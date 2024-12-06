@@ -53,8 +53,14 @@ func NewMCPServer() *MCPServer {
 		"test://static/resource/{id}",
 		s.handleResourceTemplate,
 	)
-	s.server.AddPrompt(string(SIMPLE), s.handleSimplePrompt)
-	s.server.AddPrompt(string(COMPLEX), s.handleComplexPrompt)
+	s.server.AddPrompt(mcp.Prompt{
+		Name:        string(SIMPLE),
+		Description: "A simple prompt",
+	}, s.handleSimplePrompt)
+	s.server.AddPrompt(mcp.Prompt{
+		Name:        string(COMPLEX),
+		Description: "A complex prompt",
+	}, s.handleComplexPrompt)
 	s.server.AddTool(mcp.Tool{
 		Name:        string(ECHO),
 		Description: "Echoes back the input",
