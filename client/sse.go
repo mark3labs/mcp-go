@@ -139,7 +139,7 @@ func (c *SSEMCPClient) readSSE(reader io.ReadCloser) {
 func (c *SSEMCPClient) handleSSEEvent(event, data string) {
 	switch event {
 	case "endpoint":
-		endpoint, err := url.Parse(data)
+		endpoint, err := c.baseURL.Parse(data)
 		if err != nil {
 			fmt.Printf("Error parsing endpoint URL: %v\n", err)
 			return
