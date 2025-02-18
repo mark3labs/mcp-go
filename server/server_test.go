@@ -3,10 +3,10 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"testing"
-
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
+	"testing"
+	"time"
 )
 
 func TestMCPServer_NewMCPServer(t *testing.T) {
@@ -103,6 +103,109 @@ func TestMCPServer_Capabilities(t *testing.T) {
 			response := server.HandleMessage(context.Background(), messageBytes)
 			tt.validate(t, response)
 		})
+	}
+}
+func TestMCPServer_Tools(t *testing.T) {
+	tests := []struct {
+		name                  string
+		action                func(*MCPServer)
+		expectedNotifications int
+		validate              func(*testing.T, []ServerNotification, mcp.JSONRPCMessage)
+	}{
+		{
+			name: "SetTools sends single notifications/tools/list_changed",
+			action: func(server *MCPServer) {
+				server.SetTools(ServerTool{
+					Tool: mcp.NewTool("test-tool-1"),
+					Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+						return &mcp.CallToolResult{}, nil
+					},
+				}, ServerTool{
+					Tool: mcp.NewTool("test-tool-2"),
+					Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+						return &mcp.CallToolResult{}, nil
+					},
+				})
+			},
+			expectedNotifications: 1,
+			validate: func(t *testing.T, notifications []ServerNotification, toolsList mcp.JSONRPCMessage) {
+				assert.Equal(t, "notifications/tools/list_changed", notifications[0].Notification.Method)
+				tools := toolsList.(mcp.JSONRPCResponse).Result.(mcp.ListToolsResult).Tools
+				assert.Len(t, tools, 2)
+				assert.Equal(t, "test-tool-1", tools[0].Name)
+				assert.Equal(t, "test-tool-2", tools[1].Name)
+			},
+		},
+		{
+			name: "AddTool sends multiple notifications/tools/list_changed",
+			action: func(server *MCPServer) {
+				server.AddTool(mcp.NewTool("test-tool-1"),
+					func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+						return &mcp.CallToolResult{}, nil
+					})
+				server.AddTool(mcp.NewTool("test-tool-2"),
+					func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+						return &mcp.CallToolResult{}, nil
+					})
+			},
+			expectedNotifications: 2,
+			validate: func(t *testing.T, notifications []ServerNotification, toolsList mcp.JSONRPCMessage) {
+				assert.Equal(t, "notifications/tools/list_changed", notifications[0].Notification.Method)
+				tools := toolsList.(mcp.JSONRPCResponse).Result.(mcp.ListToolsResult).Tools
+				assert.Len(t, tools, 2)
+				assert.Equal(t, "test-tool-1", tools[0].Name)
+				assert.Equal(t, "test-tool-2", tools[1].Name)
+			},
+		},
+		{
+			name: "DeleteTools sends single notifications/tools/list_changed",
+			action: func(server *MCPServer) {
+				server.SetTools(
+					ServerTool{Tool: mcp.NewTool("test-tool-1")},
+					ServerTool{Tool: mcp.NewTool("test-tool-2")})
+				server.DeleteTools("test-tool-1", "test-tool-2")
+			},
+			expectedNotifications: 2,
+			validate: func(t *testing.T, notifications []ServerNotification, toolsList mcp.JSONRPCMessage) {
+				// One for SetTools
+				assert.Equal(t, "notifications/tools/list_changed", notifications[0].Notification.Method)
+				// One for DeleteTools
+				assert.Equal(t, "notifications/tools/list_changed", notifications[1].Notification.Method)
+				assert.Equal(t, "Tools not supported", toolsList.(mcp.JSONRPCError).Error.Message)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			server := NewMCPServer("test-server", "1.0.0")
+			_ = server.HandleMessage(ctx, []byte(`{
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "initialize"
+            }`))
+			notifications := make([]ServerNotification, 0)
+			tt.action(server)
+			for done := false; !done; {
+				select {
+				case serverNotification := <-server.notifications:
+					notifications = append(notifications, serverNotification)
+					if len(notifications) == tt.expectedNotifications {
+						done = true
+					}
+				case <-time.After(1 * time.Second):
+					done = true
+				}
+			}
+			assert.Len(t, notifications, tt.expectedNotifications)
+			toolsList := server.HandleMessage(ctx, []byte(`{
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "tools/list"
+            }`))
+			tt.validate(t, notifications, toolsList.(mcp.JSONRPCMessage))
+		})
+
 	}
 }
 

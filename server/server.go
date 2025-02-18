@@ -37,6 +37,12 @@ type PromptHandlerFunc func(ctx context.Context, request mcp.GetPromptRequest) (
 // ToolHandlerFunc handles tool calls with given arguments.
 type ToolHandlerFunc func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
 
+// ServerTool combines a Tool with its ToolHandlerFunc.
+type ServerTool struct {
+	Tool    mcp.Tool
+	Handler ToolHandlerFunc
+}
+
 // NotificationContext provides client identification for notifications
 type NotificationContext struct {
 	ClientID  string
@@ -61,8 +67,7 @@ type MCPServer struct {
 	resourceTemplates    map[string]resourceTemplateEntry
 	prompts              map[string]mcp.Prompt
 	promptHandlers       map[string]PromptHandlerFunc
-	tools                map[string]mcp.Tool
-	toolHandlers         map[string]ToolHandlerFunc
+	tools                map[string]ServerTool
 	notificationHandlers map[string]NotificationHandlerFunc
 	capabilities         serverCapabilities
 	notifications        chan ServerNotification
@@ -174,8 +179,7 @@ func NewMCPServer(
 		resourceTemplates:    make(map[string]resourceTemplateEntry),
 		prompts:              make(map[string]mcp.Prompt),
 		promptHandlers:       make(map[string]PromptHandlerFunc),
-		tools:                make(map[string]mcp.Tool),
-		toolHandlers:         make(map[string]ToolHandlerFunc),
+		tools:                make(map[string]ServerTool),
 		name:                 name,
 		version:              version,
 		notificationHandlers: make(map[string]NotificationHandlerFunc),
@@ -421,8 +425,34 @@ func (s *MCPServer) AddPrompt(prompt mcp.Prompt, handler PromptHandlerFunc) {
 
 // AddTool registers a new tool and its handler
 func (s *MCPServer) AddTool(tool mcp.Tool, handler ToolHandlerFunc) {
-	s.tools[tool.Name] = tool
-	s.toolHandlers[tool.Name] = handler
+	s.AddTools(ServerTool{Tool: tool, Handler: handler})
+}
+
+// AddTools registers multiple tools at once
+func (s *MCPServer) AddTools(tools ...ServerTool) {
+	for _, entry := range tools {
+		s.tools[entry.Tool.Name] = entry
+	}
+
+	// Send notification if server is already initialized
+	if s.initialized {
+		if err := s.SendNotificationToClient("notifications/tools/list_changed", nil); err != nil {
+			// We can't return the error, but in a future version we could log it
+		}
+	}
+}
+
+// SetTools replaces all existing tools with the provided list
+func (s *MCPServer) SetTools(tools ...ServerTool) {
+	s.tools = make(map[string]ServerTool)
+	s.AddTools(tools...)
+}
+
+// DeleteTools removes a tool from the server
+func (s *MCPServer) DeleteTools(names ...string) {
+	for _, name := range names {
+		delete(s.tools, name)
+	}
 
 	// Send notification if server is already initialized
 	if s.initialized {
@@ -630,7 +660,7 @@ func (s *MCPServer) handleListTools(
 ) mcp.JSONRPCMessage {
 	tools := make([]mcp.Tool, 0, len(s.tools))
 	for name := range s.tools {
-		tools = append(tools, s.tools[name])
+		tools = append(tools, s.tools[name].Tool)
 	}
 
 	result := mcp.ListToolsResult{
@@ -647,7 +677,7 @@ func (s *MCPServer) handleToolCall(
 	id interface{},
 	request mcp.CallToolRequest,
 ) mcp.JSONRPCMessage {
-	handler, ok := s.toolHandlers[request.Params.Name]
+	tool, ok := s.tools[request.Params.Name]
 	if !ok {
 		return createErrorResponse(
 			id,
@@ -656,7 +686,7 @@ func (s *MCPServer) handleToolCall(
 		)
 	}
 
-	result, err := handler(ctx, request)
+	result, err := tool.Handler(ctx, request)
 	if err != nil {
 		return createErrorResponse(id, mcp.INTERNAL_ERROR, err.Error())
 	}
