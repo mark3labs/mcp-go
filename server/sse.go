@@ -12,13 +12,19 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// SSEContextFunc is a function that takes an existing context and the current
+// request and returns a potentially modified context based on the request
+// content. This can be used to inject context values from headers, for example.
+type SSEContextFunc func(ctx context.Context, r *http.Request) context.Context
+
 // SSEServer implements a Server-Sent Events (SSE) based MCP server.
 // It provides real-time communication capabilities over HTTP using the SSE protocol.
 type SSEServer struct {
-	server   *MCPServer
-	baseURL  string
-	sessions sync.Map
-	srv      *http.Server
+	server      *MCPServer
+	baseURL     string
+	sessions    sync.Map
+	srv         *http.Server
+	contextFunc SSEContextFunc
 }
 
 // sseSession represents an active SSE connection.
@@ -34,6 +40,12 @@ func NewSSEServer(server *MCPServer, baseURL string) *SSEServer {
 		server:  server,
 		baseURL: baseURL,
 	}
+}
+
+// SetContextFunc sets a function that will be called to customise the context
+// to the server using the incoming request.
+func (s *SSEServer) SetContextFunc(fn SSEContextFunc) {
+	s.contextFunc = fn
 }
 
 // NewTestServer creates a test server for testing purposes
@@ -171,6 +183,10 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		ClientID:  sessionID,
 		SessionID: sessionID,
 	})
+
+	if s.contextFunc != nil {
+		ctx = s.contextFunc(ctx, r)
+	}
 
 	sessionI, ok := s.sessions.Load(sessionID)
 	if !ok {
