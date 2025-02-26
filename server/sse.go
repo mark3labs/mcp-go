@@ -21,6 +21,11 @@ type sseSession struct {
 	eventQueue chan string // Channel for queuing events
 }
 
+// SSEContextFunc is a function that takes an existing context and the current
+// request and returns a potentially modified context based on the request
+// content. This can be used to inject context values from headers, for example.
+type SSEContextFunc func(ctx context.Context, r *http.Request) context.Context
+
 // SSEServer implements a Server-Sent Events (SSE) based MCP server.
 // It provides real-time communication capabilities over HTTP using the SSE protocol.
 type SSEServer struct {
@@ -31,6 +36,7 @@ type SSEServer struct {
 	sseEndpoint     string
 	sessions        sync.Map
 	srv             *http.Server
+	contextFunc     SSEContextFunc
 }
 
 // Option defines a function type for configuring SSEServer
@@ -91,6 +97,12 @@ func NewSSEServer(server *MCPServer, opts ...Option) *SSEServer {
 	}
 
 	return s
+}
+
+// SetContextFunc sets a function that will be called to customise the context
+// to the server using the incoming request.
+func (s *SSEServer) SetContextFunc(fn SSEContextFunc) {
+	s.contextFunc = fn
 }
 
 // NewTestServer creates a test server for testing purposes
@@ -229,6 +241,10 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		ClientID:  sessionID,
 		SessionID: sessionID,
 	})
+
+	if s.contextFunc != nil {
+		ctx = s.contextFunc(ctx, r)
+	}
 
 	sessionI, ok := s.sessions.Load(sessionID)
 	if !ok {
