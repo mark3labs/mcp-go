@@ -373,7 +373,7 @@ type ReadResourceRequest struct {
 // from the client.
 type ReadResourceResult struct {
 	Result
-	Contents []interface{} `json:"contents"` // Can be TextResourceContents or BlobResourceContents
+	Contents []ResourceContents `json:"contents"` // Can be TextResourceContents or BlobResourceContents
 }
 
 // ResourceListChangedNotification is an optional notification from the server
@@ -459,25 +459,32 @@ type ResourceTemplate struct {
 
 // ResourceContents represents the contents of a specific resource or sub-
 // resource.
-type ResourceContents struct {
+type ResourceContents interface {
+	isResourceContents()
+}
+
+type TextResourceContents struct {
 	// The URI of this resource.
 	URI string `json:"uri"`
 	// The MIME type of this resource, if known.
 	MIMEType string `json:"mimeType,omitempty"`
-}
-
-type TextResourceContents struct {
-	ResourceContents
 	// The text of the item. This must only be set if the item can actually be
 	// represented as text (not binary data).
 	Text string `json:"text"`
 }
 
+func (TextResourceContents) isResourceContents() {}
+
 type BlobResourceContents struct {
-	ResourceContents
+	// The URI of this resource.
+	URI string `json:"uri"`
+	// The MIME type of this resource, if known.
+	MIMEType string `json:"mimeType,omitempty"`
 	// A base64-encoded string representing the binary data of the item.
 	Blob string `json:"blob"`
 }
+
+func (BlobResourceContents) isResourceContents() {}
 
 /* Logging */
 

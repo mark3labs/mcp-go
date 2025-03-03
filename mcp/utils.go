@@ -305,7 +305,7 @@ func NewListResourceTemplatesResult(
 // NewReadResourceResult creates a new ReadResourceResult with text content
 func NewReadResourceResult(text string) *ReadResourceResult {
 	return &ReadResourceResult{
-		Contents: []interface{}{
+		Contents: []ResourceContents{
 			TextResourceContents{
 				Text: text,
 			},
@@ -410,22 +410,12 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 			return nil, fmt.Errorf("resource is missing")
 		}
 
-		uri := ExtractString(resourceMap, "uri")
-		mimeType := ExtractString(resourceMap, "mimeType")
-		text := ExtractString(resourceMap, "text")
-
-		if uri == "" || mimeType == "" {
-			return nil, fmt.Errorf("resource uri or mimeType is missing")
+		resourceContents, err := ParseResourceContents(resourceMap)
+		if err != nil {
+			return nil, err
 		}
 
-		if text != "" {
-			return NewEmbeddedResource(
-				ResourceContents{
-					URI:      uri,
-					MIMEType: mimeType,
-				},
-			), nil
-		}
+		return NewEmbeddedResource(resourceContents), nil
 	}
 
 	return nil, fmt.Errorf("unsupported content type: %s", contentType)
@@ -539,6 +529,77 @@ func ParseCallToolResult(rawMessage *json.RawMessage) (*CallToolResult, error) {
 		}
 
 		result.Content = append(result.Content, content)
+	}
+
+	return &result, nil
+}
+
+func ParseResourceContents(contentMap map[string]any) (ResourceContents, error) {
+	uri := ExtractString(contentMap, "uri")
+	if uri == "" {
+		return nil, fmt.Errorf("resource uri is missing")
+	}
+
+	mimeType := ExtractString(contentMap, "mimeType")
+
+	if text := ExtractString(contentMap, "text"); text != "" {
+		return TextResourceContents{
+			URI:      uri,
+			MIMEType: mimeType,
+			Text:     text,
+		}, nil
+	}
+
+	if blob := ExtractString(contentMap, "blob"); blob != "" {
+		return BlobResourceContents{
+			URI:      uri,
+			MIMEType: mimeType,
+			Blob:     blob,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("unsupported resource type")
+}
+
+func ParseReadResourceResult(rawMessage *json.RawMessage) (*ReadResourceResult, error) {
+	var jsonContent map[string]any
+	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	var result ReadResourceResult
+
+	meta, ok := jsonContent["_meta"]
+	if ok {
+		if metaMap, ok := meta.(map[string]any); ok {
+			result.Meta = metaMap
+		}
+	}
+
+	contents, ok := jsonContent["contents"]
+	if !ok {
+		return nil, fmt.Errorf("contents is missing")
+	}
+
+	contentArr, ok := contents.([]any)
+	if !ok {
+		return nil, fmt.Errorf("contents is not an array")
+	}
+
+	for _, content := range contentArr {
+		// Extract content
+		contentMap, ok := content.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("content is not an object")
+		}
+
+		// Process content
+		content, err := ParseResourceContents(contentMap)
+		if err != nil {
+			return nil, err
+		}
+
+		result.Contents = append(result.Contents, content)
 	}
 
 	return &result, nil

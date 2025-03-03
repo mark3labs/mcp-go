@@ -338,12 +338,7 @@ func (c *StdioMCPClient) ReadResource(
 		return nil, err
 	}
 
-	var result mcp.ReadResourceResult
-	if err := json.Unmarshal(*response, &result); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	return &result, nil
+	return mcp.ParseReadResourceResult(response)
 }
 
 func (c *StdioMCPClient) Subscribe(
