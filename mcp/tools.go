@@ -72,7 +72,7 @@ type Tool struct {
 	// A human-readable description of the tool.
 	Description string `json:"description,omitempty"`
 	// A JSON Schema object defining the expected parameters for the tool.
-	InputSchema ToolInputSchema `json:"-"` // Hide this from JSON marshaling
+	InputSchema ToolInputSchema `json:"inputSchema"`
 	// Alternative to InputSchema - allows arbitrary JSON Schema to be provided
 	RawInputSchema json.RawMessage `json:"-"` // Hide this from JSON marshaling
 }
@@ -101,41 +101,6 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 	}
 
 	return json.Marshal(m)
-}
-
-
-// UnmarshalJSON implements the json.Unmarshaler interface for Tool.
-// It handles unmarshaling InputSchema while supporting raw schema formats.
-func (t *Tool) UnmarshalJSON(b []byte) error {
-	// Temporary structure for decoding
-	var raw struct {
-		Name        string          `json:"name"`
-		Description string          `json:"description"`
-		InputSchema json.RawMessage `json:"inputSchema"`
-	}
-
-	// Unmarshal into the temporary structure
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return err
-	}
-
-	// Assign name and description
-	t.Name = raw.Name
-	t.Description = raw.Description
-
-	// Try to unmarshal InputSchema into structured format
-	var schema ToolInputSchema
-	if err := json.Unmarshal(raw.InputSchema, &schema); err == nil && schema.Type != "" {
-		// Successfully parsed structured schema
-		t.InputSchema = schema
-		t.RawInputSchema = nil
-	} else {
-		// Failed to parse structured schema, use raw schema
-		t.InputSchema = ToolInputSchema{}
-		t.RawInputSchema = raw.InputSchema
-	}
-
-	return nil
 }
 
 type ToolInputSchema struct {
