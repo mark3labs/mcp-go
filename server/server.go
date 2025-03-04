@@ -138,6 +138,7 @@ func (s *MCPServer) SendNotificationToClient(
 
 // serverCapabilities defines the supported features of the MCP server
 type serverCapabilities struct {
+	tools     *toolCapabilities
 	resources *resourceCapabilities
 	prompts   *promptCapabilities
 	logging   bool
@@ -151,6 +152,11 @@ type resourceCapabilities struct {
 
 // promptCapabilities defines the supported prompt-related features
 type promptCapabilities struct {
+	listChanged bool
+}
+
+// toolCapabilities defines the supported tool-related features
+type toolCapabilities struct {
 	listChanged bool
 }
 
@@ -168,6 +174,15 @@ func WithResourceCapabilities(subscribe, listChanged bool) ServerOption {
 func WithPromptCapabilities(listChanged bool) ServerOption {
 	return func(s *MCPServer) {
 		s.capabilities.prompts = &promptCapabilities{
+			listChanged: listChanged,
+		}
+	}
+}
+
+// WithToolCapabilities configures tool-related server capabilities
+func WithToolCapabilities(listChanged bool) ServerOption {
+	return func(s *MCPServer) {
+		s.capabilities.tools = &toolCapabilities{
 			listChanged: listChanged,
 		}
 	}
