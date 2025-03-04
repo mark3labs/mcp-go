@@ -125,12 +125,14 @@ func (t *Tool) UnmarshalJSON(b []byte) error {
 
 	// Try to unmarshal InputSchema into structured format
 	var schema ToolInputSchema
-	if err := json.Unmarshal(raw.InputSchema, &schema); err == nil {
+	if err := json.Unmarshal(raw.InputSchema, &schema); err == nil && schema.Type != "" {
 		// Successfully parsed structured schema
 		t.InputSchema = schema
 		t.RawInputSchema = nil
 	} else {
-		return err
+		// Failed to parse structured schema, use raw schema
+		t.InputSchema = ToolInputSchema{}
+		t.RawInputSchema = raw.InputSchema
 	}
 
 	return nil
