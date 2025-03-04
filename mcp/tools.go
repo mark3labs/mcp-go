@@ -103,6 +103,39 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
+
+// UnmarshalJSON implements the json.Unmarshaler interface for Tool.
+// It handles unmarshaling InputSchema while supporting raw schema formats.
+func (t *Tool) UnmarshalJSON(b []byte) error {
+	// Temporary structure for decoding
+	var raw struct {
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		InputSchema json.RawMessage `json:"inputSchema"`
+	}
+
+	// Unmarshal into the temporary structure
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+
+	// Assign name and description
+	t.Name = raw.Name
+	t.Description = raw.Description
+
+	// Try to unmarshal InputSchema into structured format
+	var schema ToolInputSchema
+	if err := json.Unmarshal(raw.InputSchema, &schema); err == nil {
+		// Successfully parsed structured schema
+		t.InputSchema = schema
+		t.RawInputSchema = nil
+	} else {
+		return err
+	}
+
+	return nil
+}
+
 type ToolInputSchema struct {
 	Type       string                 `json:"type"`
 	Properties map[string]interface{} `json:"properties,omitempty"`
