@@ -210,6 +210,12 @@ func NewMCPServer(
 		version:              version,
 		notificationHandlers: make(map[string]NotificationHandlerFunc),
 		notifications:        make(chan ServerNotification, 100),
+		capabilities: serverCapabilities{
+			tools:     &toolCapabilities{listChanged: true},
+			resources: &resourceCapabilities{subscribe: false, listChanged: true},
+			prompts:   &promptCapabilities{listChanged: true},
+			logging:   false,
+		},
 	}
 
 	for _, opt := range opts {
@@ -319,7 +325,7 @@ func (s *MCPServer) HandleMessage(
 		}
 		return s.handleListResourceTemplates(ctx, baseMessage.ID, request)
 	case "resources/read":
-		if s.capabilities.resources == nil {
+		if !s.capabilities.resources.listChanged {
 			return createErrorResponse(
 				baseMessage.ID,
 				mcp.METHOD_NOT_FOUND,
@@ -353,7 +359,7 @@ func (s *MCPServer) HandleMessage(
 		}
 		return s.handleListPrompts(ctx, baseMessage.ID, request)
 	case "prompts/get":
-		if s.capabilities.prompts == nil {
+		if !s.capabilities.prompts.listChanged {
 			return createErrorResponse(
 				baseMessage.ID,
 				mcp.METHOD_NOT_FOUND,
@@ -387,7 +393,7 @@ func (s *MCPServer) HandleMessage(
 		}
 		return s.handleListTools(ctx, baseMessage.ID, request)
 	case "tools/call":
-		if len(s.tools) == 0 {
+		if !s.capabilities.tools.listChanged || len(s.tools) == 0 {
 			return createErrorResponse(
 				baseMessage.ID,
 				mcp.METHOD_NOT_FOUND,
@@ -523,20 +529,20 @@ func (s *MCPServer) handleInitialize(
 		Subscribe   bool `json:"subscribe,omitempty"`
 		ListChanged bool `json:"listChanged,omitempty"`
 	}{
-		Subscribe:   false,
-		ListChanged: true,
+		Subscribe:   s.capabilities.resources.subscribe,
+		ListChanged: s.capabilities.resources.listChanged,
 	}
 
 	capabilities.Prompts = &struct {
 		ListChanged bool `json:"listChanged,omitempty"`
 	}{
-		ListChanged: true,
+		ListChanged: s.capabilities.prompts.listChanged,
 	}
 
 	capabilities.Tools = &struct {
 		ListChanged bool `json:"listChanged,omitempty"`
 	}{
-		ListChanged: true,
+		ListChanged: s.capabilities.tools.listChanged,
 	}
 
 	if s.capabilities.logging {
