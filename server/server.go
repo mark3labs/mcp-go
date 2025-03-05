@@ -211,9 +211,9 @@ func NewMCPServer(
 		notificationHandlers: make(map[string]NotificationHandlerFunc),
 		notifications:        make(chan ServerNotification, 100),
 		capabilities: serverCapabilities{
-			tools:     &toolCapabilities{listChanged: true},
-			resources: &resourceCapabilities{subscribe: false, listChanged: true},
-			prompts:   &promptCapabilities{listChanged: true},
+			tools:     &toolCapabilities{},
+			resources: &resourceCapabilities{},
+			prompts:   &promptCapabilities{},
 			logging:   false,
 		},
 	}

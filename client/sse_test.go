@@ -16,6 +16,7 @@ func TestSSEMCPClient(t *testing.T) {
 		"1.0.0",
 		server.WithResourceCapabilities(true, true),
 		server.WithPromptCapabilities(true),
+		server.WithToolCapabilities(true),
 	)
 
 	// Add a test tool

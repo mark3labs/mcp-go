@@ -42,11 +42,11 @@ func TestMCPServer_Capabilities(t *testing.T) {
 				assert.Equal(t, "1.0.0", initResult.ServerInfo.Version)
 				assert.NotNil(t, initResult.Capabilities.Resources)
 				assert.False(t, initResult.Capabilities.Resources.Subscribe)
-				assert.True(t, initResult.Capabilities.Resources.ListChanged)
+				assert.False(t, initResult.Capabilities.Resources.ListChanged)
 				assert.NotNil(t, initResult.Capabilities.Prompts)
-				assert.True(t, initResult.Capabilities.Prompts.ListChanged)
+				assert.False(t, initResult.Capabilities.Prompts.ListChanged)
 				assert.NotNil(t, initResult.Capabilities.Tools)
-				assert.True(t, initResult.Capabilities.Tools.ListChanged)
+				assert.False(t, initResult.Capabilities.Tools.ListChanged)
 				assert.Nil(t, initResult.Capabilities.Logging)
 			},
 		},
@@ -563,6 +563,7 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0",
 		WithResourceCapabilities(true, true),
 		WithPromptCapabilities(true),
+		WithToolCapabilities(true),
 	)
 
 	// Add a test tool to enable tool capabilities
