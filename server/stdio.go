@@ -14,12 +14,19 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// StdioContextFunc is a function that takes an existing context and returns
+// a potentially modified context.
+// This can be used to inject context values from environment variables,
+// for example.
+type StdioContextFunc func(ctx context.Context) context.Context
+
 // StdioServer wraps a MCPServer and handles stdio communication.
 // It provides a simple way to create command-line MCP servers that
 // communicate via standard input/output streams using JSON-RPC messages.
 type StdioServer struct {
-	server    *MCPServer
-	errLogger *log.Logger
+	server      *MCPServer
+	errLogger   *log.Logger
+	contextFunc StdioContextFunc
 }
 
 // NewStdioServer creates a new stdio server wrapper around an MCPServer.
@@ -41,6 +48,13 @@ func (s *StdioServer) SetErrorLogger(logger *log.Logger) {
 	s.errLogger = logger
 }
 
+// SetContextFunc sets a function that will be called to customise the context
+// to the server. Note that the stdio server uses the same context for all requests,
+// so this function will only be called once per server instance.
+func (s *StdioServer) SetContextFunc(fn StdioContextFunc) {
+	s.contextFunc = fn
+}
+
 // Listen starts listening for JSON-RPC messages on the provided input and writes responses to the provided output.
 // It runs until the context is cancelled or an error occurs.
 // Returns an error if there are issues with reading input or writing output.
@@ -54,6 +68,11 @@ func (s *StdioServer) Listen(
 		ClientID:  "stdio",
 		SessionID: "stdio",
 	})
+
+	// Add in any custom context.
+	if s.contextFunc != nil {
+		ctx = s.contextFunc(ctx)
+	}
 
 	reader := bufio.NewReader(stdin)
 
