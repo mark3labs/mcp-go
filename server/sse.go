@@ -12,15 +12,6 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// SSEServer implements a Server-Sent Events (SSE) based MCP server.
-// It provides real-time communication capabilities over HTTP using the SSE protocol.
-type SSEServer struct {
-	server   *MCPServer
-	baseURL  string
-	sessions sync.Map
-	srv      *http.Server
-}
-
 // sseSession represents an active SSE connection.
 type sseSession struct {
 	writer     http.ResponseWriter
@@ -29,12 +20,62 @@ type sseSession struct {
 	eventQueue chan string // Channel for queuing events
 }
 
-// NewSSEServer creates a new SSE server instance with the given MCP server and base URL.
-func NewSSEServer(server *MCPServer, baseURL string) *SSEServer {
-	return &SSEServer{
-		server:  server,
-		baseURL: baseURL,
+// SSEServer implements a Server-Sent Events (SSE) based MCP server.
+// It provides real-time communication capabilities over HTTP using the SSE protocol.
+type SSEServer struct {
+	server          *MCPServer
+	baseURL         string
+	messageEndpoint string
+	sseEndpoint     string
+	sessions        sync.Map
+	srv             *http.Server
+}
+
+// Option defines a function type for configuring SSEServer
+type Option func(*SSEServer)
+
+// WithBaseURL sets the base URL for the SSE server
+func WithBaseURL(baseURL string) Option {
+	return func(s *SSEServer) {
+		s.baseURL = baseURL
 	}
+}
+
+// WithMessageEndpoint sets the message endpoint path
+func WithMessageEndpoint(endpoint string) Option {
+	return func(s *SSEServer) {
+		s.messageEndpoint = endpoint
+	}
+}
+
+// WithSSEEndpoint sets the SSE endpoint path
+func WithSSEEndpoint(endpoint string) Option {
+	return func(s *SSEServer) {
+		s.sseEndpoint = endpoint
+	}
+}
+
+// WithHTTPServer sets the HTTP server instance
+func WithHTTPServer(srv *http.Server) Option {
+	return func(s *SSEServer) {
+		s.srv = srv
+	}
+}
+
+// NewSSEServer creates a new SSE server instance with the given MCP server and options.
+func NewSSEServer(server *MCPServer, opts ...Option) *SSEServer {
+	s := &SSEServer{
+		server:          server,
+		sseEndpoint:     "/sse",
+		messageEndpoint: "/message",
+	}
+
+	// Apply all options
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	return s
 }
 
 // NewTestServer creates a test server for testing purposes
@@ -132,8 +173,9 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	messageEndpoint := fmt.Sprintf(
-		"%s/message?sessionId=%s",
+		"%s%s?sessionId=%s",
 		s.baseURL,
+		s.messageEndpoint,
 		sessionID,
 	)
 
@@ -260,9 +302,9 @@ func (s *SSEServer) SendEventToSession(
 // ServeHTTP implements the http.Handler interface.
 func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
-	case "/sse":
+	case s.sseEndpoint:
 		s.handleSSE(w, r)
-	case "/message":
+	case s.messageEndpoint:
 		s.handleMessage(w, r)
 	default:
 		http.NotFound(w, r)

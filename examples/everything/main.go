@@ -321,10 +321,6 @@ func handleSendNotification(
 	}, nil
 }
 
-func ServeSSE(mcpServer *server.MCPServer, addr string) *server.SSEServer {
-	return server.NewSSEServer(mcpServer, fmt.Sprintf("http://%s", addr))
-}
-
 func handleLongRunningOperationTool(
 	ctx context.Context,
 	request mcp.CallToolRequest,
@@ -418,19 +414,14 @@ func handleNotification(
 func main() {
 	var transport string
 	flag.StringVar(&transport, "t", "stdio", "Transport type (stdio or sse)")
-	flag.StringVar(
-		&transport,
-		"transport",
-		"stdio",
-		"Transport type (stdio or sse)",
-	)
+	flag.StringVar(&transport, "transport", "stdio", "Transport type (stdio or sse)")
 	flag.Parse()
 
 	mcpServer := NewMCPServer()
 
 	// Only check for "sse" since stdio is the default
 	if transport == "sse" {
-		sseServer := ServeSSE(mcpServer, "localhost:8080")
+		sseServer := server.NewSSEServer(mcpServer)
 		log.Printf("SSE server listening on :8080")
 		if err := sseServer.Start(":8080"); err != nil {
 			log.Fatalf("Server error: %v", err)
