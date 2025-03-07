@@ -67,6 +67,7 @@ type MCPServer struct {
 	mu                   sync.RWMutex // Add mutex for protecting shared resources
 	name                 string
 	version              string
+	instructions         string
 	resources            map[string]resourceEntry
 	resourceTemplates    map[string]resourceTemplateEntry
 	prompts              map[string]mcp.Prompt
@@ -195,6 +196,13 @@ func WithToolCapabilities(listChanged bool) ServerOption {
 func WithLogging() ServerOption {
 	return func(s *MCPServer) {
 		s.capabilities.logging = true
+	}
+}
+
+// WithInstructions sets the server instructions for the client returned in the initialize response
+func WithInstructions(instructions string) ServerOption {
+	return func(s *MCPServer) {
+		s.instructions = instructions
 	}
 }
 
@@ -571,6 +579,7 @@ func (s *MCPServer) handleInitialize(
 			Version: s.version,
 		},
 		Capabilities: capabilities,
+		Instructions: s.instructions,
 	}
 
 	s.initialized.Store(true)
