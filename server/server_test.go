@@ -141,6 +141,7 @@ func TestMCPServer_Capabilities(t *testing.T) {
 		})
 	}
 }
+
 func TestMCPServer_Tools(t *testing.T) {
 	tests := []struct {
 		name                  string
@@ -207,14 +208,14 @@ func TestMCPServer_Tools(t *testing.T) {
 				assert.Equal(t, "notifications/tools/list_changed", notifications[0].Notification.Method)
 				// One for DeleteTools
 				assert.Equal(t, "notifications/tools/list_changed", notifications[1].Notification.Method)
-				
+
 				// Expect a successful response with an empty list of tools
 				resp, ok := toolsList.(mcp.JSONRPCResponse)
 				assert.True(t, ok, "Expected JSONRPCResponse, got %T", toolsList)
-				
+
 				result, ok := resp.Result.(mcp.ListToolsResult)
 				assert.True(t, ok, "Expected ListToolsResult, got %T", resp.Result)
-				
+
 				assert.Empty(t, result.Tools, "Expected empty tools list")
 			},
 		},
@@ -660,7 +661,7 @@ func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
                         "name": "test-tool"
                     }
                 }`,
-			options: []ServerOption{},  // No capabilities at all
+			options:     []ServerOption{}, // No capabilities at all
 			expectedErr: mcp.METHOD_NOT_FOUND,
 		},
 		{
@@ -673,7 +674,7 @@ func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
                         "name": "test-prompt"
                     }
                 }`,
-			options: []ServerOption{},  // No capabilities at all
+			options:     []ServerOption{}, // No capabilities at all
 			expectedErr: mcp.METHOD_NOT_FOUND,
 		},
 		{
@@ -686,7 +687,7 @@ func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
                         "uri": "test-resource"
                     }
                 }`,
-			options: []ServerOption{},  // No capabilities at all
+			options:     []ServerOption{}, // No capabilities at all
 			expectedErr: mcp.METHOD_NOT_FOUND,
 		},
 	}
@@ -703,6 +704,75 @@ func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
 			errorResponse, ok := response.(mcp.JSONRPCError)
 			assert.True(t, ok)
 			assert.Equal(t, tt.expectedErr, errorResponse.Error.Code)
+		})
+	}
+}
+
+func TestMCPServer_Instructions(t *testing.T) {
+	tests := []struct {
+		name         string
+		instructions string
+		validate     func(t *testing.T, response mcp.JSONRPCMessage)
+	}{
+		{
+			name:         "No instructions",
+			instructions: "",
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				assert.True(t, ok)
+
+				initResult, ok := resp.Result.(mcp.InitializeResult)
+				assert.True(t, ok)
+				assert.Equal(t, "", initResult.Instructions)
+			},
+		},
+		{
+			name:         "With instructions",
+			instructions: "These are test instructions for the client.",
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				assert.True(t, ok)
+
+				initResult, ok := resp.Result.(mcp.InitializeResult)
+				assert.True(t, ok)
+				assert.Equal(t, "These are test instructions for the client.", initResult.Instructions)
+			},
+		},
+		{
+			name:         "With multiline instructions",
+			instructions: "Line 1\nLine 2\nLine 3",
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				assert.True(t, ok)
+
+				initResult, ok := resp.Result.(mcp.InitializeResult)
+				assert.True(t, ok)
+				assert.Equal(t, "Line 1\nLine 2\nLine 3", initResult.Instructions)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var server *MCPServer
+			if tt.instructions == "" {
+				server = NewMCPServer("test-server", "1.0.0")
+			} else {
+				server = NewMCPServer("test-server", "1.0.0", WithInstructions(tt.instructions))
+			}
+
+			message := mcp.JSONRPCRequest{
+				JSONRPC: "2.0",
+				ID:      1,
+				Request: mcp.Request{
+					Method: "initialize",
+				},
+			}
+			messageBytes, err := json.Marshal(message)
+			assert.NoError(t, err)
+
+			response := server.HandleMessage(context.Background(), messageBytes)
+			tt.validate(t, response)
 		})
 	}
 }
