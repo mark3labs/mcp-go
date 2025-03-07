@@ -80,9 +80,7 @@ func NewSSEServer(server *MCPServer, opts ...Option) *SSEServer {
 
 // NewTestServer creates a test server for testing purposes
 func NewTestServer(server *MCPServer) *httptest.Server {
-	sseServer := &SSEServer{
-		server: server,
-	}
+	sseServer := NewSSEServer(server)
 
 	testServer := httptest.NewServer(sseServer)
 	sseServer.baseURL = testServer.URL
