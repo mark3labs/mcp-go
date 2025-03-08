@@ -300,6 +300,7 @@ func handleSendNotification(
 	server := server.ServerFromContext(ctx)
 
 	err := server.SendNotificationToClient(
+		ctx,
 		"notifications/progress",
 		map[string]interface{}{
 			"progress":      10,
@@ -336,6 +337,7 @@ func handleLongRunningOperationTool(
 		time.Sleep(time.Duration(stepDuration * float64(time.Second)))
 		if progressToken != nil {
 			server.SendNotificationToClient(
+				ctx,
 				"notifications/progress",
 				map[string]interface{}{
 					"progress":      i,
