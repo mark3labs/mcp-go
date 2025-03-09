@@ -3,11 +3,13 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMCPServer_NewMCPServer(t *testing.T) {
@@ -145,13 +147,41 @@ func TestMCPServer_Capabilities(t *testing.T) {
 func TestMCPServer_Tools(t *testing.T) {
 	tests := []struct {
 		name                  string
-		action                func(*MCPServer)
+		action                func(*testing.T, *MCPServer, chan mcp.JSONRPCNotification)
 		expectedNotifications int
-		validate              func(*testing.T, []ServerNotification, mcp.JSONRPCMessage)
+		validate              func(*testing.T, []mcp.JSONRPCNotification, mcp.JSONRPCMessage)
 	}{
 		{
-			name: "SetTools sends single notifications/tools/list_changed",
-			action: func(server *MCPServer) {
+			name: "SetTools sends no notifications/tools/list_changed without active sessions",
+			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
+				server.SetTools(ServerTool{
+					Tool: mcp.NewTool("test-tool-1"),
+					Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+						return &mcp.CallToolResult{}, nil
+					},
+				}, ServerTool{
+					Tool: mcp.NewTool("test-tool-2"),
+					Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+						return &mcp.CallToolResult{}, nil
+					},
+				})
+			},
+			expectedNotifications: 0,
+			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, toolsList mcp.JSONRPCMessage) {
+				tools := toolsList.(mcp.JSONRPCResponse).Result.(mcp.ListToolsResult).Tools
+				assert.Len(t, tools, 2)
+				assert.Equal(t, "test-tool-1", tools[0].Name)
+				assert.Equal(t, "test-tool-2", tools[1].Name)
+			},
+		},
+		{
+			name: "SetTools sends single notifications/tools/list_changed with one active session",
+			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
+				err := server.RegisterSession(&fakeSession{
+					sessionID:           "test",
+					notificationChannel: notificationChannel,
+				})
+				require.NoError(t, err)
 				server.SetTools(ServerTool{
 					Tool: mcp.NewTool("test-tool-1"),
 					Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -165,8 +195,41 @@ func TestMCPServer_Tools(t *testing.T) {
 				})
 			},
 			expectedNotifications: 1,
-			validate: func(t *testing.T, notifications []ServerNotification, toolsList mcp.JSONRPCMessage) {
-				assert.Equal(t, "notifications/tools/list_changed", notifications[0].Notification.Method)
+			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, toolsList mcp.JSONRPCMessage) {
+				assert.Equal(t, "notifications/tools/list_changed", notifications[0].Method)
+				tools := toolsList.(mcp.JSONRPCResponse).Result.(mcp.ListToolsResult).Tools
+				assert.Len(t, tools, 2)
+				assert.Equal(t, "test-tool-1", tools[0].Name)
+				assert.Equal(t, "test-tool-2", tools[1].Name)
+			},
+		},
+		{
+			name: "SetTools sends single notifications/tools/list_changed per each active session",
+			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
+				for i := range 5 {
+					err := server.RegisterSession(&fakeSession{
+						sessionID:           fmt.Sprintf("test%d", i),
+						notificationChannel: notificationChannel,
+					})
+					require.NoError(t, err)
+				}
+				server.SetTools(ServerTool{
+					Tool: mcp.NewTool("test-tool-1"),
+					Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+						return &mcp.CallToolResult{}, nil
+					},
+				}, ServerTool{
+					Tool: mcp.NewTool("test-tool-2"),
+					Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+						return &mcp.CallToolResult{}, nil
+					},
+				})
+			},
+			expectedNotifications: 5,
+			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, toolsList mcp.JSONRPCMessage) {
+				for _, notification := range notifications {
+					assert.Equal(t, "notifications/tools/list_changed", notification.Method)
+				}
 				tools := toolsList.(mcp.JSONRPCResponse).Result.(mcp.ListToolsResult).Tools
 				assert.Len(t, tools, 2)
 				assert.Equal(t, "test-tool-1", tools[0].Name)
@@ -175,7 +238,12 @@ func TestMCPServer_Tools(t *testing.T) {
 		},
 		{
 			name: "AddTool sends multiple notifications/tools/list_changed",
-			action: func(server *MCPServer) {
+			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
+				err := server.RegisterSession(&fakeSession{
+					sessionID:           "test",
+					notificationChannel: notificationChannel,
+				})
+				require.NoError(t, err)
 				server.AddTool(mcp.NewTool("test-tool-1"),
 					func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 						return &mcp.CallToolResult{}, nil
@@ -186,8 +254,9 @@ func TestMCPServer_Tools(t *testing.T) {
 					})
 			},
 			expectedNotifications: 2,
-			validate: func(t *testing.T, notifications []ServerNotification, toolsList mcp.JSONRPCMessage) {
-				assert.Equal(t, "notifications/tools/list_changed", notifications[0].Notification.Method)
+			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, toolsList mcp.JSONRPCMessage) {
+				assert.Equal(t, "notifications/tools/list_changed", notifications[0].Method)
+				assert.Equal(t, "notifications/tools/list_changed", notifications[1].Method)
 				tools := toolsList.(mcp.JSONRPCResponse).Result.(mcp.ListToolsResult).Tools
 				assert.Len(t, tools, 2)
 				assert.Equal(t, "test-tool-1", tools[0].Name)
@@ -196,18 +265,23 @@ func TestMCPServer_Tools(t *testing.T) {
 		},
 		{
 			name: "DeleteTools sends single notifications/tools/list_changed",
-			action: func(server *MCPServer) {
+			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
+				err := server.RegisterSession(&fakeSession{
+					sessionID:           "test",
+					notificationChannel: notificationChannel,
+				})
+				require.NoError(t, err)
 				server.SetTools(
 					ServerTool{Tool: mcp.NewTool("test-tool-1")},
 					ServerTool{Tool: mcp.NewTool("test-tool-2")})
 				server.DeleteTools("test-tool-1", "test-tool-2")
 			},
 			expectedNotifications: 2,
-			validate: func(t *testing.T, notifications []ServerNotification, toolsList mcp.JSONRPCMessage) {
+			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, toolsList mcp.JSONRPCMessage) {
 				// One for SetTools
-				assert.Equal(t, "notifications/tools/list_changed", notifications[0].Notification.Method)
+				assert.Equal(t, "notifications/tools/list_changed", notifications[0].Method)
 				// One for DeleteTools
-				assert.Equal(t, "notifications/tools/list_changed", notifications[1].Notification.Method)
+				assert.Equal(t, "notifications/tools/list_changed", notifications[1].Method)
 
 				// Expect a successful response with an empty list of tools
 				resp, ok := toolsList.(mcp.JSONRPCResponse)
@@ -225,15 +299,16 @@ func TestMCPServer_Tools(t *testing.T) {
 			ctx := context.Background()
 			server := NewMCPServer("test-server", "1.0.0")
 			_ = server.HandleMessage(ctx, []byte(`{
-              "jsonrpc": "2.0",
-              "id": 1,
-              "method": "initialize"
-            }`))
-			notifications := make([]ServerNotification, 0)
-			tt.action(server)
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "initialize"
+			}`))
+			notificationChannel := make(chan mcp.JSONRPCNotification, 100)
+			notifications := make([]mcp.JSONRPCNotification, 0)
+			tt.action(t, server, notificationChannel)
 			for done := false; !done; {
 				select {
-				case serverNotification := <-server.notifications:
+				case serverNotification := <-notificationChannel:
 					notifications = append(notifications, serverNotification)
 					if len(notifications) == tt.expectedNotifications {
 						done = true
@@ -244,10 +319,10 @@ func TestMCPServer_Tools(t *testing.T) {
 			}
 			assert.Len(t, notifications, tt.expectedNotifications)
 			toolsList := server.HandleMessage(ctx, []byte(`{
-              "jsonrpc": "2.0",
-              "id": 1,
-              "method": "tools/list"
-            }`))
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "tools/list"
+			}`))
 			tt.validate(t, notifications, toolsList.(mcp.JSONRPCMessage))
 		})
 
@@ -396,6 +471,74 @@ func TestMCPServer_HandleNotifications(t *testing.T) {
 	response := server.HandleMessage(context.Background(), []byte(message))
 	assert.Nil(t, response)
 	assert.True(t, notificationReceived)
+}
+
+func TestMCPServer_SendNotificationToClient(t *testing.T) {
+	tests := []struct {
+		name           string
+		contextPrepare func(context.Context, *MCPServer) context.Context
+		validate       func(*testing.T, context.Context, *MCPServer)
+	}{
+		{
+			name: "no active session",
+			contextPrepare: func(ctx context.Context, srv *MCPServer) context.Context {
+				return ctx
+			},
+			validate: func(t *testing.T, ctx context.Context, srv *MCPServer) {
+				require.Error(t, srv.SendNotificationToClient(ctx, "method", nil))
+			},
+		},
+		{
+			name: "active session",
+			contextPrepare: func(ctx context.Context, srv *MCPServer) context.Context {
+				return srv.WithContext(ctx, fakeSession{
+					sessionID:           "test",
+					notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+				})
+			},
+			validate: func(t *testing.T, ctx context.Context, srv *MCPServer) {
+				for range 10 {
+					require.NoError(t, srv.SendNotificationToClient(ctx, "method", nil))
+				}
+				session, ok := ClientSessionFromContext(ctx).(fakeSession)
+				require.True(t, ok, "session not found or of incorrect type")
+				for range 10 {
+					select {
+					case record := <-session.notificationChannel:
+						assert.Equal(t, "method", record.Method)
+					default:
+						t.Errorf("notification not sent")
+					}
+				}
+			},
+		},
+		{
+			name: "session with blocked channel",
+			contextPrepare: func(ctx context.Context, srv *MCPServer) context.Context {
+				return srv.WithContext(ctx, fakeSession{
+					sessionID:           "test",
+					notificationChannel: make(chan mcp.JSONRPCNotification, 1),
+				})
+			},
+			validate: func(t *testing.T, ctx context.Context, srv *MCPServer) {
+				require.NoError(t, srv.SendNotificationToClient(ctx, "method", nil))
+				require.Error(t, srv.SendNotificationToClient(ctx, "method", nil))
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewMCPServer("test-server", "1.0.0")
+			ctx := tt.contextPrepare(context.Background(), server)
+			_ = server.HandleMessage(ctx, []byte(`{
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "initialize"
+			}`))
+
+			tt.validate(t, ctx, server)
+		})
+	}
 }
 
 func TestMCPServer_PromptHandling(t *testing.T) {
@@ -818,3 +961,18 @@ func createTestServer() *MCPServer {
 
 	return server
 }
+
+type fakeSession struct {
+	sessionID           string
+	notificationChannel chan mcp.JSONRPCNotification
+}
+
+func (f fakeSession) SessionID() string {
+	return f.sessionID
+}
+
+func (f fakeSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
+	return f.notificationChannel
+}
+
+var _ ClientSession = fakeSession{}

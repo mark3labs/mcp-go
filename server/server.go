@@ -46,16 +46,23 @@ type ServerTool struct {
 	Handler ToolHandlerFunc
 }
 
-// NotificationContext provides client identification for notifications
-type NotificationContext struct {
-	ClientID  string
-	SessionID string
+// ClientSession represents an active session that can be used by MCPServer to interact with client.
+type ClientSession interface {
+	// NotificationChannel provides a channel suitable for sending notifications to client.
+	NotificationChannel() chan<- mcp.JSONRPCNotification
+	// SessionID is a unique identifier used to track user session.
+	SessionID() string
 }
 
-// ServerNotification combines the notification with client context
-type ServerNotification struct {
-	Context      NotificationContext
-	Notification mcp.JSONRPCNotification
+// clientSessionKey is the context key for storing current client notification channel.
+type clientSessionKey struct{}
+
+// ClientSessionFromContext retrieves current client notification context from context.
+func ClientSessionFromContext(ctx context.Context) ClientSession {
+	if session, ok := ctx.Value(clientSessionKey{}).(ClientSession); ok {
+		return session
+	}
+	return nil
 }
 
 // NotificationHandlerFunc handles incoming notifications.
@@ -75,9 +82,7 @@ type MCPServer struct {
 	tools                map[string]ServerTool
 	notificationHandlers map[string]NotificationHandlerFunc
 	capabilities         serverCapabilities
-	notifications        chan ServerNotification
-	clientMu             sync.Mutex // Separate mutex for client context
-	currentClient        NotificationContext
+	sessions             sync.Map
 	initialized          atomic.Bool // Use atomic for the initialized flag
 }
 
@@ -92,29 +97,69 @@ func ServerFromContext(ctx context.Context) *MCPServer {
 	return nil
 }
 
-// WithContext sets the current client context and returns the provided context
+// WithContext sets the current client session and returns the provided context
 func (s *MCPServer) WithContext(
 	ctx context.Context,
-	notifCtx NotificationContext,
+	session ClientSession,
 ) context.Context {
-	s.clientMu.Lock()
-	s.currentClient = notifCtx
-	s.clientMu.Unlock()
-	return ctx
+	return context.WithValue(ctx, clientSessionKey{}, session)
+}
+
+// RegisterSession saves session that should be notified in case if some server attributes changed.
+func (s *MCPServer) RegisterSession(
+	session ClientSession,
+) error {
+	sessionID := session.SessionID()
+	if _, exists := s.sessions.LoadOrStore(sessionID, session); exists {
+		return fmt.Errorf("session %s is already registered", sessionID)
+	}
+	return nil
+}
+
+// UnregisterSession removes from storage session that is shut down.
+func (s *MCPServer) UnregisterSession(
+	sessionID string,
+) {
+	s.sessions.Delete(sessionID)
+}
+
+// sendNotificationToAllClients sends a notification to all the currently active clients.
+func (s *MCPServer) sendNotificationToAllClients(
+	method string,
+	params map[string]any,
+) {
+	notification := mcp.JSONRPCNotification{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		Notification: mcp.Notification{
+			Method: method,
+			Params: mcp.NotificationParams{
+				AdditionalFields: params,
+			},
+		},
+	}
+
+	s.sessions.Range(func(k, v any) bool {
+		if session, ok := v.(ClientSession); ok {
+			select {
+			case session.NotificationChannel() <- notification:
+			default:
+				// TODO: log blocked channel in the future versions
+			}
+		}
+		return true
+	})
 }
 
 // SendNotificationToClient sends a notification to the current client
 func (s *MCPServer) SendNotificationToClient(
+	ctx context.Context,
 	method string,
-	params map[string]interface{},
+	params map[string]any,
 ) error {
-	if s.notifications == nil {
+	session := ClientSessionFromContext(ctx)
+	if session == nil {
 		return fmt.Errorf("notification channel not initialized")
 	}
-
-	s.clientMu.Lock()
-	clientContext := s.currentClient
-	s.clientMu.Unlock()
 
 	notification := mcp.JSONRPCNotification{
 		JSONRPC: mcp.JSONRPC_VERSION,
@@ -127,10 +172,7 @@ func (s *MCPServer) SendNotificationToClient(
 	}
 
 	select {
-	case s.notifications <- ServerNotification{
-		Context:      clientContext,
-		Notification: notification,
-	}:
+	case session.NotificationChannel() <- notification:
 		return nil
 	default:
 		return fmt.Errorf("notification channel full or blocked")
@@ -220,7 +262,6 @@ func NewMCPServer(
 		name:                 name,
 		version:              version,
 		notificationHandlers: make(map[string]NotificationHandlerFunc),
-		notifications:        make(chan ServerNotification, 100),
 		capabilities: serverCapabilities{
 			tools:     nil,
 			resources: nil,
@@ -491,9 +532,7 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 
 	// Send notification if server is already initialized
 	if initialized {
-		if err := s.SendNotificationToClient("notifications/tools/list_changed", nil); err != nil {
-			// We can't return the error, but in a future version we could log it
-		}
+		s.sendNotificationToAllClients("notifications/tools/list_changed", nil)
 	}
 }
 
@@ -516,9 +555,7 @@ func (s *MCPServer) DeleteTools(names ...string) {
 
 	// Send notification if server is already initialized
 	if initialized {
-		if err := s.SendNotificationToClient("notifications/tools/list_changed", nil); err != nil {
-			// We can't return the error, but in a future version we could log it
-		}
+		s.sendNotificationToAllClients("notifications/tools/list_changed", nil)
 	}
 }
 
