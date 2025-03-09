@@ -367,3 +367,120 @@ func WithString(name string, opts ...PropertyOption) ToolOption {
 		t.InputSchema.Properties[name] = schema
 	}
 }
+
+// WithObject adds an object property to the tool schema.
+// It accepts property options to configure the object property's behavior and constraints.
+func WithObject(name string, opts ...PropertyOption) ToolOption {
+	return func(t *Tool) {
+		schema := map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		}
+
+		for _, opt := range opts {
+			opt(schema)
+		}
+
+		// Remove required from property schema and add to InputSchema.required
+		if required, ok := schema["required"].(bool); ok && required {
+			delete(schema, "required")
+			if t.InputSchema.Required == nil {
+				t.InputSchema.Required = []string{name}
+			} else {
+				t.InputSchema.Required = append(t.InputSchema.Required, name)
+			}
+		}
+
+		t.InputSchema.Properties[name] = schema
+	}
+}
+
+// WithArray adds an array property to the tool schema.
+// It accepts property options to configure the array property's behavior and constraints.
+func WithArray(name string, opts ...PropertyOption) ToolOption {
+	return func(t *Tool) {
+		schema := map[string]interface{}{
+			"type": "array",
+		}
+
+		for _, opt := range opts {
+			opt(schema)
+		}
+
+		// Remove required from property schema and add to InputSchema.required
+		if required, ok := schema["required"].(bool); ok && required {
+			delete(schema, "required")
+			if t.InputSchema.Required == nil {
+				t.InputSchema.Required = []string{name}
+			} else {
+				t.InputSchema.Required = append(t.InputSchema.Required, name)
+			}
+		}
+
+		t.InputSchema.Properties[name] = schema
+	}
+}
+
+// Properties defines the properties for an object schema
+func Properties(props map[string]interface{}) PropertyOption {
+	return func(schema map[string]interface{}) {
+		schema["properties"] = props
+	}
+}
+
+// AdditionalProperties specifies whether additional properties are allowed in the object
+// or defines a schema for additional properties
+func AdditionalProperties(schema interface{}) PropertyOption {
+	return func(schemaMap map[string]interface{}) {
+		schemaMap["additionalProperties"] = schema
+	}
+}
+
+// MinProperties sets the minimum number of properties for an object
+func MinProperties(min int) PropertyOption {
+	return func(schema map[string]interface{}) {
+		schema["minProperties"] = min
+	}
+}
+
+// MaxProperties sets the maximum number of properties for an object
+func MaxProperties(max int) PropertyOption {
+	return func(schema map[string]interface{}) {
+		schema["maxProperties"] = max
+	}
+}
+
+// PropertyNames defines a schema for property names in an object
+func PropertyNames(schema map[string]interface{}) PropertyOption {
+	return func(schemaMap map[string]interface{}) {
+		schemaMap["propertyNames"] = schema
+	}
+}
+
+// Items defines the schema for array items
+func Items(schema interface{}) PropertyOption {
+	return func(schemaMap map[string]interface{}) {
+		schemaMap["items"] = schema
+	}
+}
+
+// MinItems sets the minimum number of items for an array
+func MinItems(min int) PropertyOption {
+	return func(schema map[string]interface{}) {
+		schema["minItems"] = min
+	}
+}
+
+// MaxItems sets the maximum number of items for an array
+func MaxItems(max int) PropertyOption {
+	return func(schema map[string]interface{}) {
+		schema["maxItems"] = max
+	}
+}
+
+// UniqueItems specifies whether array items must be unique
+func UniqueItems(unique bool) PropertyOption {
+	return func(schema map[string]interface{}) {
+		schema["uniqueItems"] = unique
+	}
+}
