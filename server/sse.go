@@ -51,6 +51,7 @@ func WithBasePath(basePath string) Option {
 			basePath = "/" + basePath
 		}
 		s.basePath = strings.TrimSuffix(basePath, "/")
+		s.baseURL = s.baseURL + s.basePath
 	}
 }
 
@@ -185,9 +186,8 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	messageEndpoint := fmt.Sprintf(
-		"%s%s%s?sessionId=%s",
+		"%s%s?sessionId=%s",
 		s.baseURL,
-		s.basePath,
 		s.messageEndpoint,
 		sessionID,
 	)

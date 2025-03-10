@@ -16,7 +16,10 @@ import (
 func TestSSEServer(t *testing.T) {
 	t.Run("Can instantiate", func(t *testing.T) {
 		mcpServer := NewMCPServer("test", "1.0.0")
-		sseServer := NewSSEServer(mcpServer, WithBaseURL("http://localhost:8080"))
+		sseServer := NewSSEServer(mcpServer,
+			WithBaseURL("http://localhost:8080"),
+			WithBasePath("/mcp"),
+		)
 
 		if sseServer == nil {
 			t.Error("SSEServer should not be nil")
@@ -24,10 +27,16 @@ func TestSSEServer(t *testing.T) {
 		if sseServer.server == nil {
 			t.Error("MCPServer should not be nil")
 		}
-		if sseServer.baseURL != "http://localhost:8080" {
+		if sseServer.baseURL != "http://localhost:8080/mcp" {
 			t.Errorf(
-				"Expected baseURL http://localhost:8080, got %s",
+				"Expected baseURL http://localhost:8080/mcp, got %s",
 				sseServer.baseURL,
+			)
+		}
+		if sseServer.basePath != "/mcp" {
+			t.Errorf(
+				"Expected basePath /mcp, got %s",
+				sseServer.basePath,
 			)
 		}
 	})
@@ -404,5 +413,59 @@ func TestSSEServer(t *testing.T) {
 
 		// Clean up SSE connection
 		cancel()
+	})
+
+	t.Run("works as http.Handler with custom basePath", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0.0")
+		sseServer := NewSSEServer(mcpServer, WithBasePath("/mcp"))
+
+		ts := httptest.NewServer(sseServer)
+		defer ts.Close()
+
+		// Test 404 for unknown path first (simpler case)
+		resp, err := http.Get(fmt.Sprintf("%s/sse", ts.URL))
+		if err != nil {
+			t.Fatalf("Failed to make request: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("Expected status 404, got %d", resp.StatusCode)
+		}
+
+		// Test SSE endpoint with proper cleanup
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		sseURL := fmt.Sprintf("%s/sse", ts.URL+sseServer.basePath)
+		req, err := http.NewRequestWithContext(ctx, "GET", sseURL, nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+
+		resp, err = http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Failed to connect to SSE endpoint: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", resp.StatusCode)
+		}
+
+		// Read initial message in goroutine
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			buf := make([]byte, 1024)
+			_, err := resp.Body.Read(buf)
+			if err != nil && err.Error() != "context canceled" {
+				t.Errorf("Failed to read from SSE stream: %v", err)
+			}
+		}()
+
+		// Wait briefly for initial response then cancel
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+		<-done
 	})
 }
