@@ -105,9 +105,14 @@ func (s *SSEServer) SetContextFunc(fn SSEContextFunc) {
 	s.contextFunc = fn
 }
 
+type sseServerOpt func(sseServer *SSEServer)
+
 // NewTestServer creates a test server for testing purposes
-func NewTestServer(server *MCPServer) *httptest.Server {
+func NewTestServer(server *MCPServer, opts ...sseServerOpt) *httptest.Server {
 	sseServer := NewSSEServer(server)
+	for _, opt := range opts {
+		opt(sseServer)
+	}
 
 	testServer := httptest.NewServer(sseServer)
 	sseServer.baseURL = testServer.URL
