@@ -410,7 +410,7 @@ s.AddPrompt(mcp.NewPrompt("greeting",
         mcp.ArgumentDescription("Name of the person to greet"),
     ),
 ), func(ctx context.Context, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-    name := request.Params.Arguments["name"].(string)
+    name := request.Params.Arguments["name"]
     if name == "" {
         name = "friend"
     }
@@ -434,7 +434,7 @@ s.AddPrompt(mcp.NewPrompt("code_review",
         mcp.RequiredArgument(),
     ),
 ), func(ctx context.Context, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-    prNumber := request.Params.Arguments["pr_number"].(string)
+    prNumber := request.Params.Arguments["pr_number"]
     if prNumber == "" {
         return nil, fmt.Errorf("pr_number is required")
     }
@@ -465,7 +465,7 @@ s.AddPrompt(mcp.NewPrompt("query_builder",
         mcp.RequiredArgument(),
     ),
 ), func(ctx context.Context, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-    tableName := request.Params.Arguments["table"].(string)
+    tableName := request.Params.Arguments["table"]
     if tableName == "" {
         return nil, fmt.Errorf("table name is required")
     }
