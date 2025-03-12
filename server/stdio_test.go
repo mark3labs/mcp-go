@@ -131,10 +131,7 @@ func TestStdioServer(t *testing.T) {
 		setTestValFromEnv := func(ctx context.Context) context.Context {
 			return context.WithValue(ctx, testContextKey{}, os.Getenv(testEnvVar))
 		}
-		os.Setenv(testEnvVar, "test_value")
-		t.Cleanup(func() {
-			os.Unsetenv(testEnvVar)
-		})
+		t.Setenv(testEnvVar, "test_value")
 
 		// Create pipes for stdin and stdout
 		stdinReader, stdinWriter := io.Pipe()
