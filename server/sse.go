@@ -39,18 +39,18 @@ type SSEServer struct {
 	contextFunc     SSEContextFunc
 }
 
-// Option defines a function type for configuring SSEServer
-type Option func(*SSEServer)
+// SSEOption defines a function type for configuring SSEServer
+type SSEOption func(*SSEServer)
 
 // WithBaseURL sets the base URL for the SSE server
-func WithBaseURL(baseURL string) Option {
+func WithBaseURL(baseURL string) SSEOption {
 	return func(s *SSEServer) {
 		s.baseURL = baseURL
 	}
 }
 
 // Add a new option for setting base path
-func WithBasePath(basePath string) Option {
+func WithBasePath(basePath string) SSEOption {
 	return func(s *SSEServer) {
 		// Ensure the path starts with / and doesn't end with /
 		if !strings.HasPrefix(basePath, "/") {
@@ -62,28 +62,36 @@ func WithBasePath(basePath string) Option {
 }
 
 // WithMessageEndpoint sets the message endpoint path
-func WithMessageEndpoint(endpoint string) Option {
+func WithMessageEndpoint(endpoint string) SSEOption {
 	return func(s *SSEServer) {
 		s.messageEndpoint = endpoint
 	}
 }
 
 // WithSSEEndpoint sets the SSE endpoint path
-func WithSSEEndpoint(endpoint string) Option {
+func WithSSEEndpoint(endpoint string) SSEOption {
 	return func(s *SSEServer) {
 		s.sseEndpoint = endpoint
 	}
 }
 
 // WithHTTPServer sets the HTTP server instance
-func WithHTTPServer(srv *http.Server) Option {
+func WithHTTPServer(srv *http.Server) SSEOption {
 	return func(s *SSEServer) {
 		s.srv = srv
 	}
 }
 
+// WithContextFunc sets a function that will be called to customise the context
+// to the server using the incoming request.
+func WithSSEContextFunc(fn SSEContextFunc) SSEOption {
+	return func(s *SSEServer) {
+		s.contextFunc = fn
+	}
+}
+
 // NewSSEServer creates a new SSE server instance with the given MCP server and options.
-func NewSSEServer(server *MCPServer, opts ...Option) *SSEServer {
+func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
 	s := &SSEServer{
 		server:          server,
 		sseEndpoint:     "/sse",
@@ -99,16 +107,8 @@ func NewSSEServer(server *MCPServer, opts ...Option) *SSEServer {
 	return s
 }
 
-// SetContextFunc sets a function that will be called to customise the context
-// to the server using the incoming request.
-func (s *SSEServer) SetContextFunc(fn SSEContextFunc) {
-	s.contextFunc = fn
-}
-
-type sseServerOpt func(sseServer *SSEServer)
-
 // NewTestServer creates a test server for testing purposes
-func NewTestServer(server *MCPServer, opts ...sseServerOpt) *httptest.Server {
+func NewTestServer(server *MCPServer, opts ...SSEOption) *httptest.Server {
 	sseServer := NewSSEServer(server)
 	for _, opt := range opts {
 		opt(sseServer)
