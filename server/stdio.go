@@ -29,6 +29,25 @@ type StdioServer struct {
 	contextFunc StdioContextFunc
 }
 
+// StdioOption defines a function type for configuring StdioServer
+type StdioOption func(*StdioServer)
+
+// WithErrorLogger sets the error logger for the server
+func WithErrorLogger(logger *log.Logger) StdioOption {
+	return func(s *StdioServer) {
+		s.errLogger = logger
+	}
+}
+
+// WithContextFunc sets a function that will be called to customise the context
+// to the server. Note that the stdio server uses the same context for all requests,
+// so this function will only be called once per server instance.
+func WithStdioContextFunc(fn StdioContextFunc) StdioOption {
+	return func(s *StdioServer) {
+		s.contextFunc = fn
+	}
+}
+
 // NewStdioServer creates a new stdio server wrapper around an MCPServer.
 // It initializes the server with a default error logger that discards all output.
 func NewStdioServer(server *MCPServer) *StdioServer {
@@ -190,9 +209,13 @@ func (s *StdioServer) writeResponse(
 // ServeStdio is a convenience function that creates and starts a StdioServer with os.Stdin and os.Stdout.
 // It sets up signal handling for graceful shutdown on SIGTERM and SIGINT.
 // Returns an error if the server encounters any issues during operation.
-func ServeStdio(server *MCPServer) error {
+func ServeStdio(server *MCPServer, opts ...StdioOption) error {
 	s := NewStdioServer(server)
 	s.SetErrorLogger(log.New(os.Stderr, "", log.LstdFlags))
+
+	for _, opt := range opts {
+		opt(s)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
