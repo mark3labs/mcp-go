@@ -15,16 +15,28 @@ import (
 
 // sseSession represents an active SSE connection.
 type sseSession struct {
-	writer     http.ResponseWriter
-	flusher    http.Flusher
-	done       chan struct{}
-	eventQueue chan string // Channel for queuing events
+	writer              http.ResponseWriter
+	flusher             http.Flusher
+	done                chan struct{}
+	eventQueue          chan string // Channel for queuing events
+	sessionID           string
+	notificationChannel chan mcp.JSONRPCNotification
 }
 
 // SSEContextFunc is a function that takes an existing context and the current
 // request and returns a potentially modified context based on the request
 // content. This can be used to inject context values from headers, for example.
 type SSEContextFunc func(ctx context.Context, r *http.Request) context.Context
+
+func (s *sseSession) SessionID() string {
+	return s.sessionID
+}
+
+func (s *sseSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
+	return s.notificationChannel
+}
+
+var _ ClientSession = (*sseSession)(nil)
 
 // SSEServer implements a Server-Sent Events (SSE) based MCP server.
 // It provides real-time communication capabilities over HTTP using the SSE protocol.
@@ -168,30 +180,35 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 	sessionID := uuid.New().String()
 	session := &sseSession{
-		writer:     w,
-		flusher:    flusher,
-		done:       make(chan struct{}),
-		eventQueue: make(chan string, 100), // Buffer for events
+		writer:              w,
+		flusher:             flusher,
+		done:                make(chan struct{}),
+		eventQueue:          make(chan string, 100), // Buffer for events
+		sessionID:           sessionID,
+		notificationChannel: make(chan mcp.JSONRPCNotification, 100),
 	}
 
 	s.sessions.Store(sessionID, session)
 	defer s.sessions.Delete(sessionID)
 
+	if err := s.server.RegisterSession(session); err != nil {
+		http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer s.server.UnregisterSession(sessionID)
+
 	// Start notification handler for this session
 	go func() {
 		for {
 			select {
-			case serverNotification := <-s.server.notifications:
-				// Only forward notifications meant for this session
-				if serverNotification.Context.SessionID == sessionID {
-					eventData, err := json.Marshal(serverNotification.Notification)
-					if err == nil {
-						select {
-						case session.eventQueue <- fmt.Sprintf("event: message\ndata: %s\n\n", eventData):
-							// Event queued successfully
-						case <-session.done:
-							return
-						}
+			case notification := <-session.notificationChannel:
+				eventData, err := json.Marshal(notification)
+				if err == nil {
+					select {
+					case session.eventQueue <- fmt.Sprintf("event: message\ndata: %s\n\n", eventData):
+						// Event queued successfully
+					case <-session.done:
+						return
 					}
 				}
 			case <-session.done:
@@ -241,22 +258,18 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set the client context in the server before handling the message
-	ctx := s.server.WithContext(r.Context(), NotificationContext{
-		ClientID:  sessionID,
-		SessionID: sessionID,
-	})
-
-	if s.contextFunc != nil {
-		ctx = s.contextFunc(ctx, r)
-	}
-
 	sessionI, ok := s.sessions.Load(sessionID)
 	if !ok {
 		s.writeJSONRPCError(w, nil, mcp.INVALID_PARAMS, "Invalid session ID")
 		return
 	}
 	session := sessionI.(*sseSession)
+
+	// Set the client context before handling the message
+	ctx := s.server.WithContext(r.Context(), session)
+	if s.contextFunc != nil {
+		ctx = s.contextFunc(ctx, r)
+	}
 
 	// Parse message as raw JSON
 	var rawMessage json.RawMessage
