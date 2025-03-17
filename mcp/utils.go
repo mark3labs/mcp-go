@@ -57,49 +57,38 @@ var _ ServerResult = &ListToolsResult{}
 
 // Helper functions for type assertions
 
-// AsTextContent attempts to cast the given interface to TextContent
-func AsTextContent(content interface{}) (*TextContent, bool) {
-	tc, ok := content.(TextContent)
+// asType attempts to cast the given interface to the given type
+func asType[T any](content interface{}) (*T, bool) {
+	tc, ok := content.(T)
 	if !ok {
 		return nil, false
 	}
 	return &tc, true
 }
 
+// AsTextContent attempts to cast the given interface to TextContent
+func AsTextContent(content interface{}) (*TextContent, bool) {
+	return asType[TextContent](content)
+}
+
 // AsImageContent attempts to cast the given interface to ImageContent
 func AsImageContent(content interface{}) (*ImageContent, bool) {
-	ic, ok := content.(ImageContent)
-	if !ok {
-		return nil, false
-	}
-	return &ic, true
+	return asType[ImageContent](content)
 }
 
 // AsEmbeddedResource attempts to cast the given interface to EmbeddedResource
 func AsEmbeddedResource(content interface{}) (*EmbeddedResource, bool) {
-	er, ok := content.(EmbeddedResource)
-	if !ok {
-		return nil, false
-	}
-	return &er, true
+	return asType[EmbeddedResource](content)
 }
 
 // AsTextResourceContents attempts to cast the given interface to TextResourceContents
 func AsTextResourceContents(content interface{}) (*TextResourceContents, bool) {
-	trc, ok := content.(TextResourceContents)
-	if !ok {
-		return nil, false
-	}
-	return &trc, true
+	return asType[TextResourceContents](content)
 }
 
 // AsBlobResourceContents attempts to cast the given interface to BlobResourceContents
 func AsBlobResourceContents(content interface{}) (*BlobResourceContents, bool) {
-	brc, ok := content.(BlobResourceContents)
-	if !ok {
-		return nil, false
-	}
-	return &brc, true
+	return asType[BlobResourceContents](content)
 }
 
 // Helper function for JSON-RPC
