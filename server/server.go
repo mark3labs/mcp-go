@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/yosida95/uritemplate/v3"
 )
 
 // resourceEntry holds both a resource and its handler
@@ -731,7 +730,7 @@ func (s *MCPServer) handleReadResource(
 }
 
 // matchesTemplate checks if a URI matches a URI template pattern
-func matchesTemplate(uri string, template *uritemplate.Template) bool {
+func matchesTemplate(uri string, template *mcp.URITemplate) bool {
 	return template.Regexp().MatchString(uri)
 }
 

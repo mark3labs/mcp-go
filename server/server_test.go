@@ -923,7 +923,6 @@ func TestMCPServer_Instructions(t *testing.T) {
 func TestMCPServer_ResourceTemplates(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0",
 		WithResourceCapabilities(true, true),
-		WithPromptCapabilities(true),
 	)
 
 	server.AddResourceTemplate(
@@ -947,9 +946,15 @@ func TestMCPServer_ResourceTemplates(t *testing.T) {
 		},
 	)
 
-	message := `{
+	listMessage := `{
 		"jsonrpc": "2.0",
 		"id": 1,
+		"method": "resources/templates/list"
+	}`
+
+	message := `{
+		"jsonrpc": "2.0",
+		"id": 2,
 		"method": "resources/read",
 		"params": {
 			"uri": "test://something/test-resource/a/b/c"
@@ -959,11 +964,34 @@ func TestMCPServer_ResourceTemplates(t *testing.T) {
 	t.Run("Get resource template", func(t *testing.T) {
 		response := server.HandleMessage(
 			context.Background(),
-			[]byte(message),
+			[]byte(listMessage),
 		)
 		assert.NotNil(t, response)
 
 		resp, ok := response.(mcp.JSONRPCResponse)
+		assert.True(t, ok)
+		listResult, ok := resp.Result.(mcp.ListResourceTemplatesResult)
+		assert.True(t, ok)
+		assert.Len(t, listResult.ResourceTemplates, 1)
+		assert.Equal(t, "My Resource", listResult.ResourceTemplates[0].Name)
+		template, err := json.Marshal(listResult.ResourceTemplates[0])
+		assert.NoError(t, err)
+
+		// Need to serialize the json to map[string]string to validate the URITemplate is correctly marshalled
+		var resourceTemplate map[string]string
+		err = json.Unmarshal(template, &resourceTemplate)
+		assert.NoError(t, err)
+
+		assert.Equal(t, "test://{a}/test-resource{/b*}", resourceTemplate["uriTemplate"])
+
+		response = server.HandleMessage(
+			context.Background(),
+			[]byte(message),
+		)
+
+		assert.NotNil(t, response)
+
+		resp, ok = response.(mcp.JSONRPCResponse)
 		assert.True(t, ok)
 		// Validate that the resource values are returned correctly
 		result, ok := resp.Result.(mcp.ReadResourceResult)
@@ -974,6 +1002,7 @@ func TestMCPServer_ResourceTemplates(t *testing.T) {
 		assert.Equal(t, "test://something/test-resource/a/b/c", resultContent.URI)
 		assert.Equal(t, "text/plain", resultContent.MIMEType)
 		assert.Equal(t, "test content: something", resultContent.Text)
+
 	})
 }
 

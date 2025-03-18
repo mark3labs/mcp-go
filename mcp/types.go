@@ -8,6 +8,27 @@ import (
 	"github.com/yosida95/uritemplate/v3"
 )
 
+type URITemplate struct {
+	*uritemplate.Template
+}
+
+func (t *URITemplate) MarshalJSON() ([]byte, error) {
+	return json.Marshal(t.Template.Raw())
+}
+
+func (t *URITemplate) UnmarshalJSON(data []byte) error {
+	var raw string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	template, err := uritemplate.New(raw)
+	if err != nil {
+		return err
+	}
+	t.Template = template
+	return nil
+}
+
 /* JSON-RPC types */
 
 // JSONRPCMessage represents either a JSONRPCRequest, JSONRPCNotification, JSONRPCResponse, or JSONRPCError
@@ -446,7 +467,7 @@ type ResourceTemplate struct {
 	Annotated
 	// A URI template (according to RFC 6570) that can be used to construct
 	// resource URIs.
-	URITemplate *uritemplate.Template `json:"uriTemplate"`
+	URITemplate *URITemplate `json:"uriTemplate"`
 	// A human-readable name for the type of resource this template refers to.
 	//
 	// This can be used by clients to populate UI elements.

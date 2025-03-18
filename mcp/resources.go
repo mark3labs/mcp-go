@@ -62,7 +62,7 @@ type ResourceTemplateOption func(*ResourceTemplate)
 // Options are applied in order, allowing for flexible template configuration.
 func NewResourceTemplate(uriTemplate string, name string, opts ...ResourceTemplateOption) ResourceTemplate {
 	template := ResourceTemplate{
-		URITemplate: uritemplate.MustNew(uriTemplate),
+		URITemplate: &URITemplate{Template: uritemplate.MustNew(uriTemplate)},
 		Name:        name,
 	}
 
