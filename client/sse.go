@@ -18,40 +18,62 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+type Option func(*SSEMCPClient)
+
+func WithHeaders(headers map[string]string) Option {
+	return func(sc *SSEMCPClient) {
+		sc.headers = headers
+	}
+}
+
+func WithSSEReadTimeout(timeout time.Duration) Option {
+	return func(sc *SSEMCPClient) {
+		sc.sseReadTimeout = timeout
+	}
+}
+
 // SSEMCPClient implements the MCPClient interface using Server-Sent Events (SSE).
 // It maintains a persistent HTTP connection to receive server-pushed events
 // while sending requests over regular HTTP POST calls. The client handles
 // automatic reconnection and message routing between requests and responses.
 type SSEMCPClient struct {
-	baseURL       *url.URL
-	endpoint      *url.URL
-	httpClient    *http.Client
-	requestID     atomic.Int64
-	responses     map[int64]chan RPCResponse
-	mu            sync.RWMutex
-	done          chan struct{}
-	initialized   bool
-	notifications []func(mcp.JSONRPCNotification)
-	notifyMu      sync.RWMutex
-	endpointChan  chan struct{}
-	capabilities  mcp.ServerCapabilities
+	baseURL        *url.URL
+	endpoint       *url.URL
+	httpClient     *http.Client
+	headers        map[string]string
+	requestID      atomic.Int64
+	responses      map[int64]chan RPCResponse
+	mu             sync.RWMutex
+	done           chan struct{}
+	initialized    bool
+	notifications  []func(mcp.JSONRPCNotification)
+	notifyMu       sync.RWMutex
+	endpointChan   chan struct{}
+	capabilities   mcp.ServerCapabilities
+	sseReadTimeout time.Duration
 }
 
 // NewSSEMCPClient creates a new SSE-based MCP client with the given base URL.
 // Returns an error if the URL is invalid.
-func NewSSEMCPClient(baseURL string) (*SSEMCPClient, error) {
+func NewSSEMCPClient(baseURL string, options ...Option) (*SSEMCPClient, error) {
 	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid URL: %w", err)
 	}
 
-	return &SSEMCPClient{
+	sc := &SSEMCPClient{
 		baseURL:      parsedURL,
 		httpClient:   &http.Client{},
 		responses:    make(map[int64]chan RPCResponse),
 		done:         make(chan struct{}),
 		endpointChan: make(chan struct{}),
-	}, nil
+	}
+
+	for _, opt := range options {
+		opt(sc)
+	}
+
+	return sc, nil
 }
 
 // Start initiates the SSE connection to the server and waits for the endpoint information.
@@ -101,26 +123,46 @@ func (c *SSEMCPClient) Start(ctx context.Context) error {
 func (c *SSEMCPClient) readSSE(reader io.ReadCloser) {
 	defer reader.Close()
 
+	ctx, cancel := context.WithTimeout(context.Background(), c.sseReadTimeout) // 设置30秒超时时间
+	defer cancel()
+
 	scanner := bufio.NewScanner(reader)
 	var event, data string
 
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		if line == "" {
-			// Empty line means end of event
-			if event != "" && data != "" {
-				c.handleSSEEvent(event, data)
-				event = ""
-				data = ""
-			}
-			continue
+	var done bool
+	for {
+		if done {
+			break
 		}
 
-		if strings.HasPrefix(line, "event:") {
-			event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-		} else if strings.HasPrefix(line, "data:") {
-			data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		select {
+		case <-ctx.Done():
+			if err := ctx.Err(); err != nil {
+				fmt.Printf("SSE read timed out: %v\n", err)
+				return
+			}
+		default:
+			if !scanner.Scan() {
+				done = true
+				break
+			}
+			line := scanner.Text()
+
+			if line == "" {
+				// Empty line means end of event
+				if event != "" && data != "" {
+					c.handleSSEEvent(event, data)
+					event = ""
+					data = ""
+				}
+				continue
+			}
+
+			if strings.HasPrefix(line, "event:") {
+				event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			} else if strings.HasPrefix(line, "data:") {
+				data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			}
 		}
 	}
 
@@ -260,6 +302,10 @@ func (c *SSEMCPClient) sendRequest(
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	// set custom http headers
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
