@@ -68,6 +68,7 @@ func NewSSEMCPClient(baseURL string, options ...Option) (*SSEMCPClient, error) {
 		done:           make(chan struct{}),
 		endpointChan:   make(chan struct{}),
 		sseReadTimeout: 30 * time.Second,
+		headers:        make(map[string]string),
 	}
 
 	for _, opt := range options {
