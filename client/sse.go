@@ -62,11 +62,12 @@ func NewSSEMCPClient(baseURL string, options ...Option) (*SSEMCPClient, error) {
 	}
 
 	sc := &SSEMCPClient{
-		baseURL:      parsedURL,
-		httpClient:   &http.Client{},
-		responses:    make(map[int64]chan RPCResponse),
-		done:         make(chan struct{}),
-		endpointChan: make(chan struct{}),
+		baseURL:        parsedURL,
+		httpClient:     &http.Client{},
+		responses:      make(map[int64]chan RPCResponse),
+		done:           make(chan struct{}),
+		endpointChan:   make(chan struct{}),
+		sseReadTimeout: 30 * time.Second,
 	}
 
 	for _, opt := range options {
