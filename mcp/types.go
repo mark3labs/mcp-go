@@ -2,7 +2,11 @@
 // MCP is a protocol for communication between LLM-powered applications and their supporting services.
 package mcp
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/yosida95/uritemplate/v3"
+)
 
 /* JSON-RPC types */
 
@@ -442,7 +446,7 @@ type ResourceTemplate struct {
 	Annotated
 	// A URI template (according to RFC 6570) that can be used to construct
 	// resource URIs.
-	URITemplate string `json:"uriTemplate"`
+	URITemplate *uritemplate.Template `json:"uriTemplate"`
 	// A human-readable name for the type of resource this template refers to.
 	//
 	// This can be used by clients to populate UI elements.

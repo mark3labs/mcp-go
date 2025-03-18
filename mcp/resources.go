@@ -1,5 +1,7 @@
 package mcp
 
+import "github.com/yosida95/uritemplate/v3"
+
 // ResourceOption is a function that configures a Resource.
 // It provides a flexible way to set various properties of a Resource using the functional options pattern.
 type ResourceOption func(*Resource)
@@ -60,7 +62,7 @@ type ResourceTemplateOption func(*ResourceTemplate)
 // Options are applied in order, allowing for flexible template configuration.
 func NewResourceTemplate(uriTemplate string, name string, opts ...ResourceTemplateOption) ResourceTemplate {
 	template := ResourceTemplate{
-		URITemplate: uriTemplate,
+		URITemplate: uritemplate.MustNew(uriTemplate),
 		Name:        name,
 	}
 

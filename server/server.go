@@ -5,12 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
 	"sync"
 	"sync/atomic"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/yosida95/uritemplate/v3"
 )
 
 // resourceEntry holds both a resource and its handler
@@ -455,7 +455,7 @@ func (s *MCPServer) AddResourceTemplate(
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.resourceTemplates[template.URITemplate] = resourceTemplateEntry{
+	s.resourceTemplates[template.URITemplate.Raw()] = resourceTemplateEntry{
 		template: template,
 		handler:  handler,
 	}
@@ -656,10 +656,17 @@ func (s *MCPServer) handleReadResource(
 	// If no direct handler found, try matching against templates
 	var matchedHandler ResourceTemplateHandlerFunc
 	var matched bool
-	for uriTemplate, entry := range s.resourceTemplates {
-		if matchesTemplate(request.Params.URI, uriTemplate) {
+	for _, entry := range s.resourceTemplates {
+		template := entry.template
+		if matchesTemplate(request.Params.URI, template.URITemplate) {
 			matchedHandler = entry.handler
 			matched = true
+			matchedVars := template.URITemplate.Match(request.Params.URI)
+			// Convert matched variables to a map
+			request.Params.Arguments = make(map[string]interface{})
+			for name, value := range matchedVars {
+				request.Params.Arguments[name] = value.V
+			}
 			break
 		}
 	}
@@ -687,17 +694,8 @@ func (s *MCPServer) handleReadResource(
 }
 
 // matchesTemplate checks if a URI matches a URI template pattern
-func matchesTemplate(uri string, template string) bool {
-	// Convert template into a regex pattern
-	pattern := template
-	// Replace {name} with ([^/]+)
-	pattern = regexp.QuoteMeta(pattern)
-	pattern = regexp.MustCompile(`\\\{[^}]+\\\}`).
-		ReplaceAllString(pattern, `([^/]+)`)
-	pattern = "^" + pattern + "$"
-
-	matched, _ := regexp.MatchString(pattern, uri)
-	return matched
+func matchesTemplate(uri string, template *uritemplate.Template) bool {
+	return template.Regexp().MatchString(uri)
 }
 
 func (s *MCPServer) handleListPrompts(

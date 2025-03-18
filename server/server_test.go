@@ -777,6 +777,63 @@ func TestMCPServer_Instructions(t *testing.T) {
 	}
 }
 
+func TestMCPServer_ResourceTemplates(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0",
+		WithResourceCapabilities(true, true),
+		WithPromptCapabilities(true),
+	)
+
+	server.AddResourceTemplate(
+		mcp.NewResourceTemplate(
+			"test://{a}/test-resource{/b*}",
+			"My Resource",
+		),
+		func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+			a := request.Params.Arguments["a"].([]string)
+			b := request.Params.Arguments["b"].([]string)
+			// Validate that the template arguments are passed correctly to the handler
+			assert.Equal(t, []string{"something"}, a)
+			assert.Equal(t, []string{"a", "b", "c"}, b)
+			return []mcp.ResourceContents{
+				mcp.TextResourceContents{
+					URI:      "test://something/test-resource/a/b/c",
+					MIMEType: "text/plain",
+					Text:     "test content: " + a[0],
+				},
+			}, nil
+		},
+	)
+
+	message := `{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "resources/read",
+		"params": {
+			"uri": "test://something/test-resource/a/b/c"
+		}
+	}`
+
+	t.Run("Get resource template", func(t *testing.T) {
+		response := server.HandleMessage(
+			context.Background(),
+			[]byte(message),
+		)
+		assert.NotNil(t, response)
+
+		resp, ok := response.(mcp.JSONRPCResponse)
+		assert.True(t, ok)
+		// Validate that the resource values are returned correctly
+		result, ok := resp.Result.(mcp.ReadResourceResult)
+		assert.True(t, ok)
+		assert.Len(t, result.Contents, 1)
+		resultContent, ok := result.Contents[0].(mcp.TextResourceContents)
+		assert.True(t, ok)
+		assert.Equal(t, "test://something/test-resource/a/b/c", resultContent.URI)
+		assert.Equal(t, "text/plain", resultContent.MIMEType)
+		assert.Equal(t, "test content: something", resultContent.Text)
+	})
+}
+
 func createTestServer() *MCPServer {
 	server := NewMCPServer("test-server", "1.0.0",
 		WithResourceCapabilities(true, true),
