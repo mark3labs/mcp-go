@@ -123,7 +123,7 @@ func (c *SSEMCPClient) Start(ctx context.Context) error {
 func (c *SSEMCPClient) readSSE(reader io.ReadCloser) {
 	defer reader.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.sseReadTimeout) // 设置30秒超时时间
+	ctx, cancel := context.WithTimeout(context.Background(), c.sseReadTimeout)
 	defer cancel()
 
 	scanner := bufio.NewScanner(reader)
