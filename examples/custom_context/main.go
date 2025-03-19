@@ -56,7 +56,9 @@ func makeRequest(ctx context.Context, message, token string) (*response, error) 
 		return nil, err
 	}
 	req.Header.Set("Authorization", token)
-	req.URL.Query().Add("message", message)
+	query := req.URL.Query()
+	query.Add("message", message)
+	req.URL.RawQuery = query.Encode()
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -67,7 +69,7 @@ func makeRequest(ctx context.Context, message, token string) (*response, error) 
 		return nil, err
 	}
 	var r *response
-	if err := json.Unmarshal(body, r); err != nil {
+	if err := json.Unmarshal(body, &r); err != nil {
 		return nil, err
 	}
 	return r, nil
