@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -51,6 +52,7 @@ func WithStdioContextFunc(fn StdioContextFunc) StdioOption {
 // stdioSession is a static client session, since stdio has only one client.
 type stdioSession struct {
 	notifications chan mcp.JSONRPCNotification
+	initialized   atomic.Bool
 }
 
 func (s *stdioSession) SessionID() string {
@@ -59,6 +61,14 @@ func (s *stdioSession) SessionID() string {
 
 func (s *stdioSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
 	return s.notifications
+}
+
+func (s *stdioSession) Initialize() {
+	s.initialized.Store(true)
+}
+
+func (s *stdioSession) Initialized() bool {
+	return s.initialized.Load()
 }
 
 var _ ClientSession = (*stdioSession)(nil)

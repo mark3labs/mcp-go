@@ -180,6 +180,7 @@ func TestMCPServer_Tools(t *testing.T) {
 				err := server.RegisterSession(&fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
+					initialized:         true,
 				})
 				require.NoError(t, err)
 				server.SetTools(ServerTool{
@@ -210,6 +211,16 @@ func TestMCPServer_Tools(t *testing.T) {
 					err := server.RegisterSession(&fakeSession{
 						sessionID:           fmt.Sprintf("test%d", i),
 						notificationChannel: notificationChannel,
+						initialized:         true,
+					})
+					require.NoError(t, err)
+				}
+				// also let's register inactive sessions
+				for i := range 5 {
+					err := server.RegisterSession(&fakeSession{
+						sessionID:           fmt.Sprintf("test%d", i+5),
+						notificationChannel: notificationChannel,
+						initialized:         false,
 					})
 					require.NoError(t, err)
 				}
@@ -242,6 +253,7 @@ func TestMCPServer_Tools(t *testing.T) {
 				err := server.RegisterSession(&fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
+					initialized:         true,
 				})
 				require.NoError(t, err)
 				server.AddTool(mcp.NewTool("test-tool-1"),
@@ -269,6 +281,7 @@ func TestMCPServer_Tools(t *testing.T) {
 				err := server.RegisterSession(&fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
+					initialized:         true,
 				})
 				require.NoError(t, err)
 				server.SetTools(
@@ -489,11 +502,27 @@ func TestMCPServer_SendNotificationToClient(t *testing.T) {
 			},
 		},
 		{
+			name: "uninit session",
+			contextPrepare: func(ctx context.Context, srv *MCPServer) context.Context {
+				return srv.WithContext(ctx, fakeSession{
+					sessionID:           "test",
+					notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+					initialized:         false,
+				})
+			},
+			validate: func(t *testing.T, ctx context.Context, srv *MCPServer) {
+				require.Error(t, srv.SendNotificationToClient(ctx, "method", nil))
+				_, ok := ClientSessionFromContext(ctx).(fakeSession)
+				require.True(t, ok, "session not found or of incorrect type")
+			},
+		},
+		{
 			name: "active session",
 			contextPrepare: func(ctx context.Context, srv *MCPServer) context.Context {
 				return srv.WithContext(ctx, fakeSession{
 					sessionID:           "test",
 					notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+					initialized:         true,
 				})
 			},
 			validate: func(t *testing.T, ctx context.Context, srv *MCPServer) {
@@ -518,6 +547,7 @@ func TestMCPServer_SendNotificationToClient(t *testing.T) {
 				return srv.WithContext(ctx, fakeSession{
 					sessionID:           "test",
 					notificationChannel: make(chan mcp.JSONRPCNotification, 1),
+					initialized:         true,
 				})
 			},
 			validate: func(t *testing.T, ctx context.Context, srv *MCPServer) {
@@ -1051,6 +1081,7 @@ func createTestServer() *MCPServer {
 type fakeSession struct {
 	sessionID           string
 	notificationChannel chan mcp.JSONRPCNotification
+	initialized         bool
 }
 
 func (f fakeSession) SessionID() string {
@@ -1059,6 +1090,13 @@ func (f fakeSession) SessionID() string {
 
 func (f fakeSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
 	return f.notificationChannel
+}
+
+func (f fakeSession) Initialize() {
+}
+
+func (f fakeSession) Initialized() bool {
+	return f.initialized
 }
 
 var _ ClientSession = fakeSession{}
