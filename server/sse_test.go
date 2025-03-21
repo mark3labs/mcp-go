@@ -30,9 +30,9 @@ func TestSSEServer(t *testing.T) {
 		if sseServer.server == nil {
 			t.Error("MCPServer should not be nil")
 		}
-		if sseServer.baseURL != "http://localhost:8080/mcp" {
+		if sseServer.baseURL != "http://localhost:8080" {
 			t.Errorf(
-				"Expected baseURL http://localhost:8080/mcp, got %s",
+				"Expected baseURL http://localhost:8080, got %s",
 				sseServer.baseURL,
 			)
 		}
@@ -351,7 +351,7 @@ func TestSSEServer(t *testing.T) {
 		sseServer := NewSSEServer(mcpServer)
 
 		mux := http.NewServeMux()
-		mux.Handle("/mcp/", http.StripPrefix("/mcp", sseServer))
+		mux.Handle("/mcp/", sseServer)
 
 		ts := httptest.NewServer(mux)
 		defer ts.Close()

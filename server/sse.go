@@ -63,8 +63,14 @@ func WithBaseURL(baseURL string) SSEOption {
 			if err != nil {
 				panic(fmt.Sprintf("invalid baseURL: %s", baseURL))
 			}
+			if u.Scheme != "http" && u.Scheme != "https" {
+				panic(fmt.Sprintf("invalid baseURL: %s", baseURL))
+			}
 			// Check if the host is empty or only contains a port
 			if u.Host == "" || strings.HasPrefix(u.Host, ":") {
+				panic(fmt.Sprintf("invalid baseURL: %s", baseURL))
+			}
+			if len(u.Query()) > 0 {
 				panic(fmt.Sprintf("invalid baseURL: %s", baseURL))
 			}
 		}
