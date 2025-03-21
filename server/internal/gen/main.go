@@ -13,15 +13,15 @@ import (
 
 //go:generate go run . ../..
 
-//go:embed callbacks.go.tmpl
-var callbacksTemplate string
+//go:embed hooks.go.tmpl
+var hooksTemplate string
 
 //go:embed request_handler.go.tmpl
 var requestHandlerTemplate string
 
 func RenderTemplateToFile(templateContent, destPath, fileName string, data any) error {
 	// Create temp file for initial output
-	tempFile, err := os.CreateTemp("", "callbacks-*.go")
+	tempFile, err := os.CreateTemp("", "hooks-*.go")
 	if err != nil {
 		return err
 	}
@@ -76,7 +76,7 @@ func main() {
 	}
 	destPath := os.Args[1]
 
-	if err := RenderTemplateToFile(callbacksTemplate, destPath, "callbacks.go", MCPRequestTypes); err != nil {
+	if err := RenderTemplateToFile(hooksTemplate, destPath, "hooks.go", MCPRequestTypes); err != nil {
 		log.Fatal(err)
 	}
 

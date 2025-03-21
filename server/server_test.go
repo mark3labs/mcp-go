@@ -787,6 +787,144 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 	}
 }
 
+func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
+	var errs []error
+	type beforeResult struct {
+		method  mcp.MCPMethod
+		message any
+	}
+	type afterResult struct {
+		method  mcp.MCPMethod
+		message any
+		result  any
+	}
+	var beforeResults []beforeResult
+	var afterResults []afterResult
+	hooks := &Hooks{}
+	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
+		errs = append(errs, err)
+	})
+	hooks.AddBeforeAny(func(id any, method mcp.MCPMethod, message any) {
+		beforeResults = append(beforeResults, beforeResult{method, message})
+	})
+	hooks.AddAfterAny(func(id any, method mcp.MCPMethod, message any, result any) {
+		afterResults = append(afterResults, afterResult{method, message, result})
+	})
+
+	server := NewMCPServer("test-server", "1.0.0",
+		WithResourceCapabilities(true, true),
+		WithPromptCapabilities(true),
+		WithToolCapabilities(true),
+		WithHooks(hooks),
+	)
+
+	// Add a test tool to enable tool capabilities
+	server.AddTool(mcp.Tool{
+		Name:        "test-tool",
+		Description: "Test tool",
+		InputSchema: mcp.ToolInputSchema{
+			Type:       "object",
+			Properties: map[string]interface{}{},
+		},
+	}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{}, nil
+	})
+
+	tests := []struct {
+		name              string
+		message           string
+		expectedErr       int
+		validateCallbacks func(t *testing.T, err error, beforeResults beforeResult, afterResults afterResult)
+	}{
+		{
+			name: "Undefined tool",
+			message: `{
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "undefined-tool",
+                        "arguments": {}
+                    }
+                }`,
+			expectedErr: mcp.INVALID_PARAMS,
+			validateCallbacks: func(t *testing.T, err error, beforeResults beforeResult, afterResults afterResult) {
+				assert.Equal(t, mcp.MethodToolsCall, beforeResults.method)
+				assert.Equal(t, mcp.MethodToolsCall, afterResults.method)
+				afterResultErr, ok := afterResults.result.(error)
+				assert.True(t, ok)
+				assert.Same(t, err, afterResultErr)
+				assert.True(t, errors.Is(err, ErrToolNotFound))
+			},
+		},
+		{
+			name: "Undefined prompt",
+			message: `{
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "prompts/get",
+                    "params": {
+                        "name": "undefined-prompt",
+                        "arguments": {}
+                    }
+                }`,
+			expectedErr: mcp.INVALID_PARAMS,
+			validateCallbacks: func(t *testing.T, err error, beforeResults beforeResult, afterResults afterResult) {
+				assert.Equal(t, mcp.MethodPromptsGet, beforeResults.method)
+				assert.Equal(t, mcp.MethodPromptsGet, afterResults.method)
+				afterResultErr, ok := afterResults.result.(error)
+				assert.True(t, ok)
+				assert.Same(t, err, afterResultErr)
+				assert.True(t, errors.Is(err, ErrPromptNotFound))
+			},
+		},
+		{
+			name: "Undefined resource",
+			message: `{
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "resources/read",
+                    "params": {
+                        "uri": "undefined-resource"
+                    }
+                }`,
+			expectedErr: mcp.INVALID_PARAMS,
+			validateCallbacks: func(t *testing.T, err error, beforeResults beforeResult, afterResults afterResult) {
+				assert.Equal(t, mcp.MethodResourcesRead, beforeResults.method)
+				assert.Equal(t, mcp.MethodResourcesRead, afterResults.method)
+				afterResultErr, ok := afterResults.result.(error)
+				assert.True(t, ok)
+				assert.Same(t, err, afterResultErr)
+				assert.True(t, errors.Is(err, ErrResourceNotFound))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs = nil // Reset errors for each test case
+			beforeResults = nil
+			afterResults = nil
+			response := server.HandleMessage(
+				context.Background(),
+				[]byte(tt.message),
+			)
+			assert.NotNil(t, response)
+
+			errorResponse, ok := response.(mcp.JSONRPCError)
+			assert.True(t, ok)
+			assert.Equal(t, tt.expectedErr, errorResponse.Error.Code)
+
+			if tt.validateCallbacks != nil {
+				require.Len(t, errs, 1, "Expected exactly one error")
+				require.Len(t, beforeResults, 1, "Expected exactly one before result")
+				require.Len(t, afterResults, 1, "Expected exactly one after result")
+				tt.validateCallbacks(t, errs[0], beforeResults[0], afterResults[0])
+			}
+		})
+	}
+}
+
 func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -1063,8 +1201,8 @@ func (f fakeSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
 
 var _ ClientSession = fakeSession{}
 
-func TestMCPServer_WithCallbacks(t *testing.T) {
-	// Create callback counters to verify calls
+func TestMCPServer_WithHooks(t *testing.T) {
+	// Create hook counters to verify calls
 	var (
 		beforeAnyCount   int
 		afterAnyCount    int
@@ -1075,44 +1213,44 @@ func TestMCPServer_WithCallbacks(t *testing.T) {
 		afterToolsCount  int
 	)
 
-	// Initialize callback handlers
-	callbacks := &Callbacks{}
+	// Initialize hook handlers
+	hooks := &Hooks{}
 
-	// Register "any" callbacks
-	callbacks.AddBeforeAny(func(id any, method mcp.MCPMethod, message any) {
+	// Register "any" hooks
+	hooks.AddBeforeAny(func(id any, method mcp.MCPMethod, message any) {
 		beforeAnyCount++
 	})
 
-	callbacks.AddAfterAny(func(id any, method mcp.MCPMethod, message any, result any) {
+	hooks.AddAfterAny(func(id any, method mcp.MCPMethod, message any, result any) {
 		afterAnyCount++
 	})
 
-	callbacks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
+	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
 		onErrorCount++
 	})
 
-	// Register method-specific callbacks
-	callbacks.AddBeforePing(func(id any, message *mcp.PingRequest) {
+	// Register method-specific hooks
+	hooks.AddBeforePing(func(id any, message *mcp.PingRequest) {
 		beforePingCount++
 	})
 
-	callbacks.AddAfterPing(func(id any, message *mcp.PingRequest, result *mcp.EmptyResult) {
+	hooks.AddAfterPing(func(id any, message *mcp.PingRequest, result *mcp.EmptyResult) {
 		afterPingCount++
 	})
 
-	callbacks.AddBeforeListTools(func(id any, message *mcp.ListToolsRequest) {
+	hooks.AddBeforeListTools(func(id any, message *mcp.ListToolsRequest) {
 		beforeToolsCount++
 	})
 
-	callbacks.AddAfterListTools(func(id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
+	hooks.AddAfterListTools(func(id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
 		afterToolsCount++
 	})
 
-	// Create a server with the callbacks
+	// Create a server with the hooks
 	server := NewMCPServer(
 		"test-server",
 		"1.0.0",
-		WithCallbacks(callbacks),
+		WithHooks(hooks),
 		WithToolCapabilities(true),
 	)
 
@@ -1131,7 +1269,7 @@ func TestMCPServer_WithCallbacks(t *testing.T) {
 		"method": "initialize"
 	}`))
 
-	// Test 1: Verify ping method callbacks
+	// Test 1: Verify ping method hooks
 	pingResponse := server.HandleMessage(context.Background(), []byte(`{
 		"jsonrpc": "2.0",
 		"id": 2,
@@ -1141,7 +1279,7 @@ func TestMCPServer_WithCallbacks(t *testing.T) {
 	// Verify success response
 	assert.IsType(t, mcp.JSONRPCResponse{}, pingResponse)
 
-	// Test 2: Verify tools/list method callbacks
+	// Test 2: Verify tools/list method hooks
 	toolsListResponse := server.HandleMessage(context.Background(), []byte(`{
 		"jsonrpc": "2.0",
 		"id": 3,
@@ -1151,7 +1289,7 @@ func TestMCPServer_WithCallbacks(t *testing.T) {
 	// Verify success response
 	assert.IsType(t, mcp.JSONRPCResponse{}, toolsListResponse)
 
-	// Test 3: Verify error callbacks with invalid tool
+	// Test 3: Verify error hooks with invalid tool
 	errorResponse := server.HandleMessage(context.Background(), []byte(`{
 		"jsonrpc": "2.0",
 		"id": 4,
@@ -1164,20 +1302,20 @@ func TestMCPServer_WithCallbacks(t *testing.T) {
 	// Verify error response
 	assert.IsType(t, mcp.JSONRPCError{}, errorResponse)
 
-	// Verify callback counts
+	// Verify hook counts
 
-	// Method-specific callbacks should be called exactly once
+	// Method-specific hooks should be called exactly once
 	assert.Equal(t, 1, beforePingCount, "beforePing should be called once")
 	assert.Equal(t, 1, afterPingCount, "afterPing should be called once")
 	assert.Equal(t, 1, beforeToolsCount, "beforeListTools should be called once")
 	assert.Equal(t, 1, afterToolsCount, "afterListTools should be called once")
 
-	// General callbacks should be called for all methods
+	// General hooks should be called for all methods
 	// beforeAny is called for all 4 methods (initialize, ping, tools/list, tools/call)
 	assert.Equal(t, 4, beforeAnyCount, "beforeAny should be called for each method")
 	// afterAny is called only for successful methods (initialize, ping, tools/list)
 	assert.Equal(t, 3, afterAnyCount, "afterAny should be called for successful methods only")
 
-	// Error callback should be called once for the failed tools/call
+	// Error hook should be called once for the failed tools/call
 	assert.Equal(t, 1, onErrorCount, "onError should be called once")
 }

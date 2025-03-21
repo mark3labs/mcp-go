@@ -73,14 +73,14 @@ func (s *MCPServer) HandleMessage(
 				err:  "{{.UnmarshalError}}",
 			}
 		} else {
-			s.callbacks.before{{.CallbackName}}(baseMessage.ID, &request)
+			s.hooks.before{{.HookName}}(baseMessage.ID, &request)
 			result, err = s.{{.HandlerFunc}}(ctx, baseMessage.ID, request)
 		}
 		if err != nil {
-			s.callbacks.onError(baseMessage.ID, baseMessage.Method, &request, err)
+			s.hooks.onError(baseMessage.ID, baseMessage.Method, &request, err)
 			return err.ToJSONRPCError()
 		}
-		s.callbacks.after{{.CallbackName}}(baseMessage.ID, &request, result)
+		s.hooks.after{{.HookName}}(baseMessage.ID, &request, result)
 		return createResponse(baseMessage.ID, *result)
 	{{- end }}
 	default:

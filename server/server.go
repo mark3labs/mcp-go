@@ -82,7 +82,7 @@ type MCPServer struct {
 	capabilities         serverCapabilities
 	sessions             sync.Map
 	initialized          atomic.Bool // Use atomic for the initialized flag
-	callbacks            *Callbacks
+	hooks                *Hooks
 }
 
 // serverKey is the context key for storing the server instance
@@ -213,12 +213,12 @@ func WithResourceCapabilities(subscribe, listChanged bool) ServerOption {
 	}
 }
 
-// WithCallbacks allows adding callbacks that will be called before or after
+// WithHooks allows adding hooks that will be called before or after
 // either [all] requests or before / after specific request methods, or else
 // prior to returning an error to the client.
-func WithCallbacks(callbacks *Callbacks) ServerOption {
+func WithHooks(hooks *Hooks) ServerOption {
 	return func(s *MCPServer) {
-		s.callbacks = callbacks
+		s.hooks = hooks
 	}
 }
 

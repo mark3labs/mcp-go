@@ -66,14 +66,14 @@ func (s *MCPServer) HandleMessage(
 				err:  "Invalid initialize request",
 			}
 		} else {
-			s.callbacks.beforeInitialize(baseMessage.ID, &request)
+			s.hooks.beforeInitialize(baseMessage.ID, &request)
 			result, err = s.handleInitialize(ctx, baseMessage.ID, request)
 		}
 		if err != nil {
-			s.callbacks.onError(baseMessage.ID, baseMessage.Method, &request, err)
+			s.hooks.onError(baseMessage.ID, baseMessage.Method, &request, err)
 			return err.ToJSONRPCError()
 		}
-		s.callbacks.afterInitialize(baseMessage.ID, &request, result)
+		s.hooks.afterInitialize(baseMessage.ID, &request, result)
 		return createResponse(baseMessage.ID, *result)
 	case mcp.MethodPing:
 		var request mcp.PingRequest
@@ -85,14 +85,14 @@ func (s *MCPServer) HandleMessage(
 				err:  "Invalid ping request",
 			}
 		} else {
-			s.callbacks.beforePing(baseMessage.ID, &request)
+			s.hooks.beforePing(baseMessage.ID, &request)
 			result, err = s.handlePing(ctx, baseMessage.ID, request)
 		}
 		if err != nil {
-			s.callbacks.onError(baseMessage.ID, baseMessage.Method, &request, err)
+			s.hooks.onError(baseMessage.ID, baseMessage.Method, &request, err)
 			return err.ToJSONRPCError()
 		}
-		s.callbacks.afterPing(baseMessage.ID, &request, result)
+		s.hooks.afterPing(baseMessage.ID, &request, result)
 		return createResponse(baseMessage.ID, *result)
 	case mcp.MethodResourcesList:
 		var request mcp.ListResourcesRequest
@@ -110,14 +110,14 @@ func (s *MCPServer) HandleMessage(
 				err:  "Invalid list resources request",
 			}
 		} else {
-			s.callbacks.beforeListResources(baseMessage.ID, &request)
+			s.hooks.beforeListResources(baseMessage.ID, &request)
 			result, err = s.handleListResources(ctx, baseMessage.ID, request)
 		}
 		if err != nil {
-			s.callbacks.onError(baseMessage.ID, baseMessage.Method, &request, err)
+			s.hooks.onError(baseMessage.ID, baseMessage.Method, &request, err)
 			return err.ToJSONRPCError()
 		}
-		s.callbacks.afterListResources(baseMessage.ID, &request, result)
+		s.hooks.afterListResources(baseMessage.ID, &request, result)
 		return createResponse(baseMessage.ID, *result)
 	case mcp.MethodResourcesTemplatesList:
 		var request mcp.ListResourceTemplatesRequest
@@ -135,14 +135,14 @@ func (s *MCPServer) HandleMessage(
 				err:  "Invalid list resource templates request",
 			}
 		} else {
-			s.callbacks.beforeListResourceTemplates(baseMessage.ID, &request)
+			s.hooks.beforeListResourceTemplates(baseMessage.ID, &request)
 			result, err = s.handleListResourceTemplates(ctx, baseMessage.ID, request)
 		}
 		if err != nil {
-			s.callbacks.onError(baseMessage.ID, baseMessage.Method, &request, err)
+			s.hooks.onError(baseMessage.ID, baseMessage.Method, &request, err)
 			return err.ToJSONRPCError()
 		}
-		s.callbacks.afterListResourceTemplates(baseMessage.ID, &request, result)
+		s.hooks.afterListResourceTemplates(baseMessage.ID, &request, result)
 		return createResponse(baseMessage.ID, *result)
 	case mcp.MethodResourcesRead:
 		var request mcp.ReadResourceRequest
@@ -160,14 +160,14 @@ func (s *MCPServer) HandleMessage(
 				err:  "Invalid read resource request",
 			}
 		} else {
-			s.callbacks.beforeReadResource(baseMessage.ID, &request)
+			s.hooks.beforeReadResource(baseMessage.ID, &request)
 			result, err = s.handleReadResource(ctx, baseMessage.ID, request)
 		}
 		if err != nil {
-			s.callbacks.onError(baseMessage.ID, baseMessage.Method, &request, err)
+			s.hooks.onError(baseMessage.ID, baseMessage.Method, &request, err)
 			return err.ToJSONRPCError()
 		}
-		s.callbacks.afterReadResource(baseMessage.ID, &request, result)
+		s.hooks.afterReadResource(baseMessage.ID, &request, result)
 		return createResponse(baseMessage.ID, *result)
 	case mcp.MethodPromptsList:
 		var request mcp.ListPromptsRequest
@@ -185,14 +185,14 @@ func (s *MCPServer) HandleMessage(
 				err:  "Invalid list prompts request",
 			}
 		} else {
-			s.callbacks.beforeListPrompts(baseMessage.ID, &request)
+			s.hooks.beforeListPrompts(baseMessage.ID, &request)
 			result, err = s.handleListPrompts(ctx, baseMessage.ID, request)
 		}
 		if err != nil {
-			s.callbacks.onError(baseMessage.ID, baseMessage.Method, &request, err)
+			s.hooks.onError(baseMessage.ID, baseMessage.Method, &request, err)
 			return err.ToJSONRPCError()
 		}
-		s.callbacks.afterListPrompts(baseMessage.ID, &request, result)
+		s.hooks.afterListPrompts(baseMessage.ID, &request, result)
 		return createResponse(baseMessage.ID, *result)
 	case mcp.MethodPromptsGet:
 		var request mcp.GetPromptRequest
@@ -210,14 +210,14 @@ func (s *MCPServer) HandleMessage(
 				err:  "Invalid get prompt request",
 			}
 		} else {
-			s.callbacks.beforeGetPrompt(baseMessage.ID, &request)
+			s.hooks.beforeGetPrompt(baseMessage.ID, &request)
 			result, err = s.handleGetPrompt(ctx, baseMessage.ID, request)
 		}
 		if err != nil {
-			s.callbacks.onError(baseMessage.ID, baseMessage.Method, &request, err)
+			s.hooks.onError(baseMessage.ID, baseMessage.Method, &request, err)
 			return err.ToJSONRPCError()
 		}
-		s.callbacks.afterGetPrompt(baseMessage.ID, &request, result)
+		s.hooks.afterGetPrompt(baseMessage.ID, &request, result)
 		return createResponse(baseMessage.ID, *result)
 	case mcp.MethodToolsList:
 		var request mcp.ListToolsRequest
@@ -235,14 +235,14 @@ func (s *MCPServer) HandleMessage(
 				err:  "Invalid list tools request",
 			}
 		} else {
-			s.callbacks.beforeListTools(baseMessage.ID, &request)
+			s.hooks.beforeListTools(baseMessage.ID, &request)
 			result, err = s.handleListTools(ctx, baseMessage.ID, request)
 		}
 		if err != nil {
-			s.callbacks.onError(baseMessage.ID, baseMessage.Method, &request, err)
+			s.hooks.onError(baseMessage.ID, baseMessage.Method, &request, err)
 			return err.ToJSONRPCError()
 		}
-		s.callbacks.afterListTools(baseMessage.ID, &request, result)
+		s.hooks.afterListTools(baseMessage.ID, &request, result)
 		return createResponse(baseMessage.ID, *result)
 	case mcp.MethodToolsCall:
 		var request mcp.CallToolRequest
@@ -260,14 +260,14 @@ func (s *MCPServer) HandleMessage(
 				err:  "Invalid call tool request",
 			}
 		} else {
-			s.callbacks.beforeCallTool(baseMessage.ID, &request)
+			s.hooks.beforeCallTool(baseMessage.ID, &request)
 			result, err = s.handleToolCall(ctx, baseMessage.ID, request)
 		}
 		if err != nil {
-			s.callbacks.onError(baseMessage.ID, baseMessage.Method, &request, err)
+			s.hooks.onError(baseMessage.ID, baseMessage.Method, &request, err)
 			return err.ToJSONRPCError()
 		}
-		s.callbacks.afterCallTool(baseMessage.ID, &request, result)
+		s.hooks.afterCallTool(baseMessage.ID, &request, result)
 		return createResponse(baseMessage.ID, *result)
 	default:
 		return createErrorResponse(
