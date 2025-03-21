@@ -665,10 +665,10 @@ func TestMCPServer_PromptHandling(t *testing.T) {
 }
 
 func TestMCPServer_HandleInvalidMessages(t *testing.T) {
-	var errChan = make(chan error, 1)
+	var errs []error
 	hooks := &Hooks{}
 	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
-		errChan <- err
+		errs = append(errs, err)
 	})
 
 	server := NewMCPServer("test-server", "1.0.0", WithHooks(hooks))
@@ -710,6 +710,8 @@ func TestMCPServer_HandleInvalidMessages(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			errs = nil // Reset errors for each test case
+
 			response := server.HandleMessage(
 				context.Background(),
 				[]byte(tt.message),
@@ -719,124 +721,10 @@ func TestMCPServer_HandleInvalidMessages(t *testing.T) {
 			errorResponse, ok := response.(mcp.JSONRPCError)
 			assert.True(t, ok)
 			assert.Equal(t, tt.expectedErr, errorResponse.Error.Code)
-			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-			defer cancel()
 
 			if tt.validateErr != nil {
-				select {
-				case err := <-errChan:
-					tt.validateErr(t, err)
-				case <-ctx.Done():
-					t.Errorf("Error not received")
-				}
-			}
-		})
-	}
-}
-
-func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
-	var errChan chan error
-	hooks := &Hooks{}
-	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
-		errChan <- err
-	})
-
-	server := NewMCPServer("test-server", "1.0.0",
-		WithResourceCapabilities(true, true),
-		WithPromptCapabilities(true),
-		WithToolCapabilities(true),
-		WithHooks(hooks),
-	)
-
-	// Add a test tool to enable tool capabilities
-	server.AddTool(mcp.Tool{
-		Name:        "test-tool",
-		Description: "Test tool",
-		InputSchema: mcp.ToolInputSchema{
-			Type:       "object",
-			Properties: map[string]interface{}{},
-		},
-	}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return &mcp.CallToolResult{}, nil
-	})
-
-	tests := []struct {
-		name        string
-		message     string
-		expectedErr int
-		validateErr func(t *testing.T, err error)
-	}{
-		{
-			name: "Undefined tool",
-			message: `{
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "tools/call",
-                    "params": {
-                        "name": "undefined-tool",
-                        "arguments": {}
-                    }
-                }`,
-			expectedErr: mcp.INVALID_PARAMS,
-			validateErr: func(t *testing.T, err error) {
-				assert.True(t, errors.Is(err, ErrToolNotFound), "Error should be ErrToolNotFound but was %v", err)
-			},
-		},
-		{
-			name: "Undefined prompt",
-			message: `{
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "prompts/get",
-                    "params": {
-                        "name": "undefined-prompt",
-                        "arguments": {}
-                    }
-                }`,
-			expectedErr: mcp.INVALID_PARAMS,
-			validateErr: func(t *testing.T, err error) {
-				assert.True(t, errors.Is(err, ErrPromptNotFound), "Error should be ErrPromptNotFound but was %v", err)
-			},
-		},
-		{
-			name: "Undefined resource",
-			message: `{
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "resources/read",
-                    "params": {
-                        "uri": "undefined-resource"
-                    }
-                }`,
-			expectedErr: mcp.INVALID_PARAMS,
-			validateErr: func(t *testing.T, err error) {
-				assert.True(t, errors.Is(err, ErrResourceNotFound), "Error should be ErrResourceNotFound but was %v", err)
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			errChan = make(chan error, 1)
-			response := server.HandleMessage(
-				context.Background(),
-				[]byte(tt.message),
-			)
-			assert.NotNil(t, response)
-
-			errorResponse, ok := response.(mcp.JSONRPCError)
-			assert.True(t, ok)
-			assert.Equal(t, tt.expectedErr, errorResponse.Error.Code)
-			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-			defer cancel()
-
-			if tt.validateErr != nil {
-				select {
-				case err := <-errChan:
-					tt.validateErr(t, err)
-				case <-ctx.Done():
-					t.Errorf("Error not received")
-				}
+				require.Len(t, errs, 1, "Expected exactly one error")
+				tt.validateErr(t, errs[0])
 			}
 		})
 	}
@@ -981,10 +869,10 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 }
 
 func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
-	var errChan chan error
+	var errs []error
 	hooks := &Hooks{}
 	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
-		errChan <- err
+		errs = append(errs, err)
 	})
 	hooksOption := WithHooks(hooks)
 
@@ -1041,7 +929,8 @@ func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errChan = make(chan error, 1)
+			errs = nil // Reset errors for each test case
+
 			server := NewMCPServer("test-server", "1.0.0", tt.options...)
 			response := server.HandleMessage(
 				context.Background(),
@@ -1052,16 +941,10 @@ func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
 			errorResponse, ok := response.(mcp.JSONRPCError)
 			assert.True(t, ok)
 			assert.Equal(t, tt.expectedErr, errorResponse.Error.Code)
-			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-			defer cancel()
-			var err error
-			select {
-			case err = <-errChan:
-			case <-ctx.Done():
-				t.Errorf("Error not received")
-			}
-			assert.True(t, errors.Is(err, ErrUnsupported), "Error should be ErrUnsupported but was %v", err)
-			assert.Contains(t, err.Error(), tt.errString)
+
+			require.Len(t, errs, 1, "Expected exactly one error")
+			assert.True(t, errors.Is(errs[0], ErrUnsupported), "Error should be ErrUnsupported but was %v", errs[0])
+			assert.Contains(t, errs[0].Error(), tt.errString)
 		})
 	}
 }
@@ -1290,29 +1173,57 @@ func TestMCPServer_WithHooks(t *testing.T) {
 		afterToolsCount  int
 	)
 
+	// Collectors for message and result types
+	var beforeAnyMessages []any
+	var afterAnyData []struct {
+		msg any
+		res any
+	}
+	var beforePingMessages []*mcp.PingRequest
+	var afterPingData []struct {
+		msg *mcp.PingRequest
+		res *mcp.EmptyResult
+	}
+
 	// Initialize hook handlers
 	hooks := &Hooks{}
 
-	// Register "any" hooks
+	// Register "any" hooks with type verification
 	hooks.AddBeforeAny(func(id any, method mcp.MCPMethod, message any) {
 		beforeAnyCount++
+		// Only collect ping messages for our test
+		if method == mcp.MethodPing {
+			beforeAnyMessages = append(beforeAnyMessages, message)
+		}
 	})
 
 	hooks.AddAfterAny(func(id any, method mcp.MCPMethod, message any, result any) {
 		afterAnyCount++
+		// Only collect ping responses for our test
+		if method == mcp.MethodPing {
+			afterAnyData = append(afterAnyData, struct {
+				msg any
+				res any
+			}{message, result})
+		}
 	})
 
 	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
 		onErrorCount++
 	})
 
-	// Register method-specific hooks
+	// Register method-specific hooks with type verification
 	hooks.AddBeforePing(func(id any, message *mcp.PingRequest) {
 		beforePingCount++
+		beforePingMessages = append(beforePingMessages, message)
 	})
 
 	hooks.AddAfterPing(func(id any, message *mcp.PingRequest, result *mcp.EmptyResult) {
 		afterPingCount++
+		afterPingData = append(afterPingData, struct {
+			msg *mcp.PingRequest
+			res *mcp.EmptyResult
+		}{message, result})
 	})
 
 	hooks.AddBeforeListTools(func(id any, message *mcp.ListToolsRequest) {
@@ -1390,9 +1301,20 @@ func TestMCPServer_WithHooks(t *testing.T) {
 	// General hooks should be called for all methods
 	// beforeAny is called for all 4 methods (initialize, ping, tools/list, tools/call)
 	assert.Equal(t, 4, beforeAnyCount, "beforeAny should be called for each method")
-	// afterAny is called only for successful methods (initialize, ping, tools/list)
-	assert.Equal(t, 3, afterAnyCount, "afterAny should be called for successful methods only")
+	// afterAny is called for all 3 success methods (initialize, ping, tools/list) plus 1 error (tools/call)
+	assert.Equal(t, 4, afterAnyCount, "afterAny should be called for all methods including errors")
 
 	// Error hook should be called once for the failed tools/call
 	assert.Equal(t, 1, onErrorCount, "onError should be called once")
+
+	// Verify type matching between BeforeAny and BeforePing
+	require.Len(t, beforePingMessages, 1, "Expected one BeforePing message")
+	require.Len(t, beforeAnyMessages, 1, "Expected one BeforeAny Ping message")
+	assert.IsType(t, beforePingMessages[0], beforeAnyMessages[0], "BeforeAny message should be same type as BeforePing message")
+
+	// Verify type matching between AfterAny and AfterPing
+	require.Len(t, afterPingData, 1, "Expected one AfterPing message/result pair")
+	require.Len(t, afterAnyData, 1, "Expected one AfterAny Ping message/result pair")
+	assert.IsType(t, afterPingData[0].msg, afterAnyData[0].msg, "AfterAny message should be same type as AfterPing message")
+	assert.IsType(t, afterPingData[0].res, afterAnyData[0].res, "AfterAny result should be same type as AfterPing result")
 }

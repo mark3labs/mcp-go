@@ -129,7 +129,7 @@ func (c *Hooks) beforeAny(id any, method mcp.MCPMethod, message any) {
 		return
 	}
 	for _, hook := range c.OnBeforeAny {
-		hook(id, method, &message)
+		hook(id, method, message)
 	}
 }
 
@@ -138,7 +138,7 @@ func (c *Hooks) afterAny(id any, method mcp.MCPMethod, message any, result any) 
 		return
 	}
 	for _, hook := range c.OnAfterAny {
-		hook(id, method, &message, result)
+		hook(id, method, message, result)
 	}
 }
 
@@ -157,6 +157,7 @@ func (c *Hooks) afterAny(id any, method mcp.MCPMethod, message any, result any) 
 // - ErrPromptNotFound: When a prompt is not found
 // - ErrToolNotFound: When a tool is not found
 func (c *Hooks) onError(id any, method mcp.MCPMethod, message any, err error) {
+	c.afterAny(id, method, message, err)
 	if c == nil {
 		return
 	}
