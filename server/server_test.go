@@ -615,7 +615,7 @@ func TestMCPServer_PromptHandling(t *testing.T) {
 				resp, ok := response.(mcp.JSONRPCResponse)
 				assert.True(t, ok)
 
-				result, ok := resp.Result.(*mcp.GetPromptResult)
+				result, ok := resp.Result.(mcp.GetPromptResult)
 				assert.True(t, ok)
 				assert.Len(t, result.Messages, 1)
 				textContent, ok := result.Messages[0].Content.(mcp.TextContent)
@@ -642,7 +642,7 @@ func TestMCPServer_PromptHandling(t *testing.T) {
 				resp, ok := response.(mcp.JSONRPCResponse)
 				assert.True(t, ok)
 
-				result, ok := resp.Result.(*mcp.GetPromptResult)
+				result, ok := resp.Result.(mcp.GetPromptResult)
 				assert.True(t, ok)
 				assert.Len(t, result.Messages, 1)
 				textContent, ok := result.Messages[0].Content.(mcp.TextContent)
@@ -1062,3 +1062,122 @@ func (f fakeSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
 }
 
 var _ ClientSession = fakeSession{}
+
+func TestMCPServer_WithCallbacks(t *testing.T) {
+	// Create callback counters to verify calls
+	var (
+		beforeAnyCount   int
+		afterAnyCount    int
+		onErrorCount     int
+		beforePingCount  int
+		afterPingCount   int
+		beforeToolsCount int
+		afterToolsCount  int
+	)
+
+	// Initialize callback handlers
+	callbacks := &Callbacks{}
+
+	// Register "any" callbacks
+	callbacks.AddBeforeAny(func(id any, method mcp.MCPMethod, message any) {
+		beforeAnyCount++
+	})
+
+	callbacks.AddAfterAny(func(id any, method mcp.MCPMethod, message any, result any) {
+		afterAnyCount++
+	})
+
+	callbacks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
+		onErrorCount++
+	})
+
+	// Register method-specific callbacks
+	callbacks.AddBeforePing(func(id any, message *mcp.PingRequest) {
+		beforePingCount++
+	})
+
+	callbacks.AddAfterPing(func(id any, message *mcp.PingRequest, result *mcp.EmptyResult) {
+		afterPingCount++
+	})
+
+	callbacks.AddBeforeListTools(func(id any, message *mcp.ListToolsRequest) {
+		beforeToolsCount++
+	})
+
+	callbacks.AddAfterListTools(func(id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
+		afterToolsCount++
+	})
+
+	// Create a server with the callbacks
+	server := NewMCPServer(
+		"test-server",
+		"1.0.0",
+		WithCallbacks(callbacks),
+		WithToolCapabilities(true),
+	)
+
+	// Add a test tool
+	server.AddTool(
+		mcp.NewTool("test-tool"),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		},
+	)
+
+	// Initialize the server
+	_ = server.HandleMessage(context.Background(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "initialize"
+	}`))
+
+	// Test 1: Verify ping method callbacks
+	pingResponse := server.HandleMessage(context.Background(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 2,
+		"method": "ping"
+	}`))
+
+	// Verify success response
+	assert.IsType(t, mcp.JSONRPCResponse{}, pingResponse)
+
+	// Test 2: Verify tools/list method callbacks
+	toolsListResponse := server.HandleMessage(context.Background(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 3,
+		"method": "tools/list"
+	}`))
+
+	// Verify success response
+	assert.IsType(t, mcp.JSONRPCResponse{}, toolsListResponse)
+
+	// Test 3: Verify error callbacks with invalid tool
+	errorResponse := server.HandleMessage(context.Background(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 4,
+		"method": "tools/call",
+		"params": {
+			"name": "non-existent-tool"
+		}
+	}`))
+
+	// Verify error response
+	assert.IsType(t, mcp.JSONRPCError{}, errorResponse)
+
+	// Verify callback counts
+
+	// Method-specific callbacks should be called exactly once
+	assert.Equal(t, 1, beforePingCount, "beforePing should be called once")
+	assert.Equal(t, 1, afterPingCount, "afterPing should be called once")
+	assert.Equal(t, 1, beforeToolsCount, "beforeListTools should be called once")
+	assert.Equal(t, 1, afterToolsCount, "afterListTools should be called once")
+
+	// General callbacks should be called for all methods
+	// beforeAny is called for all 4 methods (initialize, ping, tools/list, tools/call)
+	assert.Equal(t, 4, beforeAnyCount, "beforeAny should be called for each method")
+	// afterAny is called only for successful methods (initialize, ping, tools/list)
+	assert.Equal(t, 3, afterAnyCount, "afterAny should be called for successful methods only")
+
+	// Error callback should be called once for the failed tools/call
+	assert.Equal(t, 1, onErrorCount, "onError should be called once")
+}

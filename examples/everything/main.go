@@ -29,12 +29,38 @@ const (
 )
 
 func NewMCPServer() *server.MCPServer {
+
+	callbacks := &server.Callbacks{}
+
+	callbacks.AddBeforeAny(func(id any, method mcp.MCPMethod, message any) {
+		fmt.Printf("beforeAny: %s, %v, %v\n", method, id, message)
+	})
+	callbacks.AddAfterAny(func(id any, method mcp.MCPMethod, message any, result any) {
+		fmt.Printf("afterAny: %s, %v, %v, %v\n", method, id, message, result)
+	})
+	callbacks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
+		fmt.Printf("onError: %s, %v, %v, %v\n", method, id, message, err)
+	})
+	callbacks.AddBeforeInitialize(func(id any, message *mcp.InitializeRequest) {
+		fmt.Printf("beforeInitialize: %v, %v\n", id, message)
+	})
+	callbacks.AddAfterInitialize(func(id any, message *mcp.InitializeRequest, result *mcp.InitializeResult) {
+		fmt.Printf("afterInitialize: %v, %v, %v\n", id, message, result)
+	})
+	callbacks.AddAfterCallTool(func(id any, message *mcp.CallToolRequest, result *mcp.CallToolResult) {
+		fmt.Printf("afterCallTool: %v, %v, %v\n", id, message, result)
+	})
+	callbacks.AddBeforeCallTool(func(id any, message *mcp.CallToolRequest) {
+		fmt.Printf("beforeCallTool: %v, %v\n", id, message)
+	})
+
 	mcpServer := server.NewMCPServer(
 		"example-servers/everything",
 		"1.0.0",
 		server.WithResourceCapabilities(true, true),
 		server.WithPromptCapabilities(true),
 		server.WithLogging(),
+		server.WithCallbacks(callbacks),
 	)
 
 	mcpServer.AddResource(mcp.NewResource("test://static/resource",

@@ -8,6 +8,20 @@ import (
 	"github.com/yosida95/uritemplate/v3"
 )
 
+type MCPMethod string
+
+const (
+	MethodInitialize             MCPMethod = "initialize"
+	MethodPing                   MCPMethod = "ping"
+	MethodResourcesList          MCPMethod = "resources/list"
+	MethodResourcesTemplatesList MCPMethod = "resources/templates/list"
+	MethodResourcesRead          MCPMethod = "resources/read"
+	MethodPromptsList            MCPMethod = "prompts/list"
+	MethodPromptsGet             MCPMethod = "prompts/get"
+	MethodToolsList              MCPMethod = "tools/list"
+	MethodToolsCall              MCPMethod = "tools/call"
+)
+
 type URITemplate struct {
 	*uritemplate.Template
 }
