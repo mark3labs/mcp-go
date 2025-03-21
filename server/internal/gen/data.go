@@ -18,14 +18,14 @@ var MCPRequestTypes = []MCPRequestType{
 		ParamType:      "InitializeRequest",
 		ResultType:     "InitializeResult",
 		HookName:       "Initialize",
-		UnmarshalError: "Invalid initialize request",
+		UnmarshalError: "invalid initialize request",
 		HandlerFunc:    "handleInitialize",
 	}, {
 		MethodName:     "MethodPing",
 		ParamType:      "PingRequest",
 		ResultType:     "EmptyResult",
 		HookName:       "Ping",
-		UnmarshalError: "Invalid ping request",
+		UnmarshalError: "invalid ping request",
 		HandlerFunc:    "handlePing",
 	}, {
 		MethodName:     "MethodResourcesList",
@@ -35,7 +35,7 @@ var MCPRequestTypes = []MCPRequestType{
 		GroupName:      "Resources",
 		GroupHookName:  "Resource",
 		HookName:       "ListResources",
-		UnmarshalError: "Invalid list resources request",
+		UnmarshalError: "invalid list resources request",
 		HandlerFunc:    "handleListResources",
 	}, {
 		MethodName:     "MethodResourcesTemplatesList",
@@ -45,7 +45,7 @@ var MCPRequestTypes = []MCPRequestType{
 		GroupName:      "Resources",
 		GroupHookName:  "Resource",
 		HookName:       "ListResourceTemplates",
-		UnmarshalError: "Invalid list resource templates request",
+		UnmarshalError: "invalid list resource templates request",
 		HandlerFunc:    "handleListResourceTemplates",
 	}, {
 		MethodName:     "MethodResourcesRead",
@@ -55,7 +55,7 @@ var MCPRequestTypes = []MCPRequestType{
 		GroupName:      "Resources",
 		GroupHookName:  "Resource",
 		HookName:       "ReadResource",
-		UnmarshalError: "Invalid read resource request",
+		UnmarshalError: "invalid read resource request",
 		HandlerFunc:    "handleReadResource",
 	}, {
 		MethodName:     "MethodPromptsList",
@@ -65,7 +65,7 @@ var MCPRequestTypes = []MCPRequestType{
 		GroupName:      "Prompts",
 		GroupHookName:  "Prompt",
 		HookName:       "ListPrompts",
-		UnmarshalError: "Invalid list prompts request",
+		UnmarshalError: "invalid list prompts request",
 		HandlerFunc:    "handleListPrompts",
 	}, {
 		MethodName:     "MethodPromptsGet",
@@ -75,7 +75,7 @@ var MCPRequestTypes = []MCPRequestType{
 		GroupName:      "Prompts",
 		GroupHookName:  "Prompt",
 		HookName:       "GetPrompt",
-		UnmarshalError: "Invalid get prompt request",
+		UnmarshalError: "invalid get prompt request",
 		HandlerFunc:    "handleGetPrompt",
 	}, {
 		MethodName:     "MethodToolsList",
@@ -85,7 +85,7 @@ var MCPRequestTypes = []MCPRequestType{
 		GroupName:      "Tools",
 		GroupHookName:  "Tool",
 		HookName:       "ListTools",
-		UnmarshalError: "Invalid list tools request",
+		UnmarshalError: "invalid list tools request",
 		HandlerFunc:    "handleListTools",
 	}, {
 		MethodName:     "MethodToolsCall",
@@ -95,7 +95,7 @@ var MCPRequestTypes = []MCPRequestType{
 		GroupName:      "Tools",
 		GroupHookName:  "Tool",
 		HookName:       "CallTool",
-		UnmarshalError: "Invalid call tool request",
+		UnmarshalError: "invalid call tool request",
 		HandlerFunc:    "handleToolCall",
 	},
 }

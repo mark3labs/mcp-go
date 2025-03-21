@@ -16,6 +16,37 @@ type OnAfterAnyHookFunc func(id any, method mcp.MCPMethod, message any, result a
 
 // OnErrorHookFunc is a hook that will be called when an error occurs,
 // either during the request parsing or the method execution.
+//
+// Example usage:
+// ```
+//
+//	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
+//	  // Check for specific error types using errors.Is
+//	  if errors.Is(err, ErrUnsupported) {
+//	    // Handle capability not supported errors
+//	    log.Printf("Capability not supported: %v", err)
+//	  }
+//
+//	  // Use errors.As to get specific error types
+//	  var parseErr = &UnparseableMessageError{}
+//	  if errors.As(err, &parseErr) {
+//	    // Access specific methods/fields of the error type
+//	    log.Printf("Failed to parse message for method %s: %v",
+//	               parseErr.GetMethod(), parseErr.Unwrap())
+//	    // Access the raw message that failed to parse
+//	    rawMsg := parseErr.GetMessage()
+//	  }
+//
+//	  // Check for specific resource/prompt/tool errors
+//	  switch {
+//	  case errors.Is(err, ErrResourceNotFound):
+//	    log.Printf("Resource not found: %v", err)
+//	  case errors.Is(err, ErrPromptNotFound):
+//	    log.Printf("Prompt not found: %v", err)
+//	  case errors.Is(err, ErrToolNotFound):
+//	    log.Printf("Tool not found: %v", err)
+//	  }
+//	})
 type OnErrorHookFunc func(id any, method mcp.MCPMethod, message any, err error)
 
 type OnBeforeInitializeFunc func(id any, message *mcp.InitializeRequest)
@@ -77,6 +108,51 @@ func (c *Hooks) AddAfterAny(hook OnAfterAnyHookFunc) {
 	c.OnAfterAny = append(c.OnAfterAny, hook)
 }
 
+// AddOnError registers a hook function that will be called when an error occurs.
+// The error parameter contains the actual error object, which can be interrogated
+// using Go's error handling patterns like errors.Is and errors.As.
+//
+// Example:
+// ```
+// // Create a channel to receive errors for testing
+// errChan := make(chan error, 1)
+//
+// // Register hook to capture and inspect errors
+// hooks := &Hooks{}
+//
+//	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
+//	    // For capability-related errors
+//	    if errors.Is(err, ErrUnsupported) {
+//	        // Handle capability not supported
+//	        errChan <- err
+//	        return
+//	    }
+//
+//	    // For parsing errors
+//	    var parseErr = &UnparseableMessageError{}
+//	    if errors.As(err, &parseErr) {
+//	        // Handle unparseable message errors
+//	        fmt.Printf("Failed to parse %s request: %v\n",
+//	                   parseErr.GetMethod(), parseErr.Unwrap())
+//	        errChan <- parseErr
+//	        return
+//	    }
+//
+//	    // For resource/prompt/tool not found errors
+//	    if errors.Is(err, ErrResourceNotFound) ||
+//	       errors.Is(err, ErrPromptNotFound) ||
+//	       errors.Is(err, ErrToolNotFound) {
+//	        // Handle not found errors
+//	        errChan <- err
+//	        return
+//	    }
+//
+//	    // For other errors
+//	    errChan <- err
+//	})
+//
+// server := NewMCPServer("test-server", "1.0.0", WithHooks(hooks))
+// ```
 func (c *Hooks) AddOnError(hook OnErrorHookFunc) {
 	c.OnError = append(c.OnError, hook)
 }
@@ -99,6 +175,20 @@ func (c *Hooks) afterAny(id any, method mcp.MCPMethod, message any, result any) 
 	}
 }
 
+// onError calls all registered error hooks with the error object.
+// The err parameter contains the actual error that occurred, which implements
+// the standard error interface and may be a wrapped error or custom error type.
+//
+// This allows consumer code to use Go's error handling patterns:
+// - errors.Is(err, ErrUnsupported) to check for specific sentinel errors
+// - errors.As(err, &customErr) to extract custom error types
+//
+// Common error types include:
+// - ErrUnsupported: When a capability is not enabled
+// - UnparseableMessageError: When request parsing fails
+// - ErrResourceNotFound: When a resource is not found
+// - ErrPromptNotFound: When a prompt is not found
+// - ErrToolNotFound: When a tool is not found
 func (c *Hooks) onError(id any, method mcp.MCPMethod, message any, err error) {
 	if c == nil {
 		return

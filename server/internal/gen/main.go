@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"text/template"
 )
 
@@ -29,7 +30,9 @@ func RenderTemplateToFile(templateContent, destPath, fileName string, data any) 
 	defer os.Remove(tempFilePath) // Clean up temp file when done
 
 	// Parse and execute template to temp file
-	tmpl, err := template.New(fileName).Parse(templateContent)
+	tmpl, err := template.New(fileName).Funcs(template.FuncMap{
+		"toLower": strings.ToLower,
+	}).Parse(templateContent)
 	if err != nil {
 		tempFile.Close()
 		return err

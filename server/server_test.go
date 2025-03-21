@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -664,12 +665,19 @@ func TestMCPServer_PromptHandling(t *testing.T) {
 }
 
 func TestMCPServer_HandleInvalidMessages(t *testing.T) {
-	server := NewMCPServer("test-server", "1.0.0")
+	var errChan = make(chan error, 1)
+	hooks := &Hooks{}
+	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
+		errChan <- err
+	})
+
+	server := NewMCPServer("test-server", "1.0.0", WithHooks(hooks))
 
 	tests := []struct {
 		name        string
 		message     string
 		expectedErr int
+		validateErr func(t *testing.T, err error)
 	}{
 		{
 			name:        "Invalid JSON",
@@ -685,6 +693,13 @@ func TestMCPServer_HandleInvalidMessages(t *testing.T) {
 			name:        "Invalid parameters",
 			message:     `{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": "invalid"}`,
 			expectedErr: mcp.INVALID_REQUEST,
+			validateErr: func(t *testing.T, err error) {
+				var unparseableErr = &UnparseableMessageError{}
+				var ok = errors.As(err, &unparseableErr)
+				assert.True(t, ok, "Error should be UnparseableMessageError")
+				assert.Equal(t, mcp.MethodInitialize, unparseableErr.GetMethod())
+				assert.Equal(t, json.RawMessage(`{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": "invalid"}`), unparseableErr.GetMessage())
+			},
 		},
 		{
 			name:        "Missing JSONRPC version",
@@ -704,15 +719,33 @@ func TestMCPServer_HandleInvalidMessages(t *testing.T) {
 			errorResponse, ok := response.(mcp.JSONRPCError)
 			assert.True(t, ok)
 			assert.Equal(t, tt.expectedErr, errorResponse.Error.Code)
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+
+			if tt.validateErr != nil {
+				select {
+				case err := <-errChan:
+					tt.validateErr(t, err)
+				case <-ctx.Done():
+					t.Errorf("Error not received")
+				}
+			}
 		})
 	}
 }
 
 func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
+	var errChan chan error
+	hooks := &Hooks{}
+	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
+		errChan <- err
+	})
+
 	server := NewMCPServer("test-server", "1.0.0",
 		WithResourceCapabilities(true, true),
 		WithPromptCapabilities(true),
 		WithToolCapabilities(true),
+		WithHooks(hooks),
 	)
 
 	// Add a test tool to enable tool capabilities
@@ -731,6 +764,7 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 		name        string
 		message     string
 		expectedErr int
+		validateErr func(t *testing.T, err error)
 	}{
 		{
 			name: "Undefined tool",
@@ -744,6 +778,9 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
                     }
                 }`,
 			expectedErr: mcp.INVALID_PARAMS,
+			validateErr: func(t *testing.T, err error) {
+				assert.True(t, errors.Is(err, ErrToolNotFound), "Error should be ErrToolNotFound but was %v", err)
+			},
 		},
 		{
 			name: "Undefined prompt",
@@ -757,6 +794,9 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
                     }
                 }`,
 			expectedErr: mcp.INVALID_PARAMS,
+			validateErr: func(t *testing.T, err error) {
+				assert.True(t, errors.Is(err, ErrPromptNotFound), "Error should be ErrPromptNotFound but was %v", err)
+			},
 		},
 		{
 			name: "Undefined resource",
@@ -769,11 +809,15 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
                     }
                 }`,
 			expectedErr: mcp.INVALID_PARAMS,
+			validateErr: func(t *testing.T, err error) {
+				assert.True(t, errors.Is(err, ErrResourceNotFound), "Error should be ErrResourceNotFound but was %v", err)
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			errChan = make(chan error, 1)
 			response := server.HandleMessage(
 				context.Background(),
 				[]byte(tt.message),
@@ -783,6 +827,17 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 			errorResponse, ok := response.(mcp.JSONRPCError)
 			assert.True(t, ok)
 			assert.Equal(t, tt.expectedErr, errorResponse.Error.Code)
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+
+			if tt.validateErr != nil {
+				select {
+				case err := <-errChan:
+					tt.validateErr(t, err)
+				case <-ctx.Done():
+					t.Errorf("Error not received")
+				}
+			}
 		})
 	}
 }
@@ -926,11 +981,19 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 }
 
 func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
+	var errChan chan error
+	hooks := &Hooks{}
+	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
+		errChan <- err
+	})
+	hooksOption := WithHooks(hooks)
+
 	tests := []struct {
 		name        string
 		message     string
 		options     []ServerOption
 		expectedErr int
+		errString   string
 	}{
 		{
 			name: "Tools without capabilities",
@@ -942,8 +1005,9 @@ func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
                         "name": "test-tool"
                     }
                 }`,
-			options:     []ServerOption{}, // No capabilities at all
+			options:     []ServerOption{hooksOption}, // No capabilities at all
 			expectedErr: mcp.METHOD_NOT_FOUND,
+			errString:   "tools",
 		},
 		{
 			name: "Prompts without capabilities",
@@ -955,8 +1019,9 @@ func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
                         "name": "test-prompt"
                     }
                 }`,
-			options:     []ServerOption{}, // No capabilities at all
+			options:     []ServerOption{hooksOption}, // No capabilities at all
 			expectedErr: mcp.METHOD_NOT_FOUND,
+			errString:   "prompts",
 		},
 		{
 			name: "Resources without capabilities",
@@ -968,13 +1033,15 @@ func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
                         "uri": "test-resource"
                     }
                 }`,
-			options:     []ServerOption{}, // No capabilities at all
+			options:     []ServerOption{hooksOption}, // No capabilities at all
 			expectedErr: mcp.METHOD_NOT_FOUND,
+			errString:   "resources",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			errChan = make(chan error, 1)
 			server := NewMCPServer("test-server", "1.0.0", tt.options...)
 			response := server.HandleMessage(
 				context.Background(),
@@ -985,6 +1052,16 @@ func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
 			errorResponse, ok := response.(mcp.JSONRPCError)
 			assert.True(t, ok)
 			assert.Equal(t, tt.expectedErr, errorResponse.Error.Code)
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+			var err error
+			select {
+			case err = <-errChan:
+			case <-ctx.Done():
+				t.Errorf("Error not received")
+			}
+			assert.True(t, errors.Is(err, ErrUnsupported), "Error should be ErrUnsupported but was %v", err)
+			assert.Contains(t, err.Error(), tt.errString)
 		})
 	}
 }

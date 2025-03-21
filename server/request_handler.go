@@ -59,11 +59,11 @@ func (s *MCPServer) HandleMessage(
 	case mcp.MethodInitialize:
 		var request mcp.InitializeRequest
 		var result *mcp.InitializeResult
-		if json.Unmarshal(message, &request) != nil {
+		if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.INVALID_REQUEST,
-				err:  "Invalid initialize request",
+				err:  &UnparseableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
 			s.hooks.beforeInitialize(baseMessage.ID, &request)
@@ -78,11 +78,11 @@ func (s *MCPServer) HandleMessage(
 	case mcp.MethodPing:
 		var request mcp.PingRequest
 		var result *mcp.EmptyResult
-		if json.Unmarshal(message, &request) != nil {
+		if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.INVALID_REQUEST,
-				err:  "Invalid ping request",
+				err:  &UnparseableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
 			s.hooks.beforePing(baseMessage.ID, &request)
@@ -101,13 +101,13 @@ func (s *MCPServer) HandleMessage(
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
-				err:  "Resources not supported",
+				err:  fmt.Errorf("resources %w", ErrUnsupported),
 			}
-		} else if json.Unmarshal(message, &request) != nil {
+		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.INVALID_REQUEST,
-				err:  "Invalid list resources request",
+				err:  &UnparseableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
 			s.hooks.beforeListResources(baseMessage.ID, &request)
@@ -126,13 +126,13 @@ func (s *MCPServer) HandleMessage(
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
-				err:  "Resources not supported",
+				err:  fmt.Errorf("resources %w", ErrUnsupported),
 			}
-		} else if json.Unmarshal(message, &request) != nil {
+		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.INVALID_REQUEST,
-				err:  "Invalid list resource templates request",
+				err:  &UnparseableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
 			s.hooks.beforeListResourceTemplates(baseMessage.ID, &request)
@@ -151,13 +151,13 @@ func (s *MCPServer) HandleMessage(
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
-				err:  "Resources not supported",
+				err:  fmt.Errorf("resources %w", ErrUnsupported),
 			}
-		} else if json.Unmarshal(message, &request) != nil {
+		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.INVALID_REQUEST,
-				err:  "Invalid read resource request",
+				err:  &UnparseableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
 			s.hooks.beforeReadResource(baseMessage.ID, &request)
@@ -176,13 +176,13 @@ func (s *MCPServer) HandleMessage(
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
-				err:  "Prompts not supported",
+				err:  fmt.Errorf("prompts %w", ErrUnsupported),
 			}
-		} else if json.Unmarshal(message, &request) != nil {
+		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.INVALID_REQUEST,
-				err:  "Invalid list prompts request",
+				err:  &UnparseableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
 			s.hooks.beforeListPrompts(baseMessage.ID, &request)
@@ -201,13 +201,13 @@ func (s *MCPServer) HandleMessage(
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
-				err:  "Prompts not supported",
+				err:  fmt.Errorf("prompts %w", ErrUnsupported),
 			}
-		} else if json.Unmarshal(message, &request) != nil {
+		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.INVALID_REQUEST,
-				err:  "Invalid get prompt request",
+				err:  &UnparseableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
 			s.hooks.beforeGetPrompt(baseMessage.ID, &request)
@@ -226,13 +226,13 @@ func (s *MCPServer) HandleMessage(
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
-				err:  "Tools not supported",
+				err:  fmt.Errorf("tools %w", ErrUnsupported),
 			}
-		} else if json.Unmarshal(message, &request) != nil {
+		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.INVALID_REQUEST,
-				err:  "Invalid list tools request",
+				err:  &UnparseableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
 			s.hooks.beforeListTools(baseMessage.ID, &request)
@@ -251,13 +251,13 @@ func (s *MCPServer) HandleMessage(
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
-				err:  "Tools not supported",
+				err:  fmt.Errorf("tools %w", ErrUnsupported),
 			}
-		} else if json.Unmarshal(message, &request) != nil {
+		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.INVALID_REQUEST,
-				err:  "Invalid call tool request",
+				err:  &UnparseableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
 			s.hooks.beforeCallTool(baseMessage.ID, &request)

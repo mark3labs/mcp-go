@@ -3,6 +3,8 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -62,6 +64,68 @@ func ClientSessionFromContext(ctx context.Context) ClientSession {
 	}
 	return nil
 }
+
+// UnparseableMessageError is attached to the RequestError when json.Unmarshal
+// fails on the request.
+type UnparseableMessageError struct {
+	message json.RawMessage
+	method  mcp.MCPMethod
+	err     error
+}
+
+func (e *UnparseableMessageError) Error() string {
+	return fmt.Sprintf("unparseable %s request: %s", e.method, e.err)
+}
+
+func (e *UnparseableMessageError) Unwrap() error {
+	return e.err
+}
+
+func (e *UnparseableMessageError) GetMessage() json.RawMessage {
+	return e.message
+}
+
+func (e *UnparseableMessageError) GetMethod() mcp.MCPMethod {
+	return e.method
+}
+
+// RequestError is an error that can be converted to a JSON-RPC error.
+// Implements Unwrap() to allow inspecting the error chain.
+type requestError struct {
+	id   any
+	code int
+	err  error
+}
+
+func (e *requestError) Error() string {
+	return fmt.Sprintf("request error: %s", e.err)
+}
+
+func (e *requestError) ToJSONRPCError() mcp.JSONRPCError {
+	return mcp.JSONRPCError{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		ID:      e.id,
+		Error: struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+			Data    any    `json:"data,omitempty"`
+		}{
+			Code:    e.code,
+			Message: e.err.Error(),
+		},
+	}
+}
+
+func (e *requestError) Unwrap() error {
+	return e.err
+}
+
+var (
+	ErrUnsupported      = errors.New("not supported")
+	ErrResourceNotFound = errors.New("resource not found")
+	ErrPromptNotFound   = errors.New("prompt not found")
+	ErrToolNotFound     = errors.New("tool not found")
+)
 
 // NotificationHandlerFunc handles incoming notifications.
 type NotificationHandlerFunc func(ctx context.Context, notification mcp.JSONRPCNotification)
@@ -503,7 +567,7 @@ func (s *MCPServer) handleReadResource(
 			return nil, &requestError{
 				id:   id,
 				code: mcp.INTERNAL_ERROR,
-				err:  err.Error(),
+				err:  err,
 			}
 		}
 		return &mcp.ReadResourceResult{Contents: contents}, nil
@@ -534,7 +598,7 @@ func (s *MCPServer) handleReadResource(
 			return nil, &requestError{
 				id:   id,
 				code: mcp.INTERNAL_ERROR,
-				err:  err.Error(),
+				err:  err,
 			}
 		}
 		return &mcp.ReadResourceResult{Contents: contents}, nil
@@ -543,7 +607,7 @@ func (s *MCPServer) handleReadResource(
 	return nil, &requestError{
 		id:   id,
 		code: mcp.INVALID_PARAMS,
-		err:  fmt.Sprintf("No handler found for resource URI: %s", request.Params.URI),
+		err:  fmt.Errorf("handler not found for resource URI '%s': %w", request.Params.URI, ErrResourceNotFound),
 	}
 }
 
@@ -588,7 +652,7 @@ func (s *MCPServer) handleGetPrompt(
 		return nil, &requestError{
 			id:   id,
 			code: mcp.INVALID_PARAMS,
-			err:  fmt.Sprintf("Prompt not found: %s", request.Params.Name),
+			err:  fmt.Errorf("prompt '%s' not found: %w", request.Params.Name, ErrPromptNotFound),
 		}
 	}
 
@@ -597,7 +661,7 @@ func (s *MCPServer) handleGetPrompt(
 		return nil, &requestError{
 			id:   id,
 			code: mcp.INTERNAL_ERROR,
-			err:  err.Error(),
+			err:  err,
 		}
 	}
 
@@ -635,32 +699,6 @@ func (s *MCPServer) handleListTools(
 	}
 	return &result, nil
 }
-
-type requestError struct {
-	id   any
-	code int
-	err  string
-}
-
-func (e *requestError) Error() string {
-	return fmt.Sprintf("request error: %s", e.err)
-}
-
-func (e *requestError) ToJSONRPCError() mcp.JSONRPCError {
-	return mcp.JSONRPCError{
-		JSONRPC: mcp.JSONRPC_VERSION,
-		ID:      e.id,
-		Error: struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-			Data    any    `json:"data,omitempty"`
-		}{
-			Code:    e.code,
-			Message: e.err,
-		},
-	}
-}
-
 func (s *MCPServer) handleToolCall(
 	ctx context.Context,
 	id interface{},
@@ -674,7 +712,7 @@ func (s *MCPServer) handleToolCall(
 		return nil, &requestError{
 			id:   id,
 			code: mcp.INVALID_PARAMS,
-			err:  fmt.Sprintf("Tool not found: %s", request.Params.Name),
+			err:  fmt.Errorf("tool '%s' not found: %w", request.Params.Name, ErrToolNotFound),
 		}
 	}
 
@@ -683,7 +721,7 @@ func (s *MCPServer) handleToolCall(
 		return nil, &requestError{
 			id:   id,
 			code: mcp.INTERNAL_ERROR,
-			err:  err.Error(),
+			err:  err,
 		}
 	}
 
