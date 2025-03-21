@@ -105,7 +105,7 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 
 type ToolInputSchema struct {
 	Type       string                 `json:"type"`
-	Properties map[string]interface{} `json:"properties,omitempty"`
+	Properties map[string]interface{} `json:"properties"`
 	Required   []string               `json:"required,omitempty"`
 }
 
