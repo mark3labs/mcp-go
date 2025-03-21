@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -57,7 +58,17 @@ type SSEOption func(*SSEServer)
 // WithBaseURL sets the base URL for the SSE server
 func WithBaseURL(baseURL string) SSEOption {
 	return func(s *SSEServer) {
-		s.baseURL = baseURL
+		if baseURL != "" {
+			u, err := url.Parse(baseURL)
+			if err != nil {
+				panic(fmt.Sprintf("invalid baseURL: %s", baseURL))
+			}
+			// Check if the host is empty or only contains a port
+			if u.Host == "" || strings.HasPrefix(u.Host, ":") {
+				panic(fmt.Sprintf("invalid baseURL: %s", baseURL))
+			}
+		}
+		s.baseURL = strings.TrimSuffix(baseURL, "/")
 	}
 }
 
@@ -69,7 +80,6 @@ func WithBasePath(basePath string) SSEOption {
 			basePath = "/" + basePath
 		}
 		s.basePath = strings.TrimSuffix(basePath, "/")
-		s.baseURL = s.baseURL + s.basePath
 	}
 }
 
@@ -108,7 +118,6 @@ func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
 		server:          server,
 		sseEndpoint:     "/sse",
 		messageEndpoint: "/message",
-		basePath:        "",
 	}
 
 	// Apply all options
@@ -219,12 +228,7 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	messageEndpoint := fmt.Sprintf(
-		"%s%s?sessionId=%s",
-		s.baseURL,
-		s.messageEndpoint,
-		sessionID,
-	)
+	messageEndpoint := fmt.Sprintf("%s?sessionId=%s", s.CompleteMessageEndpoint(), sessionID)
 
 	// Send the initial endpoint event
 	fmt.Fprintf(w, "event: endpoint\ndata: %s\r\n\r\n", messageEndpoint)
@@ -345,22 +349,38 @@ func (s *SSEServer) SendEventToSession(
 		return fmt.Errorf("event queue full")
 	}
 }
+func (s *SSEServer) GetUrlPath(input string) string {
+	parse, err := url.Parse(input)
+	if err != nil {
+		return ""
+	}
+	return parse.Path
+}
+
+func (s *SSEServer) CompleteSseEndpoint() string {
+	return s.baseURL + s.basePath + s.sseEndpoint
+}
+func (s *SSEServer) CompleteSsePath() string {
+	return s.GetUrlPath(s.CompleteSseEndpoint())
+}
+
+func (s *SSEServer) CompleteMessageEndpoint() string {
+	return s.baseURL + s.basePath + s.messageEndpoint
+}
+func (s *SSEServer) CompleteMessagePath() string {
+	return s.GetUrlPath(s.CompleteMessageEndpoint())
+}
 
 // ServeHTTP implements the http.Handler interface.
 func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-
-	// Construct the full SSE and message paths
-	ssePath := s.basePath + s.sseEndpoint
-	messagePath := s.basePath + s.messageEndpoint
-
 	// Use exact path matching rather than Contains
-	if path == ssePath {
+	if path == s.CompleteSsePath() {
 		s.handleSSE(w, r)
 		return
 	}
 
-	if path == messagePath {
+	if path == s.CompleteMessagePath() {
 		s.handleMessage(w, r)
 		return
 	}
