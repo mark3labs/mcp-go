@@ -389,12 +389,13 @@ func (s *SSEServer) CompleteMessagePath() string {
 func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	// Use exact path matching rather than Contains
-	if path == s.CompleteSsePath() {
+	ssePath := s.CompleteSsePath()
+	if ssePath != "" && path == s.CompleteSsePath() {
 		s.handleSSE(w, r)
 		return
 	}
-
-	if path == s.CompleteMessagePath() {
+	messagePath := s.CompleteMessagePath()
+	if messagePath != "" && path == messagePath {
 		s.handleMessage(w, r)
 		return
 	}
