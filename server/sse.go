@@ -61,17 +61,17 @@ func WithBaseURL(baseURL string) SSEOption {
 		if baseURL != "" {
 			u, err := url.Parse(baseURL)
 			if err != nil {
-				panic(fmt.Sprintf("invalid baseURL: %s", baseURL))
+				return
 			}
 			if u.Scheme != "http" && u.Scheme != "https" {
-				panic(fmt.Sprintf("invalid baseURL: %s", baseURL))
+				return
 			}
 			// Check if the host is empty or only contains a port
 			if u.Host == "" || strings.HasPrefix(u.Host, ":") {
-				panic(fmt.Sprintf("invalid baseURL: %s", baseURL))
+				return
 			}
 			if len(u.Query()) > 0 {
-				panic(fmt.Sprintf("invalid baseURL: %s", baseURL))
+				return
 			}
 		}
 		s.baseURL = strings.TrimSuffix(baseURL, "/")
@@ -355,26 +355,34 @@ func (s *SSEServer) SendEventToSession(
 		return fmt.Errorf("event queue full")
 	}
 }
-func (s *SSEServer) GetUrlPath(input string) string {
+func (s *SSEServer) GetUrlPath(input string) (string, error) {
 	parse, err := url.Parse(input)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("failed to parse URL %s: %w", input, err)
 	}
-	return parse.Path
+	return parse.Path, nil
 }
 
 func (s *SSEServer) CompleteSseEndpoint() string {
 	return s.baseURL + s.basePath + s.sseEndpoint
 }
 func (s *SSEServer) CompleteSsePath() string {
-	return s.GetUrlPath(s.CompleteSseEndpoint())
+	path, err := s.GetUrlPath(s.CompleteSseEndpoint())
+	if err != nil {
+		return s.basePath + s.sseEndpoint
+	}
+	return path
 }
 
 func (s *SSEServer) CompleteMessageEndpoint() string {
 	return s.baseURL + s.basePath + s.messageEndpoint
 }
 func (s *SSEServer) CompleteMessagePath() string {
-	return s.GetUrlPath(s.CompleteMessageEndpoint())
+	path, err := s.GetUrlPath(s.CompleteSseEndpoint())
+	if err != nil {
+		return s.basePath + s.messageEndpoint
+	}
+	return path
 }
 
 // ServeHTTP implements the http.Handler interface.
