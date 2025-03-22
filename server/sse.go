@@ -378,7 +378,7 @@ func (s *SSEServer) CompleteMessageEndpoint() string {
 	return s.baseURL + s.basePath + s.messageEndpoint
 }
 func (s *SSEServer) CompleteMessagePath() string {
-	path, err := s.GetUrlPath(s.CompleteSseEndpoint())
+	path, err := s.GetUrlPath(s.CompleteMessageEndpoint())
 	if err != nil {
 		return s.basePath + s.messageEndpoint
 	}
@@ -390,7 +390,7 @@ func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	// Use exact path matching rather than Contains
 	ssePath := s.CompleteSsePath()
-	if ssePath != "" && path == s.CompleteSsePath() {
+	if ssePath != "" && path == ssePath {
 		s.handleSSE(w, r)
 		return
 	}
