@@ -509,6 +509,18 @@ Prompts can include:
 
 For examples, see the `examples/` directory.
 
+## Extras
+
+### Request Hooks
+
+Hook into the request lifecycle by creating a `Hooks` object with your
+selection among the possible callbacks.  This enables telemetry across all
+functionality, and observability of various facts, for example the ability
+to count improperly-formatted requests, or to log the agent identity during
+initialization.
+
+Add the `Hooks` to the server at the time of creation using the
+`server.WithHooks` option.
 
 ## Contributing
 

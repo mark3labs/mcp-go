@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -615,7 +616,7 @@ func TestMCPServer_PromptHandling(t *testing.T) {
 				resp, ok := response.(mcp.JSONRPCResponse)
 				assert.True(t, ok)
 
-				result, ok := resp.Result.(*mcp.GetPromptResult)
+				result, ok := resp.Result.(mcp.GetPromptResult)
 				assert.True(t, ok)
 				assert.Len(t, result.Messages, 1)
 				textContent, ok := result.Messages[0].Content.(mcp.TextContent)
@@ -642,7 +643,7 @@ func TestMCPServer_PromptHandling(t *testing.T) {
 				resp, ok := response.(mcp.JSONRPCResponse)
 				assert.True(t, ok)
 
-				result, ok := resp.Result.(*mcp.GetPromptResult)
+				result, ok := resp.Result.(mcp.GetPromptResult)
 				assert.True(t, ok)
 				assert.Len(t, result.Messages, 1)
 				textContent, ok := result.Messages[0].Content.(mcp.TextContent)
@@ -664,12 +665,19 @@ func TestMCPServer_PromptHandling(t *testing.T) {
 }
 
 func TestMCPServer_HandleInvalidMessages(t *testing.T) {
-	server := NewMCPServer("test-server", "1.0.0")
+	var errs []error
+	hooks := &Hooks{}
+	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
+		errs = append(errs, err)
+	})
+
+	server := NewMCPServer("test-server", "1.0.0", WithHooks(hooks))
 
 	tests := []struct {
 		name        string
 		message     string
 		expectedErr int
+		validateErr func(t *testing.T, err error)
 	}{
 		{
 			name:        "Invalid JSON",
@@ -685,6 +693,13 @@ func TestMCPServer_HandleInvalidMessages(t *testing.T) {
 			name:        "Invalid parameters",
 			message:     `{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": "invalid"}`,
 			expectedErr: mcp.INVALID_REQUEST,
+			validateErr: func(t *testing.T, err error) {
+				var unparseableErr = &UnparseableMessageError{}
+				var ok = errors.As(err, &unparseableErr)
+				assert.True(t, ok, "Error should be UnparseableMessageError")
+				assert.Equal(t, mcp.MethodInitialize, unparseableErr.GetMethod())
+				assert.Equal(t, json.RawMessage(`{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": "invalid"}`), unparseableErr.GetMessage())
+			},
 		},
 		{
 			name:        "Missing JSONRPC version",
@@ -695,6 +710,8 @@ func TestMCPServer_HandleInvalidMessages(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			errs = nil // Reset errors for each test case
+
 			response := server.HandleMessage(
 				context.Background(),
 				[]byte(tt.message),
@@ -704,15 +721,44 @@ func TestMCPServer_HandleInvalidMessages(t *testing.T) {
 			errorResponse, ok := response.(mcp.JSONRPCError)
 			assert.True(t, ok)
 			assert.Equal(t, tt.expectedErr, errorResponse.Error.Code)
+
+			if tt.validateErr != nil {
+				require.Len(t, errs, 1, "Expected exactly one error")
+				tt.validateErr(t, errs[0])
+			}
 		})
 	}
 }
 
 func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
+	var errs []error
+	type beforeResult struct {
+		method  mcp.MCPMethod
+		message any
+	}
+	type afterResult struct {
+		method  mcp.MCPMethod
+		message any
+		result  any
+	}
+	var beforeResults []beforeResult
+	var afterResults []afterResult
+	hooks := &Hooks{}
+	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
+		errs = append(errs, err)
+	})
+	hooks.AddBeforeAny(func(id any, method mcp.MCPMethod, message any) {
+		beforeResults = append(beforeResults, beforeResult{method, message})
+	})
+	hooks.AddOnSuccess(func(id any, method mcp.MCPMethod, message any, result any) {
+		afterResults = append(afterResults, afterResult{method, message, result})
+	})
+
 	server := NewMCPServer("test-server", "1.0.0",
 		WithResourceCapabilities(true, true),
 		WithPromptCapabilities(true),
 		WithToolCapabilities(true),
+		WithHooks(hooks),
 	)
 
 	// Add a test tool to enable tool capabilities
@@ -728,9 +774,10 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 	})
 
 	tests := []struct {
-		name        string
-		message     string
-		expectedErr int
+		name              string
+		message           string
+		expectedErr       int
+		validateCallbacks func(t *testing.T, err error, beforeResults beforeResult)
 	}{
 		{
 			name: "Undefined tool",
@@ -744,6 +791,10 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
                     }
                 }`,
 			expectedErr: mcp.INVALID_PARAMS,
+			validateCallbacks: func(t *testing.T, err error, beforeResults beforeResult) {
+				assert.Equal(t, mcp.MethodToolsCall, beforeResults.method)
+				assert.True(t, errors.Is(err, ErrToolNotFound))
+			},
 		},
 		{
 			name: "Undefined prompt",
@@ -757,6 +808,10 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
                     }
                 }`,
 			expectedErr: mcp.INVALID_PARAMS,
+			validateCallbacks: func(t *testing.T, err error, beforeResults beforeResult) {
+				assert.Equal(t, mcp.MethodPromptsGet, beforeResults.method)
+				assert.True(t, errors.Is(err, ErrPromptNotFound))
+			},
 		},
 		{
 			name: "Undefined resource",
@@ -769,11 +824,17 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
                     }
                 }`,
 			expectedErr: mcp.INVALID_PARAMS,
+			validateCallbacks: func(t *testing.T, err error, beforeResults beforeResult) {
+				assert.Equal(t, mcp.MethodResourcesRead, beforeResults.method)
+				assert.True(t, errors.Is(err, ErrResourceNotFound))
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			errs = nil // Reset errors for each test case
+			beforeResults = nil
 			response := server.HandleMessage(
 				context.Background(),
 				[]byte(tt.message),
@@ -783,16 +844,31 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 			errorResponse, ok := response.(mcp.JSONRPCError)
 			assert.True(t, ok)
 			assert.Equal(t, tt.expectedErr, errorResponse.Error.Code)
+
+			if tt.validateCallbacks != nil {
+				require.Len(t, errs, 1, "Expected exactly one error")
+				require.Len(t, beforeResults, 1, "Expected exactly one before result")
+				require.Len(t, afterResults, 0, "Expected no after results because these calls generate errors")
+				tt.validateCallbacks(t, errs[0], beforeResults[0])
+			}
 		})
 	}
 }
 
 func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
+	var errs []error
+	hooks := &Hooks{}
+	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
+		errs = append(errs, err)
+	})
+	hooksOption := WithHooks(hooks)
+
 	tests := []struct {
 		name        string
 		message     string
 		options     []ServerOption
 		expectedErr int
+		errString   string
 	}{
 		{
 			name: "Tools without capabilities",
@@ -804,8 +880,9 @@ func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
                         "name": "test-tool"
                     }
                 }`,
-			options:     []ServerOption{}, // No capabilities at all
+			options:     []ServerOption{hooksOption}, // No capabilities at all
 			expectedErr: mcp.METHOD_NOT_FOUND,
+			errString:   "tools",
 		},
 		{
 			name: "Prompts without capabilities",
@@ -817,8 +894,9 @@ func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
                         "name": "test-prompt"
                     }
                 }`,
-			options:     []ServerOption{}, // No capabilities at all
+			options:     []ServerOption{hooksOption}, // No capabilities at all
 			expectedErr: mcp.METHOD_NOT_FOUND,
+			errString:   "prompts",
 		},
 		{
 			name: "Resources without capabilities",
@@ -830,13 +908,16 @@ func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
                         "uri": "test-resource"
                     }
                 }`,
-			options:     []ServerOption{}, // No capabilities at all
+			options:     []ServerOption{hooksOption}, // No capabilities at all
 			expectedErr: mcp.METHOD_NOT_FOUND,
+			errString:   "resources",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			errs = nil // Reset errors for each test case
+
 			server := NewMCPServer("test-server", "1.0.0", tt.options...)
 			response := server.HandleMessage(
 				context.Background(),
@@ -847,6 +928,10 @@ func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
 			errorResponse, ok := response.(mcp.JSONRPCError)
 			assert.True(t, ok)
 			assert.Equal(t, tt.expectedErr, errorResponse.Error.Code)
+
+			require.Len(t, errs, 1, "Expected exactly one error")
+			assert.True(t, errors.Is(errs[0], ErrUnsupported), "Error should be ErrUnsupported but was %v", errs[0])
+			assert.Contains(t, errs[0].Error(), tt.errString)
 		})
 	}
 }
@@ -1062,3 +1147,161 @@ func (f fakeSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
 }
 
 var _ ClientSession = fakeSession{}
+
+func TestMCPServer_WithHooks(t *testing.T) {
+	// Create hook counters to verify calls
+	var (
+		beforeAnyCount   int
+		onSuccessCount   int
+		onErrorCount     int
+		beforePingCount  int
+		afterPingCount   int
+		beforeToolsCount int
+		afterToolsCount  int
+	)
+
+	// Collectors for message and result types
+	var beforeAnyMessages []any
+	var onSuccessData []struct {
+		msg any
+		res any
+	}
+	var beforePingMessages []*mcp.PingRequest
+	var afterPingData []struct {
+		msg *mcp.PingRequest
+		res *mcp.EmptyResult
+	}
+
+	// Initialize hook handlers
+	hooks := &Hooks{}
+
+	// Register "any" hooks with type verification
+	hooks.AddBeforeAny(func(id any, method mcp.MCPMethod, message any) {
+		beforeAnyCount++
+		// Only collect ping messages for our test
+		if method == mcp.MethodPing {
+			beforeAnyMessages = append(beforeAnyMessages, message)
+		}
+	})
+
+	hooks.AddOnSuccess(func(id any, method mcp.MCPMethod, message any, result any) {
+		onSuccessCount++
+		// Only collect ping responses for our test
+		if method == mcp.MethodPing {
+			onSuccessData = append(onSuccessData, struct {
+				msg any
+				res any
+			}{message, result})
+		}
+	})
+
+	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
+		onErrorCount++
+	})
+
+	// Register method-specific hooks with type verification
+	hooks.AddBeforePing(func(id any, message *mcp.PingRequest) {
+		beforePingCount++
+		beforePingMessages = append(beforePingMessages, message)
+	})
+
+	hooks.AddAfterPing(func(id any, message *mcp.PingRequest, result *mcp.EmptyResult) {
+		afterPingCount++
+		afterPingData = append(afterPingData, struct {
+			msg *mcp.PingRequest
+			res *mcp.EmptyResult
+		}{message, result})
+	})
+
+	hooks.AddBeforeListTools(func(id any, message *mcp.ListToolsRequest) {
+		beforeToolsCount++
+	})
+
+	hooks.AddAfterListTools(func(id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
+		afterToolsCount++
+	})
+
+	// Create a server with the hooks
+	server := NewMCPServer(
+		"test-server",
+		"1.0.0",
+		WithHooks(hooks),
+		WithToolCapabilities(true),
+	)
+
+	// Add a test tool
+	server.AddTool(
+		mcp.NewTool("test-tool"),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		},
+	)
+
+	// Initialize the server
+	_ = server.HandleMessage(context.Background(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "initialize"
+	}`))
+
+	// Test 1: Verify ping method hooks
+	pingResponse := server.HandleMessage(context.Background(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 2,
+		"method": "ping"
+	}`))
+
+	// Verify success response
+	assert.IsType(t, mcp.JSONRPCResponse{}, pingResponse)
+
+	// Test 2: Verify tools/list method hooks
+	toolsListResponse := server.HandleMessage(context.Background(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 3,
+		"method": "tools/list"
+	}`))
+
+	// Verify success response
+	assert.IsType(t, mcp.JSONRPCResponse{}, toolsListResponse)
+
+	// Test 3: Verify error hooks with invalid tool
+	errorResponse := server.HandleMessage(context.Background(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 4,
+		"method": "tools/call",
+		"params": {
+			"name": "non-existent-tool"
+		}
+	}`))
+
+	// Verify error response
+	assert.IsType(t, mcp.JSONRPCError{}, errorResponse)
+
+	// Verify hook counts
+
+	// Method-specific hooks should be called exactly once
+	assert.Equal(t, 1, beforePingCount, "beforePing should be called once")
+	assert.Equal(t, 1, afterPingCount, "afterPing should be called once")
+	assert.Equal(t, 1, beforeToolsCount, "beforeListTools should be called once")
+	assert.Equal(t, 1, afterToolsCount, "afterListTools should be called once")
+
+	// General hooks should be called for all methods
+	// beforeAny is called for all 4 methods (initialize, ping, tools/list, tools/call)
+	assert.Equal(t, 4, beforeAnyCount, "beforeAny should be called for each method")
+	// onSuccess is called for all 3 success methods (initialize, ping, tools/list)
+	assert.Equal(t, 3, onSuccessCount, "onSuccess should be called after all successful invocations")
+
+	// Error hook should be called once for the failed tools/call
+	assert.Equal(t, 1, onErrorCount, "onError should be called once")
+
+	// Verify type matching between BeforeAny and BeforePing
+	require.Len(t, beforePingMessages, 1, "Expected one BeforePing message")
+	require.Len(t, beforeAnyMessages, 1, "Expected one BeforeAny Ping message")
+	assert.IsType(t, beforePingMessages[0], beforeAnyMessages[0], "BeforeAny message should be same type as BeforePing message")
+
+	// Verify type matching between OnSuccess and AfterPing
+	require.Len(t, afterPingData, 1, "Expected one AfterPing message/result pair")
+	require.Len(t, onSuccessData, 1, "Expected one OnSuccess Ping message/result pair")
+	assert.IsType(t, afterPingData[0].msg, onSuccessData[0].msg, "OnSuccess message should be same type as AfterPing message")
+	assert.IsType(t, afterPingData[0].res, onSuccessData[0].res, "OnSuccess result should be same type as AfterPing result")
+}
