@@ -646,8 +646,6 @@ func (s *MCPServer) handleGetPrompt(
 	handler, ok := s.promptHandlers[request.Params.Name]
 	s.mu.RUnlock()
 
-	fmt.Println("request.Params.Name", request.Params.Name)
-
 	if !ok {
 		return nil, &requestError{
 			id:   id,

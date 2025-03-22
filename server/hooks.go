@@ -6,13 +6,13 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// OnBeforeAnyHookFunc is a function that is called after the request is
+// BeforeAnyHookFunc is a function that is called after the request is
 // parsed but before the method is called.
-type OnBeforeAnyHookFunc func(id any, method mcp.MCPMethod, message any)
+type BeforeAnyHookFunc func(id any, method mcp.MCPMethod, message any)
 
-// OnAfterAnyHookFunc is a hook that will be called after the request
+// OnSuccessHookFunc is a hook that will be called after the request
 // successfully generates a result, but before the result is sent to the client.
-type OnAfterAnyHookFunc func(id any, method mcp.MCPMethod, message any, result any)
+type OnSuccessHookFunc func(id any, method mcp.MCPMethod, message any, result any)
 
 // OnErrorHookFunc is a hook that will be called when an error occurs,
 // either during the request parsing or the method execution.
@@ -77,8 +77,8 @@ type OnBeforeCallToolFunc func(id any, message *mcp.CallToolRequest)
 type OnAfterCallToolFunc func(id any, message *mcp.CallToolRequest, result *mcp.CallToolResult)
 
 type Hooks struct {
-	OnBeforeAny                   []OnBeforeAnyHookFunc
-	OnAfterAny                    []OnAfterAnyHookFunc
+	OnBeforeAny                   []BeforeAnyHookFunc
+	OnSuccess                     []OnSuccessHookFunc
 	OnError                       []OnErrorHookFunc
 	OnBeforeInitialize            []OnBeforeInitializeFunc
 	OnAfterInitialize             []OnAfterInitializeFunc
@@ -100,12 +100,12 @@ type Hooks struct {
 	OnAfterCallTool               []OnAfterCallToolFunc
 }
 
-func (c *Hooks) AddBeforeAny(hook OnBeforeAnyHookFunc) {
+func (c *Hooks) AddBeforeAny(hook BeforeAnyHookFunc) {
 	c.OnBeforeAny = append(c.OnBeforeAny, hook)
 }
 
-func (c *Hooks) AddAfterAny(hook OnAfterAnyHookFunc) {
-	c.OnAfterAny = append(c.OnAfterAny, hook)
+func (c *Hooks) AddOnSuccess(hook OnSuccessHookFunc) {
+	c.OnSuccess = append(c.OnSuccess, hook)
 }
 
 // AddOnError registers a hook function that will be called when an error occurs.
@@ -166,11 +166,11 @@ func (c *Hooks) beforeAny(id any, method mcp.MCPMethod, message any) {
 	}
 }
 
-func (c *Hooks) afterAny(id any, method mcp.MCPMethod, message any, result any) {
+func (c *Hooks) onSuccess(id any, method mcp.MCPMethod, message any, result any) {
 	if c == nil {
 		return
 	}
-	for _, hook := range c.OnAfterAny {
+	for _, hook := range c.OnSuccess {
 		hook(id, method, message, result)
 	}
 }
@@ -190,7 +190,6 @@ func (c *Hooks) afterAny(id any, method mcp.MCPMethod, message any, result any) 
 // - ErrPromptNotFound: When a prompt is not found
 // - ErrToolNotFound: When a tool is not found
 func (c *Hooks) onError(id any, method mcp.MCPMethod, message any, err error) {
-	c.afterAny(id, method, message, err)
 	if c == nil {
 		return
 	}
@@ -217,7 +216,7 @@ func (c *Hooks) beforeInitialize(id any, message *mcp.InitializeRequest) {
 }
 
 func (c *Hooks) afterInitialize(id any, message *mcp.InitializeRequest, result *mcp.InitializeResult) {
-	c.afterAny(id, mcp.MethodInitialize, message, result)
+	c.onSuccess(id, mcp.MethodInitialize, message, result)
 	if c == nil {
 		return
 	}
@@ -244,7 +243,7 @@ func (c *Hooks) beforePing(id any, message *mcp.PingRequest) {
 }
 
 func (c *Hooks) afterPing(id any, message *mcp.PingRequest, result *mcp.EmptyResult) {
-	c.afterAny(id, mcp.MethodPing, message, result)
+	c.onSuccess(id, mcp.MethodPing, message, result)
 	if c == nil {
 		return
 	}
@@ -271,7 +270,7 @@ func (c *Hooks) beforeListResources(id any, message *mcp.ListResourcesRequest) {
 }
 
 func (c *Hooks) afterListResources(id any, message *mcp.ListResourcesRequest, result *mcp.ListResourcesResult) {
-	c.afterAny(id, mcp.MethodResourcesList, message, result)
+	c.onSuccess(id, mcp.MethodResourcesList, message, result)
 	if c == nil {
 		return
 	}
@@ -298,7 +297,7 @@ func (c *Hooks) beforeListResourceTemplates(id any, message *mcp.ListResourceTem
 }
 
 func (c *Hooks) afterListResourceTemplates(id any, message *mcp.ListResourceTemplatesRequest, result *mcp.ListResourceTemplatesResult) {
-	c.afterAny(id, mcp.MethodResourcesTemplatesList, message, result)
+	c.onSuccess(id, mcp.MethodResourcesTemplatesList, message, result)
 	if c == nil {
 		return
 	}
@@ -325,7 +324,7 @@ func (c *Hooks) beforeReadResource(id any, message *mcp.ReadResourceRequest) {
 }
 
 func (c *Hooks) afterReadResource(id any, message *mcp.ReadResourceRequest, result *mcp.ReadResourceResult) {
-	c.afterAny(id, mcp.MethodResourcesRead, message, result)
+	c.onSuccess(id, mcp.MethodResourcesRead, message, result)
 	if c == nil {
 		return
 	}
@@ -352,7 +351,7 @@ func (c *Hooks) beforeListPrompts(id any, message *mcp.ListPromptsRequest) {
 }
 
 func (c *Hooks) afterListPrompts(id any, message *mcp.ListPromptsRequest, result *mcp.ListPromptsResult) {
-	c.afterAny(id, mcp.MethodPromptsList, message, result)
+	c.onSuccess(id, mcp.MethodPromptsList, message, result)
 	if c == nil {
 		return
 	}
@@ -379,7 +378,7 @@ func (c *Hooks) beforeGetPrompt(id any, message *mcp.GetPromptRequest) {
 }
 
 func (c *Hooks) afterGetPrompt(id any, message *mcp.GetPromptRequest, result *mcp.GetPromptResult) {
-	c.afterAny(id, mcp.MethodPromptsGet, message, result)
+	c.onSuccess(id, mcp.MethodPromptsGet, message, result)
 	if c == nil {
 		return
 	}
@@ -406,7 +405,7 @@ func (c *Hooks) beforeListTools(id any, message *mcp.ListToolsRequest) {
 }
 
 func (c *Hooks) afterListTools(id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
-	c.afterAny(id, mcp.MethodToolsList, message, result)
+	c.onSuccess(id, mcp.MethodToolsList, message, result)
 	if c == nil {
 		return
 	}
@@ -433,7 +432,7 @@ func (c *Hooks) beforeCallTool(id any, message *mcp.CallToolRequest) {
 }
 
 func (c *Hooks) afterCallTool(id any, message *mcp.CallToolRequest, result *mcp.CallToolResult) {
-	c.afterAny(id, mcp.MethodToolsCall, message, result)
+	c.onSuccess(id, mcp.MethodToolsCall, message, result)
 	if c == nil {
 		return
 	}

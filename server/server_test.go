@@ -750,7 +750,7 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 	hooks.AddBeforeAny(func(id any, method mcp.MCPMethod, message any) {
 		beforeResults = append(beforeResults, beforeResult{method, message})
 	})
-	hooks.AddAfterAny(func(id any, method mcp.MCPMethod, message any, result any) {
+	hooks.AddOnSuccess(func(id any, method mcp.MCPMethod, message any, result any) {
 		afterResults = append(afterResults, afterResult{method, message, result})
 	})
 
@@ -777,7 +777,7 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 		name              string
 		message           string
 		expectedErr       int
-		validateCallbacks func(t *testing.T, err error, beforeResults beforeResult, afterResults afterResult)
+		validateCallbacks func(t *testing.T, err error, beforeResults beforeResult)
 	}{
 		{
 			name: "Undefined tool",
@@ -791,12 +791,8 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
                     }
                 }`,
 			expectedErr: mcp.INVALID_PARAMS,
-			validateCallbacks: func(t *testing.T, err error, beforeResults beforeResult, afterResults afterResult) {
+			validateCallbacks: func(t *testing.T, err error, beforeResults beforeResult) {
 				assert.Equal(t, mcp.MethodToolsCall, beforeResults.method)
-				assert.Equal(t, mcp.MethodToolsCall, afterResults.method)
-				afterResultErr, ok := afterResults.result.(error)
-				assert.True(t, ok)
-				assert.Same(t, err, afterResultErr)
 				assert.True(t, errors.Is(err, ErrToolNotFound))
 			},
 		},
@@ -812,12 +808,8 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
                     }
                 }`,
 			expectedErr: mcp.INVALID_PARAMS,
-			validateCallbacks: func(t *testing.T, err error, beforeResults beforeResult, afterResults afterResult) {
+			validateCallbacks: func(t *testing.T, err error, beforeResults beforeResult) {
 				assert.Equal(t, mcp.MethodPromptsGet, beforeResults.method)
-				assert.Equal(t, mcp.MethodPromptsGet, afterResults.method)
-				afterResultErr, ok := afterResults.result.(error)
-				assert.True(t, ok)
-				assert.Same(t, err, afterResultErr)
 				assert.True(t, errors.Is(err, ErrPromptNotFound))
 			},
 		},
@@ -832,12 +824,8 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
                     }
                 }`,
 			expectedErr: mcp.INVALID_PARAMS,
-			validateCallbacks: func(t *testing.T, err error, beforeResults beforeResult, afterResults afterResult) {
+			validateCallbacks: func(t *testing.T, err error, beforeResults beforeResult) {
 				assert.Equal(t, mcp.MethodResourcesRead, beforeResults.method)
-				assert.Equal(t, mcp.MethodResourcesRead, afterResults.method)
-				afterResultErr, ok := afterResults.result.(error)
-				assert.True(t, ok)
-				assert.Same(t, err, afterResultErr)
 				assert.True(t, errors.Is(err, ErrResourceNotFound))
 			},
 		},
@@ -847,7 +835,6 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			errs = nil // Reset errors for each test case
 			beforeResults = nil
-			afterResults = nil
 			response := server.HandleMessage(
 				context.Background(),
 				[]byte(tt.message),
@@ -861,8 +848,8 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 			if tt.validateCallbacks != nil {
 				require.Len(t, errs, 1, "Expected exactly one error")
 				require.Len(t, beforeResults, 1, "Expected exactly one before result")
-				require.Len(t, afterResults, 1, "Expected exactly one after result")
-				tt.validateCallbacks(t, errs[0], beforeResults[0], afterResults[0])
+				require.Len(t, afterResults, 0, "Expected no after results because these calls generate errors")
+				tt.validateCallbacks(t, errs[0], beforeResults[0])
 			}
 		})
 	}
@@ -1165,7 +1152,7 @@ func TestMCPServer_WithHooks(t *testing.T) {
 	// Create hook counters to verify calls
 	var (
 		beforeAnyCount   int
-		afterAnyCount    int
+		onSuccessCount   int
 		onErrorCount     int
 		beforePingCount  int
 		afterPingCount   int
@@ -1175,7 +1162,7 @@ func TestMCPServer_WithHooks(t *testing.T) {
 
 	// Collectors for message and result types
 	var beforeAnyMessages []any
-	var afterAnyData []struct {
+	var onSuccessData []struct {
 		msg any
 		res any
 	}
@@ -1197,11 +1184,11 @@ func TestMCPServer_WithHooks(t *testing.T) {
 		}
 	})
 
-	hooks.AddAfterAny(func(id any, method mcp.MCPMethod, message any, result any) {
-		afterAnyCount++
+	hooks.AddOnSuccess(func(id any, method mcp.MCPMethod, message any, result any) {
+		onSuccessCount++
 		// Only collect ping responses for our test
 		if method == mcp.MethodPing {
-			afterAnyData = append(afterAnyData, struct {
+			onSuccessData = append(onSuccessData, struct {
 				msg any
 				res any
 			}{message, result})
@@ -1301,8 +1288,8 @@ func TestMCPServer_WithHooks(t *testing.T) {
 	// General hooks should be called for all methods
 	// beforeAny is called for all 4 methods (initialize, ping, tools/list, tools/call)
 	assert.Equal(t, 4, beforeAnyCount, "beforeAny should be called for each method")
-	// afterAny is called for all 3 success methods (initialize, ping, tools/list) plus 1 error (tools/call)
-	assert.Equal(t, 4, afterAnyCount, "afterAny should be called for all methods including errors")
+	// onSuccess is called for all 3 success methods (initialize, ping, tools/list)
+	assert.Equal(t, 3, onSuccessCount, "onSuccess should be called after all successful invocations")
 
 	// Error hook should be called once for the failed tools/call
 	assert.Equal(t, 1, onErrorCount, "onError should be called once")
@@ -1312,9 +1299,9 @@ func TestMCPServer_WithHooks(t *testing.T) {
 	require.Len(t, beforeAnyMessages, 1, "Expected one BeforeAny Ping message")
 	assert.IsType(t, beforePingMessages[0], beforeAnyMessages[0], "BeforeAny message should be same type as BeforePing message")
 
-	// Verify type matching between AfterAny and AfterPing
+	// Verify type matching between OnSuccess and AfterPing
 	require.Len(t, afterPingData, 1, "Expected one AfterPing message/result pair")
-	require.Len(t, afterAnyData, 1, "Expected one AfterAny Ping message/result pair")
-	assert.IsType(t, afterPingData[0].msg, afterAnyData[0].msg, "AfterAny message should be same type as AfterPing message")
-	assert.IsType(t, afterPingData[0].res, afterAnyData[0].res, "AfterAny result should be same type as AfterPing result")
+	require.Len(t, onSuccessData, 1, "Expected one OnSuccess Ping message/result pair")
+	assert.IsType(t, afterPingData[0].msg, onSuccessData[0].msg, "OnSuccess message should be same type as AfterPing message")
+	assert.IsType(t, afterPingData[0].res, onSuccessData[0].res, "OnSuccess result should be same type as AfterPing result")
 }

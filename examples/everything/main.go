@@ -35,8 +35,8 @@ func NewMCPServer() *server.MCPServer {
 	hooks.AddBeforeAny(func(id any, method mcp.MCPMethod, message any) {
 		fmt.Printf("beforeAny: %s, %v, %v\n", method, id, message)
 	})
-	hooks.AddAfterAny(func(id any, method mcp.MCPMethod, message any, result any) {
-		fmt.Printf("afterAny: %s, %v, %v, %v\n", method, id, message, result)
+	hooks.AddOnSuccess(func(id any, method mcp.MCPMethod, message any, result any) {
+		fmt.Printf("onSuccess: %s, %v, %v, %v\n", method, id, message, result)
 	})
 	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
 		fmt.Printf("onError: %s, %v, %v, %v\n", method, id, message, err)

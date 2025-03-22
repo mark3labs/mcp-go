@@ -11,13 +11,13 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// OnBeforeAnyHookFunc is a function that is called after the request is
+// BeforeAnyHookFunc is a function that is called after the request is
 // parsed but before the method is called.
-type OnBeforeAnyHookFunc func(id any, method mcp.MCPMethod, message any)
+type BeforeAnyHookFunc func(id any, method mcp.MCPMethod, message any)
 
-// OnAfterAnyHookFunc is a hook that will be called after the request
+// OnSuccessHookFunc is a hook that will be called after the request
 // successfully generates a result, but before the result is sent to the client.
-type OnAfterAnyHookFunc func(id any, method mcp.MCPMethod, message any, result any)
+type OnSuccessHookFunc func(id any, method mcp.MCPMethod, message any, result any)
 
 // OnErrorHookFunc is a hook that will be called when an error occurs,
 // either during the request parsing or the method execution.
@@ -59,8 +59,8 @@ type OnAfter{{.HookName}}Func func(id any, message *mcp.{{.ParamType}}, result *
 {{end}}
 
 type Hooks struct {
-	OnBeforeAny      []OnBeforeAnyHookFunc
-	OnAfterAny       []OnAfterAnyHookFunc
+	OnBeforeAny      []BeforeAnyHookFunc
+	OnSuccess        []OnSuccessHookFunc
 	OnError          []OnErrorHookFunc
 {{- range .}}
 	OnBefore{{.HookName}} []OnBefore{{.HookName}}Func
@@ -68,12 +68,12 @@ type Hooks struct {
 {{- end}}
 }
 
-func (c *Hooks) AddBeforeAny(hook OnBeforeAnyHookFunc) {
+func (c *Hooks) AddBeforeAny(hook BeforeAnyHookFunc) {
 	c.OnBeforeAny = append(c.OnBeforeAny, hook)
 }
 
-func (c *Hooks) AddAfterAny(hook OnAfterAnyHookFunc) {
-	c.OnAfterAny = append(c.OnAfterAny, hook)
+func (c *Hooks) AddOnSuccess(hook OnSuccessHookFunc) {
+	c.OnSuccess = append(c.OnSuccess, hook)
 }
 
 // AddOnError registers a hook function that will be called when an error occurs.
@@ -133,11 +133,11 @@ func (c *Hooks) beforeAny(id any, method mcp.MCPMethod, message any) {
 	}
 }
 
-func (c *Hooks) afterAny(id any, method mcp.MCPMethod, message any, result any) {
+func (c *Hooks) onSuccess(id any, method mcp.MCPMethod, message any, result any) {
 	if c == nil {
 		return
 	}
-	for _, hook := range c.OnAfterAny {
+	for _, hook := range c.OnSuccess {
 		hook(id, method, message, result)
 	}
 }
@@ -157,7 +157,6 @@ func (c *Hooks) afterAny(id any, method mcp.MCPMethod, message any, result any) 
 // - ErrPromptNotFound: When a prompt is not found
 // - ErrToolNotFound: When a tool is not found
 func (c *Hooks) onError(id any, method mcp.MCPMethod, message any, err error) {
-	c.afterAny(id, method, message, err)
 	if c == nil {
 		return
 	}
@@ -186,7 +185,7 @@ func (c *Hooks) before{{.HookName}}(id any, message *mcp.{{.ParamType}}) {
 }
 
 func (c *Hooks) after{{.HookName}}(id any, message *mcp.{{.ParamType}}, result *mcp.{{.ResultType}}) {
-	c.afterAny(id, mcp.{{.MethodName}}, message, result)
+	c.onSuccess(id, mcp.{{.MethodName}}, message, result)
 	if c == nil {
 		return
 	}
