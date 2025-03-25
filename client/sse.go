@@ -128,7 +128,7 @@ func (c *SSEMCPClient) readSSE(reader io.ReadCloser) {
 	br := bufio.NewReader(reader)
 	var event, data string
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), c.sseReadTimeout)
 	defer cancel()
 
 	for {
