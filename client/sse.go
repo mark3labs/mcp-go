@@ -18,20 +18,6 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-type Option func(*SSEMCPClient)
-
-func WithHeaders(headers map[string]string) Option {
-	return func(sc *SSEMCPClient) {
-		sc.headers = headers
-	}
-}
-
-func WithSSEReadTimeout(timeout time.Duration) Option {
-	return func(sc *SSEMCPClient) {
-		sc.sseReadTimeout = timeout
-	}
-}
-
 // SSEMCPClient implements the MCPClient interface using Server-Sent Events (SSE).
 // It maintains a persistent HTTP connection to receive server-pushed events
 // while sending requests over regular HTTP POST calls. The client handles
@@ -40,7 +26,6 @@ type SSEMCPClient struct {
 	baseURL        *url.URL
 	endpoint       *url.URL
 	httpClient     *http.Client
-	headers        map[string]string
 	requestID      atomic.Int64
 	responses      map[int64]chan RPCResponse
 	mu             sync.RWMutex
@@ -50,18 +35,33 @@ type SSEMCPClient struct {
 	notifyMu       sync.RWMutex
 	endpointChan   chan struct{}
 	capabilities   mcp.ServerCapabilities
+	headers        map[string]string
 	sseReadTimeout time.Duration
+}
+
+type ClientOption func(*SSEMCPClient)
+
+func WithHeaders(headers map[string]string) ClientOption {
+	return func(sc *SSEMCPClient) {
+		sc.headers = headers
+	}
+}
+
+func WithSSEReadTimeout(timeout time.Duration) ClientOption {
+	return func(sc *SSEMCPClient) {
+		sc.sseReadTimeout = timeout
+	}
 }
 
 // NewSSEMCPClient creates a new SSE-based MCP client with the given base URL.
 // Returns an error if the URL is invalid.
-func NewSSEMCPClient(baseURL string, options ...Option) (*SSEMCPClient, error) {
+func NewSSEMCPClient(baseURL string, options ...ClientOption) (*SSEMCPClient, error) {
 	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid URL: %w", err)
 	}
 
-	sc := &SSEMCPClient{
+	smc := &SSEMCPClient{
 		baseURL:        parsedURL,
 		httpClient:     &http.Client{},
 		responses:      make(map[int64]chan RPCResponse),
@@ -72,10 +72,10 @@ func NewSSEMCPClient(baseURL string, options ...Option) (*SSEMCPClient, error) {
 	}
 
 	for _, opt := range options {
-		opt(sc)
+		opt(smc)
 	}
 
-	return sc, nil
+	return smc, nil
 }
 
 // Start initiates the SSE connection to the server and waits for the endpoint information.
@@ -125,31 +125,37 @@ func (c *SSEMCPClient) Start(ctx context.Context) error {
 func (c *SSEMCPClient) readSSE(reader io.ReadCloser) {
 	defer reader.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.sseReadTimeout)
-	defer cancel()
-
-	scanner := bufio.NewScanner(reader)
+	br := bufio.NewReader(reader)
 	var event, data string
 
-	var done bool
-	for {
-		if done {
-			break
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
+	for {
 		select {
 		case <-ctx.Done():
-			if err := ctx.Err(); err != nil {
-				fmt.Printf("SSE read timed out: %v\n", err)
-				return
-			}
+			return
 		default:
-			if !scanner.Scan() {
-				done = true
-				break
+			line, err := br.ReadString('\n')
+			if err != nil {
+				if err == io.EOF {
+					// Process any pending event before exit
+					if event != "" && data != "" {
+						c.handleSSEEvent(event, data)
+					}
+					break
+				}
+				select {
+				case <-c.done:
+					return
+				default:
+					fmt.Printf("SSE stream error: %v\n", err)
+					return
+				}
 			}
-			line := scanner.Text()
 
+			// Remove only newline markers
+			line = strings.TrimRight(line, "\r\n")
 			if line == "" {
 				// Empty line means end of event
 				if event != "" && data != "" {
@@ -165,15 +171,6 @@ func (c *SSEMCPClient) readSSE(reader io.ReadCloser) {
 			} else if strings.HasPrefix(line, "data:") {
 				data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			}
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		select {
-		case <-c.done:
-			return
-		default:
-			fmt.Printf("SSE stream error: %v\n", err)
 		}
 	}
 }

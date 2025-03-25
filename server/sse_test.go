@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,9 +30,9 @@ func TestSSEServer(t *testing.T) {
 		if sseServer.server == nil {
 			t.Error("MCPServer should not be nil")
 		}
-		if sseServer.baseURL != "http://localhost:8080/mcp" {
+		if sseServer.baseURL != "http://localhost:8080" {
 			t.Errorf(
-				"Expected baseURL http://localhost:8080/mcp, got %s",
+				"Expected baseURL http://localhost:8080, got %s",
 				sseServer.baseURL,
 			)
 		}
@@ -350,7 +351,7 @@ func TestSSEServer(t *testing.T) {
 		sseServer := NewSSEServer(mcpServer)
 
 		mux := http.NewServeMux()
-		mux.Handle("/mcp/", http.StripPrefix("/mcp", sseServer))
+		mux.Handle("/mcp/", sseServer)
 
 		ts := httptest.NewServer(mux)
 		defer ts.Close()
@@ -614,4 +615,48 @@ func TestSSEServer(t *testing.T) {
 		}
 	})
 
+	t.Run("SSEOption should not have negative effects when used repeatedly but should always remain consistent.", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0.0")
+		basePath := "/mcp-test"
+		baseURL := "http://localhost:8080/test"
+		messageEndpoint := "/message-test"
+		sseEndpoint := "/sse-test"
+		srv := &http.Server{}
+		rands := []SSEOption{
+			WithBasePath(basePath),
+			WithBaseURL(baseURL),
+			WithMessageEndpoint(messageEndpoint),
+			WithSSEEndpoint(sseEndpoint),
+			WithHTTPServer(srv),
+		}
+		for i := 0; i < 100; i++ {
+
+			var options []SSEOption
+			for i2 := 0; i2 < 100; i2++ {
+				index := rand.Intn(len(rands))
+				options = append(options, rands[index])
+			}
+			sseServer := NewSSEServer(mcpServer, options...)
+
+			if sseServer.basePath != basePath {
+				t.Fatalf("basePath %v, got: %v", basePath, sseServer.basePath)
+			}
+
+			if sseServer.baseURL != baseURL {
+				t.Fatalf("baseURL %v, got: %v", baseURL, sseServer.baseURL)
+			}
+
+			if sseServer.sseEndpoint != sseEndpoint {
+				t.Fatalf("sseEndpoint %v, got: %v", sseEndpoint, sseServer.sseEndpoint)
+			}
+
+			if sseServer.messageEndpoint != messageEndpoint {
+				t.Fatalf("messageEndpoint  %v, got: %v", messageEndpoint, sseServer.messageEndpoint)
+			}
+
+			if sseServer.srv != srv {
+				t.Fatalf("srv  %v, got: %v", srv, sseServer.srv)
+			}
+		}
+	})
 }

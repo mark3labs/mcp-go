@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -15,16 +17,37 @@ import (
 
 // sseSession represents an active SSE connection.
 type sseSession struct {
-	writer     http.ResponseWriter
-	flusher    http.Flusher
-	done       chan struct{}
-	eventQueue chan string // Channel for queuing events
+	writer              http.ResponseWriter
+	flusher             http.Flusher
+	done                chan struct{}
+	eventQueue          chan string // Channel for queuing events
+	sessionID           string
+	notificationChannel chan mcp.JSONRPCNotification
+	initialized         atomic.Bool
 }
 
 // SSEContextFunc is a function that takes an existing context and the current
 // request and returns a potentially modified context based on the request
 // content. This can be used to inject context values from headers, for example.
 type SSEContextFunc func(ctx context.Context, r *http.Request) context.Context
+
+func (s *sseSession) SessionID() string {
+	return s.sessionID
+}
+
+func (s *sseSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
+	return s.notificationChannel
+}
+
+func (s *sseSession) Initialize() {
+	s.initialized.Store(true)
+}
+
+func (s *sseSession) Initialized() bool {
+	return s.initialized.Load()
+}
+
+var _ ClientSession = (*sseSession)(nil)
 
 // SSEServer implements a Server-Sent Events (SSE) based MCP server.
 // It provides real-time communication capabilities over HTTP using the SSE protocol.
@@ -45,7 +68,23 @@ type SSEOption func(*SSEServer)
 // WithBaseURL sets the base URL for the SSE server
 func WithBaseURL(baseURL string) SSEOption {
 	return func(s *SSEServer) {
-		s.baseURL = baseURL
+		if baseURL != "" {
+			u, err := url.Parse(baseURL)
+			if err != nil {
+				return
+			}
+			if u.Scheme != "http" && u.Scheme != "https" {
+				return
+			}
+			// Check if the host is empty or only contains a port
+			if u.Host == "" || strings.HasPrefix(u.Host, ":") {
+				return
+			}
+			if len(u.Query()) > 0 {
+				return
+			}
+		}
+		s.baseURL = strings.TrimSuffix(baseURL, "/")
 	}
 }
 
@@ -57,7 +96,6 @@ func WithBasePath(basePath string) SSEOption {
 			basePath = "/" + basePath
 		}
 		s.basePath = strings.TrimSuffix(basePath, "/")
-		s.baseURL = s.baseURL + s.basePath
 	}
 }
 
@@ -96,7 +134,6 @@ func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
 		server:          server,
 		sseEndpoint:     "/sse",
 		messageEndpoint: "/message",
-		basePath:        "",
 	}
 
 	// Apply all options
@@ -168,30 +205,35 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 	sessionID := uuid.New().String()
 	session := &sseSession{
-		writer:     w,
-		flusher:    flusher,
-		done:       make(chan struct{}),
-		eventQueue: make(chan string, 100), // Buffer for events
+		writer:              w,
+		flusher:             flusher,
+		done:                make(chan struct{}),
+		eventQueue:          make(chan string, 100), // Buffer for events
+		sessionID:           sessionID,
+		notificationChannel: make(chan mcp.JSONRPCNotification, 100),
 	}
 
 	s.sessions.Store(sessionID, session)
 	defer s.sessions.Delete(sessionID)
 
+	if err := s.server.RegisterSession(session); err != nil {
+		http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer s.server.UnregisterSession(sessionID)
+
 	// Start notification handler for this session
 	go func() {
 		for {
 			select {
-			case serverNotification := <-s.server.notifications:
-				// Only forward notifications meant for this session
-				if serverNotification.Context.SessionID == sessionID {
-					eventData, err := json.Marshal(serverNotification.Notification)
-					if err == nil {
-						select {
-						case session.eventQueue <- fmt.Sprintf("event: message\ndata: %s\n\n", eventData):
-							// Event queued successfully
-						case <-session.done:
-							return
-						}
+			case notification := <-session.notificationChannel:
+				eventData, err := json.Marshal(notification)
+				if err == nil {
+					select {
+					case session.eventQueue <- fmt.Sprintf("event: message\ndata: %s\n\n", eventData):
+						// Event queued successfully
+					case <-session.done:
+						return
 					}
 				}
 			case <-session.done:
@@ -202,12 +244,7 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	messageEndpoint := fmt.Sprintf(
-		"%s%s?sessionId=%s",
-		s.baseURL,
-		s.messageEndpoint,
-		sessionID,
-	)
+	messageEndpoint := fmt.Sprintf("%s?sessionId=%s", s.CompleteMessageEndpoint(), sessionID)
 
 	// Send the initial endpoint event
 	fmt.Fprintf(w, "event: endpoint\ndata: %s\r\n\r\n", messageEndpoint)
@@ -241,22 +278,18 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set the client context in the server before handling the message
-	ctx := s.server.WithContext(r.Context(), NotificationContext{
-		ClientID:  sessionID,
-		SessionID: sessionID,
-	})
-
-	if s.contextFunc != nil {
-		ctx = s.contextFunc(ctx, r)
-	}
-
 	sessionI, ok := s.sessions.Load(sessionID)
 	if !ok {
 		s.writeJSONRPCError(w, nil, mcp.INVALID_PARAMS, "Invalid session ID")
 		return
 	}
 	session := sessionI.(*sseSession)
+
+	// Set the client context before handling the message
+	ctx := s.server.WithContext(r.Context(), session)
+	if s.contextFunc != nil {
+		ctx = s.contextFunc(ctx, r)
+	}
 
 	// Parse message as raw JSON
 	var rawMessage json.RawMessage
@@ -332,22 +365,47 @@ func (s *SSEServer) SendEventToSession(
 		return fmt.Errorf("event queue full")
 	}
 }
+func (s *SSEServer) GetUrlPath(input string) (string, error) {
+	parse, err := url.Parse(input)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse URL %s: %w", input, err)
+	}
+	return parse.Path, nil
+}
+
+func (s *SSEServer) CompleteSseEndpoint() string {
+	return s.baseURL + s.basePath + s.sseEndpoint
+}
+func (s *SSEServer) CompleteSsePath() string {
+	path, err := s.GetUrlPath(s.CompleteSseEndpoint())
+	if err != nil {
+		return s.basePath + s.sseEndpoint
+	}
+	return path
+}
+
+func (s *SSEServer) CompleteMessageEndpoint() string {
+	return s.baseURL + s.basePath + s.messageEndpoint
+}
+func (s *SSEServer) CompleteMessagePath() string {
+	path, err := s.GetUrlPath(s.CompleteMessageEndpoint())
+	if err != nil {
+		return s.basePath + s.messageEndpoint
+	}
+	return path
+}
 
 // ServeHTTP implements the http.Handler interface.
 func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-
-	// Construct the full SSE and message paths
-	ssePath := s.basePath + s.sseEndpoint
-	messagePath := s.basePath + s.messageEndpoint
-
 	// Use exact path matching rather than Contains
-	if path == ssePath {
+	ssePath := s.CompleteSsePath()
+	if ssePath != "" && path == ssePath {
 		s.handleSSE(w, r)
 		return
 	}
-
-	if path == messagePath {
+	messagePath := s.CompleteMessagePath()
+	if messagePath != "" && path == messagePath {
 		s.handleMessage(w, r)
 		return
 	}

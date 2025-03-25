@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -48,6 +49,34 @@ func WithStdioContextFunc(fn StdioContextFunc) StdioOption {
 	}
 }
 
+// stdioSession is a static client session, since stdio has only one client.
+type stdioSession struct {
+	notifications chan mcp.JSONRPCNotification
+	initialized   atomic.Bool
+}
+
+func (s *stdioSession) SessionID() string {
+	return "stdio"
+}
+
+func (s *stdioSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
+	return s.notifications
+}
+
+func (s *stdioSession) Initialize() {
+	s.initialized.Store(true)
+}
+
+func (s *stdioSession) Initialized() bool {
+	return s.initialized.Load()
+}
+
+var _ ClientSession = (*stdioSession)(nil)
+
+var stdioSessionInstance = stdioSession{
+	notifications: make(chan mcp.JSONRPCNotification, 100),
+}
+
 // NewStdioServer creates a new stdio server wrapper around an MCPServer.
 // It initializes the server with a default error logger that discards all output.
 func NewStdioServer(server *MCPServer) *StdioServer {
@@ -83,10 +112,11 @@ func (s *StdioServer) Listen(
 	stdout io.Writer,
 ) error {
 	// Set a static client context since stdio only has one client
-	ctx = s.server.WithContext(ctx, NotificationContext{
-		ClientID:  "stdio",
-		SessionID: "stdio",
-	})
+	if err := s.server.RegisterSession(&stdioSessionInstance); err != nil {
+		return fmt.Errorf("register session: %w", err)
+	}
+	defer s.server.UnregisterSession(stdioSessionInstance.SessionID())
+	ctx = s.server.WithContext(ctx, &stdioSessionInstance)
 
 	// Add in any custom context.
 	if s.contextFunc != nil {
@@ -99,19 +129,16 @@ func (s *StdioServer) Listen(
 	go func() {
 		for {
 			select {
-			case serverNotification := <-s.server.notifications:
-				// Only handle notifications for stdio client
-				if serverNotification.Context.ClientID == "stdio" {
-					err := s.writeResponse(
-						serverNotification.Notification,
-						stdout,
+			case notification := <-stdioSessionInstance.notifications:
+				err := s.writeResponse(
+					notification,
+					stdout,
+				)
+				if err != nil {
+					s.errLogger.Printf(
+						"Error writing notification: %v",
+						err,
 					)
-					if err != nil {
-						s.errLogger.Printf(
-							"Error writing notification: %v",
-							err,
-						)
-					}
 				}
 			case <-ctx.Done():
 				return
