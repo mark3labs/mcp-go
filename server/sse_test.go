@@ -418,7 +418,7 @@ func TestSSEServer(t *testing.T) {
 		cancel()
 	})
 
-	t.Run("test isCompleteMessageEndpoint", func(t *testing.T) {
+	t.Run("test useFullURLForMessageEndpoint", func(t *testing.T) {
 		mcpServer := NewMCPServer("test", "1.0.0")
 		sseServer := NewSSEServer(mcpServer)
 
@@ -429,7 +429,7 @@ func TestSSEServer(t *testing.T) {
 		defer ts.Close()
 
 		sseServer.baseURL = ts.URL + "/mcp"
-		sseServer.isCompleteMessageEndpoint = false
+		sseServer.useFullURLForMessageEndpoint = false
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -696,13 +696,13 @@ func TestSSEServer(t *testing.T) {
 		baseURL := "http://localhost:8080/test"
 		messageEndpoint := "/message-test"
 		sseEndpoint := "/sse-test"
-		isCompleteMessageEndpoint := false
+		useFullURLForMessageEndpoint := false
 		srv := &http.Server{}
 		rands := []SSEOption{
 			WithBasePath(basePath),
 			WithBaseURL(baseURL),
 			WithMessageEndpoint(messageEndpoint),
-			WithIsCompleteMessageEndpoint(isCompleteMessageEndpoint),
+			WithUseFullURLForMessageEndpoint(useFullURLForMessageEndpoint),
 			WithSSEEndpoint(sseEndpoint),
 			WithHTTPServer(srv),
 		}
@@ -718,8 +718,8 @@ func TestSSEServer(t *testing.T) {
 			if sseServer.basePath != basePath {
 				t.Fatalf("basePath %v, got: %v", basePath, sseServer.basePath)
 			}
-			if sseServer.isCompleteMessageEndpoint != isCompleteMessageEndpoint {
-				t.Fatalf("isCompleteMessageEndpoint %v, got: %v", isCompleteMessageEndpoint, sseServer.isCompleteMessageEndpoint)
+			if sseServer.useFullURLForMessageEndpoint != useFullURLForMessageEndpoint {
+				t.Fatalf("useFullURLForMessageEndpoint %v, got: %v", useFullURLForMessageEndpoint, sseServer.useFullURLForMessageEndpoint)
 			}
 
 			if sseServer.baseURL != baseURL {

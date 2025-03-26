@@ -52,15 +52,15 @@ var _ ClientSession = (*sseSession)(nil)
 // SSEServer implements a Server-Sent Events (SSE) based MCP server.
 // It provides real-time communication capabilities over HTTP using the SSE protocol.
 type SSEServer struct {
-	server                    *MCPServer
-	baseURL                   string
-	basePath                  string
-	messageEndpoint           string
-	isCompleteMessageEndpoint bool
-	sseEndpoint               string
-	sessions                  sync.Map
-	srv                       *http.Server
-	contextFunc               SSEContextFunc
+	server                       *MCPServer
+	baseURL                      string
+	basePath                     string
+	messageEndpoint              string
+	useFullURLForMessageEndpoint bool
+	sseEndpoint                  string
+	sessions                     sync.Map
+	srv                          *http.Server
+	contextFunc                  SSEContextFunc
 }
 
 // SSEOption defines a function type for configuring SSEServer
@@ -107,10 +107,12 @@ func WithMessageEndpoint(endpoint string) SSEOption {
 	}
 }
 
-// WithIsCompleteMessageEndpoint sets the flag for whether the endpoint is for complete messages or not
-func WithIsCompleteMessageEndpoint(isCompleteMessageEndpoint bool) SSEOption {
+// WithUseFullURLForMessageEndpoint controls whether the SSE server returns a complete URL (including baseURL)
+// or just the path portion for the message endpoint. Set to false when clients will concatenate
+// the baseURL themselves to avoid malformed URLs like "http://localhost/mcphttp://localhost/mcp/message".
+func WithUseFullURLForMessageEndpoint(useFullURLForMessageEndpoint bool) SSEOption {
 	return func(s *SSEServer) {
-		s.isCompleteMessageEndpoint = isCompleteMessageEndpoint
+		s.useFullURLForMessageEndpoint = useFullURLForMessageEndpoint
 	}
 }
 
@@ -139,10 +141,10 @@ func WithSSEContextFunc(fn SSEContextFunc) SSEOption {
 // NewSSEServer creates a new SSE server instance with the given MCP server and options.
 func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
 	s := &SSEServer{
-		server:                    server,
-		sseEndpoint:               "/sse",
-		messageEndpoint:           "/message",
-		isCompleteMessageEndpoint: true,
+		server:                       server,
+		sseEndpoint:                  "/sse",
+		messageEndpoint:              "/message",
+		useFullURLForMessageEndpoint: true,
 	}
 
 	// Apply all options
@@ -252,9 +254,10 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
-
+	// Use either just the path or the complete URL based on configuration.
+	// This prevents issues with clients that concatenate the base URL themselves.
 	messageEndpoint := s.messageEndpoint
-	if s.isCompleteMessageEndpoint {
+	if s.useFullURLForMessageEndpoint {
 		messageEndpoint = s.CompleteMessageEndpoint()
 	}
 	messageEndpoint = fmt.Sprintf("%s?sessionId=%s", messageEndpoint, sessionID)
