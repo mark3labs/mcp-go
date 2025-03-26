@@ -52,14 +52,15 @@ var _ ClientSession = (*sseSession)(nil)
 // SSEServer implements a Server-Sent Events (SSE) based MCP server.
 // It provides real-time communication capabilities over HTTP using the SSE protocol.
 type SSEServer struct {
-	server          *MCPServer
-	baseURL         string
-	basePath        string
-	messageEndpoint string
-	sseEndpoint     string
-	sessions        sync.Map
-	srv             *http.Server
-	contextFunc     SSEContextFunc
+	server                       *MCPServer
+	baseURL                      string
+	basePath                     string
+	messageEndpoint              string
+	useFullURLForMessageEndpoint bool
+	sseEndpoint                  string
+	sessions                     sync.Map
+	srv                          *http.Server
+	contextFunc                  SSEContextFunc
 }
 
 // SSEOption defines a function type for configuring SSEServer
@@ -106,6 +107,15 @@ func WithMessageEndpoint(endpoint string) SSEOption {
 	}
 }
 
+// WithUseFullURLForMessageEndpoint controls whether the SSE server returns a complete URL (including baseURL)
+// or just the path portion for the message endpoint. Set to false when clients will concatenate
+// the baseURL themselves to avoid malformed URLs like "http://localhost/mcphttp://localhost/mcp/message".
+func WithUseFullURLForMessageEndpoint(useFullURLForMessageEndpoint bool) SSEOption {
+	return func(s *SSEServer) {
+		s.useFullURLForMessageEndpoint = useFullURLForMessageEndpoint
+	}
+}
+
 // WithSSEEndpoint sets the SSE endpoint path
 func WithSSEEndpoint(endpoint string) SSEOption {
 	return func(s *SSEServer) {
@@ -131,9 +141,10 @@ func WithSSEContextFunc(fn SSEContextFunc) SSEOption {
 // NewSSEServer creates a new SSE server instance with the given MCP server and options.
 func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
 	s := &SSEServer{
-		server:          server,
-		sseEndpoint:     "/sse",
-		messageEndpoint: "/message",
+		server:                       server,
+		sseEndpoint:                  "/sse",
+		messageEndpoint:              "/message",
+		useFullURLForMessageEndpoint: true,
 	}
 
 	// Apply all options
@@ -244,10 +255,8 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	messageEndpoint := fmt.Sprintf("%s?sessionId=%s", s.CompleteMessageEndpoint(), sessionID)
-
 	// Send the initial endpoint event
-	fmt.Fprintf(w, "event: endpoint\ndata: %s\r\n\r\n", messageEndpoint)
+	fmt.Fprintf(w, "event: endpoint\ndata: %s\r\n\r\n", s.GetMessageEndpointForClient(sessionID))
 	flusher.Flush()
 
 	// Main event loop - this runs in the HTTP handler goroutine
@@ -262,6 +271,16 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// GetMessageEndpointForClient returns the appropriate message endpoint URL with session ID
+// based on the useFullURLForMessageEndpoint configuration.
+func (s *SSEServer) GetMessageEndpointForClient(sessionID string) string {
+	messageEndpoint := s.messageEndpoint
+	if s.useFullURLForMessageEndpoint {
+		messageEndpoint = s.CompleteMessageEndpoint()
+	}
+	return fmt.Sprintf("%s?sessionId=%s", messageEndpoint, sessionID)
 }
 
 // handleMessage processes incoming JSON-RPC messages from clients and sends responses
