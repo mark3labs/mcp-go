@@ -52,14 +52,15 @@ var _ ClientSession = (*sseSession)(nil)
 // SSEServer implements a Server-Sent Events (SSE) based MCP server.
 // It provides real-time communication capabilities over HTTP using the SSE protocol.
 type SSEServer struct {
-	server          *MCPServer
-	baseURL         string
-	basePath        string
-	messageEndpoint string
-	sseEndpoint     string
-	sessions        sync.Map
-	srv             *http.Server
-	contextFunc     SSEContextFunc
+	server                    *MCPServer
+	baseURL                   string
+	basePath                  string
+	messageEndpoint           string
+	isCompleteMessageEndpoint bool
+	sseEndpoint               string
+	sessions                  sync.Map
+	srv                       *http.Server
+	contextFunc               SSEContextFunc
 }
 
 // SSEOption defines a function type for configuring SSEServer
@@ -106,6 +107,13 @@ func WithMessageEndpoint(endpoint string) SSEOption {
 	}
 }
 
+// WithIsCompleteMessageEndpoint sets the flag for whether the endpoint is for complete messages or not
+func WithIsCompleteMessageEndpoint(isCompleteMessageEndpoint bool) SSEOption {
+	return func(s *SSEServer) {
+		s.isCompleteMessageEndpoint = isCompleteMessageEndpoint
+	}
+}
+
 // WithSSEEndpoint sets the SSE endpoint path
 func WithSSEEndpoint(endpoint string) SSEOption {
 	return func(s *SSEServer) {
@@ -131,9 +139,10 @@ func WithSSEContextFunc(fn SSEContextFunc) SSEOption {
 // NewSSEServer creates a new SSE server instance with the given MCP server and options.
 func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
 	s := &SSEServer{
-		server:          server,
-		sseEndpoint:     "/sse",
-		messageEndpoint: "/message",
+		server:                    server,
+		sseEndpoint:               "/sse",
+		messageEndpoint:           "/message",
+		isCompleteMessageEndpoint: true,
 	}
 
 	// Apply all options
@@ -244,7 +253,11 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	messageEndpoint := fmt.Sprintf("%s?sessionId=%s", s.CompleteMessageEndpoint(), sessionID)
+	messageEndpoint := s.messageEndpoint
+	if s.isCompleteMessageEndpoint {
+		messageEndpoint = s.CompleteMessageEndpoint()
+	}
+	messageEndpoint = fmt.Sprintf("%s?sessionId=%s", messageEndpoint, sessionID)
 
 	// Send the initial endpoint event
 	fmt.Fprintf(w, "event: endpoint\ndata: %s\r\n\r\n", messageEndpoint)
