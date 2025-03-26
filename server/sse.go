@@ -254,16 +254,9 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
-	// Use either just the path or the complete URL based on configuration.
-	// This prevents issues with clients that concatenate the base URL themselves.
-	messageEndpoint := s.messageEndpoint
-	if s.useFullURLForMessageEndpoint {
-		messageEndpoint = s.CompleteMessageEndpoint()
-	}
-	messageEndpoint = fmt.Sprintf("%s?sessionId=%s", messageEndpoint, sessionID)
 
 	// Send the initial endpoint event
-	fmt.Fprintf(w, "event: endpoint\ndata: %s\r\n\r\n", messageEndpoint)
+	fmt.Fprintf(w, "event: endpoint\ndata: %s\r\n\r\n", s.GetMessageEndpointForClient(sessionID))
 	flusher.Flush()
 
 	// Main event loop - this runs in the HTTP handler goroutine
@@ -278,6 +271,16 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// GetMessageEndpointForClient returns the appropriate message endpoint URL with session ID
+// based on the useFullURLForMessageEndpoint configuration.
+func (s *SSEServer) GetMessageEndpointForClient(sessionID string) string {
+	messageEndpoint := s.messageEndpoint
+	if s.useFullURLForMessageEndpoint {
+		messageEndpoint = s.CompleteMessageEndpoint()
+	}
+	return fmt.Sprintf("%s?sessionId=%s", messageEndpoint, sessionID)
 }
 
 // handleMessage processes incoming JSON-RPC messages from clients and sends responses
