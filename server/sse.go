@@ -271,7 +271,7 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 			for {
 				select {
 				case <-ticker.C:
-					session.eventQueue <- fmt.Sprintf("event: ping\ndata: %s\n\n", time.Now().Format(time.RFC3339))
+					session.eventQueue <- fmt.Sprintf(":ping - %s\n\n", time.Now().Format(time.RFC3339))
 				case <-session.done:
 					return
 				case <-r.Context().Done():
