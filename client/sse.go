@@ -23,20 +23,19 @@ import (
 // while sending requests over regular HTTP POST calls. The client handles
 // automatic reconnection and message routing between requests and responses.
 type SSEMCPClient struct {
-	baseURL        *url.URL
-	endpoint       *url.URL
-	httpClient     *http.Client
-	requestID      atomic.Int64
-	responses      map[int64]chan RPCResponse
-	mu             sync.RWMutex
-	done           chan struct{}
-	initialized    bool
-	notifications  []func(mcp.JSONRPCNotification)
-	notifyMu       sync.RWMutex
-	endpointChan   chan struct{}
-	capabilities   mcp.ServerCapabilities
-	headers        map[string]string
-	sseReadTimeout time.Duration
+	baseURL       *url.URL
+	endpoint      *url.URL
+	httpClient    *http.Client
+	requestID     atomic.Int64
+	responses     map[int64]chan RPCResponse
+	mu            sync.RWMutex
+	done          chan struct{}
+	initialized   bool
+	notifications []func(mcp.JSONRPCNotification)
+	notifyMu      sync.RWMutex
+	endpointChan  chan struct{}
+	capabilities  mcp.ServerCapabilities
+	headers       map[string]string
 }
 
 type ClientOption func(*SSEMCPClient)
@@ -44,12 +43,6 @@ type ClientOption func(*SSEMCPClient)
 func WithHeaders(headers map[string]string) ClientOption {
 	return func(sc *SSEMCPClient) {
 		sc.headers = headers
-	}
-}
-
-func WithSSEReadTimeout(timeout time.Duration) ClientOption {
-	return func(sc *SSEMCPClient) {
-		sc.sseReadTimeout = timeout
 	}
 }
 
@@ -62,13 +55,12 @@ func NewSSEMCPClient(baseURL string, options ...ClientOption) (*SSEMCPClient, er
 	}
 
 	smc := &SSEMCPClient{
-		baseURL:        parsedURL,
-		httpClient:     &http.Client{},
-		responses:      make(map[int64]chan RPCResponse),
-		done:           make(chan struct{}),
-		endpointChan:   make(chan struct{}),
-		sseReadTimeout: 30 * time.Second,
-		headers:        make(map[string]string),
+		baseURL:      parsedURL,
+		httpClient:   &http.Client{},
+		responses:    make(map[int64]chan RPCResponse),
+		done:         make(chan struct{}),
+		endpointChan: make(chan struct{}),
+		headers:      make(map[string]string),
 	}
 
 	for _, opt := range options {
@@ -128,12 +120,9 @@ func (c *SSEMCPClient) readSSE(reader io.ReadCloser) {
 	br := bufio.NewReader(reader)
 	var event, data string
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.sseReadTimeout)
-	defer cancel()
-
 	for {
 		select {
-		case <-ctx.Done():
+		case <-c.done:
 			return
 		default:
 			line, err := br.ReadString('\n')
