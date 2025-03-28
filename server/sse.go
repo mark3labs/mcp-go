@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 
 	"github.com/google/uuid"
+	"github.com/gorilla/mux"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -163,7 +164,6 @@ func (s *SSEServer) Start(addr string) error {
 		Addr:    addr,
 		Handler: s,
 	}
-
 	return s.srv.ListenAndServe()
 }
 
@@ -398,6 +398,7 @@ func (s *SSEServer) CompleteMessagePath() string {
 // ServeHTTP implements the http.Handler interface.
 func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
+
 	// Use exact path matching rather than Contains
 	ssePath := s.CompleteSsePath()
 	if ssePath != "" && path == ssePath {
@@ -411,4 +412,9 @@ func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.NotFound(w, r)
+}
+
+func (s *SSEServer) AddMuxRoutes(mux *mux.Router) {
+	mux.HandleFunc(s.CompleteMessagePath(), s.handleMessage).Methods(http.MethodPost, http.MethodOptions)
+	mux.HandleFunc(s.CompleteSsePath(), s.handleSSE).Methods(http.MethodGet, http.MethodOptions)
 }
