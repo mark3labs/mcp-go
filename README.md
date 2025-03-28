@@ -1,8 +1,8 @@
 <!-- omit in toc -->
 # MCP Go 🚀
-[![Build](https://github.com/mark3labs/mcp-go/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mark3labs/mcp-go/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/mark3labs/mcp-go?cache)](https://goreportcard.com/report/github.com/mark3labs/mcp-go)
-[![GoDoc](https://pkg.go.dev/badge/github.com/mark3labs/mcp-go.svg)](https://pkg.go.dev/github.com/mark3labs/mcp-go)
+[![Build](https://github.com/Hirocloud/mcp-go/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Hirocloud/mcp-go/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Hirocloud/mcp-go?cache)](https://goreportcard.com/report/github.com/Hirocloud/mcp-go)
+[![GoDoc](https://pkg.go.dev/badge/github.com/Hirocloud/mcp-go.svg)](https://pkg.go.dev/github.com/Hirocloud/mcp-go)
 
 <div align="center">
 
@@ -22,8 +22,8 @@ import (
     "errors"
     "fmt"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/Hirocloud/mcp-go/mcp"
+    "github.com/Hirocloud/mcp-go/server"
 )
 
 func main() {
@@ -96,7 +96,7 @@ MCP Go handles all the complex protocol details and server management, so you ca
 ## Installation
 
 ```bash
-go get github.com/mark3labs/mcp-go
+go get github.com/Hirocloud/mcp-go
 ```
 
 ## Quickstart
@@ -111,8 +111,8 @@ import (
     "errors"
     "fmt"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/Hirocloud/mcp-go/mcp"
+    "github.com/Hirocloud/mcp-go/server"
 )
 
 func main() {
@@ -537,7 +537,7 @@ Go version >= 1.23
 Create a fork of this repository, then clone it:
 
 ```bash
-git clone https://github.com/mark3labs/mcp-go.git
+git clone https://github.com/Hirocloud/mcp-go.git
 cd mcp-go
 ```
 
