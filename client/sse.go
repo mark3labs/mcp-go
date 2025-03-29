@@ -53,6 +53,12 @@ func WithSSEReadTimeout(timeout time.Duration) ClientOption {
 	}
 }
 
+func WithAuthToken(token string) ClientOption {
+	return func(sc *SSEMCPClient) {
+		sc.headers["Authorization"] = "Bearer " + token
+	}
+}
+
 // NewSSEMCPClient creates a new SSE-based MCP client with the given base URL.
 // Returns an error if the URL is invalid.
 func NewSSEMCPClient(baseURL string, options ...ClientOption) (*SSEMCPClient, error) {
@@ -93,6 +99,10 @@ func (c *SSEMCPClient) Start(ctx context.Context) error {
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("Connection", "keep-alive")
+	// Add custom headers to initial SSE request
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
