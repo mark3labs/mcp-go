@@ -133,7 +133,7 @@ func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
 	s := &SSEServer{
 		server:          server,
 		sseEndpoint:     "/sse",
-		messageEndpoint: "/message",
+		messageEndpoint: "/messages",
 	}
 
 	// Apply all options
