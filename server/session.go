@@ -132,7 +132,7 @@ func (s *MCSSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		err := s.localQueue.PublishFromChan(ctx, sessionID, localPublishQueue)
 		if err != nil {
-			fmt.Printf("error publishing from chan: %w", err)
+			fmt.Printf("error publishing from chan: %s", err.Error())
 			cancel()
 		}
 	}()

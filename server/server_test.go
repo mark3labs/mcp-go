@@ -1169,6 +1169,31 @@ type fakeSession struct {
 	initialized         bool
 }
 
+func (f fakeSession) QueueEvent(event string) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (f fakeSession) GetEvent() chan string {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (f fakeSession) IsDone() chan struct{} {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (f fakeSession) Done() {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (f fakeSession) IsLocal() bool {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (f fakeSession) SessionID() string {
 	return f.sessionID
 }

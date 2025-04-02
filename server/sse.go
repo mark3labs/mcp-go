@@ -25,6 +25,31 @@ type sseSession struct {
 	initialized         atomic.Bool
 }
 
+func (s *sseSession) QueueEvent(event string) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *sseSession) GetEvent() chan string {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *sseSession) IsDone() chan struct{} {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *sseSession) Done() {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *sseSession) IsLocal() bool {
+	//TODO implement me
+	panic("implement me")
+}
+
 // SSEContextFunc is a function that takes an existing context and the current
 // request and returns a potentially modified context based on the request
 // content. This can be used to inject context values from headers, for example.

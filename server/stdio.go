@@ -55,6 +55,31 @@ type stdioSession struct {
 	initialized   atomic.Bool
 }
 
+func (s *stdioSession) QueueEvent(event string) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *stdioSession) GetEvent() chan string {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *stdioSession) IsDone() chan struct{} {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *stdioSession) Done() {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *stdioSession) IsLocal() bool {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (s *stdioSession) SessionID() string {
 	return "stdio"
 }
