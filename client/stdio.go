@@ -12,7 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/Hirocloud/mcp-go/mcp"
 )
 
 // StdioMCPClient implements the MCPClient interface using stdio communication.

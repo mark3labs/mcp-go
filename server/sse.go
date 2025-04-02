@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Hirocloud/mcp-go/server/queues"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,19 +12,58 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/Hirocloud/mcp-go/mcp"
 	"github.com/google/uuid"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/gorilla/mux"
 )
 
 // sseSession represents an active SSE connection.
 type sseSession struct {
-	writer              http.ResponseWriter
-	flusher             http.Flusher
 	done                chan struct{}
 	eventQueue          chan string // Channel for queuing events
 	sessionID           string
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         atomic.Bool
+}
+
+func (s *sseSession) Context() context.Context {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *sseSession) QueueEvent() chan string {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *sseSession) Cancel() {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *sseSession) QueueNotificationEvent() queues.Queue[mcp.JSONRPCNotification] {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *sseSession) GetEvent() chan string {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *sseSession) IsDone() chan struct{} {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *sseSession) Done() {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *sseSession) IsLocal() bool {
+	//TODO implement me
+	panic("implement me")
 }
 
 // SSEContextFunc is a function that takes an existing context and the current
@@ -163,7 +203,6 @@ func (s *SSEServer) Start(addr string) error {
 		Addr:    addr,
 		Handler: s,
 	}
-
 	return s.srv.ListenAndServe()
 }
 
@@ -205,8 +244,6 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 	sessionID := uuid.New().String()
 	session := &sseSession{
-		writer:              w,
-		flusher:             flusher,
 		done:                make(chan struct{}),
 		eventQueue:          make(chan string, 100), // Buffer for events
 		sessionID:           sessionID,
@@ -398,6 +435,7 @@ func (s *SSEServer) CompleteMessagePath() string {
 // ServeHTTP implements the http.Handler interface.
 func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
+
 	// Use exact path matching rather than Contains
 	ssePath := s.CompleteSsePath()
 	if ssePath != "" && path == ssePath {
@@ -411,4 +449,9 @@ func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.NotFound(w, r)
+}
+
+func (s *SSEServer) AddMuxRoutes(mux *mux.Router) {
+	mux.HandleFunc(s.CompleteMessagePath(), s.handleMessage).Methods(http.MethodPost, http.MethodOptions)
+	mux.HandleFunc(s.CompleteSsePath(), s.handleSSE).Methods(http.MethodGet, http.MethodOptions)
 }

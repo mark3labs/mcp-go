@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Hirocloud/mcp-go/server/queues"
 	"io"
 	"log"
 	"os"
@@ -12,7 +13,7 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/Hirocloud/mcp-go/mcp"
 )
 
 // StdioContextFunc is a function that takes an existing context and returns
@@ -53,6 +54,46 @@ func WithStdioContextFunc(fn StdioContextFunc) StdioOption {
 type stdioSession struct {
 	notifications chan mcp.JSONRPCNotification
 	initialized   atomic.Bool
+}
+
+func (s *stdioSession) Context() context.Context {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *stdioSession) QueueEvent() chan string {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *stdioSession) Cancel() {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *stdioSession) QueueNotificationEvent() queues.Queue[mcp.JSONRPCNotification] {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *stdioSession) GetEvent() chan string {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *stdioSession) IsDone() chan struct{} {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *stdioSession) Done() {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *stdioSession) IsLocal() bool {
+	//TODO implement me
+	panic("implement me")
 }
 
 func (s *stdioSession) SessionID() string {

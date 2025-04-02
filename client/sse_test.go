@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/Hirocloud/mcp-go/mcp"
+	"github.com/Hirocloud/mcp-go/server"
 )
 
 func TestSSEMCPClient(t *testing.T) {

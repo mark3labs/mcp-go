@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/Hirocloud/mcp-go/mcp"
+	"github.com/Hirocloud/mcp-go/server"
 )
 
 // authKey is a custom context key for storing the auth token.
