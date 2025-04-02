@@ -196,6 +196,8 @@ func (s *MCSSEServer) deleteSession(ctx context.Context, session session2.Sessio
 	if err != nil {
 		slog.Error("deleteSession: ", "err", err, "sessionID", session.SessionID())
 		return
+	} else {
+		slog.Info("deleteSession: ", "sessionID", session.SessionID(), "local", session.IsLocal())
 	}
 }
 func (s *MCSSEServer) CleanAuto(ctx context.Context) {
@@ -286,10 +288,16 @@ func (s *MCSSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		subscribeToNotifications(session.Context(), session.SessionID(), s.remoteQueueNotifications, session.QueueEvent())
 	}()
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	host := r.Host // Includes hostname and port (if present)
+	fullURL := fmt.Sprintf("%s://%s", scheme, host)
 	endpoint := strings.ReplaceAll(r.URL.Path, "/sse", "/message")
 
-	messageEndpoint := fmt.Sprintf("%s%s?sessionId=%s", s.baseURL, endpoint, session.SessionID())
-
+	messageEndpoint := fmt.Sprintf("%s%s?sessionId=%s", fullURL, endpoint, session.SessionID())
+	println(messageEndpoint)
 	// Send the initial endpoint event
 	_, _ = fmt.Fprintf(w, "event: endpoint\ndata: %s\r\n\r\n", messageEndpoint)
 	flusher.Flush()
@@ -335,7 +343,7 @@ func (s *MCSSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		writeJSONRPCError(w, nil, mcp.INVALID_PARAMS, "Invalid sessionId")
 		return
 	}
-	slog.Info(">>> handleMessage: ", "session", sessionID, " local: ", local, " redis: ", redisSession)
+	slog.Debug(">>> handleMessage: ", "session", sessionID, " local: ", local, " redis: ", redisSession)
 	var session session2.Session
 	var err error
 
@@ -347,6 +355,7 @@ func (s *MCSSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		}
 		if !session.IsLocal() && !redisSession {
 			s.deleteSession(r.Context(), session)
+			writeJSONRPCError(w, nil, mcp.INVALID_PARAMS, "Invalid sessionId")
 			return
 		}
 	} else if !local {
@@ -373,7 +382,7 @@ func (s *MCSSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 	response := s.server.HandleMessage(ctx, rawMessage)
 	if response != nil {
 		eventData, _ := json.Marshal(response)
-		ticker := time.NewTicker(500 * time.Millisecond)
+		ticker := time.NewTicker(1 * time.Second)
 
 		select {
 		case session.QueueEvent() <- fmt.Sprintf("event: message\ndata: %s\n\n", eventData):

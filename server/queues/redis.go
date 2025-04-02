@@ -63,9 +63,9 @@ func (r *RedisQueue[T]) Subscribe(ctx context.Context, sessionID string) chan T 
 		defer close(ch)
 		defer func() {
 			// Adding a log here helps confirm the goroutine actually exits
-			slog.Info("Exiting subscription goroutine", "sessionID", r.prefix+sessionID)
+			slog.Debug("Exiting subscription goroutine", "sessionID", r.prefix+sessionID)
 		}()
-		slog.Info("Starting subscription goroutine", "sessionID", r.prefix+sessionID)
+		slog.Debug("Starting subscription goroutine", "sessionID", r.prefix+sessionID)
 
 		for {
 			// BRPop blocks until an item is available, the timeout (0=indefinite) is reached,
