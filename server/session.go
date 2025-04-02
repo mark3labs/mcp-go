@@ -204,7 +204,9 @@ func (s *MCSSEServer) CleanAuto(ctx context.Context) {
 		for {
 			select {
 			case <-ctx.Done():
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				s.Clean(ctx, true)
+				cancel()
 				return
 			case <-ticker.C:
 				s.Clean(ctx, false)
