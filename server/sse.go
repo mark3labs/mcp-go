@@ -18,8 +18,6 @@ import (
 
 // sseSession represents an active SSE connection.
 type sseSession struct {
-	writer              http.ResponseWriter
-	flusher             http.Flusher
 	done                chan struct{}
 	eventQueue          chan string // Channel for queuing events
 	sessionID           string
@@ -205,8 +203,6 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 	sessionID := uuid.New().String()
 	session := &sseSession{
-		writer:              w,
-		flusher:             flusher,
 		done:                make(chan struct{}),
 		eventQueue:          make(chan string, 100), // Buffer for events
 		sessionID:           sessionID,

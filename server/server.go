@@ -172,7 +172,7 @@ func (s *MCPServer) WithContext(
 
 // RegisterSession saves session that should be notified in case if some server attributes changed.
 func (s *MCPServer) RegisterSession(
-	session ClientSession,
+	session Session,
 ) error {
 	sessionID := session.SessionID()
 	if _, exists := s.sessions.LoadOrStore(sessionID, session); exists {
