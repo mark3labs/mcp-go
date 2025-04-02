@@ -576,3 +576,65 @@ git push origin my-branch
 Feel free to reach out in a GitHub issue or discussion if you have any questions!
 
 </details>
+
+## Multi Instance Sessions
+
+
+#### Example
+
+```bash
+docker run -d --name redis-stack-server -p 6379:6379 redis/redis-stack-server:latest
+```
+
+```go
+package main
+
+import (
+	"context"
+	"github.com/Hirocloud/mcp-go/server"
+	"github.com/redis/go-redis/v9"
+	"sync"
+)
+
+func main() {
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		startServer(":8080")
+		wg.Done()
+	}()
+	go func() {
+		startServer(":8081")
+		wg.Done()
+	}()
+	wg.Wait()
+}
+
+func startServer(port string) {
+	mcpServer := server.NewMCPServer(
+		"example-servers/everything",
+		"1.0.0",
+		server.WithResourceCapabilities(true, true),
+		server.WithPromptCapabilities(true),
+		server.WithLogging(),
+	)
+	r := redis.NewClient(&redis.Options{
+		Addr: "localhost:6379",
+	})
+	sseServer := server.NewMCSSEServer(mcpServer, r)
+	sseServer.CleanAuto(context.Background())
+	sseServer.Start(port)
+}
+```
+
+#### Open SSE Session
+```bash
+curl -X GET "http://127.0.0.1:8080/sse" 
+event: endpoint
+data: /message?sessionId=test
+```
+
+#### Send SSE Message
+```bash
+curl -X POST "http://127.0.0.1:8081/message?sessionId=test"
+```

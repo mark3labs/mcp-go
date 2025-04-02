@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Hirocloud/mcp-go/server/queues"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -25,7 +26,22 @@ type sseSession struct {
 	initialized         atomic.Bool
 }
 
-func (s *sseSession) QueueEvent(event string) {
+func (s *sseSession) Context() context.Context {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *sseSession) QueueEvent() chan string {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *sseSession) Cancel() {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *sseSession) QueueNotificationEvent() queues.Queue[mcp.JSONRPCNotification] {
 	//TODO implement me
 	panic("implement me")
 }

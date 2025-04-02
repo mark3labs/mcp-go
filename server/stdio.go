@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Hirocloud/mcp-go/server/queues"
 	"io"
 	"log"
 	"os"
@@ -55,7 +56,22 @@ type stdioSession struct {
 	initialized   atomic.Bool
 }
 
-func (s *stdioSession) QueueEvent(event string) {
+func (s *stdioSession) Context() context.Context {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *stdioSession) QueueEvent() chan string {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *stdioSession) Cancel() {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (s *stdioSession) QueueNotificationEvent() queues.Queue[mcp.JSONRPCNotification] {
 	//TODO implement me
 	panic("implement me")
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Hirocloud/mcp-go/server/session"
 	"sort"
 	"sync"
 
@@ -172,7 +173,7 @@ func (s *MCPServer) WithContext(
 
 // RegisterSession saves session that should be notified in case if some server attributes changed.
 func (s *MCPServer) RegisterSession(
-	session Session,
+	session session.Session,
 ) error {
 	sessionID := session.SessionID()
 	if _, exists := s.sessions.LoadOrStore(sessionID, session); exists {

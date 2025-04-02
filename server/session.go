@@ -5,90 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Hirocloud/mcp-go/mcp"
-	"github.com/google/uuid"
+	"github.com/Hirocloud/mcp-go/server/queues"
+	session2 "github.com/Hirocloud/mcp-go/server/session"
+	"github.com/gorilla/mux"
+	"github.com/redis/go-redis/v9"
+	"log"
+	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
-
-type Session interface {
-	SessionID() string
-	NotificationChannel() chan<- mcp.JSONRPCNotification
-	Initialize()
-	Initialized() bool
-	QueueEvent(event string)
-	GetEvent() chan string
-	IsDone() chan struct{}
-	Done()
-	IsLocal() bool
-}
-
-var _ Session = &MCMCPSession{}
-
-// MCMCPSession (Multi-Cluster MCP Session)
-type MCMCPSession struct {
-	sessionID   string
-	initialized atomic.Bool
-
-	localQueue  Queue[string]
-	remoteQueue Queue[string]
-
-	localQueueNotifications  Queue[string]
-	remoteQueueNotifications Queue[string]
-	LastUpdated              time.Time
-}
-
-func NewMCMCPSession() Session {
-	//sessionID := uuid.New().String()
-	//session := &MCMCPSession{}
-	return &MCMCPSession{}
-}
-
-func (M *MCMCPSession) IsLocal() bool {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (M *MCMCPSession) SessionID() string {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (M *MCMCPSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (M *MCMCPSession) Initialize() {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (M *MCMCPSession) Initialized() bool {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (M *MCMCPSession) QueueEvent(event string) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (M *MCMCPSession) GetEvent() chan string {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (M *MCMCPSession) IsDone() chan struct{} {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (M *MCMCPSession) Done() {
-	//TODO implement me
-	panic("implement me")
-}
 
 // todo update this to use mCMCPSession
 type MCSSEServer struct {
@@ -102,11 +29,162 @@ type MCSSEServer struct {
 	localSessions   sync.Map
 
 	//todo remove these queues and use sessions map...
-	localQueue  Queue[string]
-	remoteQueue Queue[string]
+	remoteQueue              queues.Queue[string]
+	remoteQueueNotifications queues.Queue[mcp.JSONRPCNotification]
 
-	localQueueNotifications  Queue[string]
-	remoteQueueNotifications Queue[string]
+	redisClient redis.Cmdable
+}
+
+func NewMCSSEServer(server *MCPServer, redisClient redis.Cmdable) *MCSSEServer {
+	s := &MCSSEServer{
+		server:                   server,
+		sseEndpoint:              "/sse",
+		messageEndpoint:          "/message",
+		redisClient:              redisClient,
+		remoteQueue:              queues.NewRedisQueue[string](redisClient, ""),
+		remoteQueueNotifications: queues.NewRedisQueue[mcp.JSONRPCNotification](redisClient, session2.NotificationQueueName),
+	}
+	//
+	return s
+}
+
+// Start begins serving SSE connections on the specified address.
+// It sets up HTTP handlers for SSE and message endpoints.
+func (s *MCSSEServer) Start(addr string) error {
+	s.srv = &http.Server{
+		Addr:    addr,
+		Handler: s,
+	}
+	return s.srv.ListenAndServe()
+}
+
+func (s *MCSSEServer) Shutdown(ctx context.Context) error {
+	if s.srv != nil {
+		s.localSessions.Range(func(key, value interface{}) bool {
+			if session, ok := value.(session2.Session); ok {
+				s.deleteSession(ctx, session)
+			} else {
+				s.localSessions.Delete(key)
+			}
+			return true
+		})
+
+		return s.srv.Shutdown(ctx)
+	} else {
+		s.Clean(ctx, true)
+	}
+	return nil
+}
+
+func (s *MCSSEServer) CompleteSseEndpoint() string {
+	return s.baseURL + s.basePath + s.sseEndpoint
+}
+
+func (s *MCSSEServer) CompleteSsePath() string {
+	path, err := GetUrlPath(s.CompleteSseEndpoint())
+	if err != nil {
+		return s.basePath + s.sseEndpoint
+	}
+	return path
+}
+
+// ServeHTTP implements the http.Handler interface.
+func (s *MCSSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+
+	// Use exact path matching rather than Contains
+	ssePath := s.CompleteSsePath()
+	if ssePath != "" && path == ssePath {
+		s.handleSSE(w, r)
+		return
+	}
+	messagePath := s.CompleteMessagePath()
+	if messagePath != "" && path == messagePath {
+		s.handleMessage(w, r)
+		return
+	}
+
+	http.NotFound(w, r)
+}
+
+func (s *MCSSEServer) DoesSessionExist(ctx context.Context, sessionID string) (bool, bool) { //local, remote
+	var local bool
+	_, ok := s.localSessions.Load(sessionID)
+	if ok {
+		local = true
+	}
+	result, err := s.redisClient.Exists(ctx, "SES_"+sessionID).Result()
+	if err != nil {
+		return local, false
+	}
+	return local, result == 1
+}
+
+func (s *MCSSEServer) deleteSession(ctx context.Context, session session2.Session) {
+	session.Cancel()
+	s.localSessions.Delete(session.SessionID())
+	_, err := s.redisClient.Del(ctx, "SES_"+session.SessionID()).Result()
+	if err != nil {
+		slog.Error("deleteSession: ", "err", err, "sessionID", session.SessionID())
+		return
+	}
+}
+func (s *MCSSEServer) CleanAuto(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(60 * time.Second)
+		for {
+			select {
+			case <-ctx.Done():
+				s.Clean(ctx, true)
+				return
+			case <-ticker.C:
+				s.Clean(ctx, false)
+			}
+		}
+	}()
+
+}
+
+func (s *MCSSEServer) Clean(ctx context.Context, removeAll bool) {
+	s.localSessions.Range(func(key, value interface{}) bool {
+		if session, ok := value.(session2.Session); ok {
+			if removeAll {
+				s.deleteSession(ctx, session)
+				return true
+			}
+			if session.IsLocal() {
+				return true
+			}
+			result, err := s.redisClient.Exists(ctx, "SES_"+session.SessionID()).Result()
+			if err != nil {
+				return true
+			}
+			if result != 1 {
+				slog.Info("Clean: ", "sessionID", session.SessionID())
+				s.deleteSession(ctx, session)
+			}
+		} else {
+			s.localSessions.Delete(key)
+		}
+		return true
+	})
+}
+
+func (s *MCSSEServer) storeSession(ctx context.Context, session session2.Session) {
+	s.redisClient.Set(ctx, "SES_"+session.SessionID(), "true", 0)
+	s.localSessions.Store(session.SessionID(), session)
+}
+
+func (s *MCSSEServer) getSession(sessionID string) (session2.Session, error) {
+	sessionI, ok := s.localSessions.Load(sessionID)
+	if !ok {
+		return nil, fmt.Errorf("invalid session ID")
+	}
+	session, ok := sessionI.(session2.Session)
+	if !ok {
+		return nil, fmt.Errorf("invalid session type")
+	}
+	return session, nil
 }
 
 func (s *MCSSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
@@ -118,61 +196,145 @@ func (s *MCSSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 	if flusher == nil {
 		return
 	}
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-	sessionID := uuid.New().String()
-	session := NewMCMCPSession()
 
-	err := s.localQueue.New(ctx, sessionID)
+	session, err := session2.NewLocalMCMCPSession(r.Context())
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	localPublishQueue := make(chan string)
-	go func() {
-		err := s.localQueue.PublishFromChan(ctx, sessionID, localPublishQueue)
-		if err != nil {
-			fmt.Printf("error publishing from chan: %s", err.Error())
-			cancel()
-		}
-	}()
-
-	//todo add done logic?
-	//	defer s.server.UnregisterSession(sessionID)
+	s.storeSession(session.Context(), session)
+	defer s.deleteSession(context.Background(), session)
 	if err := s.server.RegisterSession(session); err != nil {
 		http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusInternalServerError)
 		return
 	}
-	defer s.server.UnregisterSession(sessionID)
+	defer s.server.UnregisterSession(session.SessionID())
 	go func() {
-		subscribeToNotifications(ctx, sessionID, s.localQueueNotifications, localPublishQueue)
+		subscribeToNotifications[mcp.JSONRPCNotification](session.Context(), session.SessionID(), session.QueueNotificationEvent(), session.QueueEvent())
 	}()
 	go func() {
-		subscribeToNotifications(ctx, sessionID, s.remoteQueueNotifications, localPublishQueue)
+		subscribeToNotifications(session.Context(), session.SessionID(), s.remoteQueueNotifications, session.QueueEvent())
 	}()
+	endpoint := strings.ReplaceAll(r.URL.Path, "/sse", "/message")
 
-	//messageEndpoint := fmt.Sprintf("%s?sessionId=%s", s.CompleteMessageEndpoint(), sessionID)
+	messageEndpoint := fmt.Sprintf("%s%s?sessionId=%s", s.baseURL, endpoint, session.SessionID())
 
 	// Send the initial endpoint event
-	//fmt.Fprintf(w, "event: endpoint\ndata: %s\r\n\r\n", messageEndpoint)
+	_, _ = fmt.Fprintf(w, "event: endpoint\ndata: %s\r\n\r\n", messageEndpoint)
 	flusher.Flush()
 	wg := sync.WaitGroup{}
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		subscribeToEvent(ctx, cancel, sessionID, s.localQueue, w, flusher)
+		subscribeToEvent(session.Context(), session.Cancel, session.SessionID(), session.Queue(), w, flusher)
 	}()
 	go func() {
 		defer wg.Done()
-		subscribeToEvent(ctx, cancel, sessionID, s.remoteQueue, w, flusher)
+		subscribeToEvent(session.Context(), session.Cancel, session.SessionID(), s.remoteQueue, w, flusher)
 	}()
 	wg.Wait()
 }
 
-func subscribeToEvent(ctx context.Context, cancel func(), sessionID string, queue Queue[string], w http.ResponseWriter, flusher http.Flusher) {
+func (s *MCSSEServer) CompleteMessageEndpoint() string {
+	return s.baseURL + s.basePath + s.messageEndpoint
+}
+func (s *MCSSEServer) CompleteMessagePath() string {
+	path, err := GetUrlPath(s.CompleteMessageEndpoint())
+	if err != nil {
+		return s.basePath + s.messageEndpoint
+	}
+	return path
+}
+
+func (s *MCSSEServer) AddMuxRoutes(mux *mux.Router) {
+	mux.HandleFunc(s.CompleteMessagePath(), s.handleMessage).Methods(http.MethodPost, http.MethodOptions)
+	mux.HandleFunc(s.CompleteSsePath(), s.handleSSE).Methods(http.MethodGet, http.MethodOptions)
+}
+
+// handleMessage processes incoming JSON-RPC messages from clients and sends responses
+// back through both the SSE connection and HTTP response.
+func (s *MCSSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.URL.Query().Get("sessionId")
+	if sessionID == "" {
+		writeJSONRPCError(w, nil, mcp.INVALID_PARAMS, "Missing sessionId")
+		return
+	}
+	local, redisSession := s.DoesSessionExist(r.Context(), sessionID)
+	if !local && !redisSession {
+		writeJSONRPCError(w, nil, mcp.INVALID_PARAMS, "Invalid sessionId")
+		return
+	}
+	slog.Info(">>> handleMessage: ", "session", sessionID, " local: ", local, " redis: ", redisSession)
+	var session session2.Session
+	var err error
+
+	if local {
+		session, err = s.getSession(sessionID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !session.IsLocal() && !redisSession {
+			s.deleteSession(r.Context(), session)
+			return
+		}
+	} else if !local {
+		session, err = session2.NewRedisMCMCPSession(context.Background(), sessionID, s.redisClient)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.storeSession(session.Context(), session)
+	}
+	if session == nil {
+		http.Error(w, "Invalid session", http.StatusInternalServerError)
+		return
+	}
+	ctx := s.server.WithContext(r.Context(), session)
+	if s.contextFunc != nil {
+		ctx = s.contextFunc(ctx, r)
+	}
+	var rawMessage json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&rawMessage); err != nil {
+		writeJSONRPCError(w, nil, mcp.PARSE_ERROR, "Parse error")
+		return
+	}
+	response := s.server.HandleMessage(ctx, rawMessage)
+	if response != nil {
+		eventData, _ := json.Marshal(response)
+		ticker := time.NewTicker(500 * time.Millisecond)
+
+		select {
+		case session.QueueEvent() <- fmt.Sprintf("event: message\ndata: %s\n\n", eventData):
+		case <-ticker.C:
+			local, redisSession := s.DoesSessionExist(r.Context(), sessionID)
+			if !local && !redisSession {
+				s.deleteSession(r.Context(), session)
+				return
+			}
+			if !session.IsLocal() && !redisSession {
+				s.deleteSession(r.Context(), session)
+				return
+			}
+			// Event queued successfully
+
+		case <-ctx.Done():
+			// Session is closed, don't try to queue
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+	} else {
+		// For notifications, just send 202 Accepted with no body
+		w.WriteHeader(http.StatusAccepted)
+	}
+
+}
+func subscribeToEvent(ctx context.Context, cancel func(), sessionID string, queue queues.Queue[string], w http.ResponseWriter, flusher http.Flusher) {
+	sub := queue.Subscribe(ctx, sessionID)
 	for {
 		select {
-		case event := <-queue.Subscribe(ctx, sessionID):
+		case event := <-sub:
 			// Write the event to the response
 			_, err := fmt.Fprint(w, event)
 			if err != nil {
@@ -188,11 +350,13 @@ func subscribeToEvent(ctx context.Context, cancel func(), sessionID string, queu
 	}
 }
 
-func subscribeToNotifications(ctx context.Context, sessionID string, queue Queue[string], publishQueue chan string) {
+func subscribeToNotifications[T any](ctx context.Context, sessionID string, queue queues.Queue[T], publishQueue chan string) {
 	notifications := queue.Subscribe(ctx, sessionID)
+	log.Printf("subscribeToNotifications: %s", sessionID)
 	for {
 		select {
 		case notification := <-notifications:
+			log.Printf("notification: %v", notification)
 			eventData, err := json.Marshal(notification)
 			if err == nil {
 				select {
