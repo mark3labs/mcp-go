@@ -12,6 +12,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -35,7 +36,72 @@ type MCSSEServer struct {
 	redisClient redis.Cmdable
 }
 
-func NewMCSSEServer(server *MCPServer, redisClient redis.Cmdable) *MCSSEServer {
+type MCSSEOption func(*MCSSEServer)
+
+// WithBaseURL sets the base URL for the SSE server
+func WithMCBaseURL(baseURL string) MCSSEOption {
+	return func(s *MCSSEServer) {
+		if baseURL != "" {
+			u, err := url.Parse(baseURL)
+			if err != nil {
+				return
+			}
+			if u.Scheme != "http" && u.Scheme != "https" {
+				return
+			}
+			// Check if the host is empty or only contains a port
+			if u.Host == "" || strings.HasPrefix(u.Host, ":") {
+				return
+			}
+			if len(u.Query()) > 0 {
+				return
+			}
+		}
+		s.baseURL = strings.TrimSuffix(baseURL, "/")
+	}
+}
+
+// Add a new option for setting base path
+func WithMCBasePath(basePath string) MCSSEOption {
+	return func(s *MCSSEServer) {
+		// Ensure the path starts with / and doesn't end with /
+		if !strings.HasPrefix(basePath, "/") {
+			basePath = "/" + basePath
+		}
+		s.basePath = strings.TrimSuffix(basePath, "/")
+	}
+}
+
+// WithMessageEndpoint sets the message endpoint path
+func WithMCMessageEndpoint(endpoint string) MCSSEOption {
+	return func(s *MCSSEServer) {
+		s.messageEndpoint = endpoint
+	}
+}
+
+// WithSSEEndpoint sets the SSE endpoint path
+func WithMCSSEEndpoint(endpoint string) MCSSEOption {
+	return func(s *MCSSEServer) {
+		s.sseEndpoint = endpoint
+	}
+}
+
+// WithHTTPServer sets the HTTP server instance
+func WithMCTTPServer(srv *http.Server) MCSSEOption {
+	return func(s *MCSSEServer) {
+		s.srv = srv
+	}
+}
+
+// WithContextFunc sets a function that will be called to customise the context
+// to the server using the incoming request.
+func WithMCSSEContextFunc(fn SSEContextFunc) MCSSEOption {
+	return func(s *MCSSEServer) {
+		s.contextFunc = fn
+	}
+}
+
+func NewMCSSEServer(server *MCPServer, redisClient redis.Cmdable, opts ...MCSSEOption) *MCSSEServer {
 	s := &MCSSEServer{
 		server:                   server,
 		sseEndpoint:              "/sse",
@@ -43,6 +109,9 @@ func NewMCSSEServer(server *MCPServer, redisClient redis.Cmdable) *MCSSEServer {
 		redisClient:              redisClient,
 		remoteQueue:              queues.NewRedisQueue[string](redisClient, ""),
 		remoteQueueNotifications: queues.NewRedisQueue[mcp.JSONRPCNotification](redisClient, session2.NotificationQueueName),
+	}
+	for _, opt := range opts {
+		opt(s)
 	}
 	//
 	return s
