@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mark3labs/mcp-go/logger"
+
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -100,7 +102,10 @@ func (c *SSEMCPClient) Start(ctx context.Context) error {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		err = resp.Body.Close()
+		if err != nil {
+			logger.DefaultLogger.Error("failed to close response body", "error", err)
+		}
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
@@ -149,7 +154,7 @@ func (c *SSEMCPClient) readSSE(reader io.ReadCloser) {
 				case <-c.done:
 					return
 				default:
-					fmt.Printf("SSE stream error: %v\n", err)
+					logger.DefaultLogger.Error("failed to read SSE event", "error", err)
 					return
 				}
 			}
@@ -182,11 +187,11 @@ func (c *SSEMCPClient) handleSSEEvent(event, data string) {
 	case "endpoint":
 		endpoint, err := c.baseURL.Parse(data)
 		if err != nil {
-			fmt.Printf("Error parsing endpoint URL: %v\n", err)
+			logger.DefaultLogger.Error("failed to parse endpoint URL", "error", err)
 			return
 		}
 		if endpoint.Host != c.baseURL.Host {
-			fmt.Printf("Endpoint origin does not match connection origin\n")
+			logger.DefaultLogger.Error("invalid endpoint URL", "endpoint", endpoint)
 			return
 		}
 		c.endpoint = endpoint
@@ -205,7 +210,7 @@ func (c *SSEMCPClient) handleSSEEvent(event, data string) {
 		}
 
 		if err := json.Unmarshal([]byte(data), &baseMessage); err != nil {
-			fmt.Printf("Error unmarshaling message: %v\n", err)
+			logger.DefaultLogger.Error("failed to unmarshal jsonrpc message", "error", err)
 			return
 		}
 

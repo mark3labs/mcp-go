@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/mark3labs/mcp-go/logger"
+
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -129,7 +131,7 @@ func (c *StdioMCPClient) readResponses() {
 			line, err := c.stdout.ReadString('\n')
 			if err != nil {
 				if err != io.EOF {
-					fmt.Printf("Error reading response: %v\n", err)
+					logger.DefaultLogger.Error("failed to read response", "error", err)
 				}
 				return
 			}
