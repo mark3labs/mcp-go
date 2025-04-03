@@ -3,6 +3,8 @@ package client
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -18,11 +20,24 @@ type MCPClient interface {
 	// Ping checks if the server is alive
 	Ping(ctx context.Context) error
 
+	// ListResourcesByPage manually list resources by page.
+	ListResourcesByPage(
+		ctx context.Context,
+		request mcp.ListResourcesRequest,
+	) (*mcp.ListResourcesResult, error)
+
 	// ListResources requests a list of available resources from the server
 	ListResources(
 		ctx context.Context,
 		request mcp.ListResourcesRequest,
 	) (*mcp.ListResourcesResult, error)
+
+	// ListResourceTemplatesByPage manually list resource templates by page.
+	ListResourceTemplatesByPage(
+		ctx context.Context,
+		request mcp.ListResourceTemplatesRequest,
+	) (*mcp.ListResourceTemplatesResult,
+		error)
 
 	// ListResourceTemplates requests a list of available resource templates from the server
 	ListResourceTemplates(
@@ -43,6 +58,12 @@ type MCPClient interface {
 	// Unsubscribe cancels notifications for a specific resource
 	Unsubscribe(ctx context.Context, request mcp.UnsubscribeRequest) error
 
+	// ListPromptsByPage manually list prompts by page.
+	ListPromptsByPage(
+		ctx context.Context,
+		request mcp.ListPromptsRequest,
+	) (*mcp.ListPromptsResult, error)
+
 	// ListPrompts requests a list of available prompts from the server
 	ListPrompts(
 		ctx context.Context,
@@ -54,6 +75,12 @@ type MCPClient interface {
 		ctx context.Context,
 		request mcp.GetPromptRequest,
 	) (*mcp.GetPromptResult, error)
+
+	// ListToolsByPage manually list tools by page.
+	ListToolsByPage(
+		ctx context.Context,
+		request mcp.ListToolsRequest,
+	) (*mcp.ListToolsResult, error)
 
 	// ListTools requests a list of available tools from the server
 	ListTools(
@@ -81,4 +108,23 @@ type MCPClient interface {
 
 	// OnNotification registers a handler for notifications
 	OnNotification(handler func(notification mcp.JSONRPCNotification))
+
+	sendRequest(ctx context.Context, method string, params interface{}) (*json.RawMessage, error)
+}
+
+func listByPage[T any](
+	ctx context.Context,
+	client MCPClient,
+	request mcp.PaginatedRequest,
+	method string,
+) (*T, error) {
+	response, err := client.sendRequest(ctx, method, request.Params)
+	if err != nil {
+		return nil, err
+	}
+	var result T
+	if err := json.Unmarshal(*response, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	return &result, nil
 }

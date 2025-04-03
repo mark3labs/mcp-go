@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -430,7 +431,7 @@ func TestMCPServer_HandleValidMessages(t *testing.T) {
 
 func TestMCPServer_HandlePagination(t *testing.T) {
 	server := createTestServer()
-
+	cursor := base64.StdEncoding.EncodeToString([]byte("My Resource"))
 	tests := []struct {
 		name     string
 		message  string
@@ -438,14 +439,14 @@ func TestMCPServer_HandlePagination(t *testing.T) {
 	}{
 		{
 			name: "List resources with cursor",
-			message: `{
+			message: fmt.Sprintf(`{
                     "jsonrpc": "2.0",
                     "id": 1,
                     "method": "resources/list",
                     "params": {
-                        "cursor": "test-cursor"
+                        "cursor": "%s"
                     }
-                }`,
+                }`, cursor),
 			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
 				resp, ok := response.(mcp.JSONRPCResponse)
 				assert.True(t, ok)
@@ -1125,6 +1126,7 @@ func createTestServer() *MCPServer {
 	server := NewMCPServer("test-server", "1.0.0",
 		WithResourceCapabilities(true, true),
 		WithPromptCapabilities(true),
+		WithPaginationLimit(2),
 	)
 
 	server.AddResource(
