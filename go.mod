@@ -4,6 +4,7 @@ go 1.23
 
 require (
 	github.com/google/uuid v1.6.0
+	github.com/sashabaranov/go-openai v1.38.1
 	github.com/stretchr/testify v1.9.0
 	github.com/yosida95/uritemplate/v3 v3.0.2
 )
