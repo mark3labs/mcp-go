@@ -335,7 +335,6 @@ func TestMCPServer_Tools(t *testing.T) {
 			toolsList := server.HandleMessage(ctx, []byte(`{
 				"jsonrpc": "2.0",
 				"id": 1,
-				"method": "tools/list"
 			}`))
 			tt.validate(t, notifications, toolsList.(mcp.JSONRPCMessage))
 		})
@@ -1125,6 +1124,7 @@ func createTestServer() *MCPServer {
 	server := NewMCPServer("test-server", "1.0.0",
 		WithResourceCapabilities(true, true),
 		WithPromptCapabilities(true),
+		WithPaginationLimit(2),
 	)
 
 	server.AddResource(
