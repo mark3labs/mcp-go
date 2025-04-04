@@ -41,6 +41,12 @@ type SSEMCPClient struct {
 
 type ClientOption func(*SSEMCPClient)
 
+func WithHTTPClient(httpClient *http.Client) ClientOption {
+	return func(sc *SSEMCPClient) {
+		sc.httpClient = httpClient
+	}
+}
+
 func WithHeaders(headers map[string]string) ClientOption {
 	return func(sc *SSEMCPClient) {
 		sc.headers = headers
