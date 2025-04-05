@@ -178,6 +178,9 @@ func (c *Stdio) SendRequest(
 	ctx context.Context,
 	request JSONRPCRequest,
 ) (*JSONRPCResponse, error) {
+	if c.stdin == nil {
+		return nil, fmt.Errorf("stdio client not started")
+	}
 
 	// Create the complete request structure
 	responseChan := make(chan *JSONRPCResponse, 1)
