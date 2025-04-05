@@ -36,7 +36,7 @@ type OnSuccessHookFunc func(ctx context.Context, id any, method mcp.MCPMethod, m
 //   }
 //
 //   // Use errors.As to get specific error types
-//   var parseErr = &UnparseableMessageError{}
+//   var parseErr = &UnparsableMessageError{}
 //   if errors.As(err, &parseErr) {
 //     // Access specific methods/fields of the error type
 //     log.Printf("Failed to parse message for method %s: %v", 
@@ -101,9 +101,9 @@ func (c *Hooks) AddOnSuccess(hook OnSuccessHookFunc) {
 //     }
 //
 //     // For parsing errors
-//     var parseErr = &UnparseableMessageError{}
+//     var parseErr = &UnparsableMessageError{}
 //     if errors.As(err, &parseErr) {
-//         // Handle unparseable message errors
+//         // Handle unparsable message errors
 //         fmt.Printf("Failed to parse %s request: %v\n", 
 //                    parseErr.GetMethod(), parseErr.Unwrap())
 //         errChan <- parseErr
@@ -157,7 +157,7 @@ func (c *Hooks) onSuccess(ctx context.Context, id any, method mcp.MCPMethod, mes
 //
 // Common error types include:
 // - ErrUnsupported: When a capability is not enabled
-// - UnparseableMessageError: When request parsing fails
+// - UnparsableMessageError: When request parsing fails
 // - ErrResourceNotFound: When a resource is not found
 // - ErrPromptNotFound: When a prompt is not found
 // - ErrToolNotFound: When a tool is not found

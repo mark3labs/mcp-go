@@ -71,7 +71,7 @@ func (s *MCPServer) HandleMessage(
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.INVALID_REQUEST,
-				err:  &UnparseableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
+				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
 			s.hooks.before{{.HookName}}(ctx, baseMessage.ID, &request)
