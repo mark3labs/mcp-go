@@ -724,11 +724,11 @@ func TestMCPServer_HandleInvalidMessages(t *testing.T) {
 			message:     `{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": "invalid"}`,
 			expectedErr: mcp.INVALID_REQUEST,
 			validateErr: func(t *testing.T, err error) {
-				var unparseableErr = &UnparseableMessageError{}
-				var ok = errors.As(err, &unparseableErr)
-				assert.True(t, ok, "Error should be UnparseableMessageError")
-				assert.Equal(t, mcp.MethodInitialize, unparseableErr.GetMethod())
-				assert.Equal(t, json.RawMessage(`{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": "invalid"}`), unparseableErr.GetMessage())
+				var unparsableErr = &UnparsableMessageError{}
+				var ok = errors.As(err, &unparsableErr)
+				assert.True(t, ok, "Error should be UnparsableMessageError")
+				assert.Equal(t, mcp.MethodInitialize, unparsableErr.GetMethod())
+				assert.Equal(t, json.RawMessage(`{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": "invalid"}`), unparsableErr.GetMessage())
 			},
 		},
 		{
