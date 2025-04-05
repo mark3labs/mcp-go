@@ -2,13 +2,24 @@ package client
 
 import (
 	"context"
-	"github.com/mark3labs/mcp-go/client/transport"
+	"net/http"
 	"testing"
 	"time"
 
+	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/stretchr/testify/assert"
 )
+
+type customTransport struct {
+	requestTimes int
+}
+
+func (c *customTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	c.requestTimes++
+	return http.DefaultClient.Do(req)
+}
 
 func TestSSEMCPClient(t *testing.T) {
 	// Create MCP server with capabilities
@@ -250,5 +261,50 @@ func TestSSEMCPClient(t *testing.T) {
 		if len(result.Content) != 1 {
 			t.Errorf("Expected 1 content item, got %d", len(result.Content))
 		}
+	})
+
+	t.Run("WithHTTPTransport", func(t *testing.T) {
+		httpTransport := &customTransport{}
+		client, err := NewSSEMCPClient(testServer.URL+"/sse", WithHTTPTransport(httpTransport))
+		if err != nil {
+			t.Fatalf("Failed to create client: %v", err)
+		}
+		defer client.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := client.Start(ctx); err != nil {
+			t.Fatalf("Failed to start client: %v", err)
+		}
+
+		// Initialize
+		initRequest := mcp.InitializeRequest{}
+		initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+		initRequest.Params.ClientInfo = mcp.Implementation{
+			Name:    "test-client",
+			Version: "1.0.0",
+		}
+
+		_, err = client.Initialize(ctx, initRequest)
+		if err != nil {
+			t.Fatalf("Failed to initialize: %v", err)
+		}
+
+		request := mcp.CallToolRequest{}
+		request.Params.Name = "test-tool"
+		request.Params.Arguments = map[string]interface{}{
+			"parameter-1": "value1",
+		}
+
+		result, err := client.CallTool(ctx, request)
+		if err != nil {
+			t.Fatalf("CallTool failed: %v", err)
+		}
+
+		if len(result.Content) != 1 {
+			t.Errorf("Expected 1 content item, got %d", len(result.Content))
+		}
+		assert.NotEqual(t, httpTransport.requestTimes, 0)
 	})
 }
