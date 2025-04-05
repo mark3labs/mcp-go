@@ -81,18 +81,18 @@ func NewSSEMCPClient(baseURL string, options ...ClientOption) (*SSEMCPClient, er
 // Start initiates the SSE connection to the server and waits for the endpoint information.
 // Returns an error if the connection fails or times out waiting for the endpoint.
 func (c *SSEMCPClient) Start(ctx context.Context) error {
-
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL.String(), nil)
-
 	if err != nil {
-
 		return fmt.Errorf("failed to create request: %w", err)
-
 	}
 
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("Connection", "keep-alive")
+	// set custom http headers
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -391,6 +391,10 @@ func (c *SSEMCPClient) Initialize(
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	// set custom http headers
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
