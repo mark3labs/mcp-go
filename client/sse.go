@@ -53,6 +53,13 @@ func WithSSEReadTimeout(timeout time.Duration) ClientOption {
 	}
 }
 
+// WithTransport sets a custom HTTP transport for the SSEMCPClient.
+func WithTransport(transport http.RoundTripper) ClientOption {
+	return func(c *SSEMCPClient) {
+		c.httpClient.Transport = transport
+	}
+}
+
 // NewSSEMCPClient creates a new SSE-based MCP client with the given base URL.
 // Returns an error if the URL is invalid.
 func NewSSEMCPClient(baseURL string, options ...ClientOption) (*SSEMCPClient, error) {
