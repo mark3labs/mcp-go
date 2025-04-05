@@ -46,7 +46,7 @@ func TestSSEMCPClient(t *testing.T) {
 		}
 		defer client.Close()
 
-		if client.baseURL == nil {
+		if client.GetBaseUrl() == nil {
 			t.Error("Base URL should not be nil")
 		}
 	})

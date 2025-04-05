@@ -361,3 +361,8 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 func (c *SSE) GetEndpoint() *url.URL {
 	return c.endpoint
 }
+
+// GetBaseURL returns the base URL set in the SSE constructor.
+func (c *SSE) GetBaseURL() *url.URL {
+	return c.baseURL
+}
