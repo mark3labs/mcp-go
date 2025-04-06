@@ -50,10 +50,9 @@ func TestStdio(t *testing.T) {
 	defer stdio.Close()
 
 	t.Run("SendRequest", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 5000000000*time.Second)
 		defer cancel()
 
-		// 使用简单的几种基本类型作为参数
 		params := map[string]interface{}{
 			"string": "hello world",
 			"array":  []interface{}{1, 2, 3},

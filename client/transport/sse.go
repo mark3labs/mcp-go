@@ -26,12 +26,13 @@ type SSE struct {
 	httpClient     *http.Client
 	responses      map[int64]chan *JSONRPCResponse
 	mu             sync.RWMutex
-	done           chan struct{}
 	onNotification func(mcp.JSONRPCNotification)
 	notifyMu       sync.RWMutex
 	endpointChan   chan struct{}
 	headers        map[string]string
 	sseReadTimeout time.Duration
+
+	closed          chan struct{}
 }
 
 type ClientOption func(*SSE)
@@ -60,7 +61,7 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 		baseURL:        parsedURL,
 		httpClient:     &http.Client{},
 		responses:      make(map[int64]chan *JSONRPCResponse),
-		done:           make(chan struct{}),
+		closed:         make(chan struct{}),
 		endpointChan:   make(chan struct{}),
 		sseReadTimeout: 30 * time.Second,
 		headers:        make(map[string]string),
@@ -141,7 +142,7 @@ func (c *SSE) readSSE(reader io.ReadCloser) {
 					break
 				}
 				select {
-				case <-c.done:
+				case <-c.closed:
 					return
 				default:
 					fmt.Printf("SSE stream error: %v\n", err)
@@ -295,10 +296,10 @@ func (c *SSE) SendRequest(
 // Returns an error if the shutdown process fails.
 func (c *SSE) Close() error {
 	select {
-	case <-c.done:
+	case <-c.closed:
 		return nil // Already closed
 	default:
-		close(c.done)
+		close(c.closed)
 	}
 
 	// Clean up any pending responses
