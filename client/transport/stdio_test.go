@@ -180,7 +180,7 @@ func TestStdio(t *testing.T) {
 		// Send multiple requests concurrently
 		responses := make([]*JSONRPCResponse, numRequests)
 		errors := make([]error, numRequests)
-
+		mu := sync.Mutex{}
 		for i := 0; i < numRequests; i++ {
 			wg.Add(1)
 			go func(idx int) {
@@ -200,8 +200,10 @@ func TestStdio(t *testing.T) {
 				}
 
 				resp, err := stdio.SendRequest(ctx, request)
+				mu.Lock()
 				responses[idx] = resp
 				errors[idx] = err
+				mu.Unlock()
 			}(i)
 		}
 
