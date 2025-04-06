@@ -110,13 +110,14 @@ func (c *SSE) Start(ctx context.Context) error {
 	go c.readSSE(resp.Body)
 
 	// Wait for the endpoint to be received
-
+	timeout := time.NewTimer(30 * time.Second)
+	defer timeout.Stop()
 	select {
 	case <-c.endpointChan:
 		// Endpoint received, proceed
 	case <-ctx.Done():
 		return fmt.Errorf("context cancelled while waiting for endpoint")
-	case <-time.After(30 * time.Second): // Add a timeout
+	case <-timeout.C: // Add a timeout
 		cancel()
 		return fmt.Errorf("timeout waiting for endpoint")
 	}
