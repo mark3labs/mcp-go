@@ -12,6 +12,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// Client implements the MCP client.
 type Client struct {
 	transport transport.Interface
 
@@ -22,7 +23,7 @@ type Client struct {
 	capabilities  mcp.ServerCapabilities
 }
 
-// NewClient creates a new MCP client with the given transport layer.
+// NewClient creates a new MCP client with the given transport.
 // Usage:
 //
 //	client, err := NewClient(transport.NewStdio("mcp", nil, "--stdio"))
@@ -35,8 +36,8 @@ func NewClient(transport transport.Interface) *Client {
 	}
 }
 
-// Start initiates the transport connection to the server.
-// Returns an error if the transport is nil or if the connection fails.
+// Start initiates the connection to the server.
+// Must be called before using the client.
 func (c *Client) Start(ctx context.Context) error {
 	if c.transport == nil {
 		return fmt.Errorf("transport is nil")
@@ -103,6 +104,8 @@ func (c *Client) sendRequest(
 	return &response.Result, nil
 }
 
+// Initialize negotiates with the server.
+// Must be called after Start, and before any request methods.
 func (c *Client) Initialize(
 	ctx context.Context,
 	request mcp.InitializeRequest,
