@@ -34,7 +34,7 @@ type SSE struct {
 	sseReadTimeout time.Duration
 
 	started         atomic.Bool
-	closed          chan struct{}
+	closed          atomic.Bool
 	cancelSSEStream context.CancelFunc
 }
 
@@ -64,7 +64,6 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 		baseURL:        parsedURL,
 		httpClient:     &http.Client{},
 		responses:      make(map[int64]chan *JSONRPCResponse),
-		closed:         make(chan struct{}),
 		endpointChan:   make(chan struct{}),
 		sseReadTimeout: 30 * time.Second,
 		headers:        make(map[string]string),
@@ -91,9 +90,7 @@ func (c *SSE) Start(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL.String(), nil)
 
 	if err != nil {
-
 		return fmt.Errorf("failed to create request: %w", err)
-
 	}
 
 	req.Header.Set("Accept", "text/event-stream")
@@ -153,13 +150,10 @@ func (c *SSE) readSSE(reader io.ReadCloser) {
 					}
 					break
 				}
-				select {
-				case <-c.closed:
-					return
-				default:
+				if !c.closed.Load() {
 					fmt.Printf("SSE stream error: %v\n", err)
-					return
 				}
+				return
 			}
 
 			// Remove only newline markers
@@ -248,9 +242,11 @@ func (c *SSE) SendRequest(
 ) (*JSONRPCResponse, error) {
 
 	if !c.started.Load() {
-		return nil, fmt.Errorf("transport not started")
+		return nil, fmt.Errorf("transport not started yet")
 	}
-
+	if c.closed.Load() {
+		return nil, fmt.Errorf("transport has been closed")
+	}
 	if c.endpoint == nil {
 		return nil, fmt.Errorf("endpoint not received")
 	}
@@ -311,11 +307,8 @@ func (c *SSE) SendRequest(
 // Close shuts down the SSE client connection and cleans up any pending responses.
 // Returns an error if the shutdown process fails.
 func (c *SSE) Close() error {
-	select {
-	case <-c.closed:
+	if !c.closed.CompareAndSwap(false, true) {
 		return nil // Already closed
-	default:
-		close(c.closed)
 	}
 
 	if c.cancelSSEStream != nil {
