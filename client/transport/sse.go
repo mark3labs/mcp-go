@@ -33,6 +33,7 @@ type SSE struct {
 	sseReadTimeout time.Duration
 
 	closed          chan struct{}
+	cancelSSEStream context.CancelFunc
 }
 
 type ClientOption func(*SSE)
@@ -77,6 +78,9 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 // Start initiates the SSE connection to the server and waits for the endpoint information.
 // Returns an error if the connection fails or times out waiting for the endpoint.
 func (c *SSE) Start(ctx context.Context) error {
+
+	ctx, cancel := context.WithCancel(ctx)
+	c.cancelSSEStream = cancel
 
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL.String(), nil)
 
@@ -300,6 +304,12 @@ func (c *SSE) Close() error {
 		return nil // Already closed
 	default:
 		close(c.closed)
+	}
+
+	if c.cancelSSEStream != nil {
+		// It could stop the sse stream body, to quit the readSSE loop immediately
+		// Also, it could quit start() immediately if not receiving the endpoint
+		c.cancelSSEStream()
 	}
 
 	// Clean up any pending responses
