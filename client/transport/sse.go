@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -32,6 +33,7 @@ type SSE struct {
 	headers        map[string]string
 	sseReadTimeout time.Duration
 
+	started         atomic.Bool
 	closed          chan struct{}
 	cancelSSEStream context.CancelFunc
 }
@@ -79,6 +81,10 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 // Returns an error if the connection fails or times out waiting for the endpoint.
 func (c *SSE) Start(ctx context.Context) error {
 
+	if c.started.Load() {
+		return fmt.Errorf("has already started")
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancelSSEStream = cancel
 
@@ -118,6 +124,7 @@ func (c *SSE) Start(ctx context.Context) error {
 		return fmt.Errorf("timeout waiting for endpoint")
 	}
 
+	c.started.Store(true)
 	return nil
 }
 
@@ -239,6 +246,10 @@ func (c *SSE) SendRequest(
 	ctx context.Context,
 	request JSONRPCRequest,
 ) (*JSONRPCResponse, error) {
+
+	if !c.started.Load() {
+		return nil, fmt.Errorf("transport not started")
+	}
 
 	if c.endpoint == nil {
 		return nil, fmt.Errorf("endpoint not received")
