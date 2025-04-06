@@ -114,6 +114,7 @@ func (c *SSE) Start(ctx context.Context) error {
 	case <-ctx.Done():
 		return fmt.Errorf("context cancelled while waiting for endpoint")
 	case <-time.After(30 * time.Second): // Add a timeout
+		cancel()
 		return fmt.Errorf("timeout waiting for endpoint")
 	}
 
