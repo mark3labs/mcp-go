@@ -160,10 +160,6 @@ func (s *StdioServer) readNextLine(ctx context.Context, reader *bufio.Reader) (s
 	errChan := make(chan error, 1)
 	done := make(chan struct{})
 	defer close(done)
-	//defer func() {
-	//	close(readChan)
-	//	close(errChan)
-	//}()
 
 	go func() {
 		select {
