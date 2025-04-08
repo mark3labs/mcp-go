@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -273,24 +274,6 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
-
-
-import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"log"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
-	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
-
-	"github.com/google/uuid"
-	"github.com/mark3labs/mcp-go/mcp"
-)
 
 	messageEndpoint := fmt.Sprintf("%s?sessionId=%s", s.CompleteMessageEndpoint(), sessionID)
 
