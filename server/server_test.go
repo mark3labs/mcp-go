@@ -208,7 +208,7 @@ func TestMCPServer_Tools(t *testing.T) {
 		{
 			name: "SetTools sends single notifications/tools/list_changed per each active session",
 			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
-				for i := range 5 {
+				for i := 0; i < 5; i++ {
 					err := server.RegisterSession(context.TODO(), &fakeSession{
 						sessionID:           fmt.Sprintf("test%d", i),
 						notificationChannel: notificationChannel,
@@ -217,7 +217,7 @@ func TestMCPServer_Tools(t *testing.T) {
 					require.NoError(t, err)
 				}
 				// also let's register inactive sessions
-				for i := range 5 {
+				for i := 0; i < 5; i++ {
 					err := server.RegisterSession(context.TODO(), &fakeSession{
 						sessionID:           fmt.Sprintf("test%d", i+5),
 						notificationChannel: notificationChannel,
@@ -527,12 +527,12 @@ func TestMCPServer_SendNotificationToClient(t *testing.T) {
 				})
 			},
 			validate: func(t *testing.T, ctx context.Context, srv *MCPServer) {
-				for range 10 {
+				for i := 0; i < 10; i++ {
 					require.NoError(t, srv.SendNotificationToClient(ctx, "method", nil))
 				}
 				session, ok := ClientSessionFromContext(ctx).(fakeSession)
 				require.True(t, ok, "session not found or of incorrect type")
-				for range 10 {
+				for i := 0; i < 10; i++ {
 					select {
 					case record := <-session.notificationChannel:
 						assert.Equal(t, "method", record.Method)
