@@ -122,6 +122,7 @@ func main() {
         "1.0.0",
         server.WithResourceCapabilities(true, true),
         server.WithLogging(),
+        server.WithRecovery(),
     )
 
     // Add a calculator tool
