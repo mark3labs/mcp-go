@@ -30,7 +30,7 @@ func NewSSEMCPClient(baseURL string, options ...transport.ClientOption) (*Client
 
 // GetEndpoint returns the current endpoint URL for the SSE connection.
 //
-// Note: This method only works with SSE transport.
+// Note: This method only works with SSE transport, or it will panic.
 func GetEndpoint(c *Client) *url.URL {
 	t := c.GetTransport()
 	sse := t.(*transport.SSE)
