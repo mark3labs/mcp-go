@@ -275,28 +275,22 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}()
 
 
-	// Start keep alive : ping
-	if s.keepAlive {
-		go func() {
-			ticker := time.NewTicker(s.keepAliveInterval)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ticker.C:
-					select {
-					case session.eventQueue <- fmt.Sprintf(":ping - %s\n\n", time.Now().Format(time.RFC3339)):
-						// Ping sent successfully
-					default:
-						log.Printf("Keep-alive ping dropped: event queue is full")
-					}
-				case <-session.done:
-					return
-				case <-r.Context().Done():
-					return
-				}
-			}
-		}()
-	}
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/mark3labs/mcp-go/mcp"
+)
 
 	messageEndpoint := fmt.Sprintf("%s?sessionId=%s", s.CompleteMessageEndpoint(), sessionID)
 
