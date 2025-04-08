@@ -275,8 +275,6 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	messageEndpoint := fmt.Sprintf("%s?sessionId=%s", s.CompleteMessageEndpoint(), sessionID)
-
 	// Send the initial endpoint event
 	fmt.Fprintf(w, "event: endpoint\ndata: %s\r\n\r\n", s.GetMessageEndpointForClient(sessionID))
 	flusher.Flush()
