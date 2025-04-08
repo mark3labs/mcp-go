@@ -41,6 +41,9 @@ type PromptHandlerFunc func(ctx context.Context, request mcp.GetPromptRequest) (
 // ToolHandlerFunc handles tool calls with given arguments.
 type ToolHandlerFunc func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
 
+// ToolHandlerMiddleware is a middleware function that wraps a ToolHandlerFunc.
+type ToolHandlerMiddleware func(ToolHandlerFunc) ToolHandlerFunc
+
 // ServerTool combines a Tool with its ToolHandlerFunc.
 type ServerTool struct {
 	Tool    mcp.Tool
@@ -138,20 +141,21 @@ type NotificationHandlerFunc func(ctx context.Context, notification mcp.JSONRPCN
 // MCPServer implements a Model Control Protocol server that can handle various types of requests
 // including resources, prompts, and tools.
 type MCPServer struct {
-	mu                   sync.RWMutex // Add mutex for protecting shared resources
-	name                 string
-	version              string
-	instructions         string
-	resources            map[string]resourceEntry
-	resourceTemplates    map[string]resourceTemplateEntry
-	prompts              map[string]mcp.Prompt
-	promptHandlers       map[string]PromptHandlerFunc
-	tools                map[string]ServerTool
-	notificationHandlers map[string]NotificationHandlerFunc
-	capabilities         serverCapabilities
-	paginationLimit      *int
-	sessions             sync.Map
-	hooks                *Hooks
+	mu                     sync.RWMutex // Add mutex for protecting shared resources
+	name                   string
+	version                string
+	instructions           string
+	resources              map[string]resourceEntry
+	resourceTemplates      map[string]resourceTemplateEntry
+	prompts                map[string]mcp.Prompt
+	promptHandlers         map[string]PromptHandlerFunc
+	tools                  map[string]ServerTool
+	toolHandlerMiddlewares []ToolHandlerMiddleware
+	notificationHandlers   map[string]NotificationHandlerFunc
+	capabilities           serverCapabilities
+	paginationLimit        *int
+	sessions               sync.Map
+	hooks                  *Hooks
 }
 
 // serverKey is the context key for storing the server instance
@@ -289,6 +293,30 @@ func WithResourceCapabilities(subscribe, listChanged bool) ServerOption {
 			listChanged: listChanged,
 		}
 	}
+}
+
+// WithToolHandlerMiddleware allows adding a middleware for the
+// tool handler call chain.
+func WithToolHandlerMiddleware(
+	toolHandlerMiddleware ToolHandlerMiddleware,
+) ServerOption {
+	return func(s *MCPServer) {
+		s.toolHandlerMiddlewares = append(s.toolHandlerMiddlewares, toolHandlerMiddleware)
+	}
+}
+
+// WithRecovery adds a middleware that recovers from panics in tool handlers.
+func WithRecovery() ServerOption {
+	return WithToolHandlerMiddleware(func(next ToolHandlerFunc) ToolHandlerFunc {
+		return func(ctx context.Context, request mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("panic recovered in %s tool handler: %v", request.Params.Name, r)
+				}
+			}()
+			return next(ctx, request)
+		}
+	})
 }
 
 // WithHooks allows adding hooks that will be called before or after
@@ -801,7 +829,11 @@ func (s *MCPServer) handleToolCall(
 		}
 	}
 
-	result, err := tool.Handler(ctx, request)
+	finalHandler := tool.Handler
+	for i := len(s.toolHandlerMiddlewares) - 1; i >= 0; i-- {
+		finalHandler = s.toolHandlerMiddlewares[i](finalHandler)
+	}
+	result, err := finalHandler(ctx, request)
 	if err != nil {
 		return nil, &requestError{
 			id:   id,
