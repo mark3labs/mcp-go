@@ -523,6 +523,12 @@ initialization.
 Add the `Hooks` to the server at the time of creation using the
 `server.WithHooks` option.
 
+### Tool Handler Middleware
+
+Add middleware to tool call handlers using the `server.WithToolHandlerMiddleware` option. Middlewares can be registered on server creation and are applied on every tool call.
+
+A recovery middleware option is available to recover from panics in a tool call and can be added to the server with the `server.WithRecovery` option.
+
 ## Contributing
 
 <details>
