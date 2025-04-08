@@ -283,7 +283,12 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 			for {
 				select {
 				case <-ticker.C:
-					session.eventQueue <- fmt.Sprintf(":ping - %s\n\n", time.Now().Format(time.RFC3339))
+					select {
+					case session.eventQueue <- fmt.Sprintf(":ping - %s\n\n", time.Now().Format(time.RFC3339)):
+						// Ping sent successfully
+					default:
+						log.Printf("Keep-alive ping dropped: event queue is full")
+					}
 				case <-session.done:
 					return
 				case <-r.Context().Done():
