@@ -418,6 +418,81 @@ func TestSSEServer(t *testing.T) {
 		cancel()
 	})
 
+	t.Run("test useFullURLForMessageEndpoint", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0.0")
+		sseServer := NewSSEServer(mcpServer)
+
+		mux := http.NewServeMux()
+		mux.Handle("/mcp/", sseServer)
+
+		ts := httptest.NewServer(mux)
+		defer ts.Close()
+
+		sseServer.baseURL = ts.URL + "/mcp"
+		sseServer.useFullURLForMessageEndpoint = false
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/sse", sseServer.baseURL), nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Failed to connect to SSE endpoint: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", resp.StatusCode)
+		}
+
+		// Read the endpoint event
+		buf := make([]byte, 1024)
+		n, err := resp.Body.Read(buf)
+		if err != nil {
+			t.Fatalf("Failed to read SSE response: %v", err)
+		}
+
+		endpointEvent := string(buf[:n])
+		messageURL := strings.TrimSpace(
+			strings.Split(strings.Split(endpointEvent, "data: ")[1], "\n")[0],
+		)
+		if !strings.HasPrefix(messageURL, sseServer.messageEndpoint) {
+			t.Errorf("Expected messageURL to be %s, got %s", sseServer.messageEndpoint, messageURL)
+		}
+
+		// The messageURL should already be correct since we set the baseURL correctly
+		// Test message endpoint
+		initRequest := map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "initialize",
+			"params": map[string]interface{}{
+				"protocolVersion": "2024-11-05",
+				"clientInfo": map[string]interface{}{
+					"name":    "test-client",
+					"version": "1.0.0",
+				},
+			},
+		}
+		requestBody, _ := json.Marshal(initRequest)
+
+		resp, err = http.Post(sseServer.baseURL+messageURL, "application/json", bytes.NewBuffer(requestBody))
+		if err != nil {
+			t.Fatalf("Failed to send message: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusAccepted {
+			t.Errorf("Expected status 202, got %d", resp.StatusCode)
+		}
+
+		// Clean up SSE connection
+		cancel()
+	})
+
 	t.Run("works as http.Handler with custom basePath", func(t *testing.T) {
 		mcpServer := NewMCPServer("test", "1.0.0")
 		sseServer := NewSSEServer(mcpServer, WithBasePath("/mcp"))
@@ -621,11 +696,13 @@ func TestSSEServer(t *testing.T) {
 		baseURL := "http://localhost:8080/test"
 		messageEndpoint := "/message-test"
 		sseEndpoint := "/sse-test"
+		useFullURLForMessageEndpoint := false
 		srv := &http.Server{}
 		rands := []SSEOption{
 			WithBasePath(basePath),
 			WithBaseURL(baseURL),
 			WithMessageEndpoint(messageEndpoint),
+			WithUseFullURLForMessageEndpoint(useFullURLForMessageEndpoint),
 			WithSSEEndpoint(sseEndpoint),
 			WithHTTPServer(srv),
 		}
@@ -640,6 +717,9 @@ func TestSSEServer(t *testing.T) {
 
 			if sseServer.basePath != basePath {
 				t.Fatalf("basePath %v, got: %v", basePath, sseServer.basePath)
+			}
+			if sseServer.useFullURLForMessageEndpoint != useFullURLForMessageEndpoint {
+				t.Fatalf("useFullURLForMessageEndpoint %v, got: %v", useFullURLForMessageEndpoint, sseServer.useFullURLForMessageEndpoint)
 			}
 
 			if sseServer.baseURL != baseURL {

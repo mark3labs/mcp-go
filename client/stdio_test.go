@@ -2,10 +2,13 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -38,7 +41,23 @@ func TestStdioMCPClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
-	defer client.Close()
+	var logRecords []map[string]any
+	var logRecordsMu sync.RWMutex
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		dec := json.NewDecoder(client.Stderr())
+		for {
+			var record map[string]any
+			if err := dec.Decode(&record); err != nil {
+				return
+			}
+			logRecordsMu.Lock()
+			logRecords = append(logRecords, record)
+			logRecordsMu.Unlock()
+		}
+	}()
 
 	t.Run("Initialize", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -236,6 +255,27 @@ func TestStdioMCPClient(t *testing.T) {
 				"Expected 1 completion value, got %d",
 				len(result.Completion.Values),
 			)
+		}
+	})
+
+	client.Close()
+	wg.Wait()
+
+	t.Run("CheckLogs", func(t *testing.T) {
+		logRecordsMu.RLock()
+		defer logRecordsMu.RUnlock()
+
+		if len(logRecords) != 1 {
+			t.Errorf("Expected 1 log record, got %d", len(logRecords))
+			return
+		}
+
+		msg, ok := logRecords[0][slog.MessageKey].(string)
+		if !ok {
+			t.Errorf("Expected log record to have message key")
+		}
+		if msg != "launch successful" {
+			t.Errorf("Expected log message 'launch successful', got '%s'", msg)
 		}
 	})
 }

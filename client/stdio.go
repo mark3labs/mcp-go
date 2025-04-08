@@ -23,6 +23,7 @@ type StdioMCPClient struct {
 	cmd           *exec.Cmd
 	stdin         io.WriteCloser
 	stdout        *bufio.Reader
+	stderr        io.ReadCloser
 	requestID     atomic.Int64
 	responses     map[int64]chan RPCResponse
 	mu            sync.RWMutex
@@ -58,9 +59,15 @@ func NewStdioMCPClient(
 		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
+	}
+
 	client := &StdioMCPClient{
 		cmd:       cmd,
 		stdin:     stdin,
+		stderr:    stderr,
 		stdout:    bufio.NewReader(stdout),
 		responses: make(map[int64]chan RPCResponse),
 		done:      make(chan struct{}),
@@ -88,7 +95,16 @@ func (c *StdioMCPClient) Close() error {
 	if err := c.stdin.Close(); err != nil {
 		return fmt.Errorf("failed to close stdin: %w", err)
 	}
+	if err := c.stderr.Close(); err != nil {
+		return fmt.Errorf("failed to close stderr: %w", err)
+	}
 	return c.cmd.Wait()
+}
+
+// Stderr returns a reader for the stderr output of the subprocess.
+// This can be used to capture error messages or logs from the subprocess.
+func (c *StdioMCPClient) Stderr() io.Reader {
+	return c.stderr
 }
 
 // OnNotification registers a handler function to be called when notifications are received.

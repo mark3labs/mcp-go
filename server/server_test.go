@@ -178,7 +178,7 @@ func TestMCPServer_Tools(t *testing.T) {
 		{
 			name: "SetTools sends single notifications/tools/list_changed with one active session",
 			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
-				err := server.RegisterSession(&fakeSession{
+				err := server.RegisterSession(context.TODO(), &fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
 					initialized:         true,
@@ -209,7 +209,7 @@ func TestMCPServer_Tools(t *testing.T) {
 			name: "SetTools sends single notifications/tools/list_changed per each active session",
 			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
 				for i := range 5 {
-					err := server.RegisterSession(&fakeSession{
+					err := server.RegisterSession(context.TODO(), &fakeSession{
 						sessionID:           fmt.Sprintf("test%d", i),
 						notificationChannel: notificationChannel,
 						initialized:         true,
@@ -218,7 +218,7 @@ func TestMCPServer_Tools(t *testing.T) {
 				}
 				// also let's register inactive sessions
 				for i := range 5 {
-					err := server.RegisterSession(&fakeSession{
+					err := server.RegisterSession(context.TODO(), &fakeSession{
 						sessionID:           fmt.Sprintf("test%d", i+5),
 						notificationChannel: notificationChannel,
 						initialized:         false,
@@ -251,7 +251,7 @@ func TestMCPServer_Tools(t *testing.T) {
 		{
 			name: "AddTool sends multiple notifications/tools/list_changed",
 			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
-				err := server.RegisterSession(&fakeSession{
+				err := server.RegisterSession(context.TODO(), &fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
 					initialized:         true,
@@ -279,7 +279,7 @@ func TestMCPServer_Tools(t *testing.T) {
 		{
 			name: "DeleteTools sends single notifications/tools/list_changed",
 			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
-				err := server.RegisterSession(&fakeSession{
+				err := server.RegisterSession(context.TODO(), &fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
 					initialized:         true,
@@ -697,7 +697,7 @@ func TestMCPServer_PromptHandling(t *testing.T) {
 func TestMCPServer_HandleInvalidMessages(t *testing.T) {
 	var errs []error
 	hooks := &Hooks{}
-	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
+	hooks.AddOnError(func(ctx context.Context, id any, method mcp.MCPMethod, message any, err error) {
 		errs = append(errs, err)
 	})
 
@@ -774,13 +774,13 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 	var beforeResults []beforeResult
 	var afterResults []afterResult
 	hooks := &Hooks{}
-	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
+	hooks.AddOnError(func(ctx context.Context, id any, method mcp.MCPMethod, message any, err error) {
 		errs = append(errs, err)
 	})
-	hooks.AddBeforeAny(func(id any, method mcp.MCPMethod, message any) {
+	hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, message any) {
 		beforeResults = append(beforeResults, beforeResult{method, message})
 	})
-	hooks.AddOnSuccess(func(id any, method mcp.MCPMethod, message any, result any) {
+	hooks.AddOnSuccess(func(ctx context.Context, id any, method mcp.MCPMethod, message any, result any) {
 		afterResults = append(afterResults, afterResult{method, message, result})
 	})
 
@@ -888,7 +888,7 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
 	var errs []error
 	hooks := &Hooks{}
-	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
+	hooks.AddOnError(func(ctx context.Context, id any, method mcp.MCPMethod, message any, err error) {
 		errs = append(errs, err)
 	})
 	hooksOption := WithHooks(hooks)
@@ -1214,7 +1214,7 @@ func TestMCPServer_WithHooks(t *testing.T) {
 	hooks := &Hooks{}
 
 	// Register "any" hooks with type verification
-	hooks.AddBeforeAny(func(id any, method mcp.MCPMethod, message any) {
+	hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, message any) {
 		beforeAnyCount++
 		// Only collect ping messages for our test
 		if method == mcp.MethodPing {
@@ -1222,7 +1222,7 @@ func TestMCPServer_WithHooks(t *testing.T) {
 		}
 	})
 
-	hooks.AddOnSuccess(func(id any, method mcp.MCPMethod, message any, result any) {
+	hooks.AddOnSuccess(func(ctx context.Context, id any, method mcp.MCPMethod, message any, result any) {
 		onSuccessCount++
 		// Only collect ping responses for our test
 		if method == mcp.MethodPing {
@@ -1233,17 +1233,17 @@ func TestMCPServer_WithHooks(t *testing.T) {
 		}
 	})
 
-	hooks.AddOnError(func(id any, method mcp.MCPMethod, message any, err error) {
+	hooks.AddOnError(func(ctx context.Context, id any, method mcp.MCPMethod, message any, err error) {
 		onErrorCount++
 	})
 
 	// Register method-specific hooks with type verification
-	hooks.AddBeforePing(func(id any, message *mcp.PingRequest) {
+	hooks.AddBeforePing(func(ctx context.Context, id any, message *mcp.PingRequest) {
 		beforePingCount++
 		beforePingMessages = append(beforePingMessages, message)
 	})
 
-	hooks.AddAfterPing(func(id any, message *mcp.PingRequest, result *mcp.EmptyResult) {
+	hooks.AddAfterPing(func(ctx context.Context, id any, message *mcp.PingRequest, result *mcp.EmptyResult) {
 		afterPingCount++
 		afterPingData = append(afterPingData, struct {
 			msg *mcp.PingRequest
@@ -1251,11 +1251,11 @@ func TestMCPServer_WithHooks(t *testing.T) {
 		}{message, result})
 	})
 
-	hooks.AddBeforeListTools(func(id any, message *mcp.ListToolsRequest) {
+	hooks.AddBeforeListTools(func(ctx context.Context, id any, message *mcp.ListToolsRequest) {
 		beforeToolsCount++
 	})
 
-	hooks.AddAfterListTools(func(id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
+	hooks.AddAfterListTools(func(ctx context.Context, id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
 		afterToolsCount++
 	})
 

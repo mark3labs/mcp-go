@@ -252,6 +252,20 @@ func NewToolResultResource(
 	}
 }
 
+// NewToolResultError creates a new CallToolResult with an error message.
+// Any errors that originate from the tool SHOULD be reported inside the result object.
+func NewToolResultError(text string) *CallToolResult {
+	return &CallToolResult{
+		Content: []Content{
+			TextContent{
+				Type: "text",
+				Text: text,
+			},
+		},
+		IsError: true,
+	}
+}
+
 // NewListResourcesResult creates a new ListResourcesResult
 func NewListResourcesResult(
 	resources []Resource,

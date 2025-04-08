@@ -305,11 +305,7 @@ func WithBoolean(name string, opts ...PropertyOption) ToolOption {
 		// Remove required from property schema and add to InputSchema.required
 		if required, ok := schema["required"].(bool); ok && required {
 			delete(schema, "required")
-			if t.InputSchema.Required == nil {
-				t.InputSchema.Required = []string{name}
-			} else {
-				t.InputSchema.Required = append(t.InputSchema.Required, name)
-			}
+			t.InputSchema.Required = append(t.InputSchema.Required, name)
 		}
 
 		t.InputSchema.Properties[name] = schema
@@ -331,11 +327,7 @@ func WithNumber(name string, opts ...PropertyOption) ToolOption {
 		// Remove required from property schema and add to InputSchema.required
 		if required, ok := schema["required"].(bool); ok && required {
 			delete(schema, "required")
-			if t.InputSchema.Required == nil {
-				t.InputSchema.Required = []string{name}
-			} else {
-				t.InputSchema.Required = append(t.InputSchema.Required, name)
-			}
+			t.InputSchema.Required = append(t.InputSchema.Required, name)
 		}
 
 		t.InputSchema.Properties[name] = schema
@@ -357,11 +349,7 @@ func WithString(name string, opts ...PropertyOption) ToolOption {
 		// Remove required from property schema and add to InputSchema.required
 		if required, ok := schema["required"].(bool); ok && required {
 			delete(schema, "required")
-			if t.InputSchema.Required == nil {
-				t.InputSchema.Required = []string{name}
-			} else {
-				t.InputSchema.Required = append(t.InputSchema.Required, name)
-			}
+			t.InputSchema.Required = append(t.InputSchema.Required, name)
 		}
 
 		t.InputSchema.Properties[name] = schema
@@ -384,11 +372,7 @@ func WithObject(name string, opts ...PropertyOption) ToolOption {
 		// Remove required from property schema and add to InputSchema.required
 		if required, ok := schema["required"].(bool); ok && required {
 			delete(schema, "required")
-			if t.InputSchema.Required == nil {
-				t.InputSchema.Required = []string{name}
-			} else {
-				t.InputSchema.Required = append(t.InputSchema.Required, name)
-			}
+			t.InputSchema.Required = append(t.InputSchema.Required, name)
 		}
 
 		t.InputSchema.Properties[name] = schema
@@ -410,11 +394,7 @@ func WithArray(name string, opts ...PropertyOption) ToolOption {
 		// Remove required from property schema and add to InputSchema.required
 		if required, ok := schema["required"].(bool); ok && required {
 			delete(schema, "required")
-			if t.InputSchema.Required == nil {
-				t.InputSchema.Required = []string{name}
-			} else {
-				t.InputSchema.Required = append(t.InputSchema.Required, name)
-			}
+			t.InputSchema.Required = append(t.InputSchema.Required, name)
 		}
 
 		t.InputSchema.Properties[name] = schema

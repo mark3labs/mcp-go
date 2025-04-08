@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 )
 
@@ -25,6 +26,8 @@ type JSONRPCResponse struct {
 }
 
 func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{}))
+	logger.Info("launch successful")
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		var request JSONRPCRequest
