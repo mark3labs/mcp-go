@@ -739,4 +739,137 @@ func TestSSEServer(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("Can handle custom route parameters", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0.0",
+			WithResourceCapabilities(true, true),
+		)
+
+		// Add a test tool that uses route parameters
+		mcpServer.AddTool(mcp.NewTool("test_route"), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			channel := GetRouteParam(ctx, "channel")
+			if channel == "" {
+				return nil, fmt.Errorf("channel parameter not found")
+			}
+			return mcp.NewToolResultText(fmt.Sprintf("Channel: %s", channel)), nil
+		})
+
+		// Create SSE server with custom route pattern
+		testServer := NewTestServer(mcpServer,
+			WithSSEPattern("/:channel/sse"),
+			WithSSEContextFunc(func(ctx context.Context, r *http.Request) context.Context {
+				return ctx
+			}),
+		)
+		defer testServer.Close()
+
+		// Connect to SSE endpoint with channel parameter
+		sseResp, err := http.Get(fmt.Sprintf("%s/test-channel/sse", testServer.URL))
+		if err != nil {
+			t.Fatalf("Failed to connect to SSE endpoint: %v", err)
+		}
+		defer sseResp.Body.Close()
+
+		// Read the endpoint event
+		buf := make([]byte, 1024)
+		n, err := sseResp.Body.Read(buf)
+		if err != nil {
+			t.Fatalf("Failed to read SSE response: %v", err)
+		}
+
+		endpointEvent := string(buf[:n])
+		if !strings.Contains(endpointEvent, "event: endpoint") {
+			t.Fatalf("Expected endpoint event, got: %s", endpointEvent)
+		}
+
+		// Extract message endpoint URL
+		messageURL := strings.TrimSpace(
+			strings.Split(strings.Split(endpointEvent, "data: ")[1], "\n")[0],
+		)
+
+		// Send initialize request
+		initRequest := map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "initialize",
+			"params": map[string]interface{}{
+				"protocolVersion": "2024-11-05",
+				"clientInfo": map[string]interface{}{
+					"name":    "test-client",
+					"version": "1.0.0",
+				},
+			},
+		}
+
+		requestBody, err := json.Marshal(initRequest)
+		if err != nil {
+			t.Fatalf("Failed to marshal request: %v", err)
+		}
+
+		resp, err := http.Post(
+			messageURL,
+			"application/json",
+			bytes.NewBuffer(requestBody),
+		)
+		if err != nil {
+			t.Fatalf("Failed to send message: %v", err)
+		}
+		defer resp.Body.Close()
+
+		// Call the test tool
+		toolRequest := map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      2,
+			"method":  "tools/call",
+			"params": map[string]interface{}{
+				"name": "test_route",
+			},
+		}
+
+		requestBody, err = json.Marshal(toolRequest)
+		if err != nil {
+			t.Fatalf("Failed to marshal tool request: %v", err)
+		}
+
+		resp, err = http.Post(
+			messageURL,
+			"application/json",
+			bytes.NewBuffer(requestBody),
+		)
+		if err != nil {
+			t.Fatalf("Failed to send tool request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		// Verify response
+		var response map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+
+		result, ok := response["result"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("Expected result object, got: %v", response)
+		}
+
+		content, ok := result["content"].([]interface{})
+		if !ok || len(content) == 0 {
+			t.Fatalf("Expected content array, got: %v", result)
+		}
+
+		textObj, ok := content[0].(map[string]interface{})
+		if !ok {
+			t.Fatalf("Expected text object, got: %v", content[0])
+		}
+
+		text, ok := textObj["text"].(string)
+		if !ok {
+			t.Fatalf("Expected text string, got: %v", textObj["text"])
+		}
+
+		expectedText := "Channel: test-channel"
+		if text != expectedText {
+			t.Errorf("Expected text %q, got %q", expectedText, text)
+		}
+	})
 }
