@@ -26,9 +26,10 @@ type Client struct {
 // NewClient creates a new MCP client with the given transport.
 // Usage:
 //
-//	client, err := NewClient(transport.NewStdio("mcp", nil, "--stdio"))
+//	stdio := transport.NewStdio("./mcp_server", nil, "xxx")
+//	client, err := NewClient(stdio)
 //	if err != nil {
-//		log.Fatalf("Failed to create client: %v", err)
+//	    log.Fatalf("Failed to create client: %v", err)
 //	}
 func NewClient(transport transport.Interface) *Client {
 	return &Client{
