@@ -170,9 +170,11 @@ func NewTestServer(server *MCPServer, opts ...SSEOption) *httptest.Server {
 // Start begins serving SSE connections on the specified address.
 // It sets up HTTP handlers for SSE and message endpoints.
 func (s *SSEServer) Start(addr string) error {
-	s.srv = &http.Server{
-		Addr:    addr,
-		Handler: s,
+	if s.srv == nil {
+		s.srv = &http.Server{
+			Addr:    addr,
+			Handler: s,
+		}
 	}
 
 	return s.srv.ListenAndServe()
