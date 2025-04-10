@@ -18,7 +18,7 @@ import (
 
 const (
 	readyTimeout      = 5 * time.Second
-	readyCheckTimeout = 100 * time.Millisecond
+	readyCheckTimeout = 3 * time.Second
 )
 
 // StdioMCPClient implements the MCPClient interface using stdio communication.
