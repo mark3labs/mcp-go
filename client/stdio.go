@@ -26,18 +26,19 @@ const (
 // using JSON-RPC messages. The client handles message routing between requests and
 // responses, and supports asynchronous notifications.
 type StdioMCPClient struct {
-	cmd           *exec.Cmd
-	stdin         io.WriteCloser
-	stdout        *bufio.Reader
-	stderr        io.ReadCloser
-	requestID     atomic.Int64
-	responses     map[int64]chan RPCResponse
-	mu            sync.RWMutex
-	done          chan struct{}
-	initialized   bool
-	notifications []func(mcp.JSONRPCNotification)
-	notifyMu      sync.RWMutex
-	capabilities  mcp.ServerCapabilities
+	cmd            *exec.Cmd
+	stdin          io.WriteCloser
+	stdout         *bufio.Reader
+	stderr         io.ReadCloser
+	requestID      atomic.Int64
+	responses      map[int64]chan RPCResponse
+	mu             sync.RWMutex
+	done           chan struct{}
+	initialized    bool
+	notifications  []func(mcp.JSONRPCNotification)
+	notifyMu       sync.RWMutex
+	capabilities   mcp.ServerCapabilities
+	processExitErr chan error
 }
 
 // NewStdioMCPClient creates a new stdio-based MCP client that communicates with a subprocess.
@@ -71,24 +72,21 @@ func NewStdioMCPClient(
 	}
 
 	client := &StdioMCPClient{
-		cmd:       cmd,
-		stdin:     stdin,
-		stderr:    stderr,
-		stdout:    bufio.NewReader(stdout),
-		responses: make(map[int64]chan RPCResponse),
-		done:      make(chan struct{}),
+		cmd:            cmd,
+		stdin:          stdin,
+		stderr:         stderr,
+		stdout:         bufio.NewReader(stdout),
+		responses:      make(map[int64]chan RPCResponse),
+		done:           make(chan struct{}),
+		processExitErr: make(chan error, 1),
 	}
 
 	if err := cmd.Start(); err != nil {
-		_ = stdin.Close()
-		_ = stdout.Close()
-		_ = stderr.Close()
 		return nil, fmt.Errorf("failed to start command: %w", err)
 	}
 
-	waitErrChain := make(chan error, 1)
 	go func() {
-		waitErrChain <- cmd.Wait()
+		client.processExitErr <- cmd.Wait()
 	}()
 
 	// Start reading responses in a goroutine and wait for it to be ready
@@ -98,7 +96,7 @@ func NewStdioMCPClient(
 		client.readResponses()
 	}()
 
-	if err := waitUntilReadyOrExit(ready, waitErrChain, readyTimeout); err != nil {
+	if err := waitUntilReadyOrExit(ready, client.processExitErr, readyTimeout); err != nil {
 		return nil, err
 	}
 	return client, nil
@@ -130,7 +128,7 @@ func (c *StdioMCPClient) Close() error {
 	if err := c.stderr.Close(); err != nil {
 		return fmt.Errorf("failed to close stderr: %w", err)
 	}
-	return c.cmd.Wait()
+	return <-c.processExitErr
 }
 
 // Stderr returns a reader for the stderr output of the subprocess.
