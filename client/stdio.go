@@ -11,8 +11,14 @@ import (
 	"os/exec"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+)
+
+const (
+	readyTimeout      = 5 * time.Second
+	readyCheckTimeout = 100 * time.Millisecond
 )
 
 // StdioMCPClient implements the MCPClient interface using stdio communication.
@@ -74,8 +80,16 @@ func NewStdioMCPClient(
 	}
 
 	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		_ = stdout.Close()
+		_ = stderr.Close()
 		return nil, fmt.Errorf("failed to start command: %w", err)
 	}
+
+	waitErrChain := make(chan error, 1)
+	go func() {
+		waitErrChain <- cmd.Wait()
+	}()
 
 	// Start reading responses in a goroutine and wait for it to be ready
 	ready := make(chan struct{})
@@ -83,9 +97,27 @@ func NewStdioMCPClient(
 		close(ready)
 		client.readResponses()
 	}()
-	<-ready
 
+	if err := waitUntilReadyOrExit(ready, waitErrChain, readyTimeout); err != nil {
+		return nil, err
+	}
 	return client, nil
+}
+
+func waitUntilReadyOrExit(ready <-chan struct{}, waitErr <-chan error, timeout time.Duration) error {
+	select {
+	case err := <-waitErr:
+		return fmt.Errorf("process exited early: %w", err)
+	case <-ready:
+		select {
+		case err := <-waitErr:
+			return fmt.Errorf("process exited after ready: %w", err)
+		case <-time.After(readyCheckTimeout):
+			return nil
+		}
+	case <-time.After(timeout):
+		return errors.New("timeout waiting for process ready")
+	}
 }
 
 // Close shuts down the stdio client, closing the stdin pipe and waiting for the subprocess to exit.
