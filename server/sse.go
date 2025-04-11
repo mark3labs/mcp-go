@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -75,16 +76,18 @@ var _ ClientSession = (*sseSession)(nil)
 // SSEServer implements a Server-Sent Events (SSE) based MCP server.
 // It provides real-time communication capabilities over HTTP using the SSE protocol.
 type SSEServer struct {
-	server                       *MCPServer
-	baseURL                      string
-	basePath                     string
-	messageEndpoint              string
-	useFullURLForMessageEndpoint bool
-	sseEndpoint                  string
-	ssePattern                   string
-	sessions                     sync.Map
-	srv                          *http.Server
-	contextFunc                  SSEContextFunc
+	server          *MCPServer
+	baseURL         string
+	basePath        string
+  useFullURLForMessageEndpoint bool
+	messageEndpoint string
+	sseEndpoint     string
+  ssePattern      string
+	sessions        sync.Map
+	srv             *http.Server
+	contextFunc     SSEContextFun
+	keepAlive         bool
+	keepAliveInterval time.Duration
 }
 
 // SSEOption defines a function type for configuring SSEServer
@@ -161,8 +164,20 @@ func WithHTTPServer(srv *http.Server) SSEOption {
 	}
 }
 
+func WithKeepAliveInterval(keepAliveInterval time.Duration) SSEOption {
+	return func(s *SSEServer) {
+		s.keepAlive = true
+		s.keepAliveInterval = keepAliveInterval
+	}
+}
+
+func WithKeepAlive(keepAlive bool) SSEOption {
+	return func(s *SSEServer) {
+		s.keepAlive = keepAlive
+	}
+}
+
 // WithSSEContextFunc sets a function that will be called to customise the context
-// to the server using the incoming request.
 func WithSSEContextFunc(fn SSEContextFunc) SSEOption {
 	return func(s *SSEServer) {
 		s.contextFunc = fn
@@ -172,10 +187,12 @@ func WithSSEContextFunc(fn SSEContextFunc) SSEOption {
 // NewSSEServer creates a new SSE server instance with the given MCP server and options.
 func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
 	s := &SSEServer{
-		server:                       server,
-		sseEndpoint:                  "/sse",
-		messageEndpoint:              "/message",
-		useFullURLForMessageEndpoint: true,
+		server:            server,
+		sseEndpoint:       "/sse",
+		messageEndpoint:   "/message",
+    useFullURLForMessageEndpoint: true,
+		keepAlive:         false,
+		keepAliveInterval: 10 * time.Second,
 	}
 
 	// Apply all options
@@ -294,6 +311,26 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+
+	// Start keep alive : ping
+	if s.keepAlive {
+		go func() {
+			ticker := time.NewTicker(s.keepAliveInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					//: ping - 2025-03-27 07:44:38.682659+00:00
+					session.eventQueue <- fmt.Sprintf(":ping - %s\n\n", time.Now().Format(time.RFC3339))
+				case <-session.done:
+					return
+				case <-r.Context().Done():
+					return
+				}
+			}
+		}()
+	}
+
 
 	// Send the initial endpoint event
 	fmt.Fprintf(w, "event: endpoint\ndata: %s\r\n\r\n", s.GetMessageEndpointForClient(sessionID))
