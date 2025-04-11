@@ -89,6 +89,11 @@ func (c *SSEMCPClient) Start(ctx context.Context) error {
 		req.Header.Set(k, v)
 	}
 
+	// set custom http headers
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
+	}
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to connect to SSE stream: %w", err)
