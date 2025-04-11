@@ -10,14 +10,14 @@ import (
 
 type JSONRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      int64           `json:"id"`
+	ID      *int64          `json:"id,omitempty"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params"`
 }
 
 type JSONRPCResponse struct {
 	JSONRPC string      `json:"jsonrpc"`
-	ID      int64       `json:"id"`
+	ID      *int64      `json:"id,omitempty"`
 	Result  interface{} `json:"result,omitempty"`
 	Error   *struct {
 		Code    int    `json:"code"`
@@ -137,6 +137,30 @@ func handleRequest(request JSONRPCRequest) JSONRPCResponse {
 			"completion": map[string]interface{}{
 				"values": []string{"test completion"},
 			},
+		}
+
+	// Debug methods for testing transport.
+	case "debug/echo":
+		response.Result = request
+	case "debug/echo_notification":
+		response.Result = request
+
+		// send notification to client
+		responseBytes, _ := json.Marshal(map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "debug/test",
+			"params":  request,
+		})
+		fmt.Fprintf(os.Stdout, "%s\n", responseBytes)
+
+	case "debug/echo_error_string":
+		all, _ := json.Marshal(request)
+		response.Error = &struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		}{
+			Code:    -32601,
+			Message: string(all),
 		}
 	default:
 		response.Error = &struct {
