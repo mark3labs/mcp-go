@@ -752,6 +752,7 @@ func (s *MCPServer) handleListTools(
 	request mcp.ListToolsRequest,
 ) (*mcp.ListToolsResult, *requestError) {
 	s.mu.RLock()
+	defer s.mu.RUnlock()
 	tools := make([]mcp.Tool, 0, len(s.tools))
 
 	// Get all tool names for consistent ordering
