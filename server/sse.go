@@ -274,6 +274,24 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	// Start keep alive : ping
+	if s.keepAlive {
+		go func() {
+			ticker := time.NewTicker(s.keepAliveInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					session.eventQueue <- fmt.Sprintf("event: ping\ndata: %s\n\n", time.Now().Format(time.RFC3339))
+				case <-session.done:
+					return
+				case <-r.Context().Done():
+					return
+				}
+			}
+		}()
+	}
+
 	// Send the initial endpoint event
 	fmt.Fprintf(w, "event: endpoint\ndata: %s\r\n\r\n", s.GetMessageEndpointForClient(sessionID))
 	flusher.Flush()
