@@ -371,6 +371,9 @@ type ProgressNotification struct {
 		Progress float64 `json:"progress"`
 		// Total number of items to process (or total progress required), if known.
 		Total float64 `json:"total,omitempty"`
+		// Message related to progress. This should provide relevant human-readable
+		// progress information.
+		Message string `json:"message,omitempty"`
 	} `json:"params"`
 }
 

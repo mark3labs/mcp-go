@@ -369,6 +369,7 @@ func handleLongRunningOperationTool(
 					"progress":      i,
 					"total":         int(steps),
 					"progressToken": progressToken,
+					"message":       fmt.Sprintf("Server progress %v%%", int(float64(i)*100/steps)),
 				},
 			)
 		}
