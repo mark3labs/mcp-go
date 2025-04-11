@@ -85,7 +85,7 @@ type SSEServer struct {
   ssePattern      string
 	sessions        sync.Map
 	srv             *http.Server
-	contextFunc     SSEContextFun
+	contextFunc     SSEContextFunc
 	keepAlive         bool
 	keepAliveInterval time.Duration
 }
