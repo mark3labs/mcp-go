@@ -287,6 +287,18 @@ func DefaultBool(value bool) PropertyOption {
 }
 
 //
+// Array Property Options
+//
+
+// DefaultArray sets the default value for an array property.
+// This value will be used if the property is not explicitly provided.
+func DefaultArray[T any](value []T) PropertyOption {
+	return func(schema map[string]interface{}) {
+		schema["default"] = value
+	}
+}
+
+//
 // Property Type Helpers
 //
 
