@@ -73,27 +73,27 @@ func ClientSessionFromContext(ctx context.Context) ClientSession {
 	return nil
 }
 
-// UnparseableMessageError is attached to the RequestError when json.Unmarshal
+// UnparsableMessageError is attached to the RequestError when json.Unmarshal
 // fails on the request.
-type UnparseableMessageError struct {
+type UnparsableMessageError struct {
 	message json.RawMessage
 	method  mcp.MCPMethod
 	err     error
 }
 
-func (e *UnparseableMessageError) Error() string {
-	return fmt.Sprintf("unparseable %s request: %s", e.method, e.err)
+func (e *UnparsableMessageError) Error() string {
+	return fmt.Sprintf("unparsable %s request: %s", e.method, e.err)
 }
 
-func (e *UnparseableMessageError) Unwrap() error {
+func (e *UnparsableMessageError) Unwrap() error {
 	return e.err
 }
 
-func (e *UnparseableMessageError) GetMessage() json.RawMessage {
+func (e *UnparsableMessageError) GetMessage() json.RawMessage {
 	return e.message
 }
 
-func (e *UnparseableMessageError) GetMethod() mcp.MCPMethod {
+func (e *UnparsableMessageError) GetMethod() mcp.MCPMethod {
 	return e.method
 }
 
