@@ -308,6 +308,8 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			close(session.done)
 			return
+		case <-session.done:
+			return
 		}
 	}
 }
