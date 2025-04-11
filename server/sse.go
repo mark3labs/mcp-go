@@ -282,7 +282,8 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 			for {
 				select {
 				case <-ticker.C:
-					session.eventQueue <- fmt.Sprintf("event: ping\ndata: %s\n\n", time.Now().Format(time.RFC3339))
+					//: ping - 2025-03-27 07:44:38.682659+00:00
+					session.eventQueue <- fmt.Sprintf(":ping - %s\n\n", time.Now().Format(time.RFC3339))
 				case <-session.done:
 					return
 				case <-r.Context().Done():
@@ -291,6 +292,7 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 	}
+
 
 	// Send the initial endpoint event
 	fmt.Fprintf(w, "event: endpoint\ndata: %s\r\n\r\n", s.GetMessageEndpointForClient(sessionID))
