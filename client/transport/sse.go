@@ -31,7 +31,6 @@ type SSE struct {
 	notifyMu       sync.RWMutex
 	endpointChan   chan struct{}
 	headers        map[string]string
-	sseReadTimeout time.Duration
 
 	started         atomic.Bool
 	closed          atomic.Bool
@@ -46,12 +45,6 @@ func WithHeaders(headers map[string]string) ClientOption {
 	}
 }
 
-func WithSSEReadTimeout(timeout time.Duration) ClientOption {
-	return func(sc *SSE) {
-		sc.sseReadTimeout = timeout
-	}
-}
-
 // NewSSE creates a new SSE-based MCP client with the given base URL.
 // Returns an error if the URL is invalid.
 func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
@@ -61,12 +54,11 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 	}
 
 	smc := &SSE{
-		baseURL:        parsedURL,
-		httpClient:     &http.Client{},
-		responses:      make(map[int64]chan *JSONRPCResponse),
-		endpointChan:   make(chan struct{}),
-		sseReadTimeout: 30 * time.Second,
-		headers:        make(map[string]string),
+		baseURL:      parsedURL,
+		httpClient:   &http.Client{},
+		responses:    make(map[int64]chan *JSONRPCResponse),
+		endpointChan: make(chan struct{}),
+		headers:      make(map[string]string),
 	}
 
 	for _, opt := range options {
@@ -139,46 +131,40 @@ func (c *SSE) readSSE(reader io.ReadCloser) {
 	br := bufio.NewReader(reader)
 	var event, data string
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.sseReadTimeout)
-	defer cancel()
-
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			line, err := br.ReadString('\n')
-			if err != nil {
-				if err == io.EOF {
-					// Process any pending event before exit
-					if event != "" && data != "" {
-						c.handleSSEEvent(event, data)
-					}
-					break
-				}
-				if !c.closed.Load() {
-					fmt.Printf("SSE stream error: %v\n", err)
-				}
-				return
-			}
-
-			// Remove only newline markers
-			line = strings.TrimRight(line, "\r\n")
-			if line == "" {
-				// Empty line means end of event
+		// when close or start's ctx cancel, the reader will be closed
+		// and the for loop will break.
+		line, err := br.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				// Process any pending event before exit
 				if event != "" && data != "" {
 					c.handleSSEEvent(event, data)
-					event = ""
-					data = ""
 				}
-				continue
+				break
 			}
+			if !c.closed.Load() {
+				fmt.Printf("SSE stream error: %v\n", err)
+			}
+			return
+		}
 
-			if strings.HasPrefix(line, "event:") {
-				event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-			} else if strings.HasPrefix(line, "data:") {
-				data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		// Remove only newline markers
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			// Empty line means end of event
+			if event != "" && data != "" {
+				c.handleSSEEvent(event, data)
+				event = ""
+				data = ""
 			}
+			continue
+		}
+
+		if strings.HasPrefix(line, "event:") {
+			event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+		} else if strings.HasPrefix(line, "data:") {
+			data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		}
 	}
 }
