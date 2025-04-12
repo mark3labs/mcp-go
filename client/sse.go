@@ -55,8 +55,16 @@ func NewSSEMCPClient(baseURL string, options ...ClientOption) (*SSEMCPClient, er
 	}
 
 	smc := &SSEMCPClient{
-		baseURL:      parsedURL,
-		httpClient:   &http.Client{},
+		baseURL: parsedURL,
+		//httpClient:   &http.Client{},
+		httpClient: &http.Client{
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+				DisableKeepAlives:   false,
+			},
+		},
 		responses:    make(map[int64]chan RPCResponse),
 		done:         make(chan struct{}),
 		endpointChan: make(chan struct{}),
