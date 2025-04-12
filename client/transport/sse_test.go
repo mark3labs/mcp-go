@@ -21,24 +21,35 @@ import (
 func startMockSSEEchoServer() (string, func()) {
 	// Create handler for SSE endpoint
 	var sseWriter http.ResponseWriter
-	var flush http.Flusher
+	var flush func()
 	var mu sync.Mutex
 	sseHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Setup SSE headers
-		defer fmt.Printf("SSEHandler ends: %v\n", r.Context().Err())
+		defer func() {
+			mu.Lock() // for passing race test
+			sseWriter = nil
+			flush = nil
+			mu.Unlock()
+			fmt.Printf("SSEHandler ends: %v\n", r.Context().Err())
+		}()
+
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
 			return
 		}
+
 		mu.Lock()
 		sseWriter = w
-		flush = flusher
+		flush = flusher.Flush
 		mu.Unlock()
+
 		// Send initial endpoint event with message endpoint URL
+		mu.Lock()
 		fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", "/message")
 		flusher.Flush()
+		mu.Unlock()
 
 		// Keep connection open
 		<-r.Context().Done()
@@ -81,7 +92,7 @@ func startMockSSEEchoServer() (string, func()) {
 			})
 			mu.Lock()
 			fmt.Fprintf(sseWriter, "event: message\ndata: %s\n\n", responseBytes)
-			flush.Flush()
+			flush()
 			mu.Unlock()
 		case "debug/echo_error_string":
 			data, _ := json.Marshal(request)
@@ -101,7 +112,7 @@ func startMockSSEEchoServer() (string, func()) {
 			defer mu.Unlock()
 			if sseWriter != nil && flush != nil {
 				fmt.Fprintf(sseWriter, "event: message\ndata: %s\n\n", data)
-				flush.Flush()
+				flush()
 			}
 		}()
 
