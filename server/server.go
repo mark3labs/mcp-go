@@ -226,7 +226,6 @@ func (s *MCPServer) sendNotificationToAllClients(
 		},
 	}
 
-	// Use a read lock on sessionsMu to ensure sessions map safety
 	s.sessions.Range(func(k, v any) bool {
 		if session, ok := v.(ClientSession); ok && session.Initialized() {
 			select {
