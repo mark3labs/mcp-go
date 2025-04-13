@@ -407,6 +407,18 @@ func (s *MCPServer) AddResource(
 	}
 }
 
+// RemoveResource removes a resource from the server
+func (s *MCPServer) RemoveResource(uri string) {
+	s.mu.Lock()
+	delete(s.resources, uri)
+	s.mu.Unlock()
+
+	// Send notification to all initialized sessions if listChanged capability is enabled
+	if s.capabilities.resources != nil && s.capabilities.resources.listChanged {
+		s.sendNotificationToAllClients("resources/list_changed", nil)
+	}
+}
+
 // AddResourceTemplate registers a new resource template and its handler
 func (s *MCPServer) AddResourceTemplate(
 	template mcp.ResourceTemplate,
