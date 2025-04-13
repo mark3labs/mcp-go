@@ -854,7 +854,6 @@ func (s *MCPServer) handleToolCall(
 
 	finalHandler := tool.Handler
 
-	// Read middlewares with a read lock - ok if not completely up-to-date
 	s.middlewareMu.RLock()
 	mw := s.toolHandlerMiddlewares
 	s.middlewareMu.RUnlock()
