@@ -41,6 +41,9 @@ type SSEMCPClient struct {
 
 type ClientOption func(*SSEMCPClient)
 
+// WithHeaders sets custom HTTP headers that will be included in all requests made by the client.
+// This is particularly useful for authentication (e.g., bearer tokens, API keys) and other
+// custom header requirements.
 func WithHeaders(headers map[string]string) ClientOption {
 	return func(sc *SSEMCPClient) {
 		sc.headers = headers
@@ -96,6 +99,11 @@ func (c *SSEMCPClient) Start(ctx context.Context) error {
 
 	// set custom http headers
 	for k, v := range c.headers {
+		// Skip standard headers that should not be overridden
+		switch k {
+		case "Accept", "Cache-Control", "Connection", "Content-Type":
+			continue
+		}
 		req.Header.Set(k, v)
 	}
 
@@ -308,6 +316,11 @@ func (c *SSEMCPClient) sendRequest(
 	req.Header.Set("Content-Type", "application/json")
 	// set custom http headers
 	for k, v := range c.headers {
+		// Skip standard headers that should not be overridden
+		switch k {
+		case "Accept", "Cache-Control", "Connection", "Content-Type":
+			continue
+		}
 		req.Header.Set(k, v)
 	}
 
@@ -396,6 +409,10 @@ func (c *SSEMCPClient) Initialize(
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	// set custom http headers
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
