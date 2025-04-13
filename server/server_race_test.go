@@ -9,6 +9,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestRaceConditions attempts to trigger race conditions by performing
@@ -75,11 +76,15 @@ func TestRaceConditions(t *testing.T) {
 	})
 
 	runConcurrentOperation(&wg, testDuration, "list-tools", func() {
-		srv.handleListTools(ctx, "123", mcp.ListToolsRequest{})
+		result, reqErr := srv.handleListTools(ctx, "123", mcp.ListToolsRequest{})
+		require.Nil(t, reqErr, "List tools operation should not return an error")
+		require.NotNil(t, result, "List tools result should not be nil")
 	})
 
 	runConcurrentOperation(&wg, testDuration, "list-prompts", func() {
-		srv.handleListPrompts(ctx, "123", mcp.ListPromptsRequest{})
+		result, reqErr := srv.handleListPrompts(ctx, "123", mcp.ListPromptsRequest{})
+		require.Nil(t, reqErr, "List prompts operation should not return an error")
+		require.NotNil(t, result, "List prompts result should not be nil")
 	})
 
 	// Add a persistent tool for testing tool calls
@@ -94,7 +99,9 @@ func TestRaceConditions(t *testing.T) {
 		req := mcp.CallToolRequest{}
 		req.Params.Name = "persistent-tool"
 		req.Params.Arguments = map[string]interface{}{"param": "test"}
-		srv.handleToolCall(ctx, "123", req)
+		result, reqErr := srv.handleToolCall(ctx, "123", req)
+		require.Nil(t, reqErr, "Tool call operation should not return an error")
+		require.NotNil(t, result, "Tool call result should not be nil")
 	})
 
 	runConcurrentOperation(&wg, testDuration, "add-resources", func() {
@@ -165,7 +172,9 @@ func TestConcurrentPromptAdd(t *testing.T) {
 
 	// Try to get the prompt - this would deadlock with a single mutex
 	go func() {
-		srv.handleGetPrompt(ctx, "123", req)
+		result, reqErr := srv.handleGetPrompt(ctx, "123", req)
+		require.Nil(t, reqErr, "Get prompt operation should not return an error")
+		require.NotNil(t, result, "Get prompt result should not be nil")
 		close(done)
 	}()
 
