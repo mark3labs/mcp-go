@@ -142,12 +142,12 @@ type NotificationHandlerFunc func(ctx context.Context, notification mcp.JSONRPCN
 // including resources, prompts, and tools.
 type MCPServer struct {
 	// Separate mutexes for different resource types
-	resourcesMu            sync.RWMutex // For protecting resources and resourceTemplates
-	promptsMu              sync.RWMutex // For protecting prompts and promptHandlers
-	toolsMu                sync.RWMutex // For protecting tools
-	middlewareMu           sync.RWMutex // For protecting toolHandlerMiddlewares
-	notificationHandlersMu sync.RWMutex // For protecting notificationHandlers
-	capabilitiesMu         sync.RWMutex // For protecting capabilities
+	resourcesMu            sync.RWMutex
+	promptsMu              sync.RWMutex
+	toolsMu                sync.RWMutex
+	middlewareMu           sync.RWMutex
+	notificationHandlersMu sync.RWMutex
+	capabilitiesMu         sync.RWMutex
 
 	name                   string
 	version                string
