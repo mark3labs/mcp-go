@@ -58,6 +58,15 @@ func WithSSEReadTimeout(timeout time.Duration) ClientOption {
 
 // NewSSEMCPClient creates a new SSE-based MCP client with the given base URL.
 // Returns an error if the URL is invalid.
+// Example:
+//
+//	// Create a client with authentication headers
+//	client, err := NewSSEMCPClient(
+//	    "https://mcp.example.com",
+//	    WithHeaders(map[string]string{
+//	        "Authorization": "Bearer your-token-here",
+//	    }),
+//	)
 func NewSSEMCPClient(baseURL string, options ...ClientOption) (*SSEMCPClient, error) {
 	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
@@ -97,7 +106,7 @@ func (c *SSEMCPClient) Start(ctx context.Context) error {
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("Connection", "keep-alive")
 
-	// set custom http headers
+	// Set custom http headers
 	for k, v := range c.headers {
 		// Skip standard headers that should not be overridden
 		switch k {
@@ -314,7 +323,7 @@ func (c *SSEMCPClient) sendRequest(
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	// set custom http headers
+	// Set custom http headers
 	for k, v := range c.headers {
 		// Skip standard headers that should not be overridden
 		switch k {
@@ -409,8 +418,13 @@ func (c *SSEMCPClient) Initialize(
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	// set custom http headers
+	// Set custom http headers
 	for k, v := range c.headers {
+		// Skip standard headers that should not be overridden
+		switch k {
+		case "Accept", "Cache-Control", "Connection", "Content-Type":
+			continue
+		}
 		req.Header.Set(k, v)
 	}
 
