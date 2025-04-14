@@ -33,6 +33,20 @@ type Stdio struct {
 	notifyMu       sync.RWMutex
 }
 
+// NewIO returns a new stdio-based transport using existing input, output, and
+// logging streams instead of spawning a subprocess.
+// This is useful for testing and simulating client behavior.
+func NewIO(input io.Reader, output io.WriteCloser, logging io.ReadCloser) *Stdio {
+	return &Stdio{
+		stdin:  output,
+		stdout: bufio.NewReader(input),
+		stderr: logging,
+
+		responses: make(map[int64]chan *JSONRPCResponse),
+		done:      make(chan struct{}),
+	}
+}
+
 // NewStdio creates a new stdio transport to communicate with a subprocess.
 // It launches the specified command with given arguments and sets up stdin/stdout pipes for communication.
 // Returns an error if the subprocess cannot be started or the pipes cannot be created.
@@ -55,6 +69,26 @@ func NewStdio(
 }
 
 func (c *Stdio) Start(ctx context.Context) error {
+	if err := c.startProc(ctx); err != nil {
+		return err
+	}
+
+	ready := make(chan struct{})
+	go func() {
+		close(ready)
+		c.readResponses()
+	}()
+	<-ready
+
+	return nil
+}
+
+// startProc spawns a new process running c.command.
+func (c *Stdio) startProc(ctx context.Context) error {
+	if c.command == "" {
+		return nil
+	}
+
 	cmd := exec.CommandContext(ctx, c.command, c.args...)
 
 	mergedEnv := os.Environ()
@@ -86,14 +120,6 @@ func (c *Stdio) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to start command: %w", err)
 	}
 
-	// Start reading responses in a goroutine and wait for it to be ready
-	ready := make(chan struct{})
-	go func() {
-		close(ready)
-		c.readResponses()
-	}()
-	<-ready
-
 	return nil
 }
 
@@ -107,7 +133,12 @@ func (c *Stdio) Close() error {
 	if err := c.stderr.Close(); err != nil {
 		return fmt.Errorf("failed to close stderr: %w", err)
 	}
-	return c.cmd.Wait()
+
+	if c.cmd != nil {
+		return c.cmd.Wait()
+	}
+
+	return nil
 }
 
 // OnNotification registers a handler function to be called when notifications are received.
