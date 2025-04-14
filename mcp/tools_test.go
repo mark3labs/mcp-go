@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -239,4 +240,71 @@ func TestToolWithObjectAndArray(t *testing.T) {
 	required, ok := schema["required"].([]interface{})
 	assert.True(t, ok)
 	assert.Contains(t, required, "books")
+}
+
+func TestParseToolCallToolRequest(t *testing.T) {
+	request := CallToolRequest{}
+	request.Params.Name = "test-tool"
+	request.Params.Arguments = map[string]interface{}{
+		"bool_value":    "true",
+		"int64_value":   "123456789",
+		"int32_value":   "123456789",
+		"int16_value":   "123456789",
+		"int8_value":    "123456789",
+		"int_value":     "123456789",
+		"uint_value":    "123456789",
+		"uint64_value":  "123456789",
+		"uint32_value":  "123456789",
+		"uint16_value":  "123456789",
+		"uint8_value":   "123456789",
+		"float32_value": "3.14",
+		"float64_value": "3.1415926",
+		"string_value":  "hello",
+	}
+	param1 := ParseBoolean(request, "bool_value", false)
+	assert.Equal(t, fmt.Sprintf("%T", param1), "bool")
+
+	param2 := ParseInt64(request, "int64_value", 1)
+	assert.Equal(t, fmt.Sprintf("%T", param2), "int64")
+
+	param3 := ParseInt32(request, "int32_value", 1)
+	assert.Equal(t, fmt.Sprintf("%T", param3), "int32")
+
+	param4 := ParseInt16(request, "int16_value", 1)
+	assert.Equal(t, fmt.Sprintf("%T", param4), "int16")
+
+	param5 := ParseInt8(request, "int8_value", 1)
+	assert.Equal(t, fmt.Sprintf("%T", param5), "int8")
+
+	param6 := ParseInt(request, "int_value", 1)
+	assert.Equal(t, fmt.Sprintf("%T", param6), "int")
+
+	param7 := ParseUInt(request, "uint_value", 1)
+	assert.Equal(t, fmt.Sprintf("%T", param7), "uint")
+
+	param8 := ParseUInt64(request, "uint64_value", 1)
+	assert.Equal(t, fmt.Sprintf("%T", param8), "uint64")
+
+	param9 := ParseUInt32(request, "uint32_value", 1)
+	assert.Equal(t, fmt.Sprintf("%T", param9), "uint32")
+
+	param10 := ParseUInt16(request, "uint16_value", 1)
+	assert.Equal(t, fmt.Sprintf("%T", param10), "uint16")
+
+	param11 := ParseUInt8(request, "uint8_value", 1)
+	assert.Equal(t, fmt.Sprintf("%T", param11), "uint8")
+
+	param12 := ParseFloat32(request, "float32_value", 1.0)
+	assert.Equal(t, fmt.Sprintf("%T", param12), "float32")
+
+	param13 := ParseFloat64(request, "float64_value", 1.0)
+	assert.Equal(t, fmt.Sprintf("%T", param13), "float64")
+
+	param14 := ParseString(request, "string_value", "")
+	assert.Equal(t, fmt.Sprintf("%T", param14), "string")
+
+	param15 := ParseInt64(request, "string_value", 1)
+	assert.Equal(t, fmt.Sprintf("%T", param15), "int64")
+	t.Logf("param15 type: %T,value:%v", param15, param15)
+
 }

@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/spf13/cast"
 )
 
 // ClientRequest types
@@ -593,4 +594,87 @@ func ParseReadResourceResult(rawMessage *json.RawMessage) (*ReadResourceResult, 
 	}
 
 	return &result, nil
+}
+
+func ParseArgument(request CallToolRequest, key string, defaultVal any) any {
+	if _, ok := request.Params.Arguments[key]; !ok {
+		return defaultVal
+	} else {
+		return request.Params.Arguments[key]
+	}
+}
+
+func ParseBoolean(request CallToolRequest, key string, defaultValue bool) bool {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToBool(v)
+}
+
+func ParseInt64(request CallToolRequest, key string, defaultValue int64) int64 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToInt64(v)
+}
+
+func ParseInt32(request CallToolRequest, key string, defaultValue int32) int32 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToInt32(v)
+}
+
+func ParseInt16(request CallToolRequest, key string, defaultValue int16) int16 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToInt16(v)
+}
+
+func ParseInt8(request CallToolRequest, key string, defaultValue int8) int8 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToInt8(v)
+}
+
+func ParseInt(request CallToolRequest, key string, defaultValue int) int {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToInt(v)
+}
+
+func ParseUInt(request CallToolRequest, key string, defaultValue uint) uint {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToUint(v)
+}
+
+func ParseUInt64(request CallToolRequest, key string, defaultValue uint64) uint64 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToUint64(v)
+}
+
+func ParseUInt32(request CallToolRequest, key string, defaultValue uint32) uint32 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToUint32(v)
+}
+
+func ParseUInt16(request CallToolRequest, key string, defaultValue uint16) uint16 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToUint16(v)
+}
+
+func ParseUInt8(request CallToolRequest, key string, defaultValue uint8) uint8 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToUint8(v)
+}
+
+func ParseFloat32(request CallToolRequest, key string, defaultValue float32) float32 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToFloat32(v)
+}
+
+func ParseFloat64(request CallToolRequest, key string, defaultValue float64) float64 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToFloat64(v)
+}
+
+func ParseString(request CallToolRequest, key string, defaultValue string) string {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToString(v)
+}
+
+func ParseStringMap(request CallToolRequest, key string, defaultValue map[string]any) map[string]any {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToStringMap(v)
 }
