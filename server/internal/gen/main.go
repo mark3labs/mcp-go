@@ -28,21 +28,19 @@ func RenderTemplateToFile(templateContent, destPath, fileName string, data any) 
 	}
 	tempFilePath := tempFile.Name()
 	defer os.Remove(tempFilePath) // Clean up temp file when done
+	defer tempFile.Close()
 
 	// Parse and execute template to temp file
 	tmpl, err := template.New(fileName).Funcs(template.FuncMap{
 		"toLower": strings.ToLower,
 	}).Parse(templateContent)
 	if err != nil {
-		tempFile.Close()
 		return err
 	}
 
 	if err := tmpl.Execute(tempFile, data); err != nil {
-		tempFile.Close()
 		return err
 	}
-	tempFile.Close()
 
 	// Run goimports on the temp file
 	cmd := exec.Command("go", "run", "golang.org/x/tools/cmd/goimports@latest", "-w", tempFilePath)
