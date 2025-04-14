@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -55,12 +56,15 @@ type SSEServer struct {
 	server                       *MCPServer
 	baseURL                      string
 	basePath                     string
-	messageEndpoint              string
 	useFullURLForMessageEndpoint bool
+	messageEndpoint              string
 	sseEndpoint                  string
 	sessions                     sync.Map
 	srv                          *http.Server
 	contextFunc                  SSEContextFunc
+
+	keepAlive         bool
+	keepAliveInterval time.Duration
 }
 
 // SSEOption defines a function type for configuring SSEServer
@@ -130,6 +134,19 @@ func WithHTTPServer(srv *http.Server) SSEOption {
 	}
 }
 
+func WithKeepAliveInterval(keepAliveInterval time.Duration) SSEOption {
+	return func(s *SSEServer) {
+		s.keepAlive = true
+		s.keepAliveInterval = keepAliveInterval
+	}
+}
+
+func WithKeepAlive(keepAlive bool) SSEOption {
+	return func(s *SSEServer) {
+		s.keepAlive = keepAlive
+	}
+}
+
 // WithContextFunc sets a function that will be called to customise the context
 // to the server using the incoming request.
 func WithSSEContextFunc(fn SSEContextFunc) SSEOption {
@@ -145,6 +162,8 @@ func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
 		sseEndpoint:                  "/sse",
 		messageEndpoint:              "/message",
 		useFullURLForMessageEndpoint: true,
+		keepAlive:                    false,
+		keepAliveInterval:            10 * time.Second,
 	}
 
 	// Apply all options
@@ -254,6 +273,25 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+
+	// Start keep alive : ping
+	if s.keepAlive {
+		go func() {
+			ticker := time.NewTicker(s.keepAliveInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					//: ping - 2025-03-27 07:44:38.682659+00:00
+					session.eventQueue <- fmt.Sprintf(":ping - %s\n\n", time.Now().Format(time.RFC3339))
+				case <-session.done:
+					return
+				case <-r.Context().Done():
+					return
+				}
+			}
+		}()
+	}
 
 	// Send the initial endpoint event
 	fmt.Fprintf(w, "event: endpoint\ndata: %s\r\n\r\n", s.GetMessageEndpointForClient(sessionID))

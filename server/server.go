@@ -3,9 +3,11 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"sync"
 
@@ -38,6 +40,9 @@ type PromptHandlerFunc func(ctx context.Context, request mcp.GetPromptRequest) (
 
 // ToolHandlerFunc handles tool calls with given arguments.
 type ToolHandlerFunc func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+
+// ToolHandlerMiddleware is a middleware function that wraps a ToolHandlerFunc.
+type ToolHandlerMiddleware func(ToolHandlerFunc) ToolHandlerFunc
 
 // ServerTool combines a Tool with its ToolHandlerFunc.
 type ServerTool struct {
@@ -136,19 +141,21 @@ type NotificationHandlerFunc func(ctx context.Context, notification mcp.JSONRPCN
 // MCPServer implements a Model Control Protocol server that can handle various types of requests
 // including resources, prompts, and tools.
 type MCPServer struct {
-	mu                   sync.RWMutex // Add mutex for protecting shared resources
-	name                 string
-	version              string
-	instructions         string
-	resources            map[string]resourceEntry
-	resourceTemplates    map[string]resourceTemplateEntry
-	prompts              map[string]mcp.Prompt
-	promptHandlers       map[string]PromptHandlerFunc
-	tools                map[string]ServerTool
-	notificationHandlers map[string]NotificationHandlerFunc
-	capabilities         serverCapabilities
-	sessions             sync.Map
-	hooks                *Hooks
+	mu                     sync.RWMutex // Add mutex for protecting shared resources
+	name                   string
+	version                string
+	instructions           string
+	resources              map[string]resourceEntry
+	resourceTemplates      map[string]resourceTemplateEntry
+	prompts                map[string]mcp.Prompt
+	promptHandlers         map[string]PromptHandlerFunc
+	tools                  map[string]ServerTool
+	toolHandlerMiddlewares []ToolHandlerMiddleware
+	notificationHandlers   map[string]NotificationHandlerFunc
+	capabilities           serverCapabilities
+	paginationLimit        *int
+	sessions               sync.Map
+	hooks                  *Hooks
 }
 
 // serverKey is the context key for storing the server instance
@@ -160,6 +167,13 @@ func ServerFromContext(ctx context.Context) *MCPServer {
 		return srv
 	}
 	return nil
+}
+
+// WithPaginationLimit sets the pagination limit for the server.
+func WithPaginationLimit(limit int) ServerOption {
+	return func(s *MCPServer) {
+		s.paginationLimit = &limit
+	}
 }
 
 // WithContext sets the current client session and returns the provided context
@@ -279,6 +293,30 @@ func WithResourceCapabilities(subscribe, listChanged bool) ServerOption {
 			listChanged: listChanged,
 		}
 	}
+}
+
+// WithToolHandlerMiddleware allows adding a middleware for the
+// tool handler call chain.
+func WithToolHandlerMiddleware(
+	toolHandlerMiddleware ToolHandlerMiddleware,
+) ServerOption {
+	return func(s *MCPServer) {
+		s.toolHandlerMiddlewares = append(s.toolHandlerMiddlewares, toolHandlerMiddleware)
+	}
+}
+
+// WithRecovery adds a middleware that recovers from panics in tool handlers.
+func WithRecovery() ServerOption {
+	return WithToolHandlerMiddleware(func(next ToolHandlerFunc) ToolHandlerFunc {
+		return func(ctx context.Context, request mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf("panic recovered in %s tool handler: %v", request.Params.Name, r)
+				}
+			}()
+			return next(ctx, request)
+		}
+	})
 }
 
 // WithHooks allows adding hooks that will be called before or after
@@ -510,6 +548,42 @@ func (s *MCPServer) handlePing(
 	return &mcp.EmptyResult{}, nil
 }
 
+func listByPagination[T any](
+	ctx context.Context,
+	s *MCPServer,
+	cursor mcp.Cursor,
+	allElements []T,
+) ([]T, mcp.Cursor, error) {
+	startPos := 0
+	if cursor != "" {
+		c, err := base64.StdEncoding.DecodeString(string(cursor))
+		if err != nil {
+			return nil, "", err
+		}
+		cString := string(c)
+		startPos = sort.Search(len(allElements), func(i int) bool {
+			return reflect.ValueOf(allElements[i]).FieldByName("Name").String() > cString
+		})
+	}
+	endPos := len(allElements)
+	if s.paginationLimit != nil {
+		if len(allElements) > startPos+*s.paginationLimit {
+			endPos = startPos + *s.paginationLimit
+		}
+	}
+	elementsToReturn := allElements[startPos:endPos]
+	// set the next cursor
+	nextCursor := func() mcp.Cursor {
+		if s.paginationLimit != nil && len(elementsToReturn) >= *s.paginationLimit {
+			nc := reflect.ValueOf(elementsToReturn[len(elementsToReturn)-1]).FieldByName("Name").String()
+			toString := base64.StdEncoding.EncodeToString([]byte(nc))
+			return mcp.Cursor(toString)
+		}
+		return ""
+	}()
+	return elementsToReturn, nextCursor, nil
+}
+
 func (s *MCPServer) handleListResources(
 	ctx context.Context,
 	id interface{},
@@ -522,11 +596,23 @@ func (s *MCPServer) handleListResources(
 	}
 	s.mu.RUnlock()
 
-	result := mcp.ListResourcesResult{
-		Resources: resources,
+	// Sort the resources by name
+	sort.Slice(resources, func(i, j int) bool {
+		return resources[i].Name < resources[j].Name
+	})
+	resourcesToReturn, nextCursor, err := listByPagination[mcp.Resource](ctx, s, request.Params.Cursor, resources)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  err,
+		}
 	}
-	if request.Params.Cursor != "" {
-		result.NextCursor = "" // Handle pagination if needed
+	result := mcp.ListResourcesResult{
+		Resources: resourcesToReturn,
+		PaginatedResult: mcp.PaginatedResult{
+			NextCursor: nextCursor,
+		},
 	}
 	return &result, nil
 }
@@ -542,12 +628,22 @@ func (s *MCPServer) handleListResourceTemplates(
 		templates = append(templates, entry.template)
 	}
 	s.mu.RUnlock()
-
-	result := mcp.ListResourceTemplatesResult{
-		ResourceTemplates: templates,
+	sort.Slice(templates, func(i, j int) bool {
+		return templates[i].Name < templates[j].Name
+	})
+	templatesToReturn, nextCursor, err := listByPagination[mcp.ResourceTemplate](ctx, s, request.Params.Cursor, templates)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  err,
+		}
 	}
-	if request.Params.Cursor != "" {
-		result.NextCursor = "" // Handle pagination if needed
+	result := mcp.ListResourceTemplatesResult{
+		ResourceTemplates: templatesToReturn,
+		PaginatedResult: mcp.PaginatedResult{
+			NextCursor: nextCursor,
+		},
 	}
 	return &result, nil
 }
@@ -628,11 +724,23 @@ func (s *MCPServer) handleListPrompts(
 	}
 	s.mu.RUnlock()
 
-	result := mcp.ListPromptsResult{
-		Prompts: prompts,
+	// sort prompts by name
+	sort.Slice(prompts, func(i, j int) bool {
+		return prompts[i].Name < prompts[j].Name
+	})
+	promptsToReturn, nextCursor, err := listByPagination[mcp.Prompt](ctx, s, request.Params.Cursor, prompts)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  err,
+		}
 	}
-	if request.Params.Cursor != "" {
-		result.NextCursor = "" // Handle pagination if needed
+	result := mcp.ListPromptsResult{
+		Prompts: promptsToReturn,
+		PaginatedResult: mcp.PaginatedResult{
+			NextCursor: nextCursor,
+		},
 	}
 	return &result, nil
 }
@@ -687,16 +795,23 @@ func (s *MCPServer) handleListTools(
 	for _, name := range toolNames {
 		tools = append(tools, s.tools[name].Tool)
 	}
-	s.mu.RUnlock()
-
-	result := mcp.ListToolsResult{
-		Tools: tools,
+	toolsToReturn, nextCursor, err := listByPagination[mcp.Tool](ctx, s, request.Params.Cursor, tools)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  err,
+		}
 	}
-	if request.Params.Cursor != "" {
-		result.NextCursor = "" // Handle pagination if needed
+	result := mcp.ListToolsResult{
+		Tools: toolsToReturn,
+		PaginatedResult: mcp.PaginatedResult{
+			NextCursor: nextCursor,
+		},
 	}
 	return &result, nil
 }
+
 func (s *MCPServer) handleToolCall(
 	ctx context.Context,
 	id interface{},
@@ -714,7 +829,11 @@ func (s *MCPServer) handleToolCall(
 		}
 	}
 
-	result, err := tool.Handler(ctx, request)
+	finalHandler := tool.Handler
+	for i := len(s.toolHandlerMiddlewares) - 1; i >= 0; i-- {
+		finalHandler = s.toolHandlerMiddlewares[i](finalHandler)
+	}
+	result, err := finalHandler(ctx, request)
 	if err != nil {
 		return nil, &requestError{
 			id:   id,
