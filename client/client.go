@@ -108,13 +108,17 @@ type MCPClient interface {
 
 	// OnNotification registers a handler for notifications
 	OnNotification(handler func(notification mcp.JSONRPCNotification))
+}
+
+type mcpClient interface {
+	MCPClient
 
 	sendRequest(ctx context.Context, method string, params interface{}) (*json.RawMessage, error)
 }
 
 func listByPage[T any](
 	ctx context.Context,
-	client MCPClient,
+	client mcpClient,
 	request mcp.PaginatedRequest,
 	method string,
 ) (*T, error) {
