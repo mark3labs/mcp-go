@@ -370,20 +370,20 @@ s.AddTool(httpTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp
         req, err = http.NewRequest(method, url, nil)
     }
     if err != nil {
-        return mcp.NewToolResultErrorWithErr("unable to create request", err), nil
+        return mcp.NewToolResultErrorFromErr("unable to create request", err), nil
     }
 
     client := &http.Client{}
     resp, err := client.Do(req)
     if err != nil {
-        return mcp.NewToolResultErrorWithErr("unable to execute request", err), nil
+        return mcp.NewToolResultErrorFromErr("unable to execute request", err), nil
     }
     defer resp.Body.Close()
 
     // Return response
     respBody, err := io.ReadAll(resp.Body)
     if err != nil {
-        return mcp.NewToolResultErrorWithErr("unable to read request response", err), nil
+        return mcp.NewToolResultErrorFromErr("unable to read request response", err), nil
     }
 
     return mcp.NewToolResultText(fmt.Sprintf("Status: %d\nBody: %s", resp.StatusCode, string(respBody))), nil
