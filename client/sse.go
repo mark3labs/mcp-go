@@ -71,6 +71,8 @@ func NewSSEMCPClient(baseURL string, options ...ClientOption) (*SSEMCPClient, er
 		headers:      make(map[string]string),
 	}
 
+	fmt.Println("\nCreated ssemcpclient\n")
+
 	for _, opt := range options {
 		opt(smc)
 	}
@@ -310,11 +312,17 @@ func (c *SSEMCPClient) sendRequest(
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+
+	// drain any io
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
 
 	if resp.StatusCode != http.StatusOK &&
 		resp.StatusCode != http.StatusAccepted {
-		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf(
 			"request failed with status %d: %s",
 			resp.StatusCode,
