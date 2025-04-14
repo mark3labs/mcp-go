@@ -71,8 +71,6 @@ func NewSSEMCPClient(baseURL string, options ...ClientOption) (*SSEMCPClient, er
 		headers:      make(map[string]string),
 	}
 
-	fmt.Println("\nCreated ssemcpclient\n")
-
 	for _, opt := range options {
 		opt(smc)
 	}
