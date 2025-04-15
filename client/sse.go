@@ -305,7 +305,8 @@ func (c *SSEMCPClient) sendRequest(
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK &&
-		resp.StatusCode != http.StatusAccepted {
+		resp.StatusCode != http.StatusAccepted &&
+		resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf(
 			"request failed with status %d: %s",
