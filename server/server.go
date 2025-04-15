@@ -795,6 +795,8 @@ func (s *MCPServer) handleListTools(
 	for _, name := range toolNames {
 		tools = append(tools, s.tools[name].Tool)
 	}
+	s.mu.RUnlock()
+
 	toolsToReturn, nextCursor, err := listByPagination[mcp.Tool](ctx, s, request.Params.Cursor, tools)
 	if err != nil {
 		return nil, &requestError{
