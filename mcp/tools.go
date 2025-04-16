@@ -75,6 +75,8 @@ type Tool struct {
 	InputSchema ToolInputSchema `json:"inputSchema"`
 	// Alternative to InputSchema - allows arbitrary JSON Schema to be provided
 	RawInputSchema json.RawMessage `json:"-"` // Hide this from JSON marshaling
+	// Optional properties describing tool behavior
+	Annotations ToolAnnotation `json:"annotations"`
 }
 
 // MarshalJSON implements the json.Marshaler interface for Tool.
@@ -109,6 +111,19 @@ type ToolInputSchema struct {
 	Required   []string               `json:"required,omitempty"`
 }
 
+type ToolAnnotation struct {
+	// Human-readable title for the tool
+	Title string `json:"title,omitempty"`
+	// If true, the tool does not modify its environment
+	ReadOnlyHint bool `json:"readOnlyHint,omitempty"`
+	// If true, the tool may perform destructive updates
+	DestructiveHint bool `json:"destructiveHint,omitempty"`
+	// If true, repeated calls with same args have no additional effect
+	IdempotentHint bool `json:"idempotentHint,omitempty"`
+	// If true, tool interacts with external entities
+	OpenWorldHint bool `json:"openWorldHint,omitempty"`
+}
+
 // ToolOption is a function that configures a Tool.
 // It provides a flexible way to set various properties of a Tool using the functional options pattern.
 type ToolOption func(*Tool)
@@ -131,6 +146,13 @@ func NewTool(name string, opts ...ToolOption) Tool {
 			Type:       "object",
 			Properties: make(map[string]interface{}),
 			Required:   nil, // Will be omitted from JSON if empty
+		},
+		Annotations: ToolAnnotation{
+			Title:           "",
+			ReadOnlyHint:    false,
+			DestructiveHint: true,
+			IdempotentHint:  false,
+			OpenWorldHint:   true,
 		},
 	}
 
@@ -163,6 +185,12 @@ func NewToolWithRawSchema(name, description string, schema json.RawMessage) Tool
 func WithDescription(description string) ToolOption {
 	return func(t *Tool) {
 		t.Description = description
+	}
+}
+
+func WithToolAnnotation(annotation ToolAnnotation) ToolOption {
+	return func(t *Tool) {
+		t.Annotations = annotation
 	}
 }
 
