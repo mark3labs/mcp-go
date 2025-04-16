@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -1305,6 +1306,7 @@ var globalHookCtx = &globalHookContext{
 }
 
 type globalHookContext struct {
+	mu                sync.Mutex
 	BeforeAnyMessages []any
 	BeforeAnyCount    *int
 	OnSuccessCount    *int
@@ -1368,14 +1370,23 @@ func (*globalHook) OnError(ctx context.Context, hookContext HookContext, id any,
 }
 
 func (e *globalHook) BeforeInitialize(ctx context.Context, hookContext HookContext, id any, message *mcp.InitializeRequest) {
+	hookContext.(*globalHookContext).mu.Lock()
+	defer hookContext.(*globalHookContext).mu.Unlock()
+
 	e.BeforeAny(ctx, hookContext, id, mcp.MethodInitialize, message)
 }
 
 func (e *globalHook) AfterInitialize(ctx context.Context, hookContext HookContext, id any, message *mcp.InitializeRequest, result *mcp.InitializeResult) {
+	hookContext.(*globalHookContext).mu.Lock()
+	defer hookContext.(*globalHookContext).mu.Unlock()
+
 	e.OnSuccess(ctx, hookContext, id, mcp.MethodInitialize, message, result)
 }
 
 func (e *globalHook) BeforePing(ctx context.Context, hookContext HookContext, id any, message *mcp.PingRequest) {
+	hookContext.(*globalHookContext).mu.Lock()
+	defer hookContext.(*globalHookContext).mu.Unlock()
+
 	e.BeforeAny(ctx, hookContext, id, mcp.MethodPing, message)
 
 	newCount := (*hookContext.(*globalHookContext).BeforePingCount) + 1
@@ -1385,6 +1396,9 @@ func (e *globalHook) BeforePing(ctx context.Context, hookContext HookContext, id
 }
 
 func (e *globalHook) AfterPing(ctx context.Context, hookContext HookContext, id any, message *mcp.PingRequest, result *mcp.EmptyResult) {
+	hookContext.(*globalHookContext).mu.Lock()
+	defer hookContext.(*globalHookContext).mu.Unlock()
+
 	e.OnSuccess(ctx, hookContext, id, mcp.MethodPing, message, result)
 
 	newCount := (*hookContext.(*globalHookContext).AfterPingCount) + 1
@@ -1427,6 +1441,9 @@ func (*globalHook) AfterGetPrompt(ctx context.Context, hookContext HookContext, 
 }
 
 func (e *globalHook) BeforeListTools(ctx context.Context, hookContext HookContext, id any, message *mcp.ListToolsRequest) {
+	hookContext.(*globalHookContext).mu.Lock()
+	defer hookContext.(*globalHookContext).mu.Unlock()
+
 	e.BeforeAny(ctx, hookContext, id, mcp.MethodToolsList, message)
 
 	newCount := (*hookContext.(*globalHookContext).BeforeToolsCount) + 1
@@ -1434,6 +1451,9 @@ func (e *globalHook) BeforeListTools(ctx context.Context, hookContext HookContex
 }
 
 func (e *globalHook) AfterListTools(ctx context.Context, hookContext HookContext, id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
+	hookContext.(*globalHookContext).mu.Lock()
+	defer hookContext.(*globalHookContext).mu.Unlock()
+
 	e.OnSuccess(ctx, hookContext, id, mcp.MethodToolsList, message, result)
 
 	newCount := (*hookContext.(*globalHookContext).AfterToolsCount) + 1
@@ -1441,10 +1461,16 @@ func (e *globalHook) AfterListTools(ctx context.Context, hookContext HookContext
 }
 
 func (e *globalHook) BeforeCallTool(ctx context.Context, hookContext HookContext, id any, message *mcp.CallToolRequest) {
+	hookContext.(*globalHookContext).mu.Lock()
+	defer hookContext.(*globalHookContext).mu.Unlock()
+
 	e.BeforeAny(ctx, hookContext, id, mcp.MethodToolsCall, message)
 }
 
 func (e *globalHook) AfterCallTool(ctx context.Context, hookContext HookContext, id any, message *mcp.CallToolRequest, result *mcp.CallToolResult) {
+	hookContext.(*globalHookContext).mu.Lock()
+	defer hookContext.(*globalHookContext).mu.Unlock()
+
 	e.OnSuccess(ctx, hookContext, id, mcp.MethodToolsCall, message, result)
 }
 
