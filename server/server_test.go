@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -430,7 +431,7 @@ func TestMCPServer_HandleValidMessages(t *testing.T) {
 
 func TestMCPServer_HandlePagination(t *testing.T) {
 	server := createTestServer()
-
+	cursor := base64.StdEncoding.EncodeToString([]byte("My Resource"))
 	tests := []struct {
 		name     string
 		message  string
@@ -438,14 +439,14 @@ func TestMCPServer_HandlePagination(t *testing.T) {
 	}{
 		{
 			name: "List resources with cursor",
-			message: `{
+			message: fmt.Sprintf(`{
                     "jsonrpc": "2.0",
                     "id": 1,
                     "method": "resources/list",
                     "params": {
-                        "cursor": "test-cursor"
+                        "cursor": "%s"
                     }
-                }`,
+                }`, cursor),
 			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
 				resp, ok := response.(mcp.JSONRPCResponse)
 				assert.True(t, ok)
@@ -799,6 +800,13 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 			Type:       "object",
 			Properties: map[string]interface{}{},
 		},
+		Annotations: mcp.ToolAnnotation{
+			Title:           "test-tool",
+			ReadOnlyHint:    true,
+			DestructiveHint: false,
+			IdempotentHint:  false,
+			OpenWorldHint:   false,
+		},
 	}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return &mcp.CallToolResult{}, nil
 	})
@@ -1125,6 +1133,7 @@ func createTestServer() *MCPServer {
 	server := NewMCPServer("test-server", "1.0.0",
 		WithResourceCapabilities(true, true),
 		WithPromptCapabilities(true),
+		WithPaginationLimit(2),
 	)
 
 	server.AddResource(
@@ -1342,4 +1351,37 @@ func TestMCPServer_WithHooks(t *testing.T) {
 	require.Len(t, onSuccessData, 1, "Expected one OnSuccess Ping message/result pair")
 	assert.IsType(t, afterPingData[0].msg, onSuccessData[0].msg, "OnSuccess message should be same type as AfterPing message")
 	assert.IsType(t, afterPingData[0].res, onSuccessData[0].res, "OnSuccess result should be same type as AfterPing result")
+}
+
+func TestMCPServer_WithRecover(t *testing.T) {
+	panicToolHandler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		panic("test panic")
+	}
+
+	server := NewMCPServer(
+		"test-server",
+		"1.0.0",
+		WithRecovery(),
+	)
+
+	server.AddTool(
+		mcp.NewTool("panic-tool"),
+		panicToolHandler,
+	)
+
+	response := server.HandleMessage(context.Background(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 4,
+		"method": "tools/call",
+		"params": {
+			"name": "panic-tool"
+		}
+	}`))
+
+	errorResponse, ok := response.(mcp.JSONRPCError)
+
+	require.True(t, ok)
+	assert.Equal(t, mcp.INTERNAL_ERROR, errorResponse.Error.Code)
+	assert.Equal(t, "panic recovered in panic-tool tool handler: test panic", errorResponse.Error.Message)
+	assert.Nil(t, errorResponse.Error.Data)
 }

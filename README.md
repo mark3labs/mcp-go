@@ -12,6 +12,10 @@
 
 [![Tutorial](http://img.youtube.com/vi/qoaeYMrXJH0/0.jpg)](http://www.youtube.com/watch?v=qoaeYMrXJH0 "Tutorial")
 
+<br>
+
+Discuss the SDK on [Discord](https://discord.gg/RqSS2NQVsY)
+
 </div>
 
 ```go
@@ -122,6 +126,7 @@ func main() {
         "1.0.0",
         server.WithResourceCapabilities(true, true),
         server.WithLogging(),
+        server.WithRecovery(),
     )
 
     // Add a calculator tool
@@ -158,7 +163,7 @@ func main() {
             result = x * y
         case "divide":
             if y == 0 {
-                return nil, errors.New("Cannot divide by zero")
+                return mcp.NewToolResultError("cannot divide by zero"), nil
             }
             result = x / y
         }
@@ -320,7 +325,7 @@ s.AddTool(calculatorTool, func(ctx context.Context, request mcp.CallToolRequest)
         result = x * y
     case "divide":
         if y == 0 {
-            return nil, errors.New("Division by zero is not allowed")
+            return mcp.NewToolResultError("cannot divide by zero"), nil
         }
         result = x / y
     }
@@ -365,20 +370,20 @@ s.AddTool(httpTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp
         req, err = http.NewRequest(method, url, nil)
     }
     if err != nil {
-        return nil, fmt.Errorf("Failed to create request: %v", err)
+        return mcp.NewToolResultErrorFromErr("unable to create request", err), nil
     }
 
     client := &http.Client{}
     resp, err := client.Do(req)
     if err != nil {
-        return nil, fmt.Errorf("Request failed: %v", err)
+        return mcp.NewToolResultErrorFromErr("unable to execute request", err), nil
     }
     defer resp.Body.Close()
 
     // Return response
     respBody, err := io.ReadAll(resp.Body)
     if err != nil {
-        return nil, fmt.Errorf("Failed to read response: %v", err)
+        return mcp.NewToolResultErrorFromErr("unable to read request response", err), nil
     }
 
     return mcp.NewToolResultText(fmt.Sprintf("Status: %d\nBody: %s", resp.StatusCode, string(respBody))), nil
@@ -521,6 +526,12 @@ initialization.
 
 Add the `Hooks` to the server at the time of creation using the
 `server.WithHooks` option.
+
+### Tool Handler Middleware
+
+Add middleware to tool call handlers using the `server.WithToolHandlerMiddleware` option. Middlewares can be registered on server creation and are applied on every tool call.
+
+A recovery middleware option is available to recover from panics in a tool call and can be added to the server with the `server.WithRecovery` option.
 
 ## Contributing
 
