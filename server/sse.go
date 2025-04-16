@@ -243,7 +243,7 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
+	var wg sync.WaitGroup
 
 	sessionID := uuid.New().String()
 	session := &sseSession{
@@ -255,6 +255,18 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		notificationChannel: make(chan mcp.JSONRPCNotification, 100),
 	}
 
+	// Cleanup function when all goroutines are closed.
+	// Order matters:
+	// 1. close session.done to signal goroutines to stop
+	// 2. wait for goroutines to finish
+	// 3. cancel context to clean up any remaining context-aware resources
+	cleanup := func() {
+		close(session.done)
+		wg.Wait()
+		cancel()
+	}
+	defer cleanup()
+
 	s.sessions.Store(sessionID, session)
 	defer s.sessions.Delete(sessionID)
 
@@ -263,8 +275,6 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.server.UnregisterSession(sessionID)
-
-	var wg sync.WaitGroup
 
 	// Start notification handler for this session
 	wg.Add(1)
@@ -311,7 +321,6 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 					}
 					messageBytes, _ := json.Marshal(message)
 					pingMsg := fmt.Sprintf("event: message\ndata:%s\n\n", messageBytes)
-
 					ctxPing, cancelPing := context.WithTimeout(ctx, 2*time.Second)
 					select {
 					case session.eventQueue <- pingMsg:
@@ -335,14 +344,6 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// Send the initial endpoint event
 	fmt.Fprintf(w, "event: endpoint\ndata: %s\r\n\r\n", s.GetMessageEndpointForClient(sessionID))
 	flusher.Flush()
-
-	// Cleanup function when all goroutines are closed
-	cleanup := func() {
-		close(session.done)
-		cancel()
-		wg.Wait()
-	}
-	defer cleanup()
 
 	// Main event loop - this runs in the HTTP handler goroutine
 	for {
@@ -412,7 +413,7 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		eventData, _ := json.Marshal(response)
 
 		// Queue the event for sending via SSE with timeout to prevent goroutine leak
-		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 
 		select {
@@ -474,6 +475,7 @@ func (s *SSEServer) SendEventToSession(
 		return fmt.Errorf("event queue full")
 	}
 }
+
 func (s *SSEServer) GetUrlPath(input string) (string, error) {
 	parse, err := url.Parse(input)
 	if err != nil {
@@ -485,6 +487,7 @@ func (s *SSEServer) GetUrlPath(input string) (string, error) {
 func (s *SSEServer) CompleteSseEndpoint() string {
 	return s.baseURL + s.basePath + s.sseEndpoint
 }
+
 func (s *SSEServer) CompleteSsePath() string {
 	path, err := s.GetUrlPath(s.CompleteSseEndpoint())
 	if err != nil {
@@ -496,6 +499,7 @@ func (s *SSEServer) CompleteSsePath() string {
 func (s *SSEServer) CompleteMessageEndpoint() string {
 	return s.baseURL + s.basePath + s.messageEndpoint
 }
+
 func (s *SSEServer) CompleteMessagePath() string {
 	path, err := s.GetUrlPath(s.CompleteMessageEndpoint())
 	if err != nil {
