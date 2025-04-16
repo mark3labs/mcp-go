@@ -162,7 +162,7 @@ type MCPServer struct {
 	capabilities           serverCapabilities
 	paginationLimit        *int
 	sessions               sync.Map
-	hooks                  *Hooks
+	hooks                  Hook
 }
 
 // serverKey is the context key for storing the server instance
@@ -331,7 +331,7 @@ func WithRecovery() ServerOption {
 // WithHooks allows adding hooks that will be called before or after
 // either [all] requests or before / after specific request methods, or else
 // prior to returning an error to the client.
-func WithHooks(hooks *Hooks) ServerOption {
+func WithHooks(hooks Hook) ServerOption {
 	return func(s *MCPServer) {
 		s.hooks = hooks
 	}
@@ -391,6 +391,7 @@ func NewMCPServer(
 			prompts:   nil,
 			logging:   false,
 		},
+		hooks: &ChainedHook{},
 	}
 
 	for _, opt := range opts {
