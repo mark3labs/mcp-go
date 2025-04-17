@@ -53,9 +53,10 @@ type OnSuccessHookFunc func(ctx context.Context, id any, method mcp.MCPMethod, m
 //	  }
 //	})
 type OnErrorHookFunc func(ctx context.Context, id any, method mcp.MCPMethod, message any, err error)
-// OnBeforeHandleRequestFunc is a function that called before handle diff request method
+
+// OnRequestInitializationFunc is a function that called before handle diff request method
 // Should any errors arise during func execution, the service will promptly return the corresponding error message.
-type OnBeforeHandleRequestFunc func(ctx context.Context, id any, message any) error
+type OnRequestInitializationFunc func(ctx context.Context, id any, message any) error
 
 type OnBeforeInitializeFunc func(ctx context.Context, id any, message *mcp.InitializeRequest)
 type OnAfterInitializeFunc func(ctx context.Context, id any, message *mcp.InitializeRequest, result *mcp.InitializeResult)
@@ -89,7 +90,7 @@ type Hooks struct {
 	OnBeforeAny                   []BeforeAnyHookFunc
 	OnSuccess                     []OnSuccessHookFunc
 	OnError                       []OnErrorHookFunc
-	OnBeforeHandleRequest         []OnBeforeHandleRequestFunc
+	OnRequestInitialization       []OnRequestInitializationFunc
 	OnBeforeInitialize            []OnBeforeInitializeFunc
 	OnAfterInitialize             []OnAfterInitializeFunc
 	OnBeforePing                  []OnBeforePingFunc
@@ -228,15 +229,15 @@ func (c *Hooks) AddAfterInitialize(hook OnAfterInitializeFunc) {
 	c.OnAfterInitialize = append(c.OnAfterInitialize, hook)
 }
 
-func (c *Hooks) AddBeforeHandleRequest(hook OnBeforeHandleRequestFunc) {
-	c.OnBeforeHandleRequest = append(c.OnBeforeHandleRequest, hook)
+func (c *Hooks) AddOnRequestInitialization(hook OnRequestInitializationFunc) {
+	c.OnRequestInitialization = append(c.OnRequestInitialization, hook)
 }
 
-func (c *Hooks) beforeHandleRequest(ctx context.Context, id any, message any) error {
+func (c *Hooks) onRequestInitialization(ctx context.Context, id any, message any) error {
 	if c == nil {
 		return nil
 	}
-	for _, hook := range c.OnBeforeHandleRequest {
+	for _, hook := range c.OnRequestInitialization {
 		err := hook(ctx, id, message)
 		if err != nil {
 			return err

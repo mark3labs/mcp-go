@@ -55,7 +55,7 @@ func (s *MCPServer) HandleMessage(
 		return nil // Return nil for notifications
 	}
 
-	handleErr := s.hooks.beforeHandleRequest(ctx, baseMessage.ID, message)
+	handleErr := s.hooks.onRequestInitialization(ctx, baseMessage.ID, message)
 	if handleErr != nil {
 		return createErrorResponse(
 			baseMessage.ID,

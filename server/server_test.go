@@ -1198,14 +1198,14 @@ var _ ClientSession = fakeSession{}
 func TestMCPServer_WithHooks(t *testing.T) {
 	// Create hook counters to verify calls
 	var (
-		beforeAnyCount           int
-		onSuccessCount           int
-		onErrorCount             int
-		beforePingCount          int
-		afterPingCount           int
-		beforeToolsCount         int
-		afterToolsCount          int
-		beforeHandleRequestCount int
+		beforeAnyCount               int
+		onSuccessCount               int
+		onErrorCount                 int
+		beforePingCount              int
+		afterPingCount               int
+		beforeToolsCount             int
+		afterToolsCount              int
+		onRequestInitializationCount int
 	)
 
 	// Collectors for message and result types
@@ -1269,8 +1269,8 @@ func TestMCPServer_WithHooks(t *testing.T) {
 		afterToolsCount++
 	})
 
-	hooks.AddBeforeHandleRequest(func(ctx context.Context, id any, message any) error {
-		beforeHandleRequestCount++
+	hooks.AddOnRequestInitialization(func(ctx context.Context, id any, message any) error {
+		onRequestInitializationCount++
 		return nil
 	})
 
@@ -1340,8 +1340,8 @@ func TestMCPServer_WithHooks(t *testing.T) {
 	// General hooks should be called for all methods
 	// beforeAny is called for all 4 methods (initialize, ping, tools/list, tools/call)
 	assert.Equal(t, 4, beforeAnyCount, "beforeAny should be called for each method")
-	// beforeHandleRequest is called for all 4 methods (initialize, ping, tools/list, tools/call)
-	assert.Equal(t, 4, beforeHandleRequestCount, "beforeHandleRequest should be called once")
+	// onRequestInitialization is called for all 4 methods (initialize, ping, tools/list, tools/call)
+	assert.Equal(t, 4, onRequestInitializationCount, "onRequestInitializationCount should be called once")
 	// onSuccess is called for all 3 success methods (initialize, ping, tools/list)
 	assert.Equal(t, 3, onSuccessCount, "onSuccess should be called after all successful invocations")
 
