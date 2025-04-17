@@ -102,6 +102,8 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 		m["inputSchema"] = t.InputSchema
 	}
 
+	m["annotations"] = t.Annotations
+
 	return json.Marshal(m)
 }
 
