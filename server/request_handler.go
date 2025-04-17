@@ -59,7 +59,7 @@ func (s *MCPServer) HandleMessage(
 	if handleErr != nil {
 		return createErrorResponse(
 			baseMessage.ID,
-			mcp.PARSE_ERROR,
+			mcp.INVALID_REQUEST,
 			handleErr.Error(),
 		)
 	}
