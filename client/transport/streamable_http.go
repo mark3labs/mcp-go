@@ -66,7 +66,7 @@ func NewStreamableHTTP(baseURL string, options ...StreamableHTTPCOption) (*Strea
 
 	smc := &StreamableHTTP{
 		baseURL:    parsedURL,
-		httpClient: &http.Client{Timeout: 60 * time.Second},
+		httpClient: &http.Client{},
 		headers:    make(map[string]string),
 		closed:     make(chan struct{}),
 	}
