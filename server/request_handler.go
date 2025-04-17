@@ -23,6 +23,7 @@ func (s *MCPServer) HandleMessage(
 		JSONRPC string        `json:"jsonrpc"`
 		Method  mcp.MCPMethod `json:"method"`
 		ID      any           `json:"id,omitempty"`
+		Result  any           `json:"result,omitempty"`
 	}
 
 	if err := json.Unmarshal(message, &baseMessage); err != nil {
@@ -53,6 +54,12 @@ func (s *MCPServer) HandleMessage(
 		}
 		s.handleNotification(ctx, notification)
 		return nil // Return nil for notifications
+	}
+
+	if baseMessage.Result != nil {
+		// this is a response to a request sent by the server (e.g. from a ping
+		// sent due to WithKeepAlive option)
+		return nil
 	}
 
 	switch baseMessage.Method {

@@ -23,6 +23,7 @@ type sseSession struct {
 	done                chan struct{}
 	eventQueue          chan string // Channel for queuing events
 	sessionID           string
+	requestID           atomic.Int64
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         atomic.Bool
 }
@@ -282,8 +283,16 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 			for {
 				select {
 				case <-ticker.C:
-					//: ping - 2025-03-27 07:44:38.682659+00:00
-					session.eventQueue <- fmt.Sprintf(":ping - %s\n\n", time.Now().Format(time.RFC3339))
+					message := mcp.JSONRPCRequest{
+						JSONRPC: "2.0",
+						ID:      session.requestID.Add(1),
+						Request: mcp.Request{
+							Method: "ping",
+						},
+					}
+					messageBytes, _ := json.Marshal(message)
+					pingMsg := fmt.Sprintf("event: message\ndata:%s\n\n", messageBytes)
+					session.eventQueue <- pingMsg
 				case <-session.done:
 					return
 				case <-r.Context().Done():
