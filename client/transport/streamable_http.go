@@ -39,6 +39,10 @@ func WithHTTPTimeout(timeout time.Duration) StreamableHTTPCOption {
 // or an upgraded SSE stream that concludes with a JSON-RPC response for the same request.
 //
 // https://modelcontextprotocol.io/specification/2025-03-26/basic/transports
+//
+// The current implementation does not support the following features:
+// - batching
+// - server -> client request
 type StreamableHTTP struct {
 	baseURL    *url.URL
 	httpClient *http.Client
@@ -128,17 +132,17 @@ func (c *StreamableHTTP) SendRequest(
 ) (*JSONRPCResponse, error) {
 
 	// Create a combined context that could be canceled when the client is closed
-	var cancelRequest context.CancelFunc
-	ctx, cancelRequest = context.WithCancel(ctx)
-	defer cancelRequest()
+	newCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	go func() {
 		select {
 		case <-c.closed:
-			cancelRequest()
+			cancel()
 		case <-ctx.Done():
 			// The original context was canceled, no need to do anything
 		}
 	}()
+	ctx = newCtx
 
 	// Marshal request
 	requestBody, err := json.Marshal(request)
@@ -234,9 +238,7 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 	// Start a goroutine to process the SSE stream
 	go c.readSSE(ctx, reader, func(event, data string) {
 
-		// unsupported
-		// - batching
-		// - server -> client request
+		// (unsupported: batching)
 
 		var message JSONRPCResponse
 		if err := json.Unmarshal([]byte(data), &message); err != nil {
