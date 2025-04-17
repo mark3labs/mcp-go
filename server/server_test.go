@@ -800,6 +800,13 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 			Type:       "object",
 			Properties: map[string]interface{}{},
 		},
+		Annotations: mcp.ToolAnnotation{
+			Title:           "test-tool",
+			ReadOnlyHint:    true,
+			DestructiveHint: false,
+			IdempotentHint:  false,
+			OpenWorldHint:   false,
+		},
 	}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return &mcp.CallToolResult{}, nil
 	})

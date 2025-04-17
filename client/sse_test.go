@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"github.com/mark3labs/mcp-go/client/transport"
 	"testing"
 	"time"
 
@@ -46,7 +47,8 @@ func TestSSEMCPClient(t *testing.T) {
 		}
 		defer client.Close()
 
-		if client.baseURL == nil {
+		sseTransport := client.GetTransport().(*transport.SSE)
+		if sseTransport.GetBaseURL() == nil {
 			t.Error("Base URL should not be nil")
 		}
 	})
