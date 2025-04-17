@@ -141,7 +141,14 @@ type NotificationHandlerFunc func(ctx context.Context, notification mcp.JSONRPCN
 // MCPServer implements a Model Control Protocol server that can handle various types of requests
 // including resources, prompts, and tools.
 type MCPServer struct {
-	mu                     sync.RWMutex // Add mutex for protecting shared resources
+	// Separate mutexes for different resource types
+	resourcesMu            sync.RWMutex
+	promptsMu              sync.RWMutex
+	toolsMu                sync.RWMutex
+	middlewareMu           sync.RWMutex
+	notificationHandlersMu sync.RWMutex
+	capabilitiesMu         sync.RWMutex
+
 	name                   string
 	version                string
 	instructions           string
@@ -301,7 +308,9 @@ func WithToolHandlerMiddleware(
 	toolHandlerMiddleware ToolHandlerMiddleware,
 ) ServerOption {
 	return func(s *MCPServer) {
+		s.middlewareMu.Lock()
 		s.toolHandlerMiddlewares = append(s.toolHandlerMiddlewares, toolHandlerMiddleware)
+		s.middlewareMu.Unlock()
 	}
 }
 
@@ -396,11 +405,14 @@ func (s *MCPServer) AddResource(
 	resource mcp.Resource,
 	handler ResourceHandlerFunc,
 ) {
+	s.capabilitiesMu.Lock()
 	if s.capabilities.resources == nil {
 		s.capabilities.resources = &resourceCapabilities{}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.capabilitiesMu.Unlock()
+
+	s.resourcesMu.Lock()
+	defer s.resourcesMu.Unlock()
 	s.resources[resource.URI] = resourceEntry{
 		resource: resource,
 		handler:  handler,
@@ -412,11 +424,14 @@ func (s *MCPServer) AddResourceTemplate(
 	template mcp.ResourceTemplate,
 	handler ResourceTemplateHandlerFunc,
 ) {
+	s.capabilitiesMu.Lock()
 	if s.capabilities.resources == nil {
 		s.capabilities.resources = &resourceCapabilities{}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.capabilitiesMu.Unlock()
+
+	s.resourcesMu.Lock()
+	defer s.resourcesMu.Unlock()
 	s.resourceTemplates[template.URITemplate.Raw()] = resourceTemplateEntry{
 		template: template,
 		handler:  handler,
@@ -425,11 +440,14 @@ func (s *MCPServer) AddResourceTemplate(
 
 // AddPrompt registers a new prompt handler with the given name
 func (s *MCPServer) AddPrompt(prompt mcp.Prompt, handler PromptHandlerFunc) {
+	s.capabilitiesMu.Lock()
 	if s.capabilities.prompts == nil {
 		s.capabilities.prompts = &promptCapabilities{}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.capabilitiesMu.Unlock()
+
+	s.promptsMu.Lock()
+	defer s.promptsMu.Unlock()
 	s.prompts[prompt.Name] = prompt
 	s.promptHandlers[prompt.Name] = handler
 }
@@ -441,14 +459,17 @@ func (s *MCPServer) AddTool(tool mcp.Tool, handler ToolHandlerFunc) {
 
 // AddTools registers multiple tools at once
 func (s *MCPServer) AddTools(tools ...ServerTool) {
+	s.capabilitiesMu.Lock()
 	if s.capabilities.tools == nil {
 		s.capabilities.tools = &toolCapabilities{}
 	}
-	s.mu.Lock()
+	s.capabilitiesMu.Unlock()
+
+	s.toolsMu.Lock()
 	for _, entry := range tools {
 		s.tools[entry.Tool.Name] = entry
 	}
-	s.mu.Unlock()
+	s.toolsMu.Unlock()
 
 	// Send notification to all initialized sessions
 	s.sendNotificationToAllClients("notifications/tools/list_changed", nil)
@@ -456,19 +477,19 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 
 // SetTools replaces all existing tools with the provided list
 func (s *MCPServer) SetTools(tools ...ServerTool) {
-	s.mu.Lock()
+	s.toolsMu.Lock()
 	s.tools = make(map[string]ServerTool)
-	s.mu.Unlock()
+	s.toolsMu.Unlock()
 	s.AddTools(tools...)
 }
 
 // DeleteTools removes a tool from the server
 func (s *MCPServer) DeleteTools(names ...string) {
-	s.mu.Lock()
+	s.toolsMu.Lock()
 	for _, name := range names {
 		delete(s.tools, name)
 	}
-	s.mu.Unlock()
+	s.toolsMu.Unlock()
 
 	// Send notification to all initialized sessions
 	s.sendNotificationToAllClients("notifications/tools/list_changed", nil)
@@ -479,8 +500,8 @@ func (s *MCPServer) AddNotificationHandler(
 	method string,
 	handler NotificationHandlerFunc,
 ) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.notificationHandlersMu.Lock()
+	defer s.notificationHandlersMu.Unlock()
 	s.notificationHandlers[method] = handler
 }
 
@@ -589,12 +610,12 @@ func (s *MCPServer) handleListResources(
 	id interface{},
 	request mcp.ListResourcesRequest,
 ) (*mcp.ListResourcesResult, *requestError) {
-	s.mu.RLock()
+	s.resourcesMu.RLock()
 	resources := make([]mcp.Resource, 0, len(s.resources))
 	for _, entry := range s.resources {
 		resources = append(resources, entry.resource)
 	}
-	s.mu.RUnlock()
+	s.resourcesMu.RUnlock()
 
 	// Sort the resources by name
 	sort.Slice(resources, func(i, j int) bool {
@@ -622,12 +643,12 @@ func (s *MCPServer) handleListResourceTemplates(
 	id interface{},
 	request mcp.ListResourceTemplatesRequest,
 ) (*mcp.ListResourceTemplatesResult, *requestError) {
-	s.mu.RLock()
+	s.resourcesMu.RLock()
 	templates := make([]mcp.ResourceTemplate, 0, len(s.resourceTemplates))
 	for _, entry := range s.resourceTemplates {
 		templates = append(templates, entry.template)
 	}
-	s.mu.RUnlock()
+	s.resourcesMu.RUnlock()
 	sort.Slice(templates, func(i, j int) bool {
 		return templates[i].Name < templates[j].Name
 	})
@@ -653,11 +674,11 @@ func (s *MCPServer) handleReadResource(
 	id interface{},
 	request mcp.ReadResourceRequest,
 ) (*mcp.ReadResourceResult, *requestError) {
-	s.mu.RLock()
+	s.resourcesMu.RLock()
 	// First try direct resource handlers
 	if entry, ok := s.resources[request.Params.URI]; ok {
 		handler := entry.handler
-		s.mu.RUnlock()
+		s.resourcesMu.RUnlock()
 		contents, err := handler(ctx, request)
 		if err != nil {
 			return nil, &requestError{
@@ -686,7 +707,7 @@ func (s *MCPServer) handleReadResource(
 			break
 		}
 	}
-	s.mu.RUnlock()
+	s.resourcesMu.RUnlock()
 
 	if matched {
 		contents, err := matchedHandler(ctx, request)
@@ -717,12 +738,12 @@ func (s *MCPServer) handleListPrompts(
 	id interface{},
 	request mcp.ListPromptsRequest,
 ) (*mcp.ListPromptsResult, *requestError) {
-	s.mu.RLock()
+	s.promptsMu.RLock()
 	prompts := make([]mcp.Prompt, 0, len(s.prompts))
 	for _, prompt := range s.prompts {
 		prompts = append(prompts, prompt)
 	}
-	s.mu.RUnlock()
+	s.promptsMu.RUnlock()
 
 	// sort prompts by name
 	sort.Slice(prompts, func(i, j int) bool {
@@ -750,9 +771,9 @@ func (s *MCPServer) handleGetPrompt(
 	id interface{},
 	request mcp.GetPromptRequest,
 ) (*mcp.GetPromptResult, *requestError) {
-	s.mu.RLock()
+	s.promptsMu.RLock()
 	handler, ok := s.promptHandlers[request.Params.Name]
-	s.mu.RUnlock()
+	s.promptsMu.RUnlock()
 
 	if !ok {
 		return nil, &requestError{
@@ -779,7 +800,7 @@ func (s *MCPServer) handleListTools(
 	id interface{},
 	request mcp.ListToolsRequest,
 ) (*mcp.ListToolsResult, *requestError) {
-	s.mu.RLock()
+	s.toolsMu.RLock()
 	tools := make([]mcp.Tool, 0, len(s.tools))
 
 	// Get all tool names for consistent ordering
@@ -795,6 +816,8 @@ func (s *MCPServer) handleListTools(
 	for _, name := range toolNames {
 		tools = append(tools, s.tools[name].Tool)
 	}
+	s.toolsMu.RUnlock()
+
 	toolsToReturn, nextCursor, err := listByPagination[mcp.Tool](ctx, s, request.Params.Cursor, tools)
 	if err != nil {
 		return nil, &requestError{
@@ -817,9 +840,9 @@ func (s *MCPServer) handleToolCall(
 	id interface{},
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, *requestError) {
-	s.mu.RLock()
+	s.toolsMu.RLock()
 	tool, ok := s.tools[request.Params.Name]
-	s.mu.RUnlock()
+	s.toolsMu.RUnlock()
 
 	if !ok {
 		return nil, &requestError{
@@ -830,9 +853,16 @@ func (s *MCPServer) handleToolCall(
 	}
 
 	finalHandler := tool.Handler
-	for i := len(s.toolHandlerMiddlewares) - 1; i >= 0; i-- {
-		finalHandler = s.toolHandlerMiddlewares[i](finalHandler)
+
+	s.middlewareMu.RLock()
+	mw := s.toolHandlerMiddlewares
+	s.middlewareMu.RUnlock()
+
+	// Apply middlewares in reverse order
+	for i := len(mw) - 1; i >= 0; i-- {
+		finalHandler = mw[i](finalHandler)
 	}
+
 	result, err := finalHandler(ctx, request)
 	if err != nil {
 		return nil, &requestError{
@@ -849,9 +879,9 @@ func (s *MCPServer) handleNotification(
 	ctx context.Context,
 	notification mcp.JSONRPCNotification,
 ) mcp.JSONRPCMessage {
-	s.mu.RLock()
+	s.notificationHandlersMu.RLock()
 	handler, ok := s.notificationHandlers[notification.Method]
-	s.mu.RUnlock()
+	s.notificationHandlersMu.RUnlock()
 
 	if ok {
 		handler(ctx, notification)
