@@ -142,7 +142,7 @@ func (c *StreamableHTTP) SendRequest(
 		select {
 		case <-c.closed:
 			cancel()
-		case <-ctx.Done():
+		case <-newCtx.Done():
 			// The original context was canceled, no need to do anything
 		}
 	}()
