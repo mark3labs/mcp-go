@@ -266,6 +266,24 @@ func NewToolResultError(text string) *CallToolResult {
 	}
 }
 
+// NewToolResultErrorFromErr creates a new CallToolResult with an error message.
+// If an error is provided, its details will be appended to the text message.
+// Any errors that originate from the tool SHOULD be reported inside the result object.
+func NewToolResultErrorFromErr(text string, err error) *CallToolResult {
+	if err != nil {
+		text = fmt.Sprintf("%s: %v", text, err)
+	}
+	return &CallToolResult{
+		Content: []Content{
+			TextContent{
+				Type: "text",
+				Text: text,
+			},
+		},
+		IsError: true,
+	}
+}
+
 // NewListResourcesResult creates a new ListResourcesResult
 func NewListResourcesResult(
 	resources []Resource,
