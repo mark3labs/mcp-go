@@ -379,3 +379,7 @@ func (c *StreamableHTTP) SetNotificationHandler(handler func(mcp.JSONRPCNotifica
 	defer c.notifyMu.Unlock()
 	c.notificationHandler = handler
 }
+
+func (c *StreamableHTTP) GetSessionId() string {
+	return c.sessionID.Load().(string)
+}
