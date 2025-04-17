@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -38,7 +39,8 @@ type Stdio struct {
 	done           chan struct{}
 	onNotification func(mcp.JSONRPCNotification)
 	notifyMu       sync.RWMutex
-	processExitErr chan error
+	processExited  chan struct{}
+	exitErr        atomic.Value
 }
 
 // NewStdio creates a new stdio transport to communicate with a subprocess.
@@ -55,9 +57,9 @@ func NewStdio(
 		args:    args,
 		env:     env,
 
-		responses:      make(map[int64]chan *JSONRPCResponse),
-		done:           make(chan struct{}),
-		processExitErr: make(chan error, 1),
+		responses:     make(map[int64]chan *JSONRPCResponse),
+		done:          make(chan struct{}),
+		processExited: make(chan struct{}),
 	}
 
 	return client
@@ -96,7 +98,11 @@ func (c *Stdio) Start(ctx context.Context) error {
 	}
 
 	go func() {
-		c.processExitErr <- cmd.Wait()
+		err := cmd.Wait()
+		if err != nil {
+			c.exitErr.Store(err)
+		}
+		close(c.processExited)
 	}()
 
 	// Start reading responses in a goroutine and wait for it to be ready
@@ -105,20 +111,21 @@ func (c *Stdio) Start(ctx context.Context) error {
 		close(ready)
 		c.readResponses()
 	}()
-	if err := waitUntilReadyOrExit(ready, c.processExitErr, readyTimeout); err != nil {
+
+	if err := waitUntilReadyOrExit(ready, c.processExited, readyTimeout); err != nil {
 		return err
 	}
 	return nil
 }
 
-func waitUntilReadyOrExit(ready <-chan struct{}, waitErr <-chan error, timeout time.Duration) error {
+func waitUntilReadyOrExit(ready <-chan struct{}, exited <-chan struct{}, timeout time.Duration) error {
 	select {
-	case err := <-waitErr:
-		return fmt.Errorf("process exited early: %w", err)
+	case <-exited:
+		return errors.New("process exited before signalling readiness")
 	case <-ready:
 		select {
-		case err := <-waitErr:
-			return fmt.Errorf("process exited after ready: %w", err)
+		case <-exited:
+			return errors.New("process exited after readiness")
 		case <-time.After(readyCheckTimeout):
 			return nil
 		}
@@ -137,7 +144,11 @@ func (c *Stdio) Close() error {
 	if err := c.stderr.Close(); err != nil {
 		return fmt.Errorf("failed to close stderr: %w", err)
 	}
-	return <-c.processExitErr
+	<-c.processExited
+	if err, ok := c.exitErr.Load().(error); ok && err != nil {
+		return err
+	}
+	return nil
 }
 
 // OnNotification registers a handler function to be called when notifications are received.
