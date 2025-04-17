@@ -25,15 +25,20 @@ func WithHTTPHeaders(headers map[string]string) StreamableHTTPCOption {
 	}
 }
 
-// WithHTTPTimeout sets the whole timeout for the HTTP request and stream.
+// WithHTTPTimeout sets the timeout for a HTTP request and stream.
 func WithHTTPTimeout(timeout time.Duration) StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
 		sc.httpClient.Timeout = timeout
 	}
 }
 
-// StreamableHTTP implements the transport.Interface using Streamable HTTP transport.
-// https://spec.modelcontextprotocol.io/specification/2025-03-26/basic/transports/#streamable-http
+// StreamableHTTP implements Streamable HTTP transport.
+//
+// It transmits JSON-RPC messages over individual HTTP requests. One message per request.
+// The HTTP response body can either be a single JSON-RPC response,
+// or an upgraded SSE stream that concludes with a JSON-RPC response for the same request.
+//
+// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports
 type StreamableHTTP struct {
 	baseURL    *url.URL
 	httpClient *http.Client
