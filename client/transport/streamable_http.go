@@ -105,7 +105,9 @@ func (c *StreamableHTTP) Close() error {
 
 		// notify server session closed
 		go func() {
-			req, err := http.NewRequest(http.MethodDelete, c.baseURL.String(), nil)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL.String(), nil)
 			if err != nil {
 				fmt.Printf("failed to create close request\n: %v", err)
 				return
