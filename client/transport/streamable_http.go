@@ -41,8 +41,12 @@ func WithHTTPTimeout(timeout time.Duration) StreamableHTTPCOption {
 // https://modelcontextprotocol.io/specification/2025-03-26/basic/transports
 //
 // The current implementation does not support the following features:
-// - batching
-// - server -> client request
+//   - batching
+//   - continuously listening for server notifications when no request is in flight
+//     (https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server)
+//   - resuming stream
+//     (https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#resumability-and-redelivery)
+//   - server -> client request
 type StreamableHTTP struct {
 	baseURL    *url.URL
 	httpClient *http.Client
@@ -179,7 +183,7 @@ func (c *StreamableHTTP) SendRequest(
 		// handle session closed
 		if resp.StatusCode == http.StatusNotFound {
 			c.sessionID.CompareAndSwap(sessionID, "")
-			return nil, fmt.Errorf("session terminated (404)")
+			return nil, fmt.Errorf("session terminated (404). need to re-initialize")
 		}
 
 		// handle error response
