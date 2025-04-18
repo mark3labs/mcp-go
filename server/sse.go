@@ -344,10 +344,7 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		s.writeJSONRPCError(w, nil, mcp.INVALID_PARAMS, "Missing sessionId")
 		return
 	}
-
-	s.mu.RLock()
 	sessionI, ok := s.sessions.Load(sessionID)
-	s.mu.RUnlock()
 	if !ok {
 		s.writeJSONRPCError(w, nil, mcp.INVALID_PARAMS, "Invalid session ID")
 		return
