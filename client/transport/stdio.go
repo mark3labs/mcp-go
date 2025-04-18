@@ -89,8 +89,8 @@ func (c *Stdio) Start(ctx context.Context) error {
 	// Start reading responses in a goroutine and wait for it to be ready
 	ready := make(chan struct{})
 	go func() {
-		close(ready)
 		c.readResponses()
+		close(ready)
 	}()
 	<-ready
 
