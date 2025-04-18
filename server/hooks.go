@@ -221,13 +221,6 @@ func (c *Hooks) RegisterSession(ctx context.Context, session ClientSession) {
 		hook(ctx, session)
 	}
 }
-func (c *Hooks) AddBeforeInitialize(hook OnBeforeInitializeFunc) {
-	c.OnBeforeInitialize = append(c.OnBeforeInitialize, hook)
-}
-
-func (c *Hooks) AddAfterInitialize(hook OnAfterInitializeFunc) {
-	c.OnAfterInitialize = append(c.OnAfterInitialize, hook)
-}
 
 func (c *Hooks) AddOnRequestInitialization(hook OnRequestInitializationFunc) {
 	c.OnRequestInitialization = append(c.OnRequestInitialization, hook)
@@ -244,6 +237,13 @@ func (c *Hooks) onRequestInitialization(ctx context.Context, id any, message any
 		}
 	}
 	return nil
+}
+func (c *Hooks) AddBeforeInitialize(hook OnBeforeInitializeFunc) {
+	c.OnBeforeInitialize = append(c.OnBeforeInitialize, hook)
+}
+
+func (c *Hooks) AddAfterInitialize(hook OnAfterInitializeFunc) {
+	c.OnAfterInitialize = append(c.OnAfterInitialize, hook)
 }
 
 func (c *Hooks) beforeInitialize(ctx context.Context, id any, message *mcp.InitializeRequest) {

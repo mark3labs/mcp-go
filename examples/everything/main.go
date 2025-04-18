@@ -44,8 +44,8 @@ func NewMCPServer() *server.MCPServer {
 	hooks.AddBeforeInitialize(func(ctx context.Context, id any, message *mcp.InitializeRequest) {
 		fmt.Printf("beforeInitialize: %v, %v\n", id, message)
 	})
-	hooks.AddBeforeHandleRequest(func(ctx context.Context, id any, message any) error {
-		fmt.Printf("beforeHandleRequest: %v, %v\n", id, message)
+	hooks.AddOnRequestInitialization(func(ctx context.Context, id any, message any) error {
+		fmt.Printf("AddOnRequestInitialization: %v, %v\n", id, message)
 		// authorization verification and other preprocessing tasks are performed.
 		return nil
 	})

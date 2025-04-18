@@ -56,6 +56,15 @@ func (s *MCPServer) HandleMessage(
 		return nil // Return nil for notifications
 	}
 
+	handleErr := s.hooks.onRequestInitialization(ctx, baseMessage.ID, message)
+    if handleErr != nil {
+    	return createErrorResponse(
+    		baseMessage.ID,
+    		mcp.INVALID_REQUEST,
+    		handleErr.Error(),
+    	)
+    }
+
 	switch baseMessage.Method {
 	{{- range .}}
 	case mcp.{{.MethodName}}:
