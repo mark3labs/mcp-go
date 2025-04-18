@@ -54,20 +54,20 @@ var _ ClientSession = (*sseSession)(nil)
 // SSEServer implements a Server-Sent Events (SSE) based MCP server.
 // It provides real-time communication capabilities over HTTP using the SSE protocol.
 type SSEServer struct {
-	server          *MCPServer
-	baseURL         string
-	basePath        string
-  useFullURLForMessageEndpoint bool
-	messageEndpoint string
-	sseEndpoint     string
-	sessions        sync.Map
-	srv             *http.Server
-	contextFunc     SSEContextFunc
+	server                       *MCPServer
+	baseURL                      string
+	basePath                     string
+	useFullURLForMessageEndpoint bool
+	messageEndpoint              string
+	sseEndpoint                  string
+	sessions                     sync.Map
+	srv                          *http.Server
+	contextFunc                  SSEContextFunc
 
 	keepAlive         bool
 	keepAliveInterval time.Duration
-	
-	mu               sync.RWMutex
+
+	mu sync.RWMutex
 }
 
 // SSEOption defines a function type for configuring SSEServer
@@ -161,12 +161,12 @@ func WithSSEContextFunc(fn SSEContextFunc) SSEOption {
 // NewSSEServer creates a new SSE server instance with the given MCP server and options.
 func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
 	s := &SSEServer{
-		server:            server,
-		sseEndpoint:       "/sse",
-		messageEndpoint:   "/message",
-    useFullURLForMessageEndpoint: true,
-		keepAlive:         false,
-		keepAliveInterval: 10 * time.Second,
+		server:                       server,
+		sseEndpoint:                  "/sse",
+		messageEndpoint:              "/message",
+		useFullURLForMessageEndpoint: true,
+		keepAlive:                    false,
+		keepAliveInterval:            10 * time.Second,
 	}
 
 	// Apply all options
@@ -259,7 +259,7 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusInternalServerError)
 		return
 	}
-	defer s.server.UnregisterSession(sessionID)
+	defer s.server.UnregisterSession(r.Context(), sessionID)
 
 	// Start notification handler for this session
 	go func() {
@@ -309,7 +309,6 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 	}
-
 
 	// Send the initial endpoint event
 	fmt.Fprintf(w, "event: endpoint\ndata: %s\r\n\r\n", s.GetMessageEndpointForClient(sessionID))
@@ -439,6 +438,7 @@ func (s *SSEServer) SendEventToSession(
 		return fmt.Errorf("event queue full")
 	}
 }
+
 func (s *SSEServer) GetUrlPath(input string) (string, error) {
 	parse, err := url.Parse(input)
 	if err != nil {
@@ -450,6 +450,7 @@ func (s *SSEServer) GetUrlPath(input string) (string, error) {
 func (s *SSEServer) CompleteSseEndpoint() string {
 	return s.baseURL + s.basePath + s.sseEndpoint
 }
+
 func (s *SSEServer) CompleteSsePath() string {
 	path, err := s.GetUrlPath(s.CompleteSseEndpoint())
 	if err != nil {
@@ -461,6 +462,7 @@ func (s *SSEServer) CompleteSsePath() string {
 func (s *SSEServer) CompleteMessageEndpoint() string {
 	return s.baseURL + s.basePath + s.messageEndpoint
 }
+
 func (s *SSEServer) CompleteMessagePath() string {
 	path, err := s.GetUrlPath(s.CompleteMessageEndpoint())
 	if err != nil {

@@ -340,7 +340,6 @@ func TestMCPServer_Tools(t *testing.T) {
 			}`))
 			tt.validate(t, notifications, toolsList.(mcp.JSONRPCMessage))
 		})
-
 	}
 }
 
@@ -725,8 +724,8 @@ func TestMCPServer_HandleInvalidMessages(t *testing.T) {
 			message:     `{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": "invalid"}`,
 			expectedErr: mcp.INVALID_REQUEST,
 			validateErr: func(t *testing.T, err error) {
-				var unparseableErr = &UnparseableMessageError{}
-				var ok = errors.As(err, &unparseableErr)
+				unparseableErr := &UnparseableMessageError{}
+				ok := errors.As(err, &unparseableErr)
 				assert.True(t, ok, "Error should be UnparseableMessageError")
 				assert.Equal(t, mcp.MethodInitialize, unparseableErr.GetMethod())
 				assert.Equal(t, json.RawMessage(`{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": "invalid"}`), unparseableErr.GetMessage())
@@ -1125,7 +1124,6 @@ func TestMCPServer_ResourceTemplates(t *testing.T) {
 		assert.Equal(t, "test://something/test-resource/a/b/c", resultContent.URI)
 		assert.Equal(t, "text/plain", resultContent.MIMEType)
 		assert.Equal(t, "test content: something", resultContent.Text)
-
 	})
 }
 
@@ -1351,6 +1349,76 @@ func TestMCPServer_WithHooks(t *testing.T) {
 	require.Len(t, onSuccessData, 1, "Expected one OnSuccess Ping message/result pair")
 	assert.IsType(t, afterPingData[0].msg, onSuccessData[0].msg, "OnSuccess message should be same type as AfterPing message")
 	assert.IsType(t, afterPingData[0].res, onSuccessData[0].res, "OnSuccess result should be same type as AfterPing result")
+}
+
+func TestMCPServer_SessionHooks(t *testing.T) {
+	var (
+		registerCalled   bool
+		unregisterCalled bool
+
+		registeredContext   context.Context
+		unregisteredContext context.Context
+
+		registeredSession   ClientSession
+		unregisteredSession ClientSession
+	)
+
+	hooks := &Hooks{}
+	hooks.AddOnRegisterSession(func(ctx context.Context, session ClientSession) {
+		registerCalled = true
+		registeredContext = ctx
+		registeredSession = session
+	})
+	hooks.AddOnUnregisterSession(func(ctx context.Context, session ClientSession) {
+		unregisterCalled = true
+		unregisteredContext = ctx
+		unregisteredSession = session
+	})
+
+	server := NewMCPServer(
+		"test-server",
+		"1.0.0",
+		WithHooks(hooks),
+	)
+
+	testSession := &fakeSession{
+		sessionID:           "test-session-id",
+		notificationChannel: make(chan mcp.JSONRPCNotification, 5),
+		initialized:         false,
+	}
+
+	ctx := context.WithoutCancel(context.Background())
+	err := server.RegisterSession(ctx, testSession)
+	require.NoError(t, err)
+
+	assert.True(t, registerCalled, "Register session hook was not called")
+	assert.Equal(t, testSession.SessionID(), registeredSession.SessionID(),
+		"Register hook received wrong session")
+
+	server.UnregisterSession(ctx, testSession.SessionID())
+
+	assert.True(t, unregisterCalled, "Unregister session hook was not called")
+	assert.Equal(t, testSession.SessionID(), unregisteredSession.SessionID(),
+		"Unregister hook received wrong session")
+
+	assert.Equal(t, ctx, unregisteredContext, "Unregister hook received wrong context")
+	assert.Equal(t, ctx, registeredContext, "Register hook received wrong context")
+}
+
+func TestMCPServer_SessionHooks_NilHooks(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0")
+
+	testSession := &fakeSession{
+		sessionID:           "test-session-id",
+		notificationChannel: make(chan mcp.JSONRPCNotification, 5),
+		initialized:         false,
+	}
+
+	ctx := context.WithoutCancel(context.Background())
+	err := server.RegisterSession(ctx, testSession)
+	require.NoError(t, err)
+
+	server.UnregisterSession(ctx, testSession.SessionID())
 }
 
 func TestMCPServer_WithRecover(t *testing.T) {

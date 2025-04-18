@@ -206,9 +206,11 @@ func (s *MCPServer) RegisterSession(
 
 // UnregisterSession removes from storage session that is shut down.
 func (s *MCPServer) UnregisterSession(
+	ctx context.Context,
 	sessionID string,
 ) {
-	s.sessions.Delete(sessionID)
+	session, _ := s.sessions.LoadAndDelete(sessionID)
+	s.hooks.UnregisterSession(ctx, session.(ClientSession))
 }
 
 // sendNotificationToAllClients sends a notification to all the currently active clients.
