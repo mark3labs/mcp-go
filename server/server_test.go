@@ -1341,7 +1341,7 @@ func TestMCPServer_WithHooks(t *testing.T) {
 	// beforeAny is called for all 4 methods (initialize, ping, tools/list, tools/call)
 	assert.Equal(t, 4, beforeAnyCount, "beforeAny should be called for each method")
 	// onRequestInitialization is called for all 4 methods (initialize, ping, tools/list, tools/call)
-	assert.Equal(t, 4, onRequestInitializationCount, "onRequestInitializationCount should be called once")
+	assert.Equal(t, 4, onRequestInitializationCount, "onRequestInitializationCount should be called for each method")
 	// onSuccess is called for all 3 success methods (initialize, ping, tools/list)
 	assert.Equal(t, 3, onSuccessCount, "onSuccess should be called after all successful invocations")
 
