@@ -131,7 +131,7 @@ func (s *StdioServer) processInputStream(ctx context.Context, reader *bufio.Read
 			return err
 		}
 
-		line, err := s.readNextLine(ctx, reader)
+		line, err := s.readNextLine(ctx, reader) // block until get info
 		if err != nil {
 			if err == io.EOF {
 				return nil
