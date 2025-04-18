@@ -65,6 +65,8 @@ type SSEServer struct {
 
 	keepAlive         bool
 	keepAliveInterval time.Duration
+	
+	mu               sync.RWMutex
 }
 
 // SSEOption defines a function type for configuring SSEServer
@@ -189,10 +191,12 @@ func NewTestServer(server *MCPServer, opts ...SSEOption) *httptest.Server {
 // Start begins serving SSE connections on the specified address.
 // It sets up HTTP handlers for SSE and message endpoints.
 func (s *SSEServer) Start(addr string) error {
+	s.mu.Lock()
 	s.srv = &http.Server{
 		Addr:    addr,
 		Handler: s,
 	}
+	s.mu.Unlock()
 
 	return s.srv.ListenAndServe()
 }
@@ -200,7 +204,12 @@ func (s *SSEServer) Start(addr string) error {
 // Shutdown gracefully stops the SSE server, closing all active sessions
 // and shutting down the HTTP server.
 func (s *SSEServer) Shutdown(ctx context.Context) error {
-	if s.srv != nil {
+	s.mu.RLock()
+	srv := s.srv
+	s.mu.RUnlock()
+
+	if srv != nil {
+		// 关闭所有会话
 		s.sessions.Range(func(key, value interface{}) bool {
 			if session, ok := value.(*sseSession); ok {
 				close(session.done)
@@ -209,7 +218,7 @@ func (s *SSEServer) Shutdown(ctx context.Context) error {
 			return true
 		})
 
-		return s.srv.Shutdown(ctx)
+		return srv.Shutdown(ctx)
 	}
 	return nil
 }
@@ -336,7 +345,9 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.mu.RLock()
 	sessionI, ok := s.sessions.Load(sessionID)
+	s.mu.RUnlock()
 	if !ok {
 		s.writeJSONRPCError(w, nil, mcp.INVALID_PARAMS, "Invalid session ID")
 		return
