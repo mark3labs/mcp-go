@@ -209,7 +209,6 @@ func (s *SSEServer) Shutdown(ctx context.Context) error {
 	s.mu.RUnlock()
 
 	if srv != nil {
-		// 关闭所有会话
 		s.sessions.Range(func(key, value interface{}) bool {
 			if session, ok := value.(*sseSession); ok {
 				close(session.done)
