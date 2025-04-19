@@ -211,8 +211,8 @@ func (s *MCPServer) UnregisterSession(
 	s.sessions.Delete(sessionID)
 }
 
-// sendNotificationToAllClients sends a notification to all the currently active clients.
-func (s *MCPServer) sendNotificationToAllClients(
+// SendNotificationToAllClients sends a notification to all the currently active clients.
+func (s *MCPServer) SendNotificationToAllClients(
 	method string,
 	params map[string]any,
 ) {
@@ -472,7 +472,7 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 	s.toolsMu.Unlock()
 
 	// Send notification to all initialized sessions
-	s.sendNotificationToAllClients("notifications/tools/list_changed", nil)
+	s.SendNotificationToAllClients("notifications/tools/list_changed", nil)
 }
 
 // SetTools replaces all existing tools with the provided list
@@ -492,7 +492,7 @@ func (s *MCPServer) DeleteTools(names ...string) {
 	s.toolsMu.Unlock()
 
 	// Send notification to all initialized sessions
-	s.sendNotificationToAllClients("notifications/tools/list_changed", nil)
+	s.SendNotificationToAllClients("notifications/tools/list_changed", nil)
 }
 
 // AddNotificationHandler registers a new handler for incoming notifications
