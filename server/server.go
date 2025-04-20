@@ -492,7 +492,7 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 // SetTools replaces all existing tools with the provided list
 func (s *MCPServer) SetTools(tools ...ServerTool) {
 	s.toolsMu.Lock()
-	s.tools = make(map[string]ServerTool)
+	s.tools = make(map[string]ServerTool, len(tools))
 	s.toolsMu.Unlock()
 	s.AddTools(tools...)
 }
@@ -714,7 +714,7 @@ func (s *MCPServer) handleReadResource(
 			matched = true
 			matchedVars := template.URITemplate.Match(request.Params.URI)
 			// Convert matched variables to a map
-			request.Params.Arguments = make(map[string]interface{})
+			request.Params.Arguments = make(map[string]interface{}, len(matchedVars))
 			for name, value := range matchedVars {
 				request.Params.Arguments[name] = value.V
 			}
