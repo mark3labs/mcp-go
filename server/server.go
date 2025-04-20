@@ -429,7 +429,7 @@ func (s *MCPServer) RemoveResource(uri string) {
 
 	// Send notification to all initialized sessions if listChanged capability is enabled
 	if s.capabilities.resources != nil && s.capabilities.resources.listChanged {
-		s.sendNotificationToAllClients("resources/list_changed", nil)
+		s.SendNotificationToAllClients("resources/list_changed", nil)
 	}
 }
 
