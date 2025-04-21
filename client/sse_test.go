@@ -11,7 +11,7 @@ import (
 )
 
 func TestSSEMCPClient(t *testing.T) {
-	// Create MCP server with capabilities
+	// Create MCP server with serverCapabilities
 	mcpServer := server.NewMCPServer(
 		"test-server",
 		"1.0.0",

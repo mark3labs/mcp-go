@@ -46,6 +46,20 @@ const (
 	// Invokes a specific tool with provided parameters.
 	// https://spec.modelcontextprotocol.io/specification/2024-11-05/server/tools/
 	MethodToolsCall MCPMethod = "tools/call"
+
+	// Notifies when the list of available resources changes.
+	// https://modelcontextprotocol.io/specification/2025-03-26/server/resources#list-changed-notification
+	MethodNotificationResourcesListChanged = "notifications/resources/list_changed"
+
+	MethodNotificationResourceUpdated = "notifications/resources/updated"
+
+	// Notifies when the list of available prompt templates changes.
+	// https://modelcontextprotocol.io/specification/2025-03-26/server/prompts#list-changed-notification
+	MethodNotificationPromptsListChanged = "notifications/prompts/list_changed"
+
+	// Notifies when the list of available tools changes.
+	// https://spec.modelcontextprotocol.io/specification/2024-11-05/server/tools/list_changed/
+	MethodNotificationToolsListChanged = "notifications/tools/list_changed"
 )
 
 type URITemplate struct {
@@ -224,6 +238,11 @@ const (
 	METHOD_NOT_FOUND = -32601
 	INVALID_PARAMS   = -32602
 	INTERNAL_ERROR   = -32603
+)
+
+// MCP error codes
+const (
+	RESOURCE_NOT_FOUND = -32002
 )
 
 /* Empty result */
