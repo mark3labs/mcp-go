@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -364,7 +365,11 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 
 		// Only send response if there is one (not for notifications)
 		if response != nil {
-			eventData, _ := json.Marshal(response)
+			eventData, err := json.Marshal(response)
+			if err != nil {
+				s.writeJSONRPCError(w, nil, mcp.INTERNAL_ERROR, "Fail to marshal response")
+				return
+			}
 
 			// Queue the event for sending via SSE
 			select {
@@ -373,7 +378,8 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 			case <-session.done:
 				// Session is closed, don't try to queue
 			default:
-				// Queue is full, could log this
+				// Queue is full, log this situation
+				log.Printf("Event queue full for session %s", sessionID)
 			}
 		}
 	}()
