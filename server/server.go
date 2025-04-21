@@ -73,27 +73,27 @@ func ClientSessionFromContext(ctx context.Context) ClientSession {
 	return nil
 }
 
-// UnparseableMessageError is attached to the RequestError when json.Unmarshal
+// UnparsableMessageError is attached to the RequestError when json.Unmarshal
 // fails on the request.
-type UnparseableMessageError struct {
+type UnparsableMessageError struct {
 	message json.RawMessage
 	method  mcp.MCPMethod
 	err     error
 }
 
-func (e *UnparseableMessageError) Error() string {
-	return fmt.Sprintf("unparseable %s request: %s", e.method, e.err)
+func (e *UnparsableMessageError) Error() string {
+	return fmt.Sprintf("unparsable %s request: %s", e.method, e.err)
 }
 
-func (e *UnparseableMessageError) Unwrap() error {
+func (e *UnparsableMessageError) Unwrap() error {
 	return e.err
 }
 
-func (e *UnparseableMessageError) GetMessage() json.RawMessage {
+func (e *UnparsableMessageError) GetMessage() json.RawMessage {
 	return e.message
 }
 
-func (e *UnparseableMessageError) GetMethod() mcp.MCPMethod {
+func (e *UnparsableMessageError) GetMethod() mcp.MCPMethod {
 	return e.method
 }
 
@@ -206,13 +206,15 @@ func (s *MCPServer) RegisterSession(
 
 // UnregisterSession removes from storage session that is shut down.
 func (s *MCPServer) UnregisterSession(
+	ctx context.Context,
 	sessionID string,
 ) {
-	s.sessions.Delete(sessionID)
+	session, _ := s.sessions.LoadAndDelete(sessionID)
+	s.hooks.UnregisterSession(ctx, session.(ClientSession))
 }
 
-// sendNotificationToAllClients sends a notification to all the currently active clients.
-func (s *MCPServer) sendNotificationToAllClients(
+// SendNotificationToAllClients sends a notification to all the currently active clients.
+func (s *MCPServer) SendNotificationToAllClients(
 	method string,
 	params map[string]any,
 ) {
@@ -419,6 +421,18 @@ func (s *MCPServer) AddResource(
 	}
 }
 
+// RemoveResource removes a resource from the server
+func (s *MCPServer) RemoveResource(uri string) {
+	s.resourcesMu.Lock()
+	delete(s.resources, uri)
+	s.resourcesMu.Unlock()
+
+	// Send notification to all initialized sessions if listChanged capability is enabled
+	if s.capabilities.resources != nil && s.capabilities.resources.listChanged {
+		s.SendNotificationToAllClients("resources/list_changed", nil)
+	}
+}
+
 // AddResourceTemplate registers a new resource template and its handler
 func (s *MCPServer) AddResourceTemplate(
 	template mcp.ResourceTemplate,
@@ -472,13 +486,13 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 	s.toolsMu.Unlock()
 
 	// Send notification to all initialized sessions
-	s.sendNotificationToAllClients("notifications/tools/list_changed", nil)
+	s.SendNotificationToAllClients("notifications/tools/list_changed", nil)
 }
 
 // SetTools replaces all existing tools with the provided list
 func (s *MCPServer) SetTools(tools ...ServerTool) {
 	s.toolsMu.Lock()
-	s.tools = make(map[string]ServerTool)
+	s.tools = make(map[string]ServerTool, len(tools))
 	s.toolsMu.Unlock()
 	s.AddTools(tools...)
 }
@@ -492,7 +506,7 @@ func (s *MCPServer) DeleteTools(names ...string) {
 	s.toolsMu.Unlock()
 
 	// Send notification to all initialized sessions
-	s.sendNotificationToAllClients("notifications/tools/list_changed", nil)
+	s.SendNotificationToAllClients("notifications/tools/list_changed", nil)
 }
 
 // AddNotificationHandler registers a new handler for incoming notifications
@@ -700,7 +714,7 @@ func (s *MCPServer) handleReadResource(
 			matched = true
 			matchedVars := template.URITemplate.Match(request.Params.URI)
 			// Convert matched variables to a map
-			request.Params.Arguments = make(map[string]interface{})
+			request.Params.Arguments = make(map[string]interface{}, len(matchedVars))
 			for name, value := range matchedVars {
 				request.Params.Arguments[name] = value.V
 			}
