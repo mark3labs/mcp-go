@@ -3,11 +3,10 @@ package transport
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -15,47 +14,142 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-func compileTestServer(outputPath string) error {
-	cmd := exec.Command(
-		"go",
-		"build",
-		"-o",
-		outputPath,
-		"../../testdata/mockstdio_server.go",
-	)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("compilation failed: %v\nOutput: %s", err, output)
-	}
-	return nil
+// startMockStreamableHTTPServer starts a test HTTP server that implements
+// a minimal Streamable HTTP server for testing purposes.
+// It returns the server URL and a function to close the server.
+func startMockStreamableHTTPServer() (string, func()) {
+	var sessionID string
+	var mu sync.Mutex
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Handle only POST requests
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Parse incoming JSON-RPC request
+		var request map[string]any
+		decoder := json.NewDecoder(r.Body)
+		if err := decoder.Decode(&request); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		method := request["method"]
+		switch method {
+		case "initialize":
+			// Generate a new session ID
+			mu.Lock()
+			sessionID = fmt.Sprintf("test-session-%d", time.Now().UnixNano())
+			mu.Unlock()
+			w.Header().Set("Mcp-Session-Id", sessionID)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      request["id"],
+				"result":  "initialized",
+			})
+
+		case "debug/echo":
+			// Check session ID
+			if r.Header.Get("Mcp-Session-Id") != sessionID {
+				http.Error(w, "Invalid session ID", http.StatusNotFound)
+				return
+			}
+
+			// Echo back the request as the response result
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      request["id"],
+				"result":  request,
+			})
+
+		case "debug/echo_notification":
+			// Check session ID
+			if r.Header.Get("Mcp-Session-Id") != sessionID {
+				http.Error(w, "Invalid session ID", http.StatusNotFound)
+				return
+			}
+
+			// Send response and notification
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			notification := map[string]any{
+				"jsonrpc": "2.0",
+				"method":  "debug/test",
+				"params":  request,
+			}
+			notificationData, _ := json.Marshal(notification)
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", notificationData)
+			response := map[string]any{
+				"jsonrpc": "2.0",
+				"id":      request["id"],
+				"result":  request,
+			}
+			responseData, _ := json.Marshal(response)
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", responseData)
+
+		case "debug/echo_error_string":
+			// Check session ID
+			if r.Header.Get("Mcp-Session-Id") != sessionID {
+				http.Error(w, "Invalid session ID", http.StatusNotFound)
+				return
+			}
+
+			// Return an error response
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			data, _ := json.Marshal(request)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      request["id"],
+				"error": map[string]interface{}{
+					"code":    -1,
+					"message": string(data),
+				},
+			})
+		}
+	})
+
+	// Start test server
+	testServer := httptest.NewServer(handler)
+	return testServer.URL, testServer.Close
 }
 
-func TestStdio(t *testing.T) {
-	// Compile mock server
-	mockServerPath := filepath.Join(os.TempDir(), "mockstdio_server")
-	// Add .exe suffix on Windows
-	if runtime.GOOS == "windows" {
-		mockServerPath += ".exe"
-	}
-	if err := compileTestServer(mockServerPath); err != nil {
-		t.Fatalf("Failed to compile mock server: %v", err)
-	}
-	defer os.Remove(mockServerPath)
+func TestStreamableHTTP(t *testing.T) {
+	// Start mock server
+	url, closeF := startMockStreamableHTTPServer()
+	defer closeF()
 
-	// Create a new Stdio transport
-	stdio := NewStdio(mockServerPath, nil)
+	// Create transport
+	trans, err := NewStreamableHTTP(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer trans.Close()
 
-	// Start the transport
+	// Initialize the transport first
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := stdio.Start(ctx)
-	if err != nil {
-		t.Fatalf("Failed to start Stdio transport: %v", err)
+	initRequest := JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
 	}
-	defer stdio.Close()
 
+	_, err = trans.SendRequest(ctx, initRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Now run the tests
 	t.Run("SendRequest", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5000000000*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
 		params := map[string]interface{}{
@@ -71,7 +165,7 @@ func TestStdio(t *testing.T) {
 		}
 
 		// Send the request
-		response, err := stdio.SendRequest(ctx, request)
+		response, err := trans.SendRequest(ctx, request)
 		if err != nil {
 			t.Fatalf("SendRequest failed: %v", err)
 		}
@@ -121,52 +215,54 @@ func TestStdio(t *testing.T) {
 		}
 
 		// The request should fail because the context is canceled
-		_, err := stdio.SendRequest(ctx, request)
+		_, err := trans.SendRequest(ctx, request)
 		if err == nil {
 			t.Errorf("Expected context canceled error, got nil")
-		} else if err != context.Canceled {
+		} else if !errors.Is(err, context.Canceled) {
 			t.Errorf("Expected context.Canceled error, got: %v", err)
 		}
 	})
 
 	t.Run("SendNotification & NotificationHandler", func(t *testing.T) {
-
 		var wg sync.WaitGroup
 		notificationChan := make(chan mcp.JSONRPCNotification, 1)
 
 		// Set notification handler
-		stdio.SetNotificationHandler(func(notification mcp.JSONRPCNotification) {
+		trans.SetNotificationHandler(func(notification mcp.JSONRPCNotification) {
 			notificationChan <- notification
 		})
 
-		// Send a notification
-		// This would trigger a notification from the server
+		// Send a request that triggers a notification
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
-		notification := mcp.JSONRPCNotification{
+		request := JSONRPCRequest{
 			JSONRPC: "2.0",
-			Notification: mcp.Notification{
-				Method: "debug/echo_notification",
-				Params: mcp.NotificationParams{
-					AdditionalFields: map[string]interface{}{"test": "value"},
-				},
-			},
+			ID:      1,
+			Method:  "debug/echo_notification",
 		}
-		err := stdio.SendNotification(ctx, notification)
+
+		_, err := trans.SendRequest(ctx, request)
 		if err != nil {
-			t.Fatalf("SendNotification failed: %v", err)
+			t.Fatalf("SendRequest failed: %v", err)
 		}
 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			select {
-			case nt := <-notificationChan:
+			case notification := <-notificationChan:
 				// We received a notification
-				responseJson, _ := json.Marshal(nt.Params.AdditionalFields)
-				requestJson, _ := json.Marshal(notification)
-				if string(responseJson) != string(requestJson) {
+				got := notification.Params.AdditionalFields
+				if got == nil {
+					t.Errorf("Notification handler did not send the expected notification: got nil")
+				}
+				if int64(got["id"].(float64)) != request.ID ||
+					got["jsonrpc"] != request.JSONRPC ||
+					got["method"] != request.Method {
+
+					responseJson, _ := json.Marshal(got)
+					requestJson, _ := json.Marshal(request)
 					t.Errorf("Notification handler did not send the expected notification: \ngot %s\nexpect %s", responseJson, requestJson)
 				}
 
@@ -183,9 +279,10 @@ func TestStdio(t *testing.T) {
 		const numRequests = 5
 
 		// Send multiple requests concurrently
+		mu := sync.Mutex{}
 		responses := make([]*JSONRPCResponse, numRequests)
 		errors := make([]error, numRequests)
-		mu := sync.Mutex{}
+
 		for i := 0; i < numRequests; i++ {
 			wg.Add(1)
 			go func(idx int) {
@@ -204,7 +301,7 @@ func TestStdio(t *testing.T) {
 					},
 				}
 
-				resp, err := stdio.SendRequest(ctx, request)
+				resp, err := trans.SendRequest(ctx, request)
 				mu.Lock()
 				responses[idx] = resp
 				errors[idx] = err
@@ -256,6 +353,8 @@ func TestStdio(t *testing.T) {
 	})
 
 	t.Run("ResponseError", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 
 		// Prepare a request
 		request := JSONRPCRequest{
@@ -264,8 +363,7 @@ func TestStdio(t *testing.T) {
 			Method:  "debug/echo_error_string",
 		}
 
-		// The request should fail because the context is canceled
-		reps, err := stdio.SendRequest(ctx, request)
+		reps, err := trans.SendRequest(ctx, request)
 		if err != nil {
 			t.Errorf("SendRequest failed: %v", err)
 		}
@@ -277,6 +375,7 @@ func TestStdio(t *testing.T) {
 		var responseError JSONRPCRequest
 		if err := json.Unmarshal([]byte(reps.Error.Message), &responseError); err != nil {
 			t.Errorf("Failed to unmarshal result: %v", err)
+			return
 		}
 
 		if responseError.Method != "debug/echo_error_string" {
@@ -289,90 +388,37 @@ func TestStdio(t *testing.T) {
 			t.Errorf("Expected JSONRPC '2.0', got '%s'", responseError.JSONRPC)
 		}
 	})
-
 }
 
-func TestStdioErrors(t *testing.T) {
-	t.Run("InvalidCommand", func(t *testing.T) {
-		// Create a new Stdio transport with a non-existent command
-		stdio := NewStdio("non_existent_command", nil)
-
-		// Start should fail
-		ctx := context.Background()
-		err := stdio.Start(ctx)
+func TestStreamableHTTPErrors(t *testing.T) {
+	t.Run("InvalidURL", func(t *testing.T) {
+		// Create a new StreamableHTTP transport with an invalid URL
+		_, err := NewStreamableHTTP("://invalid-url")
 		if err == nil {
-			t.Errorf("Expected error when starting with invalid command, got nil")
-			stdio.Close()
+			t.Errorf("Expected error when creating with invalid URL, got nil")
 		}
 	})
 
-	t.Run("RequestBeforeStart", func(t *testing.T) {
-		mockServerPath := filepath.Join(os.TempDir(), "mockstdio_server")
-		// Add .exe suffix on Windows
-		if runtime.GOOS == "windows" {
-			mockServerPath += ".exe"
-		}
-		if err := compileTestServer(mockServerPath); err != nil {
-			t.Fatalf("Failed to compile mock server: %v", err)
-		}
-		defer os.Remove(mockServerPath)
-
-		uninitiatedStdio := NewStdio(mockServerPath, nil)
-
-		// Prepare a request
-		request := JSONRPCRequest{
-			JSONRPC: "2.0",
-			ID:      99,
-			Method:  "ping",
+	t.Run("NonExistentURL", func(t *testing.T) {
+		// Create a new StreamableHTTP transport with a non-existent URL
+		trans, err := NewStreamableHTTP("http://localhost:1")
+		if err != nil {
+			t.Fatalf("Failed to create StreamableHTTP transport: %v", err)
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		// Send request should fail
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_, err := uninitiatedStdio.SendRequest(ctx, request)
-		if err == nil {
-			t.Errorf("Expected SendRequest to panic before Start(), but it didn't")
-		} else if err.Error() != "stdio client not started" {
-			t.Errorf("Expected error 'stdio client not started', got: %v", err)
-		}
-	})
 
-	t.Run("RequestAfterClose", func(t *testing.T) {
-		// Compile mock server
-		mockServerPath := filepath.Join(os.TempDir(), "mockstdio_server")
-		// Add .exe suffix on Windows
-		if runtime.GOOS == "windows" {
-			mockServerPath += ".exe"
-		}
-		if err := compileTestServer(mockServerPath); err != nil {
-			t.Fatalf("Failed to compile mock server: %v", err)
-		}
-		defer os.Remove(mockServerPath)
-
-		// Create a new Stdio transport
-		stdio := NewStdio(mockServerPath, nil)
-
-		// Start the transport
-		ctx := context.Background()
-		if err := stdio.Start(ctx); err != nil {
-			t.Fatalf("Failed to start Stdio transport: %v", err)
-		}
-
-		// Close the transport - ignore errors like "broken pipe" since the process might exit already
-		stdio.Close()
-
-		// Wait a bit to ensure process has exited
-		time.Sleep(100 * time.Millisecond)
-
-		// Try to send a request after close
 		request := JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      1,
-			Method:  "ping",
+			Method:  "initialize",
 		}
 
-		_, err := stdio.SendRequest(ctx, request)
+		_, err = trans.SendRequest(ctx, request)
 		if err == nil {
-			t.Errorf("Expected error when sending request after close, got nil")
+			t.Errorf("Expected error when sending request to non-existent URL, got nil")
 		}
 	})
 

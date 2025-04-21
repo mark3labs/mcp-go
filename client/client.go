@@ -42,9 +42,15 @@ func WithClientCapabilities(capabilities mcp.ClientCapabilities) ClientOption {
 //	    log.Fatalf("Failed to create client: %v", err)
 //	}
 func NewClient(transport transport.Interface, options ...ClientOption) *Client {
-	return &Client{
+	client := &Client{
 		transport: transport,
 	}
+
+	for _, opt := range options {
+		opt(client)
+	}
+
+	return client
 }
 
 // Start initiates the connection to the server.
