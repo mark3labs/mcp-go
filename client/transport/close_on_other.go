@@ -20,11 +20,11 @@ func killByPid(pid int) error {
 		fmt.Printf("Failed to send SIGTERM to pid %d: %v\n", pid, err)
 	}
 
-	_, err = process.Status()
+	_, err = proc.Status()
 	if err == nil {
 		// kill ok
 		return nil
 	}
 	// send SIGKILL
-	return process.Kill()
+	return proc.Kill()
 }
