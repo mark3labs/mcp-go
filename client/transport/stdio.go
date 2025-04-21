@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -107,7 +108,20 @@ func (c *Stdio) Close() error {
 	if err := c.stderr.Close(); err != nil {
 		return fmt.Errorf("failed to close stderr: %w", err)
 	}
-	return c.cmd.Wait()
+
+	// Wait for the process to exit with a timeout
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- c.cmd.Wait()
+	}()
+
+	select {
+	case err := <-errChan:
+		return err
+	case <-time.After(3 * time.Second):
+		err := killByPid(c.cmd.Process.Pid)
+		return err
+	}
 }
 
 // OnNotification registers a handler function to be called when notifications are received.
