@@ -407,11 +407,18 @@ func (s *MCPServer) AddResource(
 	resource mcp.Resource,
 	handler ResourceHandlerFunc,
 ) {
-	s.capabilitiesMu.Lock()
+	s.capabilitiesMu.RLock()
 	if s.capabilities.resources == nil {
-		s.capabilities.resources = &resourceCapabilities{}
+		s.capabilitiesMu.RUnlock()
+
+		s.capabilitiesMu.Lock()
+		if s.capabilities.resources == nil {
+			s.capabilities.resources = &resourceCapabilities{}
+		}
+		s.capabilitiesMu.Unlock()
+	} else {
+		s.capabilitiesMu.RUnlock()
 	}
-	s.capabilitiesMu.Unlock()
 
 	s.resourcesMu.Lock()
 	defer s.resourcesMu.Unlock()
@@ -438,11 +445,17 @@ func (s *MCPServer) AddResourceTemplate(
 	template mcp.ResourceTemplate,
 	handler ResourceTemplateHandlerFunc,
 ) {
-	s.capabilitiesMu.Lock()
+	s.capabilitiesMu.RLock()
 	if s.capabilities.resources == nil {
+		s.capabilitiesMu.RUnlock()
+
+		s.capabilitiesMu.Lock()
 		s.capabilities.resources = &resourceCapabilities{}
+		s.capabilitiesMu.Unlock()
+	} else {
+		s.capabilitiesMu.RUnlock()
 	}
-	s.capabilitiesMu.Unlock()
+
 
 	s.resourcesMu.Lock()
 	defer s.resourcesMu.Unlock()
@@ -454,11 +467,16 @@ func (s *MCPServer) AddResourceTemplate(
 
 // AddPrompt registers a new prompt handler with the given name
 func (s *MCPServer) AddPrompt(prompt mcp.Prompt, handler PromptHandlerFunc) {
-	s.capabilitiesMu.Lock()
+	s.capabilitiesMu.RLock()
 	if s.capabilities.prompts == nil {
+		s.capabilitiesMu.RUnlock()
+
+		s.capabilitiesMu.Lock()
 		s.capabilities.prompts = &promptCapabilities{}
+		s.capabilitiesMu.Unlock()
+	} else {
+		s.capabilitiesMu.RUnlock()
 	}
-	s.capabilitiesMu.Unlock()
 
 	s.promptsMu.Lock()
 	defer s.promptsMu.Unlock()
@@ -473,11 +491,16 @@ func (s *MCPServer) AddTool(tool mcp.Tool, handler ToolHandlerFunc) {
 
 // AddTools registers multiple tools at once
 func (s *MCPServer) AddTools(tools ...ServerTool) {
-	s.capabilitiesMu.Lock()
+	s.capabilitiesMu.RLock()
 	if s.capabilities.tools == nil {
+		s.capabilitiesMu.RUnlock()
+
+		s.capabilitiesMu.Lock()
 		s.capabilities.tools = &toolCapabilities{}
+		s.capabilitiesMu.Unlock()
+	} else {
+		s.capabilitiesMu.RUnlock()
 	}
-	s.capabilitiesMu.Unlock()
 
 	s.toolsMu.Lock()
 	for _, entry := range tools {
