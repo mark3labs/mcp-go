@@ -450,7 +450,9 @@ func (s *MCPServer) AddResourceTemplate(
 		s.capabilitiesMu.RUnlock()
 
 		s.capabilitiesMu.Lock()
-		s.capabilities.resources = &resourceCapabilities{}
+		if s.capabilities.resources == nil {
+			s.capabilities.resources = &resourceCapabilities{}
+		}
 		s.capabilitiesMu.Unlock()
 	} else {
 		s.capabilitiesMu.RUnlock()
@@ -472,7 +474,9 @@ func (s *MCPServer) AddPrompt(prompt mcp.Prompt, handler PromptHandlerFunc) {
 		s.capabilitiesMu.RUnlock()
 
 		s.capabilitiesMu.Lock()
-		s.capabilities.prompts = &promptCapabilities{}
+		if s.capabilities.prompts == nil {
+			s.capabilities.prompts = &promptCapabilities{}
+		}
 		s.capabilitiesMu.Unlock()
 	} else {
 		s.capabilitiesMu.RUnlock()
@@ -496,7 +500,9 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 		s.capabilitiesMu.RUnlock()
 
 		s.capabilitiesMu.Lock()
-		s.capabilities.tools = &toolCapabilities{}
+		if s.capabilities.tools == nil {
+			s.capabilities.tools = &toolCapabilities{}
+		}
 		s.capabilitiesMu.Unlock()
 	} else {
 		s.capabilitiesMu.RUnlock()
