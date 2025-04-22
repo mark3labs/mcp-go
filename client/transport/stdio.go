@@ -69,7 +69,7 @@ func NewStdio(
 }
 
 func (c *Stdio) Start(ctx context.Context) error {
-	if err := c.startProc(ctx); err != nil {
+	if err := c.spawnCommand(ctx); err != nil {
 		return err
 	}
 
@@ -83,8 +83,8 @@ func (c *Stdio) Start(ctx context.Context) error {
 	return nil
 }
 
-// startProc spawns a new process running c.command.
-func (c *Stdio) startProc(ctx context.Context) error {
+// spawnCommand spawns a new process running c.command.
+func (c *Stdio) spawnCommand(ctx context.Context) error {
 	if c.command == "" {
 		return nil
 	}
