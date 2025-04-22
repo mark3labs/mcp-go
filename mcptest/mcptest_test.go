@@ -28,16 +28,7 @@ func TestServer(t *testing.T) {
 
 	client := srv.Client()
 
-	var initReq mcp.InitializeRequest
-
-	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
-
-	if _, err := client.Initialize(ctx, initReq); err != nil {
-		t.Fatal("Initialize:", err)
-	}
-
 	var req mcp.CallToolRequest
-
 	req.Params.Name = "hello"
 	req.Params.Arguments = map[string]any{
 		"name": "Claude",

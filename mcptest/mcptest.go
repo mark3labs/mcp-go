@@ -4,6 +4,7 @@ package mcptest
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"testing"
@@ -30,6 +31,7 @@ type Server struct {
 	logBuffer bytes.Buffer
 
 	transport transport.Interface
+	client    *client.Client
 }
 
 // NewServer starts a new MCP server with the provided tools and returns the server instance.
@@ -98,8 +100,19 @@ func (s *Server) Start() error {
 	}()
 
 	s.transport = transport.NewIO(s.clientReader, s.clientWriter, io.NopCloser(&s.logBuffer))
+	if err := s.transport.Start(s.ctx); err != nil {
+		return fmt.Errorf("transport.Start(): %w", err)
+	}
 
-	return s.transport.Start(s.ctx)
+	s.client = client.NewClient(s.transport)
+
+	var initReq mcp.InitializeRequest
+	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	if _, err := s.client.Initialize(s.ctx, initReq); err != nil {
+		return fmt.Errorf("client.Initialize(): %w", err)
+	}
+
+	return nil
 }
 
 // Close stops the server and cleans up resources like temporary directories.
@@ -116,6 +129,7 @@ func (s *Server) Close() {
 }
 
 // Client returns an MCP client connected to the server.
-func (s *Server) Client() client.MCPClient {
-	return client.NewClient(s.transport)
+// The client is already initialized, i.e. you do _not_ need to call Client.Initialize().
+func (s *Server) Client() *client.Client {
+	return s.client
 }
