@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"sync"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/client"
@@ -23,15 +24,17 @@ type Server struct {
 	ctx    context.Context
 	cancel func()
 
-	serverReader io.Reader
-	serverWriter io.Writer
-	clientReader io.Reader
-	clientWriter io.WriteCloser
+	serverReader *io.PipeReader
+	serverWriter *io.PipeWriter
+	clientReader *io.PipeReader
+	clientWriter *io.PipeWriter
 
 	logBuffer bytes.Buffer
 
 	transport transport.Interface
 	client    *client.Client
+
+	wg sync.WaitGroup
 }
 
 // NewServer starts a new MCP server with the provided tools and returns the server instance.
@@ -83,8 +86,12 @@ func (s *Server) AddTool(tool mcp.Tool, handler server.ToolHandlerFunc) {
 // Start starts the server in a goroutine. Make sure to defer Close() after Start().
 // When using NewServer(), the returned server is already started.
 func (s *Server) Start() error {
+	s.wg.Add(1)
+
 	// Start the MCP server in a goroutine
 	go func() {
+		defer s.wg.Done()
+
 		mcpServer := server.NewMCPServer(s.name, "1.0.0")
 
 		mcpServer.AddTools(s.tools...)
@@ -120,12 +127,24 @@ func (s *Server) Close() {
 	if s.transport != nil {
 		s.transport.Close()
 		s.transport = nil
+		s.client = nil
 	}
 
 	if s.cancel != nil {
 		s.cancel()
 		s.cancel = nil
 	}
+
+	// Wait for server goroutine to finish
+	s.wg.Wait()
+
+	s.serverWriter.Close()
+	s.serverReader.Close()
+	s.serverReader, s.serverWriter = nil, nil
+
+	s.clientWriter.Close()
+	s.clientReader.Close()
+	s.clientReader, s.clientWriter = nil, nil
 }
 
 // Client returns an MCP client connected to the server.
