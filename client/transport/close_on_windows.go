@@ -10,6 +10,8 @@ import (
 	"github.com/shirou/gopsutil/v3/process"
 )
 
+// killByPid kills the process by pid on windows.
+// It kills all subprocesses recursively.
 func killByPid(pid int) error {
 	proc, err := process.NewProcess(int32(pid))
 	if err != nil {
@@ -36,4 +38,12 @@ func killByPid(pid int) error {
 		}
 	}
 	return err
+}
+
+// KillProcess kills the process on windows.
+func killProcess(p *os.Process) error {
+	if p == nil {
+		return nil
+	}
+	return killByPid(p.Pid)
 }

@@ -119,7 +119,7 @@ func (c *Stdio) Close() error {
 	case err := <-errChan:
 		return err
 	case <-time.After(3 * time.Second):
-		err := killByPid(c.cmd.Process.Pid)
+		err := killProcess(c.cmd.Process)
 		return err
 	}
 }
