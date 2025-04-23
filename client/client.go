@@ -16,11 +16,21 @@ import (
 type Client struct {
 	transport transport.Interface
 
-	initialized   bool
-	notifications []func(mcp.JSONRPCNotification)
-	notifyMu      sync.RWMutex
-	requestID     atomic.Int64
-	capabilities  mcp.ServerCapabilities
+	initialized        bool
+	notifications      []func(mcp.JSONRPCNotification)
+	notifyMu           sync.RWMutex
+	requestID          atomic.Int64
+	clientCapabilities mcp.ClientCapabilities
+	serverCapabilities mcp.ServerCapabilities
+}
+
+type ClientOption func(*Client)
+
+// WithClientCapabilities sets the client capabilities for the client.
+func WithClientCapabilities(capabilities mcp.ClientCapabilities) ClientOption {
+	return func(c *Client) {
+		c.clientCapabilities = capabilities
+	}
 }
 
 // NewClient creates a new MCP client with the given transport.
@@ -31,10 +41,16 @@ type Client struct {
 //	if err != nil {
 //	    log.Fatalf("Failed to create client: %v", err)
 //	}
-func NewClient(transport transport.Interface) *Client {
-	return &Client{
+func NewClient(transport transport.Interface, options ...ClientOption) *Client {
+	client := &Client{
 		transport: transport,
 	}
+
+	for _, opt := range options {
+		opt(client)
+	}
+
+	return client
 }
 
 // Start initiates the connection to the server.
@@ -115,7 +131,7 @@ func (c *Client) Initialize(
 	params := struct {
 		ProtocolVersion string                 `json:"protocolVersion"`
 		ClientInfo      mcp.Implementation     `json:"clientInfo"`
-		Capabilities    mcp.ClientCapabilities `json:"capabilities"`
+		Capabilities    mcp.ClientCapabilities `json:"serverCapabilities"`
 	}{
 		ProtocolVersion: request.Params.ProtocolVersion,
 		ClientInfo:      request.Params.ClientInfo,
@@ -132,8 +148,8 @@ func (c *Client) Initialize(
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
-	// Store capabilities
-	c.capabilities = result.Capabilities
+	// Store serverCapabilities
+	c.serverCapabilities = result.Capabilities
 
 	// Send initialized notification
 	notification := mcp.JSONRPCNotification{
@@ -405,4 +421,14 @@ func listByPage[T any](
 // Cast it to the specific transport type and obtain the other helper methods.
 func (c *Client) GetTransport() transport.Interface {
 	return c.transport
+}
+
+// GetServerCapabilities returns the server capabilities.
+func (c *Client) GetServerCapabilities() mcp.ServerCapabilities {
+	return c.serverCapabilities
+}
+
+// GetClientCapabilities returns the client capabilities.
+func (c *Client) GetClientCapabilities() mcp.ClientCapabilities {
+	return c.clientCapabilities
 }

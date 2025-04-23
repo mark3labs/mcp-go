@@ -199,7 +199,7 @@ func TestMCPServer_Tools(t *testing.T) {
 			},
 			expectedNotifications: 1,
 			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, toolsList mcp.JSONRPCMessage) {
-				assert.Equal(t, "notifications/tools/list_changed", notifications[0].Method)
+				assert.Equal(t, mcp.MethodNotificationToolsListChanged, notifications[0].Method)
 				tools := toolsList.(mcp.JSONRPCResponse).Result.(mcp.ListToolsResult).Tools
 				assert.Len(t, tools, 2)
 				assert.Equal(t, "test-tool-1", tools[0].Name)
@@ -241,7 +241,7 @@ func TestMCPServer_Tools(t *testing.T) {
 			expectedNotifications: 5,
 			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, toolsList mcp.JSONRPCMessage) {
 				for _, notification := range notifications {
-					assert.Equal(t, "notifications/tools/list_changed", notification.Method)
+					assert.Equal(t, mcp.MethodNotificationToolsListChanged, notification.Method)
 				}
 				tools := toolsList.(mcp.JSONRPCResponse).Result.(mcp.ListToolsResult).Tools
 				assert.Len(t, tools, 2)
@@ -269,8 +269,8 @@ func TestMCPServer_Tools(t *testing.T) {
 			},
 			expectedNotifications: 2,
 			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, toolsList mcp.JSONRPCMessage) {
-				assert.Equal(t, "notifications/tools/list_changed", notifications[0].Method)
-				assert.Equal(t, "notifications/tools/list_changed", notifications[1].Method)
+				assert.Equal(t, mcp.MethodNotificationToolsListChanged, notifications[0].Method)
+				assert.Equal(t, mcp.MethodNotificationToolsListChanged, notifications[1].Method)
 				tools := toolsList.(mcp.JSONRPCResponse).Result.(mcp.ListToolsResult).Tools
 				assert.Len(t, tools, 2)
 				assert.Equal(t, "test-tool-1", tools[0].Name)
@@ -294,9 +294,9 @@ func TestMCPServer_Tools(t *testing.T) {
 			expectedNotifications: 2,
 			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, toolsList mcp.JSONRPCMessage) {
 				// One for SetTools
-				assert.Equal(t, "notifications/tools/list_changed", notifications[0].Method)
+				assert.Equal(t, mcp.MethodNotificationToolsListChanged, notifications[0].Method)
 				// One for DeleteTools
-				assert.Equal(t, "notifications/tools/list_changed", notifications[1].Method)
+				assert.Equal(t, mcp.MethodNotificationToolsListChanged, notifications[1].Method)
 
 				// Expect a successful response with an empty list of tools
 				resp, ok := toolsList.(mcp.JSONRPCResponse)
@@ -312,7 +312,7 @@ func TestMCPServer_Tools(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			server := NewMCPServer("test-server", "1.0.0")
+			server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(true))
 			_ = server.HandleMessage(ctx, []byte(`{
 				"jsonrpc": "2.0",
 				"id": 1,
@@ -929,7 +929,7 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
                         "uri": "undefined-resource"
                     }
                 }`,
-			expectedErr: mcp.INVALID_PARAMS,
+			expectedErr: mcp.RESOURCE_NOT_FOUND,
 			validateCallbacks: func(t *testing.T, err error, beforeResults beforeResult) {
 				assert.Equal(t, mcp.MethodResourcesRead, beforeResults.method)
 				assert.True(t, errors.Is(err, ErrResourceNotFound))

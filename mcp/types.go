@@ -12,40 +12,54 @@ type MCPMethod string
 
 const (
 	// Initiates connection and negotiates protocol capabilities.
-	// https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/lifecycle/#initialization
+	// https://modelcontextprotocol.io/specification/2024-11-05/basic/lifecycle/#initialization
 	MethodInitialize MCPMethod = "initialize"
 
 	// Verifies connection liveness between client and server.
-	// https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/utilities/ping/
+	// https://modelcontextprotocol.io/specification/2024-11-05/basic/utilities/ping/
 	MethodPing MCPMethod = "ping"
 
 	// Lists all available server resources.
-	// https://spec.modelcontextprotocol.io/specification/2024-11-05/server/resources/
+	// https://modelcontextprotocol.io/specification/2024-11-05/server/resources/
 	MethodResourcesList MCPMethod = "resources/list"
 
 	// Provides URI templates for constructing resource URIs.
-	// https://spec.modelcontextprotocol.io/specification/2024-11-05/server/resources/
+	// https://modelcontextprotocol.io/specification/2024-11-05/server/resources/
 	MethodResourcesTemplatesList MCPMethod = "resources/templates/list"
 
 	// Retrieves content of a specific resource by URI.
-	// https://spec.modelcontextprotocol.io/specification/2024-11-05/server/resources/
+	// https://modelcontextprotocol.io/specification/2024-11-05/server/resources/
 	MethodResourcesRead MCPMethod = "resources/read"
 
 	// Lists all available prompt templates.
-	// https://spec.modelcontextprotocol.io/specification/2024-11-05/server/prompts/
+	// https://modelcontextprotocol.io/specification/2024-11-05/server/prompts/
 	MethodPromptsList MCPMethod = "prompts/list"
 
 	// Retrieves a specific prompt template with filled parameters.
-	// https://spec.modelcontextprotocol.io/specification/2024-11-05/server/prompts/
+	// https://modelcontextprotocol.io/specification/2024-11-05/server/prompts/
 	MethodPromptsGet MCPMethod = "prompts/get"
 
 	// Lists all available executable tools.
-	// https://spec.modelcontextprotocol.io/specification/2024-11-05/server/tools/
+	// https://modelcontextprotocol.io/specification/2024-11-05/server/tools/
 	MethodToolsList MCPMethod = "tools/list"
 
 	// Invokes a specific tool with provided parameters.
-	// https://spec.modelcontextprotocol.io/specification/2024-11-05/server/tools/
+	// https://modelcontextprotocol.io/specification/2024-11-05/server/tools/
 	MethodToolsCall MCPMethod = "tools/call"
+
+	// Notifies when the list of available resources changes.
+	// https://modelcontextprotocol.io/specification/2025-03-26/server/resources#list-changed-notification
+	MethodNotificationResourcesListChanged = "notifications/resources/list_changed"
+
+	MethodNotificationResourceUpdated = "notifications/resources/updated"
+
+	// Notifies when the list of available prompt templates changes.
+	// https://modelcontextprotocol.io/specification/2025-03-26/server/prompts#list-changed-notification
+	MethodNotificationPromptsListChanged = "notifications/prompts/list_changed"
+
+	// Notifies when the list of available tools changes.
+	// https://spec.modelcontextprotocol.io/specification/2024-11-05/server/tools/list_changed/
+	MethodNotificationToolsListChanged = "notifications/tools/list_changed"
 )
 
 type URITemplate struct {
@@ -224,6 +238,11 @@ const (
 	METHOD_NOT_FOUND = -32601
 	INVALID_PARAMS   = -32602
 	INTERNAL_ERROR   = -32603
+)
+
+// MCP error codes
+const (
+	RESOURCE_NOT_FOUND = -32002
 )
 
 /* Empty result */
