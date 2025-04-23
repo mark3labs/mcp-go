@@ -131,7 +131,7 @@ func (c *Client) Initialize(
 	params := struct {
 		ProtocolVersion string                 `json:"protocolVersion"`
 		ClientInfo      mcp.Implementation     `json:"clientInfo"`
-		Capabilities    mcp.ClientCapabilities `json:"serverCapabilities"`
+		Capabilities    mcp.ClientCapabilities `json:"capabilities"`
 	}{
 		ProtocolVersion: request.Params.ProtocolVersion,
 		ClientInfo:      request.Params.ClientInfo,
