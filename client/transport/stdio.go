@@ -214,6 +214,10 @@ func (c *Stdio) SendNotification(
 	ctx context.Context,
 	notification mcp.JSONRPCNotification,
 ) error {
+	if c.stdin == nil {
+		return fmt.Errorf("stdio client not started")
+	}
+	
 	notificationBytes, err := json.Marshal(notification)
 	if err != nil {
 		return fmt.Errorf("failed to marshal notification: %w", err)
