@@ -1,4 +1,4 @@
-// Package server provides MCP (Model Control Protocol) server implementations.
+// Package server provides MCP (Model Context Protocol) server implementations.
 package server
 
 import (
@@ -138,7 +138,7 @@ var (
 // NotificationHandlerFunc handles incoming notifications.
 type NotificationHandlerFunc func(ctx context.Context, notification mcp.JSONRPCNotification)
 
-// MCPServer implements a Model Control Protocol server that can handle various types of requests
+// MCPServer implements a Model Context Protocol server that can handle various types of requests
 // including resources, prompts, and tools.
 type MCPServer struct {
 	// Separate mutexes for different resource types

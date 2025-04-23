@@ -1,4 +1,4 @@
-// Package mcp defines the core types and interfaces for the Model Control Protocol (MCP).
+// Package mcp defines the core types and interfaces for the Model Context Protocol (MCP).
 // MCP is a protocol for communication between LLM-powered applications and their supporting services.
 package mcp
 
