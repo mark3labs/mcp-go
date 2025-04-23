@@ -15,18 +15,18 @@ func killByPid(pid int) error {
 	if err != nil {
 		return err
 	}
-	// 获取所有子进程（递归）
+	// get all subprocess recursively
 	children, err := proc.Children()
 	if err == nil {
 		for _, child := range children {
-			err = killByPid(int(child.Pid)) // 递归杀子进程
+			err = killByPid(int(child.Pid)) // kill all subprocesses
 			if err != nil {
 				fmt.Printf("Failed to kill pid %d: %v\n", child.Pid, err)
 			}
 		}
 	}
 
-	// 杀掉当前进程
+	// kill current process
 	p, err := os.FindProcess(int(pid))
 	if err == nil {
 		// windows does not support SIGTERM, so we just use Kill()
