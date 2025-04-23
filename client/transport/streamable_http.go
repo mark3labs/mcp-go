@@ -236,39 +236,43 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 
 	// Create a channel for this specific request
 	responseChan := make(chan *JSONRPCResponse, 1)
-	defer close(responseChan)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	// Start a goroutine to process the SSE stream
-	go c.readSSE(ctx, reader, func(event, data string) {
+	go func() {
+		// only close responseChan after readingSSE()
+		defer close(responseChan)
 
-		// (unsupported: batching)
+		c.readSSE(ctx, reader, func(event, data string) {
 
-		var message JSONRPCResponse
-		if err := json.Unmarshal([]byte(data), &message); err != nil {
-			fmt.Printf("failed to unmarshal message: %v\n", err)
-			return
-		}
-
-		// Handle notification
-		if message.ID == nil {
-			var notification mcp.JSONRPCNotification
-			if err := json.Unmarshal([]byte(data), &notification); err != nil {
-				fmt.Printf("failed to unmarshal notification: %v\n", err)
+			// (unsupported: batching)
+	
+			var message JSONRPCResponse
+			if err := json.Unmarshal([]byte(data), &message); err != nil {
+				fmt.Printf("failed to unmarshal message: %v\n", err)
 				return
 			}
-			c.notifyMu.RLock()
-			if c.notificationHandler != nil {
-				c.notificationHandler(notification)
+	
+			// Handle notification
+			if message.ID == nil {
+				var notification mcp.JSONRPCNotification
+				if err := json.Unmarshal([]byte(data), &notification); err != nil {
+					fmt.Printf("failed to unmarshal notification: %v\n", err)
+					return
+				}
+				c.notifyMu.RLock()
+				if c.notificationHandler != nil {
+					c.notificationHandler(notification)
+				}
+				c.notifyMu.RUnlock()
+				return
 			}
-			c.notifyMu.RUnlock()
-			return
-		}
-
-		responseChan <- &message
-	})
+	
+			responseChan <- &message
+		})
+	}()
 
 	// Wait for the response or context cancellation
 	select {
