@@ -45,6 +45,12 @@ func WithHeaders(headers map[string]string) ClientOption {
 	}
 }
 
+func WithHttpClient(httpClient *http.Client) ClientOption {
+	return func(sc *SSE) {
+		sc.httpClient = httpClient
+	}
+}
+
 // NewSSE creates a new SSE-based MCP client with the given base URL.
 // Returns an error if the URL is invalid.
 func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
