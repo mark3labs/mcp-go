@@ -31,10 +31,13 @@ func NewStdioMCPClient(
 
 // GetStderr returns a reader for the stderr output of the subprocess.
 // This can be used to capture error messages or logs from the subprocess.
-//
-// Note: This method only works with stdio transport, or it will panic.
-func GetStderr(c *Client) io.Reader {
+func GetStderr(c *Client) (io.Reader, bool) {
 	t := c.GetTransport()
-	stdio := t.(*transport.Stdio)
-	return stdio.Stderr()
+
+	stdio, ok := t.(*transport.Stdio)
+	if !ok {
+		return nil, false
+	}
+
+	return stdio.Stderr(), true
 }
