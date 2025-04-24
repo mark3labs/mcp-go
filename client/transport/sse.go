@@ -261,7 +261,7 @@ func (c *SSE) SendRequest(
 		req.Header.Set(k, v)
 	}
 
-	// Resgiter response channel
+	// Register response channel
 	responseChan := make(chan *JSONRPCResponse, 1)
 	c.mu.Lock()
 	c.responses[request.ID] = responseChan
