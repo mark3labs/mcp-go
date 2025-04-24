@@ -243,53 +243,54 @@ func (c *SSE) SendRequest(
 		return nil, fmt.Errorf("endpoint not received")
 	}
 
+	// Marshal request
 	requestBytes, err := json.Marshal(request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	responseChan := make(chan *JSONRPCResponse, 1)
-	c.mu.Lock()
-	c.responses[request.ID] = responseChan
-	c.mu.Unlock()
-
-	req, err := http.NewRequestWithContext(
-		ctx,
-		"POST",
-		c.endpoint.String(),
-		bytes.NewReader(requestBytes),
-	)
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint.String(), bytes.NewReader(requestBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
+	// Set headers
 	req.Header.Set("Content-Type", "application/json")
-	// set custom http headers
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
 	}
 
+	// Resgiter response channel
+	responseChan := make(chan *JSONRPCResponse, 1)
+	c.mu.Lock()
+	c.responses[request.ID] = responseChan
+	c.mu.Unlock()
+	deleteResponseChan := func() {
+		c.mu.Lock()
+		delete(c.responses, request.ID)
+		c.mu.Unlock()
+	}
+
+	// Send request
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		deleteResponseChan()
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK &&
-		resp.StatusCode != http.StatusAccepted {
+	// Check if we got an error response
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		deleteResponseChan()
+
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf(
-			"request failed with status %d: %s",
-			resp.StatusCode,
-			body,
-		)
+		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, body)
 	}
 
 	select {
 	case <-ctx.Done():
-		c.mu.Lock()
-		delete(c.responses, request.ID)
-		c.mu.Unlock()
+		deleteResponseChan()
 		return nil, ctx.Err()
 	case response := <-responseChan:
 		return response, nil
