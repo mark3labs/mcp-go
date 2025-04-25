@@ -100,7 +100,14 @@ func (c *Stdio) Start(ctx context.Context) error {
 // Close shuts down the stdio client, closing the stdin pipe and waiting for the subprocess to exit.
 // Returns an error if there are issues closing stdin or waiting for the subprocess to terminate.
 func (c *Stdio) Close() error {
+	select {
+	case <-c.done:
+		return nil
+	default:
+	}
+	// cancel all in-flight request
 	close(c.done)
+	
 	if err := c.stdin.Close(); err != nil {
 		return fmt.Errorf("failed to close stdin: %w", err)
 	}
