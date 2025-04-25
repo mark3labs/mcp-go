@@ -405,9 +405,6 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 	switch contentType {
 	case "text":
 		text := ExtractString(contentMap, "text")
-		if text == "" {
-			return nil, fmt.Errorf("text is missing")
-		}
 		return NewTextContent(text), nil
 
 	case "image":
