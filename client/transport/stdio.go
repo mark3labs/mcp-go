@@ -182,27 +182,33 @@ func (c *Stdio) SendRequest(
 		return nil, fmt.Errorf("stdio client not started")
 	}
 
-	// Create the complete request structure
-	responseChan := make(chan *JSONRPCResponse, 1)
-	c.mu.Lock()
-	c.responses[request.ID] = responseChan
-	c.mu.Unlock()
-
+	// Marshal request
 	requestBytes, err := json.Marshal(request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 	requestBytes = append(requestBytes, '\n')
 
+	// Register response channel
+	responseChan := make(chan *JSONRPCResponse, 1)
+	c.mu.Lock()
+	c.responses[request.ID] = responseChan
+	c.mu.Unlock()
+	deleteResponseChan := func() {
+		c.mu.Lock()
+		delete(c.responses, request.ID)
+		c.mu.Unlock()
+	}
+
+	// Send request
 	if _, err := c.stdin.Write(requestBytes); err != nil {
+		deleteResponseChan()
 		return nil, fmt.Errorf("failed to write request: %w", err)
 	}
 
 	select {
 	case <-ctx.Done():
-		c.mu.Lock()
-		delete(c.responses, request.ID)
-		c.mu.Unlock()
+		deleteResponseChan()
 		return nil, ctx.Err()
 	case response := <-responseChan:
 		return response, nil
