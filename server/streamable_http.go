@@ -1,0 +1,509 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/util"
+)
+
+// StreamableHttpOption defines a function type for configuring StreamableHttpServer
+type StreamableHttpOption func(*StreamableHttpServer)
+
+// WithEndpointPath sets the endpoint path for the server.
+// The default is "/mcp".
+func WithEndpointPath(endpointPath string) StreamableHttpOption {
+	return func(s *StreamableHttpServer) {
+		// Normalize the endpoint path to ensure it starts with a slash and doesn't end with one
+		normalizedPath := "/" + strings.Trim(endpointPath, "/")
+		s.endpointPath = normalizedPath
+	}
+}
+
+// WithStateLess sets the server to stateless mode.
+// If true, the server will manage no session information. Every request will be treated
+// as a new session. No session id returned to the client.
+// The default is false.
+func WithStateLess(stateLess bool) StreamableHttpOption {
+	return func(s *StreamableHttpServer) {
+		s.sessionIdManager = &StatelessSessionIdManager{}
+	}
+}
+
+// WithSessionIdManager sets a custom session id generator for the server.
+// By default, the server will use SimpleStatefulSessionIdGenerator, which generates
+// session ids with uuid, and it's insecure.
+// Notice: it will override the WithStateLess option.
+func WithSessionIdManager(manager SessionIdManager) StreamableHttpOption {
+	return func(s *StreamableHttpServer) {
+		s.sessionIdManager = manager
+	}
+}
+
+// WithHeartbeatInterval sets the heartbeat interval. Positive interval means the
+// server will send a heartbeat to the client through the GET connection, to keep
+// the connection alive from being closed by the network infrastructure (e.g.
+// gateways). If the client does not establish a GET connection, it has no
+// effect. The default is not to send heartbeats.
+func WithHeartbeatInterval(interval time.Duration) StreamableHttpOption {
+	return func(s *StreamableHttpServer) {
+		s.listenHeartbeatInterval = interval
+	}
+}
+
+// WithHttpContextFunc sets a function that will be called to customise the context
+// to the server using the incoming request.
+// This can be used to inject context values from headers, for example.
+func WithHttpContextFunc(fn SSEContextFunc) StreamableHttpOption {
+	return func(s *StreamableHttpServer) {
+		s.contextFunc = fn
+	}
+}
+
+// WithLogger sets the logger for the server
+func WithLogger(logger util.Logger) StreamableHttpOption {
+	return func(s *StreamableHttpServer) {
+		s.logger = logger
+	}
+}
+
+// StreamableHttpServer implements a Streamable-http based MCP server.
+// It communicates with clients over HTTP protocol, supporting both direct HTTP responses, and SSE streams.
+// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http
+//
+// Usage:
+//
+//	server := NewStreamableHttpServer(mcpServer)
+//	server.Start(":8080")
+//
+// or the server itself can be used as a http.Handler, which is convenient to
+// integrate with existing http servers:
+//
+//	handler := NewStreamableHttpServer(mcpServer)
+//	http.Handle("/streamable-http", handler)
+//	http.ListenAndServe(":8080", nil)
+//
+// The current implementation does not support the following features from the specification:
+//   - Batching of requests/notifications/responses in arrays.
+//   - Stream Resumability
+type StreamableHttpServer struct {
+	server *MCPServer
+
+	httpServer *http.Server
+	mu         sync.RWMutex
+
+	endpointPath            string
+	contextFunc             SSEContextFunc
+	sessionIdManager        SessionIdManager
+	listenHeartbeatInterval time.Duration
+	logger                  util.Logger
+}
+
+// NewStreamableHttpServer creates a new streamable-http server instance
+func NewStreamableHttpServer(server *MCPServer, opts ...StreamableHttpOption) *StreamableHttpServer {
+	s := &StreamableHttpServer{
+		server:           server,
+		endpointPath:     "/mcp",
+		sessionIdManager: &InsecureStatefulSessionIdManager{},
+		logger:           util.DefaultLogger(),
+	}
+
+	// Apply all options
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// ServeHTTP implements the http.Handler interface.
+func (s *StreamableHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		s.handlePost(w, r)
+	} else if r.Method == http.MethodGet {
+		s.handleGet(w, r)
+	} else if r.Method == http.MethodDelete {
+		s.handleDelete(w, r)
+	} else {
+		http.NotFound(w, r)
+	}
+}
+
+// Start begins serving the http server on the specified address and path
+// (endpointPath). like:
+//
+//	s.Start(":8080")
+func (s *StreamableHttpServer) Start(addr string) error {
+	s.mu.Lock()
+	mux := http.NewServeMux()
+	mux.Handle(s.endpointPath, s)
+	s.httpServer = &http.Server{
+		Addr:    addr,
+		Handler: mux,
+	}
+	s.mu.Unlock()
+
+	return s.httpServer.ListenAndServe()
+}
+
+// Shutdown gracefully stops the server, closing all active sessions
+// and shutting down the HTTP server.
+func (s *StreamableHttpServer) Shutdown(ctx context.Context) error {
+
+	// shutdown the server if needed (may use as a http.Handler)
+	s.mu.RLock()
+	srv := s.httpServer
+	s.mu.RUnlock()
+	if srv != nil {
+		return srv.Shutdown(ctx)
+	}
+	return nil
+}
+
+// --- internal methods ---
+
+const (
+	headerKeySessionID = "Mcp-Session-Id"
+)
+
+func (s *StreamableHttpServer) handlePost(w http.ResponseWriter, r *http.Request) {
+	// post request carry request/notification message
+
+	// Check content type
+	contentType := r.Header.Get("Content-Type")
+	if contentType != "application/json" {
+		http.Error(w, "Invalid content type: must be 'application/json'", http.StatusBadRequest)
+		return
+	}
+
+	// Check the request body is valid json, meanwhile, get the request Method
+	rawData, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.writeJSONRPCError(w, nil, mcp.PARSE_ERROR, fmt.Sprintf("read request body error: %v", err))
+		return
+	}
+	var baseMessage struct {
+		Method mcp.MCPMethod `json:"method"`
+	}
+	if err := json.Unmarshal(rawData, &baseMessage); err != nil {
+		s.writeJSONRPCError(w, nil, mcp.PARSE_ERROR, "request body is not valid json")
+		return
+	}
+	isInitializeRequest := baseMessage.Method == mcp.MethodInitialize
+
+	// Prepare the session for the mcp server
+	// The session is ephemeral. Its life is the same as the request. It's only created
+	// for interaction with the mcp server.
+	var sessionID string
+	if isInitializeRequest {
+		// generate a new one for initialize request
+		sessionID = s.sessionIdManager.Generate()
+	} else {
+		// Get session ID from header.
+		// Stateful servers need the client to carry the session ID.
+		sessionID = r.Header.Get(headerKeySessionID)
+		isTerminated, err := s.sessionIdManager.Validate(sessionID)
+		if err != nil {
+			http.Error(w, "Invalid session ID", http.StatusBadRequest)
+			return
+		}
+		if isTerminated {
+			http.Error(w, "Session terminated", http.StatusNotFound)
+			return
+		}
+	}
+
+	session := newStreamableHttpSession(sessionID)
+
+	// Set the client context before handling the message
+	ctx := s.server.WithContext(r.Context(), session)
+	if s.contextFunc != nil {
+		ctx = s.contextFunc(ctx, r)
+	}
+
+	// handle potential notifications
+	mu := sync.Mutex{}
+	upgraded := false
+	done := make(chan struct{})
+	defer close(done)
+
+	go func() {
+		for {
+			select {
+			case nt := <-session.notificationChannel:
+				func() {
+					mu.Lock()
+					defer mu.Unlock()
+					defer func() {
+						flusher, ok := w.(http.Flusher)
+						if ok {
+							flusher.Flush()
+						}
+					}()
+
+					// if there's notifications, upgrade to SSE response
+					if !upgraded {
+						upgraded = true
+						w.Header().Set("Content-Type", "text/event-stream")
+						w.Header().Set("Connection", "keep-alive")
+						w.Header().Set("Cache-Control", "no-cache")
+						w.WriteHeader(http.StatusAccepted)
+					}
+					err := writeSSEEvent(w, nt)
+					if err != nil {
+						s.logger.Errorf("Failed to write SSE event: %v", err)
+						return
+					}
+				}()
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Process message through MCPServer
+	response := s.server.HandleMessage(ctx, rawData)
+	if response == nil {
+		// For notifications, just send 202 Accepted with no body
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+
+	// Write response
+	mu.Lock()
+	defer mu.Unlock()
+	if ctx.Err() != nil {
+		return
+	}
+	if upgraded {
+		if err := writeSSEEvent(w, response); err != nil {
+			s.logger.Errorf("Failed to write final SSE response event: %v", err)
+		}
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+		if isInitializeRequest && sessionID != "" {
+			// send the session ID back to the client
+			w.Header().Set(headerKeySessionID, sessionID)
+		}
+		w.WriteHeader(http.StatusOK)
+		err := json.NewEncoder(w).Encode(response)
+		if err != nil {
+			s.logger.Errorf("Failed to write response: %v", err)
+		}
+	}
+}
+
+func (s *StreamableHttpServer) handleGet(w http.ResponseWriter, r *http.Request) {
+	// get request is for listening to notifications
+	// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
+
+	sessionID := r.Header.Get(headerKeySessionID)
+	// the specification didn't say we should validate the session id
+
+	if sessionID == "" {
+		// It's a stateless server,
+		// but the MCP server requires a unique ID for registering, so we use a random one
+		sessionID = uuid.New().String()
+	}
+
+	session := newStreamableHttpSession(sessionID)
+	if err := s.server.RegisterSession(r.Context(), session); err != nil {
+		http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusBadRequest)
+		return
+	}
+	defer s.server.UnregisterSession(r.Context(), sessionID)
+
+	// Set the client context before handling the message
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	// Start notification handler for this session
+	done := make(chan struct{})
+	defer close(done)
+	mu := sync.Mutex{}
+
+	go func() {
+		for {
+			select {
+			case nt := <-session.notificationChannel:
+				func() {
+					mu.Lock()
+					defer mu.Unlock()
+					err := writeSSEEvent(w, nt)
+					if err != nil {
+						s.logger.Errorf("Failed to write SSE event: %v", err)
+						return
+					}
+					flusher.Flush()
+				}()
+			case <-done:
+				return
+			case <-r.Context().Done():
+				return
+			}
+		}
+	}()
+
+	if s.listenHeartbeatInterval > 0 {
+		// heartbeat to keep the connection alive
+		go func() {
+			ticker := time.NewTicker(s.listenHeartbeatInterval)
+			defer ticker.Stop()
+			message := mcp.JSONRPCRequest{
+				JSONRPC: "2.0",
+				Request: mcp.Request{
+					Method: "ping",
+				},
+			}
+			for {
+				select {
+				case <-ticker.C:
+					func() {
+						mu.Lock()
+						defer mu.Unlock()
+						err := writeSSEEvent(w, message)
+						if err != nil {
+							s.logger.Errorf("Failed to write SSE heartbeat event: %v", err)
+							return
+						}
+						flusher.Flush()
+					}()
+				case <-done:
+					return
+				case <-r.Context().Done():
+					return
+				}
+			}
+		}()
+	}
+
+	// Keep the connection open until the client disconnects
+	<-r.Context().Done()
+}
+
+func (s *StreamableHttpServer) handleDelete(w http.ResponseWriter, r *http.Request) {
+	// delete request terminate the session
+	sessionID := r.Header.Get(headerKeySessionID)
+	notAllowed, err := s.sessionIdManager.Terminate(sessionID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Session termination failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if notAllowed {
+		http.Error(w, "Session termination not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func writeSSEEvent(w io.Writer, data any) error {
+	data, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("failed to marshal data: %w", err)
+	}
+	_, err = w.Write([]byte(fmt.Sprintf("event: message\ndata: %s\n\n", data)))
+	if err != nil {
+		return fmt.Errorf("failed to write SSE event: %w", err)
+	}
+	return nil
+}
+
+// writeJSONRPCError writes a JSON-RPC error response with the given error details.
+func (s *StreamableHttpServer) writeJSONRPCError(
+	w http.ResponseWriter,
+	id interface{},
+	code int,
+	message string,
+) {
+	response := createErrorResponse(id, code, message)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	json.NewEncoder(w).Encode(response)
+}
+
+// --- session ---
+
+type streamableHttpSession struct {
+	sessionID           string
+	notificationChannel chan mcp.JSONRPCNotification // server -> client notifications
+}
+
+func newStreamableHttpSession(sessionID string) *streamableHttpSession {
+	return &streamableHttpSession{
+		sessionID:           sessionID,
+		notificationChannel: make(chan mcp.JSONRPCNotification, 100),
+	}
+}
+
+func (s *streamableHttpSession) SessionID() string {
+	return s.sessionID
+}
+
+func (s *streamableHttpSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
+	return s.notificationChannel
+}
+
+func (s *streamableHttpSession) Initialize() {
+	// do nothing
+	// the session is ephemeral, no real initialized action needed
+}
+
+func (s *streamableHttpSession) Initialized() bool {
+	// the session is ephemeral, no real initialized action needed
+	return true
+}
+
+var _ ClientSession = (*streamableHttpSession)(nil)
+
+// --- session id manager ---
+
+type SessionIdManager interface {
+	Generate() string
+	Validate(string) (isTerminated bool, err error) // return err if invalid
+	Terminate(string) (isNotAllowed bool, err error)
+}
+
+// StatelessSessionIdManager does nothing, which means it has no session management, which is stateless.
+type StatelessSessionIdManager struct{}
+
+func (s *StatelessSessionIdManager) Generate() string {
+	return ""
+}
+func (s *StatelessSessionIdManager) Validate(sessionID string) (isTerminated bool, err error) {
+	return false, nil
+}
+func (s *StatelessSessionIdManager) Terminate(sessionID string) (isNotAllowed bool, err error) {
+	return false, nil
+}
+
+// InsecureStatefulSessionIdManager generate id with uuid
+// It won't validate the id indeed, so it could be fake.
+// For more secure session id, use a more complex generator, like a JWT.
+type InsecureStatefulSessionIdManager struct{}
+
+func (s *InsecureStatefulSessionIdManager) Generate() string {
+	return uuid.New().String()
+}
+func (s *InsecureStatefulSessionIdManager) Validate(sessionID string) (isTerminated bool, err error) {
+	return false, nil
+}
+func (s *InsecureStatefulSessionIdManager) Terminate(sessionID string) (isNotAllowed bool, err error) {
+	return false, nil
+}
