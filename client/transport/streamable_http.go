@@ -126,7 +126,6 @@ func (c *StreamableHTTP) Close() error {
 }
 
 const (
-	initializeMethod   = "initialize"
 	headerKeySessionID = "Mcp-Session-Id"
 )
 
@@ -197,7 +196,7 @@ func (c *StreamableHTTP) SendRequest(
 		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, body)
 	}
 
-	if request.Method == initializeMethod {
+	if request.Method == string(mcp.MethodInitialize) {
 		// saved the received session ID in the response
 		// empty session ID is allowed
 		if sessionID := resp.Header.Get(headerKeySessionID); sessionID != "" {
