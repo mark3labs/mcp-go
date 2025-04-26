@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/shirou/gopsutil/v3/process"
 )
 
 func compileTestServer(outputPath string) error {
@@ -52,7 +53,6 @@ func TestStdio(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to start Stdio transport: %v", err)
 	}
-	defer stdio.Close()
 
 	t.Run("SendRequest", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5000000000*time.Second)
@@ -290,6 +290,41 @@ func TestStdio(t *testing.T) {
 		}
 	})
 
+	t.Run("closeAndCheckProcess", func(t *testing.T) {
+		stdio.Close()
+		// Wait a bit to ensure process has exited
+		time.Sleep(100 * time.Millisecond)
+		exists, err := process.PidExists(int32(stdio.cmd.Process.Pid))
+		if err != nil {
+			t.Errorf("Failed to check if process exists: %v", err)
+		}
+		if exists {
+			t.Fatalf("Expected process to be closed, but it still exists")
+		}
+	})
+
+	t.Run("sendRequestAfterClose", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		params := map[string]interface{}{
+			"string": "hello world",
+			"array":  []interface{}{1, 2, 3},
+		}
+
+		request := JSONRPCRequest{
+			JSONRPC: "2.0",
+			ID:      1,
+			Method:  "debug/echo",
+			Params:  params,
+		}
+
+		// Send the request
+		_, err := stdio.SendRequest(ctx, request)
+		if err == nil {
+			t.Fatalf("SendRequest should failed:")
+		}
+	})
 }
 
 func TestStdioErrors(t *testing.T) {
