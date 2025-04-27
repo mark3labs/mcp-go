@@ -421,11 +421,11 @@ func (s *MCPServer) AddResource(
 	}
 
 	s.resourcesMu.Lock()
-	defer s.resourcesMu.Unlock()
 	s.resources[resource.URI] = resourceEntry{
 		resource: resource,
 		handler:  handler,
 	}
+	s.resourcesMu.Unlock()
 
 	// When the list of available resources changes, servers that declared the listChanged capability SHOULD send a notification
 	if s.capabilities.resources.listChanged {
@@ -466,11 +466,11 @@ func (s *MCPServer) AddResourceTemplate(
 
 
 	s.resourcesMu.Lock()
-	defer s.resourcesMu.Unlock()
 	s.resourceTemplates[template.URITemplate.Raw()] = resourceTemplateEntry{
 		template: template,
 		handler:  handler,
 	}
+	s.resourcesMu.Unlock()
 
 	// When the list of available resources changes, servers that declared the listChanged capability SHOULD send a notification
 	if s.capabilities.resources.listChanged {
@@ -495,9 +495,9 @@ func (s *MCPServer) AddPrompt(prompt mcp.Prompt, handler PromptHandlerFunc) {
 	}
 
 	s.promptsMu.Lock()
-	defer s.promptsMu.Unlock()
 	s.prompts[prompt.Name] = prompt
 	s.promptHandlers[prompt.Name] = handler
+	s.promptsMu.Unlock()
 
 	// When the list of available resources changes, servers that declared the listChanged capability SHOULD send a notification.
 	if s.capabilities.prompts.listChanged {
