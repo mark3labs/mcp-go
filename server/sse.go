@@ -77,18 +77,18 @@ var _ ClientSession = (*sseSession)(nil)
 // SSEServer implements a Server-Sent Events (SSE) based MCP server.
 // It provides real-time communication capabilities over HTTP using the SSE protocol.
 type SSEServer struct {
-	server          *MCPServer
-	baseURL         string
-	basePath        string
-  useFullURLForMessageEndpoint bool
-	messageEndpoint string
-	sseEndpoint     string
-  ssePattern      string
-	sessions        sync.Map
-	srv             *http.Server
-	contextFunc     SSEContextFunc
-	keepAlive         bool
-	keepAliveInterval time.Duration
+	server                       *MCPServer
+	baseURL                      string
+	basePath                     string
+	useFullURLForMessageEndpoint bool
+	messageEndpoint              string
+	sseEndpoint                  string
+	ssePattern                   string
+	sessions                     sync.Map
+	srv                          *http.Server
+	contextFunc                  SSEContextFunc
+	keepAlive                    bool
+	keepAliveInterval            time.Duration
 
 	mu sync.RWMutex
 }
