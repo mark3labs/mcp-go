@@ -34,6 +34,13 @@ type sseSession struct {
 // content. This can be used to inject context values from headers, for example.
 type SSEContextFunc func(ctx context.Context, r *http.Request) context.Context
 
+// DynamicBasePathFunc allows the user to provide a function to generate the
+// base path for a given request and sessionID. This is useful for cases where
+// the base path is not known at the time of SSE server creation, such as when
+// using a reverse proxy or when the base path is dynamically generated. The
+// function should return the base path (e.g., "/mcp/tenant123").
+type DynamicBasePathFunc func(r *http.Request, sessionID string) string
+
 func (s *sseSession) SessionID() string {
 	return s.sessionID
 }
@@ -58,19 +65,19 @@ type SSEServer struct {
 	server                       *MCPServer
 	baseURL                      string
 	basePath                     string
+	appendQueryToMessageEndpoint bool
 	useFullURLForMessageEndpoint bool
 	messageEndpoint              string
 	sseEndpoint                  string
 	sessions                     sync.Map
 	srv                          *http.Server
 	contextFunc                  SSEContextFunc
+	dynamicBasePathFunc          DynamicBasePathFunc
 
 	keepAlive         bool
 	keepAliveInterval time.Duration
 
 	mu sync.RWMutex
-
-	appendQueryToMessageEndpoint bool
 }
 
 // SSEOption defines a function type for configuring SSEServer
@@ -99,7 +106,7 @@ func WithBaseURL(baseURL string) SSEOption {
 	}
 }
 
-// WithBasePath adds a new option for setting base path
+// WithBasePath adds a new option for setting a static base path
 func WithBasePath(basePath string) SSEOption {
 	return func(s *SSEServer) {
 		// Ensure the path starts with / and doesn't end with /
@@ -107,6 +114,24 @@ func WithBasePath(basePath string) SSEOption {
 			basePath = "/" + basePath
 		}
 		s.basePath = strings.TrimSuffix(basePath, "/")
+	}
+}
+
+// WithDynamicBasePath accepts a function for generating the base path. This is
+// useful for cases where the base path is not known at the time of SSE server
+// creation, such as when using a reverse proxy or when the server is mounted
+// at a dynamic path.
+func WithDynamicBasePath(fn DynamicBasePathFunc) SSEOption {
+	return func(s *SSEServer) {
+		if fn != nil {
+			s.dynamicBasePathFunc = func(r *http.Request, sid string) string {
+				bp := fn(r, sid)
+				if !strings.HasPrefix(bp, "/") {
+					bp = "/" + bp
+				}
+				return strings.TrimSuffix(bp, "/")
+			}
+		}
 	}
 }
 
@@ -208,8 +233,8 @@ func (s *SSEServer) Start(addr string) error {
 
 	if s.srv == nil {
 		s.srv = &http.Server{
-			Addr:		addr,
-			Handler:	s,
+			Addr:    addr,
+			Handler: s,
 		}
 	} else {
 		if s.srv.Addr == "" {
@@ -218,7 +243,7 @@ func (s *SSEServer) Start(addr string) error {
 			return fmt.Errorf("conflicting listen address: WithHTTPServer(%q) vs Start(%q)", s.srv.Addr, addr)
 		}
 	}
-	
+
 	return s.srv.ListenAndServe()
 }
 
@@ -331,7 +356,7 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Send the initial endpoint event
-	endpoint := s.GetMessageEndpointForClient(sessionID)
+	endpoint := s.GetMessageEndpointForClient(r, sessionID)
 	if s.appendQueryToMessageEndpoint && len(r.URL.RawQuery) > 0 {
 		endpoint += "&" + r.URL.RawQuery
 	}
@@ -355,13 +380,20 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetMessageEndpointForClient returns the appropriate message endpoint URL with session ID
-// based on the useFullURLForMessageEndpoint configuration.
-func (s *SSEServer) GetMessageEndpointForClient(sessionID string) string {
-	messageEndpoint := s.messageEndpoint
-	if s.useFullURLForMessageEndpoint {
-		messageEndpoint = s.CompleteMessageEndpoint()
+// for the given request. This is the canonical way to compute the message endpoint for a client.
+// It handles both dynamic and static path modes, and honors the WithUseFullURLForMessageEndpoint flag.
+func (s *SSEServer) GetMessageEndpointForClient(r *http.Request, sessionID string) string {
+	basePath := s.basePath
+	if s.dynamicBasePathFunc != nil {
+		basePath = s.dynamicBasePathFunc(r, sessionID)
 	}
-	return fmt.Sprintf("%s?sessionId=%s", messageEndpoint, sessionID)
+
+	endpointPath := basePath + s.messageEndpoint
+	if s.useFullURLForMessageEndpoint && s.baseURL != "" {
+		endpointPath = s.baseURL + endpointPath
+	}
+
+	return fmt.Sprintf("%s?sessionId=%s", endpointPath, sessionID)
 }
 
 // handleMessage processes incoming JSON-RPC messages from clients and sends responses
@@ -479,32 +511,108 @@ func (s *SSEServer) GetUrlPath(input string) (string, error) {
 	return parse.Path, nil
 }
 
-func (s *SSEServer) CompleteSseEndpoint() string {
-	return s.baseURL + s.basePath + s.sseEndpoint
+func (s *SSEServer) CompleteSseEndpoint() (string, error) {
+	if s.dynamicBasePathFunc != nil {
+		return "", &ErrDynamicPathConfig{Method: "CompleteSseEndpoint"}
+	}
+	return s.baseURL + s.basePath + s.sseEndpoint, nil
 }
 
 func (s *SSEServer) CompleteSsePath() string {
-	path, err := s.GetUrlPath(s.CompleteSseEndpoint())
+	path, err := s.CompleteSseEndpoint()
 	if err != nil {
 		return s.basePath + s.sseEndpoint
 	}
-	return path
+	urlPath, err := s.GetUrlPath(path)
+	if err != nil {
+		return s.basePath + s.sseEndpoint
+	}
+	return urlPath
 }
 
-func (s *SSEServer) CompleteMessageEndpoint() string {
-	return s.baseURL + s.basePath + s.messageEndpoint
+func (s *SSEServer) CompleteMessageEndpoint() (string, error) {
+	if s.dynamicBasePathFunc != nil {
+		return "", &ErrDynamicPathConfig{Method: "CompleteMessageEndpoint"}
+	}
+	return s.baseURL + s.basePath + s.messageEndpoint, nil
 }
 
 func (s *SSEServer) CompleteMessagePath() string {
-	path, err := s.GetUrlPath(s.CompleteMessageEndpoint())
+	path, err := s.CompleteMessageEndpoint()
 	if err != nil {
 		return s.basePath + s.messageEndpoint
 	}
-	return path
+	urlPath, err := s.GetUrlPath(path)
+	if err != nil {
+		return s.basePath + s.messageEndpoint
+	}
+	return urlPath
+}
+
+// SSEHandler returns an http.Handler for the SSE endpoint.
+//
+// This method allows you to mount the SSE handler at any arbitrary path
+// using your own router (e.g. net/http, gorilla/mux, chi, etc.). It is
+// intended for advanced scenarios where you want to control the routing or
+// support dynamic segments.
+//
+// IMPORTANT: When using this handler in advanced/dynamic mounting scenarios,
+// you must use the WithDynamicBasePath option to ensure the correct base path
+// is communicated to clients.
+//
+// Example usage:
+//
+//	// Advanced/dynamic:
+//	sseServer := NewSSEServer(mcpServer,
+//		WithDynamicBasePath(func(r *http.Request, sessionID string) string {
+//			tenant := r.PathValue("tenant")
+//			return "/mcp/" + tenant
+//		}),
+//		WithBaseURL("http://localhost:8080")
+//	)
+//	mux.Handle("/mcp/{tenant}/sse", sseServer.SSEHandler())
+//	mux.Handle("/mcp/{tenant}/message", sseServer.MessageHandler())
+//
+// For non-dynamic cases, use ServeHTTP method instead.
+func (s *SSEServer) SSEHandler() http.Handler {
+	return http.HandlerFunc(s.handleSSE)
+}
+
+// MessageHandler returns an http.Handler for the message endpoint.
+//
+// This method allows you to mount the message handler at any arbitrary path
+// using your own router (e.g. net/http, gorilla/mux, chi, etc.). It is
+// intended for advanced scenarios where you want to control the routing or
+// support dynamic segments.
+//
+// IMPORTANT: When using this handler in advanced/dynamic mounting scenarios,
+// you must use the WithDynamicBasePath option to ensure the correct base path
+// is communicated to clients.
+//
+// Example usage:
+//
+//	// Advanced/dynamic:
+//	sseServer := NewSSEServer(mcpServer,
+//		WithDynamicBasePath(func(r *http.Request, sessionID string) string {
+//			tenant := r.PathValue("tenant")
+//			return "/mcp/" + tenant
+//		}),
+//		WithBaseURL("http://localhost:8080")
+//	)
+//	mux.Handle("/mcp/{tenant}/sse", sseServer.SSEHandler())
+//	mux.Handle("/mcp/{tenant}/message", sseServer.MessageHandler())
+//
+// For non-dynamic cases, use ServeHTTP method instead.
+func (s *SSEServer) MessageHandler() http.Handler {
+	return http.HandlerFunc(s.handleMessage)
 }
 
 // ServeHTTP implements the http.Handler interface.
 func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.dynamicBasePathFunc != nil {
+		http.Error(w, (&ErrDynamicPathConfig{Method: "ServeHTTP"}).Error(), http.StatusInternalServerError)
+		return
+	}
 	path := r.URL.Path
 	// Use exact path matching rather than Contains
 	ssePath := s.CompleteSsePath()

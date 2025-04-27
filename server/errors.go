@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 )
 
 var (
@@ -21,3 +22,12 @@ var (
 	ErrNotificationNotInitialized = errors.New("notification channel not initialized")
 	ErrNotificationChannelBlocked = errors.New("notification channel full or blocked")
 )
+
+// ErrDynamicPathConfig is returned when attempting to use static path methods with dynamic path configuration
+type ErrDynamicPathConfig struct {
+	Method string
+}
+
+func (e *ErrDynamicPathConfig) Error() string {
+	return fmt.Sprintf("%s cannot be used with WithDynamicBasePath. Use dynamic path logic in your router.", e.Method)
+}

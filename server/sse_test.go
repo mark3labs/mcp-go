@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSSEServer(t *testing.T) {
@@ -443,17 +444,25 @@ func TestSSEServer(t *testing.T) {
 			t.Errorf("Expected status 200, got %d", resp.StatusCode)
 		}
 
-		// Read the endpoint event
-		buf := make([]byte, 1024)
-		n, err := resp.Body.Read(buf)
-		if err != nil {
-			t.Fatalf("Failed to read SSE response: %v", err)
+		// Read the endpoint event using a bufio.Reader loop to ensure we get the full SSE frame
+		reader := bufio.NewReader(resp.Body)
+		var endpointEvent strings.Builder
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				t.Fatalf("Failed to read SSE response: %v", err)
+			}
+			endpointEvent.WriteString(line)
+			if line == "\n" || line == "\r\n" {
+				break // End of SSE frame
+			}
 		}
-
-		endpointEvent := string(buf[:n])
-		messageURL := strings.TrimSpace(
-			strings.Split(strings.Split(endpointEvent, "data: ")[1], "\n")[0],
-		)
+		endpointEventStr := endpointEvent.String()
+		if !strings.Contains(endpointEventStr, "event: endpoint") {
+			t.Fatalf("Expected endpoint event, got: %s", endpointEventStr)
+		}
+		// Extract message endpoint and check correctness
+		messageURL := strings.TrimSpace(strings.Split(strings.Split(endpointEventStr, "data: ")[1], "\n")[0])
 		if !strings.HasPrefix(messageURL, sseServer.messageEndpoint) {
 			t.Errorf("Expected messageURL to be %s, got %s", sseServer.messageEndpoint, messageURL)
 		}
@@ -613,7 +622,6 @@ func TestSSEServer(t *testing.T) {
 			"application/json",
 			bytes.NewBuffer(requestBody),
 		)
-
 		if err != nil {
 			t.Fatalf("Failed to send message: %v", err)
 		}
@@ -860,6 +868,168 @@ func TestSSEServer(t *testing.T) {
 				t.Errorf("Expected no error in response, got %v", response["error"])
 			}
 		}
+	})
+
+	t.Run("TestSSEHandlerWithDynamicMounting", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0.0")
+		// MessageEndpointFunc that extracts tenant from the path using Go 1.22+ PathValue
+
+		sseServer := NewSSEServer(
+			mcpServer,
+			WithDynamicBasePath(func(r *http.Request, sessionID string) string {
+				tenant := r.PathValue("tenant")
+				return "/mcp/" + tenant
+			}),
+		)
+
+		mux := http.NewServeMux()
+		mux.Handle("/mcp/{tenant}/sse", sseServer.SSEHandler())
+		mux.Handle("/mcp/{tenant}/message", sseServer.MessageHandler())
+
+		ts := httptest.NewServer(mux)
+		defer ts.Close()
+
+		// Use a dynamic tenant
+		tenant := "tenant123"
+		// Connect to SSE endpoint
+		req, _ := http.NewRequest("GET", ts.URL+"/mcp/"+tenant+"/sse", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Failed to connect to SSE endpoint: %v", err)
+		}
+		defer resp.Body.Close()
+
+		reader := bufio.NewReader(resp.Body)
+		var endpointEvent strings.Builder
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				t.Fatalf("Failed to read SSE response: %v", err)
+			}
+			endpointEvent.WriteString(line)
+			if line == "\n" || line == "\r\n" {
+				break // End of SSE frame
+			}
+		}
+		endpointEventStr := endpointEvent.String()
+		if !strings.Contains(endpointEventStr, "event: endpoint") {
+			t.Fatalf("Expected endpoint event, got: %s", endpointEventStr)
+		}
+		// Extract message endpoint and check correctness
+		messageURL := strings.TrimSpace(strings.Split(strings.Split(endpointEventStr, "data: ")[1], "\n")[0])
+		if !strings.HasPrefix(messageURL, "/mcp/"+tenant+"/message") {
+			t.Errorf("Expected message endpoint to start with /mcp/%s/message, got %s", tenant, messageURL)
+		}
+
+		// Optionally, test sending a message to the message endpoint
+		initRequest := map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "initialize",
+			"params": map[string]interface{}{
+				"protocolVersion": "2024-11-05",
+				"clientInfo": map[string]interface{}{
+					"name":    "test-client",
+					"version": "1.0.0",
+				},
+			},
+		}
+		requestBody, err := json.Marshal(initRequest)
+		if err != nil {
+			t.Fatalf("Failed to marshal request: %v", err)
+		}
+
+		// The message endpoint is relative, so prepend the test server URL
+		fullMessageURL := ts.URL + messageURL
+		resp2, err := http.Post(fullMessageURL, "application/json", bytes.NewBuffer(requestBody))
+		if err != nil {
+			t.Fatalf("Failed to send message: %v", err)
+		}
+		defer resp2.Body.Close()
+
+		if resp2.StatusCode != http.StatusAccepted {
+			t.Errorf("Expected status 202, got %d", resp2.StatusCode)
+		}
+
+		// Read the response from the SSE stream
+		reader = bufio.NewReader(resp.Body)
+		var initResponse strings.Builder
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				t.Fatalf("Failed to read SSE response: %v", err)
+			}
+			initResponse.WriteString(line)
+			if line == "\n" || line == "\r\n" {
+				break // End of SSE frame
+			}
+		}
+		initResponseStr := initResponse.String()
+		if !strings.Contains(initResponseStr, "event: message") {
+			t.Fatalf("Expected message event, got: %s", initResponseStr)
+		}
+
+		// Extract and parse the response data
+		respData := strings.TrimSpace(strings.Split(strings.Split(initResponseStr, "data: ")[1], "\n")[0])
+		var response map[string]interface{}
+		if err := json.NewDecoder(strings.NewReader(respData)).Decode(&response); err != nil {
+			t.Fatalf("Failed to decode response: %v", err)
+		}
+
+		if response["jsonrpc"] != "2.0" {
+			t.Errorf("Expected jsonrpc 2.0, got %v", response["jsonrpc"])
+		}
+		if response["id"].(float64) != 1 {
+			t.Errorf("Expected id 1, got %v", response["id"])
+		}
+	})
+	t.Run("TestSSEHandlerRequiresDynamicBasePath", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0.0")
+		sseServer := NewSSEServer(mcpServer)
+		require.NotPanics(t, func() { sseServer.SSEHandler() })
+		require.NotPanics(t, func() { sseServer.MessageHandler() })
+
+		sseServer = NewSSEServer(
+			mcpServer,
+			WithDynamicBasePath(func(r *http.Request, sessionID string) string {
+				return "/foo"
+			}),
+		)
+		req := httptest.NewRequest("GET", "/foo/sse", nil)
+		w := httptest.NewRecorder()
+
+		sseServer.ServeHTTP(w, req)
+		require.Equal(t, http.StatusInternalServerError, w.Code)
+		require.Contains(t, w.Body.String(), "ServeHTTP cannot be used with WithDynamicBasePath")
+	})
+
+	t.Run("TestCompleteSseEndpointAndMessageEndpointErrors", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0.0")
+		sseServer := NewSSEServer(mcpServer, WithDynamicBasePath(func(r *http.Request, sessionID string) string {
+			return "/foo"
+		}))
+
+		// Test CompleteSseEndpoint
+		endpoint, err := sseServer.CompleteSseEndpoint()
+		require.Error(t, err)
+		var dynamicPathErr *ErrDynamicPathConfig
+		require.ErrorAs(t, err, &dynamicPathErr)
+		require.Equal(t, "CompleteSseEndpoint", dynamicPathErr.Method)
+		require.Empty(t, endpoint)
+
+		// Test CompleteMessageEndpoint
+		messageEndpoint, err := sseServer.CompleteMessageEndpoint()
+		require.Error(t, err)
+		require.ErrorAs(t, err, &dynamicPathErr)
+		require.Equal(t, "CompleteMessageEndpoint", dynamicPathErr.Method)
+		require.Empty(t, messageEndpoint)
+
+		// Test that path methods still work and return fallback values
+		ssePath := sseServer.CompleteSsePath()
+		require.Equal(t, sseServer.basePath+sseServer.sseEndpoint, ssePath)
+
+		messagePath := sseServer.CompleteMessagePath()
+		require.Equal(t, sseServer.basePath+sseServer.messageEndpoint, messagePath)
 	})
 }
 
