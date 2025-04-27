@@ -476,8 +476,14 @@ var _ ClientSession = (*streamableHttpSession)(nil)
 
 type SessionIdManager interface {
 	Generate() string
-	Validate(string) (isTerminated bool, err error) // return err if invalid
-	Terminate(string) (isNotAllowed bool, err error)
+	// Validate checks if a session ID is valid and not terminated.
+	// Returns isTerminated=true if the ID is valid but belongs to a terminated session.
+	// Returns err!=nil if the ID format is invalid or lookup failed.
+	Validate(sessionID string) (isTerminated bool, err error)
+	// Terminate marks a session ID as terminated.
+	// Returns isNotAllowed=true if the server policy prevents client termination.
+	// Returns err!=nil if the ID is invalid or termination failed.
+	Terminate(sessionID string) (isNotAllowed bool, err error)
 }
 
 // StatelessSessionIdManager does nothing, which means it has no session management, which is stateless.
@@ -506,4 +512,11 @@ func (s *InsecureStatefulSessionIdManager) Validate(sessionID string) (isTermina
 }
 func (s *InsecureStatefulSessionIdManager) Terminate(sessionID string) (isNotAllowed bool, err error) {
 	return false, nil
+}
+
+// NewTestStreamableHttpServer creates a test server for testing purposes
+func NewTestStreamableHttpServer(server *MCPServer, opts ...StreamableHttpOption) *httptest.Server {
+	sseServer := NewStreamableHttpServer(server, opts...)
+	testServer := httptest.NewServer(sseServer)
+	return testServer
 }
