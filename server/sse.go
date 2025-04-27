@@ -370,31 +370,27 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Process message through MCPServer
-	response := s.server.HandleMessage(ctx, rawMessage)
+	ctx = context.WithoutCancel(ctx)
+	w.WriteHeader(http.StatusAccepted)
+	go func() {
+		// Process message through MCPServer
+		response := s.server.HandleMessage(ctx, rawMessage)
 
-	// Only send response if there is one (not for notifications)
-	if response != nil {
-		eventData, _ := json.Marshal(response)
+		// Only send response if there is one (not for notifications)
+		if response != nil {
+			eventData, _ := json.Marshal(response)
 
-		// Queue the event for sending via SSE
-		select {
-		case session.eventQueue <- fmt.Sprintf("event: message\ndata: %s\n\n", eventData):
-			// Event queued successfully
-		case <-session.done:
-			// Session is closed, don't try to queue
-		default:
-			// Queue is full, could log this
+			// Queue the event for sending via SSE
+			select {
+			case session.eventQueue <- fmt.Sprintf("event: message\ndata: %s\n\n", eventData):
+				// Event queued successfully
+			case <-session.done:
+				// Session is closed, don't try to queue
+			default:
+				// Queue is full, could log this
+			}
 		}
-
-		// Send HTTP response
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-		json.NewEncoder(w).Encode(response)
-	} else {
-		// For notifications, just send 202 Accepted with no body
-		w.WriteHeader(http.StatusAccepted)
-	}
+	}()
 }
 
 // writeJSONRPCError writes a JSON-RPC error response with the given error details.
