@@ -464,7 +464,6 @@ func (s *MCPServer) AddResourceTemplate(
 		s.capabilitiesMu.RUnlock()
 	}
 
-
 	s.resourcesMu.Lock()
 	defer s.resourcesMu.Unlock()
 	s.resourceTemplates[template.URITemplate.Raw()] = resourceTemplateEntry{
