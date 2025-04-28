@@ -156,6 +156,103 @@ func WithPaginationLimit(limit int) ServerOption {
 	}
 }
 
+// WithContext sets the current client session and returns the provided context
+func (s *MCPServer) WithContext(
+	ctx context.Context,
+	session ClientSession,
+) context.Context {
+	return context.WithValue(ctx, clientSessionKey{}, session)
+}
+
+// RegisterSession saves session that should be notified in case if some server attributes changed.
+func (s *MCPServer) RegisterSession(
+	ctx context.Context,
+	session ClientSession,
+) error {
+	sessionID := session.SessionID()
+	if _, exists := s.sessions.LoadOrStore(sessionID, session); exists {
+		return fmt.Errorf("session %s is already registered", sessionID)
+	}
+	s.hooks.RegisterSession(ctx, session)
+	return nil
+}
+
+// UnregisterSession removes from storage session that is shut down.
+func (s *MCPServer) UnregisterSession(
+	ctx context.Context,
+	sessionID string,
+) {
+	session, _ := s.sessions.LoadAndDelete(sessionID)
+	s.hooks.UnregisterSession(ctx, session.(ClientSession))
+}
+
+// SendNotificationToAllClients sends a notification to all the currently active clients.
+func (s *MCPServer) SendNotificationToAllClients(
+	method string,
+	params map[string]any,
+) {
+	notification := mcp.JSONRPCNotification{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		Notification: mcp.Notification{
+			Method: method,
+			Params: mcp.NotificationParams{
+				AdditionalFields: params,
+			},
+		},
+	}
+
+	s.sessions.Range(func(k, v any) bool {
+		if session, ok := v.(ClientSession); ok && session.Initialized() {
+			select {
+			case session.NotificationChannel() <- notification:
+			default:
+				sessionID := session.SessionID()
+				if s.hooks != nil {
+					s.hooks.onError(context.Background(), nil, "", nil,
+						fmt.Errorf("notification channel blocked for session %s (method: %s)",
+							sessionID, method))
+				}
+			}
+		}
+		return true
+	})
+}
+
+// SendNotificationToClient sends a notification to the current client
+func (s *MCPServer) SendNotificationToClient(
+	ctx context.Context,
+	method string,
+	params map[string]any,
+) error {
+	session := ClientSessionFromContext(ctx)
+	if session == nil || !session.Initialized() {
+		return fmt.Errorf("notification channel not initialized")
+	}
+
+	notification := mcp.JSONRPCNotification{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		Notification: mcp.Notification{
+			Method: method,
+			Params: mcp.NotificationParams{
+				AdditionalFields: params,
+			},
+		},
+	}
+
+	select {
+	case session.NotificationChannel() <- notification:
+		return nil
+	default:
+		sessionID := session.SessionID()
+		if s.hooks != nil {
+			s.hooks.onError(ctx, nil, "", nil,
+				fmt.Errorf("notification channel blocked for session %s (method: %s)",
+					sessionID, method))
+		}
+		return fmt.Errorf("notification channel full or blocked")
+	}
+}
+
 // serverCapabilities defines the supported features of the MCP server
 type serverCapabilities struct {
 	tools     *toolCapabilities
