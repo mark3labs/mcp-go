@@ -26,6 +26,9 @@ func compileTestServer(outputPath string) error {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("compilation failed: %v\nOutput: %s", err, output)
 	}
+	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
+		return fmt.Errorf("mock server binary not found at %s after compilation", outputPath)
+	}
 	return nil
 }
 
