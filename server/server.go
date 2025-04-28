@@ -233,7 +233,12 @@ func (s *MCPServer) SendNotificationToAllClients(
 			select {
 			case session.NotificationChannel() <- notification:
 			default:
-				// TODO: log blocked channel in the future versions
+				sessionID := session.SessionID()
+				if s.hooks != nil {
+					s.hooks.onError(context.Background(), nil, "", nil,
+						fmt.Errorf("notification channel blocked for session %s (method: %s)",
+							sessionID, method))
+				}
 			}
 		}
 		return true
@@ -265,6 +270,12 @@ func (s *MCPServer) SendNotificationToClient(
 	case session.NotificationChannel() <- notification:
 		return nil
 	default:
+		sessionID := session.SessionID()
+		if s.hooks != nil {
+			s.hooks.onError(ctx, nil, "", nil,
+				fmt.Errorf("notification channel blocked for session %s (method: %s)",
+					sessionID, method))
+		}
 		return fmt.Errorf("notification channel full or blocked")
 	}
 }
