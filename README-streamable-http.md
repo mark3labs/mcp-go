@@ -174,7 +174,7 @@ func main() {
 	})
 
 	// Create a context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// Initialize the connection
@@ -195,11 +195,30 @@ func main() {
 	initResponseJSON, _ := json.MarshalIndent(initResponse, "", "  ")
 	fmt.Printf("Initialization response: %s\n", initResponseJSON)
 
-	// Call the echo tool
-	fmt.Println("\nCalling echo tool...")
-	echoRequest := transport.JSONRPCRequest{
+	// List available tools
+	fmt.Println("\nListing available tools...")
+	listToolsRequest := transport.JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      2,
+		Method:  "tools/list",
+	}
+
+	listToolsResponse, err := trans.SendRequest(ctx, listToolsRequest)
+	if err != nil {
+		fmt.Printf("Failed to list tools: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Print the tools list response
+	toolsResponseJSON, _ := json.MarshalIndent(listToolsResponse, "", "  ")
+	fmt.Printf("Tools list response: %s\n", toolsResponseJSON)
+
+	// Call the echo tool
+	fmt.Println("\nCalling echo tool...")
+	fmt.Println("Using session ID from initialization...")
+	echoRequest := transport.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      3,
 		Method:  "tools/call",
 		Params: map[string]interface{}{
 			"name": "echo",
@@ -221,6 +240,7 @@ func main() {
 
 	// Wait for notifications (the echo tool sends a notification after 1 second)
 	fmt.Println("\nWaiting for notifications...")
+	fmt.Println("(The server should send a notification about 1 second after the tool call)")
 
 	// Set up a signal channel to handle Ctrl+C
 	sigChan := make(chan os.Signal, 1)

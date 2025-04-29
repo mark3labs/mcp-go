@@ -71,7 +71,7 @@ func main() {
 
 	// Create a new Streamable HTTP server
 	streamableServer := server.NewStreamableHTTPServer(mcpServer,
-		server.WithEnableJSONResponse(false), // Use SSE streaming by default
+		server.WithEnableJSONResponse(true), // Use direct JSON responses for simplicity
 	)
 
 	// Start the server in a goroutine

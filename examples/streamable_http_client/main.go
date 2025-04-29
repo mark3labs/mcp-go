@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/mark3labs/mcp-go/client/transport"
@@ -14,8 +12,9 @@ import (
 )
 
 func main() {
-	// Create a new Streamable HTTP transport
-	trans, err := transport.NewStreamableHTTP("http://localhost:8080/mcp")
+	// Create a new Streamable HTTP transport with a longer timeout
+	trans, err := transport.NewStreamableHTTP("http://localhost:8080/mcp",
+		transport.WithHTTPTimeout(30*time.Second))
 	if err != nil {
 		fmt.Printf("Failed to create transport: %v\n", err)
 		os.Exit(1)
@@ -30,7 +29,7 @@ func main() {
 	})
 
 	// Create a context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// Initialize the connection
@@ -50,43 +49,8 @@ func main() {
 	// Print the initialization response
 	initResponseJSON, _ := json.MarshalIndent(initResponse, "", "  ")
 	fmt.Printf("Initialization response: %s\n", initResponseJSON)
+	fmt.Printf("Session ID: %s\n", trans.GetSessionId())
 
-	// Call the echo tool
-	fmt.Println("\nCalling echo tool...")
-	echoRequest := transport.JSONRPCRequest{
-		JSONRPC: "2.0",
-		ID:      2,
-		Method:  "tools/call",
-		Params: map[string]interface{}{
-			"name": "echo",
-			"arguments": map[string]interface{}{
-				"message": "Hello from Streamable HTTP client!",
-			},
-		},
-	}
-
-	echoResponse, err := trans.SendRequest(ctx, echoRequest)
-	if err != nil {
-		fmt.Printf("Failed to call echo tool: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Print the echo response
-	echoResponseJSON, _ := json.MarshalIndent(echoResponse, "", "  ")
-	fmt.Printf("Echo response: %s\n", echoResponseJSON)
-
-	// Wait for notifications (the echo tool sends a notification after 1 second)
-	fmt.Println("\nWaiting for notifications...")
-
-	// Set up a signal channel to handle Ctrl+C
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// Wait for either a signal or a timeout
-	select {
-	case <-sigChan:
-		fmt.Println("Received interrupt signal, exiting...")
-	case <-time.After(5 * time.Second):
-		fmt.Println("Timeout reached, exiting...")
-	}
+	// Wait for a moment
+	fmt.Println("\nInitialization successful. Exiting...")
 }
