@@ -226,7 +226,7 @@ func (c *SSE) SetNotificationHandler(handler func(notification mcp.JSONRPCNotifi
 	c.onNotification = handler
 }
 
-// sendRequest sends a JSON-RPC request to the server and waits for a response.
+// SendRequest sends a JSON-RPC request to the server and waits for a response.
 // Returns the raw JSON response message or an error if the request fails.
 func (c *SSE) SendRequest(
 	ctx context.Context,

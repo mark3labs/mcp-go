@@ -133,7 +133,7 @@ func (c *Stdio) Close() error {
 	}
 	// cancel all in-flight request
 	close(c.done)
-	
+
 	if err := c.stdin.Close(); err != nil {
 		return fmt.Errorf("failed to close stdin: %w", err)
 	}
@@ -148,8 +148,8 @@ func (c *Stdio) Close() error {
 	return nil
 }
 
-// OnNotification registers a handler function to be called when notifications are received.
-// Multiple handlers can be registered and will be called in the order they were added.
+// SetNotificationHandler sets the handler function to be called when a notification is received.
+// Only one handler can be set at a time; setting a new one replaces the previous handler.
 func (c *Stdio) SetNotificationHandler(
 	handler func(notification mcp.JSONRPCNotification),
 ) {
@@ -208,7 +208,7 @@ func (c *Stdio) readResponses() {
 	}
 }
 
-// sendRequest sends a JSON-RPC request to the server and waits for a response.
+// SendRequest sends a JSON-RPC request to the server and waits for a response.
 // It creates a unique request ID, sends the request over stdin, and waits for
 // the corresponding response or context cancellation.
 // Returns the raw JSON response message or an error if the request fails.
@@ -261,7 +261,7 @@ func (c *Stdio) SendNotification(
 	if c.stdin == nil {
 		return fmt.Errorf("stdio client not started")
 	}
-	
+
 	notificationBytes, err := json.Marshal(notification)
 	if err != nil {
 		return fmt.Errorf("failed to marshal notification: %w", err)
