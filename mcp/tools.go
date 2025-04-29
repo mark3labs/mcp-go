@@ -113,6 +113,23 @@ type ToolInputSchema struct {
 	Required   []string               `json:"required,omitempty"`
 }
 
+// MarshalJSON implements the json.Marshaler interface for ToolInputSchema.
+func (tis ToolInputSchema) MarshalJSON() ([]byte, error) {
+	m := make(map[string]interface{})
+	m["type"] = tis.Type
+
+	// Marshal Properties to '{}' rather than `nil` when its length equals zero
+	if tis.Properties != nil {
+		m["properties"] = tis.Properties
+	}
+
+	if len(tis.Required) > 0 {
+		m["required"] = tis.Required
+	}
+
+	return json.Marshal(m)
+}
+
 type ToolAnnotation struct {
 	// Human-readable title for the tool
 	Title string `json:"title,omitempty"`
