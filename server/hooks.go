@@ -11,6 +11,9 @@ import (
 // OnRegisterSessionHookFunc is a hook that will be called when a new session is registered.
 type OnRegisterSessionHookFunc func(ctx context.Context, session ClientSession)
 
+// OnUnregisterSessionHookFunc is a hook that will be called when a session is being unregistered.
+type OnUnregisterSessionHookFunc func(ctx context.Context, session ClientSession)
+
 // BeforeAnyHookFunc is a function that is called after the request is
 // parsed but before the method is called.
 type BeforeAnyHookFunc func(ctx context.Context, id any, method mcp.MCPMethod, message any)
@@ -33,7 +36,7 @@ type OnSuccessHookFunc func(ctx context.Context, id any, method mcp.MCPMethod, m
 //	  }
 //
 //	  // Use errors.As to get specific error types
-//	  var parseErr = &UnparseableMessageError{}
+//	  var parseErr = &UnparsableMessageError{}
 //	  if errors.As(err, &parseErr) {
 //	    // Access specific methods/fields of the error type
 //	    log.Printf("Failed to parse message for method %s: %v",
@@ -53,6 +56,10 @@ type OnSuccessHookFunc func(ctx context.Context, id any, method mcp.MCPMethod, m
 //	  }
 //	})
 type OnErrorHookFunc func(ctx context.Context, id any, method mcp.MCPMethod, message any, err error)
+
+// OnRequestInitializationFunc is a function that called before handle diff request method
+// Should any errors arise during func execution, the service will promptly return the corresponding error message.
+type OnRequestInitializationFunc func(ctx context.Context, id any, message any) error
 
 type OnBeforeInitializeFunc func(ctx context.Context, id any, message *mcp.InitializeRequest)
 type OnAfterInitializeFunc func(ctx context.Context, id any, message *mcp.InitializeRequest, result *mcp.InitializeResult)
@@ -83,9 +90,11 @@ type OnAfterCallToolFunc func(ctx context.Context, id any, message *mcp.CallTool
 
 type Hooks struct {
 	OnRegisterSession             []OnRegisterSessionHookFunc
+	OnUnregisterSession           []OnUnregisterSessionHookFunc
 	OnBeforeAny                   []BeforeAnyHookFunc
 	OnSuccess                     []OnSuccessHookFunc
 	OnError                       []OnErrorHookFunc
+	OnRequestInitialization       []OnRequestInitializationFunc
 	OnBeforeInitialize            []OnBeforeInitializeFunc
 	OnAfterInitialize             []OnAfterInitializeFunc
 	OnBeforePing                  []OnBeforePingFunc
@@ -135,9 +144,9 @@ func (c *Hooks) AddOnSuccess(hook OnSuccessHookFunc) {
 //	    }
 //
 //	    // For parsing errors
-//	    var parseErr = &UnparseableMessageError{}
+//	    var parseErr = &UnparsableMessageError{}
 //	    if errors.As(err, &parseErr) {
-//	        // Handle unparseable message errors
+//	        // Handle unparsable message errors
 //	        fmt.Printf("Failed to parse %s request: %v\n",
 //	                   parseErr.GetMethod(), parseErr.Unwrap())
 //	        errChan <- parseErr
@@ -191,7 +200,7 @@ func (c *Hooks) onSuccess(ctx context.Context, id any, method mcp.MCPMethod, mes
 //
 // Common error types include:
 // - ErrUnsupported: When a capability is not enabled
-// - UnparseableMessageError: When request parsing fails
+// - UnparsableMessageError: When request parsing fails
 // - ErrResourceNotFound: When a resource is not found
 // - ErrPromptNotFound: When a prompt is not found
 // - ErrToolNotFound: When a tool is not found
@@ -215,6 +224,36 @@ func (c *Hooks) RegisterSession(ctx context.Context, session ClientSession) {
 	for _, hook := range c.OnRegisterSession {
 		hook(ctx, session)
 	}
+}
+
+func (c *Hooks) AddOnUnregisterSession(hook OnUnregisterSessionHookFunc) {
+	c.OnUnregisterSession = append(c.OnUnregisterSession, hook)
+}
+
+func (c *Hooks) UnregisterSession(ctx context.Context, session ClientSession) {
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnUnregisterSession {
+		hook(ctx, session)
+	}
+}
+
+func (c *Hooks) AddOnRequestInitialization(hook OnRequestInitializationFunc) {
+	c.OnRequestInitialization = append(c.OnRequestInitialization, hook)
+}
+
+func (c *Hooks) onRequestInitialization(ctx context.Context, id any, message any) error {
+	if c == nil {
+		return nil
+	}
+	for _, hook := range c.OnRequestInitialization {
+		err := hook(ctx, id, message)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func (c *Hooks) AddBeforeInitialize(hook OnBeforeInitializeFunc) {
 	c.OnBeforeInitialize = append(c.OnBeforeInitialize, hook)

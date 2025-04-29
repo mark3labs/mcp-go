@@ -130,6 +130,7 @@ func NewProgressNotification(
 	token ProgressToken,
 	progress float64,
 	total *float64,
+	message *string,
 ) ProgressNotification {
 	notification := ProgressNotification{
 		Notification: Notification{
@@ -139,6 +140,7 @@ func NewProgressNotification(
 			ProgressToken ProgressToken `json:"progressToken"`
 			Progress      float64       `json:"progress"`
 			Total         float64       `json:"total,omitempty"`
+			Message       string        `json:"message,omitempty"`
 		}{
 			ProgressToken: token,
 			Progress:      progress,
@@ -146,6 +148,9 @@ func NewProgressNotification(
 	}
 	if total != nil {
 		notification.Params.Total = *total
+	}
+	if message != nil {
+		notification.Params.Message = *message
 	}
 	return notification
 }
@@ -256,6 +261,24 @@ func NewToolResultResource(
 // NewToolResultError creates a new CallToolResult with an error message.
 // Any errors that originate from the tool SHOULD be reported inside the result object.
 func NewToolResultError(text string) *CallToolResult {
+	return &CallToolResult{
+		Content: []Content{
+			TextContent{
+				Type: "text",
+				Text: text,
+			},
+		},
+		IsError: true,
+	}
+}
+
+// NewToolResultErrorFromErr creates a new CallToolResult with an error message.
+// If an error is provided, its details will be appended to the text message.
+// Any errors that originate from the tool SHOULD be reported inside the result object.
+func NewToolResultErrorFromErr(text string, err error) *CallToolResult {
+	if err != nil {
+		text = fmt.Sprintf("%s: %v", text, err)
+	}
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
@@ -382,9 +405,6 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 	switch contentType {
 	case "text":
 		text := ExtractString(contentMap, "text")
-		if text == "" {
-			return nil, fmt.Errorf("text is missing")
-		}
 		return NewTextContent(text), nil
 
 	case "image":
