@@ -233,7 +233,16 @@ func (s *MCPServer) SendNotificationToAllClients(
 			select {
 			case session.NotificationChannel() <- notification:
 			default:
-				// TODO: log blocked channel in the future versions
+				sessionID := session.SessionID()
+				base := fmt.Errorf("notification channel blocked for session %s (method: %s)", sessionID, method)
+				reqErr := &requestError{
+					id:   nil,
+					code: mcp.INTERNAL_ERROR,
+					err:  fmt.Errorf("%w", base),
+				}
+				if s.hooks != nil {
+					s.hooks.onError(context.Background(), nil, "", nil, reqErr)
+				}
 			}
 		}
 		return true
@@ -265,6 +274,16 @@ func (s *MCPServer) SendNotificationToClient(
 	case session.NotificationChannel() <- notification:
 		return nil
 	default:
+		sessionID := session.SessionID()
+		base := fmt.Errorf("notification channel blocked for session %s (method: %s)", sessionID, method)
+		reqErr := &requestError{
+			id:   nil,
+			code: mcp.INTERNAL_ERROR,
+			err:  fmt.Errorf("%w", base),
+		}
+		if s.hooks != nil {
+			s.hooks.onError(ctx, nil, "", nil, reqErr)
+		}
 		return fmt.Errorf("notification channel full or blocked")
 	}
 }
@@ -463,7 +482,6 @@ func (s *MCPServer) AddResourceTemplate(
 	} else {
 		s.capabilitiesMu.RUnlock()
 	}
-
 
 	s.resourcesMu.Lock()
 	defer s.resourcesMu.Unlock()
