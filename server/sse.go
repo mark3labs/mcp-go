@@ -365,15 +365,19 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 
 		// Only send response if there is one (not for notifications)
 		if response != nil {
-			eventData, err := json.Marshal(response)
-			if err != nil {
-				s.writeJSONRPCError(w, nil, mcp.INTERNAL_ERROR, "Fail to marshal response")
+			var message string
+			if eventData, err := json.Marshal(response); err != nil {
+				// If there is an error marshalling the response, send a generic error response
+				log.Printf("failed to marshal response: %v", err)
+				message = fmt.Sprintf("event: message\ndata: {\"error\": \"internal error\",\"jsonrpc\": \"2.0\", \"id\": null}\n\n")
 				return
+			} else {
+				message = fmt.Sprintf("event: message\ndata: %s\n\n", eventData)
 			}
 
 			// Queue the event for sending via SSE
 			select {
-			case session.eventQueue <- fmt.Sprintf("event: message\ndata: %s\n\n", eventData):
+			case session.eventQueue <- message:
 				// Event queued successfully
 			case <-session.done:
 				// Session is closed, don't try to queue

@@ -59,13 +59,10 @@ func TestSSEServer(t *testing.T) {
 		defer sseResp.Body.Close()
 
 		// Read the endpoint event
-		buf := make([]byte, 1024)
-		n, err := sseResp.Body.Read(buf)
+		endpointEvent, err := readSeeEvent(sseResp)
 		if err != nil {
 			t.Fatalf("Failed to read SSE response: %v", err)
 		}
-
-		endpointEvent := string(buf[:n])
 		if !strings.Contains(endpointEvent, "event: endpoint") {
 			t.Fatalf("Expected endpoint event, got: %s", endpointEvent)
 		}
@@ -106,19 +103,6 @@ func TestSSEServer(t *testing.T) {
 
 		if resp.StatusCode != http.StatusAccepted {
 			t.Errorf("Expected status 202, got %d", resp.StatusCode)
-		}
-
-		// Verify response
-		var response map[string]interface{}
-		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-			t.Fatalf("Failed to decode response: %v", err)
-		}
-
-		if response["jsonrpc"] != "2.0" {
-			t.Errorf("Expected jsonrpc 2.0, got %v", response["jsonrpc"])
-		}
-		if response["id"].(float64) != 1 {
-			t.Errorf("Expected id 1, got %v", response["id"])
 		}
 	})
 
@@ -208,8 +192,17 @@ func TestSSEServer(t *testing.T) {
 				}
 				defer resp.Body.Close()
 
+				endpointEvent, err = readSeeEvent(sseResp)
+				if err != nil {
+					t.Fatalf("Failed to read SSE response: %v", err)
+				}
+				respFromSee := strings.TrimSpace(
+					strings.Split(strings.Split(endpointEvent, "data: ")[1], "\n")[0],
+				)
+
+				fmt.Printf("========> %v", respFromSee)
 				var response map[string]interface{}
-				if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+				if err := json.NewDecoder(strings.NewReader(respFromSee)).Decode(&response); err != nil {
 					t.Errorf(
 						"Session %d: Failed to decode response: %v",
 						sessionNum,
@@ -586,13 +579,10 @@ func TestSSEServer(t *testing.T) {
 		defer sseResp.Body.Close()
 
 		// Read the endpoint event
-		buf := make([]byte, 1024)
-		n, err := sseResp.Body.Read(buf)
+		endpointEvent, err := readSeeEvent(sseResp)
 		if err != nil {
 			t.Fatalf("Failed to read SSE response: %v", err)
 		}
-
-		endpointEvent := string(buf[:n])
 		messageURL := strings.TrimSpace(
 			strings.Split(strings.Split(endpointEvent, "data: ")[1], "\n")[0],
 		)
@@ -632,8 +622,16 @@ func TestSSEServer(t *testing.T) {
 		}
 
 		// Verify response
+		endpointEvent, err = readSeeEvent(sseResp)
+		if err != nil {
+			t.Fatalf("Failed to read SSE response: %v", err)
+		}
+		respFromSee := strings.TrimSpace(
+			strings.Split(strings.Split(endpointEvent, "data: ")[1], "\n")[0],
+		)
+
 		var response map[string]interface{}
-		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		if err := json.NewDecoder(strings.NewReader(respFromSee)).Decode(&response); err != nil {
 			t.Fatalf("Failed to decode response: %v", err)
 		}
 
@@ -671,8 +669,17 @@ func TestSSEServer(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
+		endpointEvent, err = readSeeEvent(sseResp)
+		if err != nil {
+			t.Fatalf("Failed to read SSE response: %v", err)
+		}
+
+		respFromSee = strings.TrimSpace(
+			strings.Split(strings.Split(endpointEvent, "data: ")[1], "\n")[0],
+		)
+
 		response = make(map[string]interface{})
-		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		if err := json.NewDecoder(strings.NewReader(respFromSee)).Decode(&response); err != nil {
 			t.Fatalf("Failed to decode response: %v", err)
 		}
 
@@ -739,4 +746,13 @@ func TestSSEServer(t *testing.T) {
 			}
 		}
 	})
+}
+
+func readSeeEvent(sseResp *http.Response) (string, error) {
+	buf := make([]byte, 1024)
+	n, err := sseResp.Body.Read(buf)
+	if err != nil {
+		return "", err
+	}
+	return string(buf[:n]), nil
 }
