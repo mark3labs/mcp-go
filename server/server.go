@@ -207,10 +207,14 @@ func (s *MCPServer) SendNotificationToAllClients(
 			case session.NotificationChannel() <- notification:
 			default:
 				sessionID := session.SessionID()
+				base := fmt.Errorf("notification channel blocked for session %s (method: %s)", sessionID, method)
+				reqErr := &requestError{
+					id:   nil,
+					code: mcp.INTERNAL_ERROR,
+					err:  fmt.Errorf("%w", base),
+				}
 				if s.hooks != nil {
-					s.hooks.onError(context.Background(), nil, "", nil,
-						fmt.Errorf("notification channel blocked for session %s (method: %s)",
-							sessionID, method))
+					s.hooks.onError(context.Background(), nil, "", nil, reqErr)
 				}
 			}
 		}
@@ -244,10 +248,14 @@ func (s *MCPServer) SendNotificationToClient(
 		return nil
 	default:
 		sessionID := session.SessionID()
+		base := fmt.Errorf("notification channel blocked for session %s (method: %s)", sessionID, method)
+		reqErr := &requestError{
+			id:   nil,
+			code: mcp.INTERNAL_ERROR,
+			err:  fmt.Errorf("%w", base),
+		}
 		if s.hooks != nil {
-			s.hooks.onError(ctx, nil, "", nil,
-				fmt.Errorf("notification channel blocked for session %s (method: %s)",
-					sessionID, method))
+			s.hooks.onError(ctx, nil, "", nil, reqErr)
 		}
 		return fmt.Errorf("notification channel full or blocked")
 	}
