@@ -356,6 +356,7 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")	
 	if sessionID := c.sessionID.Load(); sessionID != "" {
 		req.Header.Set(headerKeySessionID, sessionID.(string))
 	}
