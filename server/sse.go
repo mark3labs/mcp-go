@@ -190,12 +190,21 @@ func NewTestServer(server *MCPServer, opts ...SSEOption) *httptest.Server {
 // It sets up HTTP handlers for SSE and message endpoints.
 func (s *SSEServer) Start(addr string) error {
 	s.mu.Lock()
-	s.srv = &http.Server{
-		Addr:    addr,
-		Handler: s,
-	}
-	s.mu.Unlock()
+	defer s.mu.Unlock()
 
+	if s.srv == nil {
+		s.srv = &http.Server{
+			Addr:		addr,
+			Handler:	s,
+		}
+	} else {
+		if s.srv.Addr == "" {
+			s.srv.Addr = addr
+		} else if s.srv.Addr != addr {
+			return fmt.Errorf("conflicting listen address: WithHTTPServer(%q) vs Start(%q)", s.srv.Addr, addr)
+		}
+	}
+	
 	return s.srv.ListenAndServe()
 }
 
