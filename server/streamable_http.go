@@ -204,7 +204,7 @@ type StreamableHTTPServer struct {
 	baseURL            string
 	basePath           string
 	endpoint           string
-	sessions           sync.Map
+	sessions           sync.Map // Maps sessionID to ClientSession
 	srv                *http.Server
 	contextFunc        SSEContextFunc
 	sessionIDGenerator func() string
@@ -254,8 +254,10 @@ func (s *StreamableHTTPServer) Start(addr string) error {
 func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 	if s.srv != nil {
 		s.sessions.Range(func(key, value interface{}) bool {
-			if session, ok := value.(*streamableHTTPSession); ok {
-				close(session.notificationChannel)
+			if session, ok := value.(ClientSession); ok {
+				if httpSession, ok := session.(*streamableHTTPSession); ok {
+					close(httpSession.notificationChannel)
+				}
 			}
 			s.sessions.Delete(key)
 			return true
@@ -297,8 +299,8 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	// Check if this is a request with a valid session
 	if sessionID != "" {
 		if sessionValue, ok := s.sessions.Load(sessionID); ok {
-			if sess, ok := sessionValue.(*streamableHTTPSession); ok {
-				session = sess
+			if sess, ok := sessionValue.(SessionWithTools); ok {
+				session = sess.(*streamableHTTPSession)
 			} else {
 				http.Error(w, "Invalid session", http.StatusBadRequest)
 				return
@@ -449,7 +451,7 @@ func (s *StreamableHTTPServer) handleRequest(w http.ResponseWriter, r *http.Requ
 }
 
 // handleSSEResponse sends the response as an SSE stream
-func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.Request, ctx context.Context, initialResponse mcp.JSONRPCMessage, session *streamableHTTPSession) {
+func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.Request, ctx context.Context, initialResponse mcp.JSONRPCMessage, session SessionWithTools) {
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache, no-transform")
@@ -483,9 +485,10 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 
 	// Check for Last-Event-ID header for resumability
 	lastEventID := r.Header.Get("Last-Event-Id")
-	if lastEventID != "" && session.eventStore != nil {
+	httpSession, ok := session.(*streamableHTTPSession)
+	if lastEventID != "" && ok && httpSession.eventStore != nil {
 		// Replay events that occurred after the last event ID
-		err := session.eventStore.ReplayEventsAfter(lastEventID, func(eventID string, message mcp.JSONRPCMessage) error {
+		err := httpSession.eventStore.ReplayEventsAfter(lastEventID, func(eventID string, message mcp.JSONRPCMessage) error {
 			data, err := json.Marshal(message)
 			if err != nil {
 				return err
@@ -516,9 +519,9 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 
 		// Store the event if we have an event store
 		var eventID string
-		if session.eventStore != nil {
+		if httpSession != nil && httpSession.eventStore != nil {
 			var storeErr error
-			eventID, storeErr = session.eventStore.StoreEvent(streamID, initialResponse)
+			eventID, storeErr = httpSession.eventStore.StoreEvent(streamID, initialResponse)
 			if storeErr != nil {
 				// Log the error but continue
 				fmt.Printf("Error storing event: %v\n", storeErr)
@@ -541,7 +544,7 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 	go func() {
 		for {
 			select {
-			case notification, ok := <-session.notificationChannel:
+			case notification, ok := <-httpSession.notificationChannel:
 				if !ok {
 					return
 				}
@@ -553,9 +556,9 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 
 				// Store the event if we have an event store
 				var eventID string
-				if session.eventStore != nil {
+				if httpSession != nil && httpSession.eventStore != nil {
 					var storeErr error
-					eventID, storeErr = session.eventStore.StoreEvent(streamID, notification)
+					eventID, storeErr = httpSession.eventStore.StoreEvent(streamID, notification)
 					if storeErr != nil {
 						// Log the error but continue
 						fmt.Printf("Error storing event: %v\n", storeErr)
@@ -623,8 +626,8 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 	// Check if this is a request with a valid session
 	if sessionID != "" {
 		if sessionValue, ok := s.sessions.Load(sessionID); ok {
-			if sess, ok := sessionValue.(*streamableHTTPSession); ok {
-				session = sess
+			if sess, ok := sessionValue.(SessionWithTools); ok {
+				session = sess.(*streamableHTTPSession)
 			} else {
 				http.Error(w, "Invalid session", http.StatusBadRequest)
 				return
@@ -663,7 +666,7 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 
 	// Check for Last-Event-ID header for resumability
 	lastEventID := r.Header.Get("Last-Event-Id")
-	if lastEventID != "" && session.eventStore != nil {
+	if lastEventID != "" && session != nil && session.eventStore != nil {
 		// Replay events that occurred after the last event ID
 		err := session.eventStore.ReplayEventsAfter(lastEventID, func(eventID string, message mcp.JSONRPCMessage) error {
 			data, err := json.Marshal(message)
@@ -690,10 +693,13 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 	notifDone := make(chan struct{})
 	defer close(notifDone)
 
+	// Get the concrete session type for notification channel access
+	httpSession := session
+
 	go func() {
 		for {
 			select {
-			case notification, ok := <-session.notificationChannel:
+			case notification, ok := <-httpSession.notificationChannel:
 				if !ok {
 					return
 				}
@@ -705,9 +711,9 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 
 				// Store the event if we have an event store
 				var eventID string
-				if session.eventStore != nil {
+				if httpSession != nil && httpSession.eventStore != nil {
 					var storeErr error
-					eventID, storeErr = session.eventStore.StoreEvent(s.standaloneStreamID, notification)
+					eventID, storeErr = httpSession.eventStore.StoreEvent(s.standaloneStreamID, notification)
 					if storeErr != nil {
 						// Log the error but continue
 						fmt.Printf("Error storing event: %v\n", storeErr)
@@ -865,7 +871,7 @@ func (s *StreamableHTTPServer) validateSession(sessionID string) bool {
 		return false
 	}
 
-	session, ok := sessionValue.(*streamableHTTPSession)
+	session, ok := sessionValue.(ClientSession)
 	if !ok {
 		return false
 	}

@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func TestStreamableHTTPServer(t *testing.T) {
@@ -256,34 +254,10 @@ func TestStreamableHTTPServer(t *testing.T) {
 			// Wait a bit for the stream to be established
 			time.Sleep(100 * time.Millisecond)
 
-			// Create a notification
-			notification := mcp.JSONRPCNotification{
-				JSONRPC: "2.0",
-				Notification: mcp.Notification{
-					Method: "test/notification",
-					Params: mcp.NotificationParams{
-						AdditionalFields: map[string]interface{}{
-							"message": "Hello, world!",
-						},
-					},
-				},
-			}
-
-			// Find the session
-			sessionValue, ok := streamableServer.sessions.Load(sessionID)
-			if !ok {
-				t.Errorf("Session not found: %s", sessionID)
-				return
-			}
-
 			// Send the notification
-			session, ok := sessionValue.(*streamableHTTPSession)
-			if !ok {
-				t.Errorf("Invalid session type")
-				return
-			}
-
-			session.notificationChannel <- notification
+			mcpServer.SendNotificationToSpecificClient(sessionID, "test/notification", map[string]interface{}{
+				"message": "Hello, world!",
+			})
 		}()
 
 		// Read the response body
