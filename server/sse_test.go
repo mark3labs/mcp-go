@@ -1031,6 +1031,104 @@ func TestSSEServer(t *testing.T) {
 		messagePath := sseServer.CompleteMessagePath()
 		require.Equal(t, sseServer.basePath+sseServer.messageEndpoint, messagePath)
 	})
+
+	t.Run("TestNormalizeURLPath", func(t *testing.T) {
+		tests := []struct {
+			name     string
+			inputs   []string
+			expected string
+		}{
+			// Basic path joining
+			{
+				name:     "empty inputs",
+				inputs:   []string{"", ""},
+				expected: "/",
+			},
+			{
+				name:     "single path segment",
+				inputs:   []string{"mcp"},
+				expected: "/mcp",
+			},
+			{
+				name:     "multiple path segments",
+				inputs:   []string{"mcp", "api", "message"},
+				expected: "/mcp/api/message",
+			},
+
+			// Leading slash handling
+			{
+				name:     "already has leading slash",
+				inputs:   []string{"/mcp", "message"},
+				expected: "/mcp/message",
+			},
+			{
+				name:     "mixed leading slashes",
+				inputs:   []string{"/mcp", "/message"},
+				expected: "/mcp/message",
+			},
+
+			// Trailing slash handling
+			{
+				name:     "with trailing slashes",
+				inputs:   []string{"mcp/", "message/"},
+				expected: "/mcp/message",
+			},
+			{
+				name:     "mixed trailing slashes",
+				inputs:   []string{"mcp", "message/"},
+				expected: "/mcp/message",
+			},
+			{
+				name:     "root path",
+				inputs:   []string{"/"},
+				expected: "/",
+			},
+
+			// Path normalization
+			{
+				name:     "normalize double slashes",
+				inputs:   []string{"mcp//api", "//message"},
+				expected: "/mcp/api/message",
+			},
+			{
+				name:     "normalize parent directory",
+				inputs:   []string{"mcp/parent/../child", "message"},
+				expected: "/mcp/child/message",
+			},
+			{
+				name:     "normalize current directory",
+				inputs:   []string{"mcp/./api", "./message"},
+				expected: "/mcp/api/message",
+			},
+
+			// Complex cases
+			{
+				name:     "complex mixed case",
+				inputs:   []string{"/mcp/", "/api//", "message/"},
+				expected: "/mcp/api/message",
+			},
+			{
+				name:     "absolute path in second segment",
+				inputs:   []string{"tenant", "/message"},
+				expected: "/tenant/message",
+			},
+			{
+				name:     "URL pattern with parameters",
+				inputs:   []string{"/mcp/{tenant}", "message"},
+				expected: "/mcp/{tenant}/message",
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				result := normalizeURLPath(tt.inputs...)
+				if result != tt.expected {
+					t.Errorf("normalizeURLPath(%q) = %q, want %q",
+						tt.inputs, result, tt.expected)
+				}
+			})
+		}
+	})
 }
 
 func readSeeEvent(sseResp *http.Response) (string, error) {

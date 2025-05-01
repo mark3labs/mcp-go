@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -109,11 +110,7 @@ func WithBaseURL(baseURL string) SSEOption {
 // WithBasePath adds a new option for setting a static base path
 func WithBasePath(basePath string) SSEOption {
 	return func(s *SSEServer) {
-		// Ensure the path starts with / and doesn't end with /
-		if !strings.HasPrefix(basePath, "/") {
-			basePath = "/" + basePath
-		}
-		s.basePath = strings.TrimSuffix(basePath, "/")
+		s.basePath = normalizeURLPath(basePath)
 	}
 }
 
@@ -126,10 +123,7 @@ func WithDynamicBasePath(fn DynamicBasePathFunc) SSEOption {
 		if fn != nil {
 			s.dynamicBasePathFunc = func(r *http.Request, sid string) string {
 				bp := fn(r, sid)
-				if !strings.HasPrefix(bp, "/") {
-					bp = "/" + bp
-				}
-				return strings.TrimSuffix(bp, "/")
+				return normalizeURLPath(bp)
 			}
 		}
 	}
@@ -388,7 +382,7 @@ func (s *SSEServer) GetMessageEndpointForClient(r *http.Request, sessionID strin
 		basePath = s.dynamicBasePathFunc(r, sessionID)
 	}
 
-	endpointPath := basePath + s.messageEndpoint
+	endpointPath := normalizeURLPath(basePath, s.messageEndpoint)
 	if s.useFullURLForMessageEndpoint && s.baseURL != "" {
 		endpointPath = s.baseURL + endpointPath
 	}
@@ -515,17 +509,19 @@ func (s *SSEServer) CompleteSseEndpoint() (string, error) {
 	if s.dynamicBasePathFunc != nil {
 		return "", &ErrDynamicPathConfig{Method: "CompleteSseEndpoint"}
 	}
-	return s.baseURL + s.basePath + s.sseEndpoint, nil
+
+	path := normalizeURLPath(s.basePath, s.sseEndpoint)
+	return s.baseURL + path, nil
 }
 
 func (s *SSEServer) CompleteSsePath() string {
 	path, err := s.CompleteSseEndpoint()
 	if err != nil {
-		return s.basePath + s.sseEndpoint
+		return normalizeURLPath(s.basePath, s.sseEndpoint)
 	}
 	urlPath, err := s.GetUrlPath(path)
 	if err != nil {
-		return s.basePath + s.sseEndpoint
+		return normalizeURLPath(s.basePath, s.sseEndpoint)
 	}
 	return urlPath
 }
@@ -534,17 +530,18 @@ func (s *SSEServer) CompleteMessageEndpoint() (string, error) {
 	if s.dynamicBasePathFunc != nil {
 		return "", &ErrDynamicPathConfig{Method: "CompleteMessageEndpoint"}
 	}
-	return s.baseURL + s.basePath + s.messageEndpoint, nil
+	path := normalizeURLPath(s.basePath, s.messageEndpoint)
+	return s.baseURL + path, nil
 }
 
 func (s *SSEServer) CompleteMessagePath() string {
 	path, err := s.CompleteMessageEndpoint()
 	if err != nil {
-		return s.basePath + s.messageEndpoint
+		return normalizeURLPath(s.basePath, s.messageEndpoint)
 	}
 	urlPath, err := s.GetUrlPath(path)
 	if err != nil {
-		return s.basePath + s.messageEndpoint
+		return normalizeURLPath(s.basePath, s.messageEndpoint)
 	}
 	return urlPath
 }
@@ -627,4 +624,22 @@ func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.NotFound(w, r)
+}
+
+// normalizeURLPath joins path elements like path.Join but ensures the
+// result always starts with a leading slash and never ends with a slash
+func normalizeURLPath(elem ...string) string {
+	joined := path.Join(elem...)
+
+	// Ensure leading slash
+	if !strings.HasPrefix(joined, "/") {
+		joined = "/" + joined
+	}
+
+	// Remove trailing slash if not just "/"
+	if len(joined) > 1 && strings.HasSuffix(joined, "/") {
+		joined = joined[:len(joined)-1]
+	}
+
+	return joined
 }
