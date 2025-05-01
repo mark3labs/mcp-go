@@ -132,7 +132,7 @@ type NotificationParams struct {
 }
 
 // MarshalJSON implements custom JSON marshaling
-func (p *NotificationParams) MarshalJSON() ([]byte, error) {
+func (p NotificationParams) MarshalJSON() ([]byte, error) {
 	// Create a map to hold all fields
 	m := make(map[string]interface{})
 
