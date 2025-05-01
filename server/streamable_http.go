@@ -21,6 +21,7 @@ type streamableHTTPSession struct {
 	initialized         atomic.Bool
 	lastEventID         string
 	eventStore          EventStore
+	sessionTools        sync.Map // Maps tool name to ServerTool
 }
 
 func (s *streamableHTTPSession) SessionID() string {
@@ -39,7 +40,34 @@ func (s *streamableHTTPSession) Initialized() bool {
 	return s.initialized.Load()
 }
 
+// GetSessionTools returns the tools specific to this session
+func (s *streamableHTTPSession) GetSessionTools() map[string]ServerTool {
+	tools := make(map[string]ServerTool)
+	s.sessionTools.Range(func(key, value interface{}) bool {
+		if toolName, ok := key.(string); ok {
+			if tool, ok := value.(ServerTool); ok {
+				tools[toolName] = tool
+			}
+		}
+		return true
+	})
+	return tools
+}
+
+// SetSessionTools sets tools specific to this session
+func (s *streamableHTTPSession) SetSessionTools(tools map[string]ServerTool) {
+	// Clear existing tools
+	s.sessionTools = sync.Map{}
+
+	// Add new tools
+	for name, tool := range tools {
+		s.sessionTools.Store(name, tool)
+	}
+}
+
+// Ensure streamableHTTPSession implements both ClientSession and SessionWithTools interfaces
 var _ ClientSession = (*streamableHTTPSession)(nil)
+var _ SessionWithTools = (*streamableHTTPSession)(nil)
 
 // EventStore is an interface for storing and retrieving events for resumability
 type EventStore interface {
@@ -364,6 +392,7 @@ func (s *StreamableHTTPServer) handleRequest(w http.ResponseWriter, r *http.Requ
 				sessionID:           newSessionID,
 				notificationChannel: make(chan mcp.JSONRPCNotification, 100),
 				eventStore:          s.eventStore,
+				sessionTools:        sync.Map{},
 			}
 
 			// Register the session
