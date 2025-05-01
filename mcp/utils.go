@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+
 	"github.com/spf13/cast"
 )
 
@@ -433,6 +434,10 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 }
 
 func ParseGetPromptResult(rawMessage *json.RawMessage) (*GetPromptResult, error) {
+	if rawMessage == nil {
+		return nil, fmt.Errorf("response is nil")
+	}
+
 	var jsonContent map[string]any
 	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
@@ -495,6 +500,10 @@ func ParseGetPromptResult(rawMessage *json.RawMessage) (*GetPromptResult, error)
 }
 
 func ParseCallToolResult(rawMessage *json.RawMessage) (*CallToolResult, error) {
+	if rawMessage == nil {
+		return nil, fmt.Errorf("response is nil")
+	}
+
 	var jsonContent map[string]any
 	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
@@ -573,6 +582,10 @@ func ParseResourceContents(contentMap map[string]any) (ResourceContents, error) 
 }
 
 func ParseReadResourceResult(rawMessage *json.RawMessage) (*ReadResourceResult, error) {
+	if rawMessage == nil {
+		return nil, fmt.Errorf("response is nil")
+	}
+
 	var jsonContent map[string]any
 	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
