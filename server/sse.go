@@ -96,7 +96,7 @@ func WithBaseURL(baseURL string) SSEOption {
 	}
 }
 
-// Add a new option for setting base path
+// WithBasePath adds a new option for setting base path
 func WithBasePath(basePath string) SSEOption {
 	return func(s *SSEServer) {
 		// Ensure the path starts with / and doesn't end with /
@@ -150,7 +150,7 @@ func WithKeepAlive(keepAlive bool) SSEOption {
 	}
 }
 
-// WithContextFunc sets a function that will be called to customise the context
+// WithSSEContextFunc sets a function that will be called to customise the context
 // to the server using the incoming request.
 func WithSSEContextFunc(fn SSEContextFunc) SSEOption {
 	return func(s *SSEServer) {

@@ -131,7 +131,7 @@ const (
 	headerKeySessionID = "Mcp-Session-Id"
 )
 
-// sendRequest sends a JSON-RPC request to the server and waits for a response.
+// SendRequest sends a JSON-RPC request to the server and waits for a response.
 // Returns the raw JSON response message or an error if the request fails.
 func (c *StreamableHTTP) SendRequest(
 	ctx context.Context,
