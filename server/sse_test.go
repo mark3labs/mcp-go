@@ -666,7 +666,8 @@ func TestSSEServer(t *testing.T) {
 			t.Fatalf("Failed to marshal tool request: %v", err)
 		}
 
-		req, err := http.NewRequest(http.MethodPost, messageURL, bytes.NewBuffer(requestBody))
+		var req *http.Request
+		req, err = http.NewRequest(http.MethodPost, messageURL, bytes.NewBuffer(requestBody))
 		if err != nil {
 			t.Fatalf("Failed to create tool request: %v", err)
 		}
@@ -1127,6 +1128,116 @@ func TestSSEServer(t *testing.T) {
 						tt.inputs, result, tt.expected)
 				}
 			})
+		}
+	})
+
+	t.Run("SessionWithTools implementation", func(t *testing.T) {
+		// Create hooks to track sessions
+		hooks := &Hooks{}
+		var registeredSession *sseSession
+		hooks.AddOnRegisterSession(func(ctx context.Context, session ClientSession) {
+			if s, ok := session.(*sseSession); ok {
+				registeredSession = s
+			}
+		})
+		
+		mcpServer := NewMCPServer("test", "1.0.0", WithHooks(hooks))
+		testServer := NewTestServer(mcpServer)
+		defer testServer.Close()
+
+		// Connect to SSE endpoint
+		sseResp, err := http.Get(fmt.Sprintf("%s/sse", testServer.URL))
+		if err != nil {
+			t.Fatalf("Failed to connect to SSE endpoint: %v", err)
+		}
+		defer sseResp.Body.Close()
+
+		// Read the endpoint event to ensure session is established
+		_, err = readSeeEvent(sseResp)
+		if err != nil {
+			t.Fatalf("Failed to read SSE response: %v", err)
+		}
+
+		// Verify we got a session
+		if registeredSession == nil {
+			t.Fatal("Session was not registered via hook")
+		}
+
+		// Test setting and getting tools
+		tools := map[string]ServerTool{
+			"test_tool": {
+				Tool: mcp.Tool{
+					Name:        "test_tool",
+					Description: "A test tool",
+					Annotations: mcp.ToolAnnotation{
+						Title: "Test Tool",
+					},
+				},
+				Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return mcp.NewToolResultText("test"), nil
+				},
+			},
+		}
+
+		// Test SetSessionTools
+		registeredSession.SetSessionTools(tools)
+
+		// Test GetSessionTools
+		retrievedTools := registeredSession.GetSessionTools()
+		if len(retrievedTools) != 1 {
+			t.Errorf("Expected 1 tool, got %d", len(retrievedTools))
+		}
+		if tool, exists := retrievedTools["test_tool"]; !exists {
+			t.Error("Expected test_tool to exist")
+		} else if tool.Tool.Name != "test_tool" {
+			t.Errorf("Expected tool name test_tool, got %s", tool.Tool.Name)
+		}
+
+		// Test concurrent access
+		var wg sync.WaitGroup
+		for i := 0; i < 10; i++ {
+			wg.Add(2)
+			go func(i int) {
+				defer wg.Done()
+				tools := map[string]ServerTool{
+					fmt.Sprintf("tool_%d", i): {
+						Tool: mcp.Tool{
+							Name:        fmt.Sprintf("tool_%d", i),
+							Description: fmt.Sprintf("Tool %d", i),
+							Annotations: mcp.ToolAnnotation{
+								Title: fmt.Sprintf("Tool %d", i),
+							},
+						},
+					},
+				}
+				registeredSession.SetSessionTools(tools)
+			}(i)
+			go func() {
+				defer wg.Done()
+				_ = registeredSession.GetSessionTools()
+			}()
+		}
+		wg.Wait()
+
+		// Verify we can still get and set tools after concurrent access
+		finalTools := map[string]ServerTool{
+			"final_tool": {
+				Tool: mcp.Tool{
+					Name:        "final_tool",
+					Description: "Final Tool",
+					Annotations: mcp.ToolAnnotation{
+						Title: "Final Tool",
+					},
+				},
+			},
+		}
+		registeredSession.SetSessionTools(finalTools)
+		retrievedTools = registeredSession.GetSessionTools()
+		if len(retrievedTools) != 1 {
+			t.Errorf("Expected 1 tool, got %d", len(retrievedTools))
+		}
+		if _, exists := retrievedTools["final_tool"]; !exists {
+			t.Error("Expected final_tool to exist")
 		}
 	})
 }

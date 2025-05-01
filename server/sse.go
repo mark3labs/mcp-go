@@ -28,6 +28,7 @@ type sseSession struct {
 	requestID           atomic.Int64
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         atomic.Bool
+	tools               sync.Map // stores session-specific tools
 }
 
 // SSEContextFunc is a function that takes an existing context and the current
@@ -58,7 +59,34 @@ func (s *sseSession) Initialized() bool {
 	return s.initialized.Load()
 }
 
-var _ ClientSession = (*sseSession)(nil)
+func (s *sseSession) GetSessionTools() map[string]ServerTool {
+	tools := make(map[string]ServerTool)
+	s.tools.Range(func(key, value interface{}) bool {
+		if tool, ok := value.(ServerTool); ok {
+			tools[key.(string)] = tool
+		}
+		return true
+	})
+	return tools
+}
+
+func (s *sseSession) SetSessionTools(tools map[string]ServerTool) {
+	// Clear existing tools
+	s.tools.Range(func(key, _ interface{}) bool {
+		s.tools.Delete(key)
+		return true
+	})
+
+	// Set new tools
+	for name, tool := range tools {
+		s.tools.Store(name, tool)
+	}
+}
+
+var (
+	_ ClientSession    = (*sseSession)(nil)
+	_ SessionWithTools = (*sseSession)(nil)
+)
 
 // SSEServer implements a Server-Sent Events (SSE) based MCP server.
 // It provides real-time communication capabilities over HTTP using the SSE protocol.
