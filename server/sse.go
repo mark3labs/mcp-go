@@ -261,6 +261,9 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, cancel := context.WithCancel(r.Context())
+	var wg sync.WaitGroup
+
 	sessionID := uuid.New().String()
 	session := &sseSession{
 		writer:              w,
@@ -271,17 +274,31 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		notificationChannel: make(chan mcp.JSONRPCNotification, 100),
 	}
 
+	// Cleanup function when all goroutines are closed.
+	// Order matters:
+	// 1. close session.done to signal goroutines to stop
+	// 2. wait for goroutines to finish
+	// 3. cancel context to clean up any remaining context-aware resources
+	cleanup := func() {
+		close(session.done)
+		wg.Wait()
+		cancel()
+	}
+	defer cleanup()
+
 	s.sessions.Store(sessionID, session)
 	defer s.sessions.Delete(sessionID)
 
-	if err := s.server.RegisterSession(r.Context(), session); err != nil {
+	if err := s.server.RegisterSession(ctx, session); err != nil {
 		http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusInternalServerError)
 		return
 	}
 	defer s.server.UnregisterSession(r.Context(), sessionID)
 
 	// Start notification handler for this session
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for {
 			select {
 			case notification := <-session.notificationChannel:
@@ -292,11 +309,13 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 						// Event queued successfully
 					case <-session.done:
 						return
+					case <-ctx.Done():
+						return
 					}
 				}
 			case <-session.done:
 				return
-			case <-r.Context().Done():
+			case <-ctx.Done():
 				return
 			}
 		}
@@ -304,7 +323,9 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 	// Start keep alive : ping
 	if s.keepAlive {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			ticker := time.NewTicker(s.keepAliveInterval)
 			defer ticker.Stop()
 			for {
@@ -319,10 +340,20 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 					}
 					messageBytes, _ := json.Marshal(message)
 					pingMsg := fmt.Sprintf("event: message\ndata:%s\n\n", messageBytes)
-					session.eventQueue <- pingMsg
+					ctxPing, cancelPing := context.WithTimeout(ctx, 2*time.Second)
+					select {
+					case session.eventQueue <- pingMsg:
+						// Ping sent successfully
+					case <-session.done:
+						cancelPing()
+						return
+					case <-ctxPing.Done():
+						// Avoid blocking indefinitely
+					}
+					cancelPing()
 				case <-session.done:
 					return
-				case <-r.Context().Done():
+				case <-ctx.Done():
 					return
 				}
 			}
@@ -342,10 +373,13 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		select {
 		case event := <-session.eventQueue:
 			// Write the event to the response
-			fmt.Fprint(w, event)
+			_, err := fmt.Fprint(w, event)
+			if err != nil {
+				// Error writing data to client, likely because client disconnected
+				return
+			}
 			flusher.Flush()
-		case <-r.Context().Done():
-			close(session.done)
+		case <-ctx.Done():
 			return
 		case <-session.done:
 			return
@@ -403,14 +437,17 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 	if response != nil {
 		eventData, _ := json.Marshal(response)
 
-		// Queue the event for sending via SSE
+		// Queue the event for sending via SSE with timeout to prevent goroutine leak
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+
 		select {
 		case session.eventQueue <- fmt.Sprintf("event: message\ndata: %s\n\n", eventData):
 			// Event queued successfully
 		case <-session.done:
 			// Session is closed, don't try to queue
-		default:
-			// Queue is full, could log this
+		case <-ctx.Done():
+			// Timeout, Queue is full or context canceled, could log this
 		}
 
 		// Send HTTP response
