@@ -175,6 +175,13 @@ func WithSessionIDGenerator(generator func() string) StreamableHTTPOption {
 	}
 }
 
+// WithStatelessMode enables stateless mode (no sessions)
+func WithStatelessMode(enable bool) StreamableHTTPOption {
+	return func(s *StreamableHTTPServer) {
+		s.statelessMode = enable
+	}
+}
+
 // WithEnableJSONResponse enables direct JSON responses instead of SSE streams
 func WithEnableJSONResponse(enable bool) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {
@@ -213,6 +220,7 @@ type StreamableHTTPServer struct {
 	standaloneStreamID string
 	streamMapping      sync.Map // Maps streamID to response writer
 	requestToStreamMap sync.Map // Maps requestID to streamID
+	statelessMode      bool
 }
 
 // NewStreamableHTTPServer creates a new Streamable HTTP server instance with the given MCP server and options.
@@ -375,9 +383,8 @@ func (s *StreamableHTTPServer) handleRequest(w http.ResponseWriter, r *http.Requ
 	isInitialize := request.Method == "initialize"
 
 	// If this is not an initialization request and we don't have a session,
-	// and we're not in stateless mode (sessionIDGenerator returns empty string),
-	// then reject the request
-	if !isInitialize && session == nil && s.sessionIDGenerator() != "" {
+	// and we're not in stateless mode, then reject the request
+	if !isInitialize && session == nil && !s.statelessMode {
 		http.Error(w, "Bad Request: Server not initialized", http.StatusBadRequest)
 		return
 	}
@@ -388,7 +395,7 @@ func (s *StreamableHTTPServer) handleRequest(w http.ResponseWriter, r *http.Requ
 	// If this is an initialization request, create a new session
 	if isInitialize && response != nil {
 		// Only create a session if we're not in stateless mode
-		if s.sessionIDGenerator() != "" {
+		if !s.statelessMode {
 			newSessionID := s.sessionIDGenerator()
 			newSession := &streamableHTTPSession{
 				sessionID:           newSessionID,
