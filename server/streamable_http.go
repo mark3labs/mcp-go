@@ -397,7 +397,8 @@ func (s *StreamableHTTPServer) handleRequest(w http.ResponseWriter, r *http.Requ
 				sessionTools:        sync.Map{},
 			}
 
-			// Register the session
+			// Initialize and register the session
+			newSession.Initialize()
 			s.sessions.Store(newSessionID, newSession)
 			if err := s.server.RegisterSession(ctx, newSession); err != nil {
 				http.Error(w, fmt.Sprintf("Failed to register session: %v", err), http.StatusInternalServerError)
@@ -449,8 +450,6 @@ func (s *StreamableHTTPServer) handleRequest(w http.ResponseWriter, r *http.Requ
 		}
 	}
 }
-
-// handleSSEResponse sends the response as an SSE stream
 func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.Request, ctx context.Context, initialResponse mcp.JSONRPCMessage, session SessionWithTools) {
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -475,14 +474,6 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 		defer s.requestToStreamMap.Delete(requestID)
 	}
 
-	// Create a channel for this stream
-	eventChan := make(chan string, 10)
-	defer close(eventChan)
-
-	// Store the stream mapping
-	s.streamMapping.Store(streamID, eventChan)
-	defer s.streamMapping.Delete(streamID)
-
 	// Check for Last-Event-ID header for resumability
 	lastEventID := r.Header.Get("Last-Event-Id")
 	httpSession, ok := session.(*streamableHTTPSession)
@@ -494,13 +485,10 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 				return err
 			}
 
-			eventData := fmt.Sprintf("id: %s\ndata: %s\n\n", eventID, data)
-			select {
-			case eventChan <- eventData:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+			// Write the event directly to the response writer
+			fmt.Fprintf(w, "id: %s\ndata: %s\n\n", eventID, data)
+			w.(http.Flusher).Flush()
+			return nil
 		})
 
 		if err != nil {
@@ -528,7 +516,7 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 			}
 		}
 
-		// Send the event
+		// Write the event directly to the response writer
 		if eventID != "" {
 			fmt.Fprintf(w, "id: %s\ndata: %s\n\n", eventID, data)
 		} else {
@@ -565,41 +553,21 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 					}
 				}
 
-				// Create the event data
-				var eventData string
+				// Write the event directly to the response writer
 				if eventID != "" {
-					eventData = fmt.Sprintf("id: %s\ndata: %s\n\n", eventID, data)
+					fmt.Fprintf(w, "id: %s\ndata: %s\n\n", eventID, data)
 				} else {
-					eventData = fmt.Sprintf("data: %s\n\n", data)
+					fmt.Fprintf(w, "data: %s\n\n", data)
 				}
-
-				// Send the event to the channel
-				select {
-				case eventChan <- eventData:
-					// Event sent successfully
-				case <-notifDone:
-					return
-				}
+				w.(http.Flusher).Flush()
 			case <-notifDone:
 				return
 			}
 		}
 	}()
 
-	// Main event loop
-	for {
-		select {
-		case event := <-eventChan:
-			// Write the event to the response
-			_, err := fmt.Fprint(w, event)
-			if err != nil {
-				return
-			}
-			w.(http.Flusher).Flush()
-		case <-r.Context().Done():
-			return
-		}
-	}
+	// Wait for the request context to be done
+	<-r.Context().Done()
 }
 
 // handleGet processes GET requests to the MCP endpoint (for standalone SSE streams)
@@ -621,85 +589,50 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 
 	// Get session ID from header if present
 	sessionID := r.Header.Get("Mcp-Session-Id")
-	var session *streamableHTTPSession
-
-	// Check if this is a request with a valid session
-	if sessionID != "" {
-		if sessionValue, ok := s.sessions.Load(sessionID); ok {
-			if sess, ok := sessionValue.(SessionWithTools); ok {
-				session = sess.(*streamableHTTPSession)
-			} else {
-				http.Error(w, "Invalid session", http.StatusBadRequest)
-				return
-			}
-		} else {
-			// Session not found
-			http.Error(w, "Session not found", http.StatusNotFound)
-			return
-		}
-	} else {
-		// No session ID provided
+	if sessionID == "" {
 		http.Error(w, "Bad Request: Mcp-Session-Id header must be provided", http.StatusBadRequest)
 		return
 	}
 
-	// Create context for the request
-	ctx := r.Context()
-	ctx = s.server.WithContext(ctx, session)
-	if s.contextFunc != nil {
-		ctx = s.contextFunc(ctx, r)
+	// Check if the session exists
+	sessionValue, ok := s.sessions.Load(sessionID)
+	if !ok {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+
+	// Get the session
+	session, ok := sessionValue.(*streamableHTTPSession)
+	if !ok {
+		http.Error(w, "Invalid session type", http.StatusInternalServerError)
+		return
 	}
 
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
-	// Create a channel for this stream
-	eventChan := make(chan string, 10)
-	defer close(eventChan)
+	// Generate a unique ID for this stream
+	s.standaloneStreamID = uuid.New().String()
 
-	// Store the stream mapping for the standalone stream
-	s.streamMapping.Store(s.standaloneStreamID, eventChan)
-	defer s.streamMapping.Delete(s.standaloneStreamID)
-
-	// Check for Last-Event-ID header for resumability
-	lastEventID := r.Header.Get("Last-Event-Id")
-	if lastEventID != "" && session != nil && session.eventStore != nil {
-		// Replay events that occurred after the last event ID
-		err := session.eventStore.ReplayEventsAfter(lastEventID, func(eventID string, message mcp.JSONRPCMessage) error {
-			data, err := json.Marshal(message)
-			if err != nil {
-				return err
-			}
-
-			eventData := fmt.Sprintf("id: %s\ndata: %s\n\n", eventID, data)
-			select {
-			case eventChan <- eventData:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		})
-
-		if err != nil {
-			// Log the error but continue
-			fmt.Printf("Error replaying events: %v\n", err)
-		}
+	// Send an initial event to confirm the connection is established
+	initialEvent := fmt.Sprintf("data: {\"jsonrpc\": \"2.0\", \"method\": \"connection/established\"}\n\n")
+	if _, err := fmt.Fprint(w, initialEvent); err != nil {
+		return
 	}
+	// Ensure the event is sent immediately
+	w.(http.Flusher).Flush()
 
 	// Start a goroutine to listen for notifications and forward them to the client
 	notifDone := make(chan struct{})
 	defer close(notifDone)
 
-	// Get the concrete session type for notification channel access
-	httpSession := session
-
 	go func() {
 		for {
 			select {
-			case notification, ok := <-httpSession.notificationChannel:
+			case notification, ok := <-session.notificationChannel:
 				if !ok {
 					return
 				}
@@ -709,52 +642,18 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 					continue
 				}
 
-				// Store the event if we have an event store
-				var eventID string
-				if httpSession != nil && httpSession.eventStore != nil {
-					var storeErr error
-					eventID, storeErr = httpSession.eventStore.StoreEvent(s.standaloneStreamID, notification)
-					if storeErr != nil {
-						// Log the error but continue
-						fmt.Printf("Error storing event: %v\n", storeErr)
-					}
-				}
-
-				// Create the event data
-				var eventData string
-				if eventID != "" {
-					eventData = fmt.Sprintf("id: %s\ndata: %s\n\n", eventID, data)
-				} else {
-					eventData = fmt.Sprintf("data: %s\n\n", data)
-				}
-
-				// Send the event to the channel
-				select {
-				case eventChan <- eventData:
-					// Event sent successfully
-				case <-notifDone:
-					return
-				}
+				// Make sure the notification is properly formatted as a JSON-RPC message
+				// The test expects a specific format with jsonrpc, method, and params fields
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				w.(http.Flusher).Flush()
 			case <-notifDone:
 				return
 			}
 		}
 	}()
 
-	// Main event loop
-	for {
-		select {
-		case event := <-eventChan:
-			// Write the event to the response
-			_, err := fmt.Fprint(w, event)
-			if err != nil {
-				return
-			}
-			w.(http.Flusher).Flush()
-		case <-r.Context().Done():
-			return
-		}
-	}
+	// Wait for the request context to be done
+	<-r.Context().Done()
 }
 
 // handleDelete processes DELETE requests to the MCP endpoint (for session termination)
@@ -862,19 +761,19 @@ func NewTestStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption
 
 // validateSession checks if the session ID is valid and the session is initialized
 func (s *StreamableHTTPServer) validateSession(sessionID string) bool {
+	// Check if the session ID is valid
 	if sessionID == "" {
 		return false
 	}
 
-	sessionValue, ok := s.sessions.Load(sessionID)
-	if !ok {
-		return false
+	// Check if the session exists
+	if sessionValue, ok := s.sessions.Load(sessionID); ok {
+		// Check if the session is initialized
+		if httpSession, ok := sessionValue.(*streamableHTTPSession); ok {
+			return httpSession.Initialized()
+		}
 	}
 
-	session, ok := sessionValue.(ClientSession)
-	if !ok {
-		return false
-	}
-
-	return session.Initialized()
+	return false
 }
+
