@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+
 	"github.com/spf13/cast"
 )
 
@@ -125,6 +126,7 @@ func NewJSONRPCError(
 	}
 }
 
+// NewProgressNotification
 // Helper function for creating a progress notification
 func NewProgressNotification(
 	token ProgressToken,
@@ -155,6 +157,7 @@ func NewProgressNotification(
 	return notification
 }
 
+// NewLoggingMessageNotification
 // Helper function for creating a logging message notification
 func NewLoggingMessageNotification(
 	level LoggingLevel,
@@ -177,6 +180,7 @@ func NewLoggingMessageNotification(
 	}
 }
 
+// NewPromptMessage
 // Helper function to create a new PromptMessage
 func NewPromptMessage(role Role, content Content) PromptMessage {
 	return PromptMessage{
@@ -185,6 +189,7 @@ func NewPromptMessage(role Role, content Content) PromptMessage {
 	}
 }
 
+// NewTextContent
 // Helper function to create a new TextContent
 func NewTextContent(text string) TextContent {
 	return TextContent{
@@ -193,6 +198,7 @@ func NewTextContent(text string) TextContent {
 	}
 }
 
+// NewImageContent
 // Helper function to create a new ImageContent
 func NewImageContent(data, mimeType string) ImageContent {
 	return ImageContent{
@@ -202,6 +208,7 @@ func NewImageContent(data, mimeType string) ImageContent {
 	}
 }
 
+// NewEmbeddedResource
 // Helper function to create a new EmbeddedResource
 func NewEmbeddedResource(resource ResourceContents) EmbeddedResource {
 	return EmbeddedResource{
@@ -376,6 +383,7 @@ func NewInitializeResult(
 	}
 }
 
+// FormatNumberResult
 // Helper for formatting numbers in tool results
 func FormatNumberResult(value float64) *CallToolResult {
 	return NewToolResultText(fmt.Sprintf("%.2f", value))
@@ -433,6 +441,10 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 }
 
 func ParseGetPromptResult(rawMessage *json.RawMessage) (*GetPromptResult, error) {
+	if rawMessage == nil {
+		return nil, fmt.Errorf("response is nil")
+	}
+
 	var jsonContent map[string]any
 	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
@@ -495,6 +507,10 @@ func ParseGetPromptResult(rawMessage *json.RawMessage) (*GetPromptResult, error)
 }
 
 func ParseCallToolResult(rawMessage *json.RawMessage) (*CallToolResult, error) {
+	if rawMessage == nil {
+		return nil, fmt.Errorf("response is nil")
+	}
+
 	var jsonContent map[string]any
 	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
@@ -573,6 +589,10 @@ func ParseResourceContents(contentMap map[string]any) (ResourceContents, error) 
 }
 
 func ParseReadResourceResult(rawMessage *json.RawMessage) (*ReadResourceResult, error) {
+	if rawMessage == nil {
+		return nil, fmt.Errorf("response is nil")
+	}
+
 	var jsonContent map[string]any
 	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
