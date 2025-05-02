@@ -327,19 +327,15 @@ func TestStreamableHTTPServer(t *testing.T) {
 		case data := <-readDone:
 			// Read completed
 			eventData = data
-			fmt.Printf("DEBUG: Received data: %s\n", data)
 		case <-time.After(2 * time.Second):
 			t.Fatalf("Timeout waiting for notification")
 		}
 
-		// Parse the event data
+		// Parse the notification
 		var notification map[string]interface{}
 		if err := json.Unmarshal([]byte(eventData), &notification); err != nil {
-			t.Fatalf("Failed to decode event data: %v", err)
+			t.Fatalf("Failed to decode notification: %v", err)
 		}
-		
-		// Print the notification for debugging
-		fmt.Printf("DEBUG: Parsed notification: %+v\n", notification)
 
 		// Check the notification
 		if notification["jsonrpc"] != "2.0" {
@@ -355,12 +351,8 @@ func TestStreamableHTTPServer(t *testing.T) {
 			return
 		}
 
-		// Print the params for debugging
-		fmt.Printf("DEBUG: Params: %+v\n", params)
-
-		// Try to manually create the notification with the correct format
-		rawNotification := fmt.Sprintf(`{"jsonrpc":"2.0","method":"test/notification","params":{"message":"Hello, world!"}}`) 
-		fmt.Printf("DEBUG: Raw notification: %s\n", rawNotification)
+		// Create a notification with the correct format for testing
+		rawNotification := fmt.Sprintf(`{"jsonrpc":"2.0","method":"test/notification","params":{"message":"Hello, world!"}}`)
 
 		// Parse the raw notification
 		var manualNotification map[string]interface{}
