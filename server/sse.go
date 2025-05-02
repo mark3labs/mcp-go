@@ -457,7 +457,6 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		// Process message through MCPServer
 		response := s.server.HandleMessage(ctx, rawMessage)
-
 		// Only send response if there is one (not for notifications)
 		if response != nil {
 			var message string
@@ -465,7 +464,6 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 				// If there is an error marshalling the response, send a generic error response
 				log.Printf("failed to marshal response: %v", err)
 				message = fmt.Sprintf("event: message\ndata: {\"error\": \"internal error\",\"jsonrpc\": \"2.0\", \"id\": null}\n\n")
-				return
 			} else {
 				message = fmt.Sprintf("event: message\ndata: %s\n\n", eventData)
 			}
