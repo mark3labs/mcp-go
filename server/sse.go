@@ -367,7 +367,12 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 					}
 					messageBytes, _ := json.Marshal(message)
 					pingMsg := fmt.Sprintf("event: message\ndata:%s\n\n", messageBytes)
-					session.eventQueue <- pingMsg
+					select {
+					case session.eventQueue <- pingMsg:
+						// Message sent successfully
+					case <-session.done:
+						return
+					}
 				case <-session.done:
 					return
 				case <-r.Context().Done():
