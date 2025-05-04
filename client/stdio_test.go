@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -19,6 +19,7 @@ func compileTestServer(outputPath string) error {
 	cmd := exec.Command(
 		"go",
 		"build",
+		"-buildmode=pie",
 		"-o",
 		outputPath,
 		"../testdata/mockstdio_server.go",
@@ -33,10 +34,22 @@ func compileTestServer(outputPath string) error {
 }
 
 func TestStdioMCPClient(t *testing.T) {
-	// Compile mock server
-	mockServerPath := filepath.Join(os.TempDir(), "mockstdio_server")
-	if err := compileTestServer(mockServerPath); err != nil {
-		t.Fatalf("Failed to compile mock server: %v", err)
+	// Create a temporary file for the mock server
+	tempFile, err := os.CreateTemp("", "mockstdio_server")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	tempFile.Close()
+	mockServerPath := tempFile.Name()
+	
+	// Add .exe suffix on Windows
+	if runtime.GOOS == "windows" {
+		os.Remove(mockServerPath) // Remove the empty file first
+		mockServerPath += ".exe"
+	}
+	
+	if compileErr := compileTestServer(mockServerPath); compileErr != nil {
+		t.Fatalf("Failed to compile mock server: %v", compileErr)
 	}
 	defer os.Remove(mockServerPath)
 
