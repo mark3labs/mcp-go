@@ -135,11 +135,20 @@ func WithBaseURL(baseURL string) SSEOption {
 	}
 }
 
-// WithBasePath adds a new option for setting a static base path
-func WithBasePath(basePath string) SSEOption {
+// WithStaticBasePath adds a new option for setting a static base path
+func WithStaticBasePath(basePath string) SSEOption {
 	return func(s *SSEServer) {
 		s.basePath = normalizeURLPath(basePath)
 	}
+}
+
+// WithBasePath adds a new option for setting a static base path.
+//
+// Deprecated: Use WithStaticBasePath instead. This will be removed in a future version.
+//
+//go:deprecated
+func WithBasePath(basePath string) SSEOption {
+	return WithStaticBasePath(basePath)
 }
 
 // WithDynamicBasePath accepts a function for generating the base path. This is

@@ -24,7 +24,7 @@ func TestSSEServer(t *testing.T) {
 		mcpServer := NewMCPServer("test", "1.0.0")
 		sseServer := NewSSEServer(mcpServer,
 			WithBaseURL("http://localhost:8080"),
-			WithBasePath("/mcp"),
+			WithStaticBasePath("/mcp"),
 		)
 
 		if sseServer == nil {
@@ -499,7 +499,7 @@ func TestSSEServer(t *testing.T) {
 
 	t.Run("works as http.Handler with custom basePath", func(t *testing.T) {
 		mcpServer := NewMCPServer("test", "1.0.0")
-		sseServer := NewSSEServer(mcpServer, WithBasePath("/mcp"))
+		sseServer := NewSSEServer(mcpServer, WithStaticBasePath("/mcp"))
 
 		ts := httptest.NewServer(sseServer)
 		defer ts.Close()
@@ -717,7 +717,7 @@ func TestSSEServer(t *testing.T) {
 		useFullURLForMessageEndpoint := false
 		srv := &http.Server{}
 		rands := []SSEOption{
-			WithBasePath(basePath),
+			WithStaticBasePath(basePath),
 			WithBaseURL(baseURL),
 			WithMessageEndpoint(messageEndpoint),
 			WithUseFullURLForMessageEndpoint(useFullURLForMessageEndpoint),
