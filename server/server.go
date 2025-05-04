@@ -856,7 +856,7 @@ func (s *MCPServer) handleToolCall(
 
 	session := ClientSessionFromContext(ctx)
 	if session != nil {
-		if sessionWithTools, ok := session.(SessionWithTools); ok {
+		if sessionWithTools, typeAssertOk := session.(SessionWithTools); typeAssertOk {
 			if sessionTools := sessionWithTools.GetSessionTools(); sessionTools != nil {
 				var sessionOk bool
 				tool, sessionOk = sessionTools[request.Params.Name]
