@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -293,6 +294,64 @@ func TestMCPServer_AddSessionTool(t *testing.T) {
 	// Verify tool was added to session
 	assert.Len(t, session.GetSessionTools(), 1)
 	assert.Contains(t, session.GetSessionTools(), "session-tool-helper")
+}
+
+func TestMCPServer_CallSessionTool(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(true))
+
+	// Add global tool
+	server.AddTool(mcp.NewTool("test_tool"), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("global result"), nil
+	})
+
+	// Create a session
+	sessionChan := make(chan mcp.JSONRPCNotification, 10)
+	session := &sessionTestClientWithTools{
+		sessionID:           "session-1",
+		notificationChannel: sessionChan,
+		initialized:         true,
+	}
+
+	// Register the session
+	err := server.RegisterSession(context.Background(), session)
+	require.NoError(t, err)
+
+	// Add session-specific tool with the same name to override the global tool
+	err = server.AddSessionTool(
+		session.SessionID(),
+		mcp.NewTool("test_tool"),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("session result"), nil
+		},
+	)
+	require.NoError(t, err)
+
+	// Call the tool using session context
+	sessionCtx := server.WithContext(context.Background(), session)
+	toolRequest := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params": map[string]interface{}{
+			"name": "test_tool",
+		},
+	}
+	requestBytes, err := json.Marshal(toolRequest)
+	if err != nil {
+		t.Fatalf("Failed to marshal tool request: %v", err)
+	}
+
+	response := server.HandleMessage(sessionCtx, requestBytes)
+	resp, ok := response.(mcp.JSONRPCResponse)
+	assert.True(t, ok)
+
+	callToolResult, ok := resp.Result.(mcp.CallToolResult)
+	assert.True(t, ok)
+
+	// Since we specify a tool with the same name for current session, the expected text should be "session result"
+	if text := callToolResult.Content[0].(mcp.TextContent).Text; text != "session result" {
+		t.Errorf("Expected result 'session result', got %q", text)
+	}
 }
 
 func TestMCPServer_DeleteSessionTools(t *testing.T) {
