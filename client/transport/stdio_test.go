@@ -23,6 +23,9 @@ func compileTestServer(outputPath string) error {
 		outputPath,
 		"../../testdata/mockstdio_server.go",
 	)
+	tmpCache, _ := os.MkdirTemp("", "gocache")
+	cmd.Env = append(os.Environ(), "GOCACHE="+tmpCache)
+
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("compilation failed: %v\nOutput: %s", err, output)
 	}
