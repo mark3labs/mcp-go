@@ -203,7 +203,6 @@ func TestSSEServer(t *testing.T) {
 					strings.Split(strings.Split(endpointEvent, "data: ")[1], "\n")[0],
 				)
 
-				fmt.Printf("========> %v", respFromSee)
 				var response map[string]interface{}
 				if err := json.NewDecoder(strings.NewReader(respFromSee)).Decode(&response); err != nil {
 					t.Errorf(
@@ -1316,6 +1315,89 @@ func TestSSEServer(t *testing.T) {
 
 		if !strings.Contains(endpointEvent, "\"id\": null") {
 			t.Errorf("Expected id to be null")
+		}
+	})
+
+	t.Run("Message processing continues after we return back result to client", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0.0")
+
+		processingCompleted := make(chan struct{})
+		processingStarted := make(chan struct{})
+
+		mcpServer.AddTool(mcp.NewTool("slowMethod"), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			close(processingStarted) // signal for processing started
+
+			select {
+			case <-ctx.Done(): // If this happens, the test will fail because processingCompleted won't be closed
+				return nil, fmt.Errorf("context was canceled")
+			case <-time.After(1 * time.Second): // Simulate processing time
+				// Successfully completed processing, now close the completed channel to signal completion
+				close(processingCompleted)
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{
+						mcp.TextContent{
+							Type: "text",
+							Text: "success",
+						},
+					},
+				}, nil
+			}
+		})
+
+		testServer := NewTestServer(mcpServer)
+		defer testServer.Close()
+
+		sseResp, err := http.Get(fmt.Sprintf("%s/sse", testServer.URL))
+		require.NoError(t, err, "Failed to connect to SSE endpoint")
+		defer sseResp.Body.Close()
+
+		endpointEvent, err := readSSEEvent(sseResp)
+		require.NoError(t, err, "Failed to read SSE response")
+		require.Contains(t, endpointEvent, "event: endpoint", "Expected endpoint event")
+
+		messageURL := strings.TrimSpace(
+			strings.Split(strings.Split(endpointEvent, "data: ")[1], "\n")[0],
+		)
+
+		messageRequest := map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "tools/call",
+			"params": map[string]interface{}{
+				"name":       "slowMethod",
+				"parameters": map[string]interface{}{},
+			},
+		}
+
+		requestBody, err := json.Marshal(messageRequest)
+		require.NoError(t, err, "Failed to marshal request")
+
+		ctx, cancel := context.WithCancel(context.Background())
+		req, err := http.NewRequestWithContext(ctx, "POST", messageURL, bytes.NewBuffer(requestBody))
+		require.NoError(t, err, "Failed to create request")
+		req.Header.Set("Content-Type", "application/json")
+
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		require.NoError(t, err, "Failed to send message")
+		defer resp.Body.Close()
+
+		require.Equal(t, http.StatusAccepted, resp.StatusCode, "Expected status 202 Accepted")
+
+		// Wait for processing to start
+		select {
+		case <-processingStarted: // Processing has started, now cancel the client context to simulate disconnection
+		case <-time.After(2 * time.Second):
+			t.Fatal("Timed out waiting for processing to start")
+		}
+
+		cancel() // cancel the client context to simulate disconnection
+
+		// wait for processing to complete, if the test passes, it means the processing continued despite client disconnection
+		select {
+		case <-processingCompleted:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Processing did not complete after client disconnection")
 		}
 	})
 }

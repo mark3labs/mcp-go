@@ -465,10 +465,19 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Create a context that preserves all values from parent ctx but won't be canceled when the parent is canceled.
+	// this is required because the http ctx will be canceled when the client disconnects
+	detachedCtx := context.WithoutCancel(ctx)
+
 	// quick return request, send 202 Accepted with no body, then deal the message and sent response via SSE
 	w.WriteHeader(http.StatusAccepted)
 
-	go func() {
+	// Create a new context for handling the message that will be canceled when the message handling is done
+	messageCtx, cancel := context.WithCancel(detachedCtx)
+
+	go func(ctx context.Context) {
+		defer cancel()
+		// Use the context that will be canceled when session is done
 		// Process message through MCPServer
 		response := s.server.HandleMessage(ctx, rawMessage)
 		// Only send response if there is one (not for notifications)
@@ -493,7 +502,7 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 				log.Printf("Event queue full for session %s", sessionID)
 			}
 		}
-	}()
+	}(messageCtx)
 }
 
 // writeJSONRPCError writes a JSON-RPC error response with the given error details.
