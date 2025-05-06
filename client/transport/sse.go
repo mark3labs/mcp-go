@@ -45,6 +45,12 @@ func WithHeaders(headers map[string]string) ClientOption {
 	}
 }
 
+func WithHTTPClient(httpClient *http.Client) ClientOption {
+	return func(sc *SSE) {
+		sc.httpClient = httpClient
+	}
+}
+
 // NewSSE creates a new SSE-based MCP client with the given base URL.
 // Returns an error if the URL is invalid.
 func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
@@ -226,7 +232,7 @@ func (c *SSE) SetNotificationHandler(handler func(notification mcp.JSONRPCNotifi
 	c.onNotification = handler
 }
 
-// sendRequest sends a JSON-RPC request to the server and waits for a response.
+// SendRequest sends a JSON-RPC request to the server and waits for a response.
 // Returns the raw JSON response message or an error if the request fails.
 func (c *SSE) SendRequest(
 	ctx context.Context,
@@ -243,53 +249,60 @@ func (c *SSE) SendRequest(
 		return nil, fmt.Errorf("endpoint not received")
 	}
 
+	// Marshal request
 	requestBytes, err := json.Marshal(request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	responseChan := make(chan *JSONRPCResponse, 1)
-	c.mu.Lock()
-	c.responses[request.ID] = responseChan
-	c.mu.Unlock()
-
-	req, err := http.NewRequestWithContext(
-		ctx,
-		"POST",
-		c.endpoint.String(),
-		bytes.NewReader(requestBytes),
-	)
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint.String(), bytes.NewReader(requestBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
+	// Set headers
 	req.Header.Set("Content-Type", "application/json")
-	// set custom http headers
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
 	}
 
+	// Register response channel
+	responseChan := make(chan *JSONRPCResponse, 1)
+	c.mu.Lock()
+	c.responses[request.ID] = responseChan
+	c.mu.Unlock()
+	deleteResponseChan := func() {
+		c.mu.Lock()
+		delete(c.responses, request.ID)
+		c.mu.Unlock()
+	}
+
+	// Send request
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		deleteResponseChan()
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK &&
-		resp.StatusCode != http.StatusAccepted {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf(
-			"request failed with status %d: %s",
-			resp.StatusCode,
-			body,
-		)
+	// Drain any outstanding io
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Check if we got an error response
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		deleteResponseChan()
+
+		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, body)
 	}
 
 	select {
 	case <-ctx.Done():
-		c.mu.Lock()
-		delete(c.responses, request.ID)
-		c.mu.Unlock()
+		deleteResponseChan()
 		return nil, ctx.Err()
 	case response := <-responseChan:
 		return response, nil

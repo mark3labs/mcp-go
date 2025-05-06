@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -18,21 +18,41 @@ func compileTestServer(outputPath string) error {
 	cmd := exec.Command(
 		"go",
 		"build",
+		"-buildmode=pie",
 		"-o",
 		outputPath,
 		"../../testdata/mockstdio_server.go",
 	)
+	tmpCache, _ := os.MkdirTemp("", "gocache")
+	cmd.Env = append(os.Environ(), "GOCACHE="+tmpCache)
+
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("compilation failed: %v\nOutput: %s", err, output)
+	}
+	// Verify the binary was actually created
+	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
+		return fmt.Errorf("mock server binary not found at %s after compilation", outputPath)
 	}
 	return nil
 }
 
 func TestStdio(t *testing.T) {
-	// Compile mock server
-	mockServerPath := filepath.Join(os.TempDir(), "mockstdio_server")
-	if err := compileTestServer(mockServerPath); err != nil {
-		t.Fatalf("Failed to compile mock server: %v", err)
+	// Create a temporary file for the mock server
+	tempFile, err := os.CreateTemp("", "mockstdio_server")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	tempFile.Close()
+	mockServerPath := tempFile.Name()
+
+	// Add .exe suffix on Windows
+	if runtime.GOOS == "windows" {
+		os.Remove(mockServerPath) // Remove the empty file first
+		mockServerPath += ".exe"
+	}
+
+	if compileErr := compileTestServer(mockServerPath); compileErr != nil {
+		t.Fatalf("Failed to compile mock server: %v", compileErr)
 	}
 	defer os.Remove(mockServerPath)
 
@@ -43,9 +63,9 @@ func TestStdio(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := stdio.Start(ctx)
-	if err != nil {
-		t.Fatalf("Failed to start Stdio transport: %v", err)
+	startErr := stdio.Start(ctx)
+	if startErr != nil {
+		t.Fatalf("Failed to start Stdio transport: %v", startErr)
 	}
 	defer stdio.Close()
 
@@ -302,16 +322,28 @@ func TestStdioErrors(t *testing.T) {
 	})
 
 	t.Run("RequestBeforeStart", func(t *testing.T) {
-		// 创建一个新的 Stdio 实例但不调用 Start 方法
-		mockServerPath := filepath.Join(os.TempDir(), "mockstdio_server")
-		if err := compileTestServer(mockServerPath); err != nil {
-			t.Fatalf("Failed to compile mock server: %v", err)
+		// Create a temporary file for the mock server
+		tempFile, err := os.CreateTemp("", "mockstdio_server")
+		if err != nil {
+			t.Fatalf("Failed to create temp file: %v", err)
+		}
+		tempFile.Close()
+		mockServerPath := tempFile.Name()
+
+		// Add .exe suffix on Windows
+		if runtime.GOOS == "windows" {
+			os.Remove(mockServerPath) // Remove the empty file first
+			mockServerPath += ".exe"
+		}
+
+		if compileErr := compileTestServer(mockServerPath); compileErr != nil {
+			t.Fatalf("Failed to compile mock server: %v", compileErr)
 		}
 		defer os.Remove(mockServerPath)
 
 		uninitiatedStdio := NewStdio(mockServerPath, nil)
 
-		// 准备一个请求
+		// Prepare a request
 		request := JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      99,
@@ -320,19 +352,31 @@ func TestStdioErrors(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		defer cancel()
-		_, err := uninitiatedStdio.SendRequest(ctx, request)
-		if err == nil {
+		_, reqErr := uninitiatedStdio.SendRequest(ctx, request)
+		if reqErr == nil {
 			t.Errorf("Expected SendRequest to panic before Start(), but it didn't")
-		} else if err.Error() != "stdio client not started" {
-			t.Errorf("Expected error 'stdio client not started', got: %v", err)
+		} else if reqErr.Error() != "stdio client not started" {
+			t.Errorf("Expected error 'stdio client not started', got: %v", reqErr)
 		}
 	})
 
 	t.Run("RequestAfterClose", func(t *testing.T) {
-		// Compile mock server
-		mockServerPath := filepath.Join(os.TempDir(), "mockstdio_server")
-		if err := compileTestServer(mockServerPath); err != nil {
-			t.Fatalf("Failed to compile mock server: %v", err)
+		// Create a temporary file for the mock server
+		tempFile, err := os.CreateTemp("", "mockstdio_server")
+		if err != nil {
+			t.Fatalf("Failed to create temp file: %v", err)
+		}
+		tempFile.Close()
+		mockServerPath := tempFile.Name()
+
+		// Add .exe suffix on Windows
+		if runtime.GOOS == "windows" {
+			os.Remove(mockServerPath) // Remove the empty file first
+			mockServerPath += ".exe"
+		}
+
+		if compileErr := compileTestServer(mockServerPath); compileErr != nil {
+			t.Fatalf("Failed to compile mock server: %v", compileErr)
 		}
 		defer os.Remove(mockServerPath)
 
@@ -341,8 +385,8 @@ func TestStdioErrors(t *testing.T) {
 
 		// Start the transport
 		ctx := context.Background()
-		if err := stdio.Start(ctx); err != nil {
-			t.Fatalf("Failed to start Stdio transport: %v", err)
+		if startErr := stdio.Start(ctx); startErr != nil {
+			t.Fatalf("Failed to start Stdio transport: %v", startErr)
 		}
 
 		// Close the transport - ignore errors like "broken pipe" since the process might exit already
@@ -358,10 +402,39 @@ func TestStdioErrors(t *testing.T) {
 			Method:  "ping",
 		}
 
-		_, err := stdio.SendRequest(ctx, request)
-		if err == nil {
+		_, sendErr := stdio.SendRequest(ctx, request)
+		if sendErr == nil {
 			t.Errorf("Expected error when sending request after close, got nil")
 		}
 	})
+	t.Run("SubprocessStartsAndExitsImmediately", func(t *testing.T) {
+		// Create a temporary file for the mock server
+		tempFile, err := os.CreateTemp("", "mockstdio_server")
+		if err != nil {
+			t.Fatalf("Failed to create temp file: %v", err)
+		}
+		tempFile.Close()
+		mockServerPath := tempFile.Name()
 
+		// Add .exe suffix on Windows
+		if runtime.GOOS == "windows" {
+			os.Remove(mockServerPath) // Remove the empty file first
+			mockServerPath += ".exe"
+		}
+
+		if compileErr := compileTestServer(mockServerPath); compileErr != nil {
+			t.Fatalf("Failed to compile mock server: %v", compileErr)
+		}
+		//defer os.Remove(mockServerPath)
+
+		// Create a new Stdio transport
+		stdio := NewStdio(mockServerPath, nil)
+		stdio.env = append(stdio.env, "MOCK_FAIL_IMMEDIATELY=1")
+		defer stdio.Close()
+		// Start the transport
+		ctx := context.Background()
+		if startErr := stdio.Start(ctx); startErr == nil {
+			t.Fatalf("Expected error when starting Stdio transport, got nil")
+		}
+	})
 }

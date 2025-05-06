@@ -40,7 +40,7 @@ func WithErrorLogger(logger *log.Logger) StdioOption {
 	}
 }
 
-// WithContextFunc sets a function that will be called to customise the context
+// WithStdioContextFunc sets a function that will be called to customise the context
 // to the server. Note that the stdio server uses the same context for all requests,
 // so this function will only be called once per server instance.
 func WithStdioContextFunc(fn StdioContextFunc) StdioOption {
@@ -204,7 +204,7 @@ func (s *StdioServer) Listen(
 	if err := s.server.RegisterSession(ctx, &stdioSessionInstance); err != nil {
 		return fmt.Errorf("register session: %w", err)
 	}
-	defer s.server.UnregisterSession(stdioSessionInstance.SessionID())
+	defer s.server.UnregisterSession(ctx, stdioSessionInstance.SessionID())
 	ctx = s.server.WithContext(ctx, &stdioSessionInstance)
 
 	// Add in any custom context.

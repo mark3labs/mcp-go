@@ -43,6 +43,20 @@ type Stdio struct {
 	exitErr        atomic.Value
 }
 
+// NewIO returns a new stdio-based transport using existing input, output, and
+// logging streams instead of spawning a subprocess.
+// This is useful for testing and simulating client behavior.
+func NewIO(input io.Reader, output io.WriteCloser, logging io.ReadCloser) *Stdio {
+	return &Stdio{
+		stdin:  output,
+		stdout: bufio.NewReader(input),
+		stderr: logging,
+
+		responses: make(map[int64]chan *JSONRPCResponse),
+		done:      make(chan struct{}),
+	}
+}
+
 // NewStdio creates a new stdio transport to communicate with a subprocess.
 // It launches the specified command with given arguments and sets up stdin/stdout pipes for communication.
 // Returns an error if the subprocess cannot be started or the pipes cannot be created.
@@ -66,13 +80,24 @@ func NewStdio(
 }
 
 func (c *Stdio) Start(ctx context.Context) error {
+	if err := c.spawnCommand(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+// spawnCommand spawns a new process running c.command.
+func (c *Stdio) spawnCommand(ctx context.Context) error {
+	if c.command == "" {
+		return nil
+	}
+
 	cmd := exec.CommandContext(ctx, c.command, c.args...)
 
 	mergedEnv := os.Environ()
 	mergedEnv = append(mergedEnv, c.env...)
 
 	cmd.Env = mergedEnv
-
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("failed to create stdin pipe: %w", err)
@@ -96,7 +121,6 @@ func (c *Stdio) Start(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start command: %w", err)
 	}
-
 	go func() {
 		err := cmd.Wait()
 		if err != nil {
@@ -211,7 +235,7 @@ func (c *Stdio) readResponses() {
 	}
 }
 
-// sendRequest sends a JSON-RPC request to the server and waits for a response.
+// SendRequest sends a JSON-RPC request to the server and waits for a response.
 // It creates a unique request ID, sends the request over stdin, and waits for
 // the corresponding response or context cancellation.
 // Returns the raw JSON response message or an error if the request fails.
@@ -223,27 +247,32 @@ func (c *Stdio) SendRequest(
 		return nil, fmt.Errorf("stdio client not started")
 	}
 
-	// Create the complete request structure
-	responseChan := make(chan *JSONRPCResponse, 1)
-	c.mu.Lock()
-	c.responses[request.ID] = responseChan
-	c.mu.Unlock()
-
+	// Marshal request
 	requestBytes, err := json.Marshal(request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 	requestBytes = append(requestBytes, '\n')
 
-	if _, err := c.stdin.Write(requestBytes); err != nil {
-		return nil, fmt.Errorf("failed to write request: %w", err)
-	}
-
-	select {
-	case <-ctx.Done():
+	// Register response channel
+	responseChan := make(chan *JSONRPCResponse, 1)
+	c.mu.Lock()
+	c.responses[request.ID] = responseChan
+	c.mu.Unlock()
+	deleteResponseChan := func() {
 		c.mu.Lock()
 		delete(c.responses, request.ID)
 		c.mu.Unlock()
+	}
+
+	// Send request
+	if _, err := c.stdin.Write(requestBytes); err != nil {
+		deleteResponseChan()
+		return nil, fmt.Errorf("failed to write request: %w", err)
+	}
+	select {
+	case <-ctx.Done():
+		deleteResponseChan()
 		return nil, ctx.Err()
 	case response := <-responseChan:
 		return response, nil
@@ -255,6 +284,10 @@ func (c *Stdio) SendNotification(
 	ctx context.Context,
 	notification mcp.JSONRPCNotification,
 ) error {
+	if c.stdin == nil {
+		return fmt.Errorf("stdio client not started")
+	}
+
 	notificationBytes, err := json.Marshal(notification)
 	if err != nil {
 		return fmt.Errorf("failed to marshal notification: %w", err)

@@ -1,4 +1,4 @@
-// Package client provides MCP (Model Control Protocol) client implementations.
+// Package client provides MCP (Model Context Protocol) client implementations.
 package client
 
 import (

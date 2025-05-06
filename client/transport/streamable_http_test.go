@@ -4,59 +4,24 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
-	"fmt"
-	"net/http"
-	"net/http/httptest"
-
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// startMockSSEEchoServer starts a test HTTP server that implements
-// a minimal SSE-based echo server for testing purposes.
+// startMockStreamableHTTPServer starts a test HTTP server that implements
+// a minimal Streamable HTTP server for testing purposes.
 // It returns the server URL and a function to close the server.
-func startMockSSEEchoServer() (string, func()) {
-	// Create handler for SSE endpoint
-	var sseWriter http.ResponseWriter
-	var flush func()
+func startMockStreamableHTTPServer() (string, func()) {
+	var sessionID string
 	var mu sync.Mutex
-	sseHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Setup SSE headers
-		defer func() {
-			mu.Lock() // for passing race test
-			sseWriter = nil
-			flush = nil
-			mu.Unlock()
-			fmt.Printf("SSEHandler ends: %v\n", r.Context().Err())
-		}()
 
-		w.Header().Set("Content-Type", "text/event-stream")
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-			return
-		}
-
-		mu.Lock()
-		sseWriter = w
-		flush = flusher.Flush
-		mu.Unlock()
-
-		// Send initial endpoint event with message endpoint URL
-		mu.Lock()
-		fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", "/message")
-		flusher.Flush()
-		mu.Unlock()
-
-		// Keep connection open
-		<-r.Context().Done()
-	})
-
-	// Create handler for message endpoint
-	messageHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Handle only POST requests
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -64,91 +29,125 @@ func startMockSSEEchoServer() (string, func()) {
 		}
 
 		// Parse incoming JSON-RPC request
-		var request map[string]interface{}
+		var request map[string]any
 		decoder := json.NewDecoder(r.Body)
 		if err := decoder.Decode(&request); err != nil {
 			http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
 			return
 		}
 
-		// Echo back the request as the response result
-		response := map[string]interface{}{
-			"jsonrpc": "2.0",
-			"id":      request["id"],
-			"result":  request,
-		}
-
 		method := request["method"]
 		switch method {
+		case "initialize":
+			// Generate a new session ID
+			mu.Lock()
+			sessionID = fmt.Sprintf("test-session-%d", time.Now().UnixNano())
+			mu.Unlock()
+			w.Header().Set("Mcp-Session-Id", sessionID)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      request["id"],
+				"result":  "initialized",
+			})
+
 		case "debug/echo":
-			response["result"] = request
+			// Check session ID
+			if r.Header.Get("Mcp-Session-Id") != sessionID {
+				http.Error(w, "Invalid session ID", http.StatusNotFound)
+				return
+			}
+
+			// Echo back the request as the response result
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      request["id"],
+				"result":  request,
+			})
+
 		case "debug/echo_notification":
-			response["result"] = request
-			// send notification to client
-			responseBytes, _ := json.Marshal(map[string]any{
+			// Check session ID
+			if r.Header.Get("Mcp-Session-Id") != sessionID {
+				http.Error(w, "Invalid session ID", http.StatusNotFound)
+				return
+			}
+
+			// Send response and notification
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			notification := map[string]any{
 				"jsonrpc": "2.0",
 				"method":  "debug/test",
 				"params":  request,
-			})
-			mu.Lock()
-			fmt.Fprintf(sseWriter, "event: message\ndata: %s\n\n", responseBytes)
-			flush()
-			mu.Unlock()
+			}
+			notificationData, _ := json.Marshal(notification)
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", notificationData)
+			response := map[string]any{
+				"jsonrpc": "2.0",
+				"id":      request["id"],
+				"result":  request,
+			}
+			responseData, _ := json.Marshal(response)
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", responseData)
+
 		case "debug/echo_error_string":
+			// Check session ID
+			if r.Header.Get("Mcp-Session-Id") != sessionID {
+				http.Error(w, "Invalid session ID", http.StatusNotFound)
+				return
+			}
+
+			// Return an error response
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
 			data, _ := json.Marshal(request)
-			response["error"] = map[string]interface{}{
-				"code":    -1,
-				"message": string(data),
-			}
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      request["id"],
+				"error": map[string]interface{}{
+					"code":    -1,
+					"message": string(data),
+				},
+			})
 		}
-
-		// Set response headers
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-
-		go func() {
-			data, _ := json.Marshal(response)
-			mu.Lock()
-			defer mu.Unlock()
-			if sseWriter != nil && flush != nil {
-				fmt.Fprintf(sseWriter, "event: message\ndata: %s\n\n", data)
-				flush()
-			}
-		}()
-
 	})
 
-	// Create a router to handle different endpoints
-	mux := http.NewServeMux()
-	mux.Handle("/", sseHandler)
-	mux.Handle("/message", messageHandler)
-
 	// Start test server
-	testServer := httptest.NewServer(mux)
-
+	testServer := httptest.NewServer(handler)
 	return testServer.URL, testServer.Close
 }
 
-func TestSSE(t *testing.T) {
-	// Compile mock server
-	url, closeF := startMockSSEEchoServer()
+func TestStreamableHTTP(t *testing.T) {
+	// Start mock server
+	url, closeF := startMockStreamableHTTPServer()
 	defer closeF()
 
-	trans, err := NewSSE(url)
+	// Create transport
+	trans, err := NewStreamableHTTP(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer trans.Close()
+
+	// Initialize the transport first
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	initRequest := JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+	}
+
+	_, err = trans.SendRequest(ctx, initRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Start the transport
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	err = trans.Start(ctx)
-	if err != nil {
-		t.Fatalf("Failed to start transport: %v", err)
-	}
-	defer trans.Close()
-
+	// Now run the tests
 	t.Run("SendRequest", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -225,7 +224,6 @@ func TestSSE(t *testing.T) {
 	})
 
 	t.Run("SendNotification & NotificationHandler", func(t *testing.T) {
-
 		var wg sync.WaitGroup
 		notificationChan := make(chan mcp.JSONRPCNotification, 1)
 
@@ -234,34 +232,37 @@ func TestSSE(t *testing.T) {
 			notificationChan <- notification
 		})
 
-		// Send a notification
-		// This would trigger a notification from the server
+		// Send a request that triggers a notification
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
-		notification := mcp.JSONRPCNotification{
+		request := JSONRPCRequest{
 			JSONRPC: "2.0",
-			Notification: mcp.Notification{
-				Method: "debug/echo_notification",
-				Params: mcp.NotificationParams{
-					AdditionalFields: map[string]interface{}{"test": "value"},
-				},
-			},
+			ID:      1,
+			Method:  "debug/echo_notification",
 		}
-		err := trans.SendNotification(ctx, notification)
+
+		_, err := trans.SendRequest(ctx, request)
 		if err != nil {
-			t.Fatalf("SendNotification failed: %v", err)
+			t.Fatalf("SendRequest failed: %v", err)
 		}
 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			select {
-			case nt := <-notificationChan:
+			case notification := <-notificationChan:
 				// We received a notification
-				responseJson, _ := json.Marshal(nt.Params.AdditionalFields)
-				requestJson, _ := json.Marshal(notification)
-				if string(responseJson) != string(requestJson) {
+				got := notification.Params.AdditionalFields
+				if got == nil {
+					t.Errorf("Notification handler did not send the expected notification: got nil")
+				}
+				if int64(got["id"].(float64)) != request.ID ||
+					got["jsonrpc"] != request.JSONRPC ||
+					got["method"] != request.Method {
+
+					responseJson, _ := json.Marshal(got)
+					requestJson, _ := json.Marshal(request)
 					t.Errorf("Notification handler did not send the expected notification: \ngot %s\nexpect %s", responseJson, requestJson)
 				}
 
@@ -352,6 +353,8 @@ func TestSSE(t *testing.T) {
 	})
 
 	t.Run("ResponseError", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 
 		// Prepare a request
 		request := JSONRPCRequest{
@@ -360,7 +363,6 @@ func TestSSE(t *testing.T) {
 			Method:  "debug/echo_error_string",
 		}
 
-		// The request should fail because the context is canceled
 		reps, err := trans.SendRequest(ctx, request)
 		if err != nil {
 			t.Errorf("SendRequest failed: %v", err)
@@ -373,6 +375,7 @@ func TestSSE(t *testing.T) {
 		var responseError JSONRPCRequest
 		if err := json.Unmarshal([]byte(reps.Error.Message), &responseError); err != nil {
 			t.Errorf("Failed to unmarshal result: %v", err)
+			return
 		}
 
 		if responseError.Method != "debug/echo_error_string" {
@@ -385,120 +388,38 @@ func TestSSE(t *testing.T) {
 			t.Errorf("Expected JSONRPC '2.0', got '%s'", responseError.JSONRPC)
 		}
 	})
-
 }
 
-func TestSSEErrors(t *testing.T) {
+func TestStreamableHTTPErrors(t *testing.T) {
 	t.Run("InvalidURL", func(t *testing.T) {
-		// Create a new SSE transport with an invalid URL
-		_, err := NewSSE("://invalid-url")
+		// Create a new StreamableHTTP transport with an invalid URL
+		_, err := NewStreamableHTTP("://invalid-url")
 		if err == nil {
 			t.Errorf("Expected error when creating with invalid URL, got nil")
 		}
 	})
 
 	t.Run("NonExistentURL", func(t *testing.T) {
-		// Create a new SSE transport with a non-existent URL
-		sse, err := NewSSE("http://localhost:1")
+		// Create a new StreamableHTTP transport with a non-existent URL
+		trans, err := NewStreamableHTTP("http://localhost:1")
 		if err != nil {
-			t.Fatalf("Failed to create SSE transport: %v", err)
+			t.Fatalf("Failed to create StreamableHTTP transport: %v", err)
 		}
 
-		// Start should fail
+		// Send request should fail
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
-		err = sse.Start(ctx)
-		if err == nil {
-			t.Errorf("Expected error when starting with non-existent URL, got nil")
-			sse.Close()
-		}
-	})
-
-	t.Run("WithHTTPClient", func(t *testing.T) {
-		// Create a custom client with a very short timeout
-		customClient := &http.Client{Timeout: 1 * time.Nanosecond}
-
-		url, closeF := startMockSSEEchoServer()
-		defer closeF()
-		// Initialize SSE transport with the custom HTTP client
-		trans, err := NewSSE(url, WithHTTPClient(customClient))
-		if err != nil {
-			t.Fatalf("Failed to create SSE with custom client: %v", err)
-		}
-
-		// Starting should immediately error due to timeout
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		err = trans.Start(ctx)
-		if err == nil {
-			t.Error("Expected Start to fail with custom timeout, got nil")
-		}
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Errorf("Expected error 'context deadline exceeded', got '%s'", err.Error())
-		}
-		trans.Close()
-	})
-
-	t.Run("RequestBeforeStart", func(t *testing.T) {
-		url, closeF := startMockSSEEchoServer()
-		defer closeF()
-
-		// Create a new SSE instance without calling Start method
-		sse, err := NewSSE(url)
-		if err != nil {
-			t.Fatalf("Failed to create SSE transport: %v", err)
-		}
-
-		// Prepare a request
-		request := JSONRPCRequest{
-			JSONRPC: "2.0",
-			ID:      99,
-			Method:  "ping",
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-		defer cancel()
-
-		_, err = sse.SendRequest(ctx, request)
-		if err == nil {
-			t.Errorf("Expected SendRequest to fail before Start(), but it didn't")
-		}
-	})
-
-	t.Run("RequestAfterClose", func(t *testing.T) {
-		// Start a mock server
-		url, closeF := startMockSSEEchoServer()
-		defer closeF()
-
-		// Create a new SSE transport
-		sse, err := NewSSE(url)
-		if err != nil {
-			t.Fatalf("Failed to create SSE transport: %v", err)
-		}
-
-		// Start the transport
-		ctx := context.Background()
-		if err := sse.Start(ctx); err != nil {
-			t.Fatalf("Failed to start SSE transport: %v", err)
-		}
-
-		// Close the transport
-		sse.Close()
-
-		// Wait a bit to ensure connection has closed
-		time.Sleep(100 * time.Millisecond)
-
-		// Try to send a request after close
 		request := JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      1,
-			Method:  "ping",
+			Method:  "initialize",
 		}
 
-		_, err = sse.SendRequest(ctx, request)
+		_, err = trans.SendRequest(ctx, request)
 		if err == nil {
-			t.Errorf("Expected error when sending request after close, got nil")
+			t.Errorf("Expected error when sending request to non-existent URL, got nil")
 		}
 	})
+
 }

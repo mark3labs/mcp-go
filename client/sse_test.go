@@ -25,6 +25,13 @@ func TestSSEMCPClient(t *testing.T) {
 		"test-tool",
 		mcp.WithDescription("Test tool"),
 		mcp.WithString("parameter-1", mcp.Description("A string tool parameter")),
+		mcp.WithToolAnnotation(mcp.ToolAnnotation{
+			Title:           "Test Tool Annotation Title",
+			ReadOnlyHint:    true,
+			DestructiveHint: false,
+			IdempotentHint:  true,
+			OpenWorldHint:   false,
+		}),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
@@ -95,9 +102,20 @@ func TestSSEMCPClient(t *testing.T) {
 
 		// Test ListTools
 		toolsRequest := mcp.ListToolsRequest{}
-		_, err = client.ListTools(ctx, toolsRequest)
+		toolListResult, err := client.ListTools(ctx, toolsRequest)
 		if err != nil {
 			t.Errorf("ListTools failed: %v", err)
+		}
+		if toolListResult == nil || len((*toolListResult).Tools) == 0 {
+			t.Errorf("Expected one tool")
+		}
+		testToolAnnotations := (*toolListResult).Tools[0].Annotations
+		if testToolAnnotations.Title != "Test Tool Annotation Title" ||
+			testToolAnnotations.ReadOnlyHint != true ||
+			testToolAnnotations.DestructiveHint != false ||
+			testToolAnnotations.IdempotentHint != true ||
+			testToolAnnotations.OpenWorldHint != false {
+			t.Errorf("The annotations of the tools are invalid")
 		}
 	})
 

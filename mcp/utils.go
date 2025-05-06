@@ -3,6 +3,8 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/spf13/cast"
 )
 
 // ClientRequest types
@@ -124,11 +126,13 @@ func NewJSONRPCError(
 	}
 }
 
+// NewProgressNotification
 // Helper function for creating a progress notification
 func NewProgressNotification(
 	token ProgressToken,
 	progress float64,
 	total *float64,
+	message *string,
 ) ProgressNotification {
 	notification := ProgressNotification{
 		Notification: Notification{
@@ -138,6 +142,7 @@ func NewProgressNotification(
 			ProgressToken ProgressToken `json:"progressToken"`
 			Progress      float64       `json:"progress"`
 			Total         float64       `json:"total,omitempty"`
+			Message       string        `json:"message,omitempty"`
 		}{
 			ProgressToken: token,
 			Progress:      progress,
@@ -146,9 +151,13 @@ func NewProgressNotification(
 	if total != nil {
 		notification.Params.Total = *total
 	}
+	if message != nil {
+		notification.Params.Message = *message
+	}
 	return notification
 }
 
+// NewLoggingMessageNotification
 // Helper function for creating a logging message notification
 func NewLoggingMessageNotification(
 	level LoggingLevel,
@@ -171,6 +180,7 @@ func NewLoggingMessageNotification(
 	}
 }
 
+// NewPromptMessage
 // Helper function to create a new PromptMessage
 func NewPromptMessage(role Role, content Content) PromptMessage {
 	return PromptMessage{
@@ -179,6 +189,7 @@ func NewPromptMessage(role Role, content Content) PromptMessage {
 	}
 }
 
+// NewTextContent
 // Helper function to create a new TextContent
 func NewTextContent(text string) TextContent {
 	return TextContent{
@@ -187,6 +198,7 @@ func NewTextContent(text string) TextContent {
 	}
 }
 
+// NewImageContent
 // Helper function to create a new ImageContent
 func NewImageContent(data, mimeType string) ImageContent {
 	return ImageContent{
@@ -196,6 +208,7 @@ func NewImageContent(data, mimeType string) ImageContent {
 	}
 }
 
+// NewEmbeddedResource
 // Helper function to create a new EmbeddedResource
 func NewEmbeddedResource(resource ResourceContents) EmbeddedResource {
 	return EmbeddedResource{
@@ -370,6 +383,7 @@ func NewInitializeResult(
 	}
 }
 
+// FormatNumberResult
 // Helper for formatting numbers in tool results
 func FormatNumberResult(value float64) *CallToolResult {
 	return NewToolResultText(fmt.Sprintf("%.2f", value))
@@ -399,9 +413,6 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 	switch contentType {
 	case "text":
 		text := ExtractString(contentMap, "text")
-		if text == "" {
-			return nil, fmt.Errorf("text is missing")
-		}
 		return NewTextContent(text), nil
 
 	case "image":
@@ -430,6 +441,10 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 }
 
 func ParseGetPromptResult(rawMessage *json.RawMessage) (*GetPromptResult, error) {
+	if rawMessage == nil {
+		return nil, fmt.Errorf("response is nil")
+	}
+
 	var jsonContent map[string]any
 	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
@@ -492,6 +507,10 @@ func ParseGetPromptResult(rawMessage *json.RawMessage) (*GetPromptResult, error)
 }
 
 func ParseCallToolResult(rawMessage *json.RawMessage) (*CallToolResult, error) {
+	if rawMessage == nil {
+		return nil, fmt.Errorf("response is nil")
+	}
+
 	var jsonContent map[string]any
 	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
@@ -570,6 +589,10 @@ func ParseResourceContents(contentMap map[string]any) (ResourceContents, error) 
 }
 
 func ParseReadResourceResult(rawMessage *json.RawMessage) (*ReadResourceResult, error) {
+	if rawMessage == nil {
+		return nil, fmt.Errorf("response is nil")
+	}
+
 	var jsonContent map[string]any
 	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
@@ -611,4 +634,106 @@ func ParseReadResourceResult(rawMessage *json.RawMessage) (*ReadResourceResult, 
 	}
 
 	return &result, nil
+}
+
+func ParseArgument(request CallToolRequest, key string, defaultVal any) any {
+	if _, ok := request.Params.Arguments[key]; !ok {
+		return defaultVal
+	} else {
+		return request.Params.Arguments[key]
+	}
+}
+
+// ParseBoolean extracts and converts a boolean parameter from a CallToolRequest.
+// If the key is not found in the Arguments map, the defaultValue is returned.
+// The function uses cast.ToBool for conversion which handles various string representations
+// such as "true", "yes", "1", etc.
+func ParseBoolean(request CallToolRequest, key string, defaultValue bool) bool {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToBool(v)
+}
+
+// ParseInt64 extracts and converts an int64 parameter from a CallToolRequest.
+// If the key is not found in the Arguments map, the defaultValue is returned.
+func ParseInt64(request CallToolRequest, key string, defaultValue int64) int64 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToInt64(v)
+}
+
+// ParseInt32 extracts and converts an int32 parameter from a CallToolRequest.
+func ParseInt32(request CallToolRequest, key string, defaultValue int32) int32 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToInt32(v)
+}
+
+// ParseInt16 extracts and converts an int16 parameter from a CallToolRequest.
+func ParseInt16(request CallToolRequest, key string, defaultValue int16) int16 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToInt16(v)
+}
+
+// ParseInt8 extracts and converts an int8 parameter from a CallToolRequest.
+func ParseInt8(request CallToolRequest, key string, defaultValue int8) int8 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToInt8(v)
+}
+
+// ParseInt extracts and converts an int parameter from a CallToolRequest.
+func ParseInt(request CallToolRequest, key string, defaultValue int) int {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToInt(v)
+}
+
+// ParseUInt extracts and converts an uint parameter from a CallToolRequest.
+func ParseUInt(request CallToolRequest, key string, defaultValue uint) uint {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToUint(v)
+}
+
+// ParseUInt64 extracts and converts an uint64 parameter from a CallToolRequest.
+func ParseUInt64(request CallToolRequest, key string, defaultValue uint64) uint64 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToUint64(v)
+}
+
+// ParseUInt32 extracts and converts an uint32 parameter from a CallToolRequest.
+func ParseUInt32(request CallToolRequest, key string, defaultValue uint32) uint32 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToUint32(v)
+}
+
+// ParseUInt16 extracts and converts an uint16 parameter from a CallToolRequest.
+func ParseUInt16(request CallToolRequest, key string, defaultValue uint16) uint16 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToUint16(v)
+}
+
+// ParseUInt8 extracts and converts an uint8 parameter from a CallToolRequest.
+func ParseUInt8(request CallToolRequest, key string, defaultValue uint8) uint8 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToUint8(v)
+}
+
+// ParseFloat32 extracts and converts a float32 parameter from a CallToolRequest.
+func ParseFloat32(request CallToolRequest, key string, defaultValue float32) float32 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToFloat32(v)
+}
+
+// ParseFloat64 extracts and converts a float64 parameter from a CallToolRequest.
+func ParseFloat64(request CallToolRequest, key string, defaultValue float64) float64 {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToFloat64(v)
+}
+
+// ParseString extracts and converts a string parameter from a CallToolRequest.
+func ParseString(request CallToolRequest, key string, defaultValue string) string {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToString(v)
+}
+
+// ParseStringMap extracts and converts a string map parameter from a CallToolRequest.
+func ParseStringMap(request CallToolRequest, key string, defaultValue map[string]any) map[string]any {
+	v := ParseArgument(request, key, defaultValue)
+	return cast.ToStringMap(v)
 }

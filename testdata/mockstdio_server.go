@@ -26,6 +26,10 @@ type JSONRPCResponse struct {
 }
 
 func main() {
+	if os.Getenv("MOCK_FAIL_IMMEDIATELY") == "1" {
+		fmt.Fprintln(os.Stderr, "mock server: simulated startup failure")
+		os.Exit(1)
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{}))
 	logger.Info("launch successful")
 	scanner := bufio.NewScanner(os.Stdin)
