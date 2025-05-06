@@ -45,6 +45,12 @@ func WithHeaders(headers map[string]string) ClientOption {
 	}
 }
 
+func WithHTTPClient(httpClient *http.Client) ClientOption {
+	return func(sc *SSE) {
+		sc.httpClient = httpClient
+	}
+}
+
 // NewSSE creates a new SSE-based MCP client with the given base URL.
 // Returns an error if the URL is invalid.
 func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
@@ -226,7 +232,7 @@ func (c *SSE) SetNotificationHandler(handler func(notification mcp.JSONRPCNotifi
 	c.onNotification = handler
 }
 
-// sendRequest sends a JSON-RPC request to the server and waits for a response.
+// SendRequest sends a JSON-RPC request to the server and waits for a response.
 // Returns the raw JSON response message or an error if the request fails.
 func (c *SSE) SendRequest(
 	ctx context.Context,
@@ -278,13 +284,19 @@ func (c *SSE) SendRequest(
 		deleteResponseChan()
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+
+	// Drain any outstanding io
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
 
 	// Check if we got an error response
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		deleteResponseChan()
 
-		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, body)
 	}
 

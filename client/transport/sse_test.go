@@ -415,6 +415,31 @@ func TestSSEErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("WithHTTPClient", func(t *testing.T) {
+		// Create a custom client with a very short timeout
+		customClient := &http.Client{Timeout: 1 * time.Nanosecond}
+
+		url, closeF := startMockSSEEchoServer()
+		defer closeF()
+		// Initialize SSE transport with the custom HTTP client
+		trans, err := NewSSE(url, WithHTTPClient(customClient))
+		if err != nil {
+			t.Fatalf("Failed to create SSE with custom client: %v", err)
+		}
+
+		// Starting should immediately error due to timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err = trans.Start(ctx)
+		if err == nil {
+			t.Error("Expected Start to fail with custom timeout, got nil")
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Expected error 'context deadline exceeded', got '%s'", err.Error())
+		}
+		trans.Close()
+	})
+
 	t.Run("RequestBeforeStart", func(t *testing.T) {
 		url, closeF := startMockSSEEchoServer()
 		defer closeF()
