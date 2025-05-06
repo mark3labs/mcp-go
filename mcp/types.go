@@ -656,7 +656,7 @@ type CreateMessageResult struct {
 // SamplingMessage describes a message issued to or received from an LLM API.
 type SamplingMessage struct {
 	Role    Role        `json:"role"`
-	Content interface{} `json:"content"` // Can be TextContent or ImageContent
+	Content interface{} `json:"content"` // Can be TextContent, ImageContent or AudioContent
 }
 
 type Annotations struct {
@@ -708,6 +708,19 @@ type ImageContent struct {
 }
 
 func (ImageContent) isContent() {}
+
+// AudioContent represents the contents of audio, embedded into a prompt or tool call result.
+// It must have Type set to "audio".
+type AudioContent struct {
+	Annotated
+	Type string `json:"type"` // Must be "audio"
+	// The base64-encoded audio data.
+	Data string `json:"data"`
+	// The MIME type of the audio. Different providers may support different audio types.
+	MIMEType string `json:"mimeType"`
+}
+
+func (AudioContent) isContent() {}
 
 // EmbeddedResource represents the contents of a resource, embedded into a prompt or tool call result.
 //
