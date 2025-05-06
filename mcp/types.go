@@ -709,6 +709,19 @@ type ImageContent struct {
 
 func (ImageContent) isContent() {}
 
+// AudioContent represents audio provided to or from an LLM.
+// It must have Type set to "audio".
+type AudioContent struct {
+	Annotated
+	Type string `json:"type"` // Must be "audio"
+	// The base64-encoded audio data.
+	Data string `json:"data"`
+	// The MIME type of the audio. Different providers may support different audio types.
+	MIMEType string `json:"mimeType"`
+}
+
+func (AudioContent) isContent() {}
+
 // EmbeddedResource represents the contents of a resource, embedded into a prompt or tool call result.
 //
 // It is up to the client how best to render embedded resources for the
