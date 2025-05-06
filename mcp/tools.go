@@ -79,6 +79,11 @@ type Tool struct {
 	Annotations ToolAnnotation `json:"annotations"`
 }
 
+// GetName returns the name of the tool.
+func (t Tool) GetName() string {
+	return t.Name
+}
+
 // MarshalJSON implements the json.Marshaler interface for Tool.
 // It handles marshaling either InputSchema or RawInputSchema based on which is set.
 func (t Tool) MarshalJSON() ([]byte, error) {
