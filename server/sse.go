@@ -655,6 +655,10 @@ func (s *SSEServer) MessageHandler() http.Handler {
 
 // ServeHTTP implements the http.Handler interface.
 func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.dynamicBasePathFunc != nil {
+		http.Error(w, (&ErrDynamicPathConfig{Method: "ServeHTTP"}).Error(), http.StatusInternalServerError)
+		return
+	}
 	path := r.URL.Path
 	// Use exact path matching rather than Contains
 	ssePath := s.CompleteSsePath()

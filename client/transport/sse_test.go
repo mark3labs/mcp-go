@@ -501,4 +501,5 @@ func TestSSEErrors(t *testing.T) {
 			t.Errorf("Expected error when sending request after close, got nil")
 		}
 	})
+
 }
