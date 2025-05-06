@@ -39,7 +39,6 @@ type Stdio struct {
 	done           chan struct{}
 	onNotification func(mcp.JSONRPCNotification)
 	notifyMu       sync.RWMutex
-	processExited  chan struct{}
 	exitErr        atomic.Value
 }
 
@@ -71,9 +70,8 @@ func NewStdio(
 		args:    args,
 		env:     env,
 
-		responses:     make(map[int64]chan *JSONRPCResponse),
-		done:          make(chan struct{}),
-		processExited: make(chan struct{}),
+		responses: make(map[int64]chan *JSONRPCResponse),
+		done:      make(chan struct{}),
 	}
 
 	return client
@@ -83,7 +81,14 @@ func (c *Stdio) Start(ctx context.Context) error {
 	if err := c.spawnCommand(ctx); err != nil {
 		return err
 	}
-	return nil
+
+	// Start reading responses in a goroutine and wait for it to be ready
+	ready := make(chan struct{})
+	go func() {
+		close(ready)
+		c.readResponses()
+	}()
+	return waitUntilReadyOrExit(ready, c.done, readyTimeout)
 }
 
 // spawnCommand spawns a new process running c.command.
@@ -121,27 +126,25 @@ func (c *Stdio) spawnCommand(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start command: %w", err)
 	}
+
 	go func() {
 		err := cmd.Wait()
 		if err != nil {
 			c.exitErr.Store(err)
 		}
-		close(c.processExited)
+		tryCloseDone(c.done)
 	}()
-
-	// Start reading responses in a goroutine and wait for it to be ready
-	ready := make(chan struct{})
-	go func() {
-		close(ready)
-		c.readResponses()
-	}()
-
-	if err := waitUntilReadyOrExit(ready, c.processExited, readyTimeout); err != nil {
-		return err
-	}
 	return nil
 }
 
+func tryCloseDone(done chan struct{}) {
+	select {
+	case <-done:
+		return
+	default:
+	}
+	close(done)
+}
 func waitUntilReadyOrExit(ready <-chan struct{}, exited <-chan struct{}, timeout time.Duration) error {
 	select {
 	case <-exited:
@@ -161,14 +164,15 @@ func waitUntilReadyOrExit(ready <-chan struct{}, exited <-chan struct{}, timeout
 // Close shuts down the stdio client, closing the stdin pipe and waiting for the subprocess to exit.
 // Returns an error if there are issues closing stdin or waiting for the subprocess to terminate.
 func (c *Stdio) Close() error {
-	close(c.done)
+	// cancel all in-flight request
+	tryCloseDone(c.done)
 	if err := c.stdin.Close(); err != nil {
 		return fmt.Errorf("failed to close stdin: %w", err)
 	}
 	if err := c.stderr.Close(); err != nil {
 		return fmt.Errorf("failed to close stderr: %w", err)
 	}
-	<-c.processExited
+
 	if err, ok := c.exitErr.Load().(error); ok && err != nil {
 		return err
 	}
@@ -270,6 +274,7 @@ func (c *Stdio) SendRequest(
 		deleteResponseChan()
 		return nil, fmt.Errorf("failed to write request: %w", err)
 	}
+
 	select {
 	case <-ctx.Done():
 		deleteResponseChan()
