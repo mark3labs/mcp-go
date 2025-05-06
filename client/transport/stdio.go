@@ -179,8 +179,8 @@ func (c *Stdio) Close() error {
 	return nil
 }
 
-// OnNotification registers a handler function to be called when notifications are received.
-// Multiple handlers can be registered and will be called in the order they were added.
+// SetNotificationHandler sets the handler function to be called when a notification is received.
+// Only one handler can be set at a time; setting a new one replaces the previous handler.
 func (c *Stdio) SetNotificationHandler(
 	handler func(notification mcp.JSONRPCNotification),
 ) {
