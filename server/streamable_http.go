@@ -217,7 +217,6 @@ type StreamableHTTPServer struct {
 	sessionIDGenerator func() string
 	enableJSONResponse bool
 	eventStore         EventStore
-	standaloneStreamID string
 	streamMapping      sync.Map // Maps streamID to response writer
 	requestToStreamMap sync.Map // Maps requestID to streamID
 	statelessMode      bool
@@ -230,7 +229,6 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 		endpoint:           "/mcp",
 		sessionIDGenerator: func() string { return uuid.New().String() },
 		enableJSONResponse: false,
-		standaloneStreamID: "_GET_stream",
 	}
 
 	// Apply all options
@@ -645,9 +643,6 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
-
-	// Generate a unique ID for this stream
-	s.standaloneStreamID = uuid.New().String()
 
 	// Send an initial event to confirm the connection is established
 	initialEvent := fmt.Sprintf("data: {\"jsonrpc\": \"2.0\", \"method\": \"connection/established\"}\n\n")
