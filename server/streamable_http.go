@@ -532,10 +532,15 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 		w.(http.Flusher).Flush()
 	}
 
-	// Start a goroutine to listen for notifications and forward them to the client
+	// Create a channel to pass notifications from the goroutine to the main handler
+	notificationCh := make(chan struct {
+		eventID string
+		data    []byte
+	}, 100) // Buffer size to prevent blocking
 	notifDone := make(chan struct{})
 	defer close(notifDone)
 
+	// Start a goroutine to listen for notifications and send them to the notification channel
 	go func() {
 		for {
 			select {
@@ -560,21 +565,41 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 					}
 				}
 
-				// Write the event directly to the response writer
-				if eventID != "" {
-					fmt.Fprintf(w, "id: %s\ndata: %s\n\n", eventID, data)
-				} else {
-					fmt.Fprintf(w, "data: %s\n\n", data)
+				// Send the notification to the main handler goroutine via channel
+				select {
+				case notificationCh <- struct {
+					eventID string
+					data    []byte
+				}{eventID: eventID, data: data}:
+				case <-notifDone:
+					return
 				}
-				w.(http.Flusher).Flush()
 			case <-notifDone:
 				return
 			}
 		}
 	}()
 
-	// Wait for the request context to be done
-	<-r.Context().Done()
+	// Create a context with cancellation
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	// Process notifications in the main handler goroutine
+	for {
+		select {
+		case notification := <-notificationCh:
+			// Write the event directly to the response writer from the main handler goroutine
+			if notification.eventID != "" {
+				fmt.Fprintf(w, "id: %s\ndata: %s\n\n", notification.eventID, notification.data)
+			} else {
+				fmt.Fprintf(w, "data: %s\n\n", notification.data)
+			}
+			w.(http.Flusher).Flush()
+		case <-ctx.Done():
+			// Request context is done, exit the loop
+			return
+		}
+	}
 }
 
 // handleGet processes GET requests to the MCP endpoint (for standalone SSE streams)
@@ -783,4 +808,3 @@ func (s *StreamableHTTPServer) validateSession(sessionID string) bool {
 
 	return false
 }
-
