@@ -424,7 +424,7 @@ func (s *StreamableHTTPServer) handleRequest(w http.ResponseWriter, r *http.Requ
 	acceptHeader := r.Header.Get("Accept")
 	acceptsSSE := false
 	for _, accept := range splitHeader(acceptHeader) {
-		if accept == "text/event-stream" {
+		if strings.HasPrefix(accept, "text/event-stream") {
 			acceptsSSE = true
 			break
 		}
@@ -608,7 +608,7 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 	acceptHeader := r.Header.Get("Accept")
 	acceptsSSE := false
 	for _, accept := range splitHeader(acceptHeader) {
-		if accept == "text/event-stream" {
+		if strings.HasPrefix(accept, "text/event-stream") {
 			acceptsSSE = true
 			break
 		}
