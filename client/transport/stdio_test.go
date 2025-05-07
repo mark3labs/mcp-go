@@ -44,11 +44,13 @@ func TestStdio(t *testing.T) {
 	}
 	tempFile.Close()
 	mockServerPath := tempFile.Name()
+
 	// Add .exe suffix on Windows
 	if runtime.GOOS == "windows" {
 		os.Remove(mockServerPath) // Remove the empty file first
 		mockServerPath += ".exe"
 	}
+
 	if compileErr := compileTestServer(mockServerPath); compileErr != nil {
 		t.Fatalf("Failed to compile mock server: %v", compileErr)
 	}
@@ -327,11 +329,13 @@ func TestStdioErrors(t *testing.T) {
 		}
 		tempFile.Close()
 		mockServerPath := tempFile.Name()
+
 		// Add .exe suffix on Windows
 		if runtime.GOOS == "windows" {
 			os.Remove(mockServerPath) // Remove the empty file first
 			mockServerPath += ".exe"
 		}
+
 		if compileErr := compileTestServer(mockServerPath); compileErr != nil {
 			t.Fatalf("Failed to compile mock server: %v", compileErr)
 		}
@@ -364,11 +368,13 @@ func TestStdioErrors(t *testing.T) {
 		}
 		tempFile.Close()
 		mockServerPath := tempFile.Name()
+
 		// Add .exe suffix on Windows
 		if runtime.GOOS == "windows" {
 			os.Remove(mockServerPath) // Remove the empty file first
 			mockServerPath += ".exe"
 		}
+
 		if compileErr := compileTestServer(mockServerPath); compileErr != nil {
 			t.Fatalf("Failed to compile mock server: %v", compileErr)
 		}
