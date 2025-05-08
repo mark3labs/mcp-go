@@ -168,58 +168,38 @@ func (s *InMemoryEventStore) ReplayEventsAfter(lastEventID string, send func(eve
 // WithSessionIDGenerator sets a custom session ID generator
 func WithSessionIDGenerator(generator func() string) StreamableHTTPOption {
 	return streamableHTTPOption(func(s *StreamableHTTPServer) {
-		// Store the generator for later use
-		generatorFunc = generator
+		s.sessionIDGenerator = generator
 	})
 }
-
-// Generator function stored for later use
-var generatorFunc func() string
 
 // WithStatelessMode enables stateless mode (no sessions)
 func WithStatelessMode(enable bool) StreamableHTTPOption {
 	return streamableHTTPOption(func(s *StreamableHTTPServer) {
-		// Store the mode for later use
-		statelessModeEnabled = enable
+		s.statelessMode = enable
 	})
 }
-
-// Stateless mode flag stored for later use
-var statelessModeEnabled bool
 
 // WithEnableJSONResponse enables direct JSON responses instead of SSE streams
 func WithEnableJSONResponse(enable bool) StreamableHTTPOption {
 	return streamableHTTPOption(func(s *StreamableHTTPServer) {
-		// Store the setting for later use
-		enableJSONResponseFlag = enable
+		s.enableJSONResponse = enable
 	})
 }
-
-// JSON response flag stored for later use
-var enableJSONResponseFlag bool
 
 // WithEventStore sets a custom event store for resumability
 func WithEventStore(store EventStore) StreamableHTTPOption {
 	return streamableHTTPOption(func(s *StreamableHTTPServer) {
-		// Store the event store for later use
-		customEventStore = store
+		s.eventStore = store
 	})
 }
-
-// Event store stored for later use
-var customEventStore EventStore
 
 // WithStreamableHTTPContextFunc sets a function that will be called to customize the context
 // to the server using the incoming request.
-func WithStreamableHTTPContextFunc(fn SSEContextFunc) StreamableHTTPOption {
+func WithStreamableHTTPContextFunc(fn HTTPContextFunc) StreamableHTTPOption {
 	return streamableHTTPOption(func(s *StreamableHTTPServer) {
-		// Store the context function for later use
-		contextFunction = fn
+		s.contextFunc = fn
 	})
 }
-
-// Context function stored for later use
-var contextFunction SSEContextFunc
 
 // realStreamableHTTPServer is the concrete implementation of StreamableHTTPServer.
 // It provides HTTP transport capabilities following the MCP Streamable HTTP specification.
@@ -231,7 +211,7 @@ type StreamableHTTPServer struct {
 	endpoint           string
 	sessions           sync.Map // Maps sessionID to ClientSession
 	srv                *http.Server
-	contextFunc        SSEContextFunc
+	contextFunc        HTTPContextFunc
 	sessionIDGenerator func() string
 	enableJSONResponse bool
 	eventStore         EventStore
@@ -253,19 +233,6 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 	// Apply all options
 	for _, opt := range opts {
 		opt.applyToStreamableHTTP(s)
-	}
-
-	// Apply the stored option values to our implementation
-	if generatorFunc != nil {
-		s.sessionIDGenerator = generatorFunc
-	}
-	s.statelessMode = statelessModeEnabled
-	s.enableJSONResponse = enableJSONResponseFlag
-	if customEventStore != nil {
-		s.eventStore = customEventStore
-	}
-	if contextFunction != nil {
-		s.contextFunc = contextFunction
 	}
 
 	// If no event store is provided, create an in-memory one
