@@ -78,6 +78,11 @@ func AsImageContent(content interface{}) (*ImageContent, bool) {
 	return asType[ImageContent](content)
 }
 
+// AsAudioContent attempts to cast the given interface to AudioContent
+func AsAudioContent(content interface{}) (*AudioContent, bool) {
+	return asType[AudioContent](content)
+}
+
 // AsEmbeddedResource attempts to cast the given interface to EmbeddedResource
 func AsEmbeddedResource(content interface{}) (*EmbeddedResource, bool) {
 	return asType[EmbeddedResource](content)
@@ -208,7 +213,15 @@ func NewImageContent(data, mimeType string) ImageContent {
 	}
 }
 
-// NewEmbeddedResource
+// Helper function to create a new AudioContent
+func NewAudioContent(data, mimeType string) AudioContent {
+	return AudioContent{
+		Type:     "audio",
+		Data:     data,
+		MIMEType: mimeType,
+	}
+}
+
 // Helper function to create a new EmbeddedResource
 func NewEmbeddedResource(resource ResourceContents) EmbeddedResource {
 	return EmbeddedResource{
@@ -239,6 +252,23 @@ func NewToolResultImage(text, imageData, mimeType string) *CallToolResult {
 			},
 			ImageContent{
 				Type:     "image",
+				Data:     imageData,
+				MIMEType: mimeType,
+			},
+		},
+	}
+}
+
+// NewToolResultAudio creates a new CallToolResult with both text and audio content
+func NewToolResultAudio(text, imageData, mimeType string) *CallToolResult {
+	return &CallToolResult{
+		Content: []Content{
+			TextContent{
+				Type: "text",
+				Text: text,
+			},
+			AudioContent{
+				Type:     "audio",
 				Data:     imageData,
 				MIMEType: mimeType,
 			},
@@ -422,6 +452,14 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 			return nil, fmt.Errorf("image data or mimeType is missing")
 		}
 		return NewImageContent(data, mimeType), nil
+
+	case "audio":
+		data := ExtractString(contentMap, "data")
+		mimeType := ExtractString(contentMap, "mimeType")
+		if data == "" || mimeType == "" {
+			return nil, fmt.Errorf("audio data or mimeType is missing")
+		}
+		return NewAudioContent(data, mimeType), nil
 
 	case "resource":
 		resourceMap := ExtractMap(contentMap, "resource")

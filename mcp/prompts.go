@@ -78,7 +78,7 @@ const (
 // resources from the MCP server.
 type PromptMessage struct {
 	Role    Role    `json:"role"`
-	Content Content `json:"content"` // Can be TextContent, ImageContent, or EmbeddedResource
+	Content Content `json:"content"` // Can be TextContent, ImageContent, AudioContent or EmbeddedResource
 }
 
 // PromptListChangedNotification is an optional notification from the server

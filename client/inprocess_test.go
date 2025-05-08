@@ -36,6 +36,11 @@ func TestInProcessMCPClient(t *testing.T) {
 					Type: "text",
 					Text: "Input parameter: " + request.Params.Arguments["parameter-1"].(string),
 				},
+				mcp.AudioContent{
+					Type:     "audio",
+					Data:     "base64-encoded-audio-data",
+					MIMEType: "audio/wav",
+				},
 			},
 		}, nil
 	})
@@ -75,6 +80,14 @@ func TestInProcessMCPClient(t *testing.T) {
 						Content: mcp.TextContent{
 							Type: "text",
 							Text: "Test prompt with arg1: " + request.Params.Arguments["arg1"],
+						},
+					},
+					{
+						Role: mcp.RoleUser,
+						Content: mcp.AudioContent{
+							Type:     "audio",
+							Data:     "base64-encoded-audio-data",
+							MIMEType: "audio/wav",
 						},
 					},
 				},
@@ -192,8 +205,8 @@ func TestInProcessMCPClient(t *testing.T) {
 			t.Fatalf("CallTool failed: %v", err)
 		}
 
-		if len(result.Content) != 1 {
-			t.Errorf("Expected 1 content item, got %d", len(result.Content))
+		if len(result.Content) != 2 {
+			t.Errorf("Expected 2 content item, got %d", len(result.Content))
 		}
 	})
 
@@ -359,14 +372,17 @@ func TestInProcessMCPClient(t *testing.T) {
 
 		request := mcp.GetPromptRequest{}
 		request.Params.Name = "test-prompt"
+		request.Params.Arguments = map[string]string{
+			"arg1": "arg1 value",
+		}
 
 		result, err := client.GetPrompt(context.Background(), request)
 		if err != nil {
 			t.Errorf("GetPrompt failed: %v", err)
 		}
 
-		if len(result.Messages) != 1 {
-			t.Errorf("Expected 1 message, got %d", len(result.Messages))
+		if len(result.Messages) != 2 {
+			t.Errorf("Expected 2 message, got %d", len(result.Messages))
 		}
 	})
 
