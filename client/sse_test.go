@@ -2,9 +2,10 @@ package client
 
 import (
 	"context"
-	"github.com/mark3labs/mcp-go/client/transport"
 	"testing"
 	"time"
+
+	"github.com/mark3labs/mcp-go/client/transport"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -27,10 +28,10 @@ func TestSSEMCPClient(t *testing.T) {
 		mcp.WithString("parameter-1", mcp.Description("A string tool parameter")),
 		mcp.WithToolAnnotation(mcp.ToolAnnotation{
 			Title:           "Test Tool Annotation Title",
-			ReadOnlyHint:    true,
-			DestructiveHint: false,
-			IdempotentHint:  true,
-			OpenWorldHint:   false,
+			ReadOnlyHint:    mcp.BoolPtr(true),
+			DestructiveHint: mcp.BoolPtr(false),
+			IdempotentHint:  mcp.BoolPtr(true),
+			OpenWorldHint:   mcp.BoolPtr(false),
 		}),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return &mcp.CallToolResult{
@@ -111,10 +112,10 @@ func TestSSEMCPClient(t *testing.T) {
 		}
 		testToolAnnotations := (*toolListResult).Tools[0].Annotations
 		if testToolAnnotations.Title != "Test Tool Annotation Title" ||
-			testToolAnnotations.ReadOnlyHint != true ||
-			testToolAnnotations.DestructiveHint != false ||
-			testToolAnnotations.IdempotentHint != true ||
-			testToolAnnotations.OpenWorldHint != false {
+			*testToolAnnotations.ReadOnlyHint != true ||
+			*testToolAnnotations.DestructiveHint != false ||
+			*testToolAnnotations.IdempotentHint != true ||
+			*testToolAnnotations.OpenWorldHint != false {
 			t.Errorf("The annotations of the tools are invalid")
 		}
 	})

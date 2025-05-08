@@ -134,13 +134,13 @@ type ToolAnnotation struct {
 	// Human-readable title for the tool
 	Title string `json:"title,omitempty"`
 	// If true, the tool does not modify its environment
-	ReadOnlyHint bool `json:"readOnlyHint,omitempty"`
+	ReadOnlyHint *bool `json:"readOnlyHint,omitempty"`
 	// If true, the tool may perform destructive updates
-	DestructiveHint bool `json:"destructiveHint,omitempty"`
+	DestructiveHint *bool `json:"destructiveHint,omitempty"`
 	// If true, repeated calls with same args have no additional effect
-	IdempotentHint bool `json:"idempotentHint,omitempty"`
+	IdempotentHint *bool `json:"idempotentHint,omitempty"`
 	// If true, tool interacts with external entities
-	OpenWorldHint bool `json:"openWorldHint,omitempty"`
+	OpenWorldHint *bool `json:"openWorldHint,omitempty"`
 }
 
 // ToolOption is a function that configures a Tool.
@@ -168,10 +168,10 @@ func NewTool(name string, opts ...ToolOption) Tool {
 		},
 		Annotations: ToolAnnotation{
 			Title:           "",
-			ReadOnlyHint:    false,
-			DestructiveHint: true,
-			IdempotentHint:  false,
-			OpenWorldHint:   true,
+			ReadOnlyHint:    BoolPtr(false),
+			DestructiveHint: BoolPtr(true),
+			IdempotentHint:  BoolPtr(false),
+			OpenWorldHint:   BoolPtr(true),
 		},
 	}
 

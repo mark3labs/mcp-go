@@ -870,10 +870,10 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 		},
 		Annotations: mcp.ToolAnnotation{
 			Title:           "test-tool",
-			ReadOnlyHint:    true,
-			DestructiveHint: false,
-			IdempotentHint:  false,
-			OpenWorldHint:   false,
+			ReadOnlyHint:    mcp.BoolPtr(true),
+			DestructiveHint: mcp.BoolPtr(false),
+			IdempotentHint:  mcp.BoolPtr(false),
+			OpenWorldHint:   mcp.BoolPtr(false),
 		},
 	}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return &mcp.CallToolResult{}, nil
