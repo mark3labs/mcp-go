@@ -76,13 +76,13 @@ func TestSSEServer(t *testing.T) {
 		)
 
 		// Send initialize request
-		initRequest := map[string]interface{}{
+		initRequest := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      1,
 			"method":  "initialize",
-			"params": map[string]interface{}{
+			"params": map[string]any{
 				"protocolVersion": "2024-11-05",
-				"clientInfo": map[string]interface{}{
+				"clientInfo": map[string]any{
 					"name":    "test-client",
 					"version": "1.0.0",
 				},
@@ -154,13 +154,13 @@ func TestSSEServer(t *testing.T) {
 				)
 
 				// Send initialize request
-				initRequest := map[string]interface{}{
+				initRequest := map[string]any{
 					"jsonrpc": "2.0",
 					"id":      sessionNum,
 					"method":  "initialize",
-					"params": map[string]interface{}{
+					"params": map[string]any{
 						"protocolVersion": "2024-11-05",
-						"clientInfo": map[string]interface{}{
+						"clientInfo": map[string]any{
 							"name": fmt.Sprintf(
 								"test-client-%d",
 								sessionNum,
@@ -203,7 +203,7 @@ func TestSSEServer(t *testing.T) {
 					strings.Split(strings.Split(endpointEvent, "data: ")[1], "\n")[0],
 				)
 
-				var response map[string]interface{}
+				var response map[string]any
 				if err := json.NewDecoder(strings.NewReader(respFromSee)).Decode(&response); err != nil {
 					t.Errorf(
 						"Session %d: Failed to decode response: %v",
@@ -385,13 +385,13 @@ func TestSSEServer(t *testing.T) {
 
 		// The messageURL should already be correct since we set the baseURL correctly
 		// Test message endpoint
-		initRequest := map[string]interface{}{
+		initRequest := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      1,
 			"method":  "initialize",
-			"params": map[string]interface{}{
+			"params": map[string]any{
 				"protocolVersion": "2024-11-05",
-				"clientInfo": map[string]interface{}{
+				"clientInfo": map[string]any{
 					"name":    "test-client",
 					"version": "1.0.0",
 				},
@@ -468,13 +468,13 @@ func TestSSEServer(t *testing.T) {
 
 		// The messageURL should already be correct since we set the baseURL correctly
 		// Test message endpoint
-		initRequest := map[string]interface{}{
+		initRequest := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      1,
 			"method":  "initialize",
-			"params": map[string]interface{}{
+			"params": map[string]any{
 				"protocolVersion": "2024-11-05",
-				"clientInfo": map[string]interface{}{
+				"clientInfo": map[string]any{
 					"name":    "test-client",
 					"version": "1.0.0",
 				},
@@ -598,13 +598,13 @@ func TestSSEServer(t *testing.T) {
 		)
 
 		// Send initialize request
-		initRequest := map[string]interface{}{
+		initRequest := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      1,
 			"method":  "initialize",
-			"params": map[string]interface{}{
+			"params": map[string]any{
 				"protocolVersion": "2024-11-05",
-				"clientInfo": map[string]interface{}{
+				"clientInfo": map[string]any{
 					"name":    "test-client",
 					"version": "1.0.0",
 				},
@@ -639,7 +639,7 @@ func TestSSEServer(t *testing.T) {
 			strings.Split(strings.Split(endpointEvent, "data: ")[1], "\n")[0],
 		)
 
-		var response map[string]interface{}
+		var response map[string]any
 		if err := json.NewDecoder(strings.NewReader(respFromSSE)).Decode(&response); err != nil {
 			t.Fatalf("Failed to decode response: %v", err)
 		}
@@ -652,11 +652,11 @@ func TestSSEServer(t *testing.T) {
 		}
 
 		// Call the tool.
-		toolRequest := map[string]interface{}{
+		toolRequest := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      2,
 			"method":  "tools/call",
-			"params": map[string]interface{}{
+			"params": map[string]any{
 				"name": "test_tool",
 			},
 		}
@@ -688,7 +688,7 @@ func TestSSEServer(t *testing.T) {
 			strings.Split(strings.Split(endpointEvent, "data: ")[1], "\n")[0],
 		)
 
-		response = make(map[string]interface{})
+		response = make(map[string]any)
 		if err := json.NewDecoder(strings.NewReader(respFromSSE)).Decode(&response); err != nil {
 			t.Fatalf("Failed to decode response: %v", err)
 		}
@@ -699,7 +699,7 @@ func TestSSEServer(t *testing.T) {
 		if response["id"].(float64) != 2 {
 			t.Errorf("Expected id 2, got %v", response["id"])
 		}
-		if response["result"].(map[string]interface{})["content"].([]interface{})[0].(map[string]interface{})["text"] != "test_value" {
+		if response["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"] != "test_value" {
 			t.Errorf("Expected result 'test_value', got %v", response["result"])
 		}
 		if response["error"] != nil {
@@ -922,13 +922,13 @@ func TestSSEServer(t *testing.T) {
 		}
 
 		// Optionally, test sending a message to the message endpoint
-		initRequest := map[string]interface{}{
+		initRequest := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      1,
 			"method":  "initialize",
-			"params": map[string]interface{}{
+			"params": map[string]any{
 				"protocolVersion": "2024-11-05",
-				"clientInfo": map[string]interface{}{
+				"clientInfo": map[string]any{
 					"name":    "test-client",
 					"version": "1.0.0",
 				},
@@ -971,7 +971,7 @@ func TestSSEServer(t *testing.T) {
 
 		// Extract and parse the response data
 		respData := strings.TrimSpace(strings.Split(strings.Split(initResponseStr, "data: ")[1], "\n")[0])
-		var response map[string]interface{}
+		var response map[string]any
 		if err := json.NewDecoder(strings.NewReader(respData)).Decode(&response); err != nil {
 			t.Fatalf("Failed to decode response: %v", err)
 		}
@@ -1246,7 +1246,7 @@ func TestSSEServer(t *testing.T) {
 			WithHooks(&Hooks{
 				OnAfterInitialize: []OnAfterInitializeFunc{
 					func(ctx context.Context, id any, message *mcp.InitializeRequest, result *mcp.InitializeResult) {
-						result.Result.Meta = map[string]interface{}{"invalid": func() {}} // marshal will fail
+						result.Result.Meta = map[string]any{"invalid": func() {}} // marshal will fail
 					},
 				},
 			}),
@@ -1276,13 +1276,13 @@ func TestSSEServer(t *testing.T) {
 		)
 
 		// Send initialize request
-		initRequest := map[string]interface{}{
+		initRequest := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      1,
 			"method":  "initialize",
-			"params": map[string]interface{}{
+			"params": map[string]any{
 				"protocolVersion": "2024-11-05",
-				"clientInfo": map[string]interface{}{
+				"clientInfo": map[string]any{
 					"name":    "test-client",
 					"version": "1.0.0",
 				},
@@ -1359,13 +1359,13 @@ func TestSSEServer(t *testing.T) {
 			strings.Split(strings.Split(endpointEvent, "data: ")[1], "\n")[0],
 		)
 
-		messageRequest := map[string]interface{}{
+		messageRequest := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      1,
 			"method":  "tools/call",
-			"params": map[string]interface{}{
+			"params": map[string]any{
 				"name":       "slowMethod",
-				"parameters": map[string]interface{}{},
+				"parameters": map[string]any{},
 			},
 		}
 

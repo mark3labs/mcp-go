@@ -44,8 +44,8 @@ func tokenFromContext(ctx context.Context) (string, error) {
 }
 
 type response struct {
-	Args    map[string]interface{} `json:"args"`
-	Headers map[string]string      `json:"headers"`
+	Args    map[string]any    `json:"args"`
+	Headers map[string]string `json:"headers"`
 }
 
 // makeRequest makes a request to httpbin.org including the auth token in the request

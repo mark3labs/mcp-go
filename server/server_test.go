@@ -351,7 +351,7 @@ func TestMCPServer_HandleValidMessages(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		message  interface{}
+		message  any
 		validate func(t *testing.T, response mcp.JSONRPCMessage)
 	}{
 		{
@@ -866,7 +866,7 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 		Description: "Test tool",
 		InputSchema: mcp.ToolInputSchema{
 			Type:       "object",
-			Properties: map[string]interface{}{},
+			Properties: map[string]any{},
 		},
 		Annotations: mcp.ToolAnnotation{
 			Title:           "test-tool",

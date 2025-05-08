@@ -232,7 +232,7 @@ func TestStdioMCPClient(t *testing.T) {
 
 		request := mcp.CallToolRequest{}
 		request.Params.Name = "test-tool"
-		request.Params.Arguments = map[string]interface{}{
+		request.Params.Arguments = map[string]any{
 			"param1": "value1",
 		}
 

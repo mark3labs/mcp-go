@@ -105,7 +105,7 @@ func (s *MCPServer) SendNotificationToAllClients(
 					go func(sessionID string, hooks *Hooks) {
 						ctx := context.Background()
 						// Use the error hook to report the blocked channel
-						hooks.onError(ctx, nil, "notification", map[string]interface{}{
+						hooks.onError(ctx, nil, "notification", map[string]any{
 							"method":    method,
 							"sessionID": sessionID,
 						}, fmt.Errorf("notification channel blocked for session %s: %w", sessionID, err))
@@ -149,7 +149,7 @@ func (s *MCPServer) SendNotificationToClient(
 			hooks := s.hooks
 			go func(sessionID string, hooks *Hooks) {
 				// Use the error hook to report the blocked channel
-				hooks.onError(ctx, nil, "notification", map[string]interface{}{
+				hooks.onError(ctx, nil, "notification", map[string]any{
 					"method":    method,
 					"sessionID": sessionID,
 				}, fmt.Errorf("notification channel blocked for session %s: %w", sessionID, err))
@@ -197,7 +197,7 @@ func (s *MCPServer) SendNotificationToSpecificClient(
 			hooks := s.hooks
 			go func(sID string, hooks *Hooks) {
 				// Use the error hook to report the blocked channel
-				hooks.onError(ctx, nil, "notification", map[string]interface{}{
+				hooks.onError(ctx, nil, "notification", map[string]any{
 					"method":    method,
 					"sessionID": sID,
 				}, fmt.Errorf("notification channel blocked for session %s: %w", sID, err))
@@ -253,7 +253,7 @@ func (s *MCPServer) AddSessionTools(sessionID string, tools ...ServerTool) error
 			hooks := s.hooks
 			go func(sID string, hooks *Hooks) {
 				ctx := context.Background()
-				hooks.onError(ctx, nil, "notification", map[string]interface{}{
+				hooks.onError(ctx, nil, "notification", map[string]any{
 					"method":    "notifications/tools/list_changed",
 					"sessionID": sID,
 				}, fmt.Errorf("failed to send notification after adding tools: %w", err))
@@ -306,7 +306,7 @@ func (s *MCPServer) DeleteSessionTools(sessionID string, names ...string) error 
 			hooks := s.hooks
 			go func(sID string, hooks *Hooks) {
 				ctx := context.Background()
-				hooks.onError(ctx, nil, "notification", map[string]interface{}{
+				hooks.onError(ctx, nil, "notification", map[string]any{
 					"method":    "notifications/tools/list_changed",
 					"sessionID": sID,
 				}, fmt.Errorf("failed to send notification after deleting tools: %w", err))

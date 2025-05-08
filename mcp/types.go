@@ -86,7 +86,7 @@ func (t *URITemplate) UnmarshalJSON(data []byte) error {
 /* JSON-RPC types */
 
 // JSONRPCMessage represents either a JSONRPCRequest, JSONRPCNotification, JSONRPCResponse, or JSONRPCError
-type JSONRPCMessage interface{}
+type JSONRPCMessage any
 
 // LATEST_PROTOCOL_VERSION is the most recent version of the MCP protocol.
 const LATEST_PROTOCOL_VERSION = "2024-11-05"
@@ -95,7 +95,7 @@ const LATEST_PROTOCOL_VERSION = "2024-11-05"
 const JSONRPC_VERSION = "2.0"
 
 // ProgressToken is used to associate progress notifications with the original request.
-type ProgressToken interface{}
+type ProgressToken any
 
 // Cursor is an opaque token used to represent a cursor for pagination.
 type Cursor string
@@ -115,7 +115,7 @@ type Request struct {
 	} `json:"params,omitempty"`
 }
 
-type Params map[string]interface{}
+type Params map[string]any
 
 type Notification struct {
 	Method string             `json:"method"`
@@ -125,16 +125,16 @@ type Notification struct {
 type NotificationParams struct {
 	// This parameter name is reserved by MCP to allow clients and
 	// servers to attach additional metadata to their notifications.
-	Meta map[string]interface{} `json:"_meta,omitempty"`
+	Meta map[string]any `json:"_meta,omitempty"`
 
 	// Additional fields can be added to this map
-	AdditionalFields map[string]interface{} `json:"-"`
+	AdditionalFields map[string]any `json:"-"`
 }
 
 // MarshalJSON implements custom JSON marshaling
 func (p NotificationParams) MarshalJSON() ([]byte, error) {
 	// Create a map to hold all fields
-	m := make(map[string]interface{})
+	m := make(map[string]any)
 
 	// Add Meta if it exists
 	if p.Meta != nil {
@@ -155,24 +155,24 @@ func (p NotificationParams) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON implements custom JSON unmarshaling
 func (p *NotificationParams) UnmarshalJSON(data []byte) error {
 	// Create a map to hold all fields
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal(data, &m); err != nil {
 		return err
 	}
 
 	// Initialize maps if they're nil
 	if p.Meta == nil {
-		p.Meta = make(map[string]interface{})
+		p.Meta = make(map[string]any)
 	}
 	if p.AdditionalFields == nil {
-		p.AdditionalFields = make(map[string]interface{})
+		p.AdditionalFields = make(map[string]any)
 	}
 
 	// Process all fields
 	for k, v := range m {
 		if k == "_meta" {
 			// Handle Meta field
-			if meta, ok := v.(map[string]interface{}); ok {
+			if meta, ok := v.(map[string]any); ok {
 				p.Meta = meta
 			}
 		} else {
@@ -187,18 +187,18 @@ func (p *NotificationParams) UnmarshalJSON(data []byte) error {
 type Result struct {
 	// This result property is reserved by the protocol to allow clients and
 	// servers to attach additional metadata to their responses.
-	Meta map[string]interface{} `json:"_meta,omitempty"`
+	Meta map[string]any `json:"_meta,omitempty"`
 }
 
 // RequestId is a uniquely identifying ID for a request in JSON-RPC.
 // It can be any JSON-serializable value, typically a number or string.
-type RequestId interface{}
+type RequestId any
 
 // JSONRPCRequest represents a request that expects a response.
 type JSONRPCRequest struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      RequestId   `json:"id"`
-	Params  interface{} `json:"params,omitempty"`
+	JSONRPC string    `json:"jsonrpc"`
+	ID      RequestId `json:"id"`
+	Params  any       `json:"params,omitempty"`
 	Request
 }
 
@@ -210,9 +210,9 @@ type JSONRPCNotification struct {
 
 // JSONRPCResponse represents a successful (non-error) response to a request.
 type JSONRPCResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      RequestId   `json:"id"`
-	Result  interface{} `json:"result"`
+	JSONRPC string    `json:"jsonrpc"`
+	ID      RequestId `json:"id"`
+	Result  any       `json:"result"`
 }
 
 // JSONRPCError represents a non-successful (error) response to a request.
@@ -227,7 +227,7 @@ type JSONRPCError struct {
 		Message string `json:"message"`
 		// Additional information about the error. The value of this member
 		// is defined by the sender (e.g. detailed error information, nested errors etc.).
-		Data interface{} `json:"data,omitempty"`
+		Data any `json:"data,omitempty"`
 	} `json:"error"`
 }
 
@@ -322,7 +322,7 @@ type InitializedNotification struct {
 // client can define its own, additional capabilities.
 type ClientCapabilities struct {
 	// Experimental, non-standard capabilities that the client supports.
-	Experimental map[string]interface{} `json:"experimental,omitempty"`
+	Experimental map[string]any `json:"experimental,omitempty"`
 	// Present if the client supports listing roots.
 	Roots *struct {
 		// Whether the client supports notifications for changes to the roots list.
@@ -337,7 +337,7 @@ type ClientCapabilities struct {
 // server can define its own, additional capabilities.
 type ServerCapabilities struct {
 	// Experimental, non-standard capabilities that the server supports.
-	Experimental map[string]interface{} `json:"experimental,omitempty"`
+	Experimental map[string]any `json:"experimental,omitempty"`
 	// Present if the server supports sending log messages to the client.
 	Logging *struct{} `json:"logging,omitempty"`
 	// Present if the server offers any prompt templates.
@@ -452,7 +452,7 @@ type ReadResourceRequest struct {
 		// to the server how to interpret it.
 		URI string `json:"uri"`
 		// Arguments to pass to the resource handler
-		Arguments map[string]interface{} `json:"arguments,omitempty"`
+		Arguments map[string]any `json:"arguments,omitempty"`
 	} `json:"params"`
 }
 
@@ -599,7 +599,7 @@ type LoggingMessageNotification struct {
 		Logger string `json:"logger,omitempty"`
 		// The data to be logged, such as a string message or an object. Any JSON
 		// serializable type is allowed here.
-		Data interface{} `json:"data"`
+		Data any `json:"data"`
 	} `json:"params"`
 }
 
@@ -636,7 +636,7 @@ type CreateMessageRequest struct {
 		Temperature      float64           `json:"temperature,omitempty"`
 		MaxTokens        int               `json:"maxTokens"`
 		StopSequences    []string          `json:"stopSequences,omitempty"`
-		Metadata         interface{}       `json:"metadata,omitempty"`
+		Metadata         any               `json:"metadata,omitempty"`
 	} `json:"params"`
 }
 
@@ -655,8 +655,8 @@ type CreateMessageResult struct {
 
 // SamplingMessage describes a message issued to or received from an LLM API.
 type SamplingMessage struct {
-	Role    Role        `json:"role"`
-	Content interface{} `json:"content"` // Can be TextContent, ImageContent or AudioContent
+	Role    Role `json:"role"`
+	Content any  `json:"content"` // Can be TextContent, ImageContent or AudioContent
 }
 
 type Annotations struct {
@@ -796,7 +796,7 @@ type ModelHint struct {
 type CompleteRequest struct {
 	Request
 	Params struct {
-		Ref      interface{} `json:"ref"` // Can be PromptReference or ResourceReference
+		Ref      any `json:"ref"` // Can be PromptReference or ResourceReference
 		Argument struct {
 			// The name of the argument
 			Name string `json:"name"`
@@ -877,19 +877,19 @@ type RootsListChangedNotification struct {
 }
 
 // ClientRequest represents any request that can be sent from client to server.
-type ClientRequest interface{}
+type ClientRequest any
 
 // ClientNotification represents any notification that can be sent from client to server.
-type ClientNotification interface{}
+type ClientNotification any
 
 // ClientResult represents any result that can be sent from client to server.
-type ClientResult interface{}
+type ClientResult any
 
 // ServerRequest represents any request that can be sent from server to client.
-type ServerRequest interface{}
+type ServerRequest any
 
 // ServerNotification represents any notification that can be sent from server to client.
-type ServerNotification interface{}
+type ServerNotification any
 
 // ServerResult represents any result that can be sent from server to client.
-type ServerResult interface{}
+type ServerResult any
