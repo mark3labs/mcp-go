@@ -165,48 +165,66 @@ func (s *InMemoryEventStore) ReplayEventsAfter(lastEventID string, send func(eve
 	return nil
 }
 
-// StreamableHTTPOption defines a function type for configuring StreamableHTTPServer
-type StreamableHTTPOption func(*StreamableHTTPServer)
-
 // WithSessionIDGenerator sets a custom session ID generator
 func WithSessionIDGenerator(generator func() string) StreamableHTTPOption {
-	return func(s *StreamableHTTPServer) {
-		s.sessionIDGenerator = generator
-	}
+	return streamableHTTPOption(func(s *StreamableHTTPServer) {
+		// Store the generator for later use
+		generatorFunc = generator
+	})
 }
+
+// Generator function stored for later use
+var generatorFunc func() string
 
 // WithStatelessMode enables stateless mode (no sessions)
 func WithStatelessMode(enable bool) StreamableHTTPOption {
-	return func(s *StreamableHTTPServer) {
-		s.statelessMode = enable
-	}
+	return streamableHTTPOption(func(s *StreamableHTTPServer) {
+		// Store the mode for later use
+		statelessModeEnabled = enable
+	})
 }
+
+// Stateless mode flag stored for later use
+var statelessModeEnabled bool
 
 // WithEnableJSONResponse enables direct JSON responses instead of SSE streams
 func WithEnableJSONResponse(enable bool) StreamableHTTPOption {
-	return func(s *StreamableHTTPServer) {
-		s.enableJSONResponse = enable
-	}
+	return streamableHTTPOption(func(s *StreamableHTTPServer) {
+		// Store the setting for later use
+		enableJSONResponseFlag = enable
+	})
 }
+
+// JSON response flag stored for later use
+var enableJSONResponseFlag bool
 
 // WithEventStore sets a custom event store for resumability
 func WithEventStore(store EventStore) StreamableHTTPOption {
-	return func(s *StreamableHTTPServer) {
-		s.eventStore = store
-	}
+	return streamableHTTPOption(func(s *StreamableHTTPServer) {
+		// Store the event store for later use
+		customEventStore = store
+	})
 }
+
+// Event store stored for later use
+var customEventStore EventStore
 
 // WithStreamableHTTPContextFunc sets a function that will be called to customize the context
 // to the server using the incoming request.
 func WithStreamableHTTPContextFunc(fn SSEContextFunc) StreamableHTTPOption {
-	return func(s *StreamableHTTPServer) {
-		s.contextFunc = fn
-	}
+	return streamableHTTPOption(func(s *StreamableHTTPServer) {
+		// Store the context function for later use
+		contextFunction = fn
+	})
 }
 
-// StreamableHTTPServer implements a Streamable HTTP based MCP server.
+// Context function stored for later use
+var contextFunction SSEContextFunc
+
+// realStreamableHTTPServer is the concrete implementation of StreamableHTTPServer.
 // It provides HTTP transport capabilities following the MCP Streamable HTTP specification.
 type StreamableHTTPServer struct {
+	// Implement the httpTransportConfigurable interface
 	server             *MCPServer
 	baseURL            string
 	basePath           string
@@ -224,6 +242,7 @@ type StreamableHTTPServer struct {
 
 // NewStreamableHTTPServer creates a new Streamable HTTP server instance with the given MCP server and options.
 func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *StreamableHTTPServer {
+	// Create our implementation
 	s := &StreamableHTTPServer{
 		server:             server,
 		endpoint:           "/mcp",
@@ -233,7 +252,20 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 
 	// Apply all options
 	for _, opt := range opts {
-		opt(s)
+		opt.applyToStreamableHTTP(s)
+	}
+
+	// Apply the stored option values to our implementation
+	if generatorFunc != nil {
+		s.sessionIDGenerator = generatorFunc
+	}
+	s.statelessMode = statelessModeEnabled
+	s.enableJSONResponse = enableJSONResponseFlag
+	if customEventStore != nil {
+		s.eventStore = customEventStore
+	}
+	if contextFunction != nil {
+		s.contextFunc = contextFunction
 	}
 
 	// If no event store is provided, create an in-memory one
@@ -241,6 +273,7 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 		s.eventStore = NewInMemoryEventStore()
 	}
 
+	// Return the stub
 	return s
 }
 
@@ -455,6 +488,7 @@ func (s *StreamableHTTPServer) handleRequest(w http.ResponseWriter, r *http.Requ
 		}
 	}
 }
+
 func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.Request, ctx context.Context, initialResponse mcp.JSONRPCMessage, session SessionWithTools) {
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -780,9 +814,15 @@ func splitAndTrim(s string, sep rune) []string {
 
 // NewTestStreamableHTTPServer creates a test server for testing purposes
 func NewTestStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *httptest.Server {
-	streamableServer := NewStreamableHTTPServer(server, opts...)
-	testServer := httptest.NewServer(streamableServer)
-	streamableServer.baseURL = testServer.URL
+	// Create the server
+	base := NewStreamableHTTPServer(server, opts...)
+
+	// Create the test server
+	testServer := httptest.NewServer(base)
+
+	// Set the base URL
+	base.baseURL = testServer.URL
+
 	return testServer
 }
 
