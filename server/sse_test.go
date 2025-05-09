@@ -1400,6 +1400,38 @@ func TestSSEServer(t *testing.T) {
 			t.Fatal("Processing did not complete after client disconnection")
 		}
 	})
+
+	t.Run("Start() then Shutdown() should not deadlock", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0.0")
+		sseServer := NewSSEServer(mcpServer, WithBaseURL("http://localhost:0"))
+
+		done := make(chan struct{})
+
+		go func() {
+			_ = sseServer.Start("127.0.0.1:0")
+			close(done)
+		}()
+
+		// Wait a bit to ensure the server is running
+		time.Sleep(50 * time.Millisecond)
+
+		shutdownDone := make(chan error, 1)
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		defer cancel()
+		go func() {
+			err := sseServer.Shutdown(ctx)
+			shutdownDone <- err
+		}()
+
+		select {
+		case err := <-shutdownDone:
+			if ctx.Err() == context.DeadlineExceeded {
+				t.Fatalf("Shutdown deadlocked (timed out): %v", err)
+			}
+		case <-time.After(1 * time.Second):
+			t.Fatal("Shutdown did not return in time (likely deadlocked)")
+		}
+	})
 }
 
 func readSSEEvent(sseResp *http.Response) (string, error) {
