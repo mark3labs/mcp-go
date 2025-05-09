@@ -182,7 +182,8 @@ func (c *StreamableHTTP) SendRequest(
 	defer resp.Body.Close()
 
 	// Check if we got an error response
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted &&
+		resp.StatusCode != http.StatusNoContent {
 		// handle session closed
 		if resp.StatusCode == http.StatusNotFound {
 			c.sessionID.CompareAndSwap(sessionID, "")
@@ -371,7 +372,8 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted &&
+		resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf(
 			"notification failed with status %d: %s",

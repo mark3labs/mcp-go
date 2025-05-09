@@ -300,7 +300,8 @@ func (c *SSE) SendRequest(
 	}
 
 	// Check if we got an error response
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted &&
+		resp.StatusCode != http.StatusNoContent {
 		deleteResponseChan()
 
 		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, body)
@@ -375,7 +376,8 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted &&
+		resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf(
 			"notification failed with status %d: %s",
