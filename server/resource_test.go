@@ -84,7 +84,7 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 			expectedNotifications: 1,
 			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, resourcesList mcp.JSONRPCMessage) {
 				// Check that we received a list_changed notification
-				assert.Equal(t, "resources/list_changed", notifications[0].Method)
+				assert.Equal(t, mcp.MethodNotificationResourcesListChanged, notifications[0].Method)
 
 				// Verify we now have only one resource
 				resp, ok := resourcesList.(mcp.JSONRPCResponse)
@@ -133,7 +133,7 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 			expectedNotifications: 1, // Still sends a notification
 			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, resourcesList mcp.JSONRPCMessage) {
 				// Check that we received a list_changed notification
-				assert.Equal(t, "resources/list_changed", notifications[0].Method)
+				assert.Equal(t, mcp.MethodNotificationResourcesListChanged, notifications[0].Method)
 
 				// The original resource should still be there
 				resp, ok := resourcesList.(mcp.JSONRPCResponse)
