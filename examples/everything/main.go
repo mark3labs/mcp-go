@@ -159,47 +159,47 @@ func NewMCPServer() *server.MCPServer {
 	return mcpServer
 }
 
-func generateResources() []mcp.Resource {
-	resources := make([]mcp.Resource, 100)
-	for i := 0; i < 100; i++ {
-		uri := fmt.Sprintf("test://static/resource/%d", i+1)
-		if i%2 == 0 {
-			resources[i] = mcp.Resource{
-				URI:      uri,
-				Name:     fmt.Sprintf("Resource %d", i+1),
-				MIMEType: "text/plain",
-			}
-		} else {
-			resources[i] = mcp.Resource{
-				URI:      uri,
-				Name:     fmt.Sprintf("Resource %d", i+1),
-				MIMEType: "application/octet-stream",
-			}
-		}
-	}
-	return resources
-}
+// func generateResources() []mcp.Resource {
+// 	resources := make([]mcp.Resource, 100)
+// 	for i := 0; i < 100; i++ {
+// 		uri := fmt.Sprintf("test://static/resource/%d", i+1)
+// 		if i%2 == 0 {
+// 			resources[i] = mcp.Resource{
+// 				URI:      uri,
+// 				Name:     fmt.Sprintf("Resource %d", i+1),
+// 				MIMEType: "text/plain",
+// 			}
+// 		} else {
+// 			resources[i] = mcp.Resource{
+// 				URI:      uri,
+// 				Name:     fmt.Sprintf("Resource %d", i+1),
+// 				MIMEType: "application/octet-stream",
+// 			}
+// 		}
+// 	}
+// 	return resources
+// }
 
-func runUpdateInterval() {
-	// for range s.updateTicker.C {
-	// 	for uri := range s.subscriptions {
-	// 		s.server.HandleMessage(
-	// 			context.Background(),
-	// 			mcp.JSONRPCNotification{
-	// 				JSONRPC: mcp.JSONRPC_VERSION,
-	// 				Notification: mcp.Notification{
-	// 					Method: "resources/updated",
-	// 					Params: struct {
-	// 						Meta map[string]interface{} `json:"_meta,omitempty"`
-	// 					}{
-	// 						Meta: map[string]interface{}{"uri": uri},
-	// 					},
-	// 				},
-	// 			},
-	// 		)
-	// 	}
-	// }
-}
+// func runUpdateInterval() {
+// 	for range s.updateTicker.C {
+// 		for uri := range s.subscriptions {
+// 			s.server.HandleMessage(
+// 				context.Background(),
+// 				mcp.JSONRPCNotification{
+// 					JSONRPC: mcp.JSONRPC_VERSION,
+// 					Notification: mcp.Notification{
+// 						Method: "resources/updated",
+// 						Params: struct {
+// 							Meta map[string]interface{} `json:"_meta,omitempty"`
+// 						}{
+// 							Meta: map[string]interface{}{"uri": uri},
+// 						},
+// 					},
+// 				},
+// 			)
+// 		}
+// 	}
+// }
 
 func handleReadResource(
 	ctx context.Context,
