@@ -231,10 +231,8 @@ func (s *MCPServer) AddSessionTools(sessionID string, tools ...ServerTool) error
 	newSessionTools := make(map[string]ServerTool, len(sessionTools)+len(tools))
 
 	// Copy existing tools
-	if sessionTools != nil {
-		for k, v := range sessionTools {
-			newSessionTools[k] = v
-		}
+	for k, v := range sessionTools {
+		newSessionTools[k] = v
 	}
 
 	// Add new tools

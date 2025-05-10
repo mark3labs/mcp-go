@@ -451,7 +451,7 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 			if eventData, err := json.Marshal(response); err != nil {
 				// If there is an error marshalling the response, send a generic error response
 				log.Printf("failed to marshal response: %v", err)
-				message = fmt.Sprintf("event: message\ndata: {\"error\": \"internal error\",\"jsonrpc\": \"2.0\", \"id\": null}\n\n")
+				message = "event: message\ndata: {\"error\": \"internal error\",\"jsonrpc\": \"2.0\", \"id\": null}\n\n"
 			} else {
 				message = fmt.Sprintf("event: message\ndata: %s\n\n", eventData)
 			}
