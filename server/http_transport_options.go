@@ -72,10 +72,6 @@ func (o commonOption) isHTTPServerOption()                           {}
 func (o commonOption) applyToSSE(s *SSEServer)                       { o.apply(s) }
 func (o commonOption) applyToStreamableHTTP(s *StreamableHTTPServer) { o.apply(s) }
 
-// TODO: This is a stub implementation of StreamableHTTPServer just to show how
-// to use it with the new options interfaces.
-type StreamableHTTPServer struct{}
-
 // Add stub methods to satisfy httpTransportConfigurable
 
 func (s *StreamableHTTPServer) setBasePath(string)                     {}
