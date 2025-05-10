@@ -18,6 +18,7 @@ Discuss the SDK on [Discord](https://discord.gg/RqSS2NQVsY)
 
 </div>
 
+
 ```go
 package main
 
@@ -31,10 +32,11 @@ import (
 )
 
 func main() {
-    // Create MCP server
+    // Create a new MCP server
     s := server.NewMCPServer(
         "Demo 🚀",
         "1.0.0",
+        server.WithToolCapabilities(false),
     )
 
     // Add tool
@@ -116,7 +118,6 @@ package main
 
 import (
     "context"
-    "errors"
     "fmt"
 
     "github.com/mark3labs/mcp-go/mcp"
@@ -128,8 +129,7 @@ func main() {
     s := server.NewMCPServer(
         "Calculator Demo",
         "1.0.0",
-        server.WithResourceCapabilities(true, true),
-        server.WithLogging(),
+        server.WithToolCapabilities(false),
         server.WithRecovery(),
     )
 
@@ -181,6 +181,7 @@ func main() {
     }
 }
 ```
+
 ## What is MCP?
 
 The [Model Context Protocol (MCP)](https://modelcontextprotocol.io) lets you build servers that expose data and functionality to LLM applications in a secure, standardized way. Think of it like a web API, but specifically designed for LLM interactions. MCP servers can:
