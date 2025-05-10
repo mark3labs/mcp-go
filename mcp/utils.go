@@ -775,3 +775,8 @@ func ParseStringMap(request CallToolRequest, key string, defaultValue map[string
 	v := ParseArgument(request, key, defaultValue)
 	return cast.ToStringMap(v)
 }
+
+// BoolPtr returns a pointer to the given boolean value
+func BoolPtr(b bool) *bool {
+	return &b
+}
