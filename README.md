@@ -459,8 +459,8 @@ s.AddPrompt(mcp.NewPrompt("code_review",
         "Code review assistance",
         []mcp.PromptMessage{
             mcp.NewPromptMessage(
-                mcp.RoleSystem,
-                mcp.NewTextContent("You are a helpful code reviewer. Review the changes and provide constructive feedback."),
+                mcp.RoleUser,
+                mcp.NewTextContent("Review the changes and provide constructive feedback."),
             ),
             mcp.NewPromptMessage(
                 mcp.RoleAssistant,
@@ -490,11 +490,11 @@ s.AddPrompt(mcp.NewPrompt("query_builder",
         "SQL query builder assistance",
         []mcp.PromptMessage{
             mcp.NewPromptMessage(
-                mcp.RoleSystem,
-                mcp.NewTextContent("You are a SQL expert. Help construct efficient and safe queries."),
+                mcp.RoleUser,
+                mcp.NewTextContent("Help construct efficient and safe queries for the provided schema."),
             ),
             mcp.NewPromptMessage(
-                mcp.RoleAssistant,
+                mcp.RoleUser,
                 mcp.NewEmbeddedResource(mcp.ResourceContents{
                     URI: fmt.Sprintf("db://schema/%s", tableName),
                     MIMEType: "application/json",
