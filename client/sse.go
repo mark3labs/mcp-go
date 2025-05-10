@@ -16,6 +16,18 @@ func WithHTTPClient(httpClient *http.Client) transport.ClientOption {
 	return transport.WithHTTPClient(httpClient)
 }
 
+func WithSSEReadTimeout(timeout time.Duration) ClientOption {
+	return func(sc *SSEMCPClient) {
+		sc.sseReadTimeout = timeout
+	}
+}
+
+func WithHTTPClient(client *http.Client) ClientOption {
+	return func(sc *SSEMCPClient) {
+		sc.httpClient = client
+	}
+}
+
 // NewSSEMCPClient creates a new SSE-based MCP client with the given base URL.
 // Returns an error if the URL is invalid.
 func NewSSEMCPClient(baseURL string, options ...transport.ClientOption) (*Client, error) {
