@@ -146,7 +146,7 @@ type MCPServer struct {
 	notificationHandlers   map[string]NotificationHandlerFunc
 	capabilities           serverCapabilities
 	paginationLimit        *int
-	sessions               sync.Map
+	sessions               SessionStore
 	hooks                  *Hooks
 }
 
@@ -292,6 +292,7 @@ func NewMCPServer(
 			prompts:   nil,
 			logging:   false,
 		},
+		sessions: &localSessionStore{},
 	}
 
 	for _, opt := range opts {

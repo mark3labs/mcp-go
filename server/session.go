@@ -67,13 +67,11 @@ func (s *MCPServer) UnregisterSession(
 	ctx context.Context,
 	sessionID string,
 ) {
-	sessionValue, ok := s.sessions.LoadAndDelete(sessionID)
+	session, ok := s.sessions.LoadAndDelete(sessionID)
 	if !ok {
 		return
 	}
-	if session, ok := sessionValue.(ClientSession); ok {
-		s.hooks.UnregisterSession(ctx, session)
-	}
+	s.hooks.UnregisterSession(ctx, session)
 }
 
 // SendNotificationToAllClients sends a notification to all the currently active clients.
@@ -91,8 +89,8 @@ func (s *MCPServer) SendNotificationToAllClients(
 		},
 	}
 
-	s.sessions.Range(func(k, v any) bool {
-		if session, ok := v.(ClientSession); ok && session.Initialized() {
+	s.sessions.Range(func(k string, session ClientSession) bool {
+		if session.Initialized() {
 			select {
 			case session.NotificationChannel() <- notification:
 				// Successfully sent notification
@@ -165,13 +163,12 @@ func (s *MCPServer) SendNotificationToSpecificClient(
 	method string,
 	params map[string]any,
 ) error {
-	sessionValue, ok := s.sessions.Load(sessionID)
+	session, ok := s.sessions.Load(sessionID)
 	if !ok {
 		return ErrSessionNotFound
 	}
 
-	session, ok := sessionValue.(ClientSession)
-	if !ok || !session.Initialized() {
+	if !session.Initialized() {
 		return ErrSessionNotInitialized
 	}
 

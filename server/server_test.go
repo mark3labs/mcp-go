@@ -596,8 +596,7 @@ func TestMCPServer_SendNotificationToAllClients(t *testing.T) {
 		}
 
 		// Verify each session received all 10 notifications
-		srv.sessions.Range(func(k, v any) bool {
-			session := v.(ClientSession)
+		srv.sessions.Range(func(k string, session ClientSession) bool {
 			fakeSess := session.(*fakeSession)
 			notificationCount := 0
 
