@@ -308,6 +308,34 @@ func TestMCPServer_Tools(t *testing.T) {
 				assert.Empty(t, result.Tools, "Expected empty tools list")
 			},
 		},
+		{
+			name: "DeleteTools with non-existent tools does nothing and not receives notifications from MCPServer",
+			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
+				err := server.RegisterSession(context.TODO(), &fakeSession{
+					sessionID:           "test",
+					notificationChannel: notificationChannel,
+					initialized:         true,
+				})
+				require.NoError(t, err)
+				server.SetTools(
+					ServerTool{Tool: mcp.NewTool("test-tool-1")},
+					ServerTool{Tool: mcp.NewTool("test-tool-2")})
+
+				// Remove non-existing tools
+				server.DeleteTools("test-tool-3", "test-tool-4")
+			},
+			expectedNotifications: 1,
+			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, toolsList mcp.JSONRPCMessage) {
+				// Only one notification expected for SetTools
+				assert.Equal(t, mcp.MethodNotificationToolsListChanged, notifications[0].Method)
+
+				// Confirm the tool list does not change
+				tools := toolsList.(mcp.JSONRPCResponse).Result.(mcp.ListToolsResult).Tools
+				assert.Len(t, tools, 2)
+				assert.Equal(t, "test-tool-1", tools[0].Name)
+				assert.Equal(t, "test-tool-2", tools[1].Name)
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

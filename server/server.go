@@ -336,11 +336,14 @@ func (s *MCPServer) AddResource(
 // RemoveResource removes a resource from the server
 func (s *MCPServer) RemoveResource(uri string) {
 	s.resourcesMu.Lock()
-	delete(s.resources, uri)
+	_, exists := s.resources[uri]
+	if exists {
+		delete(s.resources, uri)
+	}
 	s.resourcesMu.Unlock()
 
-	// Send notification to all initialized sessions if listChanged capability is enabled
-	if s.capabilities.resources != nil && s.capabilities.resources.listChanged {
+	// Send notification to all initialized sessions if listChanged capability is enabled and we actually remove a resource 
+	if exists && s.capabilities.resources != nil && s.capabilities.resources.listChanged {
 		s.SendNotificationToAllClients(mcp.MethodNotificationResourcesListChanged, nil)
 	}
 }
@@ -448,13 +451,17 @@ func (s *MCPServer) SetTools(tools ...ServerTool) {
 // DeleteTools removes a tool from the server
 func (s *MCPServer) DeleteTools(names ...string) {
 	s.toolsMu.Lock()
+	var exists bool
 	for _, name := range names {
-		delete(s.tools, name)
+		if _, ok := s.tools[name]; ok {
+			delete(s.tools, name)
+			exists = true
+		}
 	}
 	s.toolsMu.Unlock()
 
 	// When the list of available tools changes, servers that declared the listChanged capability SHOULD send a notification.
-	if s.capabilities.tools.listChanged {
+	if exists && s.capabilities.tools != nil && s.capabilities.tools.listChanged {
 		// Send notification to all initialized sessions
 		s.SendNotificationToAllClients(mcp.MethodNotificationToolsListChanged, nil)
 	}
