@@ -4,13 +4,21 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+)
+
+const (
+	readyTimeout      = 5 * time.Second
+	readyCheckTimeout = 1 * time.Second
 )
 
 // Stdio implements the transport layer of the MCP protocol using stdio communication.
@@ -31,6 +39,7 @@ type Stdio struct {
 	done           chan struct{}
 	onNotification func(mcp.JSONRPCNotification)
 	notifyMu       sync.RWMutex
+	exitErr        atomic.Value
 }
 
 // NewIO returns a new stdio-based transport using existing input, output, and
@@ -73,14 +82,13 @@ func (c *Stdio) Start(ctx context.Context) error {
 		return err
 	}
 
+	// Start reading responses in a goroutine and wait for it to be ready
 	ready := make(chan struct{})
 	go func() {
 		close(ready)
 		c.readResponses()
 	}()
-	<-ready
-
-	return nil
+	return waitUntilReadyOrExit(ready, c.done, readyTimeout)
 }
 
 // spawnCommand spawns a new process running c.command.
@@ -95,7 +103,6 @@ func (c *Stdio) spawnCommand(ctx context.Context) error {
 	mergedEnv = append(mergedEnv, c.env...)
 
 	cmd.Env = mergedEnv
-
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("failed to create stdin pipe: %w", err)
@@ -120,20 +127,45 @@ func (c *Stdio) spawnCommand(ctx context.Context) error {
 		return fmt.Errorf("failed to start command: %w", err)
 	}
 
+	go func() {
+		err := cmd.Wait()
+		if err != nil {
+			c.exitErr.Store(err)
+		}
+		tryCloseDone(c.done)
+	}()
 	return nil
+}
+
+func tryCloseDone(done chan struct{}) {
+	select {
+	case <-done:
+		return
+	default:
+	}
+	close(done)
+}
+func waitUntilReadyOrExit(ready <-chan struct{}, exited <-chan struct{}, timeout time.Duration) error {
+	select {
+	case <-exited:
+		return errors.New("process exited before signalling readiness")
+	case <-ready:
+		select {
+		case <-exited:
+			return errors.New("process exited after readiness")
+		case <-time.After(readyCheckTimeout):
+			return nil
+		}
+	case <-time.After(timeout):
+		return errors.New("timeout waiting for process ready")
+	}
 }
 
 // Close shuts down the stdio client, closing the stdin pipe and waiting for the subprocess to exit.
 // Returns an error if there are issues closing stdin or waiting for the subprocess to terminate.
 func (c *Stdio) Close() error {
-	select {
-	case <-c.done:
-		return nil
-	default:
-	}
 	// cancel all in-flight request
-	close(c.done)
-
+	tryCloseDone(c.done)
 	if err := c.stdin.Close(); err != nil {
 		return fmt.Errorf("failed to close stdin: %w", err)
 	}
@@ -141,10 +173,9 @@ func (c *Stdio) Close() error {
 		return fmt.Errorf("failed to close stderr: %w", err)
 	}
 
-	if c.cmd != nil {
-		return c.cmd.Wait()
+	if err, ok := c.exitErr.Load().(error); ok && err != nil {
+		return err
 	}
-
 	return nil
 }
 

@@ -407,5 +407,34 @@ func TestStdioErrors(t *testing.T) {
 			t.Errorf("Expected error when sending request after close, got nil")
 		}
 	})
+	t.Run("SubprocessStartsAndExitsImmediately", func(t *testing.T) {
+		// Create a temporary file for the mock server
+		tempFile, err := os.CreateTemp("", "mockstdio_server")
+		if err != nil {
+			t.Fatalf("Failed to create temp file: %v", err)
+		}
+		tempFile.Close()
+		mockServerPath := tempFile.Name()
 
+		// Add .exe suffix on Windows
+		if runtime.GOOS == "windows" {
+			os.Remove(mockServerPath) // Remove the empty file first
+			mockServerPath += ".exe"
+		}
+
+		if compileErr := compileTestServer(mockServerPath); compileErr != nil {
+			t.Fatalf("Failed to compile mock server: %v", compileErr)
+		}
+		//defer os.Remove(mockServerPath)
+
+		// Create a new Stdio transport
+		stdio := NewStdio(mockServerPath, nil)
+		stdio.env = append(stdio.env, "MOCK_FAIL_IMMEDIATELY=1")
+		defer stdio.Close()
+		// Start the transport
+		ctx := context.Background()
+		if startErr := stdio.Start(ctx); startErr == nil {
+			t.Fatalf("Expected error when starting Stdio transport, got nil")
+		}
+	})
 }
