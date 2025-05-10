@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -1528,4 +1530,69 @@ func TestMCPServer_WithRecover(t *testing.T) {
 	assert.Equal(t, mcp.INTERNAL_ERROR, errorResponse.Error.Code)
 	assert.Equal(t, "panic recovered in panic-tool tool handler: test panic", errorResponse.Error.Message)
 	assert.Nil(t, errorResponse.Error.Data)
+}
+
+func getTools(length int) []mcp.Tool {
+	list := make([]mcp.Tool, 0, 10000)
+	for i := 0; i < length; i++ {
+		list = append(list, mcp.Tool{
+			Name:        fmt.Sprintf("tool%d", i),
+			Description: fmt.Sprintf("tool%d", i),
+		})
+	}
+	return list
+}
+
+func listByPaginationForReflect[T any](
+	ctx context.Context,
+	s *MCPServer,
+	cursor mcp.Cursor,
+	allElements []T,
+) ([]T, mcp.Cursor, error) {
+	startPos := 0
+	if cursor != "" {
+		c, err := base64.StdEncoding.DecodeString(string(cursor))
+		if err != nil {
+			return nil, "", err
+		}
+		cString := string(c)
+		startPos = sort.Search(len(allElements), func(i int) bool {
+			return reflect.ValueOf(allElements[i]).FieldByName("Name").String() > cString
+		})
+	}
+	endPos := len(allElements)
+	if s.paginationLimit != nil {
+		if len(allElements) > startPos+*s.paginationLimit {
+			endPos = startPos + *s.paginationLimit
+		}
+	}
+	elementsToReturn := allElements[startPos:endPos]
+	// set the next cursor
+	nextCursor := func() mcp.Cursor {
+		if s.paginationLimit != nil && len(elementsToReturn) >= *s.paginationLimit {
+			nc := reflect.ValueOf(elementsToReturn[len(elementsToReturn)-1]).FieldByName("Name").String()
+			toString := base64.StdEncoding.EncodeToString([]byte(nc))
+			return mcp.Cursor(toString)
+		}
+		return ""
+	}()
+	return elementsToReturn, nextCursor, nil
+}
+
+func BenchmarkMCPServer_Pagination(b *testing.B) {
+	list := getTools(10000)
+	ctx := context.Background()
+	server := createTestServer()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = listByPagination[mcp.Tool](ctx, server, "dG9vbDY1NA==", list)
+	}
+}
+
+func BenchmarkMCPServer_PaginationForReflect(b *testing.B) {
+	list := getTools(10000)
+	ctx := context.Background()
+	server := createTestServer()
+	for i := 0; i < b.N; i++ {
+		_, _, _ = listByPaginationForReflect[mcp.Tool](ctx, server, "dG9vbDY1NA==", list)
+	}
 }
