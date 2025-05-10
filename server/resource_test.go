@@ -59,7 +59,8 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 				)
 
 				// First, verify we have two resources
-				response := server.HandleMessage(context.Background(), []byte(`{
+				header := map[string]string{"Authorization": "Bearer test"}
+				response := server.HandleMessage(context.Background(), header, []byte(`{
 					"jsonrpc": "2.0",
 					"id": 1,
 					"method": "resources/list"
@@ -205,9 +206,9 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 				"1.0.0",
 				WithResourceCapabilities(true, true),
 			)
-
+			header := map[string]string{"Authorization": "Bearer test"}
 			// Initialize the server
-			_ = server.HandleMessage(ctx, []byte(`{
+			_ = server.HandleMessage(ctx, header, []byte(`{
 				"jsonrpc": "2.0",
 				"id": 1,
 				"method": "initialize"
@@ -244,7 +245,7 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 				"id": 1,
 				"method": "resources/list"
 			}`
-			resourcesList := server.HandleMessage(ctx, []byte(listMessage))
+			resourcesList := server.HandleMessage(ctx, header, []byte(listMessage))
 
 			// Validate the results
 			tt.validate(t, notifications, resourcesList)

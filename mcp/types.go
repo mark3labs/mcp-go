@@ -101,6 +101,7 @@ type ProgressToken interface{}
 type Cursor string
 
 type Request struct {
+	Header map[string]string
 	Method string `json:"method"`
 	Params struct {
 		Meta *struct {
