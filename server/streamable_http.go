@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"time"
@@ -82,7 +83,7 @@ func WithLogger(logger util.Logger) StreamableHttpOption {
 // Usage:
 //
 //	server := NewStreamableHttpServer(mcpServer)
-//	server.Start(":8080")
+//	server.Start(":8080") // The final url for client is http://xxxx:8080/mcp by default
 //
 // or the server itself can be used as a http.Handler, which is convenient to
 // integrate with existing http servers:
