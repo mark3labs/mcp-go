@@ -208,18 +208,49 @@ func WithDescription(description string) ToolOption {
 }
 
 // WithToolAnnotation adds optional hints about the Tool.
-func WithToolAnnotation(
-	title string,
-	readOnlyHint, destructiveHint, idempotentHint, openWorldHint bool,
-) ToolOption {
+func WithToolAnnotation(annotation ToolAnnotation) ToolOption {
 	return func(t *Tool) {
-		t.Annotations = ToolAnnotation{
-			Title:           title,
-			ReadOnlyHint:    &readOnlyHint,
-			DestructiveHint: &destructiveHint,
-			IdempotentHint:  &idempotentHint,
-			OpenWorldHint:   &openWorldHint,
-		}
+		t.Annotations = annotation
+	}
+}
+
+// WithTitleAnnotation sets the Title field of the Tool's Annotations.
+// It provides a human-readable title for the tool.
+func WithTitleAnnotation(title string) ToolOption {
+	return func(t *Tool) {
+		t.Annotations.Title = title
+	}
+}
+
+// WithReadOnlyHintAnnotation sets the ReadOnlyHint field of the Tool's Annotations.
+// If true, it indicates the tool does not modify its environment.
+func WithReadOnlyHintAnnotation(value bool) ToolOption {
+	return func(t *Tool) {
+		t.Annotations.ReadOnlyHint = &value
+	}
+}
+
+// WithDestructiveHintAnnotation sets the DestructiveHint field of the Tool's Annotations.
+// If true, it indicates the tool may perform destructive updates.
+func WithDestructiveHintAnnotation(value bool) ToolOption {
+	return func(t *Tool) {
+		t.Annotations.DestructiveHint = &value
+	}
+}
+
+// WithIdempotentHintAnnotation sets the IdempotentHint field of the Tool's Annotations.
+// If true, it indicates repeated calls with the same arguments have no additional effect.
+func WithIdempotentHintAnnotation(value bool) ToolOption {
+	return func(t *Tool) {
+		t.Annotations.IdempotentHint = &value
+	}
+}
+
+// WithOpenWorldHintAnnotation sets the OpenWorldHint field of the Tool's Annotations.
+// If true, it indicates the tool interacts with external entities.
+func WithOpenWorldHintAnnotation(value bool) ToolOption {
+	return func(t *Tool) {
+		t.Annotations.OpenWorldHint = &value
 	}
 }
 

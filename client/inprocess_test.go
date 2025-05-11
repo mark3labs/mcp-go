@@ -22,13 +22,11 @@ func TestInProcessMCPClient(t *testing.T) {
 		"test-tool",
 		mcp.WithDescription("Test tool"),
 		mcp.WithString("parameter-1", mcp.Description("A string tool parameter")),
-		mcp.WithToolAnnotation(
-			"Test Tool Annotation Title",
-			true,
-			false,
-			true,
-			false,
-		),
+		mcp.WithTitleAnnotation("Test Tool Annotation Title"),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
+		mcp.WithOpenWorldHintAnnotation(false),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
