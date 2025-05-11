@@ -208,11 +208,6 @@ func WithDescription(description string) ToolOption {
 }
 
 // WithToolAnnotation adds optional hints about the Tool.
-// title: A human-readable title for the tool.
-// readOnlyHint: If true, the tool does not modify its environment.
-// destructiveHint: If true, the tool may perform destructive updates.
-// idempotentHint: If true, repeated calls with the same arguments have no additional effect.
-// openWorldHint: If true, the tool interacts with external entities.
 func WithToolAnnotation(
 	title string,
 	readOnlyHint, destructiveHint, idempotentHint, openWorldHint bool,
