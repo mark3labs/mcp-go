@@ -199,7 +199,7 @@ func TestMCPServer_Tools(t *testing.T) {
 			},
 			expectedNotifications: 1,
 			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, toolsList mcp.JSONRPCMessage) {
-				assert.Equal(t, "notifications/tools/list_changed", notifications[0].Method)
+				assert.Equal(t, mcp.MethodNotificationToolsListChanged, notifications[0].Method)
 				tools := toolsList.(mcp.JSONRPCResponse).Result.(mcp.ListToolsResult).Tools
 				assert.Len(t, tools, 2)
 				assert.Equal(t, "test-tool-1", tools[0].Name)
@@ -241,7 +241,7 @@ func TestMCPServer_Tools(t *testing.T) {
 			expectedNotifications: 5,
 			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, toolsList mcp.JSONRPCMessage) {
 				for _, notification := range notifications {
-					assert.Equal(t, "notifications/tools/list_changed", notification.Method)
+					assert.Equal(t, mcp.MethodNotificationToolsListChanged, notification.Method)
 				}
 				tools := toolsList.(mcp.JSONRPCResponse).Result.(mcp.ListToolsResult).Tools
 				assert.Len(t, tools, 2)
@@ -269,8 +269,8 @@ func TestMCPServer_Tools(t *testing.T) {
 			},
 			expectedNotifications: 2,
 			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, toolsList mcp.JSONRPCMessage) {
-				assert.Equal(t, "notifications/tools/list_changed", notifications[0].Method)
-				assert.Equal(t, "notifications/tools/list_changed", notifications[1].Method)
+				assert.Equal(t, mcp.MethodNotificationToolsListChanged, notifications[0].Method)
+				assert.Equal(t, mcp.MethodNotificationToolsListChanged, notifications[1].Method)
 				tools := toolsList.(mcp.JSONRPCResponse).Result.(mcp.ListToolsResult).Tools
 				assert.Len(t, tools, 2)
 				assert.Equal(t, "test-tool-1", tools[0].Name)
@@ -294,9 +294,9 @@ func TestMCPServer_Tools(t *testing.T) {
 			expectedNotifications: 2,
 			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, toolsList mcp.JSONRPCMessage) {
 				// One for SetTools
-				assert.Equal(t, "notifications/tools/list_changed", notifications[0].Method)
+				assert.Equal(t, mcp.MethodNotificationToolsListChanged, notifications[0].Method)
 				// One for DeleteTools
-				assert.Equal(t, "notifications/tools/list_changed", notifications[1].Method)
+				assert.Equal(t, mcp.MethodNotificationToolsListChanged, notifications[1].Method)
 
 				// Expect a successful response with an empty list of tools
 				resp, ok := toolsList.(mcp.JSONRPCResponse)
@@ -308,11 +308,39 @@ func TestMCPServer_Tools(t *testing.T) {
 				assert.Empty(t, result.Tools, "Expected empty tools list")
 			},
 		},
+		{
+			name: "DeleteTools with non-existent tools does nothing and not receives notifications from MCPServer",
+			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
+				err := server.RegisterSession(context.TODO(), &fakeSession{
+					sessionID:           "test",
+					notificationChannel: notificationChannel,
+					initialized:         true,
+				})
+				require.NoError(t, err)
+				server.SetTools(
+					ServerTool{Tool: mcp.NewTool("test-tool-1")},
+					ServerTool{Tool: mcp.NewTool("test-tool-2")})
+
+				// Remove non-existing tools
+				server.DeleteTools("test-tool-3", "test-tool-4")
+			},
+			expectedNotifications: 1,
+			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, toolsList mcp.JSONRPCMessage) {
+				// Only one notification expected for SetTools
+				assert.Equal(t, mcp.MethodNotificationToolsListChanged, notifications[0].Method)
+
+				// Confirm the tool list does not change
+				tools := toolsList.(mcp.JSONRPCResponse).Result.(mcp.ListToolsResult).Tools
+				assert.Len(t, tools, 2)
+				assert.Equal(t, "test-tool-1", tools[0].Name)
+				assert.Equal(t, "test-tool-2", tools[1].Name)
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			server := NewMCPServer("test-server", "1.0.0")
+			server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(true))
 			_ = server.HandleMessage(ctx, []byte(`{
 				"jsonrpc": "2.0",
 				"id": 1,
@@ -351,7 +379,7 @@ func TestMCPServer_HandleValidMessages(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		message  interface{}
+		message  any
 		validate func(t *testing.T, response mcp.JSONRPCMessage)
 	}{
 		{
@@ -866,7 +894,7 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 		Description: "Test tool",
 		InputSchema: mcp.ToolInputSchema{
 			Type:       "object",
-			Properties: map[string]interface{}{},
+			Properties: map[string]any{},
 		},
 		Annotations: mcp.ToolAnnotation{
 			Title:           "test-tool",
@@ -929,7 +957,7 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
                         "uri": "undefined-resource"
                     }
                 }`,
-			expectedErr: mcp.INVALID_PARAMS,
+			expectedErr: mcp.RESOURCE_NOT_FOUND,
 			validateCallbacks: func(t *testing.T, err error, beforeResults beforeResult) {
 				assert.Equal(t, mcp.MethodResourcesRead, beforeResults.method)
 				assert.True(t, errors.Is(err, ErrResourceNotFound))
@@ -1265,13 +1293,14 @@ var _ ClientSession = fakeSession{}
 func TestMCPServer_WithHooks(t *testing.T) {
 	// Create hook counters to verify calls
 	var (
-		beforeAnyCount   int
-		onSuccessCount   int
-		onErrorCount     int
-		beforePingCount  int
-		afterPingCount   int
-		beforeToolsCount int
-		afterToolsCount  int
+		beforeAnyCount               int
+		onSuccessCount               int
+		onErrorCount                 int
+		beforePingCount              int
+		afterPingCount               int
+		beforeToolsCount             int
+		afterToolsCount              int
+		onRequestInitializationCount int
 	)
 
 	// Collectors for message and result types
@@ -1333,6 +1362,11 @@ func TestMCPServer_WithHooks(t *testing.T) {
 
 	hooks.AddAfterListTools(func(ctx context.Context, id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
 		afterToolsCount++
+	})
+
+	hooks.AddOnRequestInitialization(func(ctx context.Context, id any, message any) error {
+		onRequestInitializationCount++
+		return nil
 	})
 
 	// Create a server with the hooks
@@ -1398,10 +1432,11 @@ func TestMCPServer_WithHooks(t *testing.T) {
 	assert.Equal(t, 1, afterPingCount, "afterPing should be called once")
 	assert.Equal(t, 1, beforeToolsCount, "beforeListTools should be called once")
 	assert.Equal(t, 1, afterToolsCount, "afterListTools should be called once")
-
 	// General hooks should be called for all methods
 	// beforeAny is called for all 4 methods (initialize, ping, tools/list, tools/call)
 	assert.Equal(t, 4, beforeAnyCount, "beforeAny should be called for each method")
+	// onRequestInitialization is called for all 4 methods (initialize, ping, tools/list, tools/call)
+	assert.Equal(t, 4, onRequestInitializationCount, "onRequestInitializationCount should be called for each method")
 	// onSuccess is called for all 3 success methods (initialize, ping, tools/list)
 	assert.Equal(t, 3, onSuccessCount, "onSuccess should be called after all successful invocations")
 

@@ -98,7 +98,7 @@ func TestRaceConditions(t *testing.T) {
 	runConcurrentOperation(&wg, testDuration, "call-tools", func() {
 		req := mcp.CallToolRequest{}
 		req.Params.Name = "persistent-tool"
-		req.Params.Arguments = map[string]interface{}{"param": "test"}
+		req.Params.Arguments = map[string]any{"param": "test"}
 		result, reqErr := srv.handleToolCall(ctx, "123", req)
 		require.Nil(t, reqErr, "Tool call operation should not return an error")
 		require.NotNil(t, result, "Tool call result should not be nil")

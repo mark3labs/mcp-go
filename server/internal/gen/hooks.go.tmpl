@@ -59,6 +59,11 @@ type OnSuccessHookFunc func(ctx context.Context, id any, method mcp.MCPMethod, m
 // })
 type OnErrorHookFunc func(ctx context.Context, id any, method mcp.MCPMethod, message any, err error)
 
+// OnRequestInitializationFunc is a function that called before handle diff request method
+// Should any errors arise during func execution, the service will promptly return the corresponding error message.
+type OnRequestInitializationFunc func(ctx context.Context, id any, message any) error
+
+
 {{range .}}
 type OnBefore{{.HookName}}Func func(ctx context.Context, id any, message *mcp.{{.ParamType}})
 type OnAfter{{.HookName}}Func func(ctx context.Context, id any, message *mcp.{{.ParamType}}, result *mcp.{{.ResultType}})
@@ -70,6 +75,7 @@ type Hooks struct {
 	OnBeforeAny      []BeforeAnyHookFunc
 	OnSuccess        []OnSuccessHookFunc
 	OnError          []OnErrorHookFunc
+	OnRequestInitialization       []OnRequestInitializationFunc
 {{- range .}}
 	OnBefore{{.HookName}} []OnBefore{{.HookName}}Func
 	OnAfter{{.HookName}}  []OnAfter{{.HookName}}Func
@@ -197,6 +203,23 @@ func (c *Hooks) UnregisterSession(ctx context.Context, session ClientSession) {
     for _, hook := range c.OnUnregisterSession {
         hook(ctx, session)
     }
+}
+
+func (c *Hooks) AddOnRequestInitialization(hook OnRequestInitializationFunc) {
+	c.OnRequestInitialization = append(c.OnRequestInitialization, hook)
+}
+
+func (c *Hooks) onRequestInitialization(ctx context.Context, id any, message any) error {
+	if c == nil {
+		return nil
+	}
+	for _, hook := range c.OnRequestInitialization {
+		err := hook(ctx, id, message)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 {{- range .}}

@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,6 +28,7 @@ type sseSession struct {
 	requestID           atomic.Int64
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         atomic.Bool
+	tools               sync.Map // stores session-specific tools
 }
 
 // SSEContextFunc is a function that takes an existing context and the current
@@ -49,7 +52,34 @@ func (s *sseSession) Initialized() bool {
 	return s.initialized.Load()
 }
 
-var _ ClientSession = (*sseSession)(nil)
+func (s *sseSession) GetSessionTools() map[string]ServerTool {
+	tools := make(map[string]ServerTool)
+	s.tools.Range(func(key, value any) bool {
+		if tool, ok := value.(ServerTool); ok {
+			tools[key.(string)] = tool
+		}
+		return true
+	})
+	return tools
+}
+
+func (s *sseSession) SetSessionTools(tools map[string]ServerTool) {
+	// Clear existing tools
+	s.tools.Range(func(key, _ any) bool {
+		s.tools.Delete(key)
+		return true
+	})
+
+	// Set new tools
+	for name, tool := range tools {
+		s.tools.Store(name, tool)
+	}
+}
+
+var (
+	_ ClientSession    = (*sseSession)(nil)
+	_ SessionWithTools = (*sseSession)(nil)
+)
 
 // SSEServer implements a Server-Sent Events (SSE) based MCP server.
 // It provides real-time communication capabilities over HTTP using the SSE protocol.
@@ -57,12 +87,14 @@ type SSEServer struct {
 	server                       *MCPServer
 	baseURL                      string
 	basePath                     string
+	appendQueryToMessageEndpoint bool
 	useFullURLForMessageEndpoint bool
 	messageEndpoint              string
 	sseEndpoint                  string
 	sessions                     sync.Map
 	srv                          *http.Server
-	contextFunc                  SSEContextFunc
+	contextFunc                  HTTPContextFunc
+	dynamicBasePathFunc          DynamicBasePathFunc
 
 	keepAlive         bool
 	keepAliveInterval time.Duration
@@ -70,92 +102,96 @@ type SSEServer struct {
 	mu sync.RWMutex
 }
 
-// SSEOption defines a function type for configuring SSEServer
-type SSEOption func(*SSEServer)
+// Ensure SSEServer implements httpTransportConfigurable
+var _ httpTransportConfigurable = (*SSEServer)(nil)
 
-// WithBaseURL sets the base URL for the SSE server
-func WithBaseURL(baseURL string) SSEOption {
-	return func(s *SSEServer) {
-		if baseURL != "" {
-			u, err := url.Parse(baseURL)
-			if err != nil {
-				return
-			}
-			if u.Scheme != "http" && u.Scheme != "https" {
-				return
-			}
-			// Check if the host is empty or only contains a port
-			if u.Host == "" || strings.HasPrefix(u.Host, ":") {
-				return
-			}
-			if len(u.Query()) > 0 {
-				return
-			}
+func (s *SSEServer) setBasePath(basePath string) {
+	s.basePath = normalizeURLPath(basePath)
+}
+
+func (s *SSEServer) setDynamicBasePath(fn DynamicBasePathFunc) {
+	if fn != nil {
+		s.dynamicBasePathFunc = func(r *http.Request, sid string) string {
+			bp := fn(r, sid)
+			return normalizeURLPath(bp)
 		}
-		s.baseURL = strings.TrimSuffix(baseURL, "/")
 	}
 }
 
-// Add a new option for setting base path
+func (s *SSEServer) setKeepAliveInterval(interval time.Duration) {
+	s.keepAlive = true
+	s.keepAliveInterval = interval
+}
+
+func (s *SSEServer) setKeepAlive(keepAlive bool) {
+	s.keepAlive = keepAlive
+}
+
+func (s *SSEServer) setContextFunc(fn HTTPContextFunc) {
+	s.contextFunc = fn
+}
+
+func (s *SSEServer) setHTTPServer(srv *http.Server) {
+	s.srv = srv
+}
+
+func (s *SSEServer) setBaseURL(baseURL string) {
+	s.baseURL = baseURL
+}
+
+// WithBasePath adds a new option for setting a static base path.
+//
+// Deprecated: Use WithStaticBasePath instead. This will be removed in a future version.
+//
+//go:deprecated
 func WithBasePath(basePath string) SSEOption {
-	return func(s *SSEServer) {
-		// Ensure the path starts with / and doesn't end with /
-		if !strings.HasPrefix(basePath, "/") {
-			basePath = "/" + basePath
-		}
-		s.basePath = strings.TrimSuffix(basePath, "/")
-	}
+	return WithStaticBasePath(basePath)
 }
 
 // WithMessageEndpoint sets the message endpoint path
 func WithMessageEndpoint(endpoint string) SSEOption {
-	return func(s *SSEServer) {
+	return sseOption(func(s *SSEServer) {
 		s.messageEndpoint = endpoint
-	}
+	})
+}
+
+// WithAppendQueryToMessageEndpoint configures the SSE server to append the original request's
+// query parameters to the message endpoint URL that is sent to clients during the SSE connection
+// initialization. This is useful when you need to preserve query parameters from the initial
+// SSE connection request and carry them over to subsequent message requests, maintaining
+// context or authentication details across the communication channel.
+func WithAppendQueryToMessageEndpoint() SSEOption {
+	return sseOption(func(s *SSEServer) {
+		s.appendQueryToMessageEndpoint = true
+	})
 }
 
 // WithUseFullURLForMessageEndpoint controls whether the SSE server returns a complete URL (including baseURL)
 // or just the path portion for the message endpoint. Set to false when clients will concatenate
 // the baseURL themselves to avoid malformed URLs like "http://localhost/mcphttp://localhost/mcp/message".
 func WithUseFullURLForMessageEndpoint(useFullURLForMessageEndpoint bool) SSEOption {
-	return func(s *SSEServer) {
+	return sseOption(func(s *SSEServer) {
 		s.useFullURLForMessageEndpoint = useFullURLForMessageEndpoint
-	}
+	})
 }
 
 // WithSSEEndpoint sets the SSE endpoint path
 func WithSSEEndpoint(endpoint string) SSEOption {
-	return func(s *SSEServer) {
+	return sseOption(func(s *SSEServer) {
 		s.sseEndpoint = endpoint
-	}
+	})
 }
 
-// WithHTTPServer sets the HTTP server instance
-func WithHTTPServer(srv *http.Server) SSEOption {
-	return func(s *SSEServer) {
-		s.srv = srv
-	}
-}
-
-func WithKeepAliveInterval(keepAliveInterval time.Duration) SSEOption {
-	return func(s *SSEServer) {
-		s.keepAlive = true
-		s.keepAliveInterval = keepAliveInterval
-	}
-}
-
-func WithKeepAlive(keepAlive bool) SSEOption {
-	return func(s *SSEServer) {
-		s.keepAlive = keepAlive
-	}
-}
-
-// WithContextFunc sets a function that will be called to customise the context
+// WithSSEContextFunc sets a function that will be called to customise the context
 // to the server using the incoming request.
+//
+// Deprecated: Use WithContextFunc instead. This will be removed in a future version.
+//
+//go:deprecated
 func WithSSEContextFunc(fn SSEContextFunc) SSEOption {
-	return func(s *SSEServer) {
-		s.contextFunc = fn
-	}
+	return sseOption(func(s *SSEServer) {
+		WithHTTPContextFunc(HTTPContextFunc(fn)).applyToSSE(s)
+	})
 }
 
 // NewSSEServer creates a new SSE server instance with the given MCP server and options.
@@ -171,16 +207,15 @@ func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
 
 	// Apply all options
 	for _, opt := range opts {
-		opt(s)
+		opt.applyToSSE(s)
 	}
 
 	return s
 }
 
-// NewTestServer creates a test server for testing purposes
+// NewTestServer creates a test server for testing purposes.
 func NewTestServer(server *MCPServer, opts ...SSEOption) *httptest.Server {
 	sseServer := NewSSEServer(server, opts...)
-
 	testServer := httptest.NewServer(sseServer)
 	sseServer.baseURL = testServer.URL
 	return testServer
@@ -190,13 +225,22 @@ func NewTestServer(server *MCPServer, opts ...SSEOption) *httptest.Server {
 // It sets up HTTP handlers for SSE and message endpoints.
 func (s *SSEServer) Start(addr string) error {
 	s.mu.Lock()
-	s.srv = &http.Server{
-		Addr:    addr,
-		Handler: s,
+	if s.srv == nil {
+		s.srv = &http.Server{
+			Addr:    addr,
+			Handler: s,
+		}
+	} else {
+		if s.srv.Addr == "" {
+			s.srv.Addr = addr
+		} else if s.srv.Addr != addr {
+			return fmt.Errorf("conflicting listen address: WithHTTPServer(%q) vs Start(%q)", s.srv.Addr, addr)
+		}
 	}
+	srv := s.srv
 	s.mu.Unlock()
 
-	return s.srv.ListenAndServe()
+	return srv.ListenAndServe()
 }
 
 // Shutdown gracefully stops the SSE server, closing all active sessions
@@ -207,7 +251,7 @@ func (s *SSEServer) Shutdown(ctx context.Context) error {
 	s.mu.RUnlock()
 
 	if srv != nil {
-		s.sessions.Range(func(key, value interface{}) bool {
+		s.sessions.Range(func(key, value any) bool {
 			if session, ok := value.(*sseSession); ok {
 				close(session.done)
 			}
@@ -297,7 +341,12 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 					}
 					messageBytes, _ := json.Marshal(message)
 					pingMsg := fmt.Sprintf("event: message\ndata:%s\n\n", messageBytes)
-					session.eventQueue <- pingMsg
+					select {
+					case session.eventQueue <- pingMsg:
+						// Message sent successfully
+					case <-session.done:
+						return
+					}
 				case <-session.done:
 					return
 				case <-r.Context().Done():
@@ -308,7 +357,11 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Send the initial endpoint event
-	fmt.Fprintf(w, "event: endpoint\ndata: %s\r\n\r\n", s.GetMessageEndpointForClient(sessionID))
+	endpoint := s.GetMessageEndpointForClient(r, sessionID)
+	if s.appendQueryToMessageEndpoint && len(r.URL.RawQuery) > 0 {
+		endpoint += "&" + r.URL.RawQuery
+	}
+	fmt.Fprintf(w, "event: endpoint\ndata: %s\r\n\r\n", endpoint)
 	flusher.Flush()
 
 	// Main event loop - this runs in the HTTP handler goroutine
@@ -321,22 +374,31 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			close(session.done)
 			return
+		case <-session.done:
+			return
 		}
 	}
 }
 
 // GetMessageEndpointForClient returns the appropriate message endpoint URL with session ID
-// based on the useFullURLForMessageEndpoint configuration.
-func (s *SSEServer) GetMessageEndpointForClient(sessionID string) string {
-	messageEndpoint := s.messageEndpoint
-	if s.useFullURLForMessageEndpoint {
-		messageEndpoint = s.CompleteMessageEndpoint()
+// for the given request. This is the canonical way to compute the message endpoint for a client.
+// It handles both dynamic and static path modes, and honors the WithUseFullURLForMessageEndpoint flag.
+func (s *SSEServer) GetMessageEndpointForClient(r *http.Request, sessionID string) string {
+	basePath := s.basePath
+	if s.dynamicBasePathFunc != nil {
+		basePath = s.dynamicBasePathFunc(r, sessionID)
 	}
-	return fmt.Sprintf("%s?sessionId=%s", messageEndpoint, sessionID)
+
+	endpointPath := normalizeURLPath(basePath, s.messageEndpoint)
+	if s.useFullURLForMessageEndpoint && s.baseURL != "" {
+		endpointPath = s.baseURL + endpointPath
+	}
+
+	return fmt.Sprintf("%s?sessionId=%s", endpointPath, sessionID)
 }
 
 // handleMessage processes incoming JSON-RPC messages from clients and sends responses
-// back through both the SSE connection and HTTP response.
+// back through the SSE connection and 202 code to HTTP response.
 func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		s.writeJSONRPCError(w, nil, mcp.INVALID_REQUEST, "Method not allowed")
@@ -368,37 +430,50 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Process message through MCPServer
-	response := s.server.HandleMessage(ctx, rawMessage)
+	// Create a context that preserves all values from parent ctx but won't be canceled when the parent is canceled.
+	// this is required because the http ctx will be canceled when the client disconnects
+	detachedCtx := context.WithoutCancel(ctx)
 
-	// Only send response if there is one (not for notifications)
-	if response != nil {
-		eventData, _ := json.Marshal(response)
+	// quick return request, send 202 Accepted with no body, then deal the message and sent response via SSE
+	w.WriteHeader(http.StatusAccepted)
 
-		// Queue the event for sending via SSE
-		select {
-		case session.eventQueue <- fmt.Sprintf("event: message\ndata: %s\n\n", eventData):
-			// Event queued successfully
-		case <-session.done:
-			// Session is closed, don't try to queue
-		default:
-			// Queue is full, could log this
+	// Create a new context for handling the message that will be canceled when the message handling is done
+	messageCtx, cancel := context.WithCancel(detachedCtx)
+
+	go func(ctx context.Context) {
+		defer cancel()
+		// Use the context that will be canceled when session is done
+		// Process message through MCPServer
+		response := s.server.HandleMessage(ctx, rawMessage)
+		// Only send response if there is one (not for notifications)
+		if response != nil {
+			var message string
+			if eventData, err := json.Marshal(response); err != nil {
+				// If there is an error marshalling the response, send a generic error response
+				log.Printf("failed to marshal response: %v", err)
+				message = fmt.Sprintf("event: message\ndata: {\"error\": \"internal error\",\"jsonrpc\": \"2.0\", \"id\": null}\n\n")
+			} else {
+				message = fmt.Sprintf("event: message\ndata: %s\n\n", eventData)
+			}
+
+			// Queue the event for sending via SSE
+			select {
+			case session.eventQueue <- message:
+				// Event queued successfully
+			case <-session.done:
+				// Session is closed, don't try to queue
+			default:
+				// Queue is full, log this situation
+				log.Printf("Event queue full for session %s", sessionID)
+			}
 		}
-
-		// Send HTTP response
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-		json.NewEncoder(w).Encode(response)
-	} else {
-		// For notifications, just send 202 Accepted with no body
-		w.WriteHeader(http.StatusAccepted)
-	}
+	}(messageCtx)
 }
 
 // writeJSONRPCError writes a JSON-RPC error response with the given error details.
 func (s *SSEServer) writeJSONRPCError(
 	w http.ResponseWriter,
-	id interface{},
+	id any,
 	code int,
 	message string,
 ) {
@@ -412,7 +487,7 @@ func (s *SSEServer) writeJSONRPCError(
 // Returns an error if the session is not found or closed.
 func (s *SSEServer) SendEventToSession(
 	sessionID string,
-	event interface{},
+	event any,
 ) error {
 	sessionI, ok := s.sessions.Load(sessionID)
 	if !ok {
@@ -444,32 +519,111 @@ func (s *SSEServer) GetUrlPath(input string) (string, error) {
 	return parse.Path, nil
 }
 
-func (s *SSEServer) CompleteSseEndpoint() string {
-	return s.baseURL + s.basePath + s.sseEndpoint
+func (s *SSEServer) CompleteSseEndpoint() (string, error) {
+	if s.dynamicBasePathFunc != nil {
+		return "", &ErrDynamicPathConfig{Method: "CompleteSseEndpoint"}
+	}
+
+	path := normalizeURLPath(s.basePath, s.sseEndpoint)
+	return s.baseURL + path, nil
 }
 
 func (s *SSEServer) CompleteSsePath() string {
-	path, err := s.GetUrlPath(s.CompleteSseEndpoint())
+	path, err := s.CompleteSseEndpoint()
 	if err != nil {
-		return s.basePath + s.sseEndpoint
+		return normalizeURLPath(s.basePath, s.sseEndpoint)
 	}
-	return path
+	urlPath, err := s.GetUrlPath(path)
+	if err != nil {
+		return normalizeURLPath(s.basePath, s.sseEndpoint)
+	}
+	return urlPath
 }
 
-func (s *SSEServer) CompleteMessageEndpoint() string {
-	return s.baseURL + s.basePath + s.messageEndpoint
+func (s *SSEServer) CompleteMessageEndpoint() (string, error) {
+	if s.dynamicBasePathFunc != nil {
+		return "", &ErrDynamicPathConfig{Method: "CompleteMessageEndpoint"}
+	}
+	path := normalizeURLPath(s.basePath, s.messageEndpoint)
+	return s.baseURL + path, nil
 }
 
 func (s *SSEServer) CompleteMessagePath() string {
-	path, err := s.GetUrlPath(s.CompleteMessageEndpoint())
+	path, err := s.CompleteMessageEndpoint()
 	if err != nil {
-		return s.basePath + s.messageEndpoint
+		return normalizeURLPath(s.basePath, s.messageEndpoint)
 	}
-	return path
+	urlPath, err := s.GetUrlPath(path)
+	if err != nil {
+		return normalizeURLPath(s.basePath, s.messageEndpoint)
+	}
+	return urlPath
+}
+
+// SSEHandler returns an http.Handler for the SSE endpoint.
+//
+// This method allows you to mount the SSE handler at any arbitrary path
+// using your own router (e.g. net/http, gorilla/mux, chi, etc.). It is
+// intended for advanced scenarios where you want to control the routing or
+// support dynamic segments.
+//
+// IMPORTANT: When using this handler in advanced/dynamic mounting scenarios,
+// you must use the WithDynamicBasePath option to ensure the correct base path
+// is communicated to clients.
+//
+// Example usage:
+//
+//	// Advanced/dynamic:
+//	sseServer := NewSSEServer(mcpServer,
+//		WithDynamicBasePath(func(r *http.Request, sessionID string) string {
+//			tenant := r.PathValue("tenant")
+//			return "/mcp/" + tenant
+//		}),
+//		WithBaseURL("http://localhost:8080")
+//	)
+//	mux.Handle("/mcp/{tenant}/sse", sseServer.SSEHandler())
+//	mux.Handle("/mcp/{tenant}/message", sseServer.MessageHandler())
+//
+// For non-dynamic cases, use ServeHTTP method instead.
+func (s *SSEServer) SSEHandler() http.Handler {
+	return http.HandlerFunc(s.handleSSE)
+}
+
+// MessageHandler returns an http.Handler for the message endpoint.
+//
+// This method allows you to mount the message handler at any arbitrary path
+// using your own router (e.g. net/http, gorilla/mux, chi, etc.). It is
+// intended for advanced scenarios where you want to control the routing or
+// support dynamic segments.
+//
+// IMPORTANT: When using this handler in advanced/dynamic mounting scenarios,
+// you must use the WithDynamicBasePath option to ensure the correct base path
+// is communicated to clients.
+//
+// Example usage:
+//
+//	// Advanced/dynamic:
+//	sseServer := NewSSEServer(mcpServer,
+//		WithDynamicBasePath(func(r *http.Request, sessionID string) string {
+//			tenant := r.PathValue("tenant")
+//			return "/mcp/" + tenant
+//		}),
+//		WithBaseURL("http://localhost:8080")
+//	)
+//	mux.Handle("/mcp/{tenant}/sse", sseServer.SSEHandler())
+//	mux.Handle("/mcp/{tenant}/message", sseServer.MessageHandler())
+//
+// For non-dynamic cases, use ServeHTTP method instead.
+func (s *SSEServer) MessageHandler() http.Handler {
+	return http.HandlerFunc(s.handleMessage)
 }
 
 // ServeHTTP implements the http.Handler interface.
 func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.dynamicBasePathFunc != nil {
+		http.Error(w, (&ErrDynamicPathConfig{Method: "ServeHTTP"}).Error(), http.StatusInternalServerError)
+		return
+	}
 	path := r.URL.Path
 	// Use exact path matching rather than Contains
 	ssePath := s.CompleteSsePath()
@@ -484,4 +638,22 @@ func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.NotFound(w, r)
+}
+
+// normalizeURLPath joins path elements like path.Join but ensures the
+// result always starts with a leading slash and never ends with a slash
+func normalizeURLPath(elem ...string) string {
+	joined := path.Join(elem...)
+
+	// Ensure leading slash
+	if !strings.HasPrefix(joined, "/") {
+		joined = "/" + joined
+	}
+
+	// Remove trailing slash if not just "/"
+	if len(joined) > 1 && strings.HasSuffix(joined, "/") {
+		joined = joined[:len(joined)-1]
+	}
+
+	return joined
 }

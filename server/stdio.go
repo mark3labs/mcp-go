@@ -40,7 +40,7 @@ func WithErrorLogger(logger *log.Logger) StdioOption {
 	}
 }
 
-// WithContextFunc sets a function that will be called to customise the context
+// WithStdioContextFunc sets a function that will be called to customise the context
 // to the server. Note that the stdio server uses the same context for all requests,
 // so this function will only be called once per server instance.
 func WithStdioContextFunc(fn StdioContextFunc) StdioOption {
@@ -171,7 +171,6 @@ func (s *StdioServer) readNextLine(ctx context.Context, reader *bufio.Reader) (s
 				select {
 				case errChan <- err:
 				case <-done:
-
 				}
 				return
 			}
@@ -179,6 +178,7 @@ func (s *StdioServer) readNextLine(ctx context.Context, reader *bufio.Reader) (s
 			case readChan <- line:
 			case <-done:
 			}
+			return
 		}
 	}()
 

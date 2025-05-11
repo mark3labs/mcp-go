@@ -238,7 +238,7 @@ func TestSSEMCPClient(t *testing.T) {
 
 		request := mcp.CallToolRequest{}
 		request.Params.Name = "test-tool"
-		request.Params.Arguments = map[string]interface{}{
+		request.Params.Arguments = map[string]any{
 			"parameter-1": "value1",
 		}
 

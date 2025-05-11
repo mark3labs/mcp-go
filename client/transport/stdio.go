@@ -33,6 +33,20 @@ type Stdio struct {
 	notifyMu       sync.RWMutex
 }
 
+// NewIO returns a new stdio-based transport using existing input, output, and
+// logging streams instead of spawning a subprocess.
+// This is useful for testing and simulating client behavior.
+func NewIO(input io.Reader, output io.WriteCloser, logging io.ReadCloser) *Stdio {
+	return &Stdio{
+		stdin:  output,
+		stdout: bufio.NewReader(input),
+		stderr: logging,
+
+		responses: make(map[int64]chan *JSONRPCResponse),
+		done:      make(chan struct{}),
+	}
+}
+
 // NewStdio creates a new stdio transport to communicate with a subprocess.
 // It launches the specified command with given arguments and sets up stdin/stdout pipes for communication.
 // Returns an error if the subprocess cannot be started or the pipes cannot be created.
@@ -55,6 +69,26 @@ func NewStdio(
 }
 
 func (c *Stdio) Start(ctx context.Context) error {
+	if err := c.spawnCommand(ctx); err != nil {
+		return err
+	}
+
+	ready := make(chan struct{})
+	go func() {
+		close(ready)
+		c.readResponses()
+	}()
+	<-ready
+
+	return nil
+}
+
+// spawnCommand spawns a new process running c.command.
+func (c *Stdio) spawnCommand(ctx context.Context) error {
+	if c.command == "" {
+		return nil
+	}
+
 	cmd := exec.CommandContext(ctx, c.command, c.args...)
 
 	mergedEnv := os.Environ()
@@ -86,32 +120,36 @@ func (c *Stdio) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to start command: %w", err)
 	}
 
-	// Start reading responses in a goroutine and wait for it to be ready
-	ready := make(chan struct{})
-	go func() {
-		close(ready)
-		c.readResponses()
-	}()
-	<-ready
-
 	return nil
 }
 
 // Close shuts down the stdio client, closing the stdin pipe and waiting for the subprocess to exit.
 // Returns an error if there are issues closing stdin or waiting for the subprocess to terminate.
 func (c *Stdio) Close() error {
+	select {
+	case <-c.done:
+		return nil
+	default:
+	}
+	// cancel all in-flight request
 	close(c.done)
+
 	if err := c.stdin.Close(); err != nil {
 		return fmt.Errorf("failed to close stdin: %w", err)
 	}
 	if err := c.stderr.Close(); err != nil {
 		return fmt.Errorf("failed to close stderr: %w", err)
 	}
-	return c.cmd.Wait()
+
+	if c.cmd != nil {
+		return c.cmd.Wait()
+	}
+
+	return nil
 }
 
-// OnNotification registers a handler function to be called when notifications are received.
-// Multiple handlers can be registered and will be called in the order they were added.
+// SetNotificationHandler sets the handler function to be called when a notification is received.
+// Only one handler can be set at a time; setting a new one replaces the previous handler.
 func (c *Stdio) SetNotificationHandler(
 	handler func(notification mcp.JSONRPCNotification),
 ) {
@@ -170,7 +208,7 @@ func (c *Stdio) readResponses() {
 	}
 }
 
-// sendRequest sends a JSON-RPC request to the server and waits for a response.
+// SendRequest sends a JSON-RPC request to the server and waits for a response.
 // It creates a unique request ID, sends the request over stdin, and waits for
 // the corresponding response or context cancellation.
 // Returns the raw JSON response message or an error if the request fails.
@@ -182,27 +220,33 @@ func (c *Stdio) SendRequest(
 		return nil, fmt.Errorf("stdio client not started")
 	}
 
-	// Create the complete request structure
-	responseChan := make(chan *JSONRPCResponse, 1)
-	c.mu.Lock()
-	c.responses[request.ID] = responseChan
-	c.mu.Unlock()
-
+	// Marshal request
 	requestBytes, err := json.Marshal(request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 	requestBytes = append(requestBytes, '\n')
 
+	// Register response channel
+	responseChan := make(chan *JSONRPCResponse, 1)
+	c.mu.Lock()
+	c.responses[request.ID] = responseChan
+	c.mu.Unlock()
+	deleteResponseChan := func() {
+		c.mu.Lock()
+		delete(c.responses, request.ID)
+		c.mu.Unlock()
+	}
+
+	// Send request
 	if _, err := c.stdin.Write(requestBytes); err != nil {
+		deleteResponseChan()
 		return nil, fmt.Errorf("failed to write request: %w", err)
 	}
 
 	select {
 	case <-ctx.Done():
-		c.mu.Lock()
-		delete(c.responses, request.ID)
-		c.mu.Unlock()
+		deleteResponseChan()
 		return nil, ctx.Err()
 	case response := <-responseChan:
 		return response, nil
@@ -214,6 +258,10 @@ func (c *Stdio) SendNotification(
 	ctx context.Context,
 	notification mcp.JSONRPCNotification,
 ) error {
+	if c.stdin == nil {
+		return fmt.Errorf("stdio client not started")
+	}
+
 	notificationBytes, err := json.Marshal(notification)
 	if err != nil {
 		return fmt.Errorf("failed to marshal notification: %w", err)

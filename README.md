@@ -1,10 +1,10 @@
 <!-- omit in toc -->
-# MCP Go 🚀
+<div align="center">
+<img src="./logo.png" alt="MCP Go Logo">
+
 [![Build](https://github.com/mark3labs/mcp-go/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mark3labs/mcp-go/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/mark3labs/mcp-go?cache)](https://goreportcard.com/report/github.com/mark3labs/mcp-go)
 [![GoDoc](https://pkg.go.dev/badge/github.com/mark3labs/mcp-go.svg)](https://pkg.go.dev/github.com/mark3labs/mcp-go)
-
-<div align="center">
 
 <strong>A Go implementation of the Model Context Protocol (MCP), enabling seamless integration between LLM applications and external data sources and tools.</strong>
 
@@ -17,6 +17,7 @@
 Discuss the SDK on [Discord](https://discord.gg/RqSS2NQVsY)
 
 </div>
+
 
 ```go
 package main
@@ -31,10 +32,11 @@ import (
 )
 
 func main() {
-    // Create MCP server
+    // Create a new MCP server
     s := server.NewMCPServer(
         "Demo 🚀",
         "1.0.0",
+        server.WithToolCapabilities(false),
     )
 
     // Add tool
@@ -91,6 +93,10 @@ MCP Go handles all the complex protocol details and server management, so you ca
   - [Tools](#tools)
   - [Prompts](#prompts)
 - [Examples](#examples)
+- [Extras](#extras)
+  - [Session Management](#session-management)
+  - [Request Hooks](#request-hooks)
+  - [Tool Handler Middleware](#tool-handler-middleware)
 - [Contributing](#contributing)
   - [Prerequisites](#prerequisites)
   - [Installation](#installation-1)
@@ -112,7 +118,6 @@ package main
 
 import (
     "context"
-    "errors"
     "fmt"
 
     "github.com/mark3labs/mcp-go/mcp"
@@ -124,8 +129,7 @@ func main() {
     s := server.NewMCPServer(
         "Calculator Demo",
         "1.0.0",
-        server.WithResourceCapabilities(true, true),
-        server.WithLogging(),
+        server.WithToolCapabilities(false),
         server.WithRecovery(),
     )
 
@@ -177,6 +181,7 @@ func main() {
     }
 }
 ```
+
 ## What is MCP?
 
 The [Model Context Protocol (MCP)](https://modelcontextprotocol.io) lets you build servers that expose data and functionality to LLM applications in a secure, standardized way. Think of it like a web API, but specifically designed for LLM interactions. MCP servers can:
@@ -454,8 +459,8 @@ s.AddPrompt(mcp.NewPrompt("code_review",
         "Code review assistance",
         []mcp.PromptMessage{
             mcp.NewPromptMessage(
-                mcp.RoleSystem,
-                mcp.NewTextContent("You are a helpful code reviewer. Review the changes and provide constructive feedback."),
+                mcp.RoleUser,
+                mcp.NewTextContent("Review the changes and provide constructive feedback."),
             ),
             mcp.NewPromptMessage(
                 mcp.RoleAssistant,
@@ -485,11 +490,11 @@ s.AddPrompt(mcp.NewPrompt("query_builder",
         "SQL query builder assistance",
         []mcp.PromptMessage{
             mcp.NewPromptMessage(
-                mcp.RoleSystem,
-                mcp.NewTextContent("You are a SQL expert. Help construct efficient and safe queries."),
+                mcp.RoleUser,
+                mcp.NewTextContent("Help construct efficient and safe queries for the provided schema."),
             ),
             mcp.NewPromptMessage(
-                mcp.RoleAssistant,
+                mcp.RoleUser,
                 mcp.NewEmbeddedResource(mcp.ResourceContents{
                     URI: fmt.Sprintf("db://schema/%s", tableName),
                     MIMEType: "application/json",
@@ -515,6 +520,214 @@ Prompts can include:
 For examples, see the `examples/` directory.
 
 ## Extras
+
+### Session Management
+
+MCP-Go provides a robust session management system that allows you to:
+- Maintain separate state for each connected client
+- Register and track client sessions
+- Send notifications to specific clients
+- Provide per-session tool customization
+
+<details>
+<summary>Show Session Management Examples</summary>
+
+#### Basic Session Handling
+
+```go
+// Create a server with session capabilities
+s := server.NewMCPServer(
+    "Session Demo",
+    "1.0.0",
+    server.WithToolCapabilities(true),
+)
+
+// Implement your own ClientSession
+type MySession struct {
+    id           string
+    notifChannel chan mcp.JSONRPCNotification
+    isInitialized bool
+    // Add custom fields for your application
+}
+
+// Implement the ClientSession interface
+func (s *MySession) SessionID() string {
+    return s.id
+}
+
+func (s *MySession) NotificationChannel() chan<- mcp.JSONRPCNotification {
+    return s.notifChannel
+}
+
+func (s *MySession) Initialize() {
+    s.isInitialized = true
+}
+
+func (s *MySession) Initialized() bool {
+    return s.isInitialized
+}
+
+// Register a session
+session := &MySession{
+    id:           "user-123",
+    notifChannel: make(chan mcp.JSONRPCNotification, 10),
+}
+if err := s.RegisterSession(context.Background(), session); err != nil {
+    log.Printf("Failed to register session: %v", err)
+}
+
+// Send notification to a specific client
+err := s.SendNotificationToSpecificClient(
+    session.SessionID(),
+    "notification/update",
+    map[string]any{"message": "New data available!"},
+)
+if err != nil {
+    log.Printf("Failed to send notification: %v", err)
+}
+
+// Unregister session when done
+s.UnregisterSession(context.Background(), session.SessionID())
+```
+
+#### Per-Session Tools
+
+For more advanced use cases, you can implement the `SessionWithTools` interface to support per-session tool customization:
+
+```go
+// Implement SessionWithTools interface for per-session tools
+type MyAdvancedSession struct {
+    MySession  // Embed the basic session
+    sessionTools map[string]server.ServerTool
+}
+
+// Implement additional methods for SessionWithTools
+func (s *MyAdvancedSession) GetSessionTools() map[string]server.ServerTool {
+    return s.sessionTools
+}
+
+func (s *MyAdvancedSession) SetSessionTools(tools map[string]server.ServerTool) {
+    s.sessionTools = tools
+}
+
+// Create and register a session with tools support
+advSession := &MyAdvancedSession{
+    MySession: MySession{
+        id:           "user-456",
+        notifChannel: make(chan mcp.JSONRPCNotification, 10),
+    },
+    sessionTools: make(map[string]server.ServerTool),
+}
+if err := s.RegisterSession(context.Background(), advSession); err != nil {
+    log.Printf("Failed to register session: %v", err)
+}
+
+// Add session-specific tools
+userSpecificTool := mcp.NewTool(
+    "user_data",
+    mcp.WithDescription("Access user-specific data"),
+)
+// You can use AddSessionTool (similar to AddTool)
+err := s.AddSessionTool(
+    advSession.SessionID(),
+    userSpecificTool,
+    func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        // This handler is only available to this specific session
+        return mcp.NewToolResultText("User-specific data for " + advSession.SessionID()), nil
+    },
+)
+if err != nil {
+    log.Printf("Failed to add session tool: %v", err)
+}
+
+// Or use AddSessionTools directly with ServerTool
+/*
+err := s.AddSessionTools(
+    advSession.SessionID(),
+    server.ServerTool{
+        Tool: userSpecificTool,
+        Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            // This handler is only available to this specific session
+            return mcp.NewToolResultText("User-specific data for " + advSession.SessionID()), nil
+        },
+    },
+)
+if err != nil {
+    log.Printf("Failed to add session tool: %v", err)
+}
+*/
+
+// Delete session-specific tools when no longer needed
+err = s.DeleteSessionTools(advSession.SessionID(), "user_data")
+if err != nil {
+    log.Printf("Failed to delete session tool: %v", err)
+}
+```
+
+#### Tool Filtering
+
+You can also apply filters to control which tools are available to certain sessions:
+
+```go
+// Add a tool filter that only shows tools with certain prefixes
+s := server.NewMCPServer(
+    "Tool Filtering Demo",
+    "1.0.0",
+    server.WithToolCapabilities(true),
+    server.WithToolFilter(func(ctx context.Context, tools []mcp.Tool) []mcp.Tool {
+        // Get session from context
+        session := server.ClientSessionFromContext(ctx)
+        if session == nil {
+            return tools // Return all tools if no session
+        }
+        
+        // Example: filter tools based on session ID prefix
+        if strings.HasPrefix(session.SessionID(), "admin-") {
+            // Admin users get all tools
+            return tools
+        } else {
+            // Regular users only get tools with "public-" prefix
+            var filteredTools []mcp.Tool
+            for _, tool := range tools {
+                if strings.HasPrefix(tool.Name, "public-") {
+                    filteredTools = append(filteredTools, tool)
+                }
+            }
+            return filteredTools
+        }
+    }),
+)
+```
+
+#### Working with Context
+
+The session context is automatically passed to tool and resource handlers:
+
+```go
+s.AddTool(mcp.NewTool("session_aware"), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Get the current session from context
+    session := server.ClientSessionFromContext(ctx)
+    if session == nil {
+        return mcp.NewToolResultError("No active session"), nil
+    }
+    
+    return mcp.NewToolResultText("Hello, session " + session.SessionID()), nil
+})
+
+// When using handlers in HTTP/SSE servers, you need to pass the context with the session
+httpHandler := func(w http.ResponseWriter, r *http.Request) {
+    // Get session from somewhere (like a cookie or header)
+    session := getSessionFromRequest(r)
+    
+    // Add session to context
+    ctx := s.WithContext(r.Context(), session)
+    
+    // Use this context when handling requests
+    // ...
+}
+```
+
+</details>
 
 ### Request Hooks
 
