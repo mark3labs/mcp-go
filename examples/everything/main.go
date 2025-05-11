@@ -189,27 +189,6 @@ func generateResources() []mcp.Resource {
 	return resources
 }
 
-// func runUpdateInterval() {
-// 	for range s.updateTicker.C {
-// 		for uri := range s.subscriptions {
-// 			s.server.HandleMessage(
-// 				context.Background(),
-// 				mcp.JSONRPCNotification{
-// 					JSONRPC: mcp.JSONRPC_VERSION,
-// 					Notification: mcp.Notification{
-// 						Method: "resources/updated",
-// 						Params: struct {
-// 							Meta map[string]interface{} `json:"_meta,omitempty"`
-// 						}{
-// 							Meta: map[string]interface{}{"uri": uri},
-// 						},
-// 					},
-// 				},
-// 			)
-// 		}
-// 	}
-// }
-
 func handleReadResource(
 	ctx context.Context,
 	request mcp.ReadResourceRequest,
