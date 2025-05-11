@@ -146,12 +146,12 @@ func NewMCPServer() *server.MCPServer {
 	// 	Description: "Samples from an LLM using MCP's sampling feature",
 	// 	InputSchema: mcp.ToolInputSchema{
 	// 		Type: "object",
-	// 		Properties: map[string]interface{}{
-	// 			"prompt": map[string]interface{}{
+	// 		Properties: map[string]any{
+	// 			"prompt": map[string]any{
 	// 				"type":        "string",
 	// 				"description": "The prompt to send to the LLM",
 	// 			},
-	// 			"maxTokens": map[string]interface{}{
+	// 			"maxTokens": map[string]any{
 	// 				"type":        "number",
 	// 				"description": "Maximum number of tokens to generate",
 	// 				"default":     100,
@@ -379,7 +379,7 @@ func handleSendNotification(
 	err := server.SendNotificationToClient(
 		ctx,
 		"notifications/progress",
-		map[string]interface{}{
+		map[string]any{
 			"progress":      10,
 			"total":         10,
 			"progressToken": 0,
@@ -416,7 +416,7 @@ func handleLongRunningOperationTool(
 			server.SendNotificationToClient(
 				ctx,
 				"notifications/progress",
-				map[string]interface{}{
+				map[string]any{
 					"progress":      i,
 					"total":         int(steps),
 					"progressToken": progressToken,
@@ -440,7 +440,7 @@ func handleLongRunningOperationTool(
 	}, nil
 }
 
-// func (s *MCPServer) handleSampleLLMTool(arguments map[string]interface{}) (*mcp.CallToolResult, error) {
+// func (s *MCPServer) handleSampleLLMTool(arguments map[string]any) (*mcp.CallToolResult, error) {
 // 	prompt, _ := arguments["prompt"].(string)
 // 	maxTokens, _ := arguments["maxTokens"].(float64)
 
@@ -452,7 +452,7 @@ func handleLongRunningOperationTool(
 // 	)
 
 // 	return &mcp.CallToolResult{
-// 		Content: []interface{}{
+// 		Content: []any{
 // 			mcp.TextContent{
 // 				Type: "text",
 // 				Text: fmt.Sprintf("LLM sampling result: %s", result),

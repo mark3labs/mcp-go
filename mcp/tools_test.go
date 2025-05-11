@@ -50,7 +50,7 @@ func TestToolWithRawSchema(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Unmarshal to verify the structure
-	var result map[string]interface{}
+	var result map[string]any
 	err = json.Unmarshal(data, &result)
 	assert.NoError(t, err)
 
@@ -59,18 +59,18 @@ func TestToolWithRawSchema(t *testing.T) {
 	assert.Equal(t, "Search API", result["description"])
 
 	// Verify schema was properly included
-	schema, ok := result["inputSchema"].(map[string]interface{})
+	schema, ok := result["inputSchema"].(map[string]any)
 	assert.True(t, ok)
 	assert.Equal(t, "object", schema["type"])
 
-	properties, ok := schema["properties"].(map[string]interface{})
+	properties, ok := schema["properties"].(map[string]any)
 	assert.True(t, ok)
 
-	query, ok := properties["query"].(map[string]interface{})
+	query, ok := properties["query"].(map[string]any)
 	assert.True(t, ok)
 	assert.Equal(t, "string", query["type"])
 
-	required, ok := schema["required"].([]interface{})
+	required, ok := schema["required"].([]any)
 	assert.True(t, ok)
 	assert.Contains(t, required, "query")
 }
@@ -105,12 +105,12 @@ func TestUnmarshalToolWithRawSchema(t *testing.T) {
 	// Verify schema was properly included
 	assert.Equal(t, "object", toolUnmarshalled.InputSchema.Type)
 	assert.Contains(t, toolUnmarshalled.InputSchema.Properties, "query")
-	assert.Subset(t, toolUnmarshalled.InputSchema.Properties["query"], map[string]interface{}{
+	assert.Subset(t, toolUnmarshalled.InputSchema.Properties["query"], map[string]any{
 		"type":        "string",
 		"description": "Search query",
 	})
 	assert.Contains(t, toolUnmarshalled.InputSchema.Properties, "limit")
-	assert.Subset(t, toolUnmarshalled.InputSchema.Properties["limit"], map[string]interface{}{
+	assert.Subset(t, toolUnmarshalled.InputSchema.Properties["limit"], map[string]any{
 		"type":    "integer",
 		"minimum": 1.0,
 		"maximum": 50.0,
@@ -136,7 +136,7 @@ func TestUnmarshalToolWithoutRawSchema(t *testing.T) {
 	// Verify tool properties
 	assert.Equal(t, tool.Name, toolUnmarshalled.Name)
 	assert.Equal(t, tool.Description, toolUnmarshalled.Description)
-	assert.Subset(t, toolUnmarshalled.InputSchema.Properties["input"], map[string]interface{}{
+	assert.Subset(t, toolUnmarshalled.InputSchema.Properties["input"], map[string]any{
 		"type":        "string",
 		"description": "Test input",
 	})
@@ -150,13 +150,13 @@ func TestToolWithObjectAndArray(t *testing.T) {
 		WithDescription("A tool for managing reading lists"),
 		WithObject("preferences",
 			Description("User preferences for the reading list"),
-			Properties(map[string]interface{}{
-				"theme": map[string]interface{}{
+			Properties(map[string]any{
+				"theme": map[string]any{
 					"type":        "string",
 					"description": "UI theme preference",
 					"enum":        []string{"light", "dark"},
 				},
-				"maxItems": map[string]interface{}{
+				"maxItems": map[string]any{
 					"type":        "number",
 					"description": "Maximum number of items in the list",
 					"minimum":     1,
@@ -166,19 +166,19 @@ func TestToolWithObjectAndArray(t *testing.T) {
 		WithArray("books",
 			Description("List of books to read"),
 			Required(),
-			Items(map[string]interface{}{
+			Items(map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"title": map[string]interface{}{
+				"properties": map[string]any{
+					"title": map[string]any{
 						"type":        "string",
 						"description": "Book title",
 						"required":    true,
 					},
-					"author": map[string]interface{}{
+					"author": map[string]any{
 						"type":        "string",
 						"description": "Book author",
 					},
-					"year": map[string]interface{}{
+					"year": map[string]any{
 						"type":        "number",
 						"description": "Publication year",
 						"minimum":     1000,
@@ -191,7 +191,7 @@ func TestToolWithObjectAndArray(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Unmarshal to verify the structure
-	var result map[string]interface{}
+	var result map[string]any
 	err = json.Unmarshal(data, &result)
 	assert.NoError(t, err)
 
@@ -200,44 +200,44 @@ func TestToolWithObjectAndArray(t *testing.T) {
 	assert.Equal(t, "A tool for managing reading lists", result["description"])
 
 	// Verify schema was properly included
-	schema, ok := result["inputSchema"].(map[string]interface{})
+	schema, ok := result["inputSchema"].(map[string]any)
 	assert.True(t, ok)
 	assert.Equal(t, "object", schema["type"])
 
 	// Verify properties
-	properties, ok := schema["properties"].(map[string]interface{})
+	properties, ok := schema["properties"].(map[string]any)
 	assert.True(t, ok)
 
 	// Verify preferences object
-	preferences, ok := properties["preferences"].(map[string]interface{})
+	preferences, ok := properties["preferences"].(map[string]any)
 	assert.True(t, ok)
 	assert.Equal(t, "object", preferences["type"])
 	assert.Equal(t, "User preferences for the reading list", preferences["description"])
 
-	prefProps, ok := preferences["properties"].(map[string]interface{})
+	prefProps, ok := preferences["properties"].(map[string]any)
 	assert.True(t, ok)
 	assert.Contains(t, prefProps, "theme")
 	assert.Contains(t, prefProps, "maxItems")
 
 	// Verify books array
-	books, ok := properties["books"].(map[string]interface{})
+	books, ok := properties["books"].(map[string]any)
 	assert.True(t, ok)
 	assert.Equal(t, "array", books["type"])
 	assert.Equal(t, "List of books to read", books["description"])
 
 	// Verify array items schema
-	items, ok := books["items"].(map[string]interface{})
+	items, ok := books["items"].(map[string]any)
 	assert.True(t, ok)
 	assert.Equal(t, "object", items["type"])
 
-	itemProps, ok := items["properties"].(map[string]interface{})
+	itemProps, ok := items["properties"].(map[string]any)
 	assert.True(t, ok)
 	assert.Contains(t, itemProps, "title")
 	assert.Contains(t, itemProps, "author")
 	assert.Contains(t, itemProps, "year")
 
 	// Verify required fields
-	required, ok := schema["required"].([]interface{})
+	required, ok := schema["required"].([]any)
 	assert.True(t, ok)
 	assert.Contains(t, required, "books")
 }
@@ -245,7 +245,7 @@ func TestToolWithObjectAndArray(t *testing.T) {
 func TestParseToolCallToolRequest(t *testing.T) {
 	request := CallToolRequest{}
 	request.Params.Name = "test-tool"
-	request.Params.Arguments = map[string]interface{}{
+	request.Params.Arguments = map[string]any{
 		"bool_value":    "true",
 		"int64_value":   "123456789",
 		"int32_value":   "123456789",

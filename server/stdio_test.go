@@ -54,13 +54,13 @@ func TestStdioServer(t *testing.T) {
 		}()
 
 		// Create test message
-		initRequest := map[string]interface{}{
+		initRequest := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      1,
 			"method":  "initialize",
-			"params": map[string]interface{}{
+			"params": map[string]any{
 				"protocolVersion": "2024-11-05",
-				"clientInfo": map[string]interface{}{
+				"clientInfo": map[string]any{
 					"name":    "test-client",
 					"version": "1.0.0",
 				},
@@ -84,7 +84,7 @@ func TestStdioServer(t *testing.T) {
 		}
 		responseBytes := scanner.Bytes()
 
-		var response map[string]interface{}
+		var response map[string]any
 		if err := json.Unmarshal(responseBytes, &response); err != nil {
 			t.Fatalf("failed to unmarshal response: %v", err)
 		}
@@ -166,13 +166,13 @@ func TestStdioServer(t *testing.T) {
 		}()
 
 		// Create test message
-		initRequest := map[string]interface{}{
+		initRequest := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      1,
 			"method":  "initialize",
-			"params": map[string]interface{}{
+			"params": map[string]any{
 				"protocolVersion": "2024-11-05",
-				"clientInfo": map[string]interface{}{
+				"clientInfo": map[string]any{
 					"name":    "test-client",
 					"version": "1.0.0",
 				},
@@ -196,7 +196,7 @@ func TestStdioServer(t *testing.T) {
 		}
 		responseBytes := scanner.Bytes()
 
-		var response map[string]interface{}
+		var response map[string]any
 		if err := json.Unmarshal(responseBytes, &response); err != nil {
 			t.Fatalf("failed to unmarshal response: %v", err)
 		}
@@ -216,11 +216,11 @@ func TestStdioServer(t *testing.T) {
 		}
 
 		// Call the tool.
-		toolRequest := map[string]interface{}{
+		toolRequest := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      2,
 			"method":  "tools/call",
-			"params": map[string]interface{}{
+			"params": map[string]any{
 				"name": "test_tool",
 			},
 		}
@@ -239,7 +239,7 @@ func TestStdioServer(t *testing.T) {
 		}
 		responseBytes = scanner.Bytes()
 
-		response = map[string]interface{}{}
+		response = map[string]any{}
 		if err := json.Unmarshal(responseBytes, &response); err != nil {
 			t.Fatalf("failed to unmarshal response: %v", err)
 		}
@@ -250,7 +250,7 @@ func TestStdioServer(t *testing.T) {
 		if response["id"].(float64) != 2 {
 			t.Errorf("Expected id 2, got %v", response["id"])
 		}
-		if response["result"].(map[string]interface{})["content"].([]interface{})[0].(map[string]interface{})["text"] != "test_value" {
+		if response["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"] != "test_value" {
 			t.Errorf("Expected result 'test_value', got %v", response["result"])
 		}
 		if response["error"] != nil {

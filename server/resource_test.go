@@ -98,7 +98,7 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 			},
 		},
 		{
-			name: "RemoveResource with non-existent resource does nothing",
+			name: "RemoveResource with non-existent resource does nothing and not receives notifications from MCPServer",
 			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
 				// Add a test resource
 				server.AddResource(
@@ -130,10 +130,11 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 				// Remove a non-existent resource
 				server.RemoveResource("test://nonexistent")
 			},
-			expectedNotifications: 1, // Still sends a notification
+			expectedNotifications: 0, // No notifications expected
 			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, resourcesList mcp.JSONRPCMessage) {
-				// Check that we received a list_changed notification
-				assert.Equal(t, mcp.MethodNotificationResourcesListChanged, notifications[0].Method)
+				// verify that no notifications were sent
+				assert.Empty(t, notifications)
+
 
 				// The original resource should still be there
 				resp, ok := resourcesList.(mcp.JSONRPCResponse)
