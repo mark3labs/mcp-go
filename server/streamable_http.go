@@ -202,6 +202,13 @@ func WithStreamableHTTPContextFunc(fn HTTPContextFunc) StreamableHTTPOption {
 	})
 }
 
+// WithOriginAllowlist sets the allowed origins for CORS validation
+func WithOriginAllowlist(allowlist []string) StreamableHTTPOption {
+	return streamableHTTPOption(func(s *StreamableHTTPServer) {
+		s.originAllowlist = allowlist
+	})
+}
+
 // realStreamableHTTPServer is the concrete implementation of StreamableHTTPServer.
 // It provides HTTP transport capabilities following the MCP Streamable HTTP specification.
 type StreamableHTTPServer struct {
@@ -219,6 +226,7 @@ type StreamableHTTPServer struct {
 	streamMapping      sync.Map // Maps streamID to response writer
 	requestToStreamMap sync.Map // Maps requestID to streamID
 	statelessMode      bool
+	originAllowlist    []string // List of allowed origins for CORS validation
 }
 
 // NewStreamableHTTPServer creates a new Streamable HTTP server instance with the given MCP server and options.
@@ -229,6 +237,7 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 		endpoint:           "/mcp",
 		sessionIDGenerator: func() string { return uuid.New().String() },
 		enableJSONResponse: false,
+		originAllowlist:    []string{}, // Initialize empty allowlist
 	}
 
 	// Apply all options
@@ -817,8 +826,33 @@ func (s *StreamableHTTPServer) isValidOrigin(origin string) bool {
 		return true
 	}
 
-	// TODO: Implement proper origin validation with allowlist
-	// For now, return true to maintain backward compatibility
+	// Check against allowlist if configured
+	if len(s.originAllowlist) > 0 {
+		for _, allowed := range s.originAllowlist {
+			// Exact match
+			if allowed == origin {
+				return true
+			}
+
+			// Wildcard subdomain match (e.g., *.example.com)
+			if strings.HasPrefix(allowed, "*.") {
+				domain := allowed[2:] // Remove the "*." prefix
+				if strings.HasSuffix(u.Host, domain) {
+					// Check that it's a proper subdomain
+					hostWithoutDomain := strings.TrimSuffix(u.Host, domain)
+					if hostWithoutDomain != "" && strings.HasSuffix(hostWithoutDomain, ".") {
+						return true
+					}
+				}
+			}
+		}
+
+		// If we have an allowlist and the origin isn't in it, reject
+		return false
+	}
+
+	// If no allowlist is configured, allow all origins (backward compatibility)
+	// In production, you should always configure an allowlist
 	return true
 }
 
