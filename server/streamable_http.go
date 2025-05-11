@@ -16,12 +16,12 @@ import (
 	"github.com/mark3labs/mcp-go/util"
 )
 
-// StreamableHttpOption defines a function type for configuring StreamableHTTPServer
-type StreamableHttpOption func(*StreamableHTTPServer)
+// StreamableHTTPOption defines a function type for configuring StreamableHTTPServer
+type StreamableHTTPOption func(*StreamableHTTPServer)
 
 // WithEndpointPath sets the endpoint path for the server.
 // The default is "/mcp".
-func WithEndpointPath(endpointPath string) StreamableHttpOption {
+func WithEndpointPath(endpointPath string) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {
 		// Normalize the endpoint path to ensure it starts with a slash and doesn't end with one
 		normalizedPath := "/" + strings.Trim(endpointPath, "/")
@@ -33,7 +33,7 @@ func WithEndpointPath(endpointPath string) StreamableHttpOption {
 // If true, the server will manage no session information. Every request will be treated
 // as a new session. No session id returned to the client.
 // The default is false.
-func WithStateLess(stateLess bool) StreamableHttpOption {
+func WithStateLess(stateLess bool) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {
 		s.sessionIdManager = &StatelessSessionIdManager{}
 	}
@@ -43,7 +43,7 @@ func WithStateLess(stateLess bool) StreamableHttpOption {
 // By default, the server will use SimpleStatefulSessionIdGenerator, which generates
 // session ids with uuid, and it's insecure.
 // Notice: it will override the WithStateLess option.
-func WithSessionIdManager(manager SessionIdManager) StreamableHttpOption {
+func WithSessionIdManager(manager SessionIdManager) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {
 		s.sessionIdManager = manager
 	}
@@ -54,7 +54,7 @@ func WithSessionIdManager(manager SessionIdManager) StreamableHttpOption {
 // the connection alive from being closed by the network infrastructure (e.g.
 // gateways). If the client does not establish a GET connection, it has no
 // effect. The default is not to send heartbeats.
-func WithHeartbeatInterval(interval time.Duration) StreamableHttpOption {
+func WithHeartbeatInterval(interval time.Duration) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {
 		s.listenHeartbeatInterval = interval
 	}
@@ -63,14 +63,14 @@ func WithHeartbeatInterval(interval time.Duration) StreamableHttpOption {
 // WithHttpContextFunc sets a function that will be called to customise the context
 // to the server using the incoming request.
 // This can be used to inject context values from headers, for example.
-func WithHttpContextFunc(fn HTTPContextFunc) StreamableHttpOption {
+func WithHttpContextFunc(fn HTTPContextFunc) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {
 		s.contextFunc = fn
 	}
 }
 
 // WithLogger sets the logger for the server
-func WithLogger(logger util.Logger) StreamableHttpOption {
+func WithLogger(logger util.Logger) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {
 		s.logger = logger
 	}
@@ -110,7 +110,7 @@ type StreamableHTTPServer struct {
 }
 
 // NewStreamableHTTPServer creates a new streamable-http server instance
-func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHttpOption) *StreamableHTTPServer {
+func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *StreamableHTTPServer {
 	s := &StreamableHTTPServer{
 		server:           server,
 		sessionTools:     newSessionToolsStore(),
@@ -553,7 +553,7 @@ func (s *InsecureStatefulSessionIdManager) Terminate(sessionID string) (isNotAll
 }
 
 // NewTestStreamableHTTPServer creates a test server for testing purposes
-func NewTestStreamableHTTPServer(server *MCPServer, opts ...StreamableHttpOption) *httptest.Server {
+func NewTestStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *httptest.Server {
 	sseServer := NewStreamableHTTPServer(server, opts...)
 	testServer := httptest.NewServer(sseServer)
 	return testServer
