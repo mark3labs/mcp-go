@@ -16,13 +16,13 @@ import (
 	"github.com/mark3labs/mcp-go/util"
 )
 
-// StreamableHttpOption defines a function type for configuring StreamableHttpServer
-type StreamableHttpOption func(*StreamableHttpServer)
+// StreamableHttpOption defines a function type for configuring StreamableHTTPServer
+type StreamableHttpOption func(*StreamableHTTPServer)
 
 // WithEndpointPath sets the endpoint path for the server.
 // The default is "/mcp".
 func WithEndpointPath(endpointPath string) StreamableHttpOption {
-	return func(s *StreamableHttpServer) {
+	return func(s *StreamableHTTPServer) {
 		// Normalize the endpoint path to ensure it starts with a slash and doesn't end with one
 		normalizedPath := "/" + strings.Trim(endpointPath, "/")
 		s.endpointPath = normalizedPath
@@ -34,7 +34,7 @@ func WithEndpointPath(endpointPath string) StreamableHttpOption {
 // as a new session. No session id returned to the client.
 // The default is false.
 func WithStateLess(stateLess bool) StreamableHttpOption {
-	return func(s *StreamableHttpServer) {
+	return func(s *StreamableHTTPServer) {
 		s.sessionIdManager = &StatelessSessionIdManager{}
 	}
 }
@@ -44,7 +44,7 @@ func WithStateLess(stateLess bool) StreamableHttpOption {
 // session ids with uuid, and it's insecure.
 // Notice: it will override the WithStateLess option.
 func WithSessionIdManager(manager SessionIdManager) StreamableHttpOption {
-	return func(s *StreamableHttpServer) {
+	return func(s *StreamableHTTPServer) {
 		s.sessionIdManager = manager
 	}
 }
@@ -55,7 +55,7 @@ func WithSessionIdManager(manager SessionIdManager) StreamableHttpOption {
 // gateways). If the client does not establish a GET connection, it has no
 // effect. The default is not to send heartbeats.
 func WithHeartbeatInterval(interval time.Duration) StreamableHttpOption {
-	return func(s *StreamableHttpServer) {
+	return func(s *StreamableHTTPServer) {
 		s.listenHeartbeatInterval = interval
 	}
 }
@@ -64,38 +64,38 @@ func WithHeartbeatInterval(interval time.Duration) StreamableHttpOption {
 // to the server using the incoming request.
 // This can be used to inject context values from headers, for example.
 func WithHttpContextFunc(fn HTTPContextFunc) StreamableHttpOption {
-	return func(s *StreamableHttpServer) {
+	return func(s *StreamableHTTPServer) {
 		s.contextFunc = fn
 	}
 }
 
 // WithLogger sets the logger for the server
 func WithLogger(logger util.Logger) StreamableHttpOption {
-	return func(s *StreamableHttpServer) {
+	return func(s *StreamableHTTPServer) {
 		s.logger = logger
 	}
 }
 
-// StreamableHttpServer implements a Streamable-http based MCP server.
+// StreamableHTTPServer implements a Streamable-http based MCP server.
 // It communicates with clients over HTTP protocol, supporting both direct HTTP responses, and SSE streams.
 // https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http
 //
 // Usage:
 //
-//	server := NewStreamableHttpServer(mcpServer)
+//	server := NewStreamableHTTPServer(mcpServer)
 //	server.Start(":8080") // The final url for client is http://xxxx:8080/mcp by default
 //
 // or the server itself can be used as a http.Handler, which is convenient to
 // integrate with existing http servers:
 //
-//	handler := NewStreamableHttpServer(mcpServer)
+//	handler := NewStreamableHTTPServer(mcpServer)
 //	http.Handle("/streamable-http", handler)
 //	http.ListenAndServe(":8080", nil)
 //
 // The current implementation does not support the following features from the specification:
 //   - Batching of requests/notifications/responses in arrays.
 //   - Stream Resumability
-type StreamableHttpServer struct {
+type StreamableHTTPServer struct {
 	server       *MCPServer
 	sessionTools *sessionToolsStore
 
@@ -109,9 +109,9 @@ type StreamableHttpServer struct {
 	logger                  util.Logger
 }
 
-// NewStreamableHttpServer creates a new streamable-http server instance
-func NewStreamableHttpServer(server *MCPServer, opts ...StreamableHttpOption) *StreamableHttpServer {
-	s := &StreamableHttpServer{
+// NewStreamableHTTPServer creates a new streamable-http server instance
+func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHttpOption) *StreamableHTTPServer {
+	s := &StreamableHTTPServer{
 		server:           server,
 		sessionTools:     newSessionToolsStore(),
 		endpointPath:     "/mcp",
@@ -127,7 +127,7 @@ func NewStreamableHttpServer(server *MCPServer, opts ...StreamableHttpOption) *S
 }
 
 // ServeHTTP implements the http.Handler interface.
-func (s *StreamableHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		s.handlePost(w, r)
 	} else if r.Method == http.MethodGet {
@@ -143,7 +143,7 @@ func (s *StreamableHttpServer) ServeHTTP(w http.ResponseWriter, r *http.Request)
 // (endpointPath). like:
 //
 //	s.Start(":8080")
-func (s *StreamableHttpServer) Start(addr string) error {
+func (s *StreamableHTTPServer) Start(addr string) error {
 	s.mu.Lock()
 	mux := http.NewServeMux()
 	mux.Handle(s.endpointPath, s)
@@ -158,7 +158,7 @@ func (s *StreamableHttpServer) Start(addr string) error {
 
 // Shutdown gracefully stops the server, closing all active sessions
 // and shutting down the HTTP server.
-func (s *StreamableHttpServer) Shutdown(ctx context.Context) error {
+func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 
 	// shutdown the server if needed (may use as a http.Handler)
 	s.mu.RLock()
@@ -176,7 +176,7 @@ const (
 	headerKeySessionID = "Mcp-Session-Id"
 )
 
-func (s *StreamableHttpServer) handlePost(w http.ResponseWriter, r *http.Request) {
+func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {
 	// post request carry request/notification message
 
 	// Check content type
@@ -305,7 +305,7 @@ func (s *StreamableHttpServer) handlePost(w http.ResponseWriter, r *http.Request
 	}
 }
 
-func (s *StreamableHttpServer) handleGet(w http.ResponseWriter, r *http.Request) {
+func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request) {
 	// get request is for listening to notifications
 	// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
 
@@ -400,7 +400,7 @@ func (s *StreamableHttpServer) handleGet(w http.ResponseWriter, r *http.Request)
 	<-r.Context().Done()
 }
 
-func (s *StreamableHttpServer) handleDelete(w http.ResponseWriter, r *http.Request) {
+func (s *StreamableHTTPServer) handleDelete(w http.ResponseWriter, r *http.Request) {
 	// delete request terminate the session
 	sessionID := r.Header.Get(headerKeySessionID)
 	notAllowed, err := s.sessionIdManager.Terminate(sessionID)
@@ -429,7 +429,7 @@ func writeSSEEvent(w io.Writer, data any) error {
 }
 
 // writeJSONRPCError writes a JSON-RPC error response with the given error details.
-func (s *StreamableHttpServer) writeJSONRPCError(
+func (s *StreamableHTTPServer) writeJSONRPCError(
 	w http.ResponseWriter,
 	id any,
 	code int,
@@ -552,9 +552,9 @@ func (s *InsecureStatefulSessionIdManager) Terminate(sessionID string) (isNotAll
 	return false, nil
 }
 
-// NewTestStreamableHttpServer creates a test server for testing purposes
-func NewTestStreamableHttpServer(server *MCPServer, opts ...StreamableHttpOption) *httptest.Server {
-	sseServer := NewStreamableHttpServer(server, opts...)
+// NewTestStreamableHTTPServer creates a test server for testing purposes
+func NewTestStreamableHTTPServer(server *MCPServer, opts ...StreamableHttpOption) *httptest.Server {
+	sseServer := NewStreamableHTTPServer(server, opts...)
 	testServer := httptest.NewServer(sseServer)
 	return testServer
 }
