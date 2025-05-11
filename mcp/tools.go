@@ -168,10 +168,10 @@ func NewTool(name string, opts ...ToolOption) Tool {
 		},
 		Annotations: ToolAnnotation{
 			Title:           "",
-			ReadOnlyHint:    BoolPtr(false),
-			DestructiveHint: BoolPtr(true),
-			IdempotentHint:  BoolPtr(false),
-			OpenWorldHint:   BoolPtr(true),
+			ReadOnlyHint:    ToBoolPtr(false),
+			DestructiveHint: ToBoolPtr(true),
+			IdempotentHint:  ToBoolPtr(false),
+			OpenWorldHint:   ToBoolPtr(true),
 		},
 	}
 
@@ -207,9 +207,24 @@ func WithDescription(description string) ToolOption {
 	}
 }
 
-func WithToolAnnotation(annotation ToolAnnotation) ToolOption {
+// WithToolAnnotation adds optional hints about the Tool.
+// title: A human-readable title for the tool.
+// readOnlyHint: If true, the tool does not modify its environment.
+// destructiveHint: If true, the tool may perform destructive updates.
+// idempotentHint: If true, repeated calls with the same arguments have no additional effect.
+// openWorldHint: If true, the tool interacts with external entities.
+func WithToolAnnotation(
+	title string,
+	readOnlyHint, destructiveHint, idempotentHint, openWorldHint bool,
+) ToolOption {
 	return func(t *Tool) {
-		t.Annotations = annotation
+		t.Annotations = ToolAnnotation{
+			Title:           title,
+			ReadOnlyHint:    &readOnlyHint,
+			DestructiveHint: &destructiveHint,
+			IdempotentHint:  &idempotentHint,
+			OpenWorldHint:   &openWorldHint,
+		}
 	}
 }
 

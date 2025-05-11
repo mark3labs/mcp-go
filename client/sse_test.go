@@ -26,13 +26,13 @@ func TestSSEMCPClient(t *testing.T) {
 		"test-tool",
 		mcp.WithDescription("Test tool"),
 		mcp.WithString("parameter-1", mcp.Description("A string tool parameter")),
-		mcp.WithToolAnnotation(mcp.ToolAnnotation{
-			Title:           "Test Tool Annotation Title",
-			ReadOnlyHint:    mcp.BoolPtr(true),
-			DestructiveHint: mcp.BoolPtr(false),
-			IdempotentHint:  mcp.BoolPtr(true),
-			OpenWorldHint:   mcp.BoolPtr(false),
-		}),
+		mcp.WithToolAnnotation(
+			"Test Tool Annotation Title",
+			true,
+			false,
+			true,
+			false,
+		),
 	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{

@@ -776,7 +776,7 @@ func ParseStringMap(request CallToolRequest, key string, defaultValue map[string
 	return cast.ToStringMap(v)
 }
 
-// BoolPtr returns a pointer to the given boolean value
-func BoolPtr(b bool) *bool {
+// ToBoolPtr returns a pointer to the given boolean value
+func ToBoolPtr(b bool) *bool {
 	return &b
 }
