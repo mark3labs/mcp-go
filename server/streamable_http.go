@@ -21,7 +21,6 @@ type streamableHTTPSession struct {
 	sessionID           string
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         atomic.Bool
-	lastEventID         string
 	eventStore          EventStore
 	sessionTools        sync.Map // Maps tool name to ServerTool
 
