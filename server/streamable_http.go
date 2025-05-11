@@ -329,6 +329,7 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusAccepted)
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -417,11 +418,11 @@ func (s *StreamableHTTPServer) handleDelete(w http.ResponseWriter, r *http.Reque
 }
 
 func writeSSEEvent(w io.Writer, data any) error {
-	data, err := json.Marshal(data)
+	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("failed to marshal data: %w", err)
 	}
-	_, err = w.Write([]byte(fmt.Sprintf("event: message\ndata: %s\n\n", data)))
+	_, err = w.Write([]byte(fmt.Sprintf("event: message\ndata: %s\n\n", jsonData)))
 	if err != nil {
 		return fmt.Errorf("failed to write SSE event: %w", err)
 	}
