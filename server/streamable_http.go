@@ -554,10 +554,10 @@ func (s *InsecureStatefulSessionIdManager) Generate() string {
 func (s *InsecureStatefulSessionIdManager) Validate(sessionID string) (isTerminated bool, err error) {
 	// validate the session id is a valid uuid
 	if !strings.HasPrefix(sessionID, idPrefix) {
-		return false, fmt.Errorf("invalid session id: %w", err)
+		return false, fmt.Errorf("invalid session id: %s", sessionID)
 	}
 	if _, err := uuid.Parse(sessionID[len(idPrefix):]); err != nil {
-		return false, fmt.Errorf("invalid session id: %w", err)
+		return false, fmt.Errorf("invalid session id: %s", sessionID)
 	}
 	return false, nil
 }
