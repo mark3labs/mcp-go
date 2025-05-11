@@ -96,7 +96,8 @@ func WithLogger(logger util.Logger) StreamableHttpOption {
 //   - Batching of requests/notifications/responses in arrays.
 //   - Stream Resumability
 type StreamableHttpServer struct {
-	server *MCPServer
+	server       *MCPServer
+	sessionTools *sessionToolsStore
 
 	httpServer *http.Server
 	mu         sync.RWMutex
@@ -112,6 +113,7 @@ type StreamableHttpServer struct {
 func NewStreamableHttpServer(server *MCPServer, opts ...StreamableHttpOption) *StreamableHttpServer {
 	s := &StreamableHttpServer{
 		server:           server,
+		sessionTools:     newSessionToolsStore(),
 		endpointPath:     "/mcp",
 		sessionIdManager: &InsecureStatefulSessionIdManager{},
 		logger:           util.DefaultLogger(),
@@ -221,7 +223,7 @@ func (s *StreamableHttpServer) handlePost(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	session := newStreamableHttpSession(sessionID)
+	session := newStreamableHttpSession(sessionID, s.sessionTools)
 
 	// Set the client context before handling the message
 	ctx := s.server.WithContext(r.Context(), session)
@@ -316,7 +318,7 @@ func (s *StreamableHttpServer) handleGet(w http.ResponseWriter, r *http.Request)
 		sessionID = uuid.New().String()
 	}
 
-	session := newStreamableHttpSession(sessionID)
+	session := newStreamableHttpSession(sessionID, s.sessionTools)
 	if err := s.server.RegisterSession(r.Context(), session); err != nil {
 		http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusBadRequest)
 		return
@@ -429,7 +431,7 @@ func writeSSEEvent(w io.Writer, data any) error {
 // writeJSONRPCError writes a JSON-RPC error response with the given error details.
 func (s *StreamableHttpServer) writeJSONRPCError(
 	w http.ResponseWriter,
-	id interface{},
+	id any,
 	code int,
 	message string,
 ) {
@@ -441,15 +443,40 @@ func (s *StreamableHttpServer) writeJSONRPCError(
 
 // --- session ---
 
+type sessionToolsStore struct {
+	mu    sync.RWMutex
+	tools map[string]map[string]ServerTool // sessionID -> toolName -> tool
+}
+
+func newSessionToolsStore() *sessionToolsStore {
+	return &sessionToolsStore{
+		tools: make(map[string]map[string]ServerTool),
+	}
+}
+
+func (s *sessionToolsStore) get(sessionID string) map[string]ServerTool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.tools[sessionID]
+}
+
+func (s *sessionToolsStore) set(sessionID string, tools map[string]ServerTool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tools[sessionID] = tools
+}
+
 type streamableHttpSession struct {
 	sessionID           string
 	notificationChannel chan mcp.JSONRPCNotification // server -> client notifications
+	tools               *sessionToolsStore
 }
 
-func newStreamableHttpSession(sessionID string) *streamableHttpSession {
+func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore) *streamableHttpSession {
 	return &streamableHttpSession{
 		sessionID:           sessionID,
 		notificationChannel: make(chan mcp.JSONRPCNotification, 100),
+		tools:               toolStore,
 	}
 }
 
@@ -472,6 +499,16 @@ func (s *streamableHttpSession) Initialized() bool {
 }
 
 var _ ClientSession = (*streamableHttpSession)(nil)
+
+func (s *streamableHttpSession) GetSessionTools() map[string]ServerTool {
+	return s.tools.get(s.sessionID)
+}
+
+func (s *streamableHttpSession) SetSessionTools(tools map[string]ServerTool) {
+	s.tools.set(s.sessionID, tools)
+}
+
+var _ SessionWithTools = (*streamableHttpSession)(nil)
 
 // --- session id manager ---
 
