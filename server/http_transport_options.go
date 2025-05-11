@@ -39,16 +39,10 @@ type SSEOption interface {
 	applyToSSE(*SSEServer)
 }
 
-// StreamableHTTP-specific option interface
-type StreamableHTTPOption interface {
-	HTTPServerOption
-	applyToStreamableHTTP(*StreamableHTTPServer)
-}
-
 // Common options that work with both server types
 type CommonHTTPServerOption interface {
 	SSEOption
-	StreamableHTTPOption
+	// StreamableHTTPOption
 }
 
 // Wrapper for SSE-specific functional options
@@ -72,9 +66,6 @@ func (o commonOption) isHTTPServerOption()                           {}
 func (o commonOption) applyToSSE(s *SSEServer)                       { o.apply(s) }
 func (o commonOption) applyToStreamableHTTP(s *StreamableHTTPServer) { o.apply(s) }
 
-// TODO: This is a stub implementation of StreamableHTTPServer just to show how
-// to use it with the new options interfaces.
-type StreamableHTTPServer struct{}
 
 // Add stub methods to satisfy httpTransportConfigurable
 
@@ -90,7 +81,7 @@ func (s *StreamableHTTPServer) setBaseURL(baseURL string)              {}
 var (
 	_ httpTransportConfigurable = (*StreamableHTTPServer)(nil)
 	_ SSEOption                 = sseOption(nil)
-	_ StreamableHTTPOption      = streamableHTTPOption(nil)
+	// _ StreamableHTTPOption      = streamableHTTPOption(nil)
 	_ CommonHTTPServerOption    = commonOption{}
 )
 
