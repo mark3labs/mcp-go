@@ -94,7 +94,7 @@ func (c *Client) OnNotification(
 func (c *Client) sendRequest(
 	ctx context.Context,
 	method string,
-	params interface{},
+	params any,
 ) (*json.RawMessage, error) {
 	if !c.initialized && method != "initialize" {
 		return nil, fmt.Errorf("client not initialized")

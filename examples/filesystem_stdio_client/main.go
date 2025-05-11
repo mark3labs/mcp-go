@@ -79,7 +79,7 @@ func main() {
 	fmt.Println("Listing /tmp directory...")
 	listTmpRequest := mcp.CallToolRequest{}
 	listTmpRequest.Params.Name = "list_directory"
-	listTmpRequest.Params.Arguments = map[string]interface{}{
+	listTmpRequest.Params.Arguments = map[string]any{
 		"path": "/tmp",
 	}
 
@@ -94,7 +94,7 @@ func main() {
 	fmt.Println("Creating /tmp/mcp directory...")
 	createDirRequest := mcp.CallToolRequest{}
 	createDirRequest.Params.Name = "create_directory"
-	createDirRequest.Params.Arguments = map[string]interface{}{
+	createDirRequest.Params.Arguments = map[string]any{
 		"path": "/tmp/mcp",
 	}
 
@@ -109,7 +109,7 @@ func main() {
 	fmt.Println("Creating /tmp/mcp/hello.txt...")
 	writeFileRequest := mcp.CallToolRequest{}
 	writeFileRequest.Params.Name = "write_file"
-	writeFileRequest.Params.Arguments = map[string]interface{}{
+	writeFileRequest.Params.Arguments = map[string]any{
 		"path":    "/tmp/mcp/hello.txt",
 		"content": "Hello World",
 	}
@@ -125,7 +125,7 @@ func main() {
 	fmt.Println("Reading /tmp/mcp/hello.txt...")
 	readFileRequest := mcp.CallToolRequest{}
 	readFileRequest.Params.Name = "read_file"
-	readFileRequest.Params.Arguments = map[string]interface{}{
+	readFileRequest.Params.Arguments = map[string]any{
 		"path": "/tmp/mcp/hello.txt",
 	}
 
@@ -139,7 +139,7 @@ func main() {
 	fmt.Println("Getting info for /tmp/mcp/hello.txt...")
 	fileInfoRequest := mcp.CallToolRequest{}
 	fileInfoRequest.Params.Name = "get_file_info"
-	fileInfoRequest.Params.Arguments = map[string]interface{}{
+	fileInfoRequest.Params.Arguments = map[string]any{
 		"path": "/tmp/mcp/hello.txt",
 	}
 

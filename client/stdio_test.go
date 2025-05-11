@@ -45,13 +45,13 @@ func TestStdioMCPClient(t *testing.T) {
 	}
 	tempFile.Close()
 	mockServerPath := tempFile.Name()
-	
+
 	// Add .exe suffix on Windows
 	if runtime.GOOS == "windows" {
 		os.Remove(mockServerPath) // Remove the empty file first
 		mockServerPath += ".exe"
 	}
-	
+
 	if compileErr := compileTestServer(mockServerPath); compileErr != nil {
 		t.Fatalf("Failed to compile mock server: %v", compileErr)
 	}
@@ -232,7 +232,7 @@ func TestStdioMCPClient(t *testing.T) {
 
 		request := mcp.CallToolRequest{}
 		request.Params.Name = "test-tool"
-		request.Params.Arguments = map[string]interface{}{
+		request.Params.Arguments = map[string]any{
 			"param1": "value1",
 		}
 

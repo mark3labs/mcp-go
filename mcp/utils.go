@@ -60,7 +60,7 @@ var _ ServerResult = &ListToolsResult{}
 // Helper functions for type assertions
 
 // asType attempts to cast the given interface to the given type
-func asType[T any](content interface{}) (*T, bool) {
+func asType[T any](content any) (*T, bool) {
 	tc, ok := content.(T)
 	if !ok {
 		return nil, false
@@ -69,27 +69,32 @@ func asType[T any](content interface{}) (*T, bool) {
 }
 
 // AsTextContent attempts to cast the given interface to TextContent
-func AsTextContent(content interface{}) (*TextContent, bool) {
+func AsTextContent(content any) (*TextContent, bool) {
 	return asType[TextContent](content)
 }
 
 // AsImageContent attempts to cast the given interface to ImageContent
-func AsImageContent(content interface{}) (*ImageContent, bool) {
+func AsImageContent(content any) (*ImageContent, bool) {
 	return asType[ImageContent](content)
 }
 
+// AsAudioContent attempts to cast the given interface to AudioContent
+func AsAudioContent(content any) (*AudioContent, bool) {
+	return asType[AudioContent](content)
+}
+
 // AsEmbeddedResource attempts to cast the given interface to EmbeddedResource
-func AsEmbeddedResource(content interface{}) (*EmbeddedResource, bool) {
+func AsEmbeddedResource(content any) (*EmbeddedResource, bool) {
 	return asType[EmbeddedResource](content)
 }
 
 // AsTextResourceContents attempts to cast the given interface to TextResourceContents
-func AsTextResourceContents(content interface{}) (*TextResourceContents, bool) {
+func AsTextResourceContents(content any) (*TextResourceContents, bool) {
 	return asType[TextResourceContents](content)
 }
 
 // AsBlobResourceContents attempts to cast the given interface to BlobResourceContents
-func AsBlobResourceContents(content interface{}) (*BlobResourceContents, bool) {
+func AsBlobResourceContents(content any) (*BlobResourceContents, bool) {
 	return asType[BlobResourceContents](content)
 }
 
@@ -109,15 +114,15 @@ func NewJSONRPCError(
 	id RequestId,
 	code int,
 	message string,
-	data interface{},
+	data any,
 ) JSONRPCError {
 	return JSONRPCError{
 		JSONRPC: JSONRPC_VERSION,
 		ID:      id,
 		Error: struct {
-			Code    int         `json:"code"`
-			Message string      `json:"message"`
-			Data    interface{} `json:"data,omitempty"`
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+			Data    any    `json:"data,omitempty"`
 		}{
 			Code:    code,
 			Message: message,
@@ -162,7 +167,7 @@ func NewProgressNotification(
 func NewLoggingMessageNotification(
 	level LoggingLevel,
 	logger string,
-	data interface{},
+	data any,
 ) LoggingMessageNotification {
 	return LoggingMessageNotification{
 		Notification: Notification{
@@ -171,7 +176,7 @@ func NewLoggingMessageNotification(
 		Params: struct {
 			Level  LoggingLevel `json:"level"`
 			Logger string       `json:"logger,omitempty"`
-			Data   interface{}  `json:"data"`
+			Data   any          `json:"data"`
 		}{
 			Level:  level,
 			Logger: logger,
@@ -208,7 +213,15 @@ func NewImageContent(data, mimeType string) ImageContent {
 	}
 }
 
-// NewEmbeddedResource
+// Helper function to create a new AudioContent
+func NewAudioContent(data, mimeType string) AudioContent {
+	return AudioContent{
+		Type:     "audio",
+		Data:     data,
+		MIMEType: mimeType,
+	}
+}
+
 // Helper function to create a new EmbeddedResource
 func NewEmbeddedResource(resource ResourceContents) EmbeddedResource {
 	return EmbeddedResource{
@@ -239,6 +252,23 @@ func NewToolResultImage(text, imageData, mimeType string) *CallToolResult {
 			},
 			ImageContent{
 				Type:     "image",
+				Data:     imageData,
+				MIMEType: mimeType,
+			},
+		},
+	}
+}
+
+// NewToolResultAudio creates a new CallToolResult with both text and audio content
+func NewToolResultAudio(text, imageData, mimeType string) *CallToolResult {
+	return &CallToolResult{
+		Content: []Content{
+			TextContent{
+				Type: "text",
+				Text: text,
+			},
+			AudioContent{
+				Type:     "audio",
 				Data:     imageData,
 				MIMEType: mimeType,
 			},
@@ -422,6 +452,14 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 			return nil, fmt.Errorf("image data or mimeType is missing")
 		}
 		return NewImageContent(data, mimeType), nil
+
+	case "audio":
+		data := ExtractString(contentMap, "data")
+		mimeType := ExtractString(contentMap, "mimeType")
+		if data == "" || mimeType == "" {
+			return nil, fmt.Errorf("audio data or mimeType is missing")
+		}
+		return NewAudioContent(data, mimeType), nil
 
 	case "resource":
 		resourceMap := ExtractMap(contentMap, "resource")

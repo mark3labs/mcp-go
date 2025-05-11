@@ -4,6 +4,8 @@ on:
     branches:
       - main
   pull_request:
+  workflow_dispatch:
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -13,3 +15,21 @@ jobs:
       with:
         go-version-file: 'go.mod'
     - run: go test ./... -race
+
+  verify-codegen:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: 'go.mod'
+    - name: Run code generation
+      run: go generate ./...
+    - name: Check for uncommitted changes
+      run: |
+        if [[ -n $(git status --porcelain) ]]; then
+          echo "Error: Generated code is not up to date. Please run 'go generate ./...' and commit the changes."
+          git status
+          git diff
+          exit 1
+        fi
