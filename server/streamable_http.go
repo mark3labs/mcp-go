@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -633,7 +634,16 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 			fmt.Fprintf(w, "data: %s\n\n", data)
 		}
 		w.(http.Flusher).Flush()
+
+		// According to the MCP specification, the server SHOULD close the SSE stream
+		// after all JSON-RPC responses have been sent.
+		// Since we've sent the response, we can close the stream now.
+		return
 	}
+
+	// If there's no response (which shouldn't happen in normal operation),
+	// we'll keep the stream open for a short time to handle any notifications
+	// that might come in, then close it.
 
 	// Create a channel to pass notifications from the goroutine to the main handler
 	notificationCh := make(chan struct {
@@ -683,8 +693,9 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 		}
 	}()
 
-	// Create a context with cancellation
-	ctx, cancel := context.WithCancel(r.Context())
+	// Create a context with cancellation and a timeout
+	// We'll only keep the stream open for a short time if there's no response
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
 	// Process notifications in the main handler goroutine
@@ -699,7 +710,7 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 			}
 			w.(http.Flusher).Flush()
 		case <-ctx.Done():
-			// Request context is done, exit the loop
+			// Request context is done or timeout reached, exit the loop
 			return
 		}
 	}
@@ -784,8 +795,11 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		}
 	}()
 
-	// Wait for the request context to be done
-	<-r.Context().Done()
+	// Create a context with cancellation
+	// For standalone SSE streams, we'll keep the connection open until the client disconnects
+	// or the context is canceled
+	ctx := r.Context()
+	<-ctx.Done()
 }
 
 // handleDelete processes DELETE requests to the MCP endpoint (for session termination)
