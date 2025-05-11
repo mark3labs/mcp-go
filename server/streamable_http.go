@@ -267,7 +267,11 @@ func (s *StreamableHTTPServer) Start(addr string) error {
 		Handler: s,
 	}
 
-	return s.srv.ListenAndServe()
+	err := s.srv.ListenAndServe()
+	if err != nil && err != http.ErrServerClosed {
+		return err
+	}
+	return nil
 }
 
 // Shutdown gracefully stops the Streamable HTTP server, closing all active sessions
