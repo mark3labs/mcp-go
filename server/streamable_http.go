@@ -63,7 +63,7 @@ func WithHeartbeatInterval(interval time.Duration) StreamableHttpOption {
 // WithHttpContextFunc sets a function that will be called to customise the context
 // to the server using the incoming request.
 // This can be used to inject context values from headers, for example.
-func WithHttpContextFunc(fn SSEContextFunc) StreamableHttpOption {
+func WithHttpContextFunc(fn HTTPContextFunc) StreamableHttpOption {
 	return func(s *StreamableHttpServer) {
 		s.contextFunc = fn
 	}
@@ -102,7 +102,7 @@ type StreamableHttpServer struct {
 	mu         sync.RWMutex
 
 	endpointPath            string
-	contextFunc             SSEContextFunc
+	contextFunc             HTTPContextFunc
 	sessionIdManager        SessionIdManager
 	listenHeartbeatInterval time.Duration
 	logger                  util.Logger
