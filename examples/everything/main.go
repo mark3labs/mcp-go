@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -64,6 +66,7 @@ func NewMCPServer() *server.MCPServer {
 		"1.0.0",
 		server.WithResourceCapabilities(true, true),
 		server.WithPromptCapabilities(true),
+		server.WithToolCapabilities(true),
 		server.WithLogging(),
 		server.WithHooks(hooks),
 	)
@@ -79,6 +82,12 @@ func NewMCPServer() *server.MCPServer {
 		),
 		handleResourceTemplate,
 	)
+
+	resources := generateResources()
+	for _, resource := range resources {
+		mcpServer.AddResource(resource, handleGeneratedResource)
+	}
+
 	mcpServer.AddPrompt(mcp.NewPrompt(string(SIMPLE),
 		mcp.WithPromptDescription("A simple prompt"),
 	), handleSimplePrompt)
@@ -159,26 +168,26 @@ func NewMCPServer() *server.MCPServer {
 	return mcpServer
 }
 
-// func generateResources() []mcp.Resource {
-// 	resources := make([]mcp.Resource, 100)
-// 	for i := 0; i < 100; i++ {
-// 		uri := fmt.Sprintf("test://static/resource/%d", i+1)
-// 		if i%2 == 0 {
-// 			resources[i] = mcp.Resource{
-// 				URI:      uri,
-// 				Name:     fmt.Sprintf("Resource %d", i+1),
-// 				MIMEType: "text/plain",
-// 			}
-// 		} else {
-// 			resources[i] = mcp.Resource{
-// 				URI:      uri,
-// 				Name:     fmt.Sprintf("Resource %d", i+1),
-// 				MIMEType: "application/octet-stream",
-// 			}
-// 		}
-// 	}
-// 	return resources
-// }
+func generateResources() []mcp.Resource {
+	resources := make([]mcp.Resource, 100)
+	for i := 0; i < 100; i++ {
+		uri := fmt.Sprintf("test://static/resource/%d", i+1)
+		if i%2 == 0 {
+			resources[i] = mcp.Resource{
+				URI:      uri,
+				Name:     fmt.Sprintf("Resource %d", i+1),
+				MIMEType: "text/plain",
+			}
+		} else {
+			resources[i] = mcp.Resource{
+				URI:      uri,
+				Name:     fmt.Sprintf("Resource %d", i+1),
+				MIMEType: "application/octet-stream",
+			}
+		}
+	}
+	return resources
+}
 
 // func runUpdateInterval() {
 // 	for range s.updateTicker.C {
@@ -225,6 +234,43 @@ func handleResourceTemplate(
 			Text:     "This is a sample resource",
 		},
 	}, nil
+}
+
+func handleGeneratedResource(
+	ctx context.Context,
+	request mcp.ReadResourceRequest,
+) ([]mcp.ResourceContents, error) {
+	uri := request.Params.URI
+
+	var resourceNumber string
+	if _, err := fmt.Sscanf(uri, "test://static/resource/%s", &resourceNumber); err != nil {
+		return nil, fmt.Errorf("invalid resource URI format: %w", err)
+	}
+
+	num, err := strconv.Atoi(resourceNumber)
+	if err != nil {
+		return nil, fmt.Errorf("invalid resource number: %w", err)
+	}
+
+	index := num - 1
+
+	if index%2 == 0 {
+		return []mcp.ResourceContents{
+			mcp.TextResourceContents{
+				URI:      uri,
+				MIMEType: "text/plain",
+				Text:     fmt.Sprintf("Text content for resource %d", num),
+			},
+		}, nil
+	} else {
+		return []mcp.ResourceContents{
+			mcp.BlobResourceContents{
+				URI:      uri,
+				MIMEType: "application/octet-stream",
+				Blob:     base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("Binary content for resource %d", num))),
+			},
+		}, nil
+	}
 }
 
 func handleSimplePrompt(
