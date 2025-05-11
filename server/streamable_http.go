@@ -35,27 +35,7 @@ func (s *streamableHTTPSession) SessionID() string {
 }
 
 func (s *streamableHTTPSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
-	// Create a wrapper channel that will call the notification handler if set
-	ch := make(chan mcp.JSONRPCNotification, 100)
-
-	// Start a goroutine to forward notifications and call the handler
-	go func() {
-		for notification := range ch {
-			// Forward to the actual notification channel
-			s.notificationChannel <- notification
-
-			// Call the notification handler if set
-			s.notifyMu.RLock()
-			handler := s.notificationHandler
-			s.notifyMu.RUnlock()
-
-			if handler != nil {
-				handler(notification)
-			}
-		}
-	}()
-
-	return ch
+	return s.notificationChannel
 }
 
 func (s *streamableHTTPSession) Initialize() {
@@ -483,6 +463,21 @@ func (s *StreamableHTTPServer) handleRequest(w http.ResponseWriter, r *http.Requ
 			// Initialize and register the session
 			newSession.Initialize()
 			s.sessions.Store(newSessionID, newSession)
+
+			// Start a goroutine to listen for notifications and call the notification handler
+			go func() {
+				for notification := range newSession.notificationChannel {
+					// Call the notification handler if set
+					newSession.notifyMu.RLock()
+					handler := newSession.notificationHandler
+					newSession.notifyMu.RUnlock()
+
+					if handler != nil {
+						handler(notification)
+					}
+				}
+			}()
+
 			if err := s.server.RegisterSession(ctx, newSession); err != nil {
 				http.Error(w, fmt.Sprintf("Failed to register session: %v", err), http.StatusInternalServerError)
 				return
