@@ -54,7 +54,7 @@ func (s *sseSession) Initialized() bool {
 
 func (s *sseSession) GetSessionTools() map[string]ServerTool {
 	tools := make(map[string]ServerTool)
-	s.tools.Range(func(key, value interface{}) bool {
+	s.tools.Range(func(key, value any) bool {
 		if tool, ok := value.(ServerTool); ok {
 			tools[key.(string)] = tool
 		}
@@ -65,7 +65,7 @@ func (s *sseSession) GetSessionTools() map[string]ServerTool {
 
 func (s *sseSession) SetSessionTools(tools map[string]ServerTool) {
 	// Clear existing tools
-	s.tools.Range(func(key, _ interface{}) bool {
+	s.tools.Range(func(key, _ any) bool {
 		s.tools.Delete(key)
 		return true
 	})
@@ -225,8 +225,6 @@ func NewTestServer(server *MCPServer, opts ...SSEOption) *httptest.Server {
 // It sets up HTTP handlers for SSE and message endpoints.
 func (s *SSEServer) Start(addr string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if s.srv == nil {
 		s.srv = &http.Server{
 			Addr:    addr,
@@ -239,8 +237,10 @@ func (s *SSEServer) Start(addr string) error {
 			return fmt.Errorf("conflicting listen address: WithHTTPServer(%q) vs Start(%q)", s.srv.Addr, addr)
 		}
 	}
+	srv := s.srv
+	s.mu.Unlock()
 
-	return s.srv.ListenAndServe()
+	return srv.ListenAndServe()
 }
 
 // Shutdown gracefully stops the SSE server, closing all active sessions
@@ -251,7 +251,7 @@ func (s *SSEServer) Shutdown(ctx context.Context) error {
 	s.mu.RUnlock()
 
 	if srv != nil {
-		s.sessions.Range(func(key, value interface{}) bool {
+		s.sessions.Range(func(key, value any) bool {
 			if session, ok := value.(*sseSession); ok {
 				close(session.done)
 			}
@@ -473,7 +473,7 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 // writeJSONRPCError writes a JSON-RPC error response with the given error details.
 func (s *SSEServer) writeJSONRPCError(
 	w http.ResponseWriter,
-	id interface{},
+	id any,
 	code int,
 	message string,
 ) {
@@ -487,7 +487,7 @@ func (s *SSEServer) writeJSONRPCError(
 // Returns an error if the session is not found or closed.
 func (s *SSEServer) SendEventToSession(
 	sessionID string,
-	event interface{},
+	event any,
 ) error {
 	sessionI, ok := s.sessions.Load(sessionID)
 	if !ok {

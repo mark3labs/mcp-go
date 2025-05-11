@@ -44,8 +44,8 @@ type CallToolResult struct {
 type CallToolRequest struct {
 	Request
 	Params struct {
-		Name      string                 `json:"name"`
-		Arguments map[string]interface{} `json:"arguments,omitempty"`
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments,omitempty"`
 		Meta      *struct {
 			// If specified, the caller is requesting out-of-band progress
 			// notifications for this request (as represented by
@@ -83,7 +83,7 @@ type Tool struct {
 // It handles marshaling either InputSchema or RawInputSchema based on which is set.
 func (t Tool) MarshalJSON() ([]byte, error) {
 	// Create a map to build the JSON structure
-	m := make(map[string]interface{}, 3)
+	m := make(map[string]any, 3)
 
 	// Add the name and description
 	m["name"] = t.Name
@@ -108,14 +108,14 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 }
 
 type ToolInputSchema struct {
-	Type       string                 `json:"type"`
-	Properties map[string]interface{} `json:"properties,omitempty"`
-	Required   []string               `json:"required,omitempty"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties,omitempty"`
+	Required   []string       `json:"required,omitempty"`
 }
 
 // MarshalJSON implements the json.Marshaler interface for ToolInputSchema.
 func (tis ToolInputSchema) MarshalJSON() ([]byte, error) {
-	m := make(map[string]interface{})
+	m := make(map[string]any)
 	m["type"] = tis.Type
 
 	// Marshal Properties to '{}' rather than `nil` when its length equals zero
@@ -149,7 +149,7 @@ type ToolOption func(*Tool)
 
 // PropertyOption is a function that configures a property in a Tool's input schema.
 // It allows for flexible configuration of JSON Schema properties using the functional options pattern.
-type PropertyOption func(map[string]interface{})
+type PropertyOption func(map[string]any)
 
 //
 // Core Tool Functions
@@ -163,7 +163,7 @@ func NewTool(name string, opts ...ToolOption) Tool {
 		Name: name,
 		InputSchema: ToolInputSchema{
 			Type:       "object",
-			Properties: make(map[string]interface{}),
+			Properties: make(map[string]any),
 			Required:   nil, // Will be omitted from JSON if empty
 		},
 		Annotations: ToolAnnotation{
@@ -220,7 +220,7 @@ func WithToolAnnotation(annotation ToolAnnotation) ToolOption {
 // Description adds a description to a property in the JSON Schema.
 // The description should explain the purpose and expected values of the property.
 func Description(desc string) PropertyOption {
-	return func(schema map[string]interface{}) {
+	return func(schema map[string]any) {
 		schema["description"] = desc
 	}
 }
@@ -228,7 +228,7 @@ func Description(desc string) PropertyOption {
 // Required marks a property as required in the tool's input schema.
 // Required properties must be provided when using the tool.
 func Required() PropertyOption {
-	return func(schema map[string]interface{}) {
+	return func(schema map[string]any) {
 		schema["required"] = true
 	}
 }
@@ -236,7 +236,7 @@ func Required() PropertyOption {
 // Title adds a display-friendly title to a property in the JSON Schema.
 // This title can be used by UI components to show a more readable property name.
 func Title(title string) PropertyOption {
-	return func(schema map[string]interface{}) {
+	return func(schema map[string]any) {
 		schema["title"] = title
 	}
 }
@@ -248,7 +248,7 @@ func Title(title string) PropertyOption {
 // DefaultString sets the default value for a string property.
 // This value will be used if the property is not explicitly provided.
 func DefaultString(value string) PropertyOption {
-	return func(schema map[string]interface{}) {
+	return func(schema map[string]any) {
 		schema["default"] = value
 	}
 }
@@ -256,7 +256,7 @@ func DefaultString(value string) PropertyOption {
 // Enum specifies a list of allowed values for a string property.
 // The property value must be one of the specified enum values.
 func Enum(values ...string) PropertyOption {
-	return func(schema map[string]interface{}) {
+	return func(schema map[string]any) {
 		schema["enum"] = values
 	}
 }
@@ -264,7 +264,7 @@ func Enum(values ...string) PropertyOption {
 // MaxLength sets the maximum length for a string property.
 // The string value must not exceed this length.
 func MaxLength(max int) PropertyOption {
-	return func(schema map[string]interface{}) {
+	return func(schema map[string]any) {
 		schema["maxLength"] = max
 	}
 }
@@ -272,7 +272,7 @@ func MaxLength(max int) PropertyOption {
 // MinLength sets the minimum length for a string property.
 // The string value must be at least this length.
 func MinLength(min int) PropertyOption {
-	return func(schema map[string]interface{}) {
+	return func(schema map[string]any) {
 		schema["minLength"] = min
 	}
 }
@@ -280,7 +280,7 @@ func MinLength(min int) PropertyOption {
 // Pattern sets a regex pattern that a string property must match.
 // The string value must conform to the specified regular expression.
 func Pattern(pattern string) PropertyOption {
-	return func(schema map[string]interface{}) {
+	return func(schema map[string]any) {
 		schema["pattern"] = pattern
 	}
 }
@@ -292,7 +292,7 @@ func Pattern(pattern string) PropertyOption {
 // DefaultNumber sets the default value for a number property.
 // This value will be used if the property is not explicitly provided.
 func DefaultNumber(value float64) PropertyOption {
-	return func(schema map[string]interface{}) {
+	return func(schema map[string]any) {
 		schema["default"] = value
 	}
 }
@@ -300,7 +300,7 @@ func DefaultNumber(value float64) PropertyOption {
 // Max sets the maximum value for a number property.
 // The number value must not exceed this maximum.
 func Max(max float64) PropertyOption {
-	return func(schema map[string]interface{}) {
+	return func(schema map[string]any) {
 		schema["maximum"] = max
 	}
 }
@@ -308,7 +308,7 @@ func Max(max float64) PropertyOption {
 // Min sets the minimum value for a number property.
 // The number value must not be less than this minimum.
 func Min(min float64) PropertyOption {
-	return func(schema map[string]interface{}) {
+	return func(schema map[string]any) {
 		schema["minimum"] = min
 	}
 }
@@ -316,7 +316,7 @@ func Min(min float64) PropertyOption {
 // MultipleOf specifies that a number must be a multiple of the given value.
 // The number value must be divisible by this value.
 func MultipleOf(value float64) PropertyOption {
-	return func(schema map[string]interface{}) {
+	return func(schema map[string]any) {
 		schema["multipleOf"] = value
 	}
 }
@@ -328,7 +328,7 @@ func MultipleOf(value float64) PropertyOption {
 // DefaultBool sets the default value for a boolean property.
 // This value will be used if the property is not explicitly provided.
 func DefaultBool(value bool) PropertyOption {
-	return func(schema map[string]interface{}) {
+	return func(schema map[string]any) {
 		schema["default"] = value
 	}
 }
@@ -340,7 +340,7 @@ func DefaultBool(value bool) PropertyOption {
 // DefaultArray sets the default value for an array property.
 // This value will be used if the property is not explicitly provided.
 func DefaultArray[T any](value []T) PropertyOption {
-	return func(schema map[string]interface{}) {
+	return func(schema map[string]any) {
 		schema["default"] = value
 	}
 }
@@ -353,7 +353,7 @@ func DefaultArray[T any](value []T) PropertyOption {
 // It accepts property options to configure the boolean property's behavior and constraints.
 func WithBoolean(name string, opts ...PropertyOption) ToolOption {
 	return func(t *Tool) {
-		schema := map[string]interface{}{
+		schema := map[string]any{
 			"type": "boolean",
 		}
 
@@ -375,7 +375,7 @@ func WithBoolean(name string, opts ...PropertyOption) ToolOption {
 // It accepts property options to configure the number property's behavior and constraints.
 func WithNumber(name string, opts ...PropertyOption) ToolOption {
 	return func(t *Tool) {
-		schema := map[string]interface{}{
+		schema := map[string]any{
 			"type": "number",
 		}
 
@@ -397,7 +397,7 @@ func WithNumber(name string, opts ...PropertyOption) ToolOption {
 // It accepts property options to configure the string property's behavior and constraints.
 func WithString(name string, opts ...PropertyOption) ToolOption {
 	return func(t *Tool) {
-		schema := map[string]interface{}{
+		schema := map[string]any{
 			"type": "string",
 		}
 
@@ -419,9 +419,9 @@ func WithString(name string, opts ...PropertyOption) ToolOption {
 // It accepts property options to configure the object property's behavior and constraints.
 func WithObject(name string, opts ...PropertyOption) ToolOption {
 	return func(t *Tool) {
-		schema := map[string]interface{}{
+		schema := map[string]any{
 			"type":       "object",
-			"properties": map[string]interface{}{},
+			"properties": map[string]any{},
 		}
 
 		for _, opt := range opts {
@@ -442,7 +442,7 @@ func WithObject(name string, opts ...PropertyOption) ToolOption {
 // It accepts property options to configure the array property's behavior and constraints.
 func WithArray(name string, opts ...PropertyOption) ToolOption {
 	return func(t *Tool) {
-		schema := map[string]interface{}{
+		schema := map[string]any{
 			"type": "array",
 		}
 
@@ -461,65 +461,65 @@ func WithArray(name string, opts ...PropertyOption) ToolOption {
 }
 
 // Properties defines the properties for an object schema
-func Properties(props map[string]interface{}) PropertyOption {
-	return func(schema map[string]interface{}) {
+func Properties(props map[string]any) PropertyOption {
+	return func(schema map[string]any) {
 		schema["properties"] = props
 	}
 }
 
 // AdditionalProperties specifies whether additional properties are allowed in the object
 // or defines a schema for additional properties
-func AdditionalProperties(schema interface{}) PropertyOption {
-	return func(schemaMap map[string]interface{}) {
+func AdditionalProperties(schema any) PropertyOption {
+	return func(schemaMap map[string]any) {
 		schemaMap["additionalProperties"] = schema
 	}
 }
 
 // MinProperties sets the minimum number of properties for an object
 func MinProperties(min int) PropertyOption {
-	return func(schema map[string]interface{}) {
+	return func(schema map[string]any) {
 		schema["minProperties"] = min
 	}
 }
 
 // MaxProperties sets the maximum number of properties for an object
 func MaxProperties(max int) PropertyOption {
-	return func(schema map[string]interface{}) {
+	return func(schema map[string]any) {
 		schema["maxProperties"] = max
 	}
 }
 
 // PropertyNames defines a schema for property names in an object
-func PropertyNames(schema map[string]interface{}) PropertyOption {
-	return func(schemaMap map[string]interface{}) {
+func PropertyNames(schema map[string]any) PropertyOption {
+	return func(schemaMap map[string]any) {
 		schemaMap["propertyNames"] = schema
 	}
 }
 
 // Items defines the schema for array items
-func Items(schema interface{}) PropertyOption {
-	return func(schemaMap map[string]interface{}) {
+func Items(schema any) PropertyOption {
+	return func(schemaMap map[string]any) {
 		schemaMap["items"] = schema
 	}
 }
 
 // MinItems sets the minimum number of items for an array
 func MinItems(min int) PropertyOption {
-	return func(schema map[string]interface{}) {
+	return func(schema map[string]any) {
 		schema["minItems"] = min
 	}
 }
 
 // MaxItems sets the maximum number of items for an array
 func MaxItems(max int) PropertyOption {
-	return func(schema map[string]interface{}) {
+	return func(schema map[string]any) {
 		schema["maxItems"] = max
 	}
 }
 
 // UniqueItems specifies whether array items must be unique
 func UniqueItems(unique bool) PropertyOption {
-	return func(schema map[string]interface{}) {
+	return func(schema map[string]any) {
 		schema["uniqueItems"] = unique
 	}
 }

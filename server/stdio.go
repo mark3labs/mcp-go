@@ -171,7 +171,6 @@ func (s *StdioServer) readNextLine(ctx context.Context, reader *bufio.Reader) (s
 				select {
 				case errChan <- err:
 				case <-done:
-
 				}
 				return
 			}
@@ -179,6 +178,7 @@ func (s *StdioServer) readNextLine(ctx context.Context, reader *bufio.Reader) (s
 			case readChan <- line:
 			case <-done:
 			}
+			return
 		}
 	}()
 

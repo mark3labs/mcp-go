@@ -64,7 +64,7 @@ func startMockSSEEchoServer() (string, func()) {
 		}
 
 		// Parse incoming JSON-RPC request
-		var request map[string]interface{}
+		var request map[string]any
 		decoder := json.NewDecoder(r.Body)
 		if err := decoder.Decode(&request); err != nil {
 			http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
@@ -72,7 +72,7 @@ func startMockSSEEchoServer() (string, func()) {
 		}
 
 		// Echo back the request as the response result
-		response := map[string]interface{}{
+		response := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      request["id"],
 			"result":  request,
@@ -96,7 +96,7 @@ func startMockSSEEchoServer() (string, func()) {
 			mu.Unlock()
 		case "debug/echo_error_string":
 			data, _ := json.Marshal(request)
-			response["error"] = map[string]interface{}{
+			response["error"] = map[string]any{
 				"code":    -1,
 				"message": string(data),
 			}
@@ -153,9 +153,9 @@ func TestSSE(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		params := map[string]interface{}{
+		params := map[string]any{
 			"string": "hello world",
-			"array":  []interface{}{1, 2, 3},
+			"array":  []any{1, 2, 3},
 		}
 
 		request := JSONRPCRequest{
@@ -173,10 +173,10 @@ func TestSSE(t *testing.T) {
 
 		// Parse the result to verify echo
 		var result struct {
-			JSONRPC string                 `json:"jsonrpc"`
-			ID      int64                  `json:"id"`
-			Method  string                 `json:"method"`
-			Params  map[string]interface{} `json:"params"`
+			JSONRPC string         `json:"jsonrpc"`
+			ID      int64          `json:"id"`
+			Method  string         `json:"method"`
+			Params  map[string]any `json:"params"`
 		}
 
 		if err := json.Unmarshal(response.Result, &result); err != nil {
@@ -198,7 +198,7 @@ func TestSSE(t *testing.T) {
 			t.Errorf("Expected string 'hello world', got %v", result.Params["string"])
 		}
 
-		if arr, ok := result.Params["array"].([]interface{}); !ok || len(arr) != 3 {
+		if arr, ok := result.Params["array"].([]any); !ok || len(arr) != 3 {
 			t.Errorf("Expected array with 3 items, got %v", result.Params["array"])
 		}
 	})
@@ -244,7 +244,7 @@ func TestSSE(t *testing.T) {
 			Notification: mcp.Notification{
 				Method: "debug/echo_notification",
 				Params: mcp.NotificationParams{
-					AdditionalFields: map[string]interface{}{"test": "value"},
+					AdditionalFields: map[string]any{"test": "value"},
 				},
 			},
 		}
@@ -294,7 +294,7 @@ func TestSSE(t *testing.T) {
 					JSONRPC: "2.0",
 					ID:      int64(100 + idx),
 					Method:  "debug/echo",
-					Params: map[string]interface{}{
+					Params: map[string]any{
 						"requestIndex": idx,
 						"timestamp":    time.Now().UnixNano(),
 					},
@@ -324,10 +324,10 @@ func TestSSE(t *testing.T) {
 
 			// Parse the result to verify echo
 			var result struct {
-				JSONRPC string                 `json:"jsonrpc"`
-				ID      int64                  `json:"id"`
-				Method  string                 `json:"method"`
-				Params  map[string]interface{} `json:"params"`
+				JSONRPC string         `json:"jsonrpc"`
+				ID      int64          `json:"id"`
+				Method  string         `json:"method"`
+				Params  map[string]any `json:"params"`
 			}
 
 			if err := json.Unmarshal(responses[i].Result, &result); err != nil {

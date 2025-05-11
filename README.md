@@ -1,10 +1,10 @@
 <!-- omit in toc -->
-# MCP Go 🚀
+<div align="center">
+<img src="./logo.png" alt="MCP Go Logo">
+
 [![Build](https://github.com/mark3labs/mcp-go/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mark3labs/mcp-go/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/mark3labs/mcp-go?cache)](https://goreportcard.com/report/github.com/mark3labs/mcp-go)
 [![GoDoc](https://pkg.go.dev/badge/github.com/mark3labs/mcp-go.svg)](https://pkg.go.dev/github.com/mark3labs/mcp-go)
-
-<div align="center">
 
 <strong>A Go implementation of the Model Context Protocol (MCP), enabling seamless integration between LLM applications and external data sources and tools.</strong>
 
@@ -17,6 +17,7 @@
 Discuss the SDK on [Discord](https://discord.gg/RqSS2NQVsY)
 
 </div>
+
 
 ```go
 package main
@@ -31,10 +32,11 @@ import (
 )
 
 func main() {
-    // Create MCP server
+    // Create a new MCP server
     s := server.NewMCPServer(
         "Demo 🚀",
         "1.0.0",
+        server.WithToolCapabilities(false),
     )
 
     // Add tool
@@ -116,7 +118,6 @@ package main
 
 import (
     "context"
-    "errors"
     "fmt"
 
     "github.com/mark3labs/mcp-go/mcp"
@@ -128,8 +129,7 @@ func main() {
     s := server.NewMCPServer(
         "Calculator Demo",
         "1.0.0",
-        server.WithResourceCapabilities(true, true),
-        server.WithLogging(),
+        server.WithToolCapabilities(false),
         server.WithRecovery(),
     )
 
@@ -181,6 +181,7 @@ func main() {
     }
 }
 ```
+
 ## What is MCP?
 
 The [Model Context Protocol (MCP)](https://modelcontextprotocol.io) lets you build servers that expose data and functionality to LLM applications in a secure, standardized way. Think of it like a web API, but specifically designed for LLM interactions. MCP servers can:
@@ -458,8 +459,8 @@ s.AddPrompt(mcp.NewPrompt("code_review",
         "Code review assistance",
         []mcp.PromptMessage{
             mcp.NewPromptMessage(
-                mcp.RoleSystem,
-                mcp.NewTextContent("You are a helpful code reviewer. Review the changes and provide constructive feedback."),
+                mcp.RoleUser,
+                mcp.NewTextContent("Review the changes and provide constructive feedback."),
             ),
             mcp.NewPromptMessage(
                 mcp.RoleAssistant,
@@ -489,11 +490,11 @@ s.AddPrompt(mcp.NewPrompt("query_builder",
         "SQL query builder assistance",
         []mcp.PromptMessage{
             mcp.NewPromptMessage(
-                mcp.RoleSystem,
-                mcp.NewTextContent("You are a SQL expert. Help construct efficient and safe queries."),
+                mcp.RoleUser,
+                mcp.NewTextContent("Help construct efficient and safe queries for the provided schema."),
             ),
             mcp.NewPromptMessage(
-                mcp.RoleAssistant,
+                mcp.RoleUser,
                 mcp.NewEmbeddedResource(mcp.ResourceContents{
                     URI: fmt.Sprintf("db://schema/%s", tableName),
                     MIMEType: "application/json",

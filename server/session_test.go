@@ -130,7 +130,7 @@ func TestSessionWithTools_Integration(t *testing.T) {
 	// Test that we can access the session-specific tool
 	testReq := mcp.CallToolRequest{}
 	testReq.Params.Name = "session-tool"
-	testReq.Params.Arguments = map[string]interface{}{}
+	testReq.Params.Arguments = map[string]any{}
 
 	// Call using session context
 	sessionCtx := server.WithContext(context.Background(), session)
@@ -328,11 +328,11 @@ func TestMCPServer_CallSessionTool(t *testing.T) {
 
 	// Call the tool using session context
 	sessionCtx := server.WithContext(context.Background(), session)
-	toolRequest := map[string]interface{}{
+	toolRequest := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "tools/call",
-		"params": map[string]interface{}{
+		"params": map[string]any{
 			"name": "test_tool",
 		},
 	}
@@ -545,7 +545,7 @@ func TestMCPServer_NotificationChannelBlocked(t *testing.T) {
 
 		errorCaptured = true
 		// Extract session ID and method from the error message metadata
-		if msgMap, ok := message.(map[string]interface{}); ok {
+		if msgMap, ok := message.(map[string]any); ok {
 			if sid, ok := msgMap["sessionID"].(string); ok {
 				errorSessionID = sid
 			}
