@@ -531,6 +531,9 @@ func (s *StatelessSessionIdManager) Generate() string {
 	return ""
 }
 func (s *StatelessSessionIdManager) Validate(sessionID string) (isTerminated bool, err error) {
+	if sessionID != "" {
+		return false, fmt.Errorf("session id is not allowed to be set when stateless")
+	}
 	return false, nil
 }
 func (s *StatelessSessionIdManager) Terminate(sessionID string) (isNotAllowed bool, err error) {
@@ -542,10 +545,19 @@ func (s *StatelessSessionIdManager) Terminate(sessionID string) (isNotAllowed bo
 // For more secure session id, use a more complex generator, like a JWT.
 type InsecureStatefulSessionIdManager struct{}
 
+const idPrefix = "mcp-session-"
+
 func (s *InsecureStatefulSessionIdManager) Generate() string {
-	return uuid.New().String()
+	return idPrefix + uuid.New().String()
 }
 func (s *InsecureStatefulSessionIdManager) Validate(sessionID string) (isTerminated bool, err error) {
+	// validate the session id is a valid uuid
+	if !strings.HasPrefix(sessionID, idPrefix) {
+		return false, fmt.Errorf("invalid session id: %w", err)
+	}
+	if _, err := uuid.Parse(sessionID[len(idPrefix):]); err != nil {
+		return false, fmt.Errorf("invalid session id: %w", err)
+	}
 	return false, nil
 }
 func (s *InsecureStatefulSessionIdManager) Terminate(sessionID string) (isNotAllowed bool, err error) {
