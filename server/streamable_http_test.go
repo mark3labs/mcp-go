@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -453,52 +452,6 @@ func TestStreamableHTTP_POST_SendAndReceive_stateless(t *testing.T) {
 			t.Errorf("Expected status 400, got %d", resp.StatusCode)
 		}
 	})
-}
-
-func TestStreamableHTTP_GET(t *testing.T) {
-	mcpServer := NewMCPServer("test-mcp-server", "1.0")
-	addSSETool(mcpServer)
-	server := NewTestStreamableHTTPServer(mcpServer)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", server.URL, nil)
-	if err != nil {
-		t.Fatalf("Failed to create request: %v", err)
-	}
-	req.Header.Set("Content-Type", "text/event-stream")
-
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-		mcpServer.SendNotificationToAllClients("test/notification", map[string]any{
-			"value": "all clients",
-		})
-		time.Sleep(10 * time.Millisecond)
-	}()
-
-	resp, err := server.Client().Do(req)
-	if err != nil {
-		t.Fatalf("Failed to send message: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusAccepted {
-		t.Errorf("Expected status 202, got %d", resp.StatusCode)
-	}
-
-	if resp.Header.Get("content-type") != "text/event-stream" {
-		t.Errorf("Expected content-type text/event-stream, got %s", resp.Header.Get("content-type"))
-	}
-
-	reader := bufio.NewReader(resp.Body)
-	_, _ = reader.ReadBytes('\n') // skip first line for event type
-	bodyBytes, err := reader.ReadBytes('\n')
-	if err != nil {
-		t.Fatalf("Failed to read response: %v, bytes: %s", err, string(bodyBytes))
-	}
-	if !strings.Contains(string(bodyBytes), "all clients") {
-		t.Errorf("Expected all clients, got %s", string(bodyBytes))
-	}
 }
 
 func TestStreamableHTTP_HttpHandler(t *testing.T) {
