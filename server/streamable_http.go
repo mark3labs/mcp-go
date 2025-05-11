@@ -33,6 +33,7 @@ func WithEndpointPath(endpointPath string) StreamableHTTPOption {
 // If true, the server will manage no session information. Every request will be treated
 // as a new session. No session id returned to the client.
 // The default is false.
+// Notice: it will override the WithSessionIdManager option.
 func WithStateLess(stateLess bool) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {
 		s.sessionIdManager = &StatelessSessionIdManager{}
