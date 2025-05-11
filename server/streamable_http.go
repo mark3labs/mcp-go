@@ -23,6 +23,10 @@ type streamableHTTPSession struct {
 	lastEventID         string
 	eventStore          EventStore
 	sessionTools        sync.Map // Maps tool name to ServerTool
+
+	// For handling notifications during request processing
+	notificationHandler func(mcp.JSONRPCNotification)
+	notifyMu            sync.RWMutex
 }
 
 func (s *streamableHTTPSession) SessionID() string {
@@ -30,7 +34,27 @@ func (s *streamableHTTPSession) SessionID() string {
 }
 
 func (s *streamableHTTPSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
-	return s.notificationChannel
+	// Create a wrapper channel that will call the notification handler if set
+	ch := make(chan mcp.JSONRPCNotification, 100)
+
+	// Start a goroutine to forward notifications and call the handler
+	go func() {
+		for notification := range ch {
+			// Forward to the actual notification channel
+			s.notificationChannel <- notification
+
+			// Call the notification handler if set
+			s.notifyMu.RLock()
+			handler := s.notificationHandler
+			s.notifyMu.RUnlock()
+
+			if handler != nil {
+				handler(notification)
+			}
+		}
+	}()
+
+	return ch
 }
 
 func (s *streamableHTTPSession) Initialize() {
@@ -407,8 +431,41 @@ func (s *StreamableHTTPServer) handleRequest(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Create a buffer for notifications sent during request processing
+	var notificationBuffer []mcp.JSONRPCNotification
+	var originalNotificationHandler func(mcp.JSONRPCNotification)
+
+	// Set up temporary notification handler if we have a session
+	if session != nil {
+		// Store the original notification handler if any
+		originalNotificationHandler = nil
+		session.notifyMu.RLock()
+		if session.notificationHandler != nil {
+			originalNotificationHandler = session.notificationHandler
+		}
+		session.notifyMu.RUnlock()
+
+		// Set a temporary handler to buffer notifications
+		session.notifyMu.Lock()
+		session.notificationHandler = func(notification mcp.JSONRPCNotification) {
+			notificationBuffer = append(notificationBuffer, notification)
+			// Also forward to original handler if it exists
+			if originalNotificationHandler != nil {
+				originalNotificationHandler(notification)
+			}
+		}
+		session.notifyMu.Unlock()
+	}
+
 	// Process the request
 	response := s.server.HandleMessage(ctx, rawMessage)
+
+	// Restore the original notification handler
+	if session != nil && originalNotificationHandler != nil {
+		session.notifyMu.Lock()
+		session.notificationHandler = originalNotificationHandler
+		session.notifyMu.Unlock()
+	}
 
 	// If this is an initialization request, create a new session
 	if isInitialize && response != nil {
@@ -465,7 +522,7 @@ func (s *StreamableHTTPServer) handleRequest(w http.ResponseWriter, r *http.Requ
 
 	if useSSE {
 		// Start an SSE stream for this request
-		s.handleSSEResponse(w, r, ctx, response, session)
+		s.handleSSEResponse(w, r, ctx, response, session, notificationBuffer...)
 	} else {
 		// Send a direct JSON response
 		w.Header().Set("Content-Type", "application/json")
@@ -476,7 +533,7 @@ func (s *StreamableHTTPServer) handleRequest(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.Request, ctx context.Context, initialResponse mcp.JSONRPCMessage, session SessionWithTools) {
+func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.Request, ctx context.Context, initialResponse mcp.JSONRPCMessage, session SessionWithTools, notificationBuffer ...mcp.JSONRPCNotification) {
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache, no-transform")
@@ -521,6 +578,33 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 			// Log the error but continue
 			fmt.Printf("Error replaying events: %v\n", err)
 		}
+	}
+
+	// Send any buffered notifications first
+	for _, notification := range notificationBuffer {
+		data, err := json.Marshal(notification)
+		if err != nil {
+			continue
+		}
+
+		// Store the event if we have an event store
+		var eventID string
+		if httpSession != nil && httpSession.eventStore != nil {
+			var storeErr error
+			eventID, storeErr = httpSession.eventStore.StoreEvent(streamID, notification)
+			if storeErr != nil {
+				// Log the error but continue
+				fmt.Printf("Error storing event: %v\n", storeErr)
+			}
+		}
+
+		// Write the event directly to the response writer
+		if eventID != "" {
+			fmt.Fprintf(w, "id: %s\ndata: %s\n\n", eventID, data)
+		} else {
+			fmt.Fprintf(w, "data: %s\n\n", data)
+		}
+		w.(http.Flusher).Flush()
 	}
 
 	// Send the initial response if there is one
