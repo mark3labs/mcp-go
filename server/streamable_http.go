@@ -63,7 +63,10 @@ func (s *streamableHTTPSession) GetSessionTools() map[string]ServerTool {
 // SetSessionTools sets tools specific to this session
 func (s *streamableHTTPSession) SetSessionTools(tools map[string]ServerTool) {
 	// Clear existing tools
-	s.sessionTools = sync.Map{}
+	s.sessionTools.Range(func(k, _ interface{}) bool {
+		s.sessionTools.Delete(k)
+		return true
+	})
 
 	// Add new tools
 	for name, tool := range tools {
