@@ -536,14 +536,13 @@ func (s *StreamableHTTPServer) handleRequest(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.Request, ctx context.Context, initialResponse mcp.JSONRPCMessage, session SessionWithTools, notificationBuffer ...mcp.JSONRPCNotification) {
-	// Set SSE headers
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache, no-transform")
-	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
-
-	// Create a unique stream ID for this request
-	streamID := uuid.New().String()
+	// Set up the stream
+	streamID, err := s.setupStream(w)
+	if err != nil {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+	defer s.closeStream(streamID)
 
 	// Get the request ID from the initial response
 	var requestID interface{}
@@ -565,14 +564,10 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 	if lastEventID != "" && ok && httpSession.eventStore != nil {
 		// Replay events that occurred after the last event ID
 		err := httpSession.eventStore.ReplayEventsAfter(lastEventID, func(eventID string, message mcp.JSONRPCMessage) error {
-			data, err := json.Marshal(message)
-			if err != nil {
+			// Use the event ID from the store
+			if err := s.writeSSEEvent(streamID, "", message); err != nil {
 				return err
 			}
-
-			// Write the event directly to the response writer
-			fmt.Fprintf(w, "id: %s\ndata: %s\n\n", eventID, data)
-			w.(http.Flusher).Flush()
 			return nil
 		})
 
@@ -584,57 +579,36 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 
 	// Send any buffered notifications first
 	for _, notification := range notificationBuffer {
-		data, err := json.Marshal(notification)
-		if err != nil {
-			continue
-		}
-
-		// Store the event if we have an event store
-		var eventID string
+		// Store the event in the event store if available
 		if httpSession != nil && httpSession.eventStore != nil {
-			var storeErr error
-			eventID, storeErr = httpSession.eventStore.StoreEvent(streamID, notification)
-			if storeErr != nil {
+			_, err := httpSession.eventStore.StoreEvent(streamID, notification)
+			if err != nil {
 				// Log the error but continue
-				fmt.Printf("Error storing event: %v\n", storeErr)
+				fmt.Printf("Error storing event: %v\n", err)
 			}
 		}
 
-		// Write the event directly to the response writer
-		if eventID != "" {
-			fmt.Fprintf(w, "id: %s\ndata: %s\n\n", eventID, data)
-		} else {
-			fmt.Fprintf(w, "data: %s\n\n", data)
+		// Send the notification
+		if err := s.writeSSEEvent(streamID, "", notification); err != nil {
+			fmt.Printf("Error writing notification: %v\n", err)
 		}
-		w.(http.Flusher).Flush()
 	}
 
 	// Send the initial response if there is one
 	if initialResponse != nil {
-		data, err := json.Marshal(initialResponse)
-		if err != nil {
-			http.Error(w, "Failed to marshal response", http.StatusInternalServerError)
-			return
-		}
-
-		// Store the event if we have an event store
-		var eventID string
+		// Store the event in the event store if available
 		if httpSession != nil && httpSession.eventStore != nil {
-			var storeErr error
-			eventID, storeErr = httpSession.eventStore.StoreEvent(streamID, initialResponse)
-			if storeErr != nil {
+			_, err := httpSession.eventStore.StoreEvent(streamID, initialResponse)
+			if err != nil {
 				// Log the error but continue
-				fmt.Printf("Error storing event: %v\n", storeErr)
+				fmt.Printf("Error storing event: %v\n", err)
 			}
 		}
 
-		// Write the event directly to the response writer
-		if eventID != "" {
-			fmt.Fprintf(w, "id: %s\ndata: %s\n\n", eventID, data)
-		} else {
-			fmt.Fprintf(w, "data: %s\n\n", data)
+		// Send the response
+		if err := s.writeSSEEvent(streamID, "", initialResponse); err != nil {
+			fmt.Printf("Error writing response: %v\n", err)
 		}
-		w.(http.Flusher).Flush()
 
 		// According to the MCP specification, the server SHOULD close the SSE stream
 		// after all JSON-RPC responses have been sent.
@@ -647,10 +621,7 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 	// that might come in, then close it.
 
 	// Create a channel to pass notifications from the goroutine to the main handler
-	notificationCh := make(chan struct {
-		eventID string
-		data    []byte
-	}, 100) // Buffer size to prevent blocking
+	notificationCh := make(chan mcp.JSONRPCNotification, 100) // Buffer size to prevent blocking
 	notifDone := make(chan struct{})
 	defer close(notifDone)
 
@@ -663,28 +634,9 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 					return
 				}
 
-				data, err := json.Marshal(notification)
-				if err != nil {
-					continue
-				}
-
-				// Store the event if we have an event store
-				var eventID string
-				if httpSession != nil && httpSession.eventStore != nil {
-					var storeErr error
-					eventID, storeErr = httpSession.eventStore.StoreEvent(streamID, notification)
-					if storeErr != nil {
-						// Log the error but continue
-						fmt.Printf("Error storing event: %v\n", storeErr)
-					}
-				}
-
 				// Send the notification to the main handler goroutine via channel
 				select {
-				case notificationCh <- struct {
-					eventID string
-					data    []byte
-				}{eventID: eventID, data: data}:
+				case notificationCh <- notification:
 				case <-notifDone:
 					return
 				}
@@ -703,13 +655,19 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 	for {
 		select {
 		case notification := <-notificationCh:
-			// Write the event directly to the response writer from the main handler goroutine
-			if notification.eventID != "" {
-				fmt.Fprintf(w, "id: %s\ndata: %s\n\n", notification.eventID, notification.data)
-			} else {
-				fmt.Fprintf(w, "data: %s\n\n", notification.data)
+			// Store the event in the event store if available
+			if httpSession != nil && httpSession.eventStore != nil {
+				_, err := httpSession.eventStore.StoreEvent(streamID, notification)
+				if err != nil {
+					// Log the error but continue
+					fmt.Printf("Error storing event: %v\n", err)
+				}
 			}
-			w.(http.Flusher).Flush()
+
+			// Send the notification
+			if err := s.writeSSEEvent(streamID, "", notification); err != nil {
+				fmt.Printf("Error writing notification: %v\n", err)
+			}
 		case <-ctx.Done():
 			// Request context is done or timeout reached, exit the loop
 			return
@@ -741,7 +699,13 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Check if the session exists
+	// Check if the session exists using validateSession
+	if !s.validateSession(sessionID) {
+		http.Error(w, "Session not found or not initialized", http.StatusNotFound)
+		return
+	}
+
+	// Get the session
 	sessionValue, ok := s.sessions.Load(sessionID)
 	if !ok {
 		http.Error(w, "Session not found", http.StatusNotFound)
@@ -755,24 +719,31 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Set SSE headers
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
-
-	// Send an initial event to confirm the connection is established
-	initialEvent := fmt.Sprintf("data: {\"jsonrpc\": \"2.0\", \"method\": \"connection/established\"}\n\n")
-	if _, err := fmt.Fprint(w, initialEvent); err != nil {
+	// Set up the stream
+	streamID, err := s.setupStream(w)
+	if err != nil {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
 		return
 	}
-	// Ensure the event is sent immediately
-	w.(http.Flusher).Flush()
+	defer s.closeStream(streamID)
 
-	// Start a goroutine to listen for notifications and forward them to the client
+	// Send an initial event to confirm the connection is established
+	initialNotification := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  "connection/established",
+		"params":  nil,
+	}
+	if err := s.writeSSEEvent(streamID, "", initialNotification); err != nil {
+		fmt.Printf("Error writing initial notification: %v\n", err)
+		return
+	}
+
+	// Create a channel to pass notifications from the goroutine to the main handler
+	notificationCh := make(chan mcp.JSONRPCNotification, 100) // Buffer size to prevent blocking
 	notifDone := make(chan struct{})
 	defer close(notifDone)
 
+	// Start a goroutine to listen for notifications and send them to the notification channel
 	go func() {
 		for {
 			select {
@@ -781,15 +752,12 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 					return
 				}
 
-				data, err := json.Marshal(notification)
-				if err != nil {
-					continue
+				// Send the notification to the main handler goroutine via channel
+				select {
+				case notificationCh <- notification:
+				case <-notifDone:
+					return
 				}
-
-				// Make sure the notification is properly formatted as a JSON-RPC message
-				// The test expects a specific format with jsonrpc, method, and params fields
-				fmt.Fprintf(w, "data: %s\n\n", data)
-				w.(http.Flusher).Flush()
 			case <-notifDone:
 				return
 			}
@@ -798,9 +766,21 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 
 	// Create a context with cancellation
 	// For standalone SSE streams, we'll keep the connection open until the client disconnects
-	// or the context is canceled
 	ctx := r.Context()
-	<-ctx.Done()
+
+	// Process notifications in the main handler goroutine
+	for {
+		select {
+		case notification := <-notificationCh:
+			// Send the notification
+			if err := s.writeSSEEvent(streamID, "", notification); err != nil {
+				fmt.Printf("Error writing notification: %v\n", err)
+			}
+		case <-ctx.Done():
+			// Request context is done, exit the loop
+			return
+		}
+	}
 }
 
 // handleDelete processes DELETE requests to the MCP endpoint (for session termination)
@@ -826,18 +806,30 @@ func (s *StreamableHTTPServer) handleDelete(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusOK)
 }
 
+// streamInfo holds information about an active SSE stream
+type streamInfo struct {
+	writer  http.ResponseWriter
+	flusher http.Flusher
+	eventID int
+	mu      sync.Mutex // For thread-safe event ID updates
+}
+
 // writeSSEEvent writes an SSE event to the given stream
 func (s *StreamableHTTPServer) writeSSEEvent(streamID string, event string, message mcp.JSONRPCMessage) error {
-	// Get the stream channel
-	streamChanI, ok := s.streamMapping.Load(streamID)
+	// Get the stream info
+	streamInfoI, ok := s.streamMapping.Load(streamID)
 	if !ok {
 		return fmt.Errorf("stream not found: %s", streamID)
 	}
 
-	streamChan, ok := streamChanI.(chan string)
+	streamInfo, ok := streamInfoI.(*streamInfo)
 	if !ok {
-		return fmt.Errorf("invalid stream channel type")
+		return fmt.Errorf("invalid stream info type")
 	}
+
+	// Lock for thread-safe event ID update
+	streamInfo.mu.Lock()
+	defer streamInfo.mu.Unlock()
 
 	// Marshal the message
 	data, err := json.Marshal(message)
@@ -845,16 +837,58 @@ func (s *StreamableHTTPServer) writeSSEEvent(streamID string, event string, mess
 		return err
 	}
 
-	// Create the event data
-	eventData := fmt.Sprintf("event: %s\ndata: %s\n\n", event, data)
-
-	// Send the event to the channel
-	select {
-	case streamChan <- eventData:
-		return nil
-	default:
-		return fmt.Errorf("stream channel full")
+	// Write the event to the response
+	if event != "" {
+		fmt.Fprintf(streamInfo.writer, "event: %s\n", event)
 	}
+	fmt.Fprintf(streamInfo.writer, "id: %d\ndata: %s\n\n", streamInfo.eventID, data)
+	streamInfo.flusher.Flush()
+
+	// Increment the event ID
+	streamInfo.eventID++
+
+	return nil
+}
+
+// setupStream creates a new SSE stream and returns its ID
+func (s *StreamableHTTPServer) setupStream(w http.ResponseWriter) (string, error) {
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+
+	// Create a unique stream ID
+	streamID := uuid.New().String()
+
+	// Get the flusher
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		return "", fmt.Errorf("streaming not supported")
+	}
+
+	// Store the stream info
+	s.streamMapping.Store(streamID, &streamInfo{
+		writer:  w,
+		flusher: flusher,
+		eventID: 0,
+	})
+
+	return streamID, nil
+}
+
+// closeStream removes a stream from the mapping
+func (s *StreamableHTTPServer) closeStream(streamID string) {
+	s.streamMapping.Delete(streamID)
+}
+
+// BroadcastNotification sends a notification to all active streams
+func (s *StreamableHTTPServer) BroadcastNotification(notification mcp.JSONRPCNotification) {
+	s.streamMapping.Range(func(key, value interface{}) bool {
+		streamID := key.(string)
+		s.writeSSEEvent(streamID, "", notification)
+		return true
+	})
 }
 
 // splitHeader splits a comma-separated header value into individual values
