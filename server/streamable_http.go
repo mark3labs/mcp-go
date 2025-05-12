@@ -602,7 +602,7 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 		// Replay events that occurred after the last event ID
 		err := httpSession.eventStore.ReplayEventsAfter(lastEventID, func(eventID string, message mcp.JSONRPCMessage) error {
 			// Use the event ID from the store
-			if err := s.writeSSEEvent(streamID, "", message); err != nil {
+			if err := s.writeSSEEvent(streamID, "", eventID, message); err != nil {
 				return err
 			}
 			return nil
@@ -616,34 +616,48 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 
 	// Send any buffered notifications first
 	for _, notification := range notificationBuffer {
-		// Store the event in the event store if available
+		// Store the event in the event store and get its ID
+		var eventID string
 		if httpSession != nil && httpSession.eventStore != nil {
-			_, err := httpSession.eventStore.StoreEvent(streamID, notification)
+			var err error
+			eventID, err = httpSession.eventStore.StoreEvent(streamID, notification)
 			if err != nil {
 				// Log the error but continue
 				fmt.Printf("Error storing event: %v\n", err)
+				// Use a generated UUID as fallback
+				eventID = uuid.New().String()
 			}
+		} else {
+			// Use a generated UUID if no event store is available
+			eventID = uuid.New().String()
 		}
 
-		// Send the notification
-		if err := s.writeSSEEvent(streamID, "", notification); err != nil {
+		// Send the notification with the event ID
+		if err := s.writeSSEEvent(streamID, "", eventID, notification); err != nil {
 			fmt.Printf("Error writing notification: %v\n", err)
 		}
 	}
 
 	// Send the initial response if there is one
 	if initialResponse != nil {
-		// Store the event in the event store if available
+		// Get the event ID from the store
+		var eventID string
 		if httpSession != nil && httpSession.eventStore != nil {
-			_, err := httpSession.eventStore.StoreEvent(streamID, initialResponse)
+			var err error
+			eventID, err = httpSession.eventStore.StoreEvent(streamID, initialResponse)
 			if err != nil {
 				// Log the error but continue
 				fmt.Printf("Error storing event: %v\n", err)
+				// Use a generated UUID as fallback
+				eventID = uuid.New().String()
 			}
+		} else {
+			// Use a generated UUID if no event store is available
+			eventID = uuid.New().String()
 		}
 
-		// Send the response
-		if err := s.writeSSEEvent(streamID, "", initialResponse); err != nil {
+		// Send the response with the event ID
+		if err := s.writeSSEEvent(streamID, "", eventID, initialResponse); err != nil {
 			fmt.Printf("Error writing response: %v\n", err)
 		}
 
@@ -699,17 +713,24 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 	for {
 		select {
 		case notification := <-notificationCh:
-			// Store the event in the event store if available
+			// Store the event in the event store and get its ID
+			var eventID string
 			if httpSession != nil && httpSession.eventStore != nil {
-				_, err := httpSession.eventStore.StoreEvent(streamID, notification)
+				var err error
+				eventID, err = httpSession.eventStore.StoreEvent(streamID, notification)
 				if err != nil {
 					// Log the error but continue
 					fmt.Printf("Error storing event: %v\n", err)
+					// Use a generated UUID as fallback
+					eventID = uuid.New().String()
 				}
+			} else {
+				// Use a generated UUID if no event store is available
+				eventID = uuid.New().String()
 			}
 
-			// Send the notification
-			if err := s.writeSSEEvent(streamID, "", notification); err != nil {
+			// Send the notification with the event ID
+			if err := s.writeSSEEvent(streamID, "", eventID, notification); err != nil {
 				fmt.Printf("Error writing notification: %v\n", err)
 			}
 		case <-keepAliveTicker.C:
@@ -726,7 +747,9 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 						},
 					},
 				}
-				if err := s.writeSSEEvent(streamID, "keepalive", keepAliveMsg); err != nil {
+				// Generate a unique ID for the keep-alive message
+				keepAliveID := uuid.New().String()
+				if err := s.writeSSEEvent(streamID, "keepalive", keepAliveID, keepAliveMsg); err != nil {
 					fmt.Printf("Error writing keep-alive: %v\n", err)
 				}
 			}
@@ -799,7 +822,9 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 			},
 		},
 	}
-	if err := s.writeSSEEvent(streamID, "", initialNotification); err != nil {
+	// Generate a unique ID for the initial notification
+	initialEventID := uuid.New().String()
+	if err := s.writeSSEEvent(streamID, "", initialEventID, initialNotification); err != nil {
 		fmt.Printf("Error writing initial notification: %v\n", err)
 		return
 	}
@@ -845,8 +870,9 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 	for {
 		select {
 		case notification := <-notificationCh:
-			// Send the notification
-			if err := s.writeSSEEvent(streamID, "", notification); err != nil {
+			// Generate a unique ID for the notification
+			eventID := uuid.New().String()
+			if err := s.writeSSEEvent(streamID, "", eventID, notification); err != nil {
 				fmt.Printf("Error writing notification: %v\n", err)
 			}
 		case <-keepAliveTicker.C:
@@ -863,7 +889,9 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 						},
 					},
 				}
-				if err := s.writeSSEEvent(streamID, "keepalive", keepAliveMsg); err != nil {
+				// Generate a unique ID for the keep-alive message
+				keepAliveID := uuid.New().String()
+				if err := s.writeSSEEvent(streamID, "keepalive", keepAliveID, keepAliveMsg); err != nil {
 					fmt.Printf("Error writing keep-alive: %v\n", err)
 				}
 			}
@@ -901,12 +929,11 @@ func (s *StreamableHTTPServer) handleDelete(w http.ResponseWriter, r *http.Reque
 type streamInfo struct {
 	writer  http.ResponseWriter
 	flusher http.Flusher
-	eventID int
-	mu      sync.Mutex // For thread-safe event ID updates
+	mu      sync.Mutex // For thread-safe operations
 }
 
 // writeSSEEvent writes an SSE event to the given stream
-func (s *StreamableHTTPServer) writeSSEEvent(streamID string, event string, message mcp.JSONRPCMessage) error {
+func (s *StreamableHTTPServer) writeSSEEvent(streamID, event, eventID string, message mcp.JSONRPCMessage) error {
 	// Get the stream info
 	streamInfoI, ok := s.streamMapping.Load(streamID)
 	if !ok {
@@ -918,7 +945,7 @@ func (s *StreamableHTTPServer) writeSSEEvent(streamID string, event string, mess
 		return fmt.Errorf("invalid stream info type")
 	}
 
-	// Lock for thread-safe event ID update
+	// Lock for thread-safe operations
 	streamInfo.mu.Lock()
 	defer streamInfo.mu.Unlock()
 
@@ -932,11 +959,8 @@ func (s *StreamableHTTPServer) writeSSEEvent(streamID string, event string, mess
 	if event != "" {
 		fmt.Fprintf(streamInfo.writer, "event: %s\n", event)
 	}
-	fmt.Fprintf(streamInfo.writer, "id: %d\ndata: %s\n\n", streamInfo.eventID, data)
+	fmt.Fprintf(streamInfo.writer, "id: %s\ndata: %s\n\n", eventID, data)
 	streamInfo.flusher.Flush()
-
-	// Increment the event ID
-	streamInfo.eventID++
 
 	return nil
 }
@@ -1032,7 +1056,6 @@ func (s *StreamableHTTPServer) setupStream(w http.ResponseWriter, r *http.Reques
 	info := &streamInfo{
 		writer:  w,
 		flusher: flusher,
-		eventID: 0,
 	}
 
 	// Store the stream info
