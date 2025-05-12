@@ -64,10 +64,10 @@ func WithHeartbeatInterval(interval time.Duration) StreamableHTTPOption {
 	}
 }
 
-// WithHttpContextFunc sets a function that will be called to customise the context
+// WithHTTPContextFunc sets a function that will be called to customise the context
 // to the server using the incoming request.
 // This can be used to inject context values from headers, for example.
-func WithHttpContextFunc(fn HTTPContextFunc) StreamableHTTPOption {
+func WithHTTPContextFunc(fn HTTPContextFunc) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {
 		s.contextFunc = fn
 	}
