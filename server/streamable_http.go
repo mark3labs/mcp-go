@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
@@ -27,6 +26,23 @@ type streamableHTTPSession struct {
 	// For handling notifications during request processing
 	notificationHandler func(mcp.JSONRPCNotification)
 	notifyMu            sync.RWMutex
+}
+
+// MarshalJSON implements json.Marshaler to exclude function fields
+// that cannot be marshaled to JSON
+func (s *streamableHTTPSession) MarshalJSON() ([]byte, error) {
+	// Create a simplified version of the session without function fields
+	type SessionForJSON struct {
+		SessionID string `json:"sessionId"`
+		// Include other fields that are safe to marshal
+		Initialized bool `json:"initialized"`
+		// Exclude notificationHandler and other non-marshalable fields
+	}
+
+	return json.Marshal(SessionForJSON{
+		SessionID:   s.sessionID,
+		Initialized: s.initialized.Load(),
+	})
 }
 
 func (s *streamableHTTPSession) SessionID() string {
@@ -537,7 +553,7 @@ func (s *StreamableHTTPServer) handleRequest(w http.ResponseWriter, r *http.Requ
 
 func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.Request, ctx context.Context, initialResponse mcp.JSONRPCMessage, session SessionWithTools, notificationBuffer ...mcp.JSONRPCNotification) {
 	// Set up the stream
-	streamID, err := s.setupStream(w)
+	streamID, err := s.setupStream(w, r)
 	if err != nil {
 		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
 		return
@@ -720,7 +736,7 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Set up the stream
-	streamID, err := s.setupStream(w)
+	streamID, err := s.setupStream(w, r)
 	if err != nil {
 		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
 		return
@@ -728,10 +744,14 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 	defer s.closeStream(streamID)
 
 	// Send an initial event to confirm the connection is established
-	initialNotification := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  "connection/established",
-		"params":  nil,
+	initialNotification := mcp.JSONRPCNotification{
+		JSONRPC: "2.0",
+		Notification: mcp.Notification{
+			Method: "connection/established",
+			Params: mcp.NotificationParams{
+				AdditionalFields: make(map[string]interface{}),
+			},
+		},
 	}
 	if err := s.writeSSEEvent(streamID, "", initialNotification); err != nil {
 		fmt.Printf("Error writing initial notification: %v\n", err)
@@ -850,45 +870,62 @@ func (s *StreamableHTTPServer) writeSSEEvent(streamID string, event string, mess
 	return nil
 }
 
-// setupStream creates a new SSE stream and returns its ID
-func (s *StreamableHTTPServer) setupStream(w http.ResponseWriter) (string, error) {
-	// Set SSE headers
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache, no-transform")
-	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
-
-	// Create a unique stream ID
-	streamID := uuid.New().String()
-
-	// Get the flusher
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		return "", fmt.Errorf("streaming not supported")
+// isValidOrigin validates the Origin header against the allowlist
+func (s *StreamableHTTPServer) isValidOrigin(origin string) bool {
+	// Empty origins are not valid
+	if origin == "" {
+		return false
 	}
 
-	// Store the stream info
-	s.streamMapping.Store(streamID, &streamInfo{
-		writer:  w,
-		flusher: flusher,
-		eventID: 0,
-	})
+	// Parse the origin URL first
+	originURL, err := url.Parse(origin)
+	if err != nil {
+		return false // Invalid URLs should always be rejected
+	}
 
-	return streamID, nil
-}
-
-// closeStream removes a stream from the mapping
-func (s *StreamableHTTPServer) closeStream(streamID string) {
-	s.streamMapping.Delete(streamID)
-}
-
-// BroadcastNotification sends a notification to all active streams
-func (s *StreamableHTTPServer) BroadcastNotification(notification mcp.JSONRPCNotification) {
-	s.streamMapping.Range(func(key, value interface{}) bool {
-		streamID := key.(string)
-		s.writeSSEEvent(streamID, "", notification)
+	// If no allowlist is configured, allow all valid origins
+	if len(s.originAllowlist) == 0 {
+		// Always allow localhost and 127.0.0.1
+		if originURL.Hostname() == "localhost" || originURL.Hostname() == "127.0.0.1" {
+			return true
+		}
 		return true
-	})
+	}
+
+	// Always allow localhost and 127.0.0.1
+	if originURL.Hostname() == "localhost" || originURL.Hostname() == "127.0.0.1" {
+		return true
+	}
+
+	// Check against the allowlist
+	for _, allowed := range s.originAllowlist {
+		// Check for wildcard subdomain pattern
+		if strings.HasPrefix(allowed, "*.") {
+			domain := allowed[2:] // Remove the "*." prefix
+			if strings.HasSuffix(originURL.Hostname(), domain) {
+				// Check if it's a subdomain (has at least one character before the domain)
+				prefix := originURL.Hostname()[:len(originURL.Hostname())-len(domain)]
+				if len(prefix) > 0 {
+					return true
+				}
+			}
+		} else if origin == allowed {
+			// Exact match
+			return true
+		}
+	}
+
+	return false
+}
+
+// validateSession checks if a session exists and is initialized
+func (s *StreamableHTTPServer) validateSession(sessionID string) bool {
+	if sessionValue, ok := s.sessions.Load(sessionID); ok {
+		if session, ok := sessionValue.(ClientSession); ok {
+			return session.Initialized()
+		}
+	}
+	return false
 }
 
 // splitHeader splits a comma-separated header value into individual values
@@ -896,113 +933,44 @@ func splitHeader(header string) []string {
 	if header == "" {
 		return nil
 	}
-
-	var values []string
-	for _, value := range splitAndTrim(header, ',') {
-		if value != "" {
-			values = append(values, value)
-		}
+	values := strings.Split(header, ",")
+	for i, v := range values {
+		values[i] = strings.TrimSpace(v)
 	}
-
 	return values
 }
 
-// splitAndTrim splits a string by the given separator and trims whitespace from each part
-func splitAndTrim(s string, sep rune) []string {
-	var result []string
-	var builder strings.Builder
-	var inQuotes bool
-
-	for _, r := range s {
-		if r == '"' {
-			inQuotes = !inQuotes
-			builder.WriteRune(r)
-		} else if r == sep && !inQuotes {
-			result = append(result, strings.TrimSpace(builder.String()))
-			builder.Reset()
-		} else {
-			builder.WriteRune(r)
-		}
+// setupStream creates a new SSE stream and returns its ID
+func (s *StreamableHTTPServer) setupStream(w http.ResponseWriter, r *http.Request) (string, error) {
+	// Check if the response writer supports flushing
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		return "", fmt.Errorf("streaming not supported")
 	}
 
-	if builder.Len() > 0 {
-		result = append(result, strings.TrimSpace(builder.String()))
+	// Set headers for SSE
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no") // For Nginx
+
+	// Create a unique ID for this stream
+	streamID := uuid.New().String()
+
+	// Create a stream info object
+	info := &streamInfo{
+		writer:  w,
+		flusher: flusher,
+		eventID: 0,
 	}
 
-	return result
+	// Store the stream info
+	s.streamMapping.Store(streamID, info)
+
+	return streamID, nil
 }
 
-// NewTestStreamableHTTPServer creates a test server for testing purposes
-func NewTestStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *httptest.Server {
-	// Create the server
-	base := NewStreamableHTTPServer(server, opts...)
-
-	// Create the test server
-	testServer := httptest.NewServer(base)
-
-	// Set the base URL
-	base.baseURL = testServer.URL
-
-	return testServer
-}
-
-// isValidOrigin validates the Origin header to prevent DNS rebinding attacks
-func (s *StreamableHTTPServer) isValidOrigin(origin string) bool {
-	// Basic validation - parse URL and check scheme
-	u, err := url.Parse(origin)
-	if err != nil {
-		return false
-	}
-
-	// For local development, allow localhost
-	if strings.HasPrefix(u.Host, "localhost:") || u.Host == "localhost" || u.Host == "127.0.0.1" {
-		return true
-	}
-
-	// Check against allowlist if configured
-	if len(s.originAllowlist) > 0 {
-		for _, allowed := range s.originAllowlist {
-			// Exact match
-			if allowed == origin {
-				return true
-			}
-
-			// Wildcard subdomain match (e.g., *.example.com)
-			if strings.HasPrefix(allowed, "*.") {
-				domain := allowed[2:] // Remove the "*." prefix
-				if strings.HasSuffix(u.Host, domain) {
-					// Check that it's a proper subdomain
-					hostWithoutDomain := strings.TrimSuffix(u.Host, domain)
-					if hostWithoutDomain != "" && strings.HasSuffix(hostWithoutDomain, ".") {
-						return true
-					}
-				}
-			}
-		}
-
-		// If we have an allowlist and the origin isn't in it, reject
-		return false
-	}
-
-	// If no allowlist is configured, allow all origins (backward compatibility)
-	// In production, you should always configure an allowlist
-	return true
-}
-
-// validateSession checks if the session ID is valid and the session is initialized
-func (s *StreamableHTTPServer) validateSession(sessionID string) bool {
-	// Check if the session ID is valid
-	if sessionID == "" {
-		return false
-	}
-
-	// Check if the session exists
-	if sessionValue, ok := s.sessions.Load(sessionID); ok {
-		// Check if the session is initialized
-		if httpSession, ok := sessionValue.(*streamableHTTPSession); ok {
-			return httpSession.Initialized()
-		}
-	}
-
-	return false
+// closeStream closes an SSE stream and removes it from the mapping
+func (s *StreamableHTTPServer) closeStream(streamID string) {
+	s.streamMapping.Delete(streamID)
 }

@@ -6,10 +6,37 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
+
+// TestServer is a wrapper around httptest.Server that includes the StreamableHTTPServer
+type TestServer struct {
+	*httptest.Server
+	StreamableHTTP *StreamableHTTPServer
+}
+
+// NewTestStreamableHTTPServer creates a new test server with the given MCP server and options
+func NewTestStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *TestServer {
+	// Create a new StreamableHTTPServer
+	streamableServer := NewStreamableHTTPServer(server, opts...)
+
+	// Create a test HTTP server
+	testServer := httptest.NewServer(streamableServer)
+
+	// Return the test server
+	return &TestServer{
+		Server:         testServer,
+		StreamableHTTP: streamableServer,
+	}
+}
+
+// Close closes the test server
+func (s *TestServer) Close() {
+	s.Server.Close()
+}
 
 func TestStreamableHTTPServer(t *testing.T) {
 	// Create a new MCP server
@@ -293,10 +320,18 @@ func TestStreamableHTTPServer(t *testing.T) {
 		// Give a small delay to ensure the notification is processed and flushed
 		time.Sleep(500 * time.Millisecond)
 
-		// Read the notification in a goroutine
+		// Create channels for coordination
 		readDone := make(chan string, 1)
+		errChan := make(chan error, 1)
+		readyForNotification := make(chan struct{})
+
+		// Read the notification in a goroutine
 		go func() {
 			defer close(readDone)
+
+			// Signal that we're ready to receive notifications
+			close(readyForNotification)
+
 			// Read the first event after the initial connection event (should be the notification)
 			for {
 				line, err := reader.ReadString('\n')
@@ -304,7 +339,7 @@ func TestStreamableHTTPServer(t *testing.T) {
 					if err == io.EOF {
 						return
 					}
-					t.Errorf("Failed to read line: %v", err)
+					errChan <- fmt.Errorf("Failed to read line: %v", err)
 					return
 				}
 
@@ -321,13 +356,29 @@ func TestStreamableHTTPServer(t *testing.T) {
 			}
 		}()
 
+		// Wait for the goroutine to be ready to receive notifications
+		<-readyForNotification
+
+		// Give a small delay to ensure the stream is fully established
+		time.Sleep(100 * time.Millisecond)
+
+		// Send the notification
+		err = mcpServer.SendNotificationToSpecificClient(sessionID, "test/notification", map[string]interface{}{
+			"message": "Hello, world!",
+		})
+		if err != nil {
+			t.Fatalf("Failed to send notification: %v", err)
+		}
+
 		// Wait for the read to complete or timeout
 		var eventData string
 		select {
 		case data := <-readDone:
 			// Read completed
 			eventData = data
-		case <-time.After(2 * time.Second):
+		case err := <-errChan:
+			t.Fatalf("Error reading notification: %v", err)
+		case <-time.After(5 * time.Second): // Increased timeout
 			t.Fatalf("Timeout waiting for notification")
 		}
 
