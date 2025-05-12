@@ -247,7 +247,6 @@ type StreamableHTTPServer struct {
 	enableJSONResponse bool
 	eventStore         EventStore
 	streamMapping      sync.Map // Maps streamID to response writer
-	requestToStreamMap sync.Map // Maps requestID to streamID
 	statelessMode      bool
 	originAllowlist    []string // List of allowed origins for CORS validation
 
@@ -318,24 +317,50 @@ func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// ServeHTTP implements the http.Handler interface.
-func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
-
-	// Determine the endpoint path
-	var endpoint string
-
-	// If dynamic base path function is set, use it to determine the base path
+// resolveBasePath determines the base path for a request, using either the dynamic
+// base path function (if set) or the static base path.
+func (s *StreamableHTTPServer) resolveBasePath(r *http.Request) string {
 	if s.dynamicBasePathFunc != nil {
 		// Get the session ID from the header if present
 		sessionID := r.Header.Get("Mcp-Session-Id")
 		// Use the dynamic base path function to determine the base path
-		dynamicBasePath := s.dynamicBasePathFunc(r, sessionID)
-		endpoint = dynamicBasePath + s.endpoint
-	} else {
-		// Use the static base path
-		endpoint = s.basePath + s.endpoint
+		return s.dynamicBasePathFunc(r, sessionID)
 	}
+
+	// Use the static base path
+	return s.basePath
+}
+
+// setCORSHeaders sets appropriate CORS headers based on the server's configuration.
+func (s *StreamableHTTPServer) setCORSHeaders(w http.ResponseWriter, r *http.Request) {
+	origin := r.Header.Get("Origin")
+
+	// If the origin is valid, set CORS headers
+	if origin != "" && s.isValidOrigin(origin) {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Mcp-Session-Id, Last-Event-Id")
+		w.Header().Set("Access-Control-Expose-Headers", "Mcp-Session-Id")
+		w.Header().Set("Access-Control-Max-Age", "86400") // 24 hours
+	}
+}
+
+// ServeHTTP implements the http.Handler interface.
+func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Set CORS headers for all requests
+	s.setCORSHeaders(w, r)
+
+	// Handle OPTIONS requests for CORS preflight
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	path := r.URL.Path
+
+	// Determine the endpoint path using the helper
+	basePath := s.resolveBasePath(r)
+	endpoint := basePath + s.endpoint
 
 	if path != endpoint {
 		http.NotFound(w, r)
@@ -344,12 +369,9 @@ func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request)
 
 	// Validate Origin header if present (MUST requirement from spec)
 	origin := r.Header.Get("Origin")
-	if origin != "" {
-		// Simple validation - in production you might want more sophisticated checks
-		if !s.isValidOrigin(origin) {
-			http.Error(w, "Invalid origin", http.StatusForbidden)
-			return
-		}
+	if origin != "" && !s.isValidOrigin(origin) {
+		http.Error(w, "Invalid origin", http.StatusForbidden)
+		return
 	}
 
 	switch r.Method {
@@ -582,19 +604,8 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 	}
 	defer s.closeStream(streamID)
 
-	// Get the request ID from the initial response
-	var requestID interface{}
-	if resp, ok := initialResponse.(mcp.JSONRPCResponse); ok {
-		requestID = resp.ID
-	} else if errResp, ok := initialResponse.(mcp.JSONRPCError); ok {
-		requestID = errResp.ID
-	}
-
-	// If we have a request ID, map it to this stream
-	if requestID != nil {
-		s.requestToStreamMap.Store(requestID, streamID)
-		defer s.requestToStreamMap.Delete(requestID)
-	}
+	// We could extract the request ID from the initial response if needed
+	// But since we're not using it currently, we'll skip this step
 
 	// Check for Last-Event-ID header for resumability
 	lastEventID := r.Header.Get("Last-Event-Id")
