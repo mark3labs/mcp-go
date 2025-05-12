@@ -521,6 +521,10 @@ For examples, see the `examples/` directory.
 
 ## Extras
 
+### Transports
+
+MCP-Go supports stdio, SSE and streamable-HTTP transport layers.
+
 ### Session Management
 
 MCP-Go provides a robust session management system that allows you to:
