@@ -929,9 +929,14 @@ func (s *StreamableHTTPServer) handleDelete(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Unregister the session
+	// Unregister and fully clean-up the session
+	if sessVal, ok := s.sessions.Load(sessionID); ok {
+		if httpSess, ok := sessVal.(*streamableHTTPSession); ok {
+			close(httpSess.notificationChannel) // unblock the forwarding goroutine
+		}
+		s.sessions.Delete(sessionID)
+	}
 	s.server.UnregisterSession(r.Context(), sessionID)
-	s.sessions.Delete(sessionID)
 
 	// Return 200 OK
 	w.WriteHeader(http.StatusOK)
