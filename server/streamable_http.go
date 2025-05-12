@@ -344,25 +344,15 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 	// Start notification handler for this session
 	done := make(chan struct{})
 	defer close(done)
-	mu := sync.Mutex{}
+	writeChan := make(chan any, 16)
+	defer close(writeChan)
 
 	go func() {
 		for {
 			select {
 			case nt := <-session.notificationChannel:
-				func() {
-					mu.Lock()
-					defer mu.Unlock()
-					err := writeSSEEvent(w, nt)
-					if err != nil {
-						s.logger.Errorf("Failed to write SSE event: %v", err)
-						return
-					}
-					flusher.Flush()
-				}()
+				writeChan <- &nt
 			case <-done:
-				return
-			case <-r.Context().Done():
 				return
 			}
 		}
@@ -382,19 +372,8 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 			for {
 				select {
 				case <-ticker.C:
-					func() {
-						mu.Lock()
-						defer mu.Unlock()
-						err := writeSSEEvent(w, message)
-						if err != nil {
-							s.logger.Errorf("Failed to write SSE heartbeat event: %v", err)
-							return
-						}
-						flusher.Flush()
-					}()
+					writeChan <- message
 				case <-done:
-					return
-				case <-r.Context().Done():
 					return
 				}
 			}
@@ -402,7 +381,24 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Keep the connection open until the client disconnects
-	<-r.Context().Done()
+	//
+	// There's will a Available() check when handler ends, and it maybe race with Flush(),
+	// so we use a separate channel to send the data, inteading of flushing directly in other goroutine.
+	for {
+		select {
+		case data := <-writeChan:
+			if data == nil {
+				continue
+			}
+			if err := writeSSEEvent(w, data); err != nil {
+				s.logger.Errorf("Failed to write SSE event: %v", err)
+				return
+			}
+			flusher.Flush()
+		case <-r.Context().Done():
+			return
+		}
+	}
 }
 
 func (s *StreamableHTTPServer) handleDelete(w http.ResponseWriter, r *http.Request) {
