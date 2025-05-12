@@ -96,6 +96,11 @@ func WithLogger(logger util.Logger) StreamableHTTPOption {
 //	http.Handle("/streamable-http", handler)
 //	http.ListenAndServe(":8080", nil)
 //
+// Notice:
+// Except for the GET handlers(listening), the POST handlers(request/notification) will
+// not trigger the session registration. So the methods like `SendNotificationToSpecificClient`
+// or `hooks.onRegisterSession` will not be triggered for POST messages.
+//
 // The current implementation does not support the following features from the specification:
 //   - Batching of requests/notifications/responses in arrays.
 //   - Stream Resumability
@@ -468,6 +473,9 @@ func (s *sessionToolsStore) set(sessionID string, tools map[string]ServerTool) {
 	s.tools[sessionID] = tools
 }
 
+// streamableHttpSession is a session for streamable-http transport
+// When in POST handlers(request/notification), it's ephemeral, and only exists in the life of the request handler.
+// When in GET handlers(listening), it's a real session, and will be registered in the MCP server.
 type streamableHttpSession struct {
 	sessionID           string
 	notificationChannel chan mcp.JSONRPCNotification // server -> client notifications
