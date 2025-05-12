@@ -72,15 +72,48 @@ func (o commonOption) isHTTPServerOption()                           {}
 func (o commonOption) applyToSSE(s *SSEServer)                       { o.apply(s) }
 func (o commonOption) applyToStreamableHTTP(s *StreamableHTTPServer) { o.apply(s) }
 
-// Add stub methods to satisfy httpTransportConfigurable
+// Implement methods to satisfy httpTransportConfigurable interface
 
-func (s *StreamableHTTPServer) setBasePath(string)                     {}
-func (s *StreamableHTTPServer) setDynamicBasePath(DynamicBasePathFunc) {}
-func (s *StreamableHTTPServer) setKeepAliveInterval(time.Duration)     {}
-func (s *StreamableHTTPServer) setKeepAlive(bool)                      {}
-func (s *StreamableHTTPServer) setContextFunc(HTTPContextFunc)         {}
-func (s *StreamableHTTPServer) setHTTPServer(srv *http.Server)         {}
-func (s *StreamableHTTPServer) setBaseURL(baseURL string)              {}
+// setBasePath sets the base path for the server
+func (s *StreamableHTTPServer) setBasePath(path string) {
+	s.basePath = path
+}
+
+// setDynamicBasePath sets a function to dynamically determine the base path
+// for each request based on the request and session ID
+func (s *StreamableHTTPServer) setDynamicBasePath(fn DynamicBasePathFunc) {
+	s.dynamicBasePathFunc = fn
+	// Note: The ServeHTTP method would need to be updated to use this function
+	// for determining the base path for each request
+}
+
+// setKeepAliveInterval sets the interval for sending keep-alive messages
+func (s *StreamableHTTPServer) setKeepAliveInterval(interval time.Duration) {
+	s.keepAliveInterval = interval
+	// Note: Additional implementation would be needed to send keep-alive messages
+	// at this interval in the SSE streams
+}
+
+// setKeepAlive enables or disables keep-alive messages
+func (s *StreamableHTTPServer) setKeepAlive(enabled bool) {
+	s.keepAliveEnabled = enabled
+	// Note: This works in conjunction with setKeepAliveInterval
+}
+
+// setContextFunc sets a function to customize the context for each request
+func (s *StreamableHTTPServer) setContextFunc(fn HTTPContextFunc) {
+	s.contextFunc = fn
+}
+
+// setHTTPServer sets the HTTP server instance
+func (s *StreamableHTTPServer) setHTTPServer(srv *http.Server) {
+	s.srv = srv
+}
+
+// setBaseURL sets the base URL for the server
+func (s *StreamableHTTPServer) setBaseURL(baseURL string) {
+	s.baseURL = baseURL
+}
 
 // Ensure the option types implement the correct interfaces
 var (

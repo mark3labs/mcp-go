@@ -232,8 +232,8 @@ func WithOriginAllowlist(allowlist []string) StreamableHTTPOption {
 	})
 }
 
-// realStreamableHTTPServer is the concrete implementation of StreamableHTTPServer.
-// It provides HTTP transport capabilities following the MCP Streamable HTTP specification.
+// StreamableHTTPServer is the concrete implementation of a server that supports
+// the MCP Streamable HTTP transport specification.
 type StreamableHTTPServer struct {
 	// Implement the httpTransportConfigurable interface
 	server             *MCPServer
@@ -250,6 +250,13 @@ type StreamableHTTPServer struct {
 	requestToStreamMap sync.Map // Maps requestID to streamID
 	statelessMode      bool
 	originAllowlist    []string // List of allowed origins for CORS validation
+
+	// Fields for dynamic base path
+	dynamicBasePathFunc DynamicBasePathFunc
+
+	// Fields for keep-alive
+	keepAliveEnabled  bool
+	keepAliveInterval time.Duration
 }
 
 // NewStreamableHTTPServer creates a new Streamable HTTP server instance with the given MCP server and options.
@@ -314,7 +321,21 @@ func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 // ServeHTTP implements the http.Handler interface.
 func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
-	endpoint := s.basePath + s.endpoint
+
+	// Determine the endpoint path
+	var endpoint string
+
+	// If dynamic base path function is set, use it to determine the base path
+	if s.dynamicBasePathFunc != nil {
+		// Get the session ID from the header if present
+		sessionID := r.Header.Get("Mcp-Session-Id")
+		// Use the dynamic base path function to determine the base path
+		dynamicBasePath := s.dynamicBasePathFunc(r, sessionID)
+		endpoint = dynamicBasePath + s.endpoint
+	} else {
+		// Use the static base path
+		endpoint = s.basePath + s.endpoint
+	}
 
 	if path != endpoint {
 		http.NotFound(w, r)
@@ -667,6 +688,13 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
+	// Set up keep-alive if enabled
+	keepAliveTicker := time.NewTicker(24 * time.Hour) // Default to a very long interval (effectively disabled)
+	if s.keepAliveEnabled && s.keepAliveInterval > 0 {
+		keepAliveTicker.Reset(s.keepAliveInterval)
+	}
+	defer keepAliveTicker.Stop()
+
 	// Process notifications in the main handler goroutine
 	for {
 		select {
@@ -683,6 +711,24 @@ func (s *StreamableHTTPServer) handleSSEResponse(w http.ResponseWriter, r *http.
 			// Send the notification
 			if err := s.writeSSEEvent(streamID, "", notification); err != nil {
 				fmt.Printf("Error writing notification: %v\n", err)
+			}
+		case <-keepAliveTicker.C:
+			// Send a keep-alive message
+			if s.keepAliveEnabled {
+				keepAliveMsg := mcp.JSONRPCNotification{
+					JSONRPC: "2.0",
+					Notification: mcp.Notification{
+						Method: "connection/keepalive",
+						Params: mcp.NotificationParams{
+							AdditionalFields: map[string]interface{}{
+								"timestamp": time.Now().UnixNano() / int64(time.Millisecond),
+							},
+						},
+					},
+				}
+				if err := s.writeSSEEvent(streamID, "keepalive", keepAliveMsg); err != nil {
+					fmt.Printf("Error writing keep-alive: %v\n", err)
+				}
 			}
 		case <-ctx.Done():
 			// Request context is done or timeout reached, exit the loop
@@ -788,6 +834,13 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 	// For standalone SSE streams, we'll keep the connection open until the client disconnects
 	ctx := r.Context()
 
+	// Set up keep-alive if enabled
+	keepAliveTicker := time.NewTicker(24 * time.Hour) // Default to a very long interval (effectively disabled)
+	if s.keepAliveEnabled && s.keepAliveInterval > 0 {
+		keepAliveTicker.Reset(s.keepAliveInterval)
+	}
+	defer keepAliveTicker.Stop()
+
 	// Process notifications in the main handler goroutine
 	for {
 		select {
@@ -795,6 +848,24 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 			// Send the notification
 			if err := s.writeSSEEvent(streamID, "", notification); err != nil {
 				fmt.Printf("Error writing notification: %v\n", err)
+			}
+		case <-keepAliveTicker.C:
+			// Send a keep-alive message
+			if s.keepAliveEnabled {
+				keepAliveMsg := mcp.JSONRPCNotification{
+					JSONRPC: "2.0",
+					Notification: mcp.Notification{
+						Method: "connection/keepalive",
+						Params: mcp.NotificationParams{
+							AdditionalFields: map[string]interface{}{
+								"timestamp": time.Now().UnixNano() / int64(time.Millisecond),
+							},
+						},
+					},
+				}
+				if err := s.writeSSEEvent(streamID, "keepalive", keepAliveMsg); err != nil {
+					fmt.Printf("Error writing keep-alive: %v\n", err)
+				}
 			}
 		case <-ctx.Done():
 			// Request context is done, exit the loop
