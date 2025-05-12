@@ -21,6 +21,7 @@ type StreamableHTTPOption func(*StreamableHTTPServer)
 
 // WithEndpointPath sets the endpoint path for the server.
 // The default is "/mcp".
+// It's only works for `Start` method. When used as a http.Handler, it has no effect.
 func WithEndpointPath(endpointPath string) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {
 		// Normalize the endpoint path to ensure it starts with a slash and doesn't end with one
