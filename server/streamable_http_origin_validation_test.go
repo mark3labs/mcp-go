@@ -20,7 +20,7 @@ func TestOriginValidation(t *testing.T) {
 		{"Localhost allowed", "http://localhost:3000", []string{}, true},
 		{"127.0.0.1 allowed", "http://127.0.0.1:8080", []string{}, true},
 		{"Multiple allowlist entries", "https://api.example.com", []string{"https://app.example.com", "https://api.example.com"}, true},
-		{"Empty allowlist", "https://example.com", []string{}, true}, // Should allow all when no allowlist is configured
+		{"Empty allowlist", "https://example.com", []string{}, false}, // Should only allow localhost/127.0.0.1 when no allowlist is configured
 		{"Invalid URL", "://invalid-url", []string{}, false},
 	}
 

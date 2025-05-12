@@ -232,6 +232,14 @@ func WithOriginAllowlist(allowlist []string) StreamableHTTPOption {
 	})
 }
 
+// WithAllowAllOrigins configures the server to accept requests from any origin
+func WithAllowAllOrigins() StreamableHTTPOption {
+	return streamableHTTPOption(func(s *StreamableHTTPServer) {
+		// Use a special marker to indicate "allow all"
+		s.originAllowlist = []string{"*"}
+	})
+}
+
 // StreamableHTTPServer is the concrete implementation of a server that supports
 // the MCP Streamable HTTP transport specification.
 type StreamableHTTPServer struct {
@@ -1009,21 +1017,20 @@ func (s *StreamableHTTPServer) isValidOrigin(origin string) bool {
 		return false // Invalid URLs should always be rejected
 	}
 
-	// If no allowlist is configured, allow all valid origins
-	if len(s.originAllowlist) == 0 {
-		// Always allow localhost and 127.0.0.1
-		if originURL.Hostname() == "localhost" || originURL.Hostname() == "127.0.0.1" {
-			return true
-		}
-		return true
-	}
-
-	// Always allow localhost and 127.0.0.1
+	// Always allow localhost and 127.0.0.1 for development
 	if originURL.Hostname() == "localhost" || originURL.Hostname() == "127.0.0.1" {
 		return true
 	}
 
+	// If no allowlist is configured, only allow localhost/127.0.0.1 (already checked above)
+	if len(s.originAllowlist) == 0 {
+		return false
+	}
+
 	// Check against the allowlist
+	if len(s.originAllowlist) == 1 && s.originAllowlist[0] == "*" {
+		return true // Explicitly configured to allow all origins
+	}
 	for _, allowed := range s.originAllowlist {
 		// Check for wildcard subdomain pattern
 		if strings.HasPrefix(allowed, "*.") {
