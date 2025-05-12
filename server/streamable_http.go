@@ -484,8 +484,9 @@ func (s *StreamableHTTPServer) handleRequest(w http.ResponseWriter, r *http.Requ
 	// Process the request
 	response := s.server.HandleMessage(ctx, rawMessage)
 
-	// Restore the original notification handler
-	if session != nil && originalNotificationHandler != nil {
+	// Always restore the previous state (even if it was nil)
+	// This prevents memory leaks from temporary handlers being left in place
+	if session != nil {
 		session.notifyMu.Lock()
 		session.notificationHandler = originalNotificationHandler
 		session.notifyMu.Unlock()
