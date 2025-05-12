@@ -523,6 +523,11 @@ type Resource struct {
 	MIMEType string `json:"mimeType,omitempty"`
 }
 
+// GetName returns the name of the resource.
+func (r Resource) GetName() string {
+	return r.Name
+}
+
 // ResourceTemplate represents a template description for resources available
 // on the server.
 type ResourceTemplate struct {
@@ -542,6 +547,11 @@ type ResourceTemplate struct {
 	// The MIME type for all resources that match this template. This should only
 	// be included if all resources matching this template have the same type.
 	MIMEType string `json:"mimeType,omitempty"`
+}
+
+// GetName returns the name of the resourceTemplate.
+func (rt ResourceTemplate) GetName() string {
+	return rt.Name
 }
 
 // ResourceContents represents the contents of a specific resource or sub-
@@ -893,3 +903,7 @@ type ServerNotification any
 
 // ServerResult represents any result that can be sent from server to client.
 type ServerResult any
+
+type Named interface {
+	GetName() string
+}

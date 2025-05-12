@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"sort"
 	"sync"
 
@@ -342,7 +341,7 @@ func (s *MCPServer) RemoveResource(uri string) {
 	}
 	s.resourcesMu.Unlock()
 
-	// Send notification to all initialized sessions if listChanged capability is enabled and we actually remove a resource 
+	// Send notification to all initialized sessions if listChanged capability is enabled and we actually remove a resource
 	if exists && s.capabilities.resources != nil && s.capabilities.resources.listChanged {
 		s.SendNotificationToAllClients(mcp.MethodNotificationResourcesListChanged, nil)
 	}
@@ -541,7 +540,7 @@ func (s *MCPServer) handlePing(
 	return &mcp.EmptyResult{}, nil
 }
 
-func listByPagination[T any](
+func listByPagination[T mcp.Named](
 	ctx context.Context,
 	s *MCPServer,
 	cursor mcp.Cursor,
@@ -555,7 +554,7 @@ func listByPagination[T any](
 		}
 		cString := string(c)
 		startPos = sort.Search(len(allElements), func(i int) bool {
-			return reflect.ValueOf(allElements[i]).FieldByName("Name").String() > cString
+			return allElements[i].GetName() > cString
 		})
 	}
 	endPos := len(allElements)
@@ -568,7 +567,7 @@ func listByPagination[T any](
 	// set the next cursor
 	nextCursor := func() mcp.Cursor {
 		if s.paginationLimit != nil && len(elementsToReturn) >= *s.paginationLimit {
-			nc := reflect.ValueOf(elementsToReturn[len(elementsToReturn)-1]).FieldByName("Name").String()
+			nc := elementsToReturn[len(elementsToReturn)-1].GetName()
 			toString := base64.StdEncoding.EncodeToString([]byte(nc))
 			return mcp.Cursor(toString)
 		}

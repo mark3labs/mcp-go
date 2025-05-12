@@ -47,18 +47,18 @@ func main() {
 		// Create command and stdio transport
 		command := args[0]
 		cmdArgs := args[1:]
-		
+
 		// Create stdio transport with verbose logging
 		stdioTransport := transport.NewStdio(command, nil, cmdArgs...)
-		
+
 		// Start the transport
 		if err := stdioTransport.Start(ctx); err != nil {
 			log.Fatalf("Failed to start stdio transport: %v", err)
 		}
-		
+
 		// Create client with the transport
 		c = client.NewClient(stdioTransport)
-		
+
 		// Set up logging for stderr if available
 		if stderr, ok := client.GetStderr(c); ok {
 			go func() {
@@ -84,12 +84,12 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to create SSE transport: %v", err)
 		}
-		
+
 		// Start the transport
 		if err := sseTransport.Start(ctx); err != nil {
 			log.Fatalf("Failed to start SSE transport: %v", err)
 		}
-		
+
 		// Create client with the transport
 		c = client.NewClient(sseTransport)
 	}
@@ -108,15 +108,15 @@ func main() {
 		Version: "1.0.0",
 	}
 	initRequest.Params.Capabilities = mcp.ClientCapabilities{}
-	
+
 	serverInfo, err := c.Initialize(ctx, initRequest)
 	if err != nil {
 		log.Fatalf("Failed to initialize: %v", err)
 	}
 
 	// Display server information
-	fmt.Printf("Connected to server: %s (version %s)\n", 
-		serverInfo.ServerInfo.Name, 
+	fmt.Printf("Connected to server: %s (version %s)\n",
+		serverInfo.ServerInfo.Name,
 		serverInfo.ServerInfo.Version)
 	fmt.Printf("Server capabilities: %+v\n", serverInfo.Capabilities)
 

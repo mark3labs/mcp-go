@@ -135,7 +135,6 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 				// verify that no notifications were sent
 				assert.Empty(t, notifications)
 
-
 				// The original resource should still be there
 				resp, ok := resourcesList.(mcp.JSONRPCResponse)
 				assert.True(t, ok)

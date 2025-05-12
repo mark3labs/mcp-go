@@ -197,7 +197,8 @@ func TestSSEServer(t *testing.T) {
 
 				endpointEvent, err = readSSEEvent(sseResp)
 				if err != nil {
-					t.Fatalf("Failed to read SSE response: %v", err)
+					t.Errorf("Failed to read SSE response: %v", err)
+					return
 				}
 				respFromSee := strings.TrimSpace(
 					strings.Split(strings.Split(endpointEvent, "data: ")[1], "\n")[0],
