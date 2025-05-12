@@ -882,8 +882,22 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 	for {
 		select {
 		case notification := <-notificationCh:
-			// Generate a unique ID for the notification
-			eventID := uuid.New().String()
+			// Store the event in the event store and get its ID
+			var eventID string
+			if session != nil && session.eventStore != nil {
+				var err error
+				eventID, err = session.eventStore.StoreEvent(streamID, notification)
+				if err != nil {
+					// Log the error but continue
+					fmt.Printf("Error storing event: %v\n", err)
+					// Use a generated UUID as fallback
+					eventID = uuid.New().String()
+				}
+			} else {
+				// Use a generated UUID if no event store is available
+				eventID = uuid.New().String()
+			}
+
 			if err := s.writeSSEEvent(streamID, "", eventID, notification); err != nil {
 				fmt.Printf("Error writing notification: %v\n", err)
 			}
