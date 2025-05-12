@@ -420,6 +420,9 @@ func (s *StreamableHTTPServer) handleDelete(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// remove the session relateddata from the sessionToolsStore
+	s.sessionTools.set(sessionID, nil)
+
 	w.WriteHeader(http.StatusOK)
 }
 
