@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -98,9 +99,47 @@ func (f *sessionTestClientWithTools) SetSessionTools(tools map[string]ServerTool
 	f.sessionTools = toolsCopy
 }
 
-// Verify that both implementations satisfy their respective interfaces
-var _ ClientSession = &sessionTestClient{}
-var _ SessionWithTools = &sessionTestClientWithTools{}
+// sessionTestClientWithTools implements the SessionWithLogging interface for testing
+type sessionTestClientWithLogging struct {
+	sessionID           string
+	notificationChannel chan mcp.JSONRPCNotification
+	initialized         bool
+	loggingLevel 		atomic.Value
+}
+
+func (f *sessionTestClientWithLogging) SessionID() string {
+	return f.sessionID
+}
+
+func (f *sessionTestClientWithLogging) NotificationChannel() chan<- mcp.JSONRPCNotification {
+	return f.notificationChannel
+}
+
+func (f *sessionTestClientWithLogging) Initialize() {
+	// set default logging level
+	f.loggingLevel.Store(mcp.LoggingLevelError)
+	f.initialized = true
+}
+
+func (f *sessionTestClientWithLogging) Initialized() bool {
+	return f.initialized
+}
+
+func (f *sessionTestClientWithLogging) SetLogLevel(level mcp.LoggingLevel) {
+	f.loggingLevel.Store(level)
+}
+
+func (f *sessionTestClientWithLogging) GetLogLevel() mcp.LoggingLevel {
+	level := f.loggingLevel.Load()
+	return level.(mcp.LoggingLevel)
+}
+
+// Verify that all implementations satisfy their respective interfaces
+var (
+	_ ClientSession 			= (*sessionTestClient)(nil)
+	_ SessionWithTools 			= (*sessionTestClientWithTools)(nil)
+	_ SessionWithLogging		= (*sessionTestClientWithLogging)(nil)
+)
 
 func TestSessionWithTools_Integration(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(true))
@@ -618,4 +657,52 @@ func TestMCPServer_NotificationChannelBlocked(t *testing.T) {
 	assert.True(t, localErrorCaptured, "Error hook should have been called for broadcast")
 	assert.Equal(t, "blocked-session", localErrorSessionID, "Session ID should be captured in the error hook")
 	assert.Equal(t, "broadcast-message", localErrorMethod, "Method should be captured in the error hook")
+}
+
+func TestMCPServer_SetLevel(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0", WithLogging())
+
+	// Create and initicalize a session
+	sessionChan := make(chan mcp.JSONRPCNotification, 10)
+	session := &sessionTestClientWithLogging{
+		sessionID:           "session-1",
+		notificationChannel: sessionChan,
+	}
+	session.Initialize()
+
+	// Check default logging level
+	if session.GetLogLevel() != mcp.LoggingLevelError {
+		t.Errorf("Expected error level, got %v", session.GetLogLevel())
+	}
+
+	// Register the session
+	err := server.RegisterSession(context.Background(), session)
+	require.NoError(t, err)
+
+	// Set Logging level to critical
+	sessionCtx := server.WithContext(context.Background(), session)
+	setRequest := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "logging/setLevel",
+		"params": map[string]any{
+			"level": mcp.LoggingLevelCritical,
+		},
+	}
+	requestBytes, err := json.Marshal(setRequest)
+	if err != nil {
+		t.Fatalf("Failed to marshal tool request: %v", err)
+	}
+
+	response := server.HandleMessage(sessionCtx, requestBytes)
+	resp, ok := response.(mcp.JSONRPCResponse)
+	assert.True(t, ok)
+
+	_, ok = resp.Result.(mcp.EmptyResult)
+	assert.True(t, ok)
+
+	// Check logging level
+	if session.GetLogLevel() != mcp.LoggingLevelCritical {
+		t.Errorf("Expected critical level, got %v", session.GetLogLevel())
+	}
 }

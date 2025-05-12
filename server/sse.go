@@ -28,6 +28,7 @@ type sseSession struct {
 	requestID           atomic.Int64
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         atomic.Bool
+	loggingLevel		atomic.Value
 	tools               sync.Map // stores session-specific tools
 }
 
@@ -45,11 +46,22 @@ func (s *sseSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
 }
 
 func (s *sseSession) Initialize() {
+	// set default logging level
+	s.loggingLevel.Store(mcp.LoggingLevelError)
 	s.initialized.Store(true)
 }
 
 func (s *sseSession) Initialized() bool {
 	return s.initialized.Load()
+}
+
+func(s *sseSession) SetLogLevel(level mcp.LoggingLevel) {
+	s.loggingLevel.Store(level)
+}
+
+func(s *sseSession) GetLogLevel() mcp.LoggingLevel {
+	level := s.loggingLevel.Load()
+	return level.(mcp.LoggingLevel)
 }
 
 func (s *sseSession) GetSessionTools() map[string]ServerTool {
@@ -77,8 +89,9 @@ func (s *sseSession) SetSessionTools(tools map[string]ServerTool) {
 }
 
 var (
-	_ ClientSession    = (*sseSession)(nil)
-	_ SessionWithTools = (*sseSession)(nil)
+	_ ClientSession    		= (*sseSession)(nil)
+	_ SessionWithTools 		= (*sseSession)(nil)
+	_ SessionWithLogging	= (*sseSession)(nil)
 )
 
 // SSEServer implements a Server-Sent Events (SSE) based MCP server.

@@ -540,6 +540,34 @@ func (s *MCPServer) handlePing(
 	return &mcp.EmptyResult{}, nil
 }
 
+func (s *MCPServer) handleSetLevel(
+	ctx context.Context,
+	id any,
+	request mcp.SetLevelRequest,
+) (*mcp.EmptyResult, *requestError) {
+	clientSession := ClientSessionFromContext(ctx)
+	if clientSession == nil || !clientSession.Initialized() {
+		return nil, &requestError{
+			id: 	id,
+			code: 	mcp.INTERNAL_ERROR,
+			err: 	ErrSessionNotInitialized,
+		}
+	}
+
+	sessionLogging, ok := clientSession.(SessionWithLogging)
+	if !ok {
+		return nil, &requestError{
+			id: 	id,
+			code: 	mcp.INTERNAL_ERROR,
+			err: 	ErrSessionDoesNotSupportLogging,
+		}
+	}
+
+	sessionLogging.SetLogLevel(request.Params.Level)
+
+	return &mcp.EmptyResult{}, nil
+}
+
 func listByPagination[T mcp.Named](
 	ctx context.Context,
 	s *MCPServer,

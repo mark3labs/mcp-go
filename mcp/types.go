@@ -47,6 +47,10 @@ const (
 	// https://modelcontextprotocol.io/specification/2024-11-05/server/tools/
 	MethodToolsCall MCPMethod = "tools/call"
 
+	// MethodSetLogLevel configures the minimum log level for client
+	// https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging
+	MethodSetLogLevel MCPMethod = "logging/setLevel"
+
 	// MethodNotificationResourcesListChanged notifies when the list of available resources changes.
 	// https://modelcontextprotocol.io/specification/2025-03-26/server/resources#list-changed-notification
 	MethodNotificationResourcesListChanged = "notifications/resources/list_changed"
