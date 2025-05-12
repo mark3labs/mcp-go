@@ -340,6 +340,7 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	flusher.Flush()
 
 	// Start notification handler for this session
 	done := make(chan struct{})

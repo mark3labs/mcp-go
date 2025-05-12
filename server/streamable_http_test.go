@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -130,12 +131,7 @@ func TestStreamableHTTP_POST_SendAndReceive(t *testing.T) {
 	t.Run("initialize", func(t *testing.T) {
 
 		// Send initialize request
-		requestBody, _ := json.Marshal(initRequest)
-
-		req, _ := http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(requestBody))
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := server.Client().Do(req)
+		resp, err := postJSON(server.URL, initRequest)
 		if err != nil {
 			t.Fatalf("Failed to send message: %v", err)
 		}
@@ -328,12 +324,7 @@ func TestStreamableHTTP_POST_SendAndReceive_stateless(t *testing.T) {
 	t.Run("initialize", func(t *testing.T) {
 
 		// Send initialize request
-		requestBody, _ := json.Marshal(initRequest)
-
-		req, _ := http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(requestBody))
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := server.Client().Do(req)
+		resp, err := postJSON(server.URL, initRequest)
 		if err != nil {
 			t.Fatalf("Failed to send message: %v", err)
 		}
@@ -525,17 +516,12 @@ func TestStreamableHTTP_HttpHandler(t *testing.T) {
 				},
 			},
 		}
-		requestBody, _ := json.Marshal(initRequest)
 
-		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mypath", bytes.NewBuffer(requestBody))
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := postJSON(ts.URL+"/mypath", initRequest)
 		if err != nil {
 			t.Fatalf("Failed to send message: %v", err)
 		}
 		defer resp.Body.Close()
-
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("Expected status 200, got %d", resp.StatusCode)
 		}
@@ -548,4 +534,144 @@ func TestStreamableHTTP_HttpHandler(t *testing.T) {
 			t.Errorf("Expected protocol version 2025-03-26, got %s", responseMessage.Result["protocolVersion"])
 		}
 	})
+}
+
+func TestStreamableHTTP_SessionWithTools(t *testing.T) {
+
+	t.Run("SessionWithTools implementation", func(t *testing.T) {
+		// Create hooks to track sessions
+		hooks := &Hooks{}
+		var registeredSession *streamableHttpSession
+		var mu sync.Mutex
+		var sessionRegistered sync.WaitGroup
+		sessionRegistered.Add(1)
+
+		hooks.AddOnRegisterSession(func(ctx context.Context, session ClientSession) {
+			if s, ok := session.(*streamableHttpSession); ok {
+				mu.Lock()
+				registeredSession = s
+				mu.Unlock()
+				sessionRegistered.Done()
+			}
+		})
+
+		mcpServer := NewMCPServer("test", "1.0.0", WithHooks(hooks))
+		testServer := NewTestStreamableHTTPServer(mcpServer)
+		defer testServer.Close()
+
+		// send initialize request to trigger the session registration
+		resp, err := postJSON(testServer.URL, initRequest)
+		if err != nil {
+			t.Fatalf("Failed to send message: %v", err)
+		}
+		defer resp.Body.Close()
+
+		// Watch the notification to ensure the session is registered
+		// (Normal http request (post) will not trigger the session registration)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		go func() {
+			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, testServer.URL, nil)
+			req.Header.Set("Content-Type", "text/event-stream")
+			getResp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				fmt.Printf("Failed to get: %v\n", err)
+				return
+			}
+			defer getResp.Body.Close()
+		}()
+
+		// Verify we got a session
+		sessionRegistered.Wait()
+		mu.Lock()
+		if registeredSession == nil {
+			mu.Unlock()
+			t.Fatal("Session was not registered via hook")
+		}
+		mu.Unlock()
+
+		// Test setting and getting tools
+		tools := map[string]ServerTool{
+			"test_tool": {
+				Tool: mcp.Tool{
+					Name:        "test_tool",
+					Description: "A test tool",
+					Annotations: mcp.ToolAnnotation{
+						Title: "Test Tool",
+					},
+				},
+				Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return mcp.NewToolResultText("test"), nil
+				},
+			},
+		}
+
+		// Test SetSessionTools
+		registeredSession.SetSessionTools(tools)
+
+		// Test GetSessionTools
+		retrievedTools := registeredSession.GetSessionTools()
+		if len(retrievedTools) != 1 {
+			t.Errorf("Expected 1 tool, got %d", len(retrievedTools))
+		}
+		if tool, exists := retrievedTools["test_tool"]; !exists {
+			t.Error("Expected test_tool to exist")
+		} else if tool.Tool.Name != "test_tool" {
+			t.Errorf("Expected tool name test_tool, got %s", tool.Tool.Name)
+		}
+
+		// Test concurrent access
+		var wg sync.WaitGroup
+		for i := 0; i < 10; i++ {
+			wg.Add(2)
+			go func(i int) {
+				defer wg.Done()
+				tools := map[string]ServerTool{
+					fmt.Sprintf("tool_%d", i): {
+						Tool: mcp.Tool{
+							Name:        fmt.Sprintf("tool_%d", i),
+							Description: fmt.Sprintf("Tool %d", i),
+							Annotations: mcp.ToolAnnotation{
+								Title: fmt.Sprintf("Tool %d", i),
+							},
+						},
+					},
+				}
+				registeredSession.SetSessionTools(tools)
+			}(i)
+			go func() {
+				defer wg.Done()
+				_ = registeredSession.GetSessionTools()
+			}()
+		}
+		wg.Wait()
+
+		// Verify we can still get and set tools after concurrent access
+		finalTools := map[string]ServerTool{
+			"final_tool": {
+				Tool: mcp.Tool{
+					Name:        "final_tool",
+					Description: "Final Tool",
+					Annotations: mcp.ToolAnnotation{
+						Title: "Final Tool",
+					},
+				},
+			},
+		}
+		registeredSession.SetSessionTools(finalTools)
+		retrievedTools = registeredSession.GetSessionTools()
+		if len(retrievedTools) != 1 {
+			t.Errorf("Expected 1 tool, got %d", len(retrievedTools))
+		}
+		if _, exists := retrievedTools["final_tool"]; !exists {
+			t.Error("Expected final_tool to exist")
+		}
+	})
+}
+
+func postJSON(url string, bodyObject any) (*http.Response, error) {
+	jsonBody, _ := json.Marshal(bodyObject)
+	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	return http.DefaultClient.Do(req)
 }
