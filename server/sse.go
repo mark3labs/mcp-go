@@ -185,7 +185,7 @@ func WithSSEEndpoint(endpoint string) SSEOption {
 // WithSSEContextFunc sets a function that will be called to customise the context
 // to the server using the incoming request.
 //
-// Deprecated: Use WithContextFunc instead. This will be removed in a future version.
+// Deprecated: Use WithHTTPContextFunc instead. This will be removed in a future version.
 //
 //go:deprecated
 func WithSSEContextFunc(fn SSEContextFunc) SSEOption {

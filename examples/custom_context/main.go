@@ -125,7 +125,7 @@ func NewMCPServer() *MCPServer {
 func (s *MCPServer) ServeSSE(addr string) *server.SSEServer {
 	return server.NewSSEServer(s.server,
 		server.WithBaseURL(fmt.Sprintf("http://%s", addr)),
-		server.WithSSEContextFunc(authFromRequest),
+		server.WithHTTPContextFunc(authFromRequest),
 	)
 }
 
