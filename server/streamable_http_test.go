@@ -460,7 +460,7 @@ func TestStreamableHTTP_HttpHandler(t *testing.T) {
 		server := NewStreamableHTTPServer(mcpServer)
 
 		mux := http.NewServeMux()
-		mux.Handle("/mypath/", server)
+		mux.Handle("/mypath", server)
 
 		ts := httptest.NewServer(mux)
 		defer ts.Close()
@@ -480,7 +480,7 @@ func TestStreamableHTTP_HttpHandler(t *testing.T) {
 		}
 		requestBody, _ := json.Marshal(initRequest)
 
-		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mypath/", bytes.NewBuffer(requestBody))
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/mypath", bytes.NewBuffer(requestBody))
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := http.DefaultClient.Do(req)
