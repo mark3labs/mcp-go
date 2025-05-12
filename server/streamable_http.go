@@ -90,7 +90,7 @@ func WithLogger(logger util.Logger) StreamableHTTPOption {
 //	server.Start(":8080") // The final url for client is http://xxxx:8080/mcp by default
 //
 // or the server itself can be used as a http.Handler, which is convenient to
-// integrate with existing http servers:
+// integrate with existing http servers, or advanced usage:
 //
 //	handler := NewStreamableHTTPServer(mcpServer)
 //	http.Handle("/streamable-http", handler)
