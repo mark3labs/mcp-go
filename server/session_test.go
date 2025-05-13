@@ -659,6 +659,44 @@ func TestMCPServer_NotificationChannelBlocked(t *testing.T) {
 	assert.Equal(t, "broadcast-message", localErrorMethod, "Method should be captured in the error hook")
 }
 
+func TestMCPServer_SetLevelNotEnabled(t *testing.T) {
+	// Create server without logging capability
+	server := NewMCPServer("test-server", "1.0.0")
+
+	// Create and initialize a session
+	sessionChan := make(chan mcp.JSONRPCNotification, 10)
+	session := &sessionTestClientWithLogging{
+		sessionID:           "session-1",
+		notificationChannel: sessionChan,
+	}
+	session.Initialize()
+
+	// Register the session
+	err := server.RegisterSession(context.Background(), session)
+	require.NoError(t, err)
+
+	// Try to set logging level when capability is disabled
+	sessionCtx := server.WithContext(context.Background(), session)
+	setRequest := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "logging/setLevel",
+		"params": map[string]any{
+			"level": mcp.LoggingLevelCritical,
+		},
+	}
+	requestBytes, err := json.Marshal(setRequest)
+	require.NoError(t, err)
+
+	response := server.HandleMessage(sessionCtx, requestBytes)
+	errorResponse, ok := response.(mcp.JSONRPCError)
+	assert.True(t, ok)
+
+	// Verify we get a METHOD_NOT_FOUND error
+	assert.NotNil(t, errorResponse.Error)
+	assert.Equal(t, mcp.METHOD_NOT_FOUND, errorResponse.Error.Code)
+}
+
 func TestMCPServer_SetLevel(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithLogging())
 

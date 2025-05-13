@@ -287,7 +287,6 @@ func (c *Hooks) afterInitialize(ctx context.Context, id any, message *mcp.Initia
 		hook(ctx, id, message, result)
 	}
 }
-
 func (c *Hooks) AddBeforePing(hook OnBeforePingFunc) {
 	c.OnBeforePing = append(c.OnBeforePing, hook)
 }
@@ -315,7 +314,6 @@ func (c *Hooks) afterPing(ctx context.Context, id any, message *mcp.PingRequest,
 		hook(ctx, id, message, result)
 	}
 }
-
 func (c *Hooks) AddBeforeSetLevel(hook OnBeforeSetLevelFunc) {
 	c.OnBeforeSetLevel = append(c.OnBeforeSetLevel, hook)
 }
@@ -343,7 +341,6 @@ func (c *Hooks) afterSetLevel(ctx context.Context, id any, message *mcp.SetLevel
 		hook(ctx, id, message, result)
 	}
 }
-
 func (c *Hooks) AddBeforeListResources(hook OnBeforeListResourcesFunc) {
 	c.OnBeforeListResources = append(c.OnBeforeListResources, hook)
 }

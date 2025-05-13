@@ -161,7 +161,7 @@ type serverCapabilities struct {
 	tools     *toolCapabilities
 	resources *resourceCapabilities
 	prompts   *promptCapabilities
-	logging   bool
+	logging   *bool
 }
 
 // resourceCapabilities defines the supported resource-related features
@@ -260,7 +260,7 @@ func WithToolCapabilities(listChanged bool) ServerOption {
 // WithLogging enables logging capabilities for the server
 func WithLogging() ServerOption {
 	return func(s *MCPServer) {
-		s.capabilities.logging = true
+		s.capabilities.logging = mcp.ToBoolPtr(true)
 	}
 }
 
@@ -289,7 +289,7 @@ func NewMCPServer(
 			tools:     nil,
 			resources: nil,
 			prompts:   nil,
-			logging:   false,
+			logging:   nil,
 		},
 	}
 
@@ -512,7 +512,7 @@ func (s *MCPServer) handleInitialize(
 		}
 	}
 
-	if s.capabilities.logging {
+	if s.capabilities.logging != nil && *s.capabilities.logging {
 		capabilities.Logging = &struct{}{}
 	}
 
@@ -548,22 +548,37 @@ func (s *MCPServer) handleSetLevel(
 	clientSession := ClientSessionFromContext(ctx)
 	if clientSession == nil || !clientSession.Initialized() {
 		return nil, &requestError{
-			id: 	id,
-			code: 	mcp.INTERNAL_ERROR,
-			err: 	ErrSessionNotInitialized,
+			id:   id,
+			code: mcp.INTERNAL_ERROR,
+			err:  ErrSessionNotInitialized,
 		}
 	}
 
 	sessionLogging, ok := clientSession.(SessionWithLogging)
 	if !ok {
 		return nil, &requestError{
-			id: 	id,
-			code: 	mcp.INTERNAL_ERROR,
-			err: 	ErrSessionDoesNotSupportLogging,
+			id:   id,
+			code: mcp.INTERNAL_ERROR,
+			err:  ErrSessionDoesNotSupportLogging,
 		}
 	}
 
-	sessionLogging.SetLogLevel(request.Params.Level)
+	level := request.Params.Level
+	// Validate logging level
+	switch level {
+	case mcp.LoggingLevelDebug, mcp.LoggingLevelInfo, mcp.LoggingLevelNotice,
+		mcp.LoggingLevelWarning, mcp.LoggingLevelError, mcp.LoggingLevelCritical,
+		mcp.LoggingLevelAlert, mcp.LoggingLevelEmergency:
+		// Valid level
+	default:
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  fmt.Errorf("invalid logging level '%s'", level),
+		}
+	}
+	
+	sessionLogging.SetLogLevel(level)
 
 	return &mcp.EmptyResult{}, nil
 }

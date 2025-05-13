@@ -61,6 +61,9 @@ func(s *sseSession) SetLogLevel(level mcp.LoggingLevel) {
 
 func(s *sseSession) GetLogLevel() mcp.LoggingLevel {
 	level := s.loggingLevel.Load()
+	if level == nil {
+		return mcp.LoggingLevelError
+	}
 	return level.(mcp.LoggingLevel)
 }
 

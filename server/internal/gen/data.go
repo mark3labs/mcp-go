@@ -28,6 +28,16 @@ var MCPRequestTypes = []MCPRequestType{
 		UnmarshalError: "invalid ping request",
 		HandlerFunc:    "handlePing",
 	}, {
+		MethodName:     "MethodSetLogLevel",
+		ParamType:      "SetLevelRequest",
+		ResultType:     "EmptyResult",
+		Group:          "logging",
+		GroupName:      "Logging",
+		GroupHookName:  "Logging",
+		HookName:       "SetLevel",
+		UnmarshalError: "invalid set level request",
+		HandlerFunc:    "handleSetLevel",
+	}, {
 		MethodName:     "MethodResourcesList",
 		ParamType:      "ListResourcesRequest",
 		ResultType:     "ListResourcesResult",

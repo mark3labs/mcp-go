@@ -113,7 +113,7 @@ func (s *MCPServer) HandleMessage(
 	case mcp.MethodSetLogLevel:
 		var request mcp.SetLevelRequest
 		var result *mcp.EmptyResult
-		if s.capabilities.logging == false {
+		if s.capabilities.logging == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
