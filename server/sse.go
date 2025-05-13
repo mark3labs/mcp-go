@@ -484,7 +484,14 @@ func (s *SSEServer) writeJSONRPCError(
 	response := createErrorResponse(id, code, message)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(
+			w,
+			fmt.Sprintf("Failed to encode response: %v", err),
+			http.StatusInternalServerError,
+		)
+		return
+	}
 }
 
 // SendEventToSession sends an event to a specific SSE session identified by sessionID.

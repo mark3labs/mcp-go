@@ -392,7 +392,7 @@ func handleLongRunningOperationTool(
 	for i := 1; i < int(steps)+1; i++ {
 		time.Sleep(time.Duration(stepDuration * float64(time.Second)))
 		if progressToken != nil {
-			server.SendNotificationToClient(
+			err := server.SendNotificationToClient(
 				ctx,
 				"notifications/progress",
 				map[string]any{
@@ -402,6 +402,9 @@ func handleLongRunningOperationTool(
 					"message":       fmt.Sprintf("Server progress %v%%", int(float64(i)*100/steps)),
 				},
 			)
+			if err != nil {
+				return nil, fmt.Errorf("failed to send notification: %w", err)
+			}
 		}
 	}
 
