@@ -3,3 +3,4 @@ linters:
   exclusions:
     presets:
       - std-error-handling
+
