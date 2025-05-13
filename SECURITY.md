@@ -4,4 +4,4 @@ Thank you for helping us improve the security of the project. Your contributions
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability within this project, please send an email to the maintainers at [contact@mark3labs.com](mailto:contact@mark3labs.com).
+If you discover a security vulnerability within this project, please email the maintainers at [contact@mark3labs.com](mailto:contact@mark3labs.com).
