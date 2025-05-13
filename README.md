@@ -97,11 +97,7 @@ MCP Go handles all the complex protocol details and server management, so you ca
   - [Session Management](#session-management)
   - [Request Hooks](#request-hooks)
   - [Tool Handler Middleware](#tool-handler-middleware)
-- [Contributing](#contributing)
-  - [Prerequisites](#prerequisites)
-  - [Installation](#installation-1)
-  - [Testing](#testing)
-  - [Opening a Pull Request](#opening-a-pull-request)
+- [Contributing](/CONTRIBUTING.md)
 
 ## Installation
 
