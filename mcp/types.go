@@ -67,7 +67,7 @@ type URITemplate struct {
 }
 
 func (t *URITemplate) MarshalJSON() ([]byte, error) {
-	return json.Marshal(t.Template.Raw())
+	return json.Marshal(t.Raw())
 }
 
 func (t *URITemplate) UnmarshalJSON(data []byte) error {
