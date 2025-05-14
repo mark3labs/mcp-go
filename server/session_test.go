@@ -296,6 +296,188 @@ func TestMCPServer_AddSessionTool(t *testing.T) {
 	assert.Contains(t, session.GetSessionTools(), "session-tool-helper")
 }
 
+func TestMCPServer_AddSessionToolsUninitialized(t *testing.T) {
+	// This test verifies that adding tools to an uninitialized session works correctly.
+	//
+	// This scenario can occur when tools are added during the session registration hook,
+	// before the session is fully initialized. In this case, we should:
+	// 1. Successfully add the tools to the session
+	// 2. Not attempt to send a notification (since the session isn't ready)
+	// 3. Have the tools available once the session is initialized
+	// 4. Not trigger any error hooks when adding tools to uninitialized sessions
+
+	// Set up error hook to track if it's called
+	errorChan := make(chan error)
+	hooks := &Hooks{}
+	hooks.AddOnError(
+		func(ctx context.Context, id any, method mcp.MCPMethod, message any, err error) {
+			errorChan <- err
+		},
+	)
+
+	server := NewMCPServer("test-server", "1.0.0",
+		WithToolCapabilities(true),
+		WithHooks(hooks),
+	)
+	ctx := context.Background()
+
+	// Create an uninitialized session
+	sessionChan := make(chan mcp.JSONRPCNotification, 1)
+	session := &sessionTestClientWithTools{
+		sessionID:           "uninitialized-session",
+		notificationChannel: sessionChan,
+		initialized:         false,
+	}
+
+	// Register the session
+	err := server.RegisterSession(ctx, session)
+	require.NoError(t, err)
+
+	// Add session-specific tools to the uninitialized session
+	err = server.AddSessionTools(session.SessionID(),
+		ServerTool{Tool: mcp.NewTool("uninitialized-tool")},
+	)
+	require.NoError(t, err)
+
+	// Verify no errors
+	select {
+	case err := <-errorChan:
+		t.Error("Expected no errors, but OnError called with: ", err)
+	case <-time.After(25 * time.Millisecond): // no errors
+	}
+
+	// Verify no notification was sent (channel should be empty)
+	select {
+	case <-sessionChan:
+		t.Error("Expected no notification to be sent for uninitialized session")
+	default: // no notifications
+	}
+
+	// Verify tool was added to session
+	assert.Len(t, session.GetSessionTools(), 1)
+	assert.Contains(t, session.GetSessionTools(), "uninitialized-tool")
+
+	// Initialize the session
+	session.Initialize()
+
+	// Now verify that subsequent tool additions will send notifications
+	err = server.AddSessionTools(session.SessionID(),
+		ServerTool{Tool: mcp.NewTool("initialized-tool")},
+	)
+	require.NoError(t, err)
+
+	// Verify no errors
+	select {
+	case err := <-errorChan:
+		t.Error("Expected no errors, but OnError called with:", err)
+	case <-time.After(200 * time.Millisecond): // No errors
+	}
+
+	// Verify notification was sent for the initialized session
+	select {
+	case notification := <-sessionChan:
+		assert.Equal(t, "notifications/tools/list_changed", notification.Method)
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Timeout waiting for expected notifications/tools/list_changed notification")
+	}
+
+	// Verify both tools are available
+	assert.Len(t, session.GetSessionTools(), 2)
+	assert.Contains(t, session.GetSessionTools(), "uninitialized-tool")
+	assert.Contains(t, session.GetSessionTools(), "initialized-tool")
+}
+
+func TestMCPServer_DeleteSessionToolsUninitialized(t *testing.T) {
+	// This test verifies that deleting tools from an uninitialized session works correctly.
+	//
+	// This is a bit of a weird edge case but can happen if tools are added and
+	// deleted during the RegisterSession hook.
+	//
+	// In this case, we should:
+	// 1. Successfully delete the tools from the session
+	// 2. Not attempt to send a notification (since the session isn't ready)
+	// 3. Have the tools properly deleted once the session is initialized
+	// 4. Not trigger any error hooks when deleting tools from uninitialized sessions
+
+	// Set up error hook to track if it's called
+	errorChan := make(chan error)
+	hooks := &Hooks{}
+	hooks.AddOnError(
+		func(ctx context.Context, id any, method mcp.MCPMethod, message any, err error) {
+			errorChan <- err
+		},
+	)
+
+	server := NewMCPServer("test-server", "1.0.0",
+		WithToolCapabilities(true),
+		WithHooks(hooks),
+	)
+	ctx := context.Background()
+
+	// Create an uninitialized session with some tools
+	sessionChan := make(chan mcp.JSONRPCNotification, 1)
+	session := &sessionTestClientWithTools{
+		sessionID:           "uninitialized-session",
+		notificationChannel: sessionChan,
+		initialized:         false,
+		sessionTools: map[string]ServerTool{
+			"tool-to-delete": {Tool: mcp.NewTool("tool-to-delete")},
+			"tool-to-keep":   {Tool: mcp.NewTool("tool-to-keep")},
+		},
+	}
+
+	// Register the session
+	err := server.RegisterSession(ctx, session)
+	require.NoError(t, err)
+
+	// Delete a tool from the uninitialized session
+	err = server.DeleteSessionTools(session.SessionID(), "tool-to-delete")
+	require.NoError(t, err)
+
+	select {
+	case err := <-errorChan:
+		t.Errorf("Expected error hooks not to be called, got error: %v", err)
+	case <-time.After(25 * time.Millisecond): // No errors
+	}
+
+	// Verify no notification was sent (channel should be empty)
+	select {
+	case <-sessionChan:
+		t.Error("Expected no notification to be sent for uninitialized session")
+	default:
+		// This is the expected case - no notification should be sent
+	}
+
+	// Verify tool was deleted from session
+	assert.Len(t, session.GetSessionTools(), 1)
+	assert.NotContains(t, session.GetSessionTools(), "tool-to-delete")
+	assert.Contains(t, session.GetSessionTools(), "tool-to-keep")
+
+	// Initialize the session
+	session.Initialize()
+
+	// Now verify that subsequent tool deletions will send notifications
+	err = server.DeleteSessionTools(session.SessionID(), "tool-to-keep")
+	require.NoError(t, err)
+
+	select {
+	case err := <-errorChan:
+		t.Errorf("Expected error hooks not to be called, got error: %v", err)
+	case <-time.After(200 * time.Millisecond): // No errors
+	}
+
+	// Verify notification was sent for the initialized session
+	select {
+	case notification := <-sessionChan:
+		assert.Equal(t, "notifications/tools/list_changed", notification.Method)
+	case <-time.After(100 * time.Millisecond):
+		t.Error("Expected notification not received for initialized session")
+	}
+
+	// Verify all tools are deleted
+	assert.Len(t, session.GetSessionTools(), 0)
+}
+
 func TestMCPServer_CallSessionTool(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(true))
 
