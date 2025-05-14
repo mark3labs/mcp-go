@@ -1624,3 +1624,46 @@ func BenchmarkMCPServer_PaginationForReflect(b *testing.B) {
 		_, _, _ = listByPaginationForReflect[mcp.Tool](ctx, server, "dG9vbDY1NA==", list)
 	}
 }
+
+func TestMCPServer_ToolCapabilitiesBehavior(t *testing.T) {
+	tests := []struct {
+		name           string
+		serverOptions  []ServerOption
+		validateServer func(t *testing.T, s *MCPServer)
+	}{
+		{
+			name:          "no tool capabilities provided",
+			serverOptions: []ServerOption{
+				// No WithToolCapabilities
+			},
+			validateServer: func(t *testing.T, s *MCPServer) {
+				s.capabilitiesMu.RLock()
+				defer s.capabilitiesMu.RUnlock()
+
+				require.NotNil(t, s.capabilities.tools, "tools capability should be initialized")
+				assert.True(t, s.capabilities.tools.listChanged, "listChanged should be true when no capabilities were provided")
+			},
+		},
+		{
+			name: "tools.listChanged set to false",
+			serverOptions: []ServerOption{
+				WithToolCapabilities(false),
+			},
+			validateServer: func(t *testing.T, s *MCPServer) {
+				s.capabilitiesMu.RLock()
+				defer s.capabilitiesMu.RUnlock()
+
+				require.NotNil(t, s.capabilities.tools, "tools capability should be initialized")
+				assert.False(t, s.capabilities.tools.listChanged, "listChanged should remain false when explicitly set to false")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewMCPServer("test-server", "1.0.0", tt.serverOptions...)
+			server.AddTool(mcp.NewTool("test-tool"), nil)
+			tt.validateServer(t, server)
+		})
+	}
+}

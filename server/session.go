@@ -224,6 +224,8 @@ func (s *MCPServer) AddSessionTools(sessionID string, tools ...ServerTool) error
 		return ErrSessionDoesNotSupportTools
 	}
 
+	s.implicitlyRegisterToolCapabilities()
+
 	// Get existing tools (this should return a thread-safe copy)
 	sessionTools := session.GetSessionTools()
 

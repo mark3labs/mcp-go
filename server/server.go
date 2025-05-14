@@ -411,20 +411,29 @@ func (s *MCPServer) AddTool(tool mcp.Tool, handler ToolHandlerFunc) {
 	s.AddTools(ServerTool{Tool: tool, Handler: handler})
 }
 
-// AddTools registers multiple tools at once
-func (s *MCPServer) AddTools(tools ...ServerTool) {
+// Register tool capabilities due to a tool being added.  Default to
+// listChanged: true, but don't change the value if we've already explicitly
+// registered tools.listChanged false.
+func (s *MCPServer) implicitlyRegisterToolCapabilities() {
 	s.capabilitiesMu.RLock()
 	if s.capabilities.tools == nil {
 		s.capabilitiesMu.RUnlock()
 
 		s.capabilitiesMu.Lock()
 		if s.capabilities.tools == nil {
-			s.capabilities.tools = &toolCapabilities{}
+			s.capabilities.tools = &toolCapabilities{
+				listChanged: true,
+			}
 		}
 		s.capabilitiesMu.Unlock()
 	} else {
 		s.capabilitiesMu.RUnlock()
 	}
+}
+
+// AddTools registers multiple tools at once
+func (s *MCPServer) AddTools(tools ...ServerTool) {
+	s.implicitlyRegisterToolCapabilities()
 
 	s.toolsMu.Lock()
 	for _, entry := range tools {

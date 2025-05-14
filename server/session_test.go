@@ -802,3 +802,59 @@ func TestMCPServer_NotificationChannelBlocked(t *testing.T) {
 	assert.Equal(t, "blocked-session", localErrorSessionID, "Session ID should be captured in the error hook")
 	assert.Equal(t, "broadcast-message", localErrorMethod, "Method should be captured in the error hook")
 }
+
+func TestMCPServer_SessionToolCapabilitiesBehavior(t *testing.T) {
+	tests := []struct {
+		name           string
+		serverOptions  []ServerOption
+		validateServer func(t *testing.T, s *MCPServer, session *sessionTestClientWithTools)
+	}{
+		{
+			name:          "no tool capabilities provided",
+			serverOptions: []ServerOption{
+				// No WithToolCapabilities
+			},
+			validateServer: func(t *testing.T, s *MCPServer, session *sessionTestClientWithTools) {
+				s.capabilitiesMu.RLock()
+				defer s.capabilitiesMu.RUnlock()
+
+				require.NotNil(t, s.capabilities.tools, "tools capability should be initialized")
+				assert.True(t, s.capabilities.tools.listChanged, "listChanged should be true when no capabilities were provided")
+			},
+		},
+		{
+			name: "tools.listChanged set to false",
+			serverOptions: []ServerOption{
+				WithToolCapabilities(false),
+			},
+			validateServer: func(t *testing.T, s *MCPServer, session *sessionTestClientWithTools) {
+				s.capabilitiesMu.RLock()
+				defer s.capabilitiesMu.RUnlock()
+
+				require.NotNil(t, s.capabilities.tools, "tools capability should be initialized")
+				assert.False(t, s.capabilities.tools.listChanged, "listChanged should remain false when explicitly set to false")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewMCPServer("test-server", "1.0.0", tt.serverOptions...)
+
+			// Create and register a session
+			session := &sessionTestClientWithTools{
+				sessionID:           "test-session",
+				notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+				initialized:         true,
+			}
+			err := server.RegisterSession(context.Background(), session)
+			require.NoError(t, err)
+
+			// Add a session tool and verify listChanged remains false
+			err = server.AddSessionTool(session.SessionID(), mcp.NewTool("test-tool"), nil)
+			require.NoError(t, err)
+
+			tt.validateServer(t, server, session)
+		})
+	}
+}
