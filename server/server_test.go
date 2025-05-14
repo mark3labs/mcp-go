@@ -368,7 +368,7 @@ func TestMCPServer_Tools(t *testing.T) {
 				"id": 1,
 				"method": "tools/list"
 			}`))
-			tt.validate(t, notifications, toolsList.(mcp.JSONRPCMessage))
+			tt.validate(t, notifications, toolsList)
 		})
 	}
 }

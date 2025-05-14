@@ -46,11 +46,14 @@ func startMockStreamableHTTPServer() (string, func()) {
 			w.Header().Set("Mcp-Session-Id", sessionID)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusAccepted)
-			json.NewEncoder(w).Encode(map[string]any{
+			if err := json.NewEncoder(w).Encode(map[string]any{
 				"jsonrpc": "2.0",
 				"id":      request["id"],
 				"result":  "initialized",
-			})
+			}); err != nil {
+				http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+				return
+			}
 
 		case "debug/echo":
 			// Check session ID
@@ -62,11 +65,14 @@ func startMockStreamableHTTPServer() (string, func()) {
 			// Echo back the request as the response result
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(map[string]any{
+			if err := json.NewEncoder(w).Encode(map[string]any{
 				"jsonrpc": "2.0",
 				"id":      request["id"],
 				"result":  request,
-			})
+			}); err != nil {
+				http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+				return
+			}
 
 		case "debug/echo_notification":
 			// Check session ID
@@ -104,14 +110,17 @@ func startMockStreamableHTTPServer() (string, func()) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			data, _ := json.Marshal(request)
-			json.NewEncoder(w).Encode(map[string]any{
+			if err := json.NewEncoder(w).Encode(map[string]any{
 				"jsonrpc": "2.0",
 				"id":      request["id"],
 				"error": map[string]any{
 					"code":    -1,
 					"message": string(data),
 				},
-			})
+			}); err != nil {
+				http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+				return
+			}
 		}
 	})
 

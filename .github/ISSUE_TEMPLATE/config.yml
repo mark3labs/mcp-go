@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Ask a Question
+    url: https://github.com/mark3labs/mcp-go/discussions/categories/q-a
+    about: Ask any question about the project.
+  - name: Join the Community
+    url: https://discord.gg/RqSS2NQVsY
+    about: Join the community on Discord.

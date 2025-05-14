@@ -573,7 +573,8 @@ func TestMCPServer_NotificationChannelBlocked(t *testing.T) {
 	require.NoError(t, err)
 
 	// Fill the buffer first to ensure it gets blocked
-	server.SendNotificationToSpecificClient(session.SessionID(), "first-message", nil)
+	err = server.SendNotificationToSpecificClient(session.SessionID(), "first-message", nil)
+	require.NoError(t, err)
 
 	// This will cause the buffer to block
 	err = server.SendNotificationToSpecificClient(session.SessionID(), "blocked-message", nil)
