@@ -212,16 +212,18 @@ func (r RequestId) Value() any {
 func (r RequestId) String() string {
 	switch v := r.value.(type) {
 	case string:
-		return v
+		return "string:" + v
 	case int64:
-		return strconv.FormatInt(v, 10)
+		return "int64:" + strconv.FormatInt(v, 10)
 	case float64:
 		if v == float64(int64(v)) {
-			return strconv.FormatInt(int64(v), 10)
+			return "int64:" + strconv.FormatInt(int64(v), 10)
 		}
-		return strconv.FormatFloat(v, 'f', -1, 64)
+		return "float64:" + strconv.FormatFloat(v, 'f', -1, 64)
+	case nil:
+		return "<nil>"
 	default:
-		return fmt.Sprintf("%v", v)
+		return "unknown:" + fmt.Sprintf("%v", v)
 	}
 }
 
@@ -235,6 +237,12 @@ func (r RequestId) MarshalJSON() ([]byte, error) {
 }
 
 func (r *RequestId) UnmarshalJSON(data []byte) error {
+
+	if string(data) == "null" {
+		r.value = nil
+		return nil
+	}
+
 	// Try unmarshaling as string first
 	var s string
 	if err := json.Unmarshal(data, &s); err == nil {
