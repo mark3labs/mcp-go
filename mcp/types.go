@@ -4,6 +4,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"maps"
 
 	"github.com/yosida95/uritemplate/v3"
 )
@@ -100,18 +101,47 @@ type ProgressToken any
 // Cursor is an opaque token used to represent a cursor for pagination.
 type Cursor string
 
+// Meta is metadata attached to a request's parameters. This can include fields
+// formally defined by the protocol or other arbitrary data.
+type Meta struct {
+	// If specified, the caller is requesting out-of-band progress
+	// notifications for this request (as represented by
+	// notifications/progress). The value of this parameter is an
+	// opaque token that will be attached to any subsequent
+	// notifications. The receiver is not obligated to provide these
+	// notifications.
+	ProgressToken ProgressToken
+
+	// AdditionalFields are any fields present in the Meta that are not
+	// otherwise defined in the protocol.
+	AdditionalFields map[string]any
+}
+
+func (m *Meta) MarshalJSON() ([]byte, error) {
+	raw := make(map[string]any)
+	if m.ProgressToken != nil {
+		raw["progressToken"] = m.ProgressToken
+	}
+	maps.Copy(raw, m.AdditionalFields)
+
+	return json.Marshal(raw)
+}
+
+func (m *Meta) UnmarshalJSON(data []byte) error {
+	raw := make(map[string]any)
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	m.ProgressToken = raw["progressToken"]
+	delete(raw, "progressToken")
+	m.AdditionalFields = raw
+	return nil
+}
+
 type Request struct {
 	Method string `json:"method"`
 	Params struct {
-		Meta *struct {
-			// If specified, the caller is requesting out-of-band progress
-			// notifications for this request (as represented by
-			// notifications/progress). The value of this parameter is an
-			// opaque token that will be attached to any subsequent
-			// notifications. The receiver is not obligated to provide these
-			// notifications.
-			ProgressToken ProgressToken `json:"progressToken,omitempty"`
-		} `json:"_meta,omitempty"`
+		Meta *Meta `json:"_meta,omitempty"`
 	} `json:"params,omitempty"`
 }
 
