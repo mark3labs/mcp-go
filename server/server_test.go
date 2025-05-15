@@ -134,7 +134,7 @@ func TestMCPServer_Capabilities(t *testing.T) {
 			server := NewMCPServer("test-server", "1.0.0", tt.options...)
 			message := mcp.JSONRPCRequest{
 				JSONRPC: "2.0",
-				ID:      1,
+				ID:      mcp.NewRequestId(int64(1)),
 				Request: mcp.Request{
 					Method: "initialize",
 				},
@@ -388,7 +388,7 @@ func TestMCPServer_HandleValidMessages(t *testing.T) {
 			name: "Initialize request",
 			message: mcp.JSONRPCRequest{
 				JSONRPC: "2.0",
-				ID:      1,
+				ID:      mcp.NewRequestId(int64(1)),
 				Request: mcp.Request{
 					Method: "initialize",
 				},
@@ -413,7 +413,7 @@ func TestMCPServer_HandleValidMessages(t *testing.T) {
 			name: "Ping request",
 			message: mcp.JSONRPCRequest{
 				JSONRPC: "2.0",
-				ID:      1,
+				ID:      mcp.NewRequestId(int64(1)),
 				Request: mcp.Request{
 					Method: "ping",
 				},
@@ -430,7 +430,7 @@ func TestMCPServer_HandleValidMessages(t *testing.T) {
 			name: "List resources",
 			message: mcp.JSONRPCRequest{
 				JSONRPC: "2.0",
-				ID:      1,
+				ID:      mcp.NewRequestId(int64(1)),
 				Request: mcp.Request{
 					Method: "resources/list",
 				},
@@ -1127,7 +1127,7 @@ func TestMCPServer_Instructions(t *testing.T) {
 
 			message := mcp.JSONRPCRequest{
 				JSONRPC: "2.0",
-				ID:      1,
+				ID:      mcp.NewRequestId(int64(1)),
 				Request: mcp.Request{
 					Method: "initialize",
 				},

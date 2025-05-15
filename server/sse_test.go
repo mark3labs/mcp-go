@@ -810,7 +810,16 @@ func TestSSEServer(t *testing.T) {
 				}
 
 				if pingMsg.Method == "ping" {
-					pingID = pingMsg.ID.(float64)
+					idValue, ok := pingMsg.ID.Value().(int64)
+					if ok {
+						pingID = float64(idValue)
+					} else {
+						floatValue, ok := pingMsg.ID.Value().(float64)
+						if !ok {
+							t.Fatalf("Expected ping ID to be number, got %T: %v", pingMsg.ID.Value(), pingMsg.ID.Value())
+						}
+						pingID = floatValue
+					}
 					t.Logf("Received ping with ID: %f", pingID)
 					break // We got the ping, exit the loop
 				}

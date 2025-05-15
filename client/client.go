@@ -104,7 +104,7 @@ func (c *Client) sendRequest(
 
 	request := transport.JSONRPCRequest{
 		JSONRPC: mcp.JSONRPC_VERSION,
-		ID:      id,
+		ID:      mcp.NewRequestId(id),
 		Method:  method,
 		Params:  params,
 	}

@@ -101,7 +101,7 @@ func (e *requestError) Error() string {
 func (e *requestError) ToJSONRPCError() mcp.JSONRPCError {
 	return mcp.JSONRPCError{
 		JSONRPC: mcp.JSONRPC_VERSION,
-		ID:      e.id,
+		ID:      mcp.NewRequestId(e.id),
 		Error: struct {
 			Code    int    `json:"code"`
 			Message string `json:"message"`
@@ -928,7 +928,7 @@ func (s *MCPServer) handleNotification(
 func createResponse(id any, result any) mcp.JSONRPCMessage {
 	return mcp.JSONRPCResponse{
 		JSONRPC: mcp.JSONRPC_VERSION,
-		ID:      id,
+		ID:      mcp.NewRequestId(id),
 		Result:  result,
 	}
 }
@@ -940,7 +940,7 @@ func createErrorResponse(
 ) mcp.JSONRPCMessage {
 	return mcp.JSONRPCError{
 		JSONRPC: mcp.JSONRPC_VERSION,
-		ID:      id,
+		ID:      mcp.NewRequestId(id),
 		Error: struct {
 			Code    int    `json:"code"`
 			Message string `json:"message"`

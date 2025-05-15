@@ -338,7 +338,7 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 				case <-ticker.C:
 					message := mcp.JSONRPCRequest{
 						JSONRPC: "2.0",
-						ID:      session.requestID.Add(1),
+						ID:      mcp.NewRequestId(session.requestID.Add(1)),
 						Request: mcp.Request{
 							Method: "ping",
 						},
