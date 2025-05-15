@@ -243,19 +243,24 @@ func (s *MCPServer) AddSessionTools(sessionID string, tools ...ServerTool) error
 	// Set the tools (this should be thread-safe)
 	session.SetSessionTools(newSessionTools)
 
-	// Send notification only to this session
-	if err := s.SendNotificationToSpecificClient(sessionID, "notifications/tools/list_changed", nil); err != nil {
-		// Log the error but don't fail the operation
-		// The tools were successfully added, but notification failed
-		if s.hooks != nil && len(s.hooks.OnError) > 0 {
-			hooks := s.hooks
-			go func(sID string, hooks *Hooks) {
-				ctx := context.Background()
-				hooks.onError(ctx, nil, "notification", map[string]any{
-					"method":    "notifications/tools/list_changed",
-					"sessionID": sID,
-				}, fmt.Errorf("failed to send notification after adding tools: %w", err))
-			}(sessionID, hooks)
+	// It only makes sense to send tool notifications to initialized sessions --
+	// if we're not initialized yet the client can't possibly have sent their
+	// initial tools/list message
+	if session.Initialized() {
+		// Send notification only to this session
+		if err := s.SendNotificationToSpecificClient(sessionID, "notifications/tools/list_changed", nil); err != nil {
+			// Log the error but don't fail the operation
+			// The tools were successfully added, but notification failed
+			if s.hooks != nil && len(s.hooks.OnError) > 0 {
+				hooks := s.hooks
+				go func(sID string, hooks *Hooks) {
+					ctx := context.Background()
+					hooks.onError(ctx, nil, "notification", map[string]any{
+						"method":    "notifications/tools/list_changed",
+						"sessionID": sID,
+					}, fmt.Errorf("failed to send notification after adding tools: %w", err))
+				}(sessionID, hooks)
+			}
 		}
 	}
 
@@ -296,19 +301,24 @@ func (s *MCPServer) DeleteSessionTools(sessionID string, names ...string) error 
 	// Set the tools (this should be thread-safe)
 	session.SetSessionTools(newSessionTools)
 
-	// Send notification only to this session
-	if err := s.SendNotificationToSpecificClient(sessionID, "notifications/tools/list_changed", nil); err != nil {
-		// Log the error but don't fail the operation
-		// The tools were successfully deleted, but notification failed
-		if s.hooks != nil && len(s.hooks.OnError) > 0 {
-			hooks := s.hooks
-			go func(sID string, hooks *Hooks) {
-				ctx := context.Background()
-				hooks.onError(ctx, nil, "notification", map[string]any{
-					"method":    "notifications/tools/list_changed",
-					"sessionID": sID,
-				}, fmt.Errorf("failed to send notification after deleting tools: %w", err))
-			}(sessionID, hooks)
+	// It only makes sense to send tool notifications to initialized sessions --
+	// if we're not initialized yet the client can't possibly have sent their
+	// initial tools/list message
+	if session.Initialized() {
+		// Send notification only to this session
+		if err := s.SendNotificationToSpecificClient(sessionID, "notifications/tools/list_changed", nil); err != nil {
+			// Log the error but don't fail the operation
+			// The tools were successfully deleted, but notification failed
+			if s.hooks != nil && len(s.hooks.OnError) > 0 {
+				hooks := s.hooks
+				go func(sID string, hooks *Hooks) {
+					ctx := context.Background()
+					hooks.onError(ctx, nil, "notification", map[string]any{
+						"method":    "notifications/tools/list_changed",
+						"sessionID": sID,
+					}, fmt.Errorf("failed to send notification after deleting tools: %w", err))
+				}(sessionID, hooks)
+			}
 		}
 	}
 
