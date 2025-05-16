@@ -29,6 +29,7 @@ func TestSSEServer(t *testing.T) {
 
 		if sseServer == nil {
 			t.Error("SSEServer should not be nil")
+			return
 		}
 		if sseServer.server == nil {
 			t.Error("MCPServer should not be nil")
@@ -579,7 +580,7 @@ func TestSSEServer(t *testing.T) {
 			return mcp.NewToolResultText(testVal), nil
 		})
 
-		testServer := NewTestServer(mcpServer, WithSSEContextFunc(setTestValFromRequest))
+		testServer := NewTestServer(mcpServer, WithHTTPContextFunc(setTestValFromRequest))
 		defer testServer.Close()
 
 		// Connect to SSE endpoint
@@ -1247,7 +1248,7 @@ func TestSSEServer(t *testing.T) {
 			WithHooks(&Hooks{
 				OnAfterInitialize: []OnAfterInitializeFunc{
 					func(ctx context.Context, id any, message *mcp.InitializeRequest, result *mcp.InitializeResult) {
-						result.Result.Meta = map[string]any{"invalid": func() {}} // marshal will fail
+						result.Meta = map[string]any{"invalid": func() {}} // marshal will fail
 					},
 				},
 			}),
