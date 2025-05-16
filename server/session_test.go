@@ -802,3 +802,118 @@ func TestMCPServer_NotificationChannelBlocked(t *testing.T) {
 	assert.Equal(t, "blocked-session", localErrorSessionID, "Session ID should be captured in the error hook")
 	assert.Equal(t, "broadcast-message", localErrorMethod, "Method should be captured in the error hook")
 }
+
+func TestMCPServer_SessionToolCapabilitiesBehavior(t *testing.T) {
+	tests := []struct {
+		name           string
+		serverOptions  []ServerOption
+		validateServer func(t *testing.T, s *MCPServer, session *sessionTestClientWithTools)
+	}{
+		{
+			name:          "no tool capabilities provided",
+			serverOptions: []ServerOption{
+				// No WithToolCapabilities
+			},
+			validateServer: func(t *testing.T, s *MCPServer, session *sessionTestClientWithTools) {
+				s.capabilitiesMu.RLock()
+				defer s.capabilitiesMu.RUnlock()
+
+				require.NotNil(t, s.capabilities.tools, "tools capability should be initialized")
+				assert.True(t, s.capabilities.tools.listChanged, "listChanged should be true when no capabilities were provided")
+			},
+		},
+		{
+			name: "tools.listChanged set to false",
+			serverOptions: []ServerOption{
+				WithToolCapabilities(false),
+			},
+			validateServer: func(t *testing.T, s *MCPServer, session *sessionTestClientWithTools) {
+				s.capabilitiesMu.RLock()
+				defer s.capabilitiesMu.RUnlock()
+
+				require.NotNil(t, s.capabilities.tools, "tools capability should be initialized")
+				assert.False(t, s.capabilities.tools.listChanged, "listChanged should remain false when explicitly set to false")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewMCPServer("test-server", "1.0.0", tt.serverOptions...)
+
+			// Create and register a session
+			session := &sessionTestClientWithTools{
+				sessionID:           "test-session",
+				notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+				initialized:         true,
+			}
+			err := server.RegisterSession(context.Background(), session)
+			require.NoError(t, err)
+
+			// Add a session tool and verify listChanged remains false
+			err = server.AddSessionTool(session.SessionID(), mcp.NewTool("test-tool"), nil)
+			require.NoError(t, err)
+
+			tt.validateServer(t, server, session)
+		})
+	}
+}
+
+func TestMCPServer_ToolNotificationsDisabled(t *testing.T) {
+	// This test verifies that when tool capabilities are disabled, we still
+	// add/delete tools correctly but don't send notifications about it.
+	//
+	// This is important because:
+	// 1. Tools should still work even if notifications are disabled
+	// 2. We shouldn't waste resources sending notifications that won't be used
+	// 3. The client might not be ready to handle tool notifications yet
+
+	// Create a server WITHOUT tool capabilities
+	server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(false))
+	ctx := context.Background()
+
+	// Create an initialized session
+	sessionChan := make(chan mcp.JSONRPCNotification, 1)
+	session := &sessionTestClientWithTools{
+		sessionID:           "session-1",
+		notificationChannel: sessionChan,
+		initialized:         true,
+	}
+
+	// Register the session
+	err := server.RegisterSession(ctx, session)
+	require.NoError(t, err)
+
+	// Add a tool
+	err = server.AddSessionTools(session.SessionID(),
+		ServerTool{Tool: mcp.NewTool("test-tool")},
+	)
+	require.NoError(t, err)
+
+	// Verify no notification was sent
+	select {
+	case <-sessionChan:
+		t.Error("Expected no notification to be sent when capabilities.tools.listChanged is false")
+	default:
+		// This is the expected case - no notification should be sent
+	}
+
+	// Verify tool was added to session
+	assert.Len(t, session.GetSessionTools(), 1)
+	assert.Contains(t, session.GetSessionTools(), "test-tool")
+
+	// Delete the tool
+	err = server.DeleteSessionTools(session.SessionID(), "test-tool")
+	require.NoError(t, err)
+
+	// Verify no notification was sent
+	select {
+	case <-sessionChan:
+		t.Error("Expected no notification to be sent when capabilities.tools.listChanged is false")
+	default:
+		// This is the expected case - no notification should be sent
+	}
+
+	// Verify tool was deleted from session
+	assert.Len(t, session.GetSessionTools(), 0)
+}
