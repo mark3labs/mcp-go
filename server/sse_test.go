@@ -580,7 +580,7 @@ func TestSSEServer(t *testing.T) {
 			return mcp.NewToolResultText(testVal), nil
 		})
 
-		testServer := NewTestServer(mcpServer, WithHTTPContextFunc(setTestValFromRequest))
+		testServer := NewTestServer(mcpServer, WithSSEContextFunc(setTestValFromRequest))
 		defer testServer.Close()
 
 		// Connect to SSE endpoint

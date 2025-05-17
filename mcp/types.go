@@ -96,7 +96,7 @@ func (t *URITemplate) UnmarshalJSON(data []byte) error {
 type JSONRPCMessage any
 
 // LATEST_PROTOCOL_VERSION is the most recent version of the MCP protocol.
-const LATEST_PROTOCOL_VERSION = "2024-11-05"
+const LATEST_PROTOCOL_VERSION = "2025-03-26"
 
 // JSONRPC_VERSION is the version of JSON-RPC used by MCP.
 const JSONRPC_VERSION = "2.0"

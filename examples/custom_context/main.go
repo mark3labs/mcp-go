@@ -122,9 +122,8 @@ func NewMCPServer() *MCPServer {
 	}
 }
 
-func (s *MCPServer) ServeSSE(addr string) *server.SSEServer {
-	return server.NewSSEServer(s.server,
-		server.WithBaseURL(fmt.Sprintf("http://%s", addr)),
+func (s *MCPServer) ServeHTTP() *server.StreamableHTTPServer {
+	return server.NewStreamableHTTPServer(s.server,
 		server.WithHTTPContextFunc(authFromRequest),
 	)
 }
@@ -135,12 +134,12 @@ func (s *MCPServer) ServeStdio() error {
 
 func main() {
 	var transport string
-	flag.StringVar(&transport, "t", "stdio", "Transport type (stdio or sse)")
+	flag.StringVar(&transport, "t", "stdio", "Transport type (stdio or http)")
 	flag.StringVar(
 		&transport,
 		"transport",
 		"stdio",
-		"Transport type (stdio or sse)",
+		"Transport type (stdio or http)",
 	)
 	flag.Parse()
 
@@ -151,15 +150,15 @@ func main() {
 		if err := s.ServeStdio(); err != nil {
 			log.Fatalf("Server error: %v", err)
 		}
-	case "sse":
-		sseServer := s.ServeSSE("localhost:8080")
-		log.Printf("SSE server listening on :8080")
-		if err := sseServer.Start(":8080"); err != nil {
+	case "http":
+		httpServer := s.ServeHTTP()
+		log.Printf("HTTP server listening on :8080")
+		if err := httpServer.Start(":8080"); err != nil {
 			log.Fatalf("Server error: %v", err)
 		}
 	default:
 		log.Fatalf(
-			"Invalid transport type: %s. Must be 'stdio' or 'sse'",
+			"Invalid transport type: %s. Must be 'stdio' or 'http'",
 			transport,
 		)
 	}
