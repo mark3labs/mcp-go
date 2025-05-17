@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -9,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -110,7 +108,7 @@ func (c *SSE) Start(ctx context.Context) error {
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	go c.readSSE(resp.Body)
+	go c.readSSE(ctx, resp.Body)
 
 	// Wait for the endpoint to be received
 	timeout := time.NewTimer(30 * time.Second)
@@ -131,56 +129,18 @@ func (c *SSE) Start(ctx context.Context) error {
 
 // readSSE continuously reads the SSE stream and processes events.
 // It runs until the connection is closed or an error occurs.
-func (c *SSE) readSSE(reader io.ReadCloser) {
-	defer reader.Close()
-
-	br := bufio.NewReader(reader)
-	var event, data string
-
-	for {
-		// when close or start's ctx cancel, the reader will be closed
-		// and the for loop will break.
-		line, err := br.ReadString('\n')
-		if err != nil {
-			if err == io.EOF {
-				// Process any pending event before exit
-				if event != "" && data != "" {
-					c.handleSSEEvent(event, data)
-				}
-				break
-			}
-			if !c.closed.Load() {
-				fmt.Printf("SSE stream error: %v\n", err)
-			}
-			return
-		}
-
-		// Remove only newline markers
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			// Empty line means end of event
-			if event != "" && data != "" {
-				c.handleSSEEvent(event, data)
-				event = ""
-				data = ""
-			}
-			continue
-		}
-
-		if strings.HasPrefix(line, "event:") {
-			event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-		} else if strings.HasPrefix(line, "data:") {
-			data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		}
+func (c *SSE) readSSE(ctx context.Context, reader io.ReadCloser) {
+	if err := ReadSSEStream(ctx, reader, c.handleSSEEvent); err != nil && !c.closed.Load() {
+		fmt.Printf("SSE stream error: %v\n", err)
 	}
 }
 
 // handleSSEEvent processes SSE events based on their type.
 // Handles 'endpoint' events for connection setup and 'message' events for JSON-RPC communication.
-func (c *SSE) handleSSEEvent(event, data string) {
-	switch event {
+func (c *SSE) handleSSEEvent(event sseEvent) {
+	switch event.event {
 	case "endpoint":
-		endpoint, err := c.baseURL.Parse(data)
+		endpoint, err := c.baseURL.Parse(event.data)
 		if err != nil {
 			fmt.Printf("Error parsing endpoint URL: %v\n", err)
 			return
@@ -194,7 +154,7 @@ func (c *SSE) handleSSEEvent(event, data string) {
 
 	case "message":
 		var baseMessage JSONRPCResponse
-		if err := json.Unmarshal([]byte(data), &baseMessage); err != nil {
+		if err := json.Unmarshal([]byte(event.data), &baseMessage); err != nil {
 			fmt.Printf("Error unmarshaling message: %v\n", err)
 			return
 		}
@@ -202,7 +162,7 @@ func (c *SSE) handleSSEEvent(event, data string) {
 		// Handle notification
 		if baseMessage.ID.IsNil() {
 			var notification mcp.JSONRPCNotification
-			if err := json.Unmarshal([]byte(data), &notification); err != nil {
+			if err := json.Unmarshal([]byte(event.data), &notification); err != nil {
 				return
 			}
 			c.notifyMu.RLock()
@@ -352,7 +312,7 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 
 	req, err := http.NewRequestWithContext(
 		ctx,
-		"POST",
+		http.MethodPost,
 		c.endpoint.String(),
 		bytes.NewReader(notificationBytes),
 	)
