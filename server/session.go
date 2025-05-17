@@ -343,3 +343,69 @@ func (s *MCPServer) DeleteSessionTools(sessionID string, names ...string) error 
 
 	return nil
 }
+
+// SendLogMessageToClient sends a log message to the current client
+func(s *MCPServer) SendLogMessageToClient(ctx context.Context, msg mcp.LoggingMessageNotification) error {
+	if s.capabilities.logging == nil || !(*s.capabilities.logging) {
+		return fmt.Errorf("server does not support emitting log message notifications")
+	}
+
+	clientSession := ClientSessionFromContext(ctx)
+	if clientSession == nil || !clientSession.Initialized() {
+		return ErrSessionNotInitialized
+	}
+
+	logSession, ok := clientSession.(SessionWithLogging)
+	if !ok {
+		return ErrSessionDoesNotSupportLogging
+	}
+
+	// Servers send notifications containing severity levels, optional logger names, and arbitrary JSON-serializable data.
+	// see <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging>
+	if msg.Params.Level == "" || msg.Params.Data == nil {
+		return fmt.Errorf("invalid log message without level or data")
+	}
+
+	clientLogLevel := logSession.GetLogLevel()
+	allowed, err := clientLogLevel.Allows(msg.Params.Level)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return fmt.Errorf("message level(%s) is lower than client level(%s)", msg.Params.Level, clientLogLevel)
+	}
+
+	notification := mcp.JSONRPCNotification{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		Notification: mcp.Notification{
+			Method: msg.Method,
+			Params: mcp.NotificationParams{
+				AdditionalFields: map[string]any{
+					"level":	msg.Params.Level,
+					"data":		msg.Params.Data,
+					"logger":	msg.Params.Logger,
+				},
+			},
+		},
+	}
+
+	select {
+	case logSession.NotificationChannel() <- notification:
+		return nil
+	default:
+		// Channel is blocked, if there's an error hook, use it
+		if s.hooks != nil && len(s.hooks.OnError) > 0 {
+			err := ErrNotificationChannelBlocked
+			// Copy hooks pointer to local variable to avoid race condition
+			hooks := s.hooks
+			go func(sessionID string, hooks *Hooks) {
+				// Use the error hook to report the blocked channel
+				hooks.onError(ctx, nil, "notification", map[string]any{
+					"method":    msg.Method,
+					"sessionID": sessionID,
+				}, fmt.Errorf("failed to send a log message, notification channel blocked for session %s: %w", sessionID, err))
+			}(logSession.SessionID(), hooks)
+		}
+		return ErrNotificationChannelBlocked
+	}
+}

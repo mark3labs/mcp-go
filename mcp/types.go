@@ -67,6 +67,10 @@ const (
 	// MethodNotificationToolsListChanged notifies when the list of available tools changes.
 	// https://spec.modelcontextprotocol.io/specification/2024-11-05/server/tools/list_changed/
 	MethodNotificationToolsListChanged = "notifications/tools/list_changed"
+
+	// MethodNotificationMessage notifies when severs send log messages.
+	// https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#log-message-notifications
+	MethodNotificationMessage MCPMethod = "notifications/message"
 )
 
 type URITemplate struct {
@@ -733,6 +737,30 @@ const (
 	LoggingLevelAlert     LoggingLevel = "alert"
 	LoggingLevelEmergency LoggingLevel = "emergency"
 )
+
+var (
+	// Map logging level constants to numerical codes as specified in RFC-5424
+	levelToSeverity = func() map[LoggingLevel]int {
+		return map[LoggingLevel]int {
+			LoggingLevelEmergency:	0,
+			LoggingLevelAlert:		1,
+			LoggingLevelCritical:	2,
+			LoggingLevelError:		3,
+			LoggingLevelWarning:	4,
+			LoggingLevelNotice:		5,
+			LoggingLevelInfo:		6,
+			LoggingLevelDebug:		7,
+		}
+	}()
+)
+
+// Allows is a helper function that decides a message could be sent to client or not according to the logging level
+func (subscribedLevel LoggingLevel) Allows(currentLevel LoggingLevel) (bool, error) {
+    if _, ok := levelToSeverity[currentLevel]; !ok {
+		return false, fmt.Errorf("illegal message logging level:%s", currentLevel)
+	}
+	return levelToSeverity[subscribedLevel] >= levelToSeverity[currentLevel], nil
+}
 
 /* Sampling */
 
