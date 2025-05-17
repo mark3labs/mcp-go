@@ -43,7 +43,7 @@ func addSSETool(mcpServer *MCPServer) {
 		// Send notification to client
 		server := ServerFromContext(ctx)
 		for i := 0; i < 10; i++ {
-			server.SendNotificationToClient(ctx, "test/notification", map[string]any{
+			_ = server.SendNotificationToClient(ctx, "test/notification", map[string]any{
 				"value": i,
 			})
 			time.Sleep(10 * time.Millisecond)
@@ -62,15 +62,16 @@ func TestStreamableHTTPServerBasic(t *testing.T) {
 
 		if httpServer == nil {
 			t.Error("SSEServer should not be nil")
-		}
-		if httpServer.server == nil {
-			t.Error("MCPServer should not be nil")
-		}
-		if httpServer.endpointPath != "/mcp" {
-			t.Errorf(
-				"Expected endpointPath /mcp, got %s",
-				httpServer.endpointPath,
-			)
+		} else {
+			if httpServer.server == nil {
+				t.Error("MCPServer should not be nil")
+			}
+			if httpServer.endpointPath != "/mcp" {
+				t.Errorf(
+					"Expected endpointPath /mcp, got %s",
+					httpServer.endpointPath,
+				)
+			}
 		}
 	})
 }

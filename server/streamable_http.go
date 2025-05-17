@@ -137,13 +137,14 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 
 // ServeHTTP implements the http.Handler interface.
 func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPost {
+	switch r.Method {
+	case http.MethodPost:
 		s.handlePost(w, r)
-	} else if r.Method == http.MethodGet {
+	case http.MethodGet:
 		s.handleGet(w, r)
-	} else if r.Method == http.MethodDelete {
+	case http.MethodDelete:
 		s.handleDelete(w, r)
-	} else {
+	default:
 		http.NotFound(w, r)
 	}
 }
@@ -431,7 +432,7 @@ func writeSSEEvent(w io.Writer, data any) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal data: %w", err)
 	}
-	_, err = w.Write([]byte(fmt.Sprintf("event: message\ndata: %s\n\n", jsonData)))
+	_, err = fmt.Fprintf(w, "event: message\ndata: %s\n\n", jsonData)
 	if err != nil {
 		return fmt.Errorf("failed to write SSE event: %w", err)
 	}
@@ -448,7 +449,10 @@ func (s *StreamableHTTPServer) writeJSONRPCError(
 	response := createErrorResponse(id, code, message)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
-	json.NewEncoder(w).Encode(response)
+	err := json.NewEncoder(w).Encode(response)
+	if err != nil {
+		s.logger.Errorf("Failed to write JSONRPCError: %v", err)
+	}
 }
 
 // --- session ---
