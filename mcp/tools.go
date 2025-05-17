@@ -46,15 +46,7 @@ type CallToolRequest struct {
 	Params struct {
 		Name      string         `json:"name"`
 		Arguments map[string]any `json:"arguments,omitempty"`
-		Meta      *struct {
-			// If specified, the caller is requesting out-of-band progress
-			// notifications for this request (as represented by
-			// notifications/progress). The value of this parameter is an
-			// opaque token that will be attached to any subsequent
-			// notifications. The receiver is not obligated to provide these
-			// notifications.
-			ProgressToken ProgressToken `json:"progressToken,omitempty"`
-		} `json:"_meta,omitempty"`
+		Meta      *Meta          `json:"_meta,omitempty"`
 	} `json:"params"`
 }
 

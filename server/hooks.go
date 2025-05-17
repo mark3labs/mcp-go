@@ -67,6 +67,9 @@ type OnAfterInitializeFunc func(ctx context.Context, id any, message *mcp.Initia
 type OnBeforePingFunc func(ctx context.Context, id any, message *mcp.PingRequest)
 type OnAfterPingFunc func(ctx context.Context, id any, message *mcp.PingRequest, result *mcp.EmptyResult)
 
+type OnBeforeSetLevelFunc func(ctx context.Context, id any, message *mcp.SetLevelRequest)
+type OnAfterSetLevelFunc func(ctx context.Context, id any, message *mcp.SetLevelRequest, result *mcp.EmptyResult)
+
 type OnBeforeListResourcesFunc func(ctx context.Context, id any, message *mcp.ListResourcesRequest)
 type OnAfterListResourcesFunc func(ctx context.Context, id any, message *mcp.ListResourcesRequest, result *mcp.ListResourcesResult)
 
@@ -99,6 +102,8 @@ type Hooks struct {
 	OnAfterInitialize             []OnAfterInitializeFunc
 	OnBeforePing                  []OnBeforePingFunc
 	OnAfterPing                   []OnAfterPingFunc
+	OnBeforeSetLevel              []OnBeforeSetLevelFunc
+	OnAfterSetLevel               []OnAfterSetLevelFunc
 	OnBeforeListResources         []OnBeforeListResourcesFunc
 	OnAfterListResources          []OnAfterListResourcesFunc
 	OnBeforeListResourceTemplates []OnBeforeListResourceTemplatesFunc
@@ -306,6 +311,33 @@ func (c *Hooks) afterPing(ctx context.Context, id any, message *mcp.PingRequest,
 		return
 	}
 	for _, hook := range c.OnAfterPing {
+		hook(ctx, id, message, result)
+	}
+}
+func (c *Hooks) AddBeforeSetLevel(hook OnBeforeSetLevelFunc) {
+	c.OnBeforeSetLevel = append(c.OnBeforeSetLevel, hook)
+}
+
+func (c *Hooks) AddAfterSetLevel(hook OnAfterSetLevelFunc) {
+	c.OnAfterSetLevel = append(c.OnAfterSetLevel, hook)
+}
+
+func (c *Hooks) beforeSetLevel(ctx context.Context, id any, message *mcp.SetLevelRequest) {
+	c.beforeAny(ctx, id, mcp.MethodSetLogLevel, message)
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnBeforeSetLevel {
+		hook(ctx, id, message)
+	}
+}
+
+func (c *Hooks) afterSetLevel(ctx context.Context, id any, message *mcp.SetLevelRequest, result *mcp.EmptyResult) {
+	c.onSuccess(ctx, id, mcp.MethodSetLogLevel, message, result)
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnAfterSetLevel {
 		hook(ctx, id, message, result)
 	}
 }

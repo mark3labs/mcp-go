@@ -110,6 +110,31 @@ func (s *MCPServer) HandleMessage(
 		}
 		s.hooks.afterPing(ctx, baseMessage.ID, &request, result)
 		return createResponse(baseMessage.ID, *result)
+	case mcp.MethodSetLogLevel:
+		var request mcp.SetLevelRequest
+		var result *mcp.EmptyResult
+		if s.capabilities.logging == nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.METHOD_NOT_FOUND,
+				err:  fmt.Errorf("logging %w", ErrUnsupported),
+			}
+		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.INVALID_REQUEST,
+				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
+			}
+		} else {
+			s.hooks.beforeSetLevel(ctx, baseMessage.ID, &request)
+			result, err = s.handleSetLevel(ctx, baseMessage.ID, request)
+		}
+		if err != nil {
+			s.hooks.onError(ctx, baseMessage.ID, baseMessage.Method, &request, err)
+			return err.ToJSONRPCError()
+		}
+		s.hooks.afterSetLevel(ctx, baseMessage.ID, &request, result)
+		return createResponse(baseMessage.ID, *result)
 	case mcp.MethodResourcesList:
 		var request mcp.ListResourcesRequest
 		var result *mcp.ListResourcesResult

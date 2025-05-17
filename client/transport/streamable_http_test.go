@@ -147,7 +147,7 @@ func TestStreamableHTTP(t *testing.T) {
 
 	initRequest := JSONRPCRequest{
 		JSONRPC: "2.0",
-		ID:      1,
+		ID:      mcp.NewRequestId(int64(0)),
 		Method:  "initialize",
 	}
 
@@ -168,7 +168,7 @@ func TestStreamableHTTP(t *testing.T) {
 
 		request := JSONRPCRequest{
 			JSONRPC: "2.0",
-			ID:      1,
+			ID:      mcp.NewRequestId(int64(1)),
 			Method:  "debug/echo",
 			Params:  params,
 		}
@@ -182,7 +182,7 @@ func TestStreamableHTTP(t *testing.T) {
 		// Parse the result to verify echo
 		var result struct {
 			JSONRPC string         `json:"jsonrpc"`
-			ID      int64          `json:"id"`
+			ID      mcp.RequestId  `json:"id"`
 			Method  string         `json:"method"`
 			Params  map[string]any `json:"params"`
 		}
@@ -195,8 +195,11 @@ func TestStreamableHTTP(t *testing.T) {
 		if result.JSONRPC != "2.0" {
 			t.Errorf("Expected JSONRPC value '2.0', got '%s'", result.JSONRPC)
 		}
-		if result.ID != 1 {
-			t.Errorf("Expected ID 1, got %d", result.ID)
+		idValue, ok := result.ID.Value().(int64)
+		if !ok {
+			t.Errorf("Expected ID to be int64, got %T", result.ID.Value())
+		} else if idValue != 1 {
+			t.Errorf("Expected ID 1, got %d", idValue)
 		}
 		if result.Method != "debug/echo" {
 			t.Errorf("Expected method 'debug/echo', got '%s'", result.Method)
@@ -219,7 +222,7 @@ func TestStreamableHTTP(t *testing.T) {
 		// Prepare a request
 		request := JSONRPCRequest{
 			JSONRPC: "2.0",
-			ID:      3,
+			ID:      mcp.NewRequestId(int64(3)),
 			Method:  "debug/echo",
 		}
 
@@ -247,7 +250,7 @@ func TestStreamableHTTP(t *testing.T) {
 
 		request := JSONRPCRequest{
 			JSONRPC: "2.0",
-			ID:      1,
+			ID:      mcp.NewRequestId(int64(1)),
 			Method:  "debug/echo_notification",
 		}
 
@@ -266,7 +269,7 @@ func TestStreamableHTTP(t *testing.T) {
 				if got == nil {
 					t.Errorf("Notification handler did not send the expected notification: got nil")
 				}
-				if int64(got["id"].(float64)) != request.ID ||
+				if int64(got["id"].(float64)) != request.ID.Value().(int64) ||
 					got["jsonrpc"] != request.JSONRPC ||
 					got["method"] != request.Method {
 
@@ -302,7 +305,7 @@ func TestStreamableHTTP(t *testing.T) {
 				// Each request has a unique ID and payload
 				request := JSONRPCRequest{
 					JSONRPC: "2.0",
-					ID:      int64(100 + idx),
+					ID:      mcp.NewRequestId(int64(100 + idx)),
 					Method:  "debug/echo",
 					Params: map[string]any{
 						"requestIndex": idx,
@@ -327,15 +330,25 @@ func TestStreamableHTTP(t *testing.T) {
 				continue
 			}
 
-			if responses[i] == nil || responses[i].ID == nil || *responses[i].ID != int64(100+i) {
-				t.Errorf("Request %d: Expected ID %d, got %v", i, 100+i, responses[i])
+			if responses[i] == nil {
+				t.Errorf("Request %d: Response is nil", i)
+				continue
+			}
+
+			expectedId := int64(100 + i)
+			idValue, ok := responses[i].ID.Value().(int64)
+			if !ok {
+				t.Errorf("Request %d: Expected ID to be int64, got %T", i, responses[i].ID.Value())
+				continue
+			} else if idValue != expectedId {
+				t.Errorf("Request %d: Expected ID %d, got %d", i, expectedId, idValue)
 				continue
 			}
 
 			// Parse the result to verify echo
 			var result struct {
 				JSONRPC string         `json:"jsonrpc"`
-				ID      int64          `json:"id"`
+				ID      mcp.RequestId  `json:"id"`
 				Method  string         `json:"method"`
 				Params  map[string]any `json:"params"`
 			}
@@ -346,8 +359,8 @@ func TestStreamableHTTP(t *testing.T) {
 			}
 
 			// Verify data matches what was sent
-			if result.ID != int64(100+i) {
-				t.Errorf("Request %d: Expected echoed ID %d, got %d", i, 100+i, result.ID)
+			if result.ID.Value().(int64) != expectedId {
+				t.Errorf("Request %d: Expected echoed ID %d, got %d", i, expectedId, result.ID.Value().(int64))
 			}
 
 			if result.Method != "debug/echo" {
@@ -368,7 +381,7 @@ func TestStreamableHTTP(t *testing.T) {
 		// Prepare a request
 		request := JSONRPCRequest{
 			JSONRPC: "2.0",
-			ID:      100,
+			ID:      mcp.NewRequestId(int64(100)),
 			Method:  "debug/echo_error_string",
 		}
 
@@ -390,8 +403,11 @@ func TestStreamableHTTP(t *testing.T) {
 		if responseError.Method != "debug/echo_error_string" {
 			t.Errorf("Expected method 'debug/echo_error_string', got '%s'", responseError.Method)
 		}
-		if responseError.ID != 100 {
-			t.Errorf("Expected ID 100, got %d", responseError.ID)
+		idValue, ok := responseError.ID.Value().(int64)
+		if !ok {
+			t.Errorf("Expected ID to be int64, got %T", responseError.ID.Value())
+		} else if idValue != 100 {
+			t.Errorf("Expected ID 100, got %d", idValue)
 		}
 		if responseError.JSONRPC != "2.0" {
 			t.Errorf("Expected JSONRPC '2.0', got '%s'", responseError.JSONRPC)
@@ -421,7 +437,7 @@ func TestStreamableHTTPErrors(t *testing.T) {
 
 		request := JSONRPCRequest{
 			JSONRPC: "2.0",
-			ID:      1,
+			ID:      mcp.NewRequestId(int64(1)),
 			Method:  "initialize",
 		}
 

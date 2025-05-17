@@ -101,7 +101,7 @@ func (e *requestError) Error() string {
 func (e *requestError) ToJSONRPCError() mcp.JSONRPCError {
 	return mcp.JSONRPCError{
 		JSONRPC: mcp.JSONRPC_VERSION,
-		ID:      e.id,
+		ID:      mcp.NewRequestId(e.id),
 		Error: struct {
 			Code    int    `json:"code"`
 			Message string `json:"message"`
@@ -161,7 +161,7 @@ type serverCapabilities struct {
 	tools     *toolCapabilities
 	resources *resourceCapabilities
 	prompts   *promptCapabilities
-	logging   bool
+	logging   *bool
 }
 
 // resourceCapabilities defines the supported resource-related features
@@ -260,7 +260,7 @@ func WithToolCapabilities(listChanged bool) ServerOption {
 // WithLogging enables logging capabilities for the server
 func WithLogging() ServerOption {
 	return func(s *MCPServer) {
-		s.capabilities.logging = true
+		s.capabilities.logging = mcp.ToBoolPtr(true)
 	}
 }
 
@@ -289,7 +289,7 @@ func NewMCPServer(
 			tools:     nil,
 			resources: nil,
 			prompts:   nil,
-			logging:   false,
+			logging:   nil,
 		},
 	}
 
@@ -411,20 +411,29 @@ func (s *MCPServer) AddTool(tool mcp.Tool, handler ToolHandlerFunc) {
 	s.AddTools(ServerTool{Tool: tool, Handler: handler})
 }
 
-// AddTools registers multiple tools at once
-func (s *MCPServer) AddTools(tools ...ServerTool) {
+// Register tool capabilities due to a tool being added.  Default to
+// listChanged: true, but don't change the value if we've already explicitly
+// registered tools.listChanged false.
+func (s *MCPServer) implicitlyRegisterToolCapabilities() {
 	s.capabilitiesMu.RLock()
 	if s.capabilities.tools == nil {
 		s.capabilitiesMu.RUnlock()
 
 		s.capabilitiesMu.Lock()
 		if s.capabilities.tools == nil {
-			s.capabilities.tools = &toolCapabilities{}
+			s.capabilities.tools = &toolCapabilities{
+				listChanged: true,
+			}
 		}
 		s.capabilitiesMu.Unlock()
 	} else {
 		s.capabilitiesMu.RUnlock()
 	}
+}
+
+// AddTools registers multiple tools at once
+func (s *MCPServer) AddTools(tools ...ServerTool) {
+	s.implicitlyRegisterToolCapabilities()
 
 	s.toolsMu.Lock()
 	for _, entry := range tools {
@@ -512,7 +521,7 @@ func (s *MCPServer) handleInitialize(
 		}
 	}
 
-	if s.capabilities.logging {
+	if s.capabilities.logging != nil && *s.capabilities.logging {
 		capabilities.Logging = &struct{}{}
 	}
 
@@ -537,6 +546,49 @@ func (s *MCPServer) handlePing(
 	id any,
 	request mcp.PingRequest,
 ) (*mcp.EmptyResult, *requestError) {
+	return &mcp.EmptyResult{}, nil
+}
+
+func (s *MCPServer) handleSetLevel(
+	ctx context.Context,
+	id any,
+	request mcp.SetLevelRequest,
+) (*mcp.EmptyResult, *requestError) {
+	clientSession := ClientSessionFromContext(ctx)
+	if clientSession == nil || !clientSession.Initialized() {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INTERNAL_ERROR,
+			err:  ErrSessionNotInitialized,
+		}
+	}
+
+	sessionLogging, ok := clientSession.(SessionWithLogging)
+	if !ok {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INTERNAL_ERROR,
+			err:  ErrSessionDoesNotSupportLogging,
+		}
+	}
+
+	level := request.Params.Level
+	// Validate logging level
+	switch level {
+	case mcp.LoggingLevelDebug, mcp.LoggingLevelInfo, mcp.LoggingLevelNotice,
+		mcp.LoggingLevelWarning, mcp.LoggingLevelError, mcp.LoggingLevelCritical,
+		mcp.LoggingLevelAlert, mcp.LoggingLevelEmergency:
+		// Valid level
+	default:
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  fmt.Errorf("invalid logging level '%s'", level),
+		}
+	}
+	
+	sessionLogging.SetLogLevel(level)
+
 	return &mcp.EmptyResult{}, nil
 }
 
@@ -928,7 +980,7 @@ func (s *MCPServer) handleNotification(
 func createResponse(id any, result any) mcp.JSONRPCMessage {
 	return mcp.JSONRPCResponse{
 		JSONRPC: mcp.JSONRPC_VERSION,
-		ID:      id,
+		ID:      mcp.NewRequestId(id),
 		Result:  result,
 	}
 }
@@ -940,7 +992,7 @@ func createErrorResponse(
 ) mcp.JSONRPCMessage {
 	return mcp.JSONRPCError{
 		JSONRPC: mcp.JSONRPC_VERSION,
-		ID:      id,
+		ID:      mcp.NewRequestId(id),
 		Error: struct {
 			Code    int    `json:"code"`
 			Message string `json:"message"`

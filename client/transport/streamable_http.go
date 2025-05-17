@@ -216,7 +216,7 @@ func (c *StreamableHTTP) SendRequest(
 		}
 
 		// should not be a notification
-		if response.ID == nil {
+		if response.ID.IsNil() {
 			return nil, fmt.Errorf("response should contain RPC id: %v", response)
 		}
 
@@ -257,7 +257,7 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 			}
 
 			// Handle notification
-			if message.ID == nil {
+			if message.ID.IsNil() {
 				var notification mcp.JSONRPCNotification
 				if err := json.Unmarshal([]byte(data), &notification); err != nil {
 					fmt.Printf("failed to unmarshal notification: %v\n", err)
