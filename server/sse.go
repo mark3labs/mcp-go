@@ -20,15 +20,13 @@ import (
 
 // sseSession represents an active SSE connection.
 type sseSession struct {
-	writer              http.ResponseWriter
-	flusher             http.Flusher
 	done                chan struct{}
 	eventQueue          chan string // Channel for queuing events
 	sessionID           string
 	requestID           atomic.Int64
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         atomic.Bool
-	loggingLevel		atomic.Value
+	loggingLevel        atomic.Value
 	tools               sync.Map // stores session-specific tools
 }
 
@@ -55,11 +53,11 @@ func (s *sseSession) Initialized() bool {
 	return s.initialized.Load()
 }
 
-func(s *sseSession) SetLogLevel(level mcp.LoggingLevel) {
+func (s *sseSession) SetLogLevel(level mcp.LoggingLevel) {
 	s.loggingLevel.Store(level)
 }
 
-func(s *sseSession) GetLogLevel() mcp.LoggingLevel {
+func (s *sseSession) GetLogLevel() mcp.LoggingLevel {
 	level := s.loggingLevel.Load()
 	if level == nil {
 		return mcp.LoggingLevelError
@@ -92,9 +90,9 @@ func (s *sseSession) SetSessionTools(tools map[string]ServerTool) {
 }
 
 var (
-	_ ClientSession    		= (*sseSession)(nil)
-	_ SessionWithTools 		= (*sseSession)(nil)
-	_ SessionWithLogging	= (*sseSession)(nil)
+	_ ClientSession      = (*sseSession)(nil)
+	_ SessionWithTools   = (*sseSession)(nil)
+	_ SessionWithLogging = (*sseSession)(nil)
 )
 
 // SSEServer implements a Server-Sent Events (SSE) based MCP server.
@@ -301,8 +299,6 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 	sessionID := uuid.New().String()
 	session := &sseSession{
-		writer:              w,
-		flusher:             flusher,
 		done:                make(chan struct{}),
 		eventQueue:          make(chan string, 100), // Buffer for events
 		sessionID:           sessionID,
