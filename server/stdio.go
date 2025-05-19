@@ -289,7 +289,6 @@ func (s *StdioServer) writeResponse(
 // Returns an error if the server encounters any issues during operation.
 func ServeStdio(server *MCPServer, opts ...StdioOption) error {
 	s := NewStdioServer(server)
-	s.SetErrorLogger(log.New(os.Stderr, "", log.LstdFlags))
 
 	for _, opt := range opts {
 		opt(s)
