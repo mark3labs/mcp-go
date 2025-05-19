@@ -344,7 +344,8 @@ func (s *MCPServer) DeleteSessionTools(sessionID string, names ...string) error 
 	return nil
 }
 
-// SendLogMessageToClient sends a log message to the current client
+// SendLogMessageToClient sends a log message notification to the current client.
+// The client sesssion is expected to be an instance of server.SessionWithLogging to support setting and getting minimum log level
 func(s *MCPServer) SendLogMessageToClient(ctx context.Context, msg mcp.LoggingMessageNotification) error {
 	if s.capabilities.logging == nil || !(*s.capabilities.logging) {
 		return fmt.Errorf("server does not support emitting log message notifications")
@@ -375,37 +376,10 @@ func(s *MCPServer) SendLogMessageToClient(ctx context.Context, msg mcp.LoggingMe
 		return fmt.Errorf("message level(%s) is lower than client level(%s)", msg.Params.Level, clientLogLevel)
 	}
 
-	notification := mcp.JSONRPCNotification{
-		JSONRPC: mcp.JSONRPC_VERSION,
-		Notification: mcp.Notification{
-			Method: msg.Method,
-			Params: mcp.NotificationParams{
-				AdditionalFields: map[string]any{
-					"level":	msg.Params.Level,
-					"data":		msg.Params.Data,
-					"logger":	msg.Params.Logger,
-				},
-			},
-		},
+	params := map[string]any {
+		"level":	msg.Params.Level,
+		"data":		msg.Params.Data,
+		"logger":	msg.Params.Logger,
 	}
-
-	select {
-	case logSession.NotificationChannel() <- notification:
-		return nil
-	default:
-		// Channel is blocked, if there's an error hook, use it
-		if s.hooks != nil && len(s.hooks.OnError) > 0 {
-			err := ErrNotificationChannelBlocked
-			// Copy hooks pointer to local variable to avoid race condition
-			hooks := s.hooks
-			go func(sessionID string, hooks *Hooks) {
-				// Use the error hook to report the blocked channel
-				hooks.onError(ctx, nil, "notification", map[string]any{
-					"method":    msg.Method,
-					"sessionID": sessionID,
-				}, fmt.Errorf("failed to send a log message, notification channel blocked for session %s: %w", sessionID, err))
-			}(logSession.SessionID(), hooks)
-		}
-		return ErrNotificationChannelBlocked
-	}
+	return s.SendNotificationToClient(ctx, msg.Method, params)
 }
