@@ -310,8 +310,11 @@ func (c *SSE) SendRequest(
 	case <-ctx.Done():
 		deleteResponseChan()
 		return nil, ctx.Err()
-	case response := <-responseChan:
-		return response, nil
+	case response, ok := <-responseChan:
+		if ok {
+			return response, nil
+		}
+		return nil, fmt.Errorf("connection has been closed")
 	}
 }
 
