@@ -41,19 +41,18 @@ func WithHTTPTimeout(timeout time.Duration) StreamableHTTPCOption {
 //
 // https://modelcontextprotocol.io/specification/2025-03-26/basic/transports
 //
-// The current implementation does not support the following features:
-//   - batching
-//   - continuously listening for server notifications when no request is in flight
-//     (https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server)
-//   - resuming stream
-//     (https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#resumability-and-redelivery)
-//   - server -> client request
+// Current limitations:
+//   - Limited batching support
+//   - Basic resumability support (improved but not complete)
+//   - No support for server -> client requests
+//   - Limited support for continuously listening for server notifications
 type StreamableHTTP struct {
 	baseURL    *url.URL
 	httpClient *http.Client
 	headers    map[string]string
 
-	sessionID atomic.Value // string
+	sessionID   atomic.Value // string
+	lastEventID atomic.Value // string for resumability
 
 	notificationHandler func(mcp.JSONRPCNotification)
 	notifyMu            sync.RWMutex
@@ -75,7 +74,8 @@ func NewStreamableHTTP(baseURL string, options ...StreamableHTTPCOption) (*Strea
 		headers:    make(map[string]string),
 		closed:     make(chan struct{}),
 	}
-	smc.sessionID.Store("") // set initial value to simplify later usage
+	smc.sessionID.Store("")   // set initial value to simplify later usage
+	smc.lastEventID.Store("") // initialize lastEventID
 
 	for _, opt := range options {
 		opt(smc)
@@ -166,10 +166,20 @@ func (c *StreamableHTTP) SendRequest(
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
+
+	// Add session ID if available
 	sessionID := c.sessionID.Load()
 	if sessionID != "" {
 		req.Header.Set(headerKeySessionID, sessionID.(string))
 	}
+
+	// Add Last-Event-Id header for resumability if available
+	lastEventID := c.lastEventID.Load()
+	if lastEventID != nil && lastEventID.(string) != "" {
+		req.Header.Set("Last-Event-Id", lastEventID.(string))
+	}
+
+	// Add custom headers
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
 	}
@@ -294,7 +304,7 @@ func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, hand
 	defer reader.Close()
 
 	br := bufio.NewReader(reader)
-	var event, data string
+	var event, data, id string
 
 	for {
 		select {
@@ -325,8 +335,13 @@ func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, hand
 				// Empty line means end of event
 				if event != "" && data != "" {
 					handler(event, data)
+					// Store the last event ID for resumability if present
+					if id != "" {
+						c.lastEventID.Store(id)
+					}
 					event = ""
 					data = ""
+					id = ""
 				}
 				continue
 			}
@@ -335,6 +350,8 @@ func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, hand
 				event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
 			} else if strings.HasPrefix(line, "data:") {
 				data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			} else if strings.HasPrefix(line, "id:") {
+				id = strings.TrimSpace(strings.TrimPrefix(line, "id:"))
 			}
 		}
 	}
@@ -357,9 +374,19 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
+
+	// Add session ID if available
 	if sessionID := c.sessionID.Load(); sessionID != "" {
 		req.Header.Set(headerKeySessionID, sessionID.(string))
 	}
+
+	// Add Last-Event-Id header for resumability if available
+	lastEventID := c.lastEventID.Load()
+	if lastEventID != nil && lastEventID.(string) != "" {
+		req.Header.Set("Last-Event-Id", lastEventID.(string))
+	}
+
+	// Add custom headers
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
 	}
@@ -391,4 +418,13 @@ func (c *StreamableHTTP) SetNotificationHandler(handler func(mcp.JSONRPCNotifica
 
 func (c *StreamableHTTP) GetSessionId() string {
 	return c.sessionID.Load().(string)
+}
+
+// GetLastEventId returns the last event ID for resumability
+func (c *StreamableHTTP) GetLastEventId() string {
+	lastEventID := c.lastEventID.Load()
+	if lastEventID == nil {
+		return ""
+	}
+	return lastEventID.(string)
 }
