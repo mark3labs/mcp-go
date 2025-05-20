@@ -97,6 +97,7 @@ MCP Go handles all the complex protocol details and server management, so you ca
   - [Session Management](#session-management)
   - [Request Hooks](#request-hooks)
   - [Tool Handler Middleware](#tool-handler-middleware)
+  - [Regenerating Server Code](#regenerating-server-code)
 - [Contributing](/CONTRIBUTING.md)
 
 ## Installation
@@ -755,4 +756,15 @@ Add the `Hooks` to the server at the time of creation using the
 Add middleware to tool call handlers using the `server.WithToolHandlerMiddleware` option. Middlewares can be registered on server creation and are applied on every tool call.
 
 A recovery middleware option is available to recover from panics in a tool call and can be added to the server with the `server.WithRecovery` option.
+
+### Regenerating Server Code
+
+Server hooks and request handlers are generated. Regenerate them by running:
+
+```bash
+go generate ./...
+```
+
+You need `go` installed and the `goimports` tool available. The generator runs
+`goimports` automatically to format and fix imports.
 
