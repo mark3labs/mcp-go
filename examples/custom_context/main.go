@@ -81,7 +81,7 @@ func handleMakeAuthenticatedRequestTool(
 	ctx context.Context,
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	message, ok := request.Params.Arguments["message"].(string)
+	message, ok := request.GetArguments()["message"].(string)
 	if !ok {
 		return nil, fmt.Errorf("missing message")
 	}

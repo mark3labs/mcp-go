@@ -149,9 +149,21 @@ func main() {
 
     // Add the calculator handler
     s.AddTool(calculatorTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-        op := request.Params.Arguments["operation"].(string)
-        x := request.Params.Arguments["x"].(float64)
-        y := request.Params.Arguments["y"].(float64)
+        // Using helper functions for type-safe argument access
+        op, err := request.RequireString("operation")
+        if err != nil {
+            return mcp.NewToolResultError(err.Error()), nil
+        }
+        
+        x, err := request.RequireFloat("x")
+        if err != nil {
+            return mcp.NewToolResultError(err.Error()), nil
+        }
+        
+        y, err := request.RequireFloat("y")
+        if err != nil {
+            return mcp.NewToolResultError(err.Error()), nil
+        }
 
         var result float64
         switch op {
@@ -312,9 +324,10 @@ calculatorTool := mcp.NewTool("calculate",
 )
 
 s.AddTool(calculatorTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    op := request.Params.Arguments["operation"].(string)
-    x := request.Params.Arguments["x"].(float64)
-    y := request.Params.Arguments["y"].(float64)
+    args := request.GetArguments()
+    op := args["operation"].(string)
+    x := args["x"].(float64)
+    y := args["y"].(float64)
 
     var result float64
     switch op {
@@ -355,10 +368,11 @@ httpTool := mcp.NewTool("http_request",
 )
 
 s.AddTool(httpTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    method := request.Params.Arguments["method"].(string)
-    url := request.Params.Arguments["url"].(string)
+    args := request.GetArguments()
+    method := args["method"].(string)
+    url := args["url"].(string)
     body := ""
-    if b, ok := request.Params.Arguments["body"].(string); ok {
+    if b, ok := args["body"].(string); ok {
         body = b
     }
 

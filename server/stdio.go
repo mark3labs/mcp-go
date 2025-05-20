@@ -52,10 +52,11 @@ func WithStdioContextFunc(fn StdioContextFunc) StdioOption {
 
 // stdioSession is a static client session, since stdio has only one client.
 type stdioSession struct {
-	notifications chan mcp.JSONRPCNotification
-	initialized   atomic.Bool
+	notifications   chan mcp.JSONRPCNotification
+	initialized     atomic.Bool
+	loggingLevel    atomic.Value
 	mu            sync.RWMutex
-	clientInfo    mcp.Implementation
+	clientInfo    mcp.Implementation	
 }
 
 func (s *stdioSession) SessionID() string {
@@ -67,6 +68,8 @@ func (s *stdioSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
 }
 
 func (s *stdioSession) Initialize() {
+	// set default logging level
+	s.loggingLevel.Store(mcp.LoggingLevelError)
 	s.initialized.Store(true)
 }
 
@@ -86,8 +89,23 @@ func (s *stdioSession) SetClientInfo(clientInfo mcp.Implementation) {
 	s.clientInfo = clientInfo
 }
 
-var _ ClientSession = (*stdioSession)(nil)
-var _ SessionWithClientInfo = (*stdioSession)(nil)
+func(s *stdioSession) SetLogLevel(level mcp.LoggingLevel) {
+	s.loggingLevel.Store(level)
+}
+
+func(s *stdioSession) GetLogLevel() mcp.LoggingLevel {
+	level := s.loggingLevel.Load()
+	if level == nil {
+		return mcp.LoggingLevelError
+	}
+	return level.(mcp.LoggingLevel)
+}
+
+var (
+	_ ClientSession			= (*stdioSession)(nil)
+	_ SessionWithLogging 	= (*stdioSession)(nil)
+	_ SessionWithClientInfo = (*stdioSession)(nil)	
+)
 
 var stdioSessionInstance = stdioSession{
 	notifications: make(chan mcp.JSONRPCNotification, 100),
@@ -287,7 +305,6 @@ func (s *StdioServer) writeResponse(
 // Returns an error if the server encounters any issues during operation.
 func ServeStdio(server *MCPServer, opts ...StdioOption) error {
 	s := NewStdioServer(server)
-	s.SetErrorLogger(log.New(os.Stderr, "", log.LstdFlags))
 
 	for _, opt := range opts {
 		opt(s)

@@ -312,7 +312,7 @@ func handleEchoTool(
 	ctx context.Context,
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	arguments := request.Params.Arguments
+	arguments := request.GetArguments()
 	message, ok := arguments["message"].(string)
 	if !ok {
 		return nil, fmt.Errorf("invalid message argument")
@@ -331,7 +331,7 @@ func handleAddTool(
 	ctx context.Context,
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	arguments := request.Params.Arguments
+	arguments := request.GetArguments()
 	a, ok1 := arguments["a"].(float64)
 	b, ok2 := arguments["b"].(float64)
 	if !ok1 || !ok2 {
@@ -382,7 +382,7 @@ func handleLongRunningOperationTool(
 	ctx context.Context,
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	arguments := request.Params.Arguments
+	arguments := request.GetArguments()
 	progressToken := request.Params.Meta.ProgressToken
 	duration, _ := arguments["duration"].(float64)
 	steps, _ := arguments["steps"].(float64)

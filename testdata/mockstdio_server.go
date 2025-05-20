@@ -6,19 +6,21 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 type JSONRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      *int64          `json:"id,omitempty"`
+	ID      *mcp.RequestId  `json:"id,omitempty"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params"`
 }
 
 type JSONRPCResponse struct {
-	JSONRPC string `json:"jsonrpc"`
-	ID      *int64 `json:"id,omitempty"`
-	Result  any    `json:"result,omitempty"`
+	JSONRPC string         `json:"jsonrpc"`
+	ID      *mcp.RequestId `json:"id,omitempty"`
+	Result  any            `json:"result,omitempty"`
 	Error   *struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`

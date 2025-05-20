@@ -26,7 +26,7 @@ type Stdio struct {
 	stdin          io.WriteCloser
 	stdout         *bufio.Reader
 	stderr         io.ReadCloser
-	responses      map[int64]chan *JSONRPCResponse
+	responses      map[string]chan *JSONRPCResponse
 	mu             sync.RWMutex
 	done           chan struct{}
 	onNotification func(mcp.JSONRPCNotification)
@@ -42,7 +42,7 @@ func NewIO(input io.Reader, output io.WriteCloser, logging io.ReadCloser) *Stdio
 		stdout: bufio.NewReader(input),
 		stderr: logging,
 
-		responses: make(map[int64]chan *JSONRPCResponse),
+		responses: make(map[string]chan *JSONRPCResponse),
 		done:      make(chan struct{}),
 	}
 }
@@ -61,7 +61,7 @@ func NewStdio(
 		args:    args,
 		env:     env,
 
-		responses: make(map[int64]chan *JSONRPCResponse),
+		responses: make(map[string]chan *JSONRPCResponse),
 		done:      make(chan struct{}),
 	}
 
@@ -181,7 +181,7 @@ func (c *Stdio) readResponses() {
 			}
 
 			// Handle notification
-			if baseMessage.ID == nil {
+			if baseMessage.ID.IsNil() {
 				var notification mcp.JSONRPCNotification
 				if err := json.Unmarshal([]byte(line), &notification); err != nil {
 					continue
@@ -194,14 +194,17 @@ func (c *Stdio) readResponses() {
 				continue
 			}
 
+			// Create string key for map lookup
+			idKey := baseMessage.ID.String()
+
 			c.mu.RLock()
-			ch, ok := c.responses[*baseMessage.ID]
+			ch, exists := c.responses[idKey]
 			c.mu.RUnlock()
 
-			if ok {
+			if exists {
 				ch <- &baseMessage
 				c.mu.Lock()
-				delete(c.responses, *baseMessage.ID)
+				delete(c.responses, idKey)
 				c.mu.Unlock()
 			}
 		}
@@ -227,14 +230,17 @@ func (c *Stdio) SendRequest(
 	}
 	requestBytes = append(requestBytes, '\n')
 
+	// Create string key for map lookup
+	idKey := request.ID.String()
+
 	// Register response channel
 	responseChan := make(chan *JSONRPCResponse, 1)
 	c.mu.Lock()
-	c.responses[request.ID] = responseChan
+	c.responses[idKey] = responseChan
 	c.mu.Unlock()
 	deleteResponseChan := func() {
 		c.mu.Lock()
-		delete(c.responses, request.ID)
+		delete(c.responses, idKey)
 		c.mu.Unlock()
 	}
 
