@@ -105,8 +105,7 @@ type sessionTestClientWithClientInfo struct {
 	sessionID           string
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         bool
-	clientInfoMu        sync.RWMutex
-	clientInfo          mcp.Implementation
+	clientInfo          atomic.Value
 }
 
 func (f *sessionTestClientWithClientInfo) SessionID() string {
@@ -126,27 +125,24 @@ func (f *sessionTestClientWithClientInfo) Initialized() bool {
 }
 
 func (f *sessionTestClientWithClientInfo) GetClientInfo() mcp.Implementation {
-	f.clientInfoMu.RLock()
-	defer f.clientInfoMu.RUnlock()
-	return f.clientInfo
+	if value := f.clientInfo.Load(); value != nil {
+		if clientInfo, ok := value.(mcp.Implementation); ok {
+			return clientInfo
+		}
+	}
+	return mcp.Implementation{}
 }
 
 func (f *sessionTestClientWithClientInfo) SetClientInfo(clientInfo mcp.Implementation) {
-	f.clientInfoMu.Lock()
-	defer f.clientInfoMu.Unlock()
-	f.clientInfo = clientInfo
+	f.clientInfo.Store(clientInfo)
 }
 
-// Verify that all implementations satisfy their respective interfaces
-var _ ClientSession = &sessionTestClient{}
-var _ SessionWithTools = &sessionTestClientWithTools{}
-var _ SessionWithClientInfo = &sessionTestClientWithClientInfo{}
 // sessionTestClientWithTools implements the SessionWithLogging interface for testing
 type sessionTestClientWithLogging struct {
 	sessionID           string
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         bool
-	loggingLevel 		atomic.Value
+	loggingLevel        atomic.Value
 }
 
 func (f *sessionTestClientWithLogging) SessionID() string {
@@ -178,9 +174,10 @@ func (f *sessionTestClientWithLogging) GetLogLevel() mcp.LoggingLevel {
 
 // Verify that all implementations satisfy their respective interfaces
 var (
-	_ ClientSession 			= (*sessionTestClient)(nil)
-	_ SessionWithTools 			= (*sessionTestClientWithTools)(nil)
-	_ SessionWithLogging		= (*sessionTestClientWithLogging)(nil)
+	_ ClientSession         = (*sessionTestClient)(nil)
+	_ SessionWithTools      = (*sessionTestClientWithTools)(nil)
+	_ SessionWithLogging    = (*sessionTestClientWithLogging)(nil)
+	_ SessionWithClientInfo = (*sessionTestClientWithClientInfo)(nil)
 )
 
 func TestSessionWithTools_Integration(t *testing.T) {

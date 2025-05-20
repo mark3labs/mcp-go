@@ -28,9 +28,8 @@ type sseSession struct {
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         atomic.Bool
 	loggingLevel        atomic.Value
-	tools               sync.Map // stores session-specific tools
-	mu                  sync.RWMutex
-	clientInfo          mcp.Implementation
+	tools               sync.Map     // stores session-specific tools
+	clientInfo          atomic.Value // stores session-specific client info
 }
 
 // SSEContextFunc is a function that takes an existing context and the current
@@ -90,21 +89,22 @@ func (s *sseSession) SetSessionTools(tools map[string]ServerTool) {
 }
 
 func (s *sseSession) GetClientInfo() mcp.Implementation {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.clientInfo
+	if value := s.clientInfo.Load(); value != nil {
+		if clientInfo, ok := value.(mcp.Implementation); ok {
+			return clientInfo
+		}
+	}
+	return mcp.Implementation{}
 }
 
 func (s *sseSession) SetClientInfo(clientInfo mcp.Implementation) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.clientInfo = clientInfo
+	s.clientInfo.Store(clientInfo)
 }
 
 var (
-	_ ClientSession      = (*sseSession)(nil)
-	_ SessionWithTools   = (*sseSession)(nil)
-	_ SessionWithLogging = (*sseSession)(nil)
+	_ ClientSession         = (*sseSession)(nil)
+	_ SessionWithTools      = (*sseSession)(nil)
+	_ SessionWithLogging    = (*sseSession)(nil)
 	_ SessionWithClientInfo = (*sseSession)(nil)
 )
 

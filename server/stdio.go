@@ -9,7 +9,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"sync"
 	"sync/atomic"
 	"syscall"
 
@@ -52,11 +51,10 @@ func WithStdioContextFunc(fn StdioContextFunc) StdioOption {
 
 // stdioSession is a static client session, since stdio has only one client.
 type stdioSession struct {
-	notifications   chan mcp.JSONRPCNotification
-	initialized     atomic.Bool
-	loggingLevel    atomic.Value
-	mu            sync.RWMutex
-	clientInfo    mcp.Implementation	
+	notifications chan mcp.JSONRPCNotification
+	initialized   atomic.Bool
+	loggingLevel  atomic.Value
+	clientInfo    atomic.Value // stores session-specific client info
 }
 
 func (s *stdioSession) SessionID() string {
@@ -78,22 +76,23 @@ func (s *stdioSession) Initialized() bool {
 }
 
 func (s *stdioSession) GetClientInfo() mcp.Implementation {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.clientInfo
+	if value := s.clientInfo.Load(); value != nil {
+		if clientInfo, ok := value.(mcp.Implementation); ok {
+			return clientInfo
+		}
+	}
+	return mcp.Implementation{}
 }
 
 func (s *stdioSession) SetClientInfo(clientInfo mcp.Implementation) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.clientInfo = clientInfo
+	s.clientInfo.Store(clientInfo)
 }
 
-func(s *stdioSession) SetLogLevel(level mcp.LoggingLevel) {
+func (s *stdioSession) SetLogLevel(level mcp.LoggingLevel) {
 	s.loggingLevel.Store(level)
 }
 
-func(s *stdioSession) GetLogLevel() mcp.LoggingLevel {
+func (s *stdioSession) GetLogLevel() mcp.LoggingLevel {
 	level := s.loggingLevel.Load()
 	if level == nil {
 		return mcp.LoggingLevelError
@@ -102,13 +101,14 @@ func(s *stdioSession) GetLogLevel() mcp.LoggingLevel {
 }
 
 var (
-	_ ClientSession			= (*stdioSession)(nil)
-	_ SessionWithLogging 	= (*stdioSession)(nil)
-	_ SessionWithClientInfo = (*stdioSession)(nil)	
+	_ ClientSession         = (*stdioSession)(nil)
+	_ SessionWithLogging    = (*stdioSession)(nil)
+	_ SessionWithClientInfo = (*stdioSession)(nil)
 )
 
 var stdioSessionInstance = stdioSession{
 	notifications: make(chan mcp.JSONRPCNotification, 100),
+	clientInfo:    atomic.Value{},
 }
 
 // NewStdioServer creates a new stdio server wrapper around an MCPServer.
