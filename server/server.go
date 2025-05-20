@@ -492,7 +492,7 @@ func (s *MCPServer) AddNotificationHandler(
 func (s *MCPServer) handleInitialize(
 	ctx context.Context,
 	_ any,
-	_ mcp.InitializeRequest,
+	request mcp.InitializeRequest,
 ) (*mcp.InitializeResult, *requestError) {
 	capabilities := mcp.ServerCapabilities{}
 
