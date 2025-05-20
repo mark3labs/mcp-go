@@ -996,50 +996,6 @@ func TestMCPServer_ToolNotificationsDisabled(t *testing.T) {
 	assert.Len(t, session.GetSessionTools(), 0)
 }
 
-func TestSessionWithClientInfo_Integration(t *testing.T) {
-	server := NewMCPServer("test-server", "1.0.0")
-
-	session := &sessionTestClientWithClientInfo{
-		sessionID:           "session-1",
-		notificationChannel: make(chan mcp.JSONRPCNotification, 10),
-		initialized:         false,
-	}
-
-	err := server.RegisterSession(context.Background(), session)
-	require.NoError(t, err)
-
-	clientInfo := mcp.Implementation{
-		Name:    "test-client",
-		Version: "1.0.0",
-	}
-
-	initRequest := mcp.InitializeRequest{}
-	initRequest.Params.ClientInfo = clientInfo
-	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
-	initRequest.Params.Capabilities = mcp.ClientCapabilities{}
-
-	sessionCtx := server.WithContext(context.Background(), session)
-
-	// Retrieve the session from context
-	retrievedSession := ClientSessionFromContext(sessionCtx)
-	require.NotNil(t, retrievedSession, "Session should be available from context")
-	assert.Equal(t, session.SessionID(), retrievedSession.SessionID(), "Session ID should match")
-
-	// Check if the session can be cast to SessionWithClientInfo
-	sessionWithClientInfo, ok := retrievedSession.(SessionWithClientInfo)
-	require.True(t, ok, "Session should implement SessionWithClientInfo")
-
-	result, reqErr := server.handleInitialize(sessionCtx, 1, initRequest)
-	require.Nil(t, reqErr)
-	require.NotNil(t, result)
-
-	assert.True(t, sessionWithClientInfo.Initialized(), "Session should be initialized")
-
-	storedClientInfo := sessionWithClientInfo.GetClientInfo()
-
-	assert.Equal(t, clientInfo.Name, storedClientInfo.Name, "Client name should match")
-	assert.Equal(t, clientInfo.Version, storedClientInfo.Version, "Client version should match")
-}
 func TestMCPServer_SetLevelNotEnabled(t *testing.T) {
 	// Create server without logging capability
 	server := NewMCPServer("test-server", "1.0.0")
@@ -1124,4 +1080,49 @@ func TestMCPServer_SetLevel(t *testing.T) {
 	if session.GetLogLevel() != mcp.LoggingLevelCritical {
 		t.Errorf("Expected critical level, got %v", session.GetLogLevel())
 	}
+}
+
+func TestSessionWithClientInfo_Integration(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0")
+
+	session := &sessionTestClientWithClientInfo{
+		sessionID:           "session-1",
+		notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+		initialized:         false,
+	}
+
+	err := server.RegisterSession(context.Background(), session)
+	require.NoError(t, err)
+
+	clientInfo := mcp.Implementation{
+		Name:    "test-client",
+		Version: "1.0.0",
+	}
+
+	initRequest := mcp.InitializeRequest{}
+	initRequest.Params.ClientInfo = clientInfo
+	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initRequest.Params.Capabilities = mcp.ClientCapabilities{}
+
+	sessionCtx := server.WithContext(context.Background(), session)
+
+	// Retrieve the session from context
+	retrievedSession := ClientSessionFromContext(sessionCtx)
+	require.NotNil(t, retrievedSession, "Session should be available from context")
+	assert.Equal(t, session.SessionID(), retrievedSession.SessionID(), "Session ID should match")
+
+	result, reqErr := server.handleInitialize(sessionCtx, 1, initRequest)
+	require.Nil(t, reqErr)
+	require.NotNil(t, result)
+
+	// Check if the session can be cast to SessionWithClientInfo
+	sessionWithClientInfo, ok := retrievedSession.(SessionWithClientInfo)
+	require.True(t, ok, "Session should implement SessionWithClientInfo")
+
+	assert.True(t, sessionWithClientInfo.Initialized(), "Session should be initialized")
+
+	storedClientInfo := sessionWithClientInfo.GetClientInfo()
+
+	assert.Equal(t, clientInfo.Name, storedClientInfo.Name, "Client name should match")
+	assert.Equal(t, clientInfo.Version, storedClientInfo.Version, "Client version should match")
 }
