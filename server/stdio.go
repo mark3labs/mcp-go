@@ -108,7 +108,6 @@ var (
 
 var stdioSessionInstance = stdioSession{
 	notifications: make(chan mcp.JSONRPCNotification, 100),
-	clientInfo:    atomic.Value{},
 }
 
 // NewStdioServer creates a new stdio server wrapper around an MCPServer.

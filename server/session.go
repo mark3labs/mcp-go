@@ -39,7 +39,7 @@ type SessionWithTools interface {
 	SetSessionTools(tools map[string]ServerTool)
 }
 
-// SessionWithClientInfo is an extension of ClientSession that can store client implementation info
+// SessionWithClientInfo is an extension of ClientSession that can store client info
 type SessionWithClientInfo interface {
 	ClientSession
 	// GetClientInfo returns the client information for this session
