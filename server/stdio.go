@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"sync/atomic"
 	"syscall"
 
@@ -53,6 +54,8 @@ func WithStdioContextFunc(fn StdioContextFunc) StdioOption {
 type stdioSession struct {
 	notifications chan mcp.JSONRPCNotification
 	initialized   atomic.Bool
+	mu            sync.RWMutex
+	clientInfo    mcp.Implementation
 }
 
 func (s *stdioSession) SessionID() string {
@@ -71,7 +74,20 @@ func (s *stdioSession) Initialized() bool {
 	return s.initialized.Load()
 }
 
+func (s *stdioSession) GetClientInfo() mcp.Implementation {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.clientInfo
+}
+
+func (s *stdioSession) SetClientInfo(clientInfo mcp.Implementation) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clientInfo = clientInfo
+}
+
 var _ ClientSession = (*stdioSession)(nil)
+var _ SessionWithClientInfo = (*stdioSession)(nil)
 
 var stdioSessionInstance = stdioSession{
 	notifications: make(chan mcp.JSONRPCNotification, 100),

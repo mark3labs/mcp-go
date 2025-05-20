@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -29,6 +30,8 @@ type sseSession struct {
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         atomic.Bool
 	tools               sync.Map // stores session-specific tools
+	mu                  sync.RWMutex
+	clientInfo          mcp.Implementation
 }
 
 // SSEContextFunc is a function that takes an existing context and the current
@@ -76,9 +79,22 @@ func (s *sseSession) SetSessionTools(tools map[string]ServerTool) {
 	}
 }
 
+func (s *sseSession) GetClientInfo() mcp.Implementation {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.clientInfo
+}
+
+func (s *sseSession) SetClientInfo(clientInfo mcp.Implementation) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.clientInfo = clientInfo
+}
+
 var (
-	_ ClientSession    = (*sseSession)(nil)
-	_ SessionWithTools = (*sseSession)(nil)
+	_ ClientSession         = (*sseSession)(nil)
+	_ SessionWithTools      = (*sseSession)(nil)
+	_ SessionWithClientInfo = (*sseSession)(nil)
 )
 
 // SSEServer implements a Server-Sent Events (SSE) based MCP server.
