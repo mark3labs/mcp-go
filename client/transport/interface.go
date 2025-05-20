@@ -7,6 +7,11 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// HTTPHeaderFunc is a function that extracts header entries from the given context
+// and returns them as key-value pairs. This is typically used to add context values
+// as HTTP headers in outgoing requests.
+type HTTPHeaderFunc func(context.Context) map[string]string
+
 // Interface for the transport layer.
 type Interface interface {
 	// Start the connection. Start should only be called once.

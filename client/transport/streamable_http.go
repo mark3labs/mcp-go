@@ -26,6 +26,12 @@ func WithHTTPHeaders(headers map[string]string) StreamableHTTPCOption {
 	}
 }
 
+func WithHTTPHeaderFunc(headerFunc HTTPHeaderFunc) StreamableHTTPCOption {
+	return func(sc *StreamableHTTP) {
+		sc.headerFunc = headerFunc
+	}
+}
+
 // WithHTTPTimeout sets the timeout for a HTTP request and stream.
 func WithHTTPTimeout(timeout time.Duration) StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
@@ -52,6 +58,7 @@ type StreamableHTTP struct {
 	baseURL    *url.URL
 	httpClient *http.Client
 	headers    map[string]string
+	headerFunc HTTPHeaderFunc
 
 	sessionID atomic.Value // string
 
@@ -172,6 +179,11 @@ func (c *StreamableHTTP) SendRequest(
 	}
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
+	}
+	if c.headerFunc != nil {
+		for k, v := range c.headerFunc(ctx) {
+			req.Header.Set(k, v)
+		}
 	}
 
 	// Send request
@@ -362,6 +374,11 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	}
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
+	}
+	if c.headerFunc != nil {
+		for k, v := range c.headerFunc(ctx) {
+			req.Header.Set(k, v)
+		}
 	}
 
 	// Send request
