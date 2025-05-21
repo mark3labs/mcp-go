@@ -39,6 +39,12 @@ func WithHTTPTimeout(timeout time.Duration) StreamableHTTPCOption {
 	}
 }
 
+func WithLogger(logger util.Logger) StreamableHTTPCOption {
+	return func(sc *StreamableHTTP) {
+		sc.logger = logger
+	}
+}
+
 // StreamableHTTP implements Streamable HTTP transport.
 //
 // It transmits JSON-RPC messages over individual HTTP requests. One message per request.
@@ -59,6 +65,7 @@ type StreamableHTTP struct {
 	httpClient *http.Client
 	headers    map[string]string
 	headerFunc HTTPHeaderFunc
+	logger              util.Logger
 
 	sessionID atomic.Value // string
 
@@ -81,6 +88,7 @@ func NewStreamableHTTP(baseURL string, options ...StreamableHTTPCOption) (*Strea
 		httpClient: &http.Client{},
 		headers:    make(map[string]string),
 		closed:     make(chan struct{}),
+		logger:     util.DefaultLogger(),
 	}
 	smc.sessionID.Store("") // set initial value to simplify later usage
 
