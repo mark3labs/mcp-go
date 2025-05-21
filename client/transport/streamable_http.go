@@ -150,7 +150,7 @@ func (c *StreamableHTTP) SendRequest(
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	resp, sessionID, err := c.sendRequest(ctx, bytes.NewReader(requestBody), "application/json, text/event-stream")
+	resp, sessionID, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream")
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
@@ -207,8 +207,9 @@ func (c *StreamableHTTP) SendRequest(
 	}
 }
 
-func (c *StreamableHTTP) sendRequest(
+func (c *StreamableHTTP) sendHTTP(
 	ctx context.Context,
+	method string,
 	body io.Reader,
 	acceptType string,
 ) (resp *http.Response, sessionId string, err error) {
@@ -226,7 +227,7 @@ func (c *StreamableHTTP) sendRequest(
 	ctx = newCtx
 
 	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL.String(), body)
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL.String(), body)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -373,28 +374,7 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	}
 
 	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL.String(), bytes.NewReader(requestBody))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set headers
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	if sessionID := c.sessionID.Load(); sessionID != "" {
-		req.Header.Set(headerKeySessionID, sessionID.(string))
-	}
-	for k, v := range c.headers {
-		req.Header.Set(k, v)
-	}
-	if c.headerFunc != nil {
-		for k, v := range c.headerFunc(ctx) {
-			req.Header.Set(k, v)
-		}
-	}
-
-	// Send request
-	resp, err := c.httpClient.Do(req)
+	resp, _, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream")
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
