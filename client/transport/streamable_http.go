@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -16,9 +17,22 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/util"
 )
 
 type StreamableHTTPCOption func(*StreamableHTTP)
+
+// WithContinuousListening enables receiving server-to-client notifications when no request is in flight.
+// In particular, if you want to receive global notifications (like ToolListChangedNotification)
+// from the server, you should enable this option.
+// It will establish a standalone long-live GET HTTP connection to the server.
+// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
+// NOTICE: Even enabled, the server may not support this feature.
+func WithContinuousListening() StreamableHTTPCOption {
+	return func(sc *StreamableHTTP) {
+		sc.getListeningEnabled = true
+	}
+}
 
 func WithHTTPHeaders(headers map[string]string) StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
@@ -61,13 +75,15 @@ func WithLogger(logger util.Logger) StreamableHTTPCOption {
 //     (https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#resumability-and-redelivery)
 //   - server -> client request
 type StreamableHTTP struct {
-	baseURL    *url.URL
-	httpClient *http.Client
-	headers    map[string]string
-	headerFunc HTTPHeaderFunc
+	baseURL             *url.URL
+	httpClient          *http.Client
+	headers             map[string]string
+	headerFunc          HTTPHeaderFunc
 	logger              util.Logger
+	getListeningEnabled bool
 
-	sessionID atomic.Value // string
+	initialized chan struct{}
+	sessionID   atomic.Value // string
 
 	notificationHandler func(mcp.JSONRPCNotification)
 	notifyMu            sync.RWMutex
@@ -84,11 +100,12 @@ func NewStreamableHTTP(baseURL string, options ...StreamableHTTPCOption) (*Strea
 	}
 
 	smc := &StreamableHTTP{
-		baseURL:    parsedURL,
-		httpClient: &http.Client{},
-		headers:    make(map[string]string),
-		closed:     make(chan struct{}),
-		logger:     util.DefaultLogger(),
+		baseURL:     parsedURL,
+		httpClient:  &http.Client{},
+		headers:     make(map[string]string),
+		closed:      make(chan struct{}),
+		logger:      util.DefaultLogger(),
+		initialized: make(chan struct{}),
 	}
 	smc.sessionID.Store("") // set initial value to simplify later usage
 
@@ -101,7 +118,14 @@ func NewStreamableHTTP(baseURL string, options ...StreamableHTTPCOption) (*Strea
 
 // Start initiates the HTTP connection to the server.
 func (c *StreamableHTTP) Start(ctx context.Context) error {
-	// For Streamable HTTP, we don't need to establish a persistent connection
+	// For Streamable HTTP, we don't need to establish a persistent connection by default
+	if c.getListeningEnabled {
+		go func() {
+			<-c.initialized
+			c.listenForever()
+		}()
+	}
+
 	return nil
 }
 
@@ -182,6 +206,8 @@ func (c *StreamableHTTP) SendRequest(
 		if sessionID := resp.Header.Get(headerKeySessionID); sessionID != "" {
 			c.sessionID.Store(sessionID)
 		}
+
+		close(c.initialized)
 	}
 
 	// Handle different response types
@@ -409,4 +435,62 @@ func (c *StreamableHTTP) SetNotificationHandler(handler func(mcp.JSONRPCNotifica
 
 func (c *StreamableHTTP) GetSessionId() string {
 	return c.sessionID.Load().(string)
+}
+
+func (c *StreamableHTTP) listenForever() {
+	c.logger.Infof("listening to server forever")
+	for {
+		err := c.createGETConnectionToServer()
+		if errors.Is(err, errGetMethodNotAllowed) {
+			// server does not support listening
+			c.logger.Errorf("server does not support listening")
+			return
+		}
+
+		select {
+		case <-c.closed:
+			return
+		default:
+		}
+
+		if err != nil {
+			c.logger.Errorf("failed to listen to server. retry in 1 second: %v", err)
+		}
+		time.Sleep(1 * time.Second)
+	}
+}
+
+var errGetMethodNotAllowed = fmt.Errorf("GET method not allowed")
+
+func (c *StreamableHTTP) createGETConnectionToServer() error {
+
+	ctx := context.Background() // the sendHTTP will be automatically canceled when the client is closed
+	resp, err := c.sendHTTP(ctx, http.MethodGet, nil, "text/event-stream")
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check if we got an error response
+	if resp.StatusCode == http.StatusMethodNotAllowed {
+		return errGetMethodNotAllowed
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, body)
+	}
+
+	// handle SSE response
+	contentType := resp.Header.Get("Content-Type")
+	if contentType != "text/event-stream" {
+		return fmt.Errorf("unexpected content type: %s", contentType)
+	}
+
+	_, err = c.handleSSEResponse(ctx, resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to handle SSE response: %w", err)
+	}
+
+	return nil
 }
