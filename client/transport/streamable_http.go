@@ -456,11 +456,14 @@ func (c *StreamableHTTP) listenForever() {
 		if err != nil {
 			c.logger.Errorf("failed to listen to server. retry in 1 second: %v", err)
 		}
-		time.Sleep(1 * time.Second)
+		time.Sleep(retryInterval)
 	}
 }
 
-var errGetMethodNotAllowed = fmt.Errorf("GET method not allowed")
+var (
+	errGetMethodNotAllowed = fmt.Errorf("GET method not allowed")
+	retryInterval          = 1 * time.Second // a variable is convenient for testing
+)
 
 func (c *StreamableHTTP) createGETConnectionToServer() error {
 
