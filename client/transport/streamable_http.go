@@ -23,8 +23,9 @@ import (
 type StreamableHTTPCOption func(*StreamableHTTP)
 
 // WithContinuousListening enables receiving server-to-client notifications when no request is in flight.
-// In particular, if you want to receive global notifications (like ToolListChangedNotification)
-// from the server, you should enable this option.
+// In particular, if you want to receive global notifications from the server (like ToolListChangedNotification),
+// you should enable this option.
+//
 // It will establish a standalone long-live GET HTTP connection to the server.
 // https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
 // NOTICE: Even enabled, the server may not support this feature.
@@ -69,8 +70,6 @@ func WithLogger(logger util.Logger) StreamableHTTPCOption {
 //
 // The current implementation does not support the following features:
 //   - batching
-//   - continuously listening for server notifications when no request is in flight
-//     (https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server)
 //   - resuming stream
 //     (https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#resumability-and-redelivery)
 //   - server -> client request
