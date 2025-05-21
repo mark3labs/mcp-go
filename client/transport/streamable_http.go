@@ -144,49 +144,13 @@ func (c *StreamableHTTP) SendRequest(
 	request JSONRPCRequest,
 ) (*JSONRPCResponse, error) {
 
-	// Create a combined context that could be canceled when the client is closed
-	newCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	go func() {
-		select {
-		case <-c.closed:
-			cancel()
-		case <-newCtx.Done():
-			// The original context was canceled, no need to do anything
-		}
-	}()
-	ctx = newCtx
-
 	// Marshal request
 	requestBody, err := json.Marshal(request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL.String(), bytes.NewReader(requestBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set headers
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	sessionID := c.sessionID.Load()
-	if sessionID != "" {
-		req.Header.Set(headerKeySessionID, sessionID.(string))
-	}
-	for k, v := range c.headers {
-		req.Header.Set(k, v)
-	}
-	if c.headerFunc != nil {
-		for k, v := range c.headerFunc(ctx) {
-			req.Header.Set(k, v)
-		}
-	}
-
-	// Send request
-	resp, err := c.httpClient.Do(req)
+	resp, sessionID, err := c.sendRequest(ctx, bytes.NewReader(requestBody), "application/json, text/event-stream")
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
@@ -241,6 +205,55 @@ func (c *StreamableHTTP) SendRequest(
 	default:
 		return nil, fmt.Errorf("unexpected content type: %s", resp.Header.Get("Content-Type"))
 	}
+}
+
+func (c *StreamableHTTP) sendRequest(
+	ctx context.Context,
+	body io.Reader,
+	acceptType string,
+) (resp *http.Response, sessionId string, err error) {
+	// Create a combined context that could be canceled when the client is closed
+	newCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		select {
+		case <-c.closed:
+			cancel()
+		case <-newCtx.Done():
+			// The original context was canceled, no need to do anything
+		}
+	}()
+	ctx = newCtx
+
+	// Create HTTP request
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL.String(), body)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", acceptType)
+	sessionID := c.sessionID.Load().(string)
+	if sessionID != "" {
+		req.Header.Set(headerKeySessionID, sessionID)
+	}
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
+	}
+	if c.headerFunc != nil {
+		for k, v := range c.headerFunc(ctx) {
+			req.Header.Set(k, v)
+		}
+	}
+
+	// Send request
+	resp, err = c.httpClient.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to send request: %w", err)
+	}
+
+	return resp, sessionID, nil
 }
 
 // handleSSEResponse processes an SSE stream for a specific request.
