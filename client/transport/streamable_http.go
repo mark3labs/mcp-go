@@ -183,7 +183,13 @@ func (c *StreamableHTTP) SendRequest(
 
 	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream")
 	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		if errors.Is(err, errSessionTerminated) && request.Method == string(mcp.MethodInitialize) {
+			// If the request is initialize, should not return a SessionTerminated error
+			// It should be a genuine endpoint-routing issue.
+			// ( Fall through to return StatusCode checking. )
+		} else {
+			return nil, fmt.Errorf("failed to send request: %w", err)
+		}
 	}
 	defer resp.Body.Close()
 
@@ -285,7 +291,7 @@ func (c *StreamableHTTP) sendHTTP(
 	// universal handling for session terminated
 	if resp.StatusCode == http.StatusNotFound {
 		c.sessionID.CompareAndSwap(sessionID, "")
-		return nil, fmt.Errorf("session terminated (404). need to re-initialize")
+		return nil, errSessionTerminated
 	}
 
 	return resp, nil
@@ -460,8 +466,10 @@ func (c *StreamableHTTP) listenForever() {
 }
 
 var (
+	errSessionTerminated   = fmt.Errorf("session terminated (404). need to re-initialize")
 	errGetMethodNotAllowed = fmt.Errorf("GET method not allowed")
-	retryInterval          = 1 * time.Second // a variable is convenient for testing
+
+	retryInterval = 1 * time.Second // a variable is convenient for testing
 )
 
 func (c *StreamableHTTP) createGETConnectionToServer() error {
