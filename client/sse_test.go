@@ -66,7 +66,7 @@ func TestSSEMCPClient(t *testing.T) {
 
 	// Initialize
 	testServer := server.NewTestServer(mcpServer,
-		server.WithHTTPContextFunc(func(ctx context.Context, r *http.Request) context.Context {
+		server.WithSSEContextFunc(func(ctx context.Context, r *http.Request) context.Context {
 			ctx = context.WithValue(ctx, testHeaderKey, r.Header.Get("X-Test-Header"))
 			ctx = context.WithValue(ctx, testHeaderFuncKey, r.Header.Get("X-Test-Header-Func"))
 			return ctx
