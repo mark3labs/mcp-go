@@ -150,7 +150,7 @@ func (c *StreamableHTTP) SendRequest(
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	resp, sessionID, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream")
+	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream")
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
@@ -158,11 +158,6 @@ func (c *StreamableHTTP) SendRequest(
 
 	// Check if we got an error response
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
-		// handle session closed
-		if resp.StatusCode == http.StatusNotFound {
-			c.sessionID.CompareAndSwap(sessionID, "")
-			return nil, fmt.Errorf("session terminated (404). need to re-initialize")
-		}
 
 		// handle error response
 		var errResponse JSONRPCResponse
@@ -212,7 +207,7 @@ func (c *StreamableHTTP) sendHTTP(
 	method string,
 	body io.Reader,
 	acceptType string,
-) (resp *http.Response, sessionId string, err error) {
+) (resp *http.Response, err error) {
 	// Create a combined context that could be canceled when the client is closed
 	newCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -229,7 +224,7 @@ func (c *StreamableHTTP) sendHTTP(
 	// Create HTTP request
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL.String(), body)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	// Set headers
@@ -251,10 +246,16 @@ func (c *StreamableHTTP) sendHTTP(
 	// Send request
 	resp, err = c.httpClient.Do(req)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to send request: %w", err)
+		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 
-	return resp, sessionID, nil
+	// universal handling for session terminated
+	if resp.StatusCode == http.StatusNotFound {
+		c.sessionID.CompareAndSwap(sessionID, "")
+		return nil, fmt.Errorf("session terminated (404). need to re-initialize")
+	}
+
+	return resp, nil
 }
 
 // handleSSEResponse processes an SSE stream for a specific request.
@@ -374,7 +375,7 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	}
 
 	// Create HTTP request
-	resp, _, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream")
+	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream")
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
