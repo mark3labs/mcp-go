@@ -44,6 +44,17 @@ func TestRaceConditions(t *testing.T) {
 		})
 	})
 
+	runConcurrentOperation(&wg, testDuration, "delete-prompts", func() {
+		name := fmt.Sprintf("delete-prompt-%d", time.Now().UnixNano())
+		srv.AddPrompt(mcp.Prompt{
+			Name:        name,
+			Description: "Temporary prompt",
+		}, func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+			return &mcp.GetPromptResult{}, nil
+		})
+		srv.DeletePrompts(name)
+	})
+
 	runConcurrentOperation(&wg, testDuration, "add-tools", func() {
 		name := fmt.Sprintf("tool-%d", time.Now().UnixNano())
 		srv.AddTool(mcp.Tool{
