@@ -675,10 +675,11 @@ func ParseReadResourceResult(rawMessage *json.RawMessage) (*ReadResourceResult, 
 }
 
 func ParseArgument(request CallToolRequest, key string, defaultVal any) any {
-	if _, ok := request.Params.Arguments[key]; !ok {
+	args := request.GetArguments()
+	if _, ok := args[key]; !ok {
 		return defaultVal
 	} else {
-		return request.Params.Arguments[key]
+		return args[key]
 	}
 }
 

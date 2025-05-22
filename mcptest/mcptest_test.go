@@ -52,7 +52,7 @@ func TestServer(t *testing.T) {
 
 func helloWorldHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Extract name from request arguments
-	name, ok := request.Params.Arguments["name"].(string)
+	name, ok := request.GetArguments()["name"].(string)
 	if !ok {
 		name = "World"
 	}

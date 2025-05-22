@@ -32,7 +32,7 @@ func TestInProcessMCPClient(t *testing.T) {
 			Content: []mcp.Content{
 				mcp.TextContent{
 					Type: "text",
-					Text: "Input parameter: " + request.Params.Arguments["parameter-1"].(string),
+					Text: "Input parameter: " + request.GetArguments()["parameter-1"].(string),
 				},
 				mcp.AudioContent{
 					Type:     "audio",

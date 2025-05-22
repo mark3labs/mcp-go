@@ -126,7 +126,12 @@ func TestRaceConditions(t *testing.T) {
 }
 
 // Helper function to run an operation concurrently for a specified duration
-func runConcurrentOperation(wg *sync.WaitGroup, duration time.Duration, name string, operation func()) {
+func runConcurrentOperation(
+	wg *sync.WaitGroup,
+	duration time.Duration,
+	_ string,
+	operation func(),
+) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

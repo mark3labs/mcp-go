@@ -17,12 +17,12 @@ import (
 func main() {
 	// Define command line flags
 	stdioCmd := flag.String("stdio", "", "Command to execute for stdio transport (e.g. 'python server.py')")
-	sseURL := flag.String("sse", "", "URL for SSE transport (e.g. 'http://localhost:8080/sse')")
+	httpURL := flag.String("http", "", "URL for HTTP transport (e.g. 'http://localhost:8080/mcp')")
 	flag.Parse()
 
 	// Validate flags
-	if (*stdioCmd == "" && *sseURL == "") || (*stdioCmd != "" && *sseURL != "") {
-		fmt.Println("Error: You must specify exactly one of --stdio or --sse")
+	if (*stdioCmd == "" && *httpURL == "") || (*stdioCmd != "" && *httpURL != "") {
+		fmt.Println("Error: You must specify exactly one of --stdio or --http")
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -51,11 +51,6 @@ func main() {
 		// Create stdio transport with verbose logging
 		stdioTransport := transport.NewStdio(command, nil, cmdArgs...)
 
-		// Start the transport
-		if err := stdioTransport.Start(ctx); err != nil {
-			log.Fatalf("Failed to start stdio transport: %v", err)
-		}
-
 		// Create client with the transport
 		c = client.NewClient(stdioTransport)
 
@@ -78,20 +73,20 @@ func main() {
 			}()
 		}
 	} else {
-		fmt.Println("Initializing SSE client...")
-		// Create SSE transport
-		sseTransport, err := transport.NewSSE(*sseURL)
+		fmt.Println("Initializing HTTP client...")
+		// Create HTTP transport
+		httpTransport, err := transport.NewStreamableHTTP(*httpURL)
 		if err != nil {
-			log.Fatalf("Failed to create SSE transport: %v", err)
-		}
-
-		// Start the transport
-		if err := sseTransport.Start(ctx); err != nil {
-			log.Fatalf("Failed to start SSE transport: %v", err)
+			log.Fatalf("Failed to create HTTP transport: %v", err)
 		}
 
 		// Create client with the transport
-		c = client.NewClient(sseTransport)
+		c = client.NewClient(httpTransport)
+	}
+
+	// Start the client 
+	if err := c.Start(ctx); err != nil {
+		log.Fatalf("Failed to start client: %v", err)
 	}
 
 	// Set up notification handler

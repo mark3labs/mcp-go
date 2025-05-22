@@ -20,7 +20,7 @@ func main() {
 
 	// Add a trivial tool for demonstration
 	mcpServer.AddTool(mcp.NewTool("echo"), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return mcp.NewToolResultText(fmt.Sprintf("Echo: %v", req.Params.Arguments["message"])), nil
+		return mcp.NewToolResultText(fmt.Sprintf("Echo: %v", req.GetArguments()["message"])), nil
 	})
 
 	// Use a dynamic base path based on a path parameter (Go 1.22+)

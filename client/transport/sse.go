@@ -31,6 +31,7 @@ type SSE struct {
 	notifyMu       sync.RWMutex
 	endpointChan   chan struct{}
 	headers        map[string]string
+	headerFunc     HTTPHeaderFunc
 
 	started         atomic.Bool
 	closed          atomic.Bool
@@ -42,6 +43,12 @@ type ClientOption func(*SSE)
 func WithHeaders(headers map[string]string) ClientOption {
 	return func(sc *SSE) {
 		sc.headers = headers
+	}
+}
+
+func WithHeaderFunc(headerFunc HTTPHeaderFunc) ClientOption {
+	return func(sc *SSE) {
+		sc.headerFunc = headerFunc
 	}
 }
 
@@ -98,6 +105,11 @@ func (c *SSE) Start(ctx context.Context) error {
 	// set custom http headers
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
+	}
+	if c.headerFunc != nil {
+		for k, v := range c.headerFunc(ctx) {
+			req.Header.Set(k, v)
+		}
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -269,6 +281,11 @@ func (c *SSE) SendRequest(
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
 	}
+	if c.headerFunc != nil {
+		for k, v := range c.headerFunc(ctx) {
+			req.Header.Set(k, v)
+		}
+	}
 
 	// Create string key for map lookup
 	idKey := request.ID.String()
@@ -310,8 +327,11 @@ func (c *SSE) SendRequest(
 	case <-ctx.Done():
 		deleteResponseChan()
 		return nil, ctx.Err()
-	case response := <-responseChan:
-		return response, nil
+	case response, ok := <-responseChan:
+		if ok {
+			return response, nil
+		}
+		return nil, fmt.Errorf("connection has been closed")
 	}
 }
 
@@ -364,6 +384,11 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 	// Set custom HTTP headers
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
+	}
+	if c.headerFunc != nil {
+		for k, v := range c.headerFunc(ctx) {
+			req.Header.Set(k, v)
+		}
 	}
 
 	resp, err := c.httpClient.Do(req)

@@ -220,7 +220,11 @@ func WithRecovery() ServerOption {
 		return func(ctx context.Context, request mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
 			defer func() {
 				if r := recover(); r != nil {
-					err = fmt.Errorf("panic recovered in %s tool handler: %v", request.Params.Name, r)
+					err = fmt.Errorf(
+						"panic recovered in %s tool handler: %v",
+						request.Params.Name,
+						r,
+					)
 				}
 			}()
 			return next(ctx, request)
@@ -487,8 +491,8 @@ func (s *MCPServer) AddNotificationHandler(
 
 func (s *MCPServer) handleInitialize(
 	ctx context.Context,
-	id any,
-	request mcp.InitializeRequest,
+	_ any,
+	_ mcp.InitializeRequest,
 ) (*mcp.InitializeResult, *requestError) {
 	capabilities := mcp.ServerCapabilities{}
 
@@ -542,9 +546,9 @@ func (s *MCPServer) handleInitialize(
 }
 
 func (s *MCPServer) handlePing(
-	ctx context.Context,
-	id any,
-	request mcp.PingRequest,
+	_ context.Context,
+	_ any,
+	_ mcp.PingRequest,
 ) (*mcp.EmptyResult, *requestError) {
 	return &mcp.EmptyResult{}, nil
 }
@@ -586,14 +590,14 @@ func (s *MCPServer) handleSetLevel(
 			err:  fmt.Errorf("invalid logging level '%s'", level),
 		}
 	}
-	
+
 	sessionLogging.SetLogLevel(level)
 
 	return &mcp.EmptyResult{}, nil
 }
 
 func listByPagination[T mcp.Named](
-	ctx context.Context,
+	_ context.Context,
 	s *MCPServer,
 	cursor mcp.Cursor,
 	allElements []T,
@@ -644,7 +648,12 @@ func (s *MCPServer) handleListResources(
 	sort.Slice(resources, func(i, j int) bool {
 		return resources[i].Name < resources[j].Name
 	})
-	resourcesToReturn, nextCursor, err := listByPagination[mcp.Resource](ctx, s, request.Params.Cursor, resources)
+	resourcesToReturn, nextCursor, err := listByPagination(
+		ctx,
+		s,
+		request.Params.Cursor,
+		resources,
+	)
 	if err != nil {
 		return nil, &requestError{
 			id:   id,
@@ -675,7 +684,12 @@ func (s *MCPServer) handleListResourceTemplates(
 	sort.Slice(templates, func(i, j int) bool {
 		return templates[i].Name < templates[j].Name
 	})
-	templatesToReturn, nextCursor, err := listByPagination[mcp.ResourceTemplate](ctx, s, request.Params.Cursor, templates)
+	templatesToReturn, nextCursor, err := listByPagination(
+		ctx,
+		s,
+		request.Params.Cursor,
+		templates,
+	)
 	if err != nil {
 		return nil, &requestError{
 			id:   id,
@@ -747,7 +761,11 @@ func (s *MCPServer) handleReadResource(
 	return nil, &requestError{
 		id:   id,
 		code: mcp.RESOURCE_NOT_FOUND,
-		err:  fmt.Errorf("handler not found for resource URI '%s': %w", request.Params.URI, ErrResourceNotFound),
+		err: fmt.Errorf(
+			"handler not found for resource URI '%s': %w",
+			request.Params.URI,
+			ErrResourceNotFound,
+		),
 	}
 }
 
@@ -772,7 +790,12 @@ func (s *MCPServer) handleListPrompts(
 	sort.Slice(prompts, func(i, j int) bool {
 		return prompts[i].Name < prompts[j].Name
 	})
-	promptsToReturn, nextCursor, err := listByPagination[mcp.Prompt](ctx, s, request.Params.Cursor, prompts)
+	promptsToReturn, nextCursor, err := listByPagination(
+		ctx,
+		s,
+		request.Params.Cursor,
+		prompts,
+	)
 	if err != nil {
 		return nil, &requestError{
 			id:   id,
@@ -885,7 +908,12 @@ func (s *MCPServer) handleListTools(
 	s.toolFiltersMu.RUnlock()
 
 	// Apply pagination
-	toolsToReturn, nextCursor, err := listByPagination[mcp.Tool](ctx, s, request.Params.Cursor, tools)
+	toolsToReturn, nextCursor, err := listByPagination(
+		ctx,
+		s,
+		request.Params.Cursor,
+		tools,
+	)
 	if err != nil {
 		return nil, &requestError{
 			id:   id,

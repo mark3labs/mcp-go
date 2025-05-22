@@ -26,6 +26,12 @@ func WithHTTPHeaders(headers map[string]string) StreamableHTTPCOption {
 	}
 }
 
+func WithHTTPHeaderFunc(headerFunc HTTPHeaderFunc) StreamableHTTPCOption {
+	return func(sc *StreamableHTTP) {
+		sc.headerFunc = headerFunc
+	}
+}
+
 // WithHTTPTimeout sets the timeout for a HTTP request and stream.
 func WithHTTPTimeout(timeout time.Duration) StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
@@ -52,6 +58,7 @@ type StreamableHTTP struct {
 	baseURL    *url.URL
 	httpClient *http.Client
 	headers    map[string]string
+	headerFunc HTTPHeaderFunc
 
 	sessionID atomic.Value // string
 
@@ -127,7 +134,6 @@ func (c *StreamableHTTP) Close() error {
 }
 
 const (
-	initializeMethod   = "initialize"
 	headerKeySessionID = "Mcp-Session-Id"
 )
 
@@ -173,6 +179,11 @@ func (c *StreamableHTTP) SendRequest(
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
 	}
+	if c.headerFunc != nil {
+		for k, v := range c.headerFunc(ctx) {
+			req.Header.Set(k, v)
+		}
+	}
 
 	// Send request
 	resp, err := c.httpClient.Do(req)
@@ -198,7 +209,7 @@ func (c *StreamableHTTP) SendRequest(
 		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, body)
 	}
 
-	if request.Method == initializeMethod {
+	if request.Method == string(mcp.MethodInitialize) {
 		// saved the received session ID in the response
 		// empty session ID is allowed
 		if sessionID := resp.Header.Get(headerKeySessionID); sessionID != "" {
@@ -362,6 +373,11 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	}
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
+	}
+	if c.headerFunc != nil {
+		for k, v := range c.headerFunc(ctx) {
+			req.Header.Set(k, v)
+		}
 	}
 
 	// Send request
