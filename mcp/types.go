@@ -5,8 +5,8 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"maps"
+	"strconv"
 
 	"github.com/yosida95/uritemplate/v3"
 )
@@ -741,22 +741,22 @@ const (
 var (
 	// Map logging level constants to numerical codes as specified in RFC-5424
 	levelToSeverity = func() map[LoggingLevel]int {
-		return map[LoggingLevel]int {
-			LoggingLevelEmergency:	0,
-			LoggingLevelAlert:		1,
-			LoggingLevelCritical:	2,
-			LoggingLevelError:		3,
-			LoggingLevelWarning:	4,
-			LoggingLevelNotice:		5,
-			LoggingLevelInfo:		6,
-			LoggingLevelDebug:		7,
+		return map[LoggingLevel]int{
+			LoggingLevelEmergency: 0,
+			LoggingLevelAlert:     1,
+			LoggingLevelCritical:  2,
+			LoggingLevelError:     3,
+			LoggingLevelWarning:   4,
+			LoggingLevelNotice:    5,
+			LoggingLevelInfo:      6,
+			LoggingLevelDebug:     7,
 		}
 	}()
 )
 
 // Allows is a helper function that decides a message could be sent to client or not according to the logging level
 func (subscribedLevel LoggingLevel) Allows(currentLevel LoggingLevel) (bool, error) {
-    if _, ok := levelToSeverity[currentLevel]; !ok {
+	if _, ok := levelToSeverity[currentLevel]; !ok {
 		return false, fmt.Errorf("illegal message logging level:%s", currentLevel)
 	}
 	return levelToSeverity[subscribedLevel] >= levelToSeverity[currentLevel], nil
