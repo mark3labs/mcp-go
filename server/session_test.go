@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // sessionTestClient implements the basic ClientSession interface for testing
@@ -99,12 +100,49 @@ func (f *sessionTestClientWithTools) SetSessionTools(tools map[string]ServerTool
 	f.sessionTools = toolsCopy
 }
 
+// sessionTestClientWithClientInfo implements the SessionWithClientInfo interface for testing
+type sessionTestClientWithClientInfo struct {
+	sessionID           string
+	notificationChannel chan mcp.JSONRPCNotification
+	initialized         bool
+	clientInfo          atomic.Value
+}
+
+func (f *sessionTestClientWithClientInfo) SessionID() string {
+	return f.sessionID
+}
+
+func (f *sessionTestClientWithClientInfo) NotificationChannel() chan<- mcp.JSONRPCNotification {
+	return f.notificationChannel
+}
+
+func (f *sessionTestClientWithClientInfo) Initialize() {
+	f.initialized = true
+}
+
+func (f *sessionTestClientWithClientInfo) Initialized() bool {
+	return f.initialized
+}
+
+func (f *sessionTestClientWithClientInfo) GetClientInfo() mcp.Implementation {
+	if value := f.clientInfo.Load(); value != nil {
+		if clientInfo, ok := value.(mcp.Implementation); ok {
+			return clientInfo
+		}
+	}
+	return mcp.Implementation{}
+}
+
+func (f *sessionTestClientWithClientInfo) SetClientInfo(clientInfo mcp.Implementation) {
+	f.clientInfo.Store(clientInfo)
+}
+
 // sessionTestClientWithTools implements the SessionWithLogging interface for testing
 type sessionTestClientWithLogging struct {
 	sessionID           string
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         bool
-	loggingLevel 		atomic.Value
+	loggingLevel        atomic.Value
 }
 
 func (f *sessionTestClientWithLogging) SessionID() string {
@@ -136,9 +174,10 @@ func (f *sessionTestClientWithLogging) GetLogLevel() mcp.LoggingLevel {
 
 // Verify that all implementations satisfy their respective interfaces
 var (
-	_ ClientSession 			= (*sessionTestClient)(nil)
-	_ SessionWithTools 			= (*sessionTestClientWithTools)(nil)
-	_ SessionWithLogging		= (*sessionTestClientWithLogging)(nil)
+	_ ClientSession         = (*sessionTestClient)(nil)
+	_ SessionWithTools      = (*sessionTestClientWithTools)(nil)
+	_ SessionWithLogging    = (*sessionTestClientWithLogging)(nil)
+	_ SessionWithClientInfo = (*sessionTestClientWithClientInfo)(nil)
 )
 
 func TestSessionWithTools_Integration(t *testing.T) {
@@ -1041,4 +1080,49 @@ func TestMCPServer_SetLevel(t *testing.T) {
 	if session.GetLogLevel() != mcp.LoggingLevelCritical {
 		t.Errorf("Expected critical level, got %v", session.GetLogLevel())
 	}
+}
+
+func TestSessionWithClientInfo_Integration(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0")
+
+	session := &sessionTestClientWithClientInfo{
+		sessionID:           "session-1",
+		notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+		initialized:         false,
+	}
+
+	err := server.RegisterSession(context.Background(), session)
+	require.NoError(t, err)
+
+	clientInfo := mcp.Implementation{
+		Name:    "test-client",
+		Version: "1.0.0",
+	}
+
+	initRequest := mcp.InitializeRequest{}
+	initRequest.Params.ClientInfo = clientInfo
+	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initRequest.Params.Capabilities = mcp.ClientCapabilities{}
+
+	sessionCtx := server.WithContext(context.Background(), session)
+
+	// Retrieve the session from context
+	retrievedSession := ClientSessionFromContext(sessionCtx)
+	require.NotNil(t, retrievedSession, "Session should be available from context")
+	assert.Equal(t, session.SessionID(), retrievedSession.SessionID(), "Session ID should match")
+
+	result, reqErr := server.handleInitialize(sessionCtx, 1, initRequest)
+	require.Nil(t, reqErr)
+	require.NotNil(t, result)
+
+	// Check if the session can be cast to SessionWithClientInfo
+	sessionWithClientInfo, ok := retrievedSession.(SessionWithClientInfo)
+	require.True(t, ok, "Session should implement SessionWithClientInfo")
+
+	assert.True(t, sessionWithClientInfo.Initialized(), "Session should be initialized")
+
+	storedClientInfo := sessionWithClientInfo.GetClientInfo()
+
+	assert.Equal(t, clientInfo.Name, storedClientInfo.Name, "Client name should match")
+	assert.Equal(t, clientInfo.Version, storedClientInfo.Version, "Client version should match")
 }

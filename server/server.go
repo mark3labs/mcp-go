@@ -512,7 +512,7 @@ func (s *MCPServer) AddNotificationHandler(
 func (s *MCPServer) handleInitialize(
 	ctx context.Context,
 	_ any,
-	_ mcp.InitializeRequest,
+	request mcp.InitializeRequest,
 ) (*mcp.InitializeResult, *requestError) {
 	capabilities := mcp.ServerCapabilities{}
 
@@ -561,6 +561,11 @@ func (s *MCPServer) handleInitialize(
 
 	if session := ClientSessionFromContext(ctx); session != nil {
 		session.Initialize()
+
+		// Store client info if the session supports it
+		if sessionWithClientInfo, ok := session.(SessionWithClientInfo); ok {
+			sessionWithClientInfo.SetClientInfo(request.Params.ClientInfo)
+		}
 	}
 	return &result, nil
 }
