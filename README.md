@@ -58,9 +58,9 @@ func main() {
 }
 
 func helloHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    name, ok := request.GetArguments()["name"].(string)
-    if !ok {
-        return nil, errors.New("name must be a string")
+    name, err := request.RequireString("name")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
     }
 
     return mcp.NewToolResultText(fmt.Sprintf("Hello, %s!", name)), nil
@@ -94,11 +94,15 @@ MCP Go handles all the complex protocol details and server management, so you ca
   - [Prompts](#prompts)
 - [Examples](#examples)
 - [Extras](#extras)
+  - [Transports](#transports)
   - [Session Management](#session-management)
+    - [Basic Session Handling](#basic-session-handling)
+    - [Per-Session Tools](#per-session-tools)
+    - [Tool Filtering](#tool-filtering)
+    - [Working with Context](#working-with-context)
   - [Request Hooks](#request-hooks)
   - [Tool Handler Middleware](#tool-handler-middleware)
   - [Regenerating Server Code](#regenerating-server-code)
-- [Contributing](/CONTRIBUTING.md)
 
 ## Installation
 
