@@ -51,8 +51,8 @@ func (exchange *RequestContext) SendLoggingNotification(ctx context.Context, lev
 	}
 
 	params := map[string]any{
-		"level":   level,
-		"message": message,
+		"level": level,
+		"data":  message,
 	}
 	if ClientSessionFromContext(ctx).GetLoggerName() != nil {
 		params["logger"] = *ClientSessionFromContext(ctx).GetLoggerName()
