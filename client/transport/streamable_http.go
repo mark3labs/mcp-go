@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -39,6 +40,13 @@ func WithHTTPTimeout(timeout time.Duration) StreamableHTTPCOption {
 	}
 }
 
+// WithOAuth enables OAuth authentication for the client.
+func WithOAuth(config OAuthConfig) StreamableHTTPCOption {
+	return func(sc *StreamableHTTP) {
+		sc.oauthHandler = NewOAuthHandler(config)
+	}
+}
+
 // StreamableHTTP implements Streamable HTTP transport.
 //
 // It transmits JSON-RPC messages over individual HTTP requests. One message per request.
@@ -66,6 +74,9 @@ type StreamableHTTP struct {
 	notifyMu            sync.RWMutex
 
 	closed chan struct{}
+	
+	// OAuth support
+	oauthHandler *OAuthHandler
 }
 
 // NewStreamableHTTP creates a new Streamable HTTP transport with the given base URL.
@@ -86,6 +97,11 @@ func NewStreamableHTTP(baseURL string, options ...StreamableHTTPCOption) (*Strea
 
 	for _, opt := range options {
 		opt(smc)
+	}
+
+	// If OAuth is configured, set the base URL for metadata discovery
+	if smc.oauthHandler != nil {
+		smc.oauthHandler.SetBaseURL(baseURL)
 	}
 
 	return smc, nil
@@ -137,6 +153,22 @@ const (
 	headerKeySessionID = "Mcp-Session-Id"
 )
 
+// ErrOAuthAuthorizationRequired is a sentinel error for OAuth authorization required
+var ErrOAuthAuthorizationRequired = errors.New("no valid token available, authorization required")
+
+// OAuthAuthorizationRequiredError is returned when OAuth authorization is required
+type OAuthAuthorizationRequiredError struct {
+	Handler *OAuthHandler
+}
+
+func (e *OAuthAuthorizationRequiredError) Error() string {
+	return ErrOAuthAuthorizationRequired.Error()
+}
+
+func (e *OAuthAuthorizationRequiredError) Unwrap() error {
+	return ErrOAuthAuthorizationRequired
+}
+
 // SendRequest sends a JSON-RPC request to the server and waits for a response.
 // Returns the raw JSON response message or an error if the request fails.
 func (c *StreamableHTTP) SendRequest(
@@ -179,6 +211,22 @@ func (c *StreamableHTTP) SendRequest(
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
 	}
+  
+	// Add OAuth authorization if configured
+	if c.oauthHandler != nil {
+		authHeader, err := c.oauthHandler.GetAuthorizationHeader(ctx)
+		if err != nil {
+			// If we get an authorization error, return a specific error that can be handled by the client
+			if err.Error() == "no valid token available, authorization required" {
+				return nil, &OAuthAuthorizationRequiredError{
+					Handler: c.oauthHandler,
+				}
+			}
+			return nil, fmt.Errorf("failed to get authorization header: %w", err)
+		}
+		req.Header.Set("Authorization", authHeader)
+  }
+  
 	if c.headerFunc != nil {
 		for k, v := range c.headerFunc(ctx) {
 			req.Header.Set(k, v)
@@ -198,6 +246,13 @@ func (c *StreamableHTTP) SendRequest(
 		if resp.StatusCode == http.StatusNotFound {
 			c.sessionID.CompareAndSwap(sessionID, "")
 			return nil, fmt.Errorf("session terminated (404). need to re-initialize")
+		}
+		
+		// Handle OAuth unauthorized error
+		if resp.StatusCode == http.StatusUnauthorized && c.oauthHandler != nil {
+			return nil, &OAuthAuthorizationRequiredError{
+				Handler: c.oauthHandler,
+			}
 		}
 
 		// handle error response
@@ -374,6 +429,22 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
 	}
+	
+	// Add OAuth authorization if configured
+	if c.oauthHandler != nil {
+		authHeader, err := c.oauthHandler.GetAuthorizationHeader(ctx)
+		if err != nil {
+			// If we get an authorization error, return a specific error that can be handled by the client
+			if errors.Is(err, ErrOAuthAuthorizationRequired) {
+				return &OAuthAuthorizationRequiredError{
+					Handler: c.oauthHandler,
+				}
+			}
+			return fmt.Errorf("failed to get authorization header: %w", err)
+		}
+		req.Header.Set("Authorization", authHeader)
+  }
+   
 	if c.headerFunc != nil {
 		for k, v := range c.headerFunc(ctx) {
 			req.Header.Set(k, v)
@@ -388,6 +459,13 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		// Handle OAuth unauthorized error
+		if resp.StatusCode == http.StatusUnauthorized && c.oauthHandler != nil {
+			return &OAuthAuthorizationRequiredError{
+				Handler: c.oauthHandler,
+			}
+		}
+		
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf(
 			"notification failed with status %d: %s",
@@ -407,4 +485,14 @@ func (c *StreamableHTTP) SetNotificationHandler(handler func(mcp.JSONRPCNotifica
 
 func (c *StreamableHTTP) GetSessionId() string {
 	return c.sessionID.Load().(string)
+}
+
+// GetOAuthHandler returns the OAuth handler if configured
+func (c *StreamableHTTP) GetOAuthHandler() *OAuthHandler {
+	return c.oauthHandler
+}
+
+// IsOAuthEnabled returns true if OAuth is enabled
+func (c *StreamableHTTP) IsOAuthEnabled() bool {
+	return c.oauthHandler != nil
 }
