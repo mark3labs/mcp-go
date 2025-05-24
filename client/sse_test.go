@@ -39,7 +39,7 @@ func TestSSEMCPClient(t *testing.T) {
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(false),
-	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	), func(ctx context.Context, reqContext server.RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				mcp.TextContent{
@@ -52,7 +52,7 @@ func TestSSEMCPClient(t *testing.T) {
 	mcpServer.AddTool(mcp.NewTool(
 		"test-tool-for-http-header",
 		mcp.WithDescription("Test tool for http header"),
-	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	), func(ctx context.Context, reqContext server.RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		//  , X-Test-Header-Func
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{

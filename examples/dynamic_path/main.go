@@ -19,7 +19,7 @@ func main() {
 	mcpServer := server.NewMCPServer("dynamic-path-example", "1.0.0")
 
 	// Add a trivial tool for demonstration
-	mcpServer.AddTool(mcp.NewTool("echo"), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	mcpServer.AddTool(mcp.NewTool("echo"), func(ctx context.Context, reqContext server.RequestContext, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return mcp.NewToolResultText(fmt.Sprintf("Echo: %v", req.GetArguments()["message"])), nil
 	})
 

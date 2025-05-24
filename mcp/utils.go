@@ -141,7 +141,7 @@ func NewProgressNotification(
 ) ProgressNotification {
 	notification := ProgressNotification{
 		Notification: Notification{
-			Method: "notifications/progress",
+			Method: string(MethodNotificationProgress),
 		},
 		Params: struct {
 			ProgressToken ProgressToken `json:"progressToken"`

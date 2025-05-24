@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -494,6 +495,9 @@ type streamableHttpSession struct {
 	sessionID           string
 	notificationChannel chan mcp.JSONRPCNotification // server -> client notifications
 	tools               *sessionToolsStore
+	loggingLevel        atomic.Value
+	// FIXME assign logger name in a proper way
+	loggerName *string
 }
 
 func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore) *streamableHttpSession {
@@ -520,6 +524,22 @@ func (s *streamableHttpSession) Initialize() {
 func (s *streamableHttpSession) Initialized() bool {
 	// the session is ephemeral, no real initialized action needed
 	return true
+}
+
+func (s *streamableHttpSession) SetLogLevel(level mcp.LoggingLevel) {
+	s.loggingLevel.Store(level)
+}
+
+func (s *streamableHttpSession) GetLogLevel() mcp.LoggingLevel {
+	level := s.loggingLevel.Load()
+	if level == nil {
+		return mcp.LoggingLevelError
+	}
+	return level.(mcp.LoggingLevel)
+}
+
+func (s *streamableHttpSession) GetLoggerName() *string {
+	return s.loggerName
 }
 
 var _ ClientSession = (*streamableHttpSession)(nil)
