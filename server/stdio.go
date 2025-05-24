@@ -51,9 +51,11 @@ func WithStdioContextFunc(fn StdioContextFunc) StdioOption {
 
 // stdioSession is a static client session, since stdio has only one client.
 type stdioSession struct {
-	notifications   chan mcp.JSONRPCNotification
-	initialized     atomic.Bool
-	loggingLevel    atomic.Value
+	notifications chan mcp.JSONRPCNotification
+	initialized   atomic.Bool
+	loggingLevel  atomic.Value
+	// FIXME assign logger name in a proper way
+	loggerName *string
 }
 
 func (s *stdioSession) SessionID() string {
@@ -74,11 +76,11 @@ func (s *stdioSession) Initialized() bool {
 	return s.initialized.Load()
 }
 
-func(s *stdioSession) SetLogLevel(level mcp.LoggingLevel) {
+func (s *stdioSession) SetLogLevel(level mcp.LoggingLevel) {
 	s.loggingLevel.Store(level)
 }
 
-func(s *stdioSession) GetLogLevel() mcp.LoggingLevel {
+func (s *stdioSession) GetLogLevel() mcp.LoggingLevel {
 	level := s.loggingLevel.Load()
 	if level == nil {
 		return mcp.LoggingLevelError
@@ -86,9 +88,12 @@ func(s *stdioSession) GetLogLevel() mcp.LoggingLevel {
 	return level.(mcp.LoggingLevel)
 }
 
+func (f *stdioSession) GetLoggerName() *string {
+	return f.loggerName
+}
+
 var (
-	_ ClientSession			= (*stdioSession)(nil)
-	_ SessionWithLogging 	= (*stdioSession)(nil)
+	_ ClientSession = (*stdioSession)(nil)
 )
 
 var stdioSessionInstance = stdioSession{

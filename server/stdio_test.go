@@ -140,7 +140,7 @@ func TestStdioServer(t *testing.T) {
 		// Create server
 		mcpServer := NewMCPServer("test", "1.0.0")
 		// Add a tool which uses the context function.
-		mcpServer.AddTool(mcp.NewTool("test_tool"), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		mcpServer.AddTool(mcp.NewTool("test_tool"), func(ctx context.Context, reqContext RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			// Note this is agnostic to the transport type i.e. doesn't know about request headers.
 			testVal := testValFromContext(ctx)
 			return mcp.NewToolResultText(testVal), nil

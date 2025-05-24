@@ -64,7 +64,7 @@ func main() {
 	)
 
 	// Add tool handler using the typed handler
-	s.AddTool(tool, mcp.NewTypedToolHandler(typedGreetingHandler))
+	s.AddTool(tool, server.NewTypedToolHandler(typedGreetingHandler))
 
 	// Start the stdio server
 	if err := server.ServeStdio(s); err != nil {
@@ -73,29 +73,29 @@ func main() {
 }
 
 // Our typed handler function that receives strongly-typed arguments
-func typedGreetingHandler(ctx context.Context, request mcp.CallToolRequest, args GreetingArgs) (*mcp.CallToolResult, error) {
+func typedGreetingHandler(ctx context.Context, requestContext server.RequestContext, request mcp.CallToolRequest, args GreetingArgs) (*mcp.CallToolResult, error) {
 	if args.Name == "" {
 		return mcp.NewToolResultError("name is required"), nil
 	}
 
 	// Build a personalized greeting based on the complex arguments
 	greeting := fmt.Sprintf("Hello, %s!", args.Name)
-	
+
 	if args.Age > 0 {
 		greeting += fmt.Sprintf(" You are %d years old.", args.Age)
 	}
-	
+
 	if args.IsVIP {
 		greeting += " Welcome back, valued VIP customer!"
 	}
-	
+
 	if len(args.Languages) > 0 {
 		greeting += fmt.Sprintf(" You speak %d languages: %v.", len(args.Languages), args.Languages)
 	}
-	
+
 	if args.Metadata.Location != "" {
 		greeting += fmt.Sprintf(" I see you're from %s.", args.Metadata.Location)
-		
+
 		if args.Metadata.Timezone != "" {
 			greeting += fmt.Sprintf(" Your timezone is %s.", args.Metadata.Timezone)
 		}

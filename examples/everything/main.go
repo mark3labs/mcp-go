@@ -191,6 +191,7 @@ func generateResources() []mcp.Resource {
 
 func handleReadResource(
 	ctx context.Context,
+	reqContext server.RequestContext,
 	request mcp.ReadResourceRequest,
 ) ([]mcp.ResourceContents, error) {
 	return []mcp.ResourceContents{
@@ -204,6 +205,7 @@ func handleReadResource(
 
 func handleResourceTemplate(
 	ctx context.Context,
+	reqContext server.RequestContext,
 	request mcp.ReadResourceRequest,
 ) ([]mcp.ResourceContents, error) {
 	return []mcp.ResourceContents{
@@ -217,6 +219,7 @@ func handleResourceTemplate(
 
 func handleGeneratedResource(
 	ctx context.Context,
+	reqContext server.RequestContext,
 	request mcp.ReadResourceRequest,
 ) ([]mcp.ResourceContents, error) {
 	uri := request.Params.URI
@@ -254,6 +257,7 @@ func handleGeneratedResource(
 
 func handleSimplePrompt(
 	ctx context.Context,
+	reqContext server.RequestContext,
 	request mcp.GetPromptRequest,
 ) (*mcp.GetPromptResult, error) {
 	return &mcp.GetPromptResult{
@@ -272,6 +276,7 @@ func handleSimplePrompt(
 
 func handleComplexPrompt(
 	ctx context.Context,
+	reqContext server.RequestContext,
 	request mcp.GetPromptRequest,
 ) (*mcp.GetPromptResult, error) {
 	arguments := request.Params.Arguments
@@ -310,6 +315,7 @@ func handleComplexPrompt(
 
 func handleEchoTool(
 	ctx context.Context,
+	reqContext server.RequestContext,
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	arguments := request.GetArguments()
@@ -329,6 +335,7 @@ func handleEchoTool(
 
 func handleAddTool(
 	ctx context.Context,
+	reqContext server.RequestContext,
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	arguments := request.GetArguments()
@@ -350,6 +357,7 @@ func handleAddTool(
 
 func handleSendNotification(
 	ctx context.Context,
+	reqContext server.RequestContext,
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 
@@ -380,6 +388,7 @@ func handleSendNotification(
 
 func handleLongRunningOperationTool(
 	ctx context.Context,
+	reqContext server.RequestContext,
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	arguments := request.GetArguments()
@@ -445,6 +454,7 @@ func handleLongRunningOperationTool(
 
 func handleGetTinyImageTool(
 	ctx context.Context,
+	reqContext server.RequestContext,
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	return &mcp.CallToolResult{

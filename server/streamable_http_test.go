@@ -39,7 +39,7 @@ var initRequest = map[string]any{
 func addSSETool(mcpServer *MCPServer) {
 	mcpServer.AddTool(mcp.Tool{
 		Name: "sseTool",
-	}, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	}, func(ctx context.Context, reqContext RequestContext, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		// Send notification to client
 		server := ServerFromContext(ctx)
 		for i := 0; i < 10; i++ {
@@ -601,7 +601,7 @@ func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 						Title: "Test Tool",
 					},
 				},
-				Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				Handler: func(ctx context.Context, reqContext RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 					return mcp.NewToolResultText("test"), nil
 				},
 			},

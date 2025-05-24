@@ -79,6 +79,7 @@ func makeRequest(ctx context.Context, message, token string) (*response, error) 
 // using the token from the context.
 func handleMakeAuthenticatedRequestTool(
 	ctx context.Context,
+	reqContext server.RequestContext,
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	message, ok := request.GetArguments()["message"].(string)

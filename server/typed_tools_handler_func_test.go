@@ -1,9 +1,10 @@
-package mcp
+package server
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/mark3labs/mcp-go/mcp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,15 +19,15 @@ func TestTypedToolHandler(t *testing.T) {
 	}
 
 	// Create a typed handler function
-	typedHandler := func(ctx context.Context, request CallToolRequest, args HelloArgs) (*CallToolResult, error) {
-		return NewToolResultText(args.Name), nil
+	typedHandler := func(ctx context.Context, requestContext RequestContext, request mcp.CallToolRequest, args HelloArgs) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText(args.Name), nil
 	}
 
 	// Create a wrapped handler
 	wrappedHandler := NewTypedToolHandler(typedHandler)
 
 	// Create a test request
-	req := CallToolRequest{}
+	req := mcp.CallToolRequest{}
 	req.Params.Name = "test-tool"
 	req.Params.Arguments = map[string]any{
 		"name":     "John Doe",
@@ -35,12 +36,12 @@ func TestTypedToolHandler(t *testing.T) {
 	}
 
 	// Call the wrapped handler
-	result, err := wrappedHandler(context.Background(), req)
+	result, err := wrappedHandler(context.Background(), RequestContext{}, req)
 
 	// Verify results
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.Equal(t, "John Doe", result.Content[0].(TextContent).Text)
+	assert.Equal(t, "John Doe", result.Content[0].(mcp.TextContent).Text)
 
 	// Test with invalid arguments
 	req.Params.Arguments = map[string]any{
@@ -50,7 +51,7 @@ func TestTypedToolHandler(t *testing.T) {
 	}
 
 	// This should still work because of type conversion
-	result, err = wrappedHandler(context.Background(), req)
+	result, err = wrappedHandler(context.Background(), RequestContext{}, req)
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 
@@ -62,14 +63,14 @@ func TestTypedToolHandler(t *testing.T) {
 	}
 
 	// This should still work but name will be empty
-	result, err = wrappedHandler(context.Background(), req)
+	result, err = wrappedHandler(context.Background(), RequestContext{}, req)
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.Equal(t, "", result.Content[0].(TextContent).Text)
+	assert.Equal(t, "", result.Content[0].(mcp.TextContent).Text)
 
 	// Test with completely invalid arguments
 	req.Params.Arguments = "not a map"
-	result, err = wrappedHandler(context.Background(), req)
+	result, err = wrappedHandler(context.Background(), RequestContext{}, req)
 	assert.NoError(t, err) // Error is wrapped in the result
 	assert.NotNil(t, result)
 	assert.True(t, result.IsError)
@@ -84,10 +85,10 @@ func TestTypedToolHandlerWithValidation(t *testing.T) {
 	}
 
 	// Create a typed handler function with validation
-	typedHandler := func(ctx context.Context, request CallToolRequest, args CalculatorArgs) (*CallToolResult, error) {
+	typedHandler := func(ctx context.Context, requestContext RequestContext, request mcp.CallToolRequest, args CalculatorArgs) (*mcp.CallToolResult, error) {
 		// Validate operation
 		if args.Operation == "" {
-			return NewToolResultError("operation is required"), nil
+			return mcp.NewToolResultError("operation is required"), nil
 		}
 
 		var result float64
@@ -100,21 +101,21 @@ func TestTypedToolHandlerWithValidation(t *testing.T) {
 			result = args.X * args.Y
 		case "divide":
 			if args.Y == 0 {
-				return NewToolResultError("division by zero"), nil
+				return mcp.NewToolResultError("division by zero"), nil
 			}
 			result = args.X / args.Y
 		default:
-			return NewToolResultError("invalid operation"), nil
+			return mcp.NewToolResultError("invalid operation"), nil
 		}
 
-		return NewToolResultText(fmt.Sprintf("%.0f", result)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("%.0f", result)), nil
 	}
 
 	// Create a wrapped handler
 	wrappedHandler := NewTypedToolHandler(typedHandler)
 
 	// Create a test request
-	req := CallToolRequest{}
+	req := mcp.CallToolRequest{}
 	req.Params.Name = "calculator"
 	req.Params.Arguments = map[string]any{
 		"operation": "add",
@@ -123,12 +124,12 @@ func TestTypedToolHandlerWithValidation(t *testing.T) {
 	}
 
 	// Call the wrapped handler
-	result, err := wrappedHandler(context.Background(), req)
+	result, err := wrappedHandler(context.Background(), RequestContext{}, req)
 
 	// Verify results
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.Equal(t, "16", result.Content[0].(TextContent).Text)
+	assert.Equal(t, "16", result.Content[0].(mcp.TextContent).Text)
 
 	// Test division by zero
 	req.Params.Arguments = map[string]any{
@@ -137,11 +138,11 @@ func TestTypedToolHandlerWithValidation(t *testing.T) {
 		"y":         0.0,
 	}
 
-	result, err = wrappedHandler(context.Background(), req)
+	result, err = wrappedHandler(context.Background(), RequestContext{}, req)
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.True(t, result.IsError)
-	assert.Contains(t, result.Content[0].(TextContent).Text, "division by zero")
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "division by zero")
 }
 
 func TestTypedToolHandlerWithComplexObjects(t *testing.T) {
@@ -160,64 +161,64 @@ func TestTypedToolHandlerWithComplexObjects(t *testing.T) {
 	}
 
 	type UserProfile struct {
-		Name        string         `json:"name"`
-		Email       string         `json:"email"`
-		Age         int            `json:"age"`
-		IsVerified  bool           `json:"is_verified"`
-		Address     Address        `json:"address"`
+		Name        string          `json:"name"`
+		Email       string          `json:"email"`
+		Age         int             `json:"age"`
+		IsVerified  bool            `json:"is_verified"`
+		Address     Address         `json:"address"`
 		Preferences UserPreferences `json:"preferences"`
-		Tags        []string       `json:"tags"`
+		Tags        []string        `json:"tags"`
 	}
 
 	// Create a typed handler function
-	typedHandler := func(ctx context.Context, request CallToolRequest, profile UserProfile) (*CallToolResult, error) {
+	typedHandler := func(ctx context.Context, requestContext RequestContext, request mcp.CallToolRequest, profile UserProfile) (*mcp.CallToolResult, error) {
 		// Validate required fields
 		if profile.Name == "" {
-			return NewToolResultError("name is required"), nil
+			return mcp.NewToolResultError("name is required"), nil
 		}
 		if profile.Email == "" {
-			return NewToolResultError("email is required"), nil
+			return mcp.NewToolResultError("email is required"), nil
 		}
 
 		// Build a response that includes nested object data
 		response := fmt.Sprintf("User: %s (%s)", profile.Name, profile.Email)
-		
+
 		if profile.Age > 0 {
 			response += fmt.Sprintf(", Age: %d", profile.Age)
 		}
-		
+
 		if profile.IsVerified {
 			response += ", Verified: Yes"
 		} else {
 			response += ", Verified: No"
 		}
-		
+
 		// Include address information if available
 		if profile.Address.City != "" && profile.Address.Country != "" {
 			response += fmt.Sprintf(", Location: %s, %s", profile.Address.City, profile.Address.Country)
 		}
-		
+
 		// Include preferences if available
 		if profile.Preferences.Theme != "" {
 			response += fmt.Sprintf(", Theme: %s", profile.Preferences.Theme)
 		}
-		
+
 		if len(profile.Preferences.Newsletters) > 0 {
 			response += fmt.Sprintf(", Subscribed to %d newsletters", len(profile.Preferences.Newsletters))
 		}
-		
+
 		if len(profile.Tags) > 0 {
 			response += fmt.Sprintf(", Tags: %v", profile.Tags)
 		}
-		
-		return NewToolResultText(response), nil
+
+		return mcp.NewToolResultText(response), nil
 	}
 
 	// Create a wrapped handler
 	wrappedHandler := NewTypedToolHandler(typedHandler)
 
 	// Test with complete complex object
-	req := CallToolRequest{}
+	req := mcp.CallToolRequest{}
 	req.Params.Name = "user_profile"
 	req.Params.Arguments = map[string]any{
 		"name":        "John Doe",
@@ -239,16 +240,16 @@ func TestTypedToolHandlerWithComplexObjects(t *testing.T) {
 	}
 
 	// Call the wrapped handler
-	result, err := wrappedHandler(context.Background(), req)
+	result, err := wrappedHandler(context.Background(), RequestContext{}, req)
 
 	// Verify results
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.Contains(t, result.Content[0].(TextContent).Text, "John Doe")
-	assert.Contains(t, result.Content[0].(TextContent).Text, "San Francisco, USA")
-	assert.Contains(t, result.Content[0].(TextContent).Text, "Theme: dark")
-	assert.Contains(t, result.Content[0].(TextContent).Text, "Subscribed to 2 newsletters")
-	assert.Contains(t, result.Content[0].(TextContent).Text, "Tags: [premium early_adopter]")
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "John Doe")
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "San Francisco, USA")
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "Theme: dark")
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "Subscribed to 2 newsletters")
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "Tags: [premium early_adopter]")
 
 	// Test with partial data (missing some nested fields)
 	req.Params.Arguments = map[string]any{
@@ -265,13 +266,13 @@ func TestTypedToolHandlerWithComplexObjects(t *testing.T) {
 		},
 	}
 
-	result, err = wrappedHandler(context.Background(), req)
+	result, err = wrappedHandler(context.Background(), RequestContext{}, req)
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.Contains(t, result.Content[0].(TextContent).Text, "Jane Smith")
-	assert.Contains(t, result.Content[0].(TextContent).Text, "London, UK")
-	assert.Contains(t, result.Content[0].(TextContent).Text, "Theme: light")
-	assert.NotContains(t, result.Content[0].(TextContent).Text, "newsletters")
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "Jane Smith")
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "London, UK")
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "Theme: light")
+	assert.NotContains(t, result.Content[0].(mcp.TextContent).Text, "newsletters")
 
 	// Test with JSON string input (simulating raw JSON from client)
 	jsonInput := `{
@@ -294,11 +295,11 @@ func TestTypedToolHandlerWithComplexObjects(t *testing.T) {
 	}`
 
 	req.Params.Arguments = json.RawMessage(jsonInput)
-	result, err = wrappedHandler(context.Background(), req)
+	result, err = wrappedHandler(context.Background(), RequestContext{}, req)
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.Contains(t, result.Content[0].(TextContent).Text, "Bob Johnson")
-	assert.Contains(t, result.Content[0].(TextContent).Text, "New York, USA")
-	assert.Contains(t, result.Content[0].(TextContent).Text, "Theme: system")
-	assert.Contains(t, result.Content[0].(TextContent).Text, "Subscribed to 1 newsletters")
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "Bob Johnson")
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "New York, USA")
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "Theme: system")
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "Subscribed to 1 newsletters")
 }

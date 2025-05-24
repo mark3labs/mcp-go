@@ -27,7 +27,9 @@ type sseSession struct {
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         atomic.Bool
 	loggingLevel        atomic.Value
-	tools               sync.Map // stores session-specific tools
+	// FIXME assign logger name in a proper way
+	loggerName *string
+	tools      sync.Map // stores session-specific tools
 }
 
 // SSEContextFunc is a function that takes an existing context and the current
@@ -72,6 +74,10 @@ func (s *sseSession) GetLogLevel() mcp.LoggingLevel {
 	return level.(mcp.LoggingLevel)
 }
 
+func (s *sseSession) GetLoggerName() *string {
+	return s.loggerName
+}
+
 func (s *sseSession) GetSessionTools() map[string]ServerTool {
 	tools := make(map[string]ServerTool)
 	s.tools.Range(func(key, value any) bool {
@@ -94,9 +100,8 @@ func (s *sseSession) SetSessionTools(tools map[string]ServerTool) {
 }
 
 var (
-	_ ClientSession      = (*sseSession)(nil)
-	_ SessionWithTools   = (*sseSession)(nil)
-	_ SessionWithLogging = (*sseSession)(nil)
+	_ ClientSession    = (*sseSession)(nil)
+	_ SessionWithTools = (*sseSession)(nil)
 )
 
 // SSEServer implements a Server-Sent Events (SSE) based MCP server.

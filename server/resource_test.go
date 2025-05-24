@@ -28,7 +28,7 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 						mcp.WithResourceDescription("Test resource 1"),
 						mcp.WithMIMEType("text/plain"),
 					),
-					func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+					func(ctx context.Context, reqContext RequestContext, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 						return []mcp.ResourceContents{
 							mcp.TextResourceContents{
 								URI:      "test://resource1",
@@ -47,7 +47,7 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 						mcp.WithResourceDescription("Test resource 2"),
 						mcp.WithMIMEType("text/plain"),
 					),
-					func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+					func(ctx context.Context, reqContext RequestContext, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 						return []mcp.ResourceContents{
 							mcp.TextResourceContents{
 								URI:      "test://resource2",
@@ -84,7 +84,7 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 			expectedNotifications: 1,
 			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, resourcesList mcp.JSONRPCMessage) {
 				// Check that we received a list_changed notification
-				assert.Equal(t, mcp.MethodNotificationResourcesListChanged, notifications[0].Method)
+				assert.Equal(t, string(mcp.MethodNotificationResourcesListChanged), notifications[0].Method)
 
 				// Verify we now have only one resource
 				resp, ok := resourcesList.(mcp.JSONRPCResponse)
@@ -108,7 +108,7 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 						mcp.WithResourceDescription("Test resource 1"),
 						mcp.WithMIMEType("text/plain"),
 					),
-					func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+					func(ctx context.Context, reqContext RequestContext, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 						return []mcp.ResourceContents{
 							mcp.TextResourceContents{
 								URI:      "test://resource1",
@@ -164,7 +164,7 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 						mcp.WithResourceDescription("Test resource 1"),
 						mcp.WithMIMEType("text/plain"),
 					),
-					func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+					func(ctx context.Context, reqContext RequestContext, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 						return []mcp.ResourceContents{
 							mcp.TextResourceContents{
 								URI:      "test://resource1",
