@@ -22,8 +22,6 @@ var _ ClientRequest = &CallToolRequest{}
 var _ ClientRequest = &ListToolsRequest{}
 
 // ClientNotification types
-var _ ClientNotification = &CancelledNotification{}
-var _ ClientNotification = &ProgressNotification{}
 var _ ClientNotification = &InitializedNotification{}
 var _ ClientNotification = &RootsListChangedNotification{}
 
@@ -38,9 +36,6 @@ var _ ServerRequest = &CreateMessageRequest{}
 var _ ServerRequest = &ListRootsRequest{}
 
 // ServerNotification types
-var _ ServerNotification = &CancelledNotification{}
-var _ ServerNotification = &ProgressNotification{}
-var _ ServerNotification = &LoggingMessageNotification{}
 var _ ServerNotification = &ResourceUpdatedNotification{}
 var _ ServerNotification = &ResourceListChangedNotification{}
 var _ ServerNotification = &ToolListChangedNotification{}
@@ -127,60 +122,6 @@ func NewJSONRPCError(
 			Code:    code,
 			Message: message,
 			Data:    data,
-		},
-	}
-}
-
-// NewProgressNotification
-// Helper function for creating a progress notification
-func NewProgressNotification(
-	token ProgressToken,
-	progress float64,
-	total *float64,
-	message *string,
-) ProgressNotification {
-	notification := ProgressNotification{
-		Notification: Notification{
-			Method: string(MethodNotificationProgress),
-		},
-		Params: struct {
-			ProgressToken ProgressToken `json:"progressToken"`
-			Progress      float64       `json:"progress"`
-			Total         float64       `json:"total,omitempty"`
-			Message       string        `json:"message,omitempty"`
-		}{
-			ProgressToken: token,
-			Progress:      progress,
-		},
-	}
-	if total != nil {
-		notification.Params.Total = *total
-	}
-	if message != nil {
-		notification.Params.Message = *message
-	}
-	return notification
-}
-
-// NewLoggingMessageNotification
-// Helper function for creating a logging message notification
-func NewLoggingMessageNotification(
-	level LoggingLevel,
-	logger string,
-	data any,
-) LoggingMessageNotification {
-	return LoggingMessageNotification{
-		Notification: Notification{
-			Method: "notifications/message",
-		},
-		Params: struct {
-			Level  LoggingLevel `json:"level"`
-			Logger string       `json:"logger,omitempty"`
-			Data   any          `json:"data"`
-		}{
-			Level:  level,
-			Logger: logger,
-			Data:   data,
 		},
 	}
 }

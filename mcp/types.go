@@ -72,11 +72,22 @@ const (
 	// https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#log-message-notifications
 	MethodNotificationMessage MCPMethod = "notifications/message"
 
-	// MethodNotificationProgress notifies progress updates for long-running operations.
+	// MethodNotificationProgress notifies progress updates for long-running operations
 	// https://modelcontextprotocol.io/specification/2025-03-26/basic/utilities/progress
 	MethodNotificationProgress MCPMethod = "notifications/progress"
 
-	// MethodNotificationCancellation cancel a previously-issued request
+	// MethodNotificationCancellation can be sent by either side to indicate that it is
+	// cancelling a previously-issued request.
+	//
+	// The request SHOULD still be in-flight, but due to communication latency, it
+	// is always possible that this notification MAY arrive after the request has
+	// already finished.
+	//
+	// This notification indicates that the result will be unused, so any
+	// associated processing SHOULD cease.
+	//
+	// A client MUST NOT attempt to cancel its `initialize` request.
+	//
 	// https://modelcontextprotocol.io/specification/2025-03-26/basic/utilities/cancellation
 	MethodNotificationCancellation MCPMethod = "notifications/cancelled"
 )
@@ -366,34 +377,6 @@ const (
 // EmptyResult represents a response that indicates success but carries no data.
 type EmptyResult Result
 
-/* Cancellation */
-
-// CancelledNotification can be sent by either side to indicate that it is
-// cancelling a previously-issued request.
-//
-// The request SHOULD still be in-flight, but due to communication latency, it
-// is always possible that this notification MAY arrive after the request has
-// already finished.
-//
-// This notification indicates that the result will be unused, so any
-// associated processing SHOULD cease.
-//
-// A client MUST NOT attempt to cancel its `initialize` request.
-type CancelledNotification struct {
-	Notification
-	Params struct {
-		// The ID of the request to cancel.
-		//
-		// This MUST correspond to the ID of a request previously issued
-		// in the same direction.
-		RequestId RequestId `json:"requestId"`
-
-		// An optional string describing the reason for the cancellation. This MAY
-		// be logged or presented to the user.
-		Reason string `json:"reason,omitempty"`
-	} `json:"params"`
-}
-
 /* Initialization */
 
 // InitializeRequest is sent from the client to the server when it first
@@ -489,27 +472,6 @@ type Implementation struct {
 // or else may be disconnected.
 type PingRequest struct {
 	Request
-}
-
-/* Progress notifications */
-
-// ProgressNotification is an out-of-band notification used to inform the
-// receiver of a progress update for a long-running request.
-type ProgressNotification struct {
-	Notification
-	Params struct {
-		// The progress token which was given in the initial request, used to
-		// associate this notification with the request that is proceeding.
-		ProgressToken ProgressToken `json:"progressToken"`
-		// The progress thus far. This should increase every time progress is made,
-		// even if the total is unknown.
-		Progress float64 `json:"progress"`
-		// Total number of items to process (or total progress required), if known.
-		Total float64 `json:"total,omitempty"`
-		// Message related to progress. This should provide relevant human-readable
-		// progress information.
-		Message string `json:"message,omitempty"`
-	} `json:"params"`
 }
 
 /* Pagination */
@@ -710,22 +672,6 @@ type SetLevelRequest struct {
 		// The server should send all logs at this level and higher (i.e., more severe) to
 		// the client as notifications/logging/message.
 		Level LoggingLevel `json:"level"`
-	} `json:"params"`
-}
-
-// LoggingMessageNotification is a notification of a log message passed from
-// server to client. If no logging/setLevel request has been sent from the client,
-// the server MAY decide which messages to send automatically.
-type LoggingMessageNotification struct {
-	Notification
-	Params struct {
-		// The severity of this log message.
-		Level LoggingLevel `json:"level"`
-		// An optional name of the logger issuing this message.
-		Logger string `json:"logger,omitempty"`
-		// The data to be logged, such as a string message or an object. Any JSON
-		// serializable type is allowed here.
-		Data any `json:"data"`
 	} `json:"params"`
 }
 
