@@ -532,7 +532,7 @@ Prompts can include:
 
 ## Examples
 
-For examples, see the `examples/` directory.
+For examples, see the [`examples/`](examples/) directory.
 
 ## Extras
 
