@@ -66,7 +66,7 @@ func (exchange *RequestContext) SendLoggingNotification(ctx context.Context, lev
 }
 
 // SendProgressNotification send progress notification only if the client has requested progress
-func (exchange *RequestContext) SendProgressNotification(ctx context.Context, progress, total *float64, message *string) error {
+func (exchange *RequestContext) SendProgressNotification(ctx context.Context, progress float64, total *float64, message *string) error {
 	if exchange.progressToken == nil {
 		return nil
 	}
