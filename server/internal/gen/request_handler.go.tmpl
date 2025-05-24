@@ -55,7 +55,9 @@ func (s *MCPServer) HandleMessage(
 		}
 		s.handleNotification(ctx, notification)
 		return nil // Return nil for notifications
-	}
+	} else {
+        ctx = context.WithValue(ctx, requestIDKey{}, mcp.NewRequestId(baseMessage.ID))
+    }
 
 	if baseMessage.Result != nil {
 		// this is a response to a request sent by the server (e.g. from a ping
