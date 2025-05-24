@@ -104,7 +104,7 @@ type sessionTestClientWithLogging struct {
 	sessionID           string
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         bool
-	loggingLevel 		atomic.Value
+	loggingLevel        atomic.Value
 }
 
 func (f *sessionTestClientWithLogging) SessionID() string {
@@ -136,9 +136,9 @@ func (f *sessionTestClientWithLogging) GetLogLevel() mcp.LoggingLevel {
 
 // Verify that all implementations satisfy their respective interfaces
 var (
-	_ ClientSession 			= (*sessionTestClient)(nil)
-	_ SessionWithTools 			= (*sessionTestClientWithTools)(nil)
-	_ SessionWithLogging		= (*sessionTestClientWithLogging)(nil)
+	_ ClientSession      = (*sessionTestClient)(nil)
+	_ SessionWithTools   = (*sessionTestClientWithTools)(nil)
+	_ SessionWithLogging = (*sessionTestClientWithLogging)(nil)
 )
 
 func TestSessionWithTools_Integration(t *testing.T) {
@@ -1039,6 +1039,187 @@ func TestMCPServer_SetLevel(t *testing.T) {
 
 	// Check logging level
 	if session.GetLogLevel() != mcp.LoggingLevelCritical {
-		t.Errorf("Expected critical level, got %v", session.GetLogLevel())
+		t.Errorf("Expected critical level, got %s", session.GetLogLevel())
+	}
+}
+
+func TestMCPServer_SendLogMessageToClientDisabled(t *testing.T) {
+	// Create server without logging capability
+	server := NewMCPServer("test-server", "1.0.0")
+
+	// Create and initialize a session
+	sessionChan := make(chan mcp.JSONRPCNotification, 10)
+	session := &sessionTestClientWithLogging{
+		sessionID:           "session-1",
+		notificationChannel: sessionChan,
+	}
+	session.Initialize()
+
+	// Mock a request context
+	ctx := server.WithContext(context.Background(), session)
+
+	// Try to send a log message to client when capability is disabled
+	require.Error(t, server.SendLogMessageToClient(ctx, mcp.NewLoggingMessageNotification(mcp.LoggingLevelCritical, "test logger", "test data")))
+}
+
+func TestMCPServer_SendLogMessageToClient(t *testing.T) {
+	// Prepare a log message
+	logMsg := mcp.NewLoggingMessageNotification(
+		mcp.LoggingLevelAlert,
+		"test logger",
+		"test data",
+	)
+
+	tests := []struct {
+		name           string
+		contextPrepare func(context.Context, *MCPServer) context.Context
+		validate       func(*testing.T, context.Context, *MCPServer)
+	}{
+		{
+			name: "no active session",
+			contextPrepare: func(ctx context.Context, srv *MCPServer) context.Context {
+				return ctx
+			},
+			validate: func(t *testing.T, ctx context.Context, srv *MCPServer) {
+				require.Error(t, srv.SendLogMessageToClient(ctx, logMsg))
+			},
+		},
+		{
+			name: "uninit session",
+			contextPrepare: func(ctx context.Context, srv *MCPServer) context.Context {
+				logSession := &sessionTestClientWithLogging{
+					sessionID:           "test",
+					notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+					initialized:         false,
+				}
+				return srv.WithContext(ctx, logSession)
+			},
+			validate: func(t *testing.T, ctx context.Context, srv *MCPServer) {
+				require.Error(t, srv.SendLogMessageToClient(ctx, logMsg))
+				_, ok := ClientSessionFromContext(ctx).(*sessionTestClientWithLogging)
+				require.True(t, ok, "session not found or of incorrect type")
+			},
+		},
+		{
+			name: "session not supports logging",
+			contextPrepare: func(ctx context.Context, srv *MCPServer) context.Context {
+				logSession := &sessionTestClientWithTools{
+					sessionID:           "test",
+					notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+					initialized:         false,
+				}
+				return srv.WithContext(ctx, logSession)
+			},
+			validate: func(t *testing.T, ctx context.Context, srv *MCPServer) {
+				require.Error(t, srv.SendLogMessageToClient(ctx, logMsg))
+			},
+		},
+		{
+			name: "invalid log messages without level or data",
+			contextPrepare: func(ctx context.Context, srv *MCPServer) context.Context {
+				logSession := &sessionTestClientWithLogging{
+					sessionID:           "test",
+					notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+					initialized:         false,
+				}
+				logSession.Initialize()
+				return srv.WithContext(ctx, logSession)
+			},
+			validate: func(t *testing.T, ctx context.Context, srv *MCPServer) {
+				// Invalid message without level
+				require.Error(t, srv.SendLogMessageToClient(ctx, mcp.NewLoggingMessageNotification("", "test logger", "test data")))
+				// Invalid message with illegal level
+				require.Error(t, srv.SendLogMessageToClient(ctx, mcp.NewLoggingMessageNotification(mcp.LoggingLevel("invalid level"), "test logger", "test data")))
+				// Invalid message without data
+				require.Error(t, srv.SendLogMessageToClient(ctx, mcp.NewLoggingMessageNotification(mcp.LoggingLevelCritical, "test logger", nil)))
+			},
+		},
+		{
+			name: "active session",
+			contextPrepare: func(ctx context.Context, srv *MCPServer) context.Context {
+				logSession := &sessionTestClientWithLogging{
+					sessionID:           "test",
+					notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+					initialized:         false,
+				}
+				logSession.Initialize()
+				return srv.WithContext(ctx, logSession)
+			},
+			validate: func(t *testing.T, ctx context.Context, srv *MCPServer) {
+				for range 10 {
+					require.NoError(t, srv.SendLogMessageToClient(ctx, logMsg))
+				}
+				session, ok := ClientSessionFromContext(ctx).(*sessionTestClientWithLogging)
+				require.True(t, ok, "session not found or of incorrect type")
+				for range 10 {
+					select {
+					case msg := <-session.notificationChannel:
+						assert.Equal(t, string(mcp.MethodNotificationMessage), msg.Method)
+						assert.Equal(t, mcp.LoggingLevelAlert, msg.Params.AdditionalFields["level"])
+						assert.Equal(t, "test logger", msg.Params.AdditionalFields["logger"])
+						assert.Equal(t, "test data", msg.Params.AdditionalFields["data"])
+					default:
+						t.Errorf("log message not sent")
+					}
+				}
+			},
+		},
+		{
+			name: "session with blocked channel",
+			contextPrepare: func(ctx context.Context, srv *MCPServer) context.Context {
+				logSession := &sessionTestClientWithLogging{
+					sessionID:           "test",
+					notificationChannel: make(chan mcp.JSONRPCNotification, 1),
+					initialized:         false,
+				}
+				logSession.Initialize()
+				return srv.WithContext(ctx, logSession)
+			},
+			validate: func(t *testing.T, ctx context.Context, srv *MCPServer) {
+				require.NoError(t, srv.SendLogMessageToClient(ctx, logMsg))
+				require.Error(t, srv.SendLogMessageToClient(ctx, logMsg))
+			},
+		},
+		{
+			name: "send log messages of different levels",
+			contextPrepare: func(ctx context.Context, srv *MCPServer) context.Context {
+				logSession := &sessionTestClientWithLogging{
+					sessionID:           "test",
+					notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+					initialized:         false,
+				}
+				logSession.Initialize()
+				// Set client log level to "Error"
+				logSession.SetLogLevel(mcp.LoggingLevelError)
+				return srv.WithContext(ctx, logSession)
+			},
+			validate: func(t *testing.T, ctx context.Context, srv *MCPServer) {
+				// Log messages of higher level than client level could be sent
+				require.NoError(t, srv.SendLogMessageToClient(ctx, mcp.NewLoggingMessageNotification(mcp.LoggingLevelEmergency, "test logger", "")))
+				require.NoError(t, srv.SendLogMessageToClient(ctx, mcp.NewLoggingMessageNotification(mcp.LoggingLevelAlert, "test logger", "")))
+				require.NoError(t, srv.SendLogMessageToClient(ctx, mcp.NewLoggingMessageNotification(mcp.LoggingLevelCritical, "test logger", "")))
+				require.NoError(t, srv.SendLogMessageToClient(ctx, mcp.NewLoggingMessageNotification(mcp.LoggingLevelError, "test logger", "")))
+
+				// Log messages of lower level than client level could not be sent
+				require.Error(t, srv.SendLogMessageToClient(ctx, mcp.NewLoggingMessageNotification(mcp.LoggingLevelWarning, "test logger", "")))
+				require.Error(t, srv.SendLogMessageToClient(ctx, mcp.NewLoggingMessageNotification(mcp.LoggingLevelNotice, "test logger", "")))
+				require.Error(t, srv.SendLogMessageToClient(ctx, mcp.NewLoggingMessageNotification(mcp.LoggingLevelInfo, "test logger", "")))
+				require.Error(t, srv.SendLogMessageToClient(ctx, mcp.NewLoggingMessageNotification(mcp.LoggingLevelDebug, "test logger", "")))
+
+				logSession, ok := ClientSessionFromContext(ctx).(*sessionTestClientWithLogging)
+				require.True(t, ok, "session not found or of incorrect type")
+
+				// Confirm four log messages were received
+				require.Equal(t, len(logSession.notificationChannel), 4)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewMCPServer("test-server", "1.0.0", WithLogging())
+			ctx := tt.contextPrepare(context.Background(), server)
+
+			tt.validate(t, ctx, server)
+		})
 	}
 }

@@ -343,3 +343,43 @@ func (s *MCPServer) DeleteSessionTools(sessionID string, names ...string) error 
 
 	return nil
 }
+
+// SendLogMessageToClient sends a log message notification to the current client.
+// The client sesssion is expected to be an instance of server.SessionWithLogging to support setting and getting minimum log level
+func(s *MCPServer) SendLogMessageToClient(ctx context.Context, msg mcp.LoggingMessageNotification) error {
+	if s.capabilities.logging == nil || !(*s.capabilities.logging) {
+		return fmt.Errorf("server does not support emitting log message notifications")
+	}
+
+	clientSession := ClientSessionFromContext(ctx)
+	if clientSession == nil || !clientSession.Initialized() {
+		return ErrSessionNotInitialized
+	}
+
+	logSession, ok := clientSession.(SessionWithLogging)
+	if !ok {
+		return ErrSessionDoesNotSupportLogging
+	}
+
+	// Servers send notifications containing severity levels, optional logger names, and arbitrary JSON-serializable data.
+	// see <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging>
+	if msg.Params.Level == "" || msg.Params.Data == nil {
+		return fmt.Errorf("invalid log message without level or data")
+	}
+
+	clientLogLevel := logSession.GetLogLevel()
+	allowed, err := clientLogLevel.Allows(msg.Params.Level)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return fmt.Errorf("message level(%s) is lower than client level(%s)", msg.Params.Level, clientLogLevel)
+	}
+
+	params := map[string]any {
+		"level":	msg.Params.Level,
+		"data":		msg.Params.Data,
+		"logger":	msg.Params.Logger,
+	}
+	return s.SendNotificationToClient(ctx, msg.Method, params)
+}
