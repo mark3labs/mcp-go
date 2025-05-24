@@ -8,7 +8,7 @@ import (
 
 type requestIDKey struct{}
 
-// RequestContext represents an exchange with MCP client. The exchange provides
+// RequestContext represents an exchange with MCP client, and provides
 // methods to interact with the client and query its capabilities.
 type RequestContext struct {
 	mcpServer *MCPServer

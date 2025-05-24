@@ -532,7 +532,39 @@ Prompts can include:
 </details>
 
 ### RequestContext
+<details>
+<summary>Show RequestContext Examples</summary>
 
+The RequestContext object provides capabilities to interact with the client, such as sending logging notification and progress notification.
+
+```go
+// Example of using RequestContext to send logging notifications and progress notifications
+mcpServer.AddTool(mcp.NewTool(
+    "test-RequestContent",
+    mcp.WithDescription("test RequestContent"),
+), func(ctx context.Context, reqContext server.RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// you could invoke `reqContext.IsLoggingNotificationSupported()` first the check if server supports logging notification
+	// ff server does not support logging notification, this method will do nothing.
+	_ = reqContext.SendLoggingNotification(ctx, mcp.LoggingLevelInfo, map[string]any{
+		"testLog": "test send log notification",
+	})
+
+	// server should send progress notification if request metadata includes a progressToken
+	total := float64(100)
+	progressMessage := "human readable progress information"
+	_ = reqContext.SendProgressNotification(ctx, float64(50), &total, &progressMessage)
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: "context from header: " + ctx.Value(testHeaderKey).(string) + ", " + ctx.Value(testHeaderFuncKey).(string),
+			},
+		},
+	}, nil
+})
+```
+</details>
 
 ## Examples
 
