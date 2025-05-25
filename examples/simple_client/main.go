@@ -84,7 +84,7 @@ func main() {
 		c = client.NewClient(httpTransport)
 	}
 
-	// Start the client 
+	// Start the client
 	if err := c.Start(ctx); err != nil {
 		log.Fatalf("Failed to start client: %v", err)
 	}

@@ -56,6 +56,7 @@ type stdioSession struct {
 	loggingLevel  atomic.Value
 	// FIXME assign logger name in a proper way
 	loggerName *string
+	clientInfo atomic.Value // stores session-specific client info
 }
 
 func (s *stdioSession) SessionID() string {
@@ -76,6 +77,19 @@ func (s *stdioSession) Initialized() bool {
 	return s.initialized.Load()
 }
 
+func (s *stdioSession) GetClientInfo() mcp.Implementation {
+	if value := s.clientInfo.Load(); value != nil {
+		if clientInfo, ok := value.(mcp.Implementation); ok {
+			return clientInfo
+		}
+	}
+	return mcp.Implementation{}
+}
+
+func (s *stdioSession) SetClientInfo(clientInfo mcp.Implementation) {
+	s.clientInfo.Store(clientInfo)
+}
+
 func (s *stdioSession) SetLogLevel(level mcp.LoggingLevel) {
 	s.loggingLevel.Store(level)
 }
@@ -93,7 +107,8 @@ func (f *stdioSession) GetLoggerName() *string {
 }
 
 var (
-	_ ClientSession = (*stdioSession)(nil)
+	_ ClientSession         = (*stdioSession)(nil)
+	_ SessionWithClientInfo = (*stdioSession)(nil)
 )
 
 var stdioSessionInstance = stdioSession{
