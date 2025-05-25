@@ -531,6 +531,9 @@ type ReadResourceRequest struct {
 		URI string `json:"uri"`
 		// Arguments to pass to the resource handler
 		Arguments map[string]any `json:"arguments,omitempty"`
+		// Meta is metadata attached to a request's parameters. This can include fields
+		// formally defined by the protocol or other arbitrary data.
+		Meta *Meta `json:"_meta,omitempty"`
 	} `json:"params"`
 }
 

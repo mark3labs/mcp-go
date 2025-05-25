@@ -728,7 +728,7 @@ func (s *MCPServer) handleReadResource(
 	request mcp.ReadResourceRequest,
 ) (*mcp.ReadResourceResult, *requestError) {
 
-	requestContext := NewRequestContext(s, request.Request.Params.Meta)
+	requestContext := NewRequestContext(s, request.Params.Meta)
 
 	s.resourcesMu.RLock()
 	// First try direct resource handlers

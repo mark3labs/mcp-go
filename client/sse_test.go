@@ -149,6 +149,44 @@ func TestSSEMCPClient(t *testing.T) {
 		}, nil
 	})
 
+	mcpServer.AddResource(mcp.Resource{
+		URI:  "resource://testresource",
+		Name: "My Resource",
+	}, func(ctx context.Context, requestContext server.RequestContext, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		totalProgressValue := float64(100)
+		startFuncMessage := "start read resource"
+		err := requestContext.SendProgressNotification(ctx, float64(0), &totalProgressValue, &startFuncMessage)
+		if err != nil {
+			return nil, err
+		}
+
+		err = requestContext.SendLoggingNotification(ctx, mcp.LoggingLevelInfo, map[string]any{
+			"filtered_log_message": "will be filtered by log level",
+		})
+		if err != nil {
+			return nil, err
+		}
+		err = requestContext.SendLoggingNotification(ctx, mcp.LoggingLevelError, map[string]any{
+			"log_message": "log message value",
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		startFuncMessage = "end read resource"
+		err = requestContext.SendProgressNotification(ctx, float64(100), &totalProgressValue, &startFuncMessage)
+		if err != nil {
+			return nil, err
+		}
+		return []mcp.ResourceContents{
+			mcp.TextResourceContents{
+				URI:      "resource://testresource",
+				MIMEType: "text/plain",
+				Text:     "test content",
+			},
+		}, nil
+	})
+
 	// Initialize
 	testServer := server.NewTestServer(mcpServer,
 		server.WithSSEContextFunc(func(ctx context.Context, r *http.Request) context.Context {
@@ -634,6 +672,94 @@ func TestSSEMCPClient(t *testing.T) {
 
 		assert.Equal(t, string(mcp.MethodNotificationProgress), progressNotifications[1].Method)
 		assert.Equal(t, "end get prompt", progressNotifications[1].Params.AdditionalFields["message"])
+		assert.EqualValues(t, 100, progressNotifications[1].Params.AdditionalFields["progress"])
+		assert.Equal(t, "progress_token", progressNotifications[1].Params.AdditionalFields["progressToken"])
+		assert.EqualValues(t, 100, progressNotifications[1].Params.AdditionalFields["total"])
+	})
+
+	t.Run("GetResource for testing log and progress notification", func(t *testing.T) {
+		client, err := NewSSEMCPClient(testServer.URL + "/sse")
+		if err != nil {
+			t.Fatalf("Failed to create client: %v", err)
+		}
+
+		var messageNotification *mcp.JSONRPCNotification
+		progressNotifications := make([]*mcp.JSONRPCNotification, 0)
+		notificationNum := 0
+		client.OnNotification(func(notification mcp.JSONRPCNotification) {
+			println(notification.Method)
+			if notification.Method == string(mcp.MethodNotificationMessage) {
+				messageNotification = &notification
+			} else if notification.Method == string(mcp.MethodNotificationProgress) {
+				progressNotifications = append(progressNotifications, &notification)
+			}
+			notificationNum += 1
+		})
+		defer client.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := client.Start(ctx); err != nil {
+			t.Fatalf("Failed to start client: %v", err)
+		}
+
+		// Initialize
+		initRequest := mcp.InitializeRequest{}
+		initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+		initRequest.Params.ClientInfo = mcp.Implementation{
+			Name:    "test-client",
+			Version: "1.0.0",
+		}
+
+		_, err = client.Initialize(ctx, initRequest)
+		if err != nil {
+			t.Fatalf("Failed to initialize: %v", err)
+		}
+
+		setLevelRequest := mcp.SetLevelRequest{}
+		setLevelRequest.Params.Level = mcp.LoggingLevelWarning
+		err = client.SetLevel(ctx, setLevelRequest)
+		if err != nil {
+			t.Errorf("SetLevel failed: %v", err)
+		}
+
+		request := mcp.ReadResourceRequest{}
+		request.Params.URI = "resource://testresource"
+		request.Params.Meta = &mcp.Meta{
+			ProgressToken: "progress_token",
+		}
+
+		result, err := client.ReadResource(ctx, request)
+		if err != nil {
+			t.Fatalf("ReadResource failed: %v", err)
+		}
+
+		assert.NotNil(t, result)
+		assert.Len(t, result.Contents, 1)
+		assert.Equal(t, result.Contents[0].(mcp.TextResourceContents).URI, "resource://testresource")
+		assert.Equal(t, result.Contents[0].(mcp.TextResourceContents).MIMEType, "text/plain")
+		assert.Equal(t, result.Contents[0].(mcp.TextResourceContents).Text, "test content")
+
+		time.Sleep(time.Millisecond * 200)
+
+		assert.Equal(t, notificationNum, 3)
+		assert.NotNil(t, messageNotification)
+		assert.Equal(t, messageNotification.Method, string(mcp.MethodNotificationMessage))
+		assert.Equal(t, messageNotification.Params.AdditionalFields["level"], "error")
+		assert.Equal(t, messageNotification.Params.AdditionalFields["data"], map[string]any{
+			"log_message": "log message value",
+		})
+
+		assert.Len(t, progressNotifications, 2)
+		assert.Equal(t, string(mcp.MethodNotificationProgress), progressNotifications[0].Method)
+		assert.Equal(t, "start read resource", progressNotifications[0].Params.AdditionalFields["message"])
+		assert.EqualValues(t, 0, progressNotifications[0].Params.AdditionalFields["progress"])
+		assert.Equal(t, "progress_token", progressNotifications[0].Params.AdditionalFields["progressToken"])
+		assert.EqualValues(t, 100, progressNotifications[0].Params.AdditionalFields["total"])
+
+		assert.Equal(t, string(mcp.MethodNotificationProgress), progressNotifications[1].Method)
+		assert.Equal(t, "end read resource", progressNotifications[1].Params.AdditionalFields["message"])
 		assert.EqualValues(t, 100, progressNotifications[1].Params.AdditionalFields["progress"])
 		assert.Equal(t, "progress_token", progressNotifications[1].Params.AdditionalFields["progressToken"])
 		assert.EqualValues(t, 100, progressNotifications[1].Params.AdditionalFields["total"])
