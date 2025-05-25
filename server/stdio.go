@@ -195,23 +195,17 @@ func (s *StdioServer) readNextLine(ctx context.Context, reader *bufio.Reader) (s
 	defer close(done)
 
 	go func() {
-		select {
-		case <-done:
-			return
-		default:
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				select {
-				case errChan <- err:
-				case <-done:
-				}
-				return
-			}
+		line, err := reader.ReadString('\n')
+		if err != nil {
 			select {
-			case readChan <- line:
+			case errChan <- err:
 			case <-done:
 			}
 			return
+		}
+		select {
+		case readChan <- line:
+		case <-done:
 		}
 	}()
 
