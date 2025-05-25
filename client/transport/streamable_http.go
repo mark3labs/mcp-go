@@ -88,8 +88,10 @@ type StreamableHTTP struct {
 	logger              util.Logger
 	getListeningEnabled bool
 
-	initialized chan struct{}
-	sessionID   atomic.Value // string
+	sessionID atomic.Value // string
+
+	initialized     chan struct{}
+	initializedOnce sync.Once
 
 	notificationHandler func(mcp.JSONRPCNotification)
 	notifyMu            sync.RWMutex
@@ -137,8 +139,12 @@ func (c *StreamableHTTP) Start(ctx context.Context) error {
 	// For Streamable HTTP, we don't need to establish a persistent connection by default
 	if c.getListeningEnabled {
 		go func() {
-			<-c.initialized
-			c.listenForever()
+			select {
+			case <-c.initialized:
+				c.listenForever()
+			case <-c.closed:
+				return
+			}
 		}()
 	}
 
@@ -252,7 +258,9 @@ func (c *StreamableHTTP) SendRequest(
 			c.sessionID.Store(sessionID)
 		}
 
-		close(c.initialized)
+		c.initializedOnce.Do(func() {
+			close(c.initialized)
+		})
 	}
 
 	// Handle different response types
