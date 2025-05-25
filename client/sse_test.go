@@ -455,4 +455,53 @@ func TestSSEMCPClient(t *testing.T) {
 		assert.Equal(t, "progress_token", progressNotifications[1].Params.AdditionalFields["progressToken"])
 		assert.EqualValues(t, 100, progressNotifications[1].Params.AdditionalFields["total"])
 	})
+
+	t.Run("Ensure the server does not send notifications", func(t *testing.T) {
+		client, err := NewSSEMCPClient(testServer.URL + "/sse")
+		if err != nil {
+			t.Fatalf("Failed to create client: %v", err)
+		}
+
+		notifications := make([]*mcp.JSONRPCNotification, 0)
+		client.OnNotification(func(notification mcp.JSONRPCNotification) {
+			notifications = append(notifications, &notification)
+		})
+		defer client.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := client.Start(ctx); err != nil {
+			t.Fatalf("Failed to start client: %v", err)
+		}
+
+		// Initialize
+		initRequest := mcp.InitializeRequest{}
+		initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+		initRequest.Params.ClientInfo = mcp.Implementation{
+			Name:    "test-client",
+			Version: "1.0.0",
+		}
+
+		_, err = client.Initialize(ctx, initRequest)
+		if err != nil {
+			t.Fatalf("Failed to initialize: %v", err)
+		}
+
+		setLevelRequest := mcp.SetLevelRequest{}
+		setLevelRequest.Params.Level = mcp.LoggingLevelCritical
+		err = client.SetLevel(ctx, setLevelRequest)
+		if err != nil {
+			t.Errorf("SetLevel failed: %v", err)
+		}
+
+		// request param without progressToken
+		request := mcp.CallToolRequest{}
+		request.Params.Name = "test-tool-for-sending-notification"
+
+		_, _ = client.CallTool(ctx, request)
+		time.Sleep(time.Millisecond * 200)
+
+		assert.Len(t, notifications, 0)
+	})
 }
