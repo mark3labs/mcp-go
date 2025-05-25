@@ -81,7 +81,7 @@ func WithOAuth(config OAuthConfig) StreamableHTTPCOption {
 //     (https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#resumability-and-redelivery)
 //   - server -> client request
 type StreamableHTTP struct {
-	baseURL             *url.URL
+	serverURL           *url.URL
 	httpClient          *http.Client
 	headers             map[string]string
 	headerFunc          HTTPHeaderFunc
@@ -109,7 +109,7 @@ func NewStreamableHTTP(serverURL string, options ...StreamableHTTPCOption) (*Str
 	}
 
 	smc := &StreamableHTTP{
-		baseURL:     parsedURL,
+		serverURL:   parsedURL,
 		httpClient:  &http.Client{},
 		headers:     make(map[string]string),
 		closed:      make(chan struct{}),
@@ -301,7 +301,7 @@ func (c *StreamableHTTP) sendHTTP(
 	ctx = newCtx
 
 	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL.String(), body)
+	req, err := http.NewRequestWithContext(ctx, method, c.serverURL.String(), body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
