@@ -39,6 +39,15 @@ type SessionWithTools interface {
 	SetSessionTools(tools map[string]ServerTool)
 }
 
+// SessionWithClientInfo is an extension of ClientSession that can store client info
+type SessionWithClientInfo interface {
+	ClientSession
+	// GetClientInfo returns the client information for this session
+	GetClientInfo() mcp.Implementation
+	// SetClientInfo sets the client information for this session
+	SetClientInfo(clientInfo mcp.Implementation)
+}
+
 // clientSessionKey is the context key for storing current client notification channel.
 type clientSessionKey struct{}
 

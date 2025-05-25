@@ -160,13 +160,13 @@ func TestTypedToolHandlerWithComplexObjects(t *testing.T) {
 	}
 
 	type UserProfile struct {
-		Name        string         `json:"name"`
-		Email       string         `json:"email"`
-		Age         int            `json:"age"`
-		IsVerified  bool           `json:"is_verified"`
-		Address     Address        `json:"address"`
+		Name        string          `json:"name"`
+		Email       string          `json:"email"`
+		Age         int             `json:"age"`
+		IsVerified  bool            `json:"is_verified"`
+		Address     Address         `json:"address"`
 		Preferences UserPreferences `json:"preferences"`
-		Tags        []string       `json:"tags"`
+		Tags        []string        `json:"tags"`
 	}
 
 	// Create a typed handler function
@@ -181,35 +181,35 @@ func TestTypedToolHandlerWithComplexObjects(t *testing.T) {
 
 		// Build a response that includes nested object data
 		response := fmt.Sprintf("User: %s (%s)", profile.Name, profile.Email)
-		
+
 		if profile.Age > 0 {
 			response += fmt.Sprintf(", Age: %d", profile.Age)
 		}
-		
+
 		if profile.IsVerified {
 			response += ", Verified: Yes"
 		} else {
 			response += ", Verified: No"
 		}
-		
+
 		// Include address information if available
 		if profile.Address.City != "" && profile.Address.Country != "" {
 			response += fmt.Sprintf(", Location: %s, %s", profile.Address.City, profile.Address.Country)
 		}
-		
+
 		// Include preferences if available
 		if profile.Preferences.Theme != "" {
 			response += fmt.Sprintf(", Theme: %s", profile.Preferences.Theme)
 		}
-		
+
 		if len(profile.Preferences.Newsletters) > 0 {
 			response += fmt.Sprintf(", Subscribed to %d newsletters", len(profile.Preferences.Newsletters))
 		}
-		
+
 		if len(profile.Tags) > 0 {
 			response += fmt.Sprintf(", Tags: %v", profile.Tags)
 		}
-		
+
 		return NewToolResultText(response), nil
 	}
 

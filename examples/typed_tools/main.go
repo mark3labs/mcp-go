@@ -80,22 +80,22 @@ func typedGreetingHandler(ctx context.Context, request mcp.CallToolRequest, args
 
 	// Build a personalized greeting based on the complex arguments
 	greeting := fmt.Sprintf("Hello, %s!", args.Name)
-	
+
 	if args.Age > 0 {
 		greeting += fmt.Sprintf(" You are %d years old.", args.Age)
 	}
-	
+
 	if args.IsVIP {
 		greeting += " Welcome back, valued VIP customer!"
 	}
-	
+
 	if len(args.Languages) > 0 {
 		greeting += fmt.Sprintf(" You speak %d languages: %v.", len(args.Languages), args.Languages)
 	}
-	
+
 	if args.Metadata.Location != "" {
 		greeting += fmt.Sprintf(" I see you're from %s.", args.Metadata.Location)
-		
+
 		if args.Metadata.Timezone != "" {
 			greeting += fmt.Sprintf(" Your timezone is %s.", args.Metadata.Timezone)
 		}

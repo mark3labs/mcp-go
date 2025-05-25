@@ -403,8 +403,28 @@ func (s *MCPServer) AddPrompt(prompt mcp.Prompt, handler PromptHandlerFunc) {
 	s.promptHandlers[prompt.Name] = handler
 	s.promptsMu.Unlock()
 
-	// When the list of available resources changes, servers that declared the listChanged capability SHOULD send a notification.
+	// When the list of available prompts changes, servers that declared the listChanged capability SHOULD send a notification.
 	if s.capabilities.prompts.listChanged {
+		// Send notification to all initialized sessions
+		s.SendNotificationToAllClients(mcp.MethodNotificationPromptsListChanged, nil)
+	}
+}
+
+// DeletePrompts removes prompts from the server
+func (s *MCPServer) DeletePrompts(names ...string) {
+	s.promptsMu.Lock()
+	var exists bool
+	for _, name := range names {
+		if _, ok := s.prompts[name]; ok {
+			delete(s.prompts, name)
+			delete(s.promptHandlers, name)
+			exists = true
+		}
+	}
+	s.promptsMu.Unlock()
+
+	// Send notification to all initialized sessions if listChanged capability is enabled, and we actually remove a prompt
+	if exists && s.capabilities.prompts != nil && s.capabilities.prompts.listChanged {
 		// Send notification to all initialized sessions
 		s.SendNotificationToAllClients(mcp.MethodNotificationPromptsListChanged, nil)
 	}
@@ -460,7 +480,7 @@ func (s *MCPServer) SetTools(tools ...ServerTool) {
 	s.AddTools(tools...)
 }
 
-// DeleteTools removes a tool from the server
+// DeleteTools removes tools from the server
 func (s *MCPServer) DeleteTools(names ...string) {
 	s.toolsMu.Lock()
 	var exists bool
@@ -492,7 +512,7 @@ func (s *MCPServer) AddNotificationHandler(
 func (s *MCPServer) handleInitialize(
 	ctx context.Context,
 	_ any,
-	_ mcp.InitializeRequest,
+	request mcp.InitializeRequest,
 ) (*mcp.InitializeResult, *requestError) {
 	capabilities := mcp.ServerCapabilities{}
 
@@ -541,6 +561,11 @@ func (s *MCPServer) handleInitialize(
 
 	if session := ClientSessionFromContext(ctx); session != nil {
 		session.Initialize()
+
+		// Store client info if the session supports it
+		if sessionWithClientInfo, ok := session.(SessionWithClientInfo); ok {
+			sessionWithClientInfo.SetClientInfo(request.Params.ClientInfo)
+		}
 	}
 	return &result, nil
 }

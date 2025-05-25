@@ -5,8 +5,8 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"maps"
+	"strconv"
 
 	"github.com/yosida95/uritemplate/v3"
 )

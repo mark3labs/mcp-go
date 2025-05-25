@@ -1,0 +1,32 @@
+name: Build and Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]  # or your default branch
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest  # or specify a version like '1.0.0'
+
+      - name: Install Dependencies
+        working-directory: ./www
+        run: bun install
+
+      - name: Build
+        working-directory: ./www
+        run: bun run build
+
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: www/docs/dist  # Your build output directory
+          branch: gh-pages  # The branch the action should deploy to

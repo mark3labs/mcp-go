@@ -352,13 +352,16 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 	done := make(chan struct{})
 	defer close(done)
 	writeChan := make(chan any, 16)
-	defer close(writeChan)
 
 	go func() {
 		for {
 			select {
 			case nt := <-session.notificationChannel:
-				writeChan <- &nt
+				select {
+				case writeChan <- &nt:
+				case <-done:
+					return
+				}
 			case <-done:
 				return
 			}
@@ -379,7 +382,11 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 			for {
 				select {
 				case <-ticker.C:
-					writeChan <- message
+					select {
+					case writeChan <- message:
+					case <-done:
+						return
+					}
 				case <-done:
 					return
 				}
