@@ -574,7 +574,7 @@ func TestSSEServer(t *testing.T) {
 			WithResourceCapabilities(true, true),
 		)
 		// Add a tool which uses the context function.
-		mcpServer.AddTool(mcp.NewTool("test_tool"), func(ctx context.Context, reqContext RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		mcpServer.AddTool(mcp.NewTool("test_tool"), func(ctx context.Context, requestContext RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			// Note this is agnostic to the transport type i.e. doesn't know about request headers.
 			testVal := testValFromContext(ctx)
 			return mcp.NewToolResultText(testVal), nil
@@ -1183,7 +1183,7 @@ func TestSSEServer(t *testing.T) {
 						Title: "Test Tool",
 					},
 				},
-				Handler: func(ctx context.Context, reqContext RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				Handler: func(ctx context.Context, requestContext RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 					return mcp.NewToolResultText("test"), nil
 				},
 			},
@@ -1335,7 +1335,7 @@ func TestSSEServer(t *testing.T) {
 		processingCompleted := make(chan struct{})
 		processingStarted := make(chan struct{})
 
-		mcpServer.AddTool(mcp.NewTool("slowMethod"), func(ctx context.Context, reqContext RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		mcpServer.AddTool(mcp.NewTool("slowMethod"), func(ctx context.Context, requestContext RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			close(processingStarted) // signal for processing started
 
 			select {

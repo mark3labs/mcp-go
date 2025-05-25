@@ -848,7 +848,7 @@ func (s *MCPServer) handleGetPrompt(
 		}
 	}
 
-	requestContext := NewRequestContext(s, request.Request.Params.Meta)
+	requestContext := NewRequestContext(s, request.Params.Meta)
 	result, err := handler(ctx, requestContext, request)
 	if err != nil {
 		return nil, &requestError{

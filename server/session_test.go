@@ -222,7 +222,7 @@ func TestSessionWithTools_Integration(t *testing.T) {
 	// Create session-specific tools
 	sessionTool := ServerTool{
 		Tool: mcp.NewTool("session-tool"),
-		Handler: func(ctx context.Context, reqContext RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		Handler: func(ctx context.Context, requestContext RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return mcp.NewToolResultText("session-tool result"), nil
 		},
 	}
@@ -391,7 +391,7 @@ func TestMCPServer_AddSessionTool(t *testing.T) {
 	err = server.AddSessionTool(
 		session.SessionID(),
 		mcp.NewTool("session-tool-helper"),
-		func(ctx context.Context, reqContext RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		func(ctx context.Context, requestContext RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return mcp.NewToolResultText("helper result"), nil
 		},
 	)
@@ -596,7 +596,7 @@ func TestMCPServer_CallSessionTool(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(true))
 
 	// Add global tool
-	server.AddTool(mcp.NewTool("test_tool"), func(ctx context.Context, reqContext RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	server.AddTool(mcp.NewTool("test_tool"), func(ctx context.Context, requestContext RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return mcp.NewToolResultText("global result"), nil
 	})
 
@@ -616,7 +616,7 @@ func TestMCPServer_CallSessionTool(t *testing.T) {
 	err = server.AddSessionTool(
 		session.SessionID(),
 		mcp.NewTool("test_tool"),
-		func(ctx context.Context, reqContext RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		func(ctx context.Context, requestContext RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return mcp.NewToolResultText("session result"), nil
 		},
 	)
@@ -924,7 +924,7 @@ func TestMCPServer_SessionToolCapabilitiesBehavior(t *testing.T) {
 		validateServer func(t *testing.T, s *MCPServer, session *sessionTestClientWithTools)
 	}{
 		{
-			name: "no tool capabilities provided",
+			name:          "no tool capabilities provided",
 			serverOptions: []ServerOption{
 				// No WithToolCapabilities
 			},

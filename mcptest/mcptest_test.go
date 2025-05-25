@@ -50,7 +50,7 @@ func TestServer(t *testing.T) {
 	}
 }
 
-func helloWorldHandler(ctx context.Context, reqContext server.RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func helloWorldHandler(ctx context.Context, requestContext server.RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Extract name from request arguments
 	name, ok := request.GetArguments()["name"].(string)
 	if !ok {

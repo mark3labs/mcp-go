@@ -28,7 +28,7 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 						mcp.WithResourceDescription("Test resource 1"),
 						mcp.WithMIMEType("text/plain"),
 					),
-					func(ctx context.Context, reqContext RequestContext, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+					func(ctx context.Context, requestContext RequestContext, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 						return []mcp.ResourceContents{
 							mcp.TextResourceContents{
 								URI:      "test://resource1",
@@ -47,7 +47,7 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 						mcp.WithResourceDescription("Test resource 2"),
 						mcp.WithMIMEType("text/plain"),
 					),
-					func(ctx context.Context, reqContext RequestContext, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+					func(ctx context.Context, requestContext RequestContext, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 						return []mcp.ResourceContents{
 							mcp.TextResourceContents{
 								URI:      "test://resource2",
@@ -108,7 +108,7 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 						mcp.WithResourceDescription("Test resource 1"),
 						mcp.WithMIMEType("text/plain"),
 					),
-					func(ctx context.Context, reqContext RequestContext, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+					func(ctx context.Context, requestContext RequestContext, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 						return []mcp.ResourceContents{
 							mcp.TextResourceContents{
 								URI:      "test://resource1",
@@ -164,7 +164,7 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 						mcp.WithResourceDescription("Test resource 1"),
 						mcp.WithMIMEType("text/plain"),
 					),
-					func(ctx context.Context, reqContext RequestContext, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+					func(ctx context.Context, requestContext RequestContext, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 						return []mcp.ResourceContents{
 							mcp.TextResourceContents{
 								URI:      "test://resource1",

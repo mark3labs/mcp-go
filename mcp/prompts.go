@@ -24,6 +24,7 @@ type GetPromptRequest struct {
 		Name string `json:"name"`
 		// Arguments to use for templating the prompt.
 		Arguments map[string]string `json:"arguments,omitempty"`
+		Meta      *Meta             `json:"_meta,omitempty"`
 	} `json:"params"`
 }
 
