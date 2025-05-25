@@ -994,7 +994,7 @@ func (s *MCPServer) handleToolCall(
 		finalHandler = mw[i](finalHandler)
 	}
 
-	requestContext := NewRequestContext(s, request.Request.Params.Meta)
+	requestContext := NewRequestContext(s, request.Params.Meta)
 	result, err := finalHandler(ctx, requestContext, request)
 	if err != nil {
 		return nil, &requestError{

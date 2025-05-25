@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"github.com/stretchr/testify/assert"
 	"net/http"
 	"testing"
 	"time"
@@ -27,6 +28,7 @@ func TestSSEMCPClient(t *testing.T) {
 		server.WithResourceCapabilities(true, true),
 		server.WithPromptCapabilities(true),
 		server.WithToolCapabilities(true),
+		server.WithLogging(),
 	)
 
 	// Add a test tool
@@ -39,7 +41,7 @@ func TestSSEMCPClient(t *testing.T) {
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(false),
-	), func(ctx context.Context, reqContext server.RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	), func(ctx context.Context, requestContext server.RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				mcp.TextContent{
@@ -52,13 +54,54 @@ func TestSSEMCPClient(t *testing.T) {
 	mcpServer.AddTool(mcp.NewTool(
 		"test-tool-for-http-header",
 		mcp.WithDescription("Test tool for http header"),
-	), func(ctx context.Context, reqContext server.RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	), func(ctx context.Context, requestContext server.RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		//  , X-Test-Header-Func
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				mcp.TextContent{
 					Type: "text",
 					Text: "context from header: " + ctx.Value(testHeaderKey).(string) + ", " + ctx.Value(testHeaderFuncKey).(string),
+				},
+			},
+		}, nil
+	})
+
+	mcpServer.AddTool(mcp.NewTool(
+		"test-tool-for-sending-notification",
+		mcp.WithDescription("Test tool for sending log notification, and the log level is warn"),
+	), func(ctx context.Context, requestContext server.RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+
+		totalProgreddValue := float64(100)
+		startFuncMessage := "start func"
+		err := requestContext.SendProgressNotification(ctx, float64(0), &totalProgreddValue, &startFuncMessage)
+		if err != nil {
+			return nil, err
+		}
+
+		err = requestContext.SendLoggingNotification(ctx, mcp.LoggingLevelInfo, map[string]any{
+			"filtered_log_message": "will be filtered by log level",
+		})
+		if err != nil {
+			return nil, err
+		}
+		err = requestContext.SendLoggingNotification(ctx, mcp.LoggingLevelError, map[string]any{
+			"log_message": "log message value",
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		startFuncMessage = "end func"
+		err = requestContext.SendProgressNotification(ctx, float64(100), &totalProgreddValue, &startFuncMessage)
+		if err != nil {
+			return nil, err
+		}
+
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "result",
 				},
 			},
 		}, nil
@@ -329,5 +372,87 @@ func TestSSEMCPClient(t *testing.T) {
 		if result.Content[0].(mcp.TextContent).Text != "context from header: test-header-value, test-header-func-value" {
 			t.Errorf("Got %q, want %q", result.Content[0].(mcp.TextContent).Text, "context from header: test-header-value, test-header-func-value")
 		}
+	})
+
+	t.Run("CallTool for testing log and progress notification", func(t *testing.T) {
+		client, err := NewSSEMCPClient(testServer.URL + "/sse")
+		if err != nil {
+			t.Fatalf("Failed to create client: %v", err)
+		}
+
+		var messageNotification *mcp.JSONRPCNotification
+		progressNotifications := make([]*mcp.JSONRPCNotification, 0)
+		client.OnNotification(func(notification mcp.JSONRPCNotification) {
+			if notification.Method == string(mcp.MethodNotificationMessage) {
+				messageNotification = &notification
+			} else if notification.Method == string(mcp.MethodNotificationProgress) {
+				progressNotifications = append(progressNotifications, &notification)
+			}
+		})
+		defer client.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := client.Start(ctx); err != nil {
+			t.Fatalf("Failed to start client: %v", err)
+		}
+
+		// Initialize
+		initRequest := mcp.InitializeRequest{}
+		initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+		initRequest.Params.ClientInfo = mcp.Implementation{
+			Name:    "test-client",
+			Version: "1.0.0",
+		}
+
+		_, err = client.Initialize(ctx, initRequest)
+		if err != nil {
+			t.Fatalf("Failed to initialize: %v", err)
+		}
+
+		setLevelRequest := mcp.SetLevelRequest{}
+		setLevelRequest.Params.Level = mcp.LoggingLevelWarning
+		err = client.SetLevel(ctx, setLevelRequest)
+		if err != nil {
+			t.Errorf("SetLevel failed: %v", err)
+		}
+
+		request := mcp.CallToolRequest{}
+		request.Params.Name = "test-tool-for-sending-notification"
+		request.Params.Meta = &mcp.Meta{
+			ProgressToken: "progress_token",
+		}
+
+		result, err := client.CallTool(ctx, request)
+		if err != nil {
+			t.Fatalf("CallTool failed: %v", err)
+		}
+		if len(result.Content) != 1 {
+			t.Errorf("Expected 1 content item, got %d", len(result.Content))
+		}
+
+		time.Sleep(time.Millisecond * 200)
+
+		assert.NotNil(t, messageNotification)
+		assert.Equal(t, messageNotification.Method, string(mcp.MethodNotificationMessage))
+		assert.Equal(t, messageNotification.Params.AdditionalFields["level"], "error")
+		assert.Equal(t, messageNotification.Params.AdditionalFields["data"], map[string]any{
+			"log_message": "log message value",
+		})
+
+		assert.Len(t, progressNotifications, 2)
+		assert.Equal(t, string(mcp.MethodNotificationProgress), progressNotifications[0].Method)
+		assert.Equal(t, "start func", progressNotifications[0].Params.AdditionalFields["message"])
+		assert.EqualValues(t, 0, progressNotifications[0].Params.AdditionalFields["progress"])
+		assert.Equal(t, "progress_token", progressNotifications[0].Params.AdditionalFields["progressToken"])
+		assert.EqualValues(t, 100, progressNotifications[0].Params.AdditionalFields["total"])
+
+		// Assert second progress notification (end func)
+		assert.Equal(t, string(mcp.MethodNotificationProgress), progressNotifications[1].Method)
+		assert.Equal(t, "end func", progressNotifications[1].Params.AdditionalFields["message"])
+		assert.EqualValues(t, 100, progressNotifications[1].Params.AdditionalFields["progress"])
+		assert.Equal(t, "progress_token", progressNotifications[1].Params.AdditionalFields["progressToken"])
+		assert.EqualValues(t, 100, progressNotifications[1].Params.AdditionalFields["total"])
 	})
 }
