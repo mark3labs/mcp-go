@@ -2,9 +2,9 @@ package client
 
 import (
 	"context"
-	"fmt"
 	"github.com/stretchr/testify/assert"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -460,10 +460,13 @@ func TestSSEMCPClient(t *testing.T) {
 			t.Fatalf("Failed to create client: %v", err)
 		}
 
+		mu := sync.Mutex{}
 		notificationNum := 0
 		var messageNotification *mcp.JSONRPCNotification
 		progressNotifications := make([]*mcp.JSONRPCNotification, 0)
 		client.OnNotification(func(notification mcp.JSONRPCNotification) {
+			mu.Lock()
+			defer mu.Unlock()
 			if notification.Method == string(mcp.MethodNotificationMessage) {
 				messageNotification = &notification
 			} else if notification.Method == string(mcp.MethodNotificationProgress) {
@@ -514,8 +517,10 @@ func TestSSEMCPClient(t *testing.T) {
 			t.Errorf("Expected 1 content item, got %d", len(result.Content))
 		}
 
-		time.Sleep(time.Millisecond * 200)
+		time.Sleep(time.Millisecond * 500)
 
+		mu.Lock()
+		defer mu.Unlock()
 		assert.Equal(t, notificationNum, 3)
 		assert.NotNil(t, messageNotification)
 		assert.Equal(t, messageNotification.Method, string(mcp.MethodNotificationMessage))
@@ -537,6 +542,7 @@ func TestSSEMCPClient(t *testing.T) {
 		assert.EqualValues(t, 100, progressNotifications[1].Params.AdditionalFields["progress"])
 		assert.Equal(t, "progress_token", progressNotifications[1].Params.AdditionalFields["progressToken"])
 		assert.EqualValues(t, 100, progressNotifications[1].Params.AdditionalFields["total"])
+
 	})
 
 	t.Run("Ensure the server does not send notifications", func(t *testing.T) {
@@ -545,8 +551,11 @@ func TestSSEMCPClient(t *testing.T) {
 			t.Fatalf("Failed to create client: %v", err)
 		}
 
+		mu := sync.Mutex{}
 		notifications := make([]*mcp.JSONRPCNotification, 0)
 		client.OnNotification(func(notification mcp.JSONRPCNotification) {
+			mu.Lock()
+			defer mu.Unlock()
 			notifications = append(notifications, &notification)
 		})
 		defer client.Close()
@@ -583,8 +592,10 @@ func TestSSEMCPClient(t *testing.T) {
 		request.Params.Name = "test-tool-for-sending-notification"
 
 		_, _ = client.CallTool(ctx, request)
-		time.Sleep(time.Millisecond * 200)
+		time.Sleep(time.Millisecond * 500)
 
+		mu.Lock()
+		defer mu.Unlock()
 		assert.Len(t, notifications, 0)
 	})
 
@@ -594,11 +605,13 @@ func TestSSEMCPClient(t *testing.T) {
 			t.Fatalf("Failed to create client: %v", err)
 		}
 
+		mu := sync.Mutex{}
 		var messageNotification *mcp.JSONRPCNotification
 		progressNotifications := make([]*mcp.JSONRPCNotification, 0)
 		notificationNum := 0
 		client.OnNotification(func(notification mcp.JSONRPCNotification) {
-			println(notification.Method)
+			mu.Lock()
+			defer mu.Unlock()
 			if notification.Method == string(mcp.MethodNotificationMessage) {
 				messageNotification = &notification
 			} else if notification.Method == string(mcp.MethodNotificationProgress) {
@@ -650,11 +663,10 @@ func TestSSEMCPClient(t *testing.T) {
 		assert.Equal(t, result.Messages[0].Role, mcp.RoleAssistant)
 		assert.Equal(t, result.Messages[0].Content.(mcp.TextContent).Type, "text")
 		assert.Equal(t, result.Messages[0].Content.(mcp.TextContent).Text, "prompt value")
+		time.Sleep(time.Millisecond * 500)
 
-		println(fmt.Sprintf("%v", result))
-
-		time.Sleep(time.Millisecond * 200)
-
+		mu.Lock()
+		defer mu.Unlock()
 		assert.Equal(t, notificationNum, 3)
 		assert.NotNil(t, messageNotification)
 		assert.Equal(t, messageNotification.Method, string(mcp.MethodNotificationMessage))
@@ -683,11 +695,13 @@ func TestSSEMCPClient(t *testing.T) {
 			t.Fatalf("Failed to create client: %v", err)
 		}
 
+		mu := sync.Mutex{}
 		var messageNotification *mcp.JSONRPCNotification
 		progressNotifications := make([]*mcp.JSONRPCNotification, 0)
 		notificationNum := 0
 		client.OnNotification(func(notification mcp.JSONRPCNotification) {
-			println(notification.Method)
+			mu.Lock()
+			defer mu.Unlock()
 			if notification.Method == string(mcp.MethodNotificationMessage) {
 				messageNotification = &notification
 			} else if notification.Method == string(mcp.MethodNotificationProgress) {
@@ -741,8 +755,10 @@ func TestSSEMCPClient(t *testing.T) {
 		assert.Equal(t, result.Contents[0].(mcp.TextResourceContents).MIMEType, "text/plain")
 		assert.Equal(t, result.Contents[0].(mcp.TextResourceContents).Text, "test content")
 
-		time.Sleep(time.Millisecond * 200)
+		time.Sleep(time.Millisecond * 500)
 
+		mu.Lock()
+		defer mu.Unlock()
 		assert.Equal(t, notificationNum, 3)
 		assert.NotNil(t, messageNotification)
 		assert.Equal(t, messageNotification.Method, string(mcp.MethodNotificationMessage))
