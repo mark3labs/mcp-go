@@ -27,7 +27,7 @@ func TestInProcessMCPClient(t *testing.T) {
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(false),
-	), func(ctx context.Context, requestContext server.RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	), func(ctx context.Context, requestSession server.RequestSession, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				mcp.TextContent{
@@ -48,7 +48,7 @@ func TestInProcessMCPClient(t *testing.T) {
 			URI:  "resource://testresource",
 			Name: "My Resource",
 		},
-		func(ctx context.Context, requestContext server.RequestContext, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		func(ctx context.Context, requestSession server.RequestSession, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 			return []mcp.ResourceContents{
 				mcp.TextResourceContents{
 					URI:      "resource://testresource",
@@ -70,7 +70,7 @@ func TestInProcessMCPClient(t *testing.T) {
 				},
 			},
 		},
-		func(ctx context.Context, requestContext server.RequestContext, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		func(ctx context.Context, requestSession server.RequestSession, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
 			return &mcp.GetPromptResult{
 				Messages: []mcp.PromptMessage{
 					{

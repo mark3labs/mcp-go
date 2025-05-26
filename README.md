@@ -57,7 +57,7 @@ func main() {
     }
 }
 
-func helloHandler(ctx context.Context, requestContext server.RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func helloHandler(ctx context.Context, requestSession server.RequestSession, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
     name, err := request.RequireString("name")
     if err != nil {
         return mcp.NewToolResultError(err.Error()), nil
@@ -92,7 +92,7 @@ MCP Go handles all the complex protocol details and server management, so you ca
   - [Resources](#resources)
   - [Tools](#tools)
   - [Prompts](#prompts)
-  - [RequestContext](#RequestContext)
+  - [RequestSession](#requestSession)
 - [Examples](#examples)
 - [Extras](#extras)
   - [Transports](#transports)
@@ -154,7 +154,7 @@ func main() {
     )
 
     // Add the calculator handler
-    s.AddTool(calculatorTool, func(ctx context.Context, requestContext server.RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    s.AddTool(calculatorTool, func(ctx context.Context, requestSession server.RequestSession, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
         // Using helper functions for type-safe argument access
         op, err := request.RequireString("operation")
         if err != nil {
@@ -252,7 +252,7 @@ resource := mcp.NewResource(
 )
 
 // Add resource with its handler
-s.AddResource(resource, func(ctx context.Context, requestContext server.RequestContext, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+s.AddResource(resource, func(ctx context.Context, requestSession server.RequestSession, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
     content, err := os.ReadFile("README.md")
     if err != nil {
         return nil, err
@@ -280,7 +280,7 @@ template := mcp.NewResourceTemplate(
 )
 
 // Add template with its handler
-s.AddResourceTemplate(template, func(ctx context.Context, requestContext server.RequestContext, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+s.AddResourceTemplate(template, func(ctx context.Context, requestSession server.RequestSession, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
     // Extract ID from the URI using regex matching
     // The server automatically matches URIs to templates
     userID := extractIDFromURI(request.Params.URI)
@@ -329,7 +329,7 @@ calculatorTool := mcp.NewTool("calculate",
     ),
 )
 
-s.AddTool(calculatorTool, func(ctx context.Context, requestContext server.RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+s.AddTool(calculatorTool, func(ctx context.Context, requestSession server.RequestSession, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
     args := request.GetArguments()
     op := args["operation"].(string)
     x := args["x"].(float64)
@@ -373,7 +373,7 @@ httpTool := mcp.NewTool("http_request",
     ),
 )
 
-s.AddTool(httpTool, func(ctx context.Context, requestContext server.RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+s.AddTool(httpTool, func(ctx context.Context, requestSession server.RequestSession, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
     args := request.GetArguments()
     method := args["method"].(string)
     url := args["url"].(string)
@@ -441,7 +441,7 @@ s.AddPrompt(mcp.NewPrompt("greeting",
     mcp.WithArgument("name",
         mcp.ArgumentDescription("Name of the person to greet"),
     ),
-), func(ctx context.Context, requestContext server.RequestContext, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+), func(ctx context.Context, requestSession server.RequestSession, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
     name := request.Params.Arguments["name"]
     if name == "" {
         name = "friend"
@@ -465,7 +465,7 @@ s.AddPrompt(mcp.NewPrompt("code_review",
         mcp.ArgumentDescription("Pull request number to review"),
         mcp.RequiredArgument(),
     ),
-), func(ctx context.Context, requestContext server.RequestContext, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+), func(ctx context.Context, requestSession server.RequestSession, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
     prNumber := request.Params.Arguments["pr_number"]
     if prNumber == "" {
         return nil, fmt.Errorf("pr_number is required")
@@ -496,7 +496,7 @@ s.AddPrompt(mcp.NewPrompt("query_builder",
         mcp.ArgumentDescription("Name of the table to query"),
         mcp.RequiredArgument(),
     ),
-), func(ctx context.Context, requestContext server.RequestContext, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+), func(ctx context.Context, requestSession server.RequestSession, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
     tableName := request.Params.Arguments["table"]
     if tableName == "" {
         return nil, fmt.Errorf("table name is required")
@@ -531,28 +531,28 @@ Prompts can include:
 
 </details>
 
-### RequestContext
+### requestSession
 <details>
-<summary>Show RequestContext Examples</summary>
+<summary>Show RequestSession Examples</summary>
 
-The RequestContext object provides capabilities to interact with the client, such as sending logging notification and progress notification.
+The RequestSession object provides capabilities to interact with the client, such as sending logging notification and progress notification.
 
 ```go
-// Example of using RequestContext to send logging notifications and progress notifications
+// Example of using RequestSession to send logging notifications and progress notifications
 mcpServer.AddTool(mcp.NewTool(
-    "test-RequestContent",
-    mcp.WithDescription("test RequestContent"),
-), func(ctx context.Context, requestContext server.RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// you could invoke `requestContext.IsLoggingNotificationSupported()` first the check if server supports logging notification
-	// ff server does not support logging notification, this method will do nothing.
-	_ = requestContext.SendLoggingNotification(ctx, mcp.LoggingLevelInfo, map[string]any{
+    "test-RequestSession",
+    mcp.WithDescription("test RequestSession"),
+), func(ctx context.Context, requestSession server.RequestSession, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// you could invoke `requestSession.IsLoggingNotificationSupported()` first the check if server supports logging notification
+	// if server does not support logging notification, this method will do nothing.
+	_ = requestSession.SendLoggingNotification(ctx, mcp.LoggingLevelInfo, map[string]any{
 		"testLog": "test send log notification",
 	})
 
 	// server should send progress notification if request metadata includes a progressToken
 	total := float64(100)
 	progressMessage := "human readable progress information"
-	_ = requestContext.SendProgressNotification(ctx, float64(50), &total, &progressMessage)
+	_ = requestSession.SendProgressNotification(ctx, float64(50), &total, &progressMessage)
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
@@ -759,7 +759,7 @@ s := server.NewMCPServer(
 The session context is automatically passed to tool and resource handlers:
 
 ```go
-s.AddTool(mcp.NewTool("session_aware"), func(ctx context.Context, requestContext server.RequestContext, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+s.AddTool(mcp.NewTool("session_aware"), func(ctx context.Context, requestSession server.RequestSession, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
     // Get the current session from context
     session := server.ClientSessionFromContext(ctx)
     if session == nil {

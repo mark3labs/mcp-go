@@ -28,16 +28,16 @@ type resourceTemplateEntry struct {
 type ServerOption func(*MCPServer)
 
 // ResourceHandlerFunc is a function that returns resource contents.
-type ResourceHandlerFunc func(ctx context.Context, requestContext RequestContext, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error)
+type ResourceHandlerFunc func(ctx context.Context, requestSession RequestSession, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error)
 
 // ResourceTemplateHandlerFunc is a function that returns a resource template.
-type ResourceTemplateHandlerFunc func(ctx context.Context, requestContext RequestContext, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error)
+type ResourceTemplateHandlerFunc func(ctx context.Context, requestSession RequestSession, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error)
 
 // PromptHandlerFunc handles prompt requests with given arguments.
-type PromptHandlerFunc func(ctx context.Context, requestContext RequestContext, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error)
+type PromptHandlerFunc func(ctx context.Context, requestSession RequestSession, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error)
 
 // ToolHandlerFunc handles tool calls with given arguments.
-type ToolHandlerFunc func(ctx context.Context, requestContext RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+type ToolHandlerFunc func(ctx context.Context, requestSession RequestSession, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
 
 // ToolHandlerMiddleware is a middleware function that wraps a ToolHandlerFunc.
 type ToolHandlerMiddleware func(ToolHandlerFunc) ToolHandlerFunc
@@ -217,7 +217,7 @@ func WithToolFilter(
 // WithRecovery adds a middleware that recovers from panics in tool handlers.
 func WithRecovery() ServerOption {
 	return WithToolHandlerMiddleware(func(next ToolHandlerFunc) ToolHandlerFunc {
-		return func(ctx context.Context, requestContext RequestContext, request mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
+		return func(ctx context.Context, requestSession RequestSession, request mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
 			defer func() {
 				if r := recover(); r != nil {
 					err = fmt.Errorf(
@@ -227,7 +227,7 @@ func WithRecovery() ServerOption {
 					)
 				}
 			}()
-			return next(ctx, requestContext, request)
+			return next(ctx, requestSession, request)
 		}
 	})
 }
@@ -728,14 +728,14 @@ func (s *MCPServer) handleReadResource(
 	request mcp.ReadResourceRequest,
 ) (*mcp.ReadResourceResult, *requestError) {
 
-	requestContext := NewRequestContext(s, request.Params.Meta)
+	requestSession := NewRequestSession(s, request.Params.Meta)
 
 	s.resourcesMu.RLock()
 	// First try direct resource handlers
 	if entry, ok := s.resources[request.Params.URI]; ok {
 		handler := entry.handler
 		s.resourcesMu.RUnlock()
-		contents, err := handler(ctx, requestContext, request)
+		contents, err := handler(ctx, requestSession, request)
 		if err != nil {
 			return nil, &requestError{
 				id:   id,
@@ -766,7 +766,7 @@ func (s *MCPServer) handleReadResource(
 	s.resourcesMu.RUnlock()
 
 	if matched {
-		contents, err := matchedHandler(ctx, requestContext, request)
+		contents, err := matchedHandler(ctx, requestSession, request)
 		if err != nil {
 			return nil, &requestError{
 				id:   id,
@@ -848,8 +848,8 @@ func (s *MCPServer) handleGetPrompt(
 		}
 	}
 
-	requestContext := NewRequestContext(s, request.Params.Meta)
-	result, err := handler(ctx, requestContext, request)
+	requestSession := NewRequestSession(s, request.Params.Meta)
+	result, err := handler(ctx, requestSession, request)
 	if err != nil {
 		return nil, &requestError{
 			id:   id,
@@ -999,8 +999,8 @@ func (s *MCPServer) handleToolCall(
 		finalHandler = mw[i](finalHandler)
 	}
 
-	requestContext := NewRequestContext(s, request.Params.Meta)
-	result, err := finalHandler(ctx, requestContext, request)
+	requestSession := NewRequestSession(s, request.Params.Meta)
+	result, err := finalHandler(ctx, requestSession, request)
 	if err != nil {
 		return nil, &requestError{
 			id:   id,

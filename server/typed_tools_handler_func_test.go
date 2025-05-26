@@ -19,7 +19,7 @@ func TestTypedToolHandler(t *testing.T) {
 	}
 
 	// Create a typed handler function
-	typedHandler := func(ctx context.Context, requestContext RequestContext, request mcp.CallToolRequest, args HelloArgs) (*mcp.CallToolResult, error) {
+	typedHandler := func(ctx context.Context, requestSession RequestSession, request mcp.CallToolRequest, args HelloArgs) (*mcp.CallToolResult, error) {
 		return mcp.NewToolResultText(args.Name), nil
 	}
 
@@ -36,7 +36,7 @@ func TestTypedToolHandler(t *testing.T) {
 	}
 
 	// Call the wrapped handler
-	result, err := wrappedHandler(context.Background(), RequestContext{}, req)
+	result, err := wrappedHandler(context.Background(), RequestSession{}, req)
 
 	// Verify results
 	assert.NoError(t, err)
@@ -51,7 +51,7 @@ func TestTypedToolHandler(t *testing.T) {
 	}
 
 	// This should still work because of type conversion
-	result, err = wrappedHandler(context.Background(), RequestContext{}, req)
+	result, err = wrappedHandler(context.Background(), RequestSession{}, req)
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 
@@ -63,14 +63,14 @@ func TestTypedToolHandler(t *testing.T) {
 	}
 
 	// This should still work but name will be empty
-	result, err = wrappedHandler(context.Background(), RequestContext{}, req)
+	result, err = wrappedHandler(context.Background(), RequestSession{}, req)
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, "", result.Content[0].(mcp.TextContent).Text)
 
 	// Test with completely invalid arguments
 	req.Params.Arguments = "not a map"
-	result, err = wrappedHandler(context.Background(), RequestContext{}, req)
+	result, err = wrappedHandler(context.Background(), RequestSession{}, req)
 	assert.NoError(t, err) // Error is wrapped in the result
 	assert.NotNil(t, result)
 	assert.True(t, result.IsError)
@@ -85,7 +85,7 @@ func TestTypedToolHandlerWithValidation(t *testing.T) {
 	}
 
 	// Create a typed handler function with validation
-	typedHandler := func(ctx context.Context, requestContext RequestContext, request mcp.CallToolRequest, args CalculatorArgs) (*mcp.CallToolResult, error) {
+	typedHandler := func(ctx context.Context, requestSession RequestSession, request mcp.CallToolRequest, args CalculatorArgs) (*mcp.CallToolResult, error) {
 		// Validate operation
 		if args.Operation == "" {
 			return mcp.NewToolResultError("operation is required"), nil
@@ -124,7 +124,7 @@ func TestTypedToolHandlerWithValidation(t *testing.T) {
 	}
 
 	// Call the wrapped handler
-	result, err := wrappedHandler(context.Background(), RequestContext{}, req)
+	result, err := wrappedHandler(context.Background(), RequestSession{}, req)
 
 	// Verify results
 	assert.NoError(t, err)
@@ -138,7 +138,7 @@ func TestTypedToolHandlerWithValidation(t *testing.T) {
 		"y":         0.0,
 	}
 
-	result, err = wrappedHandler(context.Background(), RequestContext{}, req)
+	result, err = wrappedHandler(context.Background(), RequestSession{}, req)
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.True(t, result.IsError)
@@ -171,7 +171,7 @@ func TestTypedToolHandlerWithComplexObjects(t *testing.T) {
 	}
 
 	// Create a typed handler function
-	typedHandler := func(ctx context.Context, requestContext RequestContext, request mcp.CallToolRequest, profile UserProfile) (*mcp.CallToolResult, error) {
+	typedHandler := func(ctx context.Context, requestSession RequestSession, request mcp.CallToolRequest, profile UserProfile) (*mcp.CallToolResult, error) {
 		// Validate required fields
 		if profile.Name == "" {
 			return mcp.NewToolResultError("name is required"), nil
@@ -240,7 +240,7 @@ func TestTypedToolHandlerWithComplexObjects(t *testing.T) {
 	}
 
 	// Call the wrapped handler
-	result, err := wrappedHandler(context.Background(), RequestContext{}, req)
+	result, err := wrappedHandler(context.Background(), RequestSession{}, req)
 
 	// Verify results
 	assert.NoError(t, err)
@@ -266,7 +266,7 @@ func TestTypedToolHandlerWithComplexObjects(t *testing.T) {
 		},
 	}
 
-	result, err = wrappedHandler(context.Background(), RequestContext{}, req)
+	result, err = wrappedHandler(context.Background(), RequestSession{}, req)
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "Jane Smith")
@@ -295,7 +295,7 @@ func TestTypedToolHandlerWithComplexObjects(t *testing.T) {
 	}`
 
 	req.Params.Arguments = json.RawMessage(jsonInput)
-	result, err = wrappedHandler(context.Background(), RequestContext{}, req)
+	result, err = wrappedHandler(context.Background(), RequestSession{}, req)
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "Bob Johnson")

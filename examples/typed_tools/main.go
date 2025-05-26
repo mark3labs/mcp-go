@@ -73,7 +73,7 @@ func main() {
 }
 
 // Our typed handler function that receives strongly-typed arguments
-func typedGreetingHandler(ctx context.Context, requestContext server.RequestContext, request mcp.CallToolRequest, args GreetingArgs) (*mcp.CallToolResult, error) {
+func typedGreetingHandler(ctx context.Context, requestSession server.RequestSession, request mcp.CallToolRequest, args GreetingArgs) (*mcp.CallToolResult, error) {
 	if args.Name == "" {
 		return mcp.NewToolResultError("name is required"), nil
 	}

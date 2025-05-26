@@ -8,35 +8,35 @@ import (
 
 type requestIDKey struct{}
 
-// RequestContext represents an exchange with MCP client, and provides
+// RequestSession represents an exchange with MCP client, and provides
 // methods to interact with the client and query its capabilities.
-type RequestContext struct {
+type RequestSession struct {
 	mcpServer *MCPServer
 
 	progressToken *mcp.ProgressToken
 }
 
-func NewRequestContext(mcpServer *MCPServer, requestParamMeta *mcp.Meta) RequestContext {
-	requestContext := RequestContext{
+func NewRequestSession(mcpServer *MCPServer, requestParamMeta *mcp.Meta) RequestSession {
+	requestSession := RequestSession{
 		mcpServer: mcpServer,
 	}
 
 	// server should send progress notification if request metadata includes a progressToken
 	if requestParamMeta != nil && requestParamMeta.ProgressToken != nil {
-		requestContext.progressToken = &requestParamMeta.ProgressToken
+		requestSession.progressToken = &requestParamMeta.ProgressToken
 	}
 
-	return requestContext
+	return requestSession
 }
 
 // IsLoggingNotificationSupported returns true if server supports logging notification
-func (exchange *RequestContext) IsLoggingNotificationSupported() bool {
+func (exchange *RequestSession) IsLoggingNotificationSupported() bool {
 	return exchange.mcpServer != nil && exchange.mcpServer.capabilities.logging != nil && *exchange.mcpServer.capabilities.logging
 }
 
 // SendLoggingNotification send logging notification to client.
 // If server does not support logging notification, this method will do nothing.
-func (exchange *RequestContext) SendLoggingNotification(ctx context.Context, level mcp.LoggingLevel, message map[string]any) error {
+func (exchange *RequestSession) SendLoggingNotification(ctx context.Context, level mcp.LoggingLevel, message map[string]any) error {
 	if !exchange.IsLoggingNotificationSupported() {
 		return nil
 	}
@@ -66,7 +66,7 @@ func (exchange *RequestContext) SendLoggingNotification(ctx context.Context, lev
 }
 
 // SendProgressNotification send progress notification only if the client has requested progress
-func (exchange *RequestContext) SendProgressNotification(ctx context.Context, progress float64, total *float64, message *string) error {
+func (exchange *RequestSession) SendProgressNotification(ctx context.Context, progress float64, total *float64, message *string) error {
 	if exchange.progressToken == nil {
 		return nil
 	}
@@ -90,7 +90,7 @@ func (exchange *RequestContext) SendProgressNotification(ctx context.Context, pr
 }
 
 // SendCancellationNotification send cancellation notification to client
-func (exchange *RequestContext) SendCancellationNotification(ctx context.Context, reason *string) error {
+func (exchange *RequestSession) SendCancellationNotification(ctx context.Context, reason *string) error {
 	requestIDRawValue := ctx.Value(requestIDKey{})
 	if requestIDRawValue == nil {
 		return fmt.Errorf("invalid requestID")

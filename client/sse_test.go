@@ -42,7 +42,7 @@ func TestSSEMCPClient(t *testing.T) {
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithOpenWorldHintAnnotation(false),
-	), func(ctx context.Context, requestContext server.RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	), func(ctx context.Context, requestSession server.RequestSession, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				mcp.TextContent{
@@ -55,7 +55,7 @@ func TestSSEMCPClient(t *testing.T) {
 	mcpServer.AddTool(mcp.NewTool(
 		"test-tool-for-http-header",
 		mcp.WithDescription("Test tool for http header"),
-	), func(ctx context.Context, requestContext server.RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	), func(ctx context.Context, requestSession server.RequestSession, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		//  , X-Test-Header-Func
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
@@ -70,21 +70,21 @@ func TestSSEMCPClient(t *testing.T) {
 	mcpServer.AddTool(mcp.NewTool(
 		"test-tool-for-sending-notification",
 		mcp.WithDescription("Test tool for sending log notification, and the log level is warn"),
-	), func(ctx context.Context, requestContext server.RequestContext, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	), func(ctx context.Context, requestSession server.RequestSession, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		totalProgressValue := float64(100)
 		startFuncMessage := "start func"
-		err := requestContext.SendProgressNotification(ctx, float64(0), &totalProgressValue, &startFuncMessage)
+		err := requestSession.SendProgressNotification(ctx, float64(0), &totalProgressValue, &startFuncMessage)
 		if err != nil {
 			return nil, err
 		}
 
-		err = requestContext.SendLoggingNotification(ctx, mcp.LoggingLevelInfo, map[string]any{
+		err = requestSession.SendLoggingNotification(ctx, mcp.LoggingLevelInfo, map[string]any{
 			"filtered_log_message": "will be filtered by log level",
 		})
 		if err != nil {
 			return nil, err
 		}
-		err = requestContext.SendLoggingNotification(ctx, mcp.LoggingLevelError, map[string]any{
+		err = requestSession.SendLoggingNotification(ctx, mcp.LoggingLevelError, map[string]any{
 			"log_message": "log message value",
 		})
 		if err != nil {
@@ -92,7 +92,7 @@ func TestSSEMCPClient(t *testing.T) {
 		}
 
 		startFuncMessage = "end func"
-		err = requestContext.SendProgressNotification(ctx, float64(100), &totalProgressValue, &startFuncMessage)
+		err = requestSession.SendProgressNotification(ctx, float64(100), &totalProgressValue, &startFuncMessage)
 		if err != nil {
 			return nil, err
 		}
@@ -109,21 +109,21 @@ func TestSSEMCPClient(t *testing.T) {
 	mcpServer.AddPrompt(mcp.Prompt{
 		Name:        "prompt_get_for_server_notification",
 		Description: "Test prompt",
-	}, func(ctx context.Context, requestContext server.RequestContext, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+	}, func(ctx context.Context, requestSession server.RequestSession, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
 		totalProgressValue := float64(100)
 		startFuncMessage := "start get prompt"
-		err := requestContext.SendProgressNotification(ctx, float64(0), &totalProgressValue, &startFuncMessage)
+		err := requestSession.SendProgressNotification(ctx, float64(0), &totalProgressValue, &startFuncMessage)
 		if err != nil {
 			return nil, err
 		}
 
-		err = requestContext.SendLoggingNotification(ctx, mcp.LoggingLevelInfo, map[string]any{
+		err = requestSession.SendLoggingNotification(ctx, mcp.LoggingLevelInfo, map[string]any{
 			"filtered_log_message": "will be filtered by log level",
 		})
 		if err != nil {
 			return nil, err
 		}
-		err = requestContext.SendLoggingNotification(ctx, mcp.LoggingLevelError, map[string]any{
+		err = requestSession.SendLoggingNotification(ctx, mcp.LoggingLevelError, map[string]any{
 			"log_message": "log message value",
 		})
 		if err != nil {
@@ -131,7 +131,7 @@ func TestSSEMCPClient(t *testing.T) {
 		}
 
 		startFuncMessage = "end get prompt"
-		err = requestContext.SendProgressNotification(ctx, float64(100), &totalProgressValue, &startFuncMessage)
+		err = requestSession.SendProgressNotification(ctx, float64(100), &totalProgressValue, &startFuncMessage)
 		if err != nil {
 			return nil, err
 		}
@@ -152,21 +152,21 @@ func TestSSEMCPClient(t *testing.T) {
 	mcpServer.AddResource(mcp.Resource{
 		URI:  "resource://testresource",
 		Name: "My Resource",
-	}, func(ctx context.Context, requestContext server.RequestContext, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	}, func(ctx context.Context, requestSession server.RequestSession, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 		totalProgressValue := float64(100)
 		startFuncMessage := "start read resource"
-		err := requestContext.SendProgressNotification(ctx, float64(0), &totalProgressValue, &startFuncMessage)
+		err := requestSession.SendProgressNotification(ctx, float64(0), &totalProgressValue, &startFuncMessage)
 		if err != nil {
 			return nil, err
 		}
 
-		err = requestContext.SendLoggingNotification(ctx, mcp.LoggingLevelInfo, map[string]any{
+		err = requestSession.SendLoggingNotification(ctx, mcp.LoggingLevelInfo, map[string]any{
 			"filtered_log_message": "will be filtered by log level",
 		})
 		if err != nil {
 			return nil, err
 		}
-		err = requestContext.SendLoggingNotification(ctx, mcp.LoggingLevelError, map[string]any{
+		err = requestSession.SendLoggingNotification(ctx, mcp.LoggingLevelError, map[string]any{
 			"log_message": "log message value",
 		})
 		if err != nil {
@@ -174,7 +174,7 @@ func TestSSEMCPClient(t *testing.T) {
 		}
 
 		startFuncMessage = "end read resource"
-		err = requestContext.SendProgressNotification(ctx, float64(100), &totalProgressValue, &startFuncMessage)
+		err = requestSession.SendProgressNotification(ctx, float64(100), &totalProgressValue, &startFuncMessage)
 		if err != nil {
 			return nil, err
 		}
