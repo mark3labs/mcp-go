@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 
@@ -550,7 +551,7 @@ func (s *MCPServer) handleInitialize(
 	}
 
 	result := mcp.InitializeResult{
-		ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+		ProtocolVersion: s.protocolVersion(request.Params.ProtocolVersion),
 		ServerInfo: mcp.Implementation{
 			Name:    s.name,
 			Version: s.version,
@@ -568,6 +569,14 @@ func (s *MCPServer) handleInitialize(
 		}
 	}
 	return &result, nil
+}
+
+func (s *MCPServer) protocolVersion(clientVersion string) string {
+	if slices.Contains(mcp.ValidProtocolVersions, clientVersion) {
+		return clientVersion
+	}
+
+	return mcp.LATEST_PROTOCOL_VERSION
 }
 
 func (s *MCPServer) handlePing(
