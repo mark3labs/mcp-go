@@ -728,7 +728,7 @@ func (s *MCPServer) handleReadResource(
 	request mcp.ReadResourceRequest,
 ) (*mcp.ReadResourceResult, *requestError) {
 
-	requestSession := NewRequestSession(s, request.Params.Meta)
+	requestSession := NewRequestSession(request.Params.Meta)
 
 	s.resourcesMu.RLock()
 	// First try direct resource handlers
@@ -848,7 +848,7 @@ func (s *MCPServer) handleGetPrompt(
 		}
 	}
 
-	requestSession := NewRequestSession(s, request.Params.Meta)
+	requestSession := NewRequestSession(request.Params.Meta)
 	result, err := handler(ctx, requestSession, request)
 	if err != nil {
 		return nil, &requestError{
@@ -999,7 +999,7 @@ func (s *MCPServer) handleToolCall(
 		finalHandler = mw[i](finalHandler)
 	}
 
-	requestSession := NewRequestSession(s, request.Params.Meta)
+	requestSession := NewRequestSession(request.Params.Meta)
 	result, err := finalHandler(ctx, requestSession, request)
 	if err != nil {
 		return nil, &requestError{

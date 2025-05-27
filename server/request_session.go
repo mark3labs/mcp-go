@@ -11,15 +11,11 @@ type requestIDKey struct{}
 // RequestSession represents an exchange with MCP client, and provides
 // methods to interact with the client and query its capabilities.
 type RequestSession struct {
-	mcpServer *MCPServer
-
 	progressToken *mcp.ProgressToken
 }
 
-func NewRequestSession(mcpServer *MCPServer, requestParamMeta *mcp.Meta) RequestSession {
-	requestSession := RequestSession{
-		mcpServer: mcpServer,
-	}
+func NewRequestSession(requestParamMeta *mcp.Meta) RequestSession {
+	requestSession := RequestSession{}
 
 	// server should send progress notification if request metadata includes a progressToken
 	if requestParamMeta != nil && requestParamMeta.ProgressToken != nil {
@@ -30,14 +26,15 @@ func NewRequestSession(mcpServer *MCPServer, requestParamMeta *mcp.Meta) Request
 }
 
 // IsLoggingNotificationSupported returns true if server supports logging notification
-func (exchange *RequestSession) IsLoggingNotificationSupported() bool {
-	return exchange.mcpServer != nil && exchange.mcpServer.capabilities.logging != nil && *exchange.mcpServer.capabilities.logging
+func (exchange *RequestSession) IsLoggingNotificationSupported(ctx context.Context) bool {
+	mcpServer := ServerFromContext(ctx)
+	return mcpServer != nil && mcpServer.capabilities.logging != nil && *mcpServer.capabilities.logging
 }
 
 // SendLoggingNotification send logging notification to client.
 // If server does not support logging notification, this method will do nothing.
 func (exchange *RequestSession) SendLoggingNotification(ctx context.Context, level mcp.LoggingLevel, message map[string]any) error {
-	if !exchange.IsLoggingNotificationSupported() {
+	if !exchange.IsLoggingNotificationSupported(ctx) {
 		return nil
 	}
 
@@ -58,7 +55,8 @@ func (exchange *RequestSession) SendLoggingNotification(ctx context.Context, lev
 		params["logger"] = *ClientSessionFromContext(ctx).GetLoggerName()
 	}
 
-	return exchange.mcpServer.SendNotificationToClient(
+	mcpServer := ServerFromContext(ctx)
+	return mcpServer.SendNotificationToClient(
 		ctx,
 		string(mcp.MethodNotificationMessage),
 		params,
@@ -82,7 +80,8 @@ func (exchange *RequestSession) SendProgressNotification(ctx context.Context, pr
 		params["message"] = *message
 	}
 
-	return exchange.mcpServer.SendNotificationToClient(
+	mcpServer := ServerFromContext(ctx)
+	return mcpServer.SendNotificationToClient(
 		ctx,
 		string(mcp.MethodNotificationProgress),
 		params,
@@ -108,7 +107,8 @@ func (exchange *RequestSession) SendCancellationNotification(ctx context.Context
 		params["reason"] = reason
 	}
 
-	return exchange.mcpServer.SendNotificationToClient(
+	mcpServer := ServerFromContext(ctx)
+	return mcpServer.SendNotificationToClient(
 		ctx,
 		string(mcp.MethodNotificationCancellation),
 		params,
