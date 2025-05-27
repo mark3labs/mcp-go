@@ -40,8 +40,8 @@ func WithHTTPTimeout(timeout time.Duration) StreamableHTTPCOption {
 	}
 }
 
-// WithOAuth enables OAuth authentication for the client.
-func WithOAuth(config OAuthConfig) StreamableHTTPCOption {
+// WithHTTPOAuth enables OAuth authentication for the client.
+func WithHTTPOAuth(config OAuthConfig) StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
 		sc.oauthHandler = NewOAuthHandler(config)
 	}
