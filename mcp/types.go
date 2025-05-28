@@ -151,6 +151,7 @@ func (m *Meta) UnmarshalJSON(data []byte) error {
 }
 
 type Request struct {
+	Header map[string]string
 	Method string `json:"method"`
 	Params struct {
 		Meta *Meta `json:"_meta,omitempty"`

@@ -108,7 +108,6 @@ func (c *Client) sendRequest(
 		Method:  method,
 		Params:  params,
 	}
-
 	response, err := c.transport.SendRequest(ctx, request)
 	if err != nil {
 		return nil, fmt.Errorf("transport error: %w", err)
