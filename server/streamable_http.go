@@ -246,7 +246,6 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	mu := sync.Mutex{}
 	upgradedHeader := false
 	done := make(chan struct{})
-	defer close(done)
 
 	go func() {
 		for {
@@ -255,6 +254,12 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 				func() {
 					mu.Lock()
 					defer mu.Unlock()
+					// if the done chan is closed, as the request is terminated, just return
+					select {
+					case <-done:
+						return
+					default:
+					}
 					defer func() {
 						flusher, ok := w.(http.Flusher)
 						if ok {
@@ -295,6 +300,8 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	// Write response
 	mu.Lock()
 	defer mu.Unlock()
+	// close the done chan before unlock
+	defer close(done)
 	if ctx.Err() != nil {
 		return
 	}

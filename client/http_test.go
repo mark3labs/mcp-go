@@ -13,10 +13,10 @@ func TestHTTPClient(t *testing.T) {
 	hooks := &server.Hooks{}
 	hooks.AddAfterCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest, result *mcp.CallToolResult) {
 		clientSession := server.ClientSessionFromContext(ctx)
-		// return until all the notifications are handled
+		// wait until all the notifications are handled
 		for len(clientSession.NotificationChannel()) > 0 {
 		}
-		time.Sleep(time.Millisecond * 200)
+		time.Sleep(time.Millisecond * 50)
 	})
 
 	// Create MCP server with capabilities
@@ -58,11 +58,10 @@ func TestHTTPClient(t *testing.T) {
 		},
 	)
 
-	// Initialize
 	testServer := server.NewTestStreamableHTTPServer(mcpServer)
 	defer testServer.Close()
 
-	t.Run("Can create client", func(t *testing.T) {
+	t.Run("Can receive notification from server", func(t *testing.T) {
 		client, err := NewStreamableHttpClient(testServer.URL)
 		if err != nil {
 			t.Fatalf("create client failed %v", err)
