@@ -52,6 +52,18 @@ type ServerTool struct {
 	Handler ToolHandlerFunc
 }
 
+// ServerPrompt combines a Prompt with its handler function.
+type ServerPrompt struct {
+	Prompt  mcp.Prompt
+	Handler PromptHandlerFunc
+}
+
+// ServerResource combines a Resource with its handler function.
+type ServerResource struct {
+	Resource mcp.Resource
+	Handler  ResourceHandlerFunc
+}
+
 // serverKey is the context key for storing the server instance
 type serverKey struct{}
 
@@ -305,28 +317,16 @@ func NewMCPServer(
 	return s
 }
 
-// AddResource registers a new resource and its handler
-func (s *MCPServer) AddResource(
-	resource mcp.Resource,
-	handler ResourceHandlerFunc,
-) {
-	s.capabilitiesMu.RLock()
-	if s.capabilities.resources == nil {
-		s.capabilitiesMu.RUnlock()
-
-		s.capabilitiesMu.Lock()
-		if s.capabilities.resources == nil {
-			s.capabilities.resources = &resourceCapabilities{}
-		}
-		s.capabilitiesMu.Unlock()
-	} else {
-		s.capabilitiesMu.RUnlock()
-	}
+// AddResources registers multiple resources at once
+func (s *MCPServer) AddResources(resources ...ServerResource) {
+	s.implicitlyRegisterResourceCapabilities()
 
 	s.resourcesMu.Lock()
-	s.resources[resource.URI] = resourceEntry{
-		resource: resource,
-		handler:  handler,
+	for _, entry := range resources {
+		s.resources[entry.Resource.URI] = resourceEntry{
+			resource: entry.Resource,
+			handler:  entry.Handler,
+		}
 	}
 	s.resourcesMu.Unlock()
 
@@ -335,6 +335,14 @@ func (s *MCPServer) AddResource(
 		// Send notification to all initialized sessions
 		s.SendNotificationToAllClients(mcp.MethodNotificationResourcesListChanged, nil)
 	}
+}
+
+// AddResource registers a new resource and its handler
+func (s *MCPServer) AddResource(
+	resource mcp.Resource,
+	handler ResourceHandlerFunc,
+) {
+	s.AddResources(ServerResource{Resource: resource, Handler: handler})
 }
 
 // RemoveResource removes a resource from the server
@@ -357,18 +365,7 @@ func (s *MCPServer) AddResourceTemplate(
 	template mcp.ResourceTemplate,
 	handler ResourceTemplateHandlerFunc,
 ) {
-	s.capabilitiesMu.RLock()
-	if s.capabilities.resources == nil {
-		s.capabilitiesMu.RUnlock()
-
-		s.capabilitiesMu.Lock()
-		if s.capabilities.resources == nil {
-			s.capabilities.resources = &resourceCapabilities{}
-		}
-		s.capabilitiesMu.Unlock()
-	} else {
-		s.capabilitiesMu.RUnlock()
-	}
+	s.implicitlyRegisterResourceCapabilities()
 
 	s.resourcesMu.Lock()
 	s.resourceTemplates[template.URITemplate.Raw()] = resourceTemplateEntry{
@@ -384,24 +381,15 @@ func (s *MCPServer) AddResourceTemplate(
 	}
 }
 
-// AddPrompt registers a new prompt handler with the given name
-func (s *MCPServer) AddPrompt(prompt mcp.Prompt, handler PromptHandlerFunc) {
-	s.capabilitiesMu.RLock()
-	if s.capabilities.prompts == nil {
-		s.capabilitiesMu.RUnlock()
-
-		s.capabilitiesMu.Lock()
-		if s.capabilities.prompts == nil {
-			s.capabilities.prompts = &promptCapabilities{}
-		}
-		s.capabilitiesMu.Unlock()
-	} else {
-		s.capabilitiesMu.RUnlock()
-	}
+// AddPrompts registers multiple prompts at once
+func (s *MCPServer) AddPrompts(prompts ...ServerPrompt) {
+	s.implicitlyRegisterPromptCapabilities()
 
 	s.promptsMu.Lock()
-	s.prompts[prompt.Name] = prompt
-	s.promptHandlers[prompt.Name] = handler
+	for _, entry := range prompts {
+		s.prompts[entry.Prompt.Name] = entry.Prompt
+		s.promptHandlers[entry.Prompt.Name] = entry.Handler
+	}
 	s.promptsMu.Unlock()
 
 	// When the list of available prompts changes, servers that declared the listChanged capability SHOULD send a notification.
@@ -409,6 +397,11 @@ func (s *MCPServer) AddPrompt(prompt mcp.Prompt, handler PromptHandlerFunc) {
 		// Send notification to all initialized sessions
 		s.SendNotificationToAllClients(mcp.MethodNotificationPromptsListChanged, nil)
 	}
+}
+
+// AddPrompt registers a new prompt handler with the given name
+func (s *MCPServer) AddPrompt(prompt mcp.Prompt, handler PromptHandlerFunc) {
+	s.AddPrompts(ServerPrompt{Prompt: prompt, Handler: handler})
 }
 
 // DeletePrompts removes prompts from the server
@@ -440,20 +433,39 @@ func (s *MCPServer) AddTool(tool mcp.Tool, handler ToolHandlerFunc) {
 // listChanged: true, but don't change the value if we've already explicitly
 // registered tools.listChanged false.
 func (s *MCPServer) implicitlyRegisterToolCapabilities() {
-	s.capabilitiesMu.RLock()
-	if s.capabilities.tools == nil {
-		s.capabilitiesMu.RUnlock()
+	s.implicitlyRegisterCapabilities(
+		func() bool { return s.capabilities.tools != nil },
+		func() { s.capabilities.tools = &toolCapabilities{listChanged: true} },
+	)
+}
 
-		s.capabilitiesMu.Lock()
-		if s.capabilities.tools == nil {
-			s.capabilities.tools = &toolCapabilities{
-				listChanged: true,
-			}
-		}
-		s.capabilitiesMu.Unlock()
-	} else {
+func (s *MCPServer) implicitlyRegisterResourceCapabilities() {
+	s.implicitlyRegisterCapabilities(
+		func() bool { return s.capabilities.resources != nil },
+		func() { s.capabilities.resources = &resourceCapabilities{} },
+	)
+}
+
+func (s *MCPServer) implicitlyRegisterPromptCapabilities() {
+	s.implicitlyRegisterCapabilities(
+		func() bool { return s.capabilities.prompts != nil },
+		func() { s.capabilities.prompts = &promptCapabilities{} },
+	)
+}
+
+func (s *MCPServer) implicitlyRegisterCapabilities(check func() bool, register func()) {
+	s.capabilitiesMu.RLock()
+	if check() {
 		s.capabilitiesMu.RUnlock()
+		return
 	}
+	s.capabilitiesMu.RUnlock()
+
+	s.capabilitiesMu.Lock()
+	if !check() {
+		register()
+	}
+	s.capabilitiesMu.Unlock()
 }
 
 // AddTools registers multiple tools at once
