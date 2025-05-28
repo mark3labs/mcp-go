@@ -244,6 +244,7 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 
 	// handle potential notifications
 	mu := sync.Mutex{}
+	upgradedHeader := false
 	done := make(chan struct{})
 	defer close(done)
 
@@ -261,11 +262,14 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 						}
 					}()
 
-					// if there's notifications, upgrade to SSE response
-					w.Header().Set("Content-Type", "text/event-stream")
-					w.Header().Set("Connection", "keep-alive")
-					w.Header().Set("Cache-Control", "no-cache")
-					w.WriteHeader(http.StatusAccepted)
+					// if there's notifications, upgradedHeader to SSE response
+					if !upgradedHeader {
+						w.Header().Set("Content-Type", "text/event-stream")
+						w.Header().Set("Connection", "keep-alive")
+						w.Header().Set("Cache-Control", "no-cache")
+						w.WriteHeader(http.StatusAccepted)
+						upgradedHeader = true
+					}
 					err := writeSSEEvent(w, nt)
 					if err != nil {
 						s.logger.Errorf("Failed to write SSE event: %v", err)
@@ -295,10 +299,13 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if session.upgradeToSSE.Load() {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.WriteHeader(http.StatusAccepted)
+		if !upgradedHeader {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Connection", "keep-alive")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.WriteHeader(http.StatusAccepted)
+			upgradedHeader = true
+		}
 		if err := writeSSEEvent(w, response); err != nil {
 			s.logger.Errorf("Failed to write final SSE response event: %v", err)
 		}
