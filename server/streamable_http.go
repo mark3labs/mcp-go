@@ -248,7 +248,6 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	defer close(done)
 
 	go func() {
-		alreadyUpgraded := false
 		for {
 			select {
 			case nt := <-session.notificationChannel:
@@ -263,13 +262,10 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 					}()
 
 					// if there's notifications, upgrade to SSE response
-					if (!alreadyUpgraded) && !session.upgradeToSSE.Load() {
-						w.Header().Set("Content-Type", "text/event-stream")
-						w.Header().Set("Connection", "keep-alive")
-						w.Header().Set("Cache-Control", "no-cache")
-						w.WriteHeader(http.StatusAccepted)
-						alreadyUpgraded = true
-					}
+					w.Header().Set("Content-Type", "text/event-stream")
+					w.Header().Set("Connection", "keep-alive")
+					w.Header().Set("Cache-Control", "no-cache")
+					w.WriteHeader(http.StatusAccepted)
 					err := writeSSEEvent(w, nt)
 					if err != nil {
 						s.logger.Errorf("Failed to write SSE event: %v", err)
@@ -299,6 +295,10 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if session.upgradeToSSE.Load() {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusAccepted)
 		if err := writeSSEEvent(w, response); err != nil {
 			s.logger.Errorf("Failed to write final SSE response event: %v", err)
 		}
