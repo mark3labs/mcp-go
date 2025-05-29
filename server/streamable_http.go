@@ -305,6 +305,7 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	if ctx.Err() != nil {
 		return
 	}
+	// If client-server communication already upgraded to SSE stream
 	if session.upgradeToSSE.Load() {
 		if !upgradedHeader {
 			w.Header().Set("Content-Type", "text/event-stream")
