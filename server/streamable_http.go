@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -243,9 +244,8 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 
 	// handle potential notifications
 	mu := sync.Mutex{}
-	upgraded := false
+	upgradedHeader := false
 	done := make(chan struct{})
-	defer close(done)
 
 	go func() {
 		for {
@@ -254,6 +254,12 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 				func() {
 					mu.Lock()
 					defer mu.Unlock()
+					// if the done chan is closed, as the request is terminated, just return
+					select {
+					case <-done:
+						return
+					default:
+					}
 					defer func() {
 						flusher, ok := w.(http.Flusher)
 						if ok {
@@ -261,13 +267,13 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 						}
 					}()
 
-					// if there's notifications, upgrade to SSE response
-					if !upgraded {
-						upgraded = true
+					// if there's notifications, upgradedHeader to SSE response
+					if !upgradedHeader {
 						w.Header().Set("Content-Type", "text/event-stream")
 						w.Header().Set("Connection", "keep-alive")
 						w.Header().Set("Cache-Control", "no-cache")
 						w.WriteHeader(http.StatusAccepted)
+						upgradedHeader = true
 					}
 					err := writeSSEEvent(w, nt)
 					if err != nil {
@@ -294,10 +300,20 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	// Write response
 	mu.Lock()
 	defer mu.Unlock()
+	// close the done chan before unlock
+	defer close(done)
 	if ctx.Err() != nil {
 		return
 	}
-	if upgraded {
+	// If client-server communication already upgraded to SSE stream
+	if session.upgradeToSSE.Load() {
+		if !upgradedHeader {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Connection", "keep-alive")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.WriteHeader(http.StatusAccepted)
+			upgradedHeader = true
+		}
 		if err := writeSSEEvent(w, response); err != nil {
 			s.logger.Errorf("Failed to write final SSE response event: %v", err)
 		}
@@ -494,6 +510,7 @@ type streamableHttpSession struct {
 	sessionID           string
 	notificationChannel chan mcp.JSONRPCNotification // server -> client notifications
 	tools               *sessionToolsStore
+	upgradeToSSE        atomic.Bool
 }
 
 func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore) *streamableHttpSession {
@@ -533,6 +550,12 @@ func (s *streamableHttpSession) SetSessionTools(tools map[string]ServerTool) {
 }
 
 var _ SessionWithTools = (*streamableHttpSession)(nil)
+
+func (s *streamableHttpSession) UpgradeToSSEWhenReceiveNotification() {
+	s.upgradeToSSE.Store(true)
+}
+
+var _ SessionWithStreamableHTTPConfig = (*streamableHttpSession)(nil)
 
 // --- session id manager ---
 
