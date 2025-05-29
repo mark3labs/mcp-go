@@ -592,6 +592,11 @@ func TestContinuousListening(t *testing.T) {
 		notificationReceived <- struct{}{}
 	})
 
+	// Start the transport - this will launch listenForever in a goroutine
+	if err := trans.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
 	// Initialize the transport first
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -604,11 +609,6 @@ func TestContinuousListening(t *testing.T) {
 
 	_, err = trans.SendRequest(ctx, initRequest)
 	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Start the transport - this will launch listenForever in a goroutine
-	if err := trans.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
