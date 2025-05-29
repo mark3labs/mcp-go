@@ -1,5 +1,5 @@
 .vocs_HomePage_logo {  
   height: auto;
-  width: auto;
+  max-width: 100%;
   object-fit: contain;
 }
