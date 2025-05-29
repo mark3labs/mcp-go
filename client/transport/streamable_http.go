@@ -220,6 +220,9 @@ func (c *StreamableHTTP) SendRequest(
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
+	ctx, cancel := c.contextAwareOfClientClose(ctx)
+	defer cancel()
+
 	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream")
 	if err != nil {
 		if errors.Is(err, errSessionTerminated) && request.Method == string(mcp.MethodInitialize) {
@@ -295,18 +298,6 @@ func (c *StreamableHTTP) sendHTTP(
 	body io.Reader,
 	acceptType string,
 ) (resp *http.Response, err error) {
-	// Create a combined context that could be canceled when the client is closed
-	newCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	go func() {
-		select {
-		case <-c.closed:
-			cancel()
-		case <-newCtx.Done():
-			// The original context was canceled, no need to do anything
-		}
-	}()
-	ctx = newCtx
 
 	// Create HTTP request
 	req, err := http.NewRequestWithContext(ctx, method, c.serverURL.String(), body)
@@ -478,6 +469,9 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	}
 
 	// Create HTTP request
+	ctx, cancel := c.contextAwareOfClientClose(ctx)
+	defer cancel()
+
 	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream")
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
@@ -555,7 +549,9 @@ var (
 
 func (c *StreamableHTTP) createGETConnectionToServer() error {
 
-	ctx := context.Background() // the sendHTTP will be automatically canceled when the client is closed
+	ctx, cancel := c.contextAwareOfClientClose(context.Background())
+	defer cancel()
+
 	resp, err := c.sendHTTP(ctx, http.MethodGet, nil, "text/event-stream")
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
@@ -584,4 +580,18 @@ func (c *StreamableHTTP) createGETConnectionToServer() error {
 	}
 
 	return nil
+}
+
+func (c *StreamableHTTP) contextAwareOfClientClose(ctx context.Context) (context.Context, context.CancelFunc) {
+	newCtx, cancel := context.WithCancel(ctx)
+	go func() {
+		select {
+		case <-c.closed:
+			cancel()
+		case <-newCtx.Done():
+			// The original context was canceled
+			cancel()
+		}
+	}()
+	return newCtx, cancel
 }
