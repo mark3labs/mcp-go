@@ -1,3 +1,5 @@
-.vocs_HomePage_logo {
-  height: fit-content;
+.vocs_HomePage_logo {  
+  height: auto;
+  width: auto;
+  object-fit: contain;
 }
