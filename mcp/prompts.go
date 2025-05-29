@@ -19,15 +19,17 @@ type ListPromptsResult struct {
 // server.
 type GetPromptRequest struct {
 	Request
-	Params struct {
-		// The name of the prompt or prompt template.
-		Name string `json:"name"`
-		// Arguments to use for templating the prompt.
-		Arguments map[string]string `json:"arguments,omitempty"`
-		// Meta is metadata attached to a request's parameters. This can include fields
-		// formally defined by the protocol or other arbitrary data.
-		Meta *Meta `json:"_meta,omitempty"`
-	} `json:"params"`
+	Params GetPromptParams `json:"params"`
+}
+
+type GetPromptParams struct {
+	// The name of the prompt or prompt template.
+	Name string `json:"name"`
+	// Arguments to use for templating the prompt.
+	Arguments map[string]string `json:"arguments,omitempty"`
+	// Meta is metadata attached to a request's parameters. This can include fields
+	// formally defined by the protocol or other arbitrary data.
+	Meta *Meta `json:"_meta,omitempty"`
 }
 
 // GetPromptResult is the server's response to a prompts/get request from the
