@@ -31,7 +31,7 @@ func TestHTTPClient(t *testing.T) {
 		mcp.NewTool("notify"),
 		func(
 			ctx context.Context,
-			requestionSession server.RequestSession,
+			requestSession server.RequestSession,
 			request mcp.CallToolRequest,
 		) (*mcp.CallToolResult, error) {
 			server := server.ServerFromContext(ctx)
