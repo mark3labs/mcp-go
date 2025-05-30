@@ -106,8 +106,9 @@ func WithLogger(logger util.Logger) StreamableHTTPOption {
 //   - Batching of requests/notifications/responses in arrays.
 //   - Stream Resumability
 type StreamableHTTPServer struct {
-	server       *MCPServer
-	sessionTools *sessionToolsStore
+	server            *MCPServer
+	sessionTools      *sessionToolsStore
+	sessionRequestIDs sync.Map // sessionId --> last requestID(*atomic.Int64)
 
 	httpServer *http.Server
 	mu         sync.RWMutex
@@ -394,7 +395,7 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 				case <-ticker.C:
 					message := mcp.JSONRPCRequest{
 						JSONRPC: "2.0",
-						ID:      mcp.NewRequestId(session.requestID.Add(1)),
+						ID:      mcp.NewRequestId(s.nextRequestID(sessionID)),
 						Request: mcp.Request{
 							Method: "ping",
 						},
@@ -448,6 +449,9 @@ func (s *StreamableHTTPServer) handleDelete(w http.ResponseWriter, r *http.Reque
 	// remove the session relateddata from the sessionToolsStore
 	s.sessionTools.set(sessionID, nil)
 
+	// remove current session's requstID information
+	s.sessionRequestIDs.Delete(sessionID)
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -477,6 +481,13 @@ func (s *StreamableHTTPServer) writeJSONRPCError(
 	if err != nil {
 		s.logger.Errorf("Failed to write JSONRPCError: %v", err)
 	}
+}
+
+// nextRequestID gets the next incrementing requestID for the current session
+func (s *StreamableHTTPServer) nextRequestID(sessionID string) int64 {
+	actual, _ := s.sessionRequestIDs.LoadOrStore(sessionID, new(atomic.Int64))
+	counter := actual.(*atomic.Int64)
+	return counter.Add(1)
 }
 
 // --- session ---
@@ -512,7 +523,6 @@ type streamableHttpSession struct {
 	notificationChannel chan mcp.JSONRPCNotification // server -> client notifications
 	tools               *sessionToolsStore
 	upgradeToSSE        atomic.Bool
-	requestID           atomic.Int64
 }
 
 func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore) *streamableHttpSession {
