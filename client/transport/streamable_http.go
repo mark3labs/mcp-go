@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,7 +10,6 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -315,12 +313,12 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 		// only close responseChan after readingSSE()
 		defer close(responseChan)
 
-		c.readSSE(ctx, reader, func(event, data string) {
+		c.readSSE(ctx, reader, func(event sseEvent) {
 
 			// (unsupported: batching)
 
 			var message JSONRPCResponse
-			if err := json.Unmarshal([]byte(data), &message); err != nil {
+			if err := json.Unmarshal([]byte(event.data), &message); err != nil {
 				fmt.Printf("failed to unmarshal message: %v\n", err)
 				return
 			}
@@ -328,7 +326,7 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 			// Handle notification
 			if message.ID.IsNil() {
 				var notification mcp.JSONRPCNotification
-				if err := json.Unmarshal([]byte(data), &notification); err != nil {
+				if err := json.Unmarshal([]byte(event.data), &notification); err != nil {
 					fmt.Printf("failed to unmarshal notification: %v\n", err)
 					return
 				}
@@ -358,52 +356,14 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 
 // readSSE reads the SSE stream(reader) and calls the handler for each event and data pair.
 // It will end when the reader is closed (or the context is done).
-func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, handler func(event, data string)) {
-	defer reader.Close()
-
-	br := bufio.NewReader(reader)
-	var event, data string
-
-	for {
+func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, handler func(event sseEvent)) {
+	if err := ReadSSEStream(ctx, reader, handler); err != nil {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			line, err := br.ReadString('\n')
-			if err != nil {
-				if err == io.EOF {
-					// Process any pending event before exit
-					if event != "" && data != "" {
-						handler(event, data)
-					}
-					return
-				}
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					fmt.Printf("SSE stream error: %v\n", err)
-					return
-				}
-			}
-
-			// Remove only newline markers
-			line = strings.TrimRight(line, "\r\n")
-			if line == "" {
-				// Empty line means end of event
-				if event != "" && data != "" {
-					handler(event, data)
-					event = ""
-					data = ""
-				}
-				continue
-			}
-
-			if strings.HasPrefix(line, "event:") {
-				event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-			} else if strings.HasPrefix(line, "data:") {
-				data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			}
+			fmt.Printf("SSE stream error: %v\n", err)
+			return
 		}
 	}
 }
