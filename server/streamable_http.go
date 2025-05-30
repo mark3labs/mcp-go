@@ -389,15 +389,16 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		go func() {
 			ticker := time.NewTicker(s.listenHeartbeatInterval)
 			defer ticker.Stop()
-			message := mcp.JSONRPCRequest{
-				JSONRPC: "2.0",
-				Request: mcp.Request{
-					Method: "ping",
-				},
-			}
 			for {
 				select {
 				case <-ticker.C:
+					message := mcp.JSONRPCRequest{
+						JSONRPC: "2.0",
+						ID:      mcp.NewRequestId(session.requestID.Add(1)),
+						Request: mcp.Request{
+							Method: "ping",
+						},
+					}
 					select {
 					case writeChan <- message:
 					case <-done:
@@ -511,6 +512,7 @@ type streamableHttpSession struct {
 	notificationChannel chan mcp.JSONRPCNotification // server -> client notifications
 	tools               *sessionToolsStore
 	upgradeToSSE        atomic.Bool
+	requestID           atomic.Int64
 }
 
 func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore) *streamableHttpSession {
