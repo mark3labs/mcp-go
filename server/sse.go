@@ -28,8 +28,10 @@ type sseSession struct {
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         atomic.Bool
 	loggingLevel        atomic.Value
-	tools               sync.Map     // stores session-specific tools
-	clientInfo          atomic.Value // stores session-specific client info
+	// FIXME assign logger name in a proper way
+	loggerName *string
+	tools      sync.Map     // stores session-specific tools
+	clientInfo atomic.Value // stores session-specific client info
 }
 
 // SSEContextFunc is a function that takes an existing context and the current
@@ -74,6 +76,10 @@ func (s *sseSession) GetLogLevel() mcp.LoggingLevel {
 	return level.(mcp.LoggingLevel)
 }
 
+func (s *sseSession) GetLoggerName() *string {
+	return s.loggerName
+}
+
 func (s *sseSession) GetSessionTools() map[string]ServerTool {
 	tools := make(map[string]ServerTool)
 	s.tools.Range(func(key, value any) bool {
@@ -111,7 +117,6 @@ func (s *sseSession) SetClientInfo(clientInfo mcp.Implementation) {
 var (
 	_ ClientSession         = (*sseSession)(nil)
 	_ SessionWithTools      = (*sseSession)(nil)
-	_ SessionWithLogging    = (*sseSession)(nil)
 	_ SessionWithClientInfo = (*sseSession)(nil)
 )
 
@@ -516,7 +521,8 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 			var message string
 			if eventData, err := json.Marshal(response); err != nil {
 				// If there is an error marshalling the response, send a generic error response
-				log.Printf("failed to marshal response: %v", err)
+				marshal, _ := json.Marshal(response)
+				log.Printf("failed to marshal response: %v, response %s", err, string(marshal))
 				message = "event: message\ndata: {\"error\": \"internal error\",\"jsonrpc\": \"2.0\", \"id\": null}\n\n"
 			} else {
 				message = fmt.Sprintf("event: message\ndata: %s\n\n", eventData)
