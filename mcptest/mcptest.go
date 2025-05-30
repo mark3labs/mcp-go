@@ -18,8 +18,11 @@ import (
 
 // Server encapsulates an MCP server and manages resources like pipes and context.
 type Server struct {
-	name  string
-	tools []server.ServerTool
+	name string
+
+	tools     []server.ServerTool
+	prompts   []server.ServerPrompt
+	resources []server.ServerResource
 
 	ctx    context.Context
 	cancel func()
@@ -83,6 +86,32 @@ func (s *Server) AddTool(tool mcp.Tool, handler server.ToolHandlerFunc) {
 	})
 }
 
+// AddPrompt adds a prompt to an unstarted server.
+func (s *Server) AddPrompt(prompt mcp.Prompt, handler server.PromptHandlerFunc) {
+	s.prompts = append(s.prompts, server.ServerPrompt{
+		Prompt:  prompt,
+		Handler: handler,
+	})
+}
+
+// AddPrompts adds multiple prompts to an unstarted server.
+func (s *Server) AddPrompts(prompts ...server.ServerPrompt) {
+	s.prompts = append(s.prompts, prompts...)
+}
+
+// AddResource adds a resource to an unstarted server.
+func (s *Server) AddResource(resource mcp.Resource, handler server.ResourceHandlerFunc) {
+	s.resources = append(s.resources, server.ServerResource{
+		Resource: resource,
+		Handler:  handler,
+	})
+}
+
+// AddResources adds multiple resources to an unstarted server.
+func (s *Server) AddResources(resources ...server.ServerResource) {
+	s.resources = append(s.resources, resources...)
+}
+
 // Start starts the server in a goroutine. Make sure to defer Close() after Start().
 // When using NewServer(), the returned server is already started.
 func (s *Server) Start() error {
@@ -95,6 +124,8 @@ func (s *Server) Start() error {
 		mcpServer := server.NewMCPServer(s.name, "1.0.0")
 
 		mcpServer.AddTools(s.tools...)
+		mcpServer.AddPrompts(s.prompts...)
+		mcpServer.AddResources(s.resources...)
 
 		logger := log.New(&s.logBuffer, "", 0)
 
