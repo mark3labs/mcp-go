@@ -43,8 +43,12 @@ func main() {
 
 	// Start the client
 	if err := c.Start(context.Background()); err != nil {
-		log.Fatalf("Failed to start client: %v", err)
+		maybeAuthorize(err)
+		if err = c.Start(context.Background()); err != nil {
+			log.Fatalf("Failed to start client: %v", err)
+		}
 	}
+
 	defer c.Close()
 
 	// Try to initialize the client
@@ -62,6 +66,44 @@ func main() {
 		},
 	})
 
+	if err != nil {
+		maybeAuthorize(err)
+		result, err = c.Initialize(context.Background(), mcp.InitializeRequest{
+			Params: struct {
+				ProtocolVersion string                 `json:"protocolVersion"`
+				Capabilities    mcp.ClientCapabilities `json:"capabilities"`
+				ClientInfo      mcp.Implementation     `json:"clientInfo"`
+			}{
+				ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+				ClientInfo: mcp.Implementation{
+					Name:    "mcp-go-oauth-example",
+					Version: "0.1.0",
+				},
+			},
+		})
+		if err != nil {
+			log.Fatalf("Failed to initialize client: %v", err)
+		}
+	}
+
+	fmt.Printf("Client initialized successfully! Server: %s %s\n",
+		result.ServerInfo.Name,
+		result.ServerInfo.Version)
+
+	// Now you can use the client as usual
+	// For example, list resources
+	resources, err := c.ListResources(context.Background(), mcp.ListResourcesRequest{})
+	if err != nil {
+		log.Fatalf("Failed to list resources: %v", err)
+	}
+
+	fmt.Println("Available resources:")
+	for _, resource := range resources.Resources {
+		fmt.Printf("- %s\n", resource.URI)
+	}
+}
+
+func maybeAuthorize(err error) {
 	// Check if we need OAuth authorization
 	if client.IsOAuthAuthorizationRequiredError(err) {
 		fmt.Println("OAuth authorization required. Starting authorization flow...")
@@ -85,6 +127,11 @@ func main() {
 		state, err := client.GenerateState()
 		if err != nil {
 			log.Fatalf("Failed to generate state: %v", err)
+		}
+
+		err = oauthHandler.RegisterClient(context.Background(), "mcp-go-oauth-example")
+		if err != nil {
+			log.Fatalf("Failed to register client: %v", err)
 		}
 
 		// Get the authorization URL
@@ -119,42 +166,6 @@ func main() {
 		}
 
 		fmt.Println("Authorization successful!")
-
-		// Try to initialize again with the token
-		result, err = c.Initialize(context.Background(), mcp.InitializeRequest{
-			Params: struct {
-				ProtocolVersion string                 `json:"protocolVersion"`
-				Capabilities    mcp.ClientCapabilities `json:"capabilities"`
-				ClientInfo      mcp.Implementation     `json:"clientInfo"`
-			}{
-				ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
-				ClientInfo: mcp.Implementation{
-					Name:    "mcp-go-oauth-example",
-					Version: "0.1.0",
-				},
-			},
-		})
-		if err != nil {
-			log.Fatalf("Failed to initialize client after authorization: %v", err)
-		}
-	} else if err != nil {
-		log.Fatalf("Failed to initialize client: %v", err)
-	}
-
-	fmt.Printf("Client initialized successfully! Server: %s %s\n",
-		result.ServerInfo.Name,
-		result.ServerInfo.Version)
-
-	// Now you can use the client as usual
-	// For example, list resources
-	resources, err := c.ListResources(context.Background(), mcp.ListResourcesRequest{})
-	if err != nil {
-		log.Fatalf("Failed to list resources: %v", err)
-	}
-
-	fmt.Println("Available resources:")
-	for _, resource := range resources.Resources {
-		fmt.Printf("- %s\n", resource.URI)
 	}
 }
 

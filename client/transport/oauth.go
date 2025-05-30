@@ -136,7 +136,14 @@ func (h *OAuthHandler) GetAuthorizationHeader(ctx context.Context) (string, erro
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s %s", token.TokenType, token.AccessToken), nil
+
+	// Some auth implementations are strict about token type
+	tokenType := token.TokenType
+	if tokenType == "bearer" {
+		tokenType = "Bearer"
+	}
+
+	return fmt.Sprintf("%s %s", tokenType, token.AccessToken), nil
 }
 
 // getValidToken returns a valid token, refreshing if necessary

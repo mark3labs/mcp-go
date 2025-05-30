@@ -26,11 +26,24 @@ var NewMemoryTokenStore = transport.NewMemoryTokenStore
 // Returns an error if the URL is invalid.
 func NewOAuthStreamableHttpClient(baseURL string, oauthConfig OAuthConfig, options ...transport.StreamableHTTPCOption) (*Client, error) {
 	// Add OAuth option to the list of options
-	options = append(options, transport.WithOAuth(oauthConfig))
+	options = append(options, transport.WithHTTPOAuth(oauthConfig))
 
 	trans, err := transport.NewStreamableHTTP(baseURL, options...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP transport: %w", err)
+	}
+	return NewClient(trans), nil
+}
+
+// NewOAuthStreamableHttpClient creates a new streamable-http-based MCP client with OAuth support.
+// Returns an error if the URL is invalid.
+func NewOAuthSSEClient(baseURL string, oauthConfig OAuthConfig, options ...transport.ClientOption) (*Client, error) {
+	// Add OAuth option to the list of options
+	options = append(options, transport.WithOAuth(oauthConfig))
+
+	trans, err := transport.NewSSE(baseURL, options...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create SSE transport: %w", err)
 	}
 	return NewClient(trans), nil
 }

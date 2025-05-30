@@ -73,7 +73,7 @@ func TestStreamableHTTP_WithOAuth(t *testing.T) {
 	}
 
 	// Create StreamableHTTP with OAuth
-	transport, err := NewStreamableHTTP(server.URL, WithOAuth(oauthConfig))
+	transport, err := NewStreamableHTTP(server.URL, WithHTTPOAuth(oauthConfig))
 	if err != nil {
 		t.Fatalf("Failed to create StreamableHTTP: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestStreamableHTTP_WithOAuth_Unauthorized(t *testing.T) {
 	}
 
 	// Create StreamableHTTP with OAuth
-	transport, err := NewStreamableHTTP(server.URL, WithOAuth(oauthConfig))
+	transport, err := NewStreamableHTTP(server.URL, WithHTTPOAuth(oauthConfig))
 	if err != nil {
 		t.Fatalf("Failed to create StreamableHTTP: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestStreamableHTTP_IsOAuthEnabled(t *testing.T) {
 	}
 
 	// Create StreamableHTTP with OAuth
-	transport2, err := NewStreamableHTTP("http://example.com", WithOAuth(OAuthConfig{
+	transport2, err := NewStreamableHTTP("http://example.com", WithHTTPOAuth(OAuthConfig{
 		ClientID: "test-client",
 	}))
 	if err != nil {
