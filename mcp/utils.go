@@ -327,6 +327,21 @@ func NewToolResultErrorFromErr(text string, err error) *CallToolResult {
 	}
 }
 
+// NewToolResultErrorf creates a new CallToolResult with an error message.
+// The error message is formatted using the fmt package.
+// Any errors that originate from the tool SHOULD be reported inside the result object.
+func NewToolResultErrorf(format string, a ...any) *CallToolResult {
+	return &CallToolResult{
+		Content: []Content{
+			TextContent{
+				Type: "text",
+				Text: fmt.Sprintf(format, a...),
+			},
+		},
+		IsError: true,
+	}
+}
+
 // NewListResourcesResult creates a new ListResourcesResult
 func NewListResourcesResult(
 	resources []Resource,
