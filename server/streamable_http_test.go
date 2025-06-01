@@ -670,6 +670,56 @@ func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 	})
 }
 
+func TestStreamableHTTPServer_WithOptions(t *testing.T) {
+	t.Run("WithStreamableHTTPServer sets httpServer field", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0.0")
+		customServer := &http.Server{Addr: ":9999"}
+		httpServer := NewStreamableHTTPServer(mcpServer, WithStreamableHTTPServer(customServer))
+
+		if httpServer.httpServer != customServer {
+			t.Errorf("Expected httpServer to be set to custom server instance, got %v", httpServer.httpServer)
+		}
+	})
+
+	t.Run("Start with conflicting address returns error", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0.0")
+		customServer := &http.Server{Addr: ":9999"}
+		httpServer := NewStreamableHTTPServer(mcpServer, WithStreamableHTTPServer(customServer))
+
+		err := httpServer.Start(":8888")
+		if err == nil {
+			t.Error("Expected error for conflicting address, got nil")
+		} else if !strings.Contains(err.Error(), "conflicting listen address") {
+			t.Errorf("Expected error message to contain 'conflicting listen address', got '%s'", err.Error())
+		}
+	})
+
+	t.Run("Options consistency test", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0.0")
+		endpointPath := "/test-mcp"
+		customServer := &http.Server{}
+
+		// Options to test
+		options := []StreamableHTTPOption{
+			WithEndpointPath(endpointPath),
+			WithStreamableHTTPServer(customServer),
+		}
+
+		// Apply options multiple times and verify consistency
+		for i := 0; i < 10; i++ {
+			server := NewStreamableHTTPServer(mcpServer, options...)
+
+			if server.endpointPath != endpointPath {
+				t.Errorf("Expected endpointPath %s, got %s", endpointPath, server.endpointPath)
+			}
+
+			if server.httpServer != customServer {
+				t.Errorf("Expected httpServer to match, got %v", server.httpServer)
+			}
+		}
+	})
+}
+
 func postJSON(url string, bodyObject any) (*http.Response, error) {
 	jsonBody, _ := json.Marshal(bodyObject)
 	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(jsonBody))
