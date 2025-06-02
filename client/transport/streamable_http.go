@@ -21,6 +21,13 @@ import (
 
 type StreamableHTTPCOption func(*StreamableHTTP)
 
+// WithHTTPClient sets a custom HTTP client on the StreamableHTTP transport.
+func WithHTTPBasicClient(client *http.Client) StreamableHTTPCOption {
+	return func(sc *StreamableHTTP) {
+		sc.httpClient = client
+	}
+}
+
 func WithHTTPHeaders(headers map[string]string) StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
 		sc.headers = headers
