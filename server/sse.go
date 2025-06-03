@@ -227,7 +227,9 @@ func WithSSEEndpoint(endpoint string) SSEOption {
 	}
 }
 
-// WithHTTPServer sets the HTTP server instance
+// WithHTTPServer sets the HTTP server instance.
+// NOTE: When providing a custom HTTP server, you must handle routing yourself
+// If routing is not set up, the server will start but won't handle any MCP requests.
 func WithHTTPServer(srv *http.Server) SSEOption {
 	return func(s *SSEServer) {
 		s.srv = srv
