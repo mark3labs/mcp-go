@@ -30,14 +30,17 @@ func TestSSE_WithOAuth(t *testing.T) {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
-			
+
 			// Create a valid endpoint URL
 			endpointURL := "http://" + r.Host + "/endpoint"
-			
+
 			// Send the SSE endpoint event
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("event: endpoint\ndata: " + endpointURL + "\n\n"))
+			_, err := w.Write([]byte("event: endpoint\ndata: " + endpointURL + "\n\n"))
+			if err != nil {
+				t.Errorf("Failed to write SSE endpoint event: %v", err)
+			}
 			sseEndpointSent = true
 			return
 		}
@@ -149,7 +152,7 @@ func TestSSE_WithOAuth(t *testing.T) {
 	// Skip the actual request/response test since it's difficult to mock properly in this context
 	// The important part is that we've verified the OAuth functionality works during connection
 	// and that the endpoint is properly received
-	
+
 	// For a real test, we would need to mock the SSE message handling more thoroughly
 	// which is beyond the scope of this test
 
