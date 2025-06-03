@@ -109,7 +109,7 @@ func TestServerWithPrompt(t *testing.T) {
 
 	srv.AddPrompt(prompt, handler)
 
-	err := srv.Start()
+	err := srv.Start(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestServerWithResource(t *testing.T) {
 
 	srv.AddResource(resource, handler)
 
-	err := srv.Start()
+	err := srv.Start(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
