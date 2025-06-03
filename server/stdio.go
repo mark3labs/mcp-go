@@ -244,6 +244,11 @@ func (s *StdioServer) processMessage(
 	line string,
 	writer io.Writer,
 ) error {
+	// If line is empty, likely due to ctx cancellation
+	if len(line) == 0 {
+		return nil
+	}
+
 	// Parse the message as raw JSON
 	var rawMessage json.RawMessage
 	if err := json.Unmarshal([]byte(line), &rawMessage); err != nil {
