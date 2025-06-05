@@ -12,6 +12,8 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+// SafeMap is a thread-safe map wrapper
+
 func TestHTTPClient(t *testing.T) {
 	hooks := &server.Hooks{}
 	hooks.AddAfterCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest, result *mcp.CallToolResult) {
@@ -87,12 +89,9 @@ func TestHTTPClient(t *testing.T) {
 			return
 		}
 
-		notificationNum := make(map[string]int)
-		notificationNumMutex := sync.Mutex{}
+		notificationNum := NewSafeMap()
 		client.OnNotification(func(notification mcp.JSONRPCNotification) {
-			notificationNumMutex.Lock()
-			notificationNum[notification.Method] += 1
-			notificationNumMutex.Unlock()
+			notificationNum.Increment(notification.Method)
 		})
 
 		ctx := context.Background()
@@ -120,19 +119,21 @@ func TestHTTPClient(t *testing.T) {
 				t.Errorf("Expected 1 content item, got %d", len(result.Content))
 			}
 
-			if n := notificationNum["notifications/progress"]; n != 1 {
+			if n := notificationNum.Get("notifications/progress"); n != 1 {
 				t.Errorf("Expected 1 progross notification item, got %d", n)
 			}
-			if n := len(notificationNum); n != 1 {
+			if n := notificationNum.Len(); n != 1 {
 				t.Errorf("Expected 1 type of notification, got %d", n)
 			}
 		})
 
-		t.Run("Cannot receive global notifications from server by default", func(t *testing.T) {
+		t.Run("Can not receive global notifications from server by default", func(t *testing.T) {
 			addServerToolfunc("hello1")
 			time.Sleep(time.Millisecond * 50)
-			if n := notificationNum["hello1"]; n != 0 {
-				t.Errorf("Expected 0 notification item, got %d", n)
+
+			helloNotifications := notificationNum.Get("hello1")
+			if helloNotifications != 0 {
+				t.Errorf("Expected 0 notification item, got %d", helloNotifications)
 			}
 		})
 
@@ -146,13 +147,9 @@ func TestHTTPClient(t *testing.T) {
 			}
 			defer client.Close()
 
-			notificationNum := make(map[string]int)
-			notificationNumMutex := sync.Mutex{}
+			notificationNum := NewSafeMap()
 			client.OnNotification(func(notification mcp.JSONRPCNotification) {
-				notificationNumMutex.Lock()
-				println(notification.Method)
-				notificationNum[notification.Method] += 1
-				notificationNumMutex.Unlock()
+				notificationNum.Increment(notification.Method)
 			})
 
 			ctx := context.Background()
@@ -176,20 +173,51 @@ func TestHTTPClient(t *testing.T) {
 				t.Fatalf("CallTool failed: %v", err)
 			}
 
-			if n := notificationNum["notifications/progress"]; n != 1 {
+			if n := notificationNum.Get("notifications/progress"); n != 1 {
 				t.Errorf("Expected 1 progross notification item, got %d", n)
 			}
-			if n := len(notificationNum); n != 1 {
+			if n := notificationNum.Len(); n != 1 {
 				t.Errorf("Expected 1 type of notification, got %d", n)
 			}
 
 			// can receive global notification
 			addServerToolfunc("hello2")
 			time.Sleep(time.Millisecond * 50) // wait for the notification to be sent as upper action is async
-			if n := notificationNum["notifications/tools/list_changed"]; n != 1 {
+
+			n := notificationNum.Get("notifications/tools/list_changed")
+			if n != 1 {
 				t.Errorf("Expected 1 notification item, got %d, %v", n, notificationNum)
 			}
 		})
 
 	})
+}
+
+type SafeMap struct {
+	mu   sync.RWMutex
+	data map[string]int
+}
+
+func NewSafeMap() *SafeMap {
+	return &SafeMap{
+		data: make(map[string]int),
+	}
+}
+
+func (sm *SafeMap) Increment(key string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.data[key]++
+}
+
+func (sm *SafeMap) Get(key string) int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.data[key]
+}
+
+func (sm *SafeMap) Len() int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return len(sm.data)
 }
