@@ -465,7 +465,7 @@ func (s *StreamableHTTPServer) handleDelete(w http.ResponseWriter, r *http.Reque
 	}
 
 	// remove the session relateddata from the sessionToolsStore
-	s.sessionTools.set(sessionID, nil)
+	s.sessionTools.delete(sessionID)
 
 	// remove current session's requstID information
 	s.sessionRequestIDs.Delete(sessionID)
@@ -531,6 +531,20 @@ func (s *sessionToolsStore) set(sessionID string, tools map[string]ServerTool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.tools[sessionID] = tools
+}
+
+func (s *sessionToolsStore) delete(sessionID string) {
+	s.mu.RLock()
+	_, exists := s.tools[sessionID]
+	s.mu.RUnlock()
+
+	if !exists {
+		return
+	}
+
+	s.mu.Lock()
+	delete(s.tools, sessionID)
+	s.mu.Unlock()
 }
 
 // streamableHttpSession is a session for streamable-http transport
