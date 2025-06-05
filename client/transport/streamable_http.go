@@ -171,13 +171,13 @@ func (c *StreamableHTTP) Close() error {
 			defer cancel()
 			req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.serverURL.String(), nil)
 			if err != nil {
-				fmt.Printf("failed to create close request\n: %v", err)
+				c.logger.Errorf("failed to create close request: %v", err)
 				return
 			}
 			req.Header.Set(headerKeySessionID, sessionId)
 			res, err := c.httpClient.Do(req)
 			if err != nil {
-				fmt.Printf("failed to send close request\n: %v", err)
+				c.logger.Errorf("failed to send close request: %v", err)
 				return
 			}
 			res.Body.Close()
