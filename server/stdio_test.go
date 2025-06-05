@@ -50,6 +50,7 @@ func TestStdioServer(t *testing.T) {
 			if err != nil && err != io.EOF && err != context.Canceled {
 				serverErrCh <- err
 			}
+			stdoutWriter.Close()
 			close(serverErrCh)
 		}()
 
@@ -106,7 +107,6 @@ func TestStdioServer(t *testing.T) {
 		// Clean up
 		cancel()
 		stdinWriter.Close()
-		stdoutWriter.Close()
 
 		// Check for server errors
 		if err := <-serverErrCh; err != nil {
@@ -162,6 +162,7 @@ func TestStdioServer(t *testing.T) {
 			if err != nil && err != io.EOF && err != context.Canceled {
 				serverErrCh <- err
 			}
+			stdoutWriter.Close()
 			close(serverErrCh)
 		}()
 
@@ -260,7 +261,6 @@ func TestStdioServer(t *testing.T) {
 		// Clean up
 		cancel()
 		stdinWriter.Close()
-		stdoutWriter.Close()
 
 		// Check for server errors
 		if err := <-serverErrCh; err != nil {

@@ -189,39 +189,23 @@ func (s *StdioServer) processInputStream(ctx context.Context, reader *bufio.Read
 // returns an empty string and the context's error. EOF is returned when the input
 // stream is closed.
 func (s *StdioServer) readNextLine(ctx context.Context, reader *bufio.Reader) (string, error) {
-	readChan := make(chan string, 1)
-	errChan := make(chan error, 1)
-	done := make(chan struct{})
-	defer close(done)
+	type result struct {
+		line string
+		err  error
+	}
+
+	resultCh := make(chan result, 1)
 
 	go func() {
-		select {
-		case <-done:
-			return
-		default:
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				select {
-				case errChan <- err:
-				case <-done:
-				}
-				return
-			}
-			select {
-			case readChan <- line:
-			case <-done:
-			}
-			return
-		}
+		line, err := reader.ReadString('\n')
+		resultCh <- result{line: line, err: err}
 	}()
 
 	select {
 	case <-ctx.Done():
-		return "", ctx.Err()
-	case err := <-errChan:
-		return "", err
-	case line := <-readChan:
-		return line, nil
+		return "", nil
+	case res := <-resultCh:
+		return res.line, res.err
 	}
 }
 
@@ -260,6 +244,11 @@ func (s *StdioServer) processMessage(
 	line string,
 	writer io.Writer,
 ) error {
+	// If line is empty, likely due to ctx cancellation
+	if len(line) == 0 {
+		return nil
+	}
+
 	// Parse the message as raw JSON
 	var rawMessage json.RawMessage
 	if err := json.Unmarshal([]byte(line), &rawMessage); err != nil {

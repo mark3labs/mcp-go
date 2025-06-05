@@ -18,10 +18,12 @@ import (
 
 // Server encapsulates an MCP server and manages resources like pipes and context.
 type Server struct {
-	name  string
-	tools []server.ServerTool
+	name string
 
-	ctx    context.Context
+	tools     []server.ServerTool
+	prompts   []server.ServerPrompt
+	resources []server.ServerResource
+
 	cancel func()
 
 	serverReader *io.PipeReader
@@ -42,7 +44,8 @@ func NewServer(t *testing.T, tools ...server.ServerTool) (*Server, error) {
 	server := NewUnstartedServer(t)
 	server.AddTools(tools...)
 
-	if err := server.Start(); err != nil {
+	// TODO: use t.Context() once go.mod is upgraded to go 1.24+
+	if err := server.Start(context.TODO()); err != nil {
 		return nil, err
 	}
 
@@ -55,12 +58,6 @@ func NewUnstartedServer(t *testing.T) *Server {
 	server := &Server{
 		name: t.Name(),
 	}
-
-	// Use t.Context() once we switch to go >= 1.24
-	ctx := context.TODO()
-
-	// Set up context with cancellation, used to stop the server
-	server.ctx, server.cancel = context.WithCancel(ctx)
 
 	// Set up pipes for client-server communication
 	server.serverReader, server.clientWriter = io.Pipe()
@@ -83,10 +80,38 @@ func (s *Server) AddTool(tool mcp.Tool, handler server.ToolHandlerFunc) {
 	})
 }
 
+// AddPrompt adds a prompt to an unstarted server.
+func (s *Server) AddPrompt(prompt mcp.Prompt, handler server.PromptHandlerFunc) {
+	s.prompts = append(s.prompts, server.ServerPrompt{
+		Prompt:  prompt,
+		Handler: handler,
+	})
+}
+
+// AddPrompts adds multiple prompts to an unstarted server.
+func (s *Server) AddPrompts(prompts ...server.ServerPrompt) {
+	s.prompts = append(s.prompts, prompts...)
+}
+
+// AddResource adds a resource to an unstarted server.
+func (s *Server) AddResource(resource mcp.Resource, handler server.ResourceHandlerFunc) {
+	s.resources = append(s.resources, server.ServerResource{
+		Resource: resource,
+		Handler:  handler,
+	})
+}
+
+// AddResources adds multiple resources to an unstarted server.
+func (s *Server) AddResources(resources ...server.ServerResource) {
+	s.resources = append(s.resources, resources...)
+}
+
 // Start starts the server in a goroutine. Make sure to defer Close() after Start().
 // When using NewServer(), the returned server is already started.
-func (s *Server) Start() error {
+func (s *Server) Start(ctx context.Context) error {
 	s.wg.Add(1)
+
+	ctx, s.cancel = context.WithCancel(ctx)
 
 	// Start the MCP server in a goroutine
 	go func() {
@@ -95,19 +120,21 @@ func (s *Server) Start() error {
 		mcpServer := server.NewMCPServer(s.name, "1.0.0")
 
 		mcpServer.AddTools(s.tools...)
+		mcpServer.AddPrompts(s.prompts...)
+		mcpServer.AddResources(s.resources...)
 
 		logger := log.New(&s.logBuffer, "", 0)
 
 		stdioServer := server.NewStdioServer(mcpServer)
 		stdioServer.SetErrorLogger(logger)
 
-		if err := stdioServer.Listen(s.ctx, s.serverReader, s.serverWriter); err != nil {
+		if err := stdioServer.Listen(ctx, s.serverReader, s.serverWriter); err != nil {
 			logger.Println("StdioServer.Listen failed:", err)
 		}
 	}()
 
 	s.transport = transport.NewIO(s.clientReader, s.clientWriter, io.NopCloser(&s.logBuffer))
-	if err := s.transport.Start(s.ctx); err != nil {
+	if err := s.transport.Start(ctx); err != nil {
 		return fmt.Errorf("transport.Start(): %w", err)
 	}
 
@@ -115,7 +142,7 @@ func (s *Server) Start() error {
 
 	var initReq mcp.InitializeRequest
 	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
-	if _, err := s.client.Initialize(s.ctx, initReq); err != nil {
+	if _, err := s.client.Initialize(ctx, initReq); err != nil {
 		return fmt.Errorf("client.Initialize(): %w", err)
 	}
 

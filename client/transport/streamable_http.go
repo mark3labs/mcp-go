@@ -35,6 +35,13 @@ func WithContinuousListening() StreamableHTTPCOption {
 	}
 }
 
+// WithHTTPClient sets a custom HTTP client on the StreamableHTTP transport.
+func WithHTTPBasicClient(client *http.Client) StreamableHTTPCOption {
+	return func(sc *StreamableHTTP) {
+		sc.httpClient = client
+	}
+}
+
 func WithHTTPHeaders(headers map[string]string) StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
 		sc.headers = headers
@@ -54,16 +61,16 @@ func WithHTTPTimeout(timeout time.Duration) StreamableHTTPCOption {
 	}
 }
 
-func WithLogger(logger util.Logger) StreamableHTTPCOption {
+// WithHTTPOAuth enables OAuth authentication for the client.
+func WithHTTPOAuth(config OAuthConfig) StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
-		sc.logger = logger
+		sc.oauthHandler = NewOAuthHandler(config)
 	}
 }
 
-// WithOAuth enables OAuth authentication for the client.
-func WithOAuth(config OAuthConfig) StreamableHTTPCOption {
+func WithLogger(logger util.Logger) StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
-		sc.oauthHandler = NewOAuthHandler(config)
+		sc.logger = logger
 	}
 }
 
