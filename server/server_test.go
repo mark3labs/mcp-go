@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -141,8 +142,8 @@ func TestMCPServer_Capabilities(t *testing.T) {
 			}
 			messageBytes, err := json.Marshal(message)
 			assert.NoError(t, err)
-
-			response := server.HandleMessage(context.Background(), messageBytes)
+			header := map[string]string{"Authorization": "Bearer test"}
+			response := server.HandleMessage(context.Background(), header, messageBytes)
 			tt.validate(t, response)
 		})
 	}
@@ -347,7 +348,8 @@ func TestMCPServer_Tools(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(true))
-			_ = server.HandleMessage(ctx, []byte(`{
+			header := map[string]string{"Authorization": "Bearer test"}
+			_ = server.HandleMessage(ctx, header, []byte(`{
 				"jsonrpc": "2.0",
 				"id": 1,
 				"method": "initialize"
@@ -367,7 +369,7 @@ func TestMCPServer_Tools(t *testing.T) {
 				}
 			}
 			assert.Len(t, notifications, tt.expectedNotifications)
-			toolsList := server.HandleMessage(ctx, []byte(`{
+			toolsList := server.HandleMessage(ctx, header, []byte(`{
 				"jsonrpc": "2.0",
 				"id": 1,
 				"method": "tools/list"
@@ -454,8 +456,8 @@ func TestMCPServer_HandleValidMessages(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			messageBytes, err := json.Marshal(tt.message)
 			assert.NoError(t, err)
-
-			response := server.HandleMessage(context.Background(), messageBytes)
+			header := map[string]string{"Authorization": "Bearer test"}
+			response := server.HandleMessage(context.Background(), header, messageBytes)
 			assert.NotNil(t, response)
 			tt.validate(t, response)
 		})
@@ -494,8 +496,10 @@ func TestMCPServer_HandlePagination(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			header := map[string]string{"Authorization": "Bearer test"}
 			response := server.HandleMessage(
 				context.Background(),
+				header,
 				[]byte(tt.message),
 			)
 			tt.validate(t, response)
@@ -518,8 +522,8 @@ func TestMCPServer_HandleNotifications(t *testing.T) {
             "jsonrpc": "2.0",
             "method": "notifications/initialized"
         }`
-
-	response := server.HandleMessage(context.Background(), []byte(message))
+	header := map[string]string{"Authorization": "Bearer test"}
+	response := server.HandleMessage(context.Background(), header, []byte(message))
 	assert.Nil(t, response)
 	assert.True(t, notificationReceived)
 }
@@ -598,7 +602,8 @@ func TestMCPServer_SendNotificationToClient(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			server := NewMCPServer("test-server", "1.0.0")
 			ctx := tt.contextPrepare(context.Background(), server)
-			_ = server.HandleMessage(ctx, []byte(`{
+			header := map[string]string{"Authorization": "Bearer test"}
+			_ = server.HandleMessage(ctx, header, []byte(`{
 				"jsonrpc": "2.0",
 				"id": 1,
 				"method": "initialize"
@@ -678,7 +683,8 @@ func TestMCPServer_SendNotificationToAllClients(t *testing.T) {
 	t.Run("all sessions", func(t *testing.T) {
 		server := NewMCPServer("test-server", "1.0.0")
 		ctx := contextPrepare(context.Background(), server)
-		_ = server.HandleMessage(ctx, []byte(`{
+		header := map[string]string{"Authorization": "Bearer test"}
+		_ = server.HandleMessage(ctx, header, []byte(`{
 				"jsonrpc": "2.0",
 				"id": 1,
 				"method": "initialize"
@@ -800,8 +806,10 @@ func TestMCPServer_PromptHandling(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			header := map[string]string{"Authorization": "Bearer test"}
 			response := server.HandleMessage(
 				context.Background(),
+				header,
 				[]byte(tt.message),
 			)
 			tt.validate(t, response)
@@ -963,11 +971,12 @@ func TestMCPServer_Prompts(t *testing.T) {
 			},
 		},
 	}
+	header := map[string]string{"Authorization": "Bearer test"}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			server := NewMCPServer("test-server", "1.0.0", WithPromptCapabilities(true))
-			_ = server.HandleMessage(ctx, []byte(`{
+			_ = server.HandleMessage(ctx, header, []byte(`{
 				"jsonrpc": "2.0",
 				"id": 1,
 				"method": "initialize"
@@ -987,7 +996,7 @@ func TestMCPServer_Prompts(t *testing.T) {
 				}
 			}
 			assert.Len(t, notifications, tt.expectedNotifications)
-			promptsList := server.HandleMessage(ctx, []byte(`{
+			promptsList := server.HandleMessage(ctx, header, []byte(`{
 				"jsonrpc": "2.0",
 				"id": 1,
 				"method": "prompts/list"
@@ -1052,9 +1061,10 @@ func TestMCPServer_HandleInvalidMessages(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			errs = nil // Reset errors for each test case
-
+			header := map[string]string{"Authorization": "Bearer test"}
 			response := server.HandleMessage(
 				context.Background(),
+				header,
 				[]byte(tt.message),
 			)
 			assert.NotNil(t, response)
@@ -1187,8 +1197,10 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			errs = nil // Reset errors for each test case
 			beforeResults = nil
+			header := map[string]string{"Authorization": "Bearer test"}
 			response := server.HandleMessage(
 				context.Background(),
+				header,
 				[]byte(tt.message),
 			)
 			assert.NotNil(t, response)
@@ -1278,8 +1290,10 @@ func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
 			errs = nil // Reset errors for each test case
 
 			server := NewMCPServer("test-server", "1.0.0", tt.options...)
+			header := map[string]string{"Authorization": "Bearer test"}
 			response := server.HandleMessage(
 				context.Background(),
+				header,
 				[]byte(tt.message),
 			)
 			assert.NotNil(t, response)
@@ -1366,8 +1380,8 @@ func TestMCPServer_Instructions(t *testing.T) {
 			}
 			messageBytes, err := json.Marshal(message)
 			assert.NoError(t, err)
-
-			response := server.HandleMessage(context.Background(), messageBytes)
+			header := map[string]string{"Authorization": "Bearer test"}
+			response := server.HandleMessage(context.Background(), header, messageBytes)
 			tt.validate(t, response)
 		})
 	}
@@ -1415,8 +1429,10 @@ func TestMCPServer_ResourceTemplates(t *testing.T) {
 	}`
 
 	t.Run("Get resource template", func(t *testing.T) {
+		header := map[string]string{"Authorization": "Bearer test"}
 		response := server.HandleMessage(
 			context.Background(),
+			header,
 			[]byte(listMessage),
 		)
 		assert.NotNil(t, response)
@@ -1436,9 +1452,9 @@ func TestMCPServer_ResourceTemplates(t *testing.T) {
 		assert.NoError(t, err)
 
 		assert.Equal(t, "test://{a}/test-resource{/b*}", resourceTemplate["uriTemplate"])
-
 		response = server.HandleMessage(
 			context.Background(),
+			header,
 			[]byte(message),
 		)
 
@@ -1626,16 +1642,16 @@ func TestMCPServer_WithHooks(t *testing.T) {
 			return &mcp.CallToolResult{}, nil
 		},
 	)
-
+	header := map[string]string{"Authorization": "Bearer test"}
 	// Initialize the server
-	_ = server.HandleMessage(context.Background(), []byte(`{
+	_ = server.HandleMessage(context.Background(), header, []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
 		"method": "initialize"
 	}`))
 
 	// Test 1: Verify ping method hooks
-	pingResponse := server.HandleMessage(context.Background(), []byte(`{
+	pingResponse := server.HandleMessage(context.Background(), header, []byte(`{
 		"jsonrpc": "2.0",
 		"id": 2,
 		"method": "ping"
@@ -1645,7 +1661,7 @@ func TestMCPServer_WithHooks(t *testing.T) {
 	assert.IsType(t, mcp.JSONRPCResponse{}, pingResponse)
 
 	// Test 2: Verify tools/list method hooks
-	toolsListResponse := server.HandleMessage(context.Background(), []byte(`{
+	toolsListResponse := server.HandleMessage(context.Background(), header, []byte(`{
 		"jsonrpc": "2.0",
 		"id": 3,
 		"method": "tools/list"
@@ -1655,7 +1671,7 @@ func TestMCPServer_WithHooks(t *testing.T) {
 	assert.IsType(t, mcp.JSONRPCResponse{}, toolsListResponse)
 
 	// Test 3: Verify error hooks with invalid tool
-	errorResponse := server.HandleMessage(context.Background(), []byte(`{
+	errorResponse := server.HandleMessage(context.Background(), header, []byte(`{
 		"jsonrpc": "2.0",
 		"id": 4,
 		"method": "tools/call",
@@ -1807,8 +1823,8 @@ func TestMCPServer_WithRecover(t *testing.T) {
 		mcp.NewTool("panic-tool"),
 		panicToolHandler,
 	)
-
-	response := server.HandleMessage(context.Background(), []byte(`{
+	header := map[string]string{"Authorization": "Bearer test"}
+	response := server.HandleMessage(context.Background(), header, []byte(`{
 		"jsonrpc": "2.0",
 		"id": 4,
 		"method": "tools/call",
@@ -2004,7 +2020,7 @@ func TestMCPServer_ProtocolNegotiation(t *testing.T) {
 			messageBytes, err := json.Marshal(initRequest)
 			assert.NoError(t, err)
 
-			response := server.HandleMessage(context.Background(), messageBytes)
+			response := server.HandleMessage(context.Background(), map[string]string{"Authorization": "Bearer test"}, messageBytes)
 			assert.NotNil(t, response)
 
 			resp, ok := response.(mcp.JSONRPCResponse)
@@ -2021,4 +2037,66 @@ func TestMCPServer_ProtocolNegotiation(t *testing.T) {
 			)
 		})
 	}
+}
+
+func TestMCPServer_HandleWithHeader(t *testing.T) {
+	allowedToolNamesCache := map[string]map[string]struct{}{
+		"test": {
+			"tool1": struct{}{},
+			"tool2": struct{}{},
+		},
+		"test2": {
+			"tool3": struct{}{},
+			"tool4": struct{}{},
+		},
+	}
+	myOnAfterListToolsFunc := func(ctx context.Context, id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
+		token := strings.TrimPrefix(message.Header["Authorization"], "Bearer ")
+		allowedToolNames := allowedToolNamesCache[token]
+		allowedTools := []mcp.Tool{}
+		for _, tool := range result.Tools {
+			if _, ok := allowedToolNames[tool.Name]; ok {
+				allowedTools = append(allowedTools, tool)
+			}
+		}
+		result.Tools = allowedTools
+	}
+	hooks := &Hooks{}
+	hooks.AddAfterListTools(myOnAfterListToolsFunc)
+	server := NewMCPServer(
+		"test-server",
+		"1.0.0",
+		WithHooks(hooks),
+	)
+	server.AddTool(mcp.NewTool("tool1"),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+	server.AddTool(mcp.NewTool("tool2"),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+	server.AddTool(mcp.NewTool("tool3"),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+	server.AddTool(mcp.NewTool("tool4"),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+	server.AddTool(mcp.NewTool("tool5"),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+	header := map[string]string{"Authorization": "Bearer test"}
+	response := server.HandleMessage(context.Background(), header, []byte(`{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "tools/list"
+	}`))
+	assert.IsType(t, mcp.JSONRPCResponse{}, response)
+	toolsListResponse := response.(mcp.JSONRPCResponse)
+	assert.IsType(t, mcp.ListToolsResult{}, toolsListResponse.Result)
+	listTools := toolsListResponse.Result.(mcp.ListToolsResult)
+	assert.Equal(t, 2, len(listTools.Tools))
 }
