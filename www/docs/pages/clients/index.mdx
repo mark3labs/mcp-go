@@ -1,0 +1,544 @@
+# Building MCP Clients
+
+Learn how to build MCP clients that connect to and interact with MCP servers. This section covers client creation, operations, and transport-specific implementations.
+
+## Overview
+
+MCP clients connect to servers to access tools, resources, and prompts. MCP-Go provides client implementations for all supported transports, making it easy to integrate MCP functionality into your applications.
+
+## What You'll Learn
+
+- **[Client Basics](/clients/basics)** - Creating and managing client lifecycle
+- **[Client Operations](/clients/operations)** - Using tools, resources, and prompts
+- **[Client Transports](/clients/transports)** - Transport-specific client implementations
+
+## Quick Example
+
+Here's a complete example showing how to create and use an MCP client:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/mcp"
+)
+
+func main() {
+    // Create STDIO client
+    c, err := client.NewStdioClient(
+        "go", "run", "/path/to/server/main.go",
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer c.Close()
+
+    ctx := context.Background()
+
+    // Initialize the connection
+    if err := c.Initialize(ctx); err != nil {
+        log.Fatal(err)
+    }
+
+    // Discover available capabilities
+    if err := demonstrateClientOperations(ctx, c); err != nil {
+        log.Fatal(err)
+    }
+}
+
+func demonstrateClientOperations(ctx context.Context, c client.Client) error {
+    // List available tools
+    tools, err := c.ListTools(ctx)
+    if err != nil {
+        return fmt.Errorf("failed to list tools: %w", err)
+    }
+
+    fmt.Printf("Available tools: %d\n", len(tools.Tools))
+    for _, tool := range tools.Tools {
+        fmt.Printf("- %s: %s\n", tool.Name, tool.Description)
+    }
+
+    // List available resources
+    resources, err := c.ListResources(ctx)
+    if err != nil {
+        return fmt.Errorf("failed to list resources: %w", err)
+    }
+
+    fmt.Printf("\nAvailable resources: %d\n", len(resources.Resources))
+    for _, resource := range resources.Resources {
+        fmt.Printf("- %s: %s\n", resource.URI, resource.Name)
+    }
+
+    // Call a tool if available
+    if len(tools.Tools) > 0 {
+        tool := tools.Tools[0]
+        fmt.Printf("\nCalling tool: %s\n", tool.Name)
+
+        result, err := c.CallTool(ctx, mcp.CallToolRequest{
+            Params: mcp.CallToolRequestParams{
+                Name: tool.Name,
+                Arguments: map[string]interface{}{
+                    // Add appropriate arguments based on tool schema
+                },
+            },
+        })
+        if err != nil {
+            return fmt.Errorf("tool call failed: %w", err)
+        }
+
+        fmt.Printf("Tool result: %+v\n", result)
+    }
+
+    // Read a resource if available
+    if len(resources.Resources) > 0 {
+        resource := resources.Resources[0]
+        fmt.Printf("\nReading resource: %s\n", resource.URI)
+
+        content, err := c.ReadResource(ctx, mcp.ReadResourceRequest{
+            Params: mcp.ReadResourceRequestParams{
+                URI: resource.URI,
+            },
+        })
+        if err != nil {
+            return fmt.Errorf("resource read failed: %w", err)
+        }
+
+        fmt.Printf("Resource content: %+v\n", content)
+    }
+
+    return nil
+}
+```
+
+## Client Types by Transport
+
+### STDIO Client
+**Best for:**
+- Command-line applications
+- Desktop software integration
+- Local development and testing
+- Single-server connections
+
+```go
+// Create STDIO client
+client, err := client.NewStdioClient("server-command", "arg1", "arg2")
+```
+
+### HTTP Client
+**Best for:**
+- Web applications
+- Microservice architectures
+- Load-balanced deployments
+- REST-like interactions
+
+```go
+// Create HTTP client
+client := client.NewHTTPClient("http://localhost:8080/mcp")
+```
+
+### SSE Client
+**Best for:**
+- Real-time web applications
+- Browser-based interfaces
+- Streaming data scenarios
+- Multi-client environments
+
+```go
+// Create SSE client
+client := client.NewSSEClient("http://localhost:8080/mcp/sse")
+```
+
+### In-Process Client
+**Best for:**
+- Testing and development
+- Embedded scenarios
+- High-performance applications
+- Library integrations
+
+```go
+// Create in-process client
+client := client.NewInProcessClient(server)
+```
+
+## Common Client Patterns
+
+### Connection Management
+
+```go
+type MCPClientManager struct {
+    client client.Client
+    ctx    context.Context
+    cancel context.CancelFunc
+}
+
+func NewMCPClientManager(clientType, address string) (*MCPClientManager, error) {
+    var c client.Client
+    var err error
+
+    switch clientType {
+    case "stdio":
+        c, err = client.NewStdioClient("server-command")
+    case "http":
+        c = client.NewHTTPClient(address)
+    case "sse":
+        c = client.NewSSEClient(address)
+    default:
+        return nil, fmt.Errorf("unknown client type: %s", clientType)
+    }
+
+    if err != nil {
+        return nil, err
+    }
+
+    ctx, cancel := context.WithCancel(context.Background())
+
+    manager := &MCPClientManager{
+        client: c,
+        ctx:    ctx,
+        cancel: cancel,
+    }
+
+    // Initialize connection
+    if err := c.Initialize(ctx); err != nil {
+        cancel()
+        return nil, fmt.Errorf("failed to initialize client: %w", err)
+    }
+
+    return manager, nil
+}
+
+func (m *MCPClientManager) Close() error {
+    m.cancel()
+    return m.client.Close()
+}
+```
+
+### Error Handling
+
+```go
+func handleClientErrors(ctx context.Context, c client.Client) {
+    // Tool call with error handling
+    result, err := c.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolRequestParams{
+            Name: "example_tool",
+            Arguments: map[string]interface{}{
+                "param": "value",
+            },
+        },
+    })
+
+    if err != nil {
+        switch {
+        case errors.Is(err, client.ErrConnectionLost):
+            log.Println("Connection lost, attempting reconnect...")
+            // Implement reconnection logic
+        case errors.Is(err, client.ErrToolNotFound):
+            log.Printf("Tool not found: %v", err)
+        case errors.Is(err, client.ErrInvalidArguments):
+            log.Printf("Invalid arguments: %v", err)
+        default:
+            log.Printf("Unexpected error: %v", err)
+        }
+        return
+    }
+
+    // Process successful result
+    processToolResult(result)
+}
+```
+
+### Retry Logic
+
+```go
+func callToolWithRetry(ctx context.Context, c client.Client, req mcp.CallToolRequest, maxRetries int) (*mcp.CallToolResult, error) {
+    var lastErr error
+
+    for attempt := 0; attempt <= maxRetries; attempt++ {
+        result, err := c.CallTool(ctx, req)
+        if err == nil {
+            return result, nil
+        }
+
+        lastErr = err
+
+        // Don't retry certain errors
+        if errors.Is(err, client.ErrInvalidArguments) ||
+           errors.Is(err, client.ErrToolNotFound) {
+            break
+        }
+
+        // Exponential backoff
+        if attempt < maxRetries {
+            backoff := time.Duration(1<<attempt) * time.Second
+            log.Printf("Attempt %d failed, retrying in %v: %v", attempt+1, backoff, err)
+            
+            select {
+            case <-time.After(backoff):
+            case <-ctx.Done():
+                return nil, ctx.Err()
+            }
+        }
+    }
+
+    return nil, fmt.Errorf("failed after %d attempts: %w", maxRetries+1, lastErr)
+}
+```
+
+## Integration Patterns
+
+### LLM Application Integration
+
+```go
+type LLMApplication struct {
+    mcpClient client.Client
+    llmClient LLMClient
+}
+
+func NewLLMApplication(mcpAddress string) (*LLMApplication, error) {
+    mcpClient := client.NewHTTPClient(mcpAddress)
+    
+    ctx := context.Background()
+    if err := mcpClient.Initialize(ctx); err != nil {
+        return nil, err
+    }
+
+    return &LLMApplication{
+        mcpClient: mcpClient,
+        llmClient: NewLLMClient(),
+    }, nil
+}
+
+func (app *LLMApplication) ProcessUserQuery(ctx context.Context, query string) (string, error) {
+    // Get available tools for the LLM
+    tools, err := app.mcpClient.ListTools(ctx)
+    if err != nil {
+        return "", err
+    }
+
+    // Send query to LLM with available tools
+    response, toolCalls, err := app.llmClient.Chat(ctx, query, tools.Tools)
+    if err != nil {
+        return "", err
+    }
+
+    // Execute any tool calls
+    for _, toolCall := range toolCalls {
+        result, err := app.mcpClient.CallTool(ctx, mcp.CallToolRequest{
+            Params: mcp.CallToolRequestParams{
+                Name:      toolCall.Name,
+                Arguments: toolCall.Arguments,
+            },
+        })
+        if err != nil {
+            return "", fmt.Errorf("tool call failed: %w", err)
+        }
+
+        // Send tool result back to LLM
+        response, err = app.llmClient.ContinueWithToolResult(ctx, toolCall.ID, result)
+        if err != nil {
+            return "", err
+        }
+    }
+
+    return response, nil
+}
+```
+
+### Multi-Server Client
+
+```go
+type MultiServerClient struct {
+    clients map[string]client.Client
+    mutex   sync.RWMutex
+}
+
+func NewMultiServerClient() *MultiServerClient {
+    return &MultiServerClient{
+        clients: make(map[string]client.Client),
+    }
+}
+
+func (msc *MultiServerClient) AddServer(name, address string, clientType string) error {
+    msc.mutex.Lock()
+    defer msc.mutex.Unlock()
+
+    var c client.Client
+    var err error
+
+    switch clientType {
+    case "http":
+        c = client.NewHTTPClient(address)
+    case "sse":
+        c = client.NewSSEClient(address)
+    default:
+        return fmt.Errorf("unsupported client type: %s", clientType)
+    }
+
+    ctx := context.Background()
+    if err := c.Initialize(ctx); err != nil {
+        return fmt.Errorf("failed to initialize client for %s: %w", name, err)
+    }
+
+    msc.clients[name] = c
+    return nil
+}
+
+func (msc *MultiServerClient) CallTool(ctx context.Context, serverName, toolName string, args map[string]interface{}) (*mcp.CallToolResult, error) {
+    msc.mutex.RLock()
+    c, exists := msc.clients[serverName]
+    msc.mutex.RUnlock()
+
+    if !exists {
+        return nil, fmt.Errorf("server not found: %s", serverName)
+    }
+
+    return c.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolRequestParams{
+            Name:      toolName,
+            Arguments: args,
+        },
+    })
+}
+
+func (msc *MultiServerClient) GetAllTools(ctx context.Context) (map[string][]mcp.Tool, error) {
+    msc.mutex.RLock()
+    defer msc.mutex.RUnlock()
+
+    allTools := make(map[string][]mcp.Tool)
+
+    for serverName, c := range msc.clients {
+        tools, err := c.ListTools(ctx)
+        if err != nil {
+            return nil, fmt.Errorf("failed to get tools from %s: %w", serverName, err)
+        }
+        allTools[serverName] = tools.Tools
+    }
+
+    return allTools, nil
+}
+```
+
+## Testing Client Code
+
+### Unit Testing
+
+```go
+func TestMCPClient(t *testing.T) {
+    // Create test server
+    server := server.NewMCPServer("Test Server", "1.0.0")
+    server.AddTool(
+        mcp.NewTool("test_tool",
+            mcp.WithDescription("Test tool"),
+            mcp.WithString("input", mcp.Required()),
+        ),
+        func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            input := req.Params.Arguments["input"].(string)
+            return mcp.NewToolResultText("Processed: " + input), nil
+        },
+    )
+
+    // Create in-process client for testing
+    client := client.NewInProcessClient(server)
+    defer client.Close()
+
+    ctx := context.Background()
+
+    // Test initialization
+    err := client.Initialize(ctx)
+    require.NoError(t, err)
+
+    // Test tool listing
+    tools, err := client.ListTools(ctx)
+    require.NoError(t, err)
+    assert.Len(t, tools.Tools, 1)
+    assert.Equal(t, "test_tool", tools.Tools[0].Name)
+
+    // Test tool call
+    result, err := client.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolRequestParams{
+            Name: "test_tool",
+            Arguments: map[string]interface{}{
+                "input": "test data",
+            },
+        },
+    })
+    require.NoError(t, err)
+    assert.Contains(t, result.Content[0].Text, "test data")
+}
+```
+
+### Integration Testing
+
+```go
+func TestClientServerIntegration(t *testing.T) {
+    // Start test server
+    server := startTestServer(t)
+    defer server.Close()
+
+    // Create HTTP client
+    client := client.NewHTTPClient("http://localhost:8080/mcp")
+    defer client.Close()
+
+    ctx := context.Background()
+
+    // Test full workflow
+    err := client.Initialize(ctx)
+    require.NoError(t, err)
+
+    // Test capabilities
+    tools, err := client.ListTools(ctx)
+    require.NoError(t, err)
+    assert.NotEmpty(t, tools.Tools)
+
+    resources, err := client.ListResources(ctx)
+    require.NoError(t, err)
+    assert.NotEmpty(t, resources.Resources)
+
+    // Test operations
+    for _, tool := range tools.Tools {
+        // Test each tool with valid arguments
+        result, err := client.CallTool(ctx, createValidToolRequest(tool))
+        assert.NoError(t, err)
+        assert.NotNil(t, result)
+    }
+}
+```
+
+## Best Practices
+
+### Connection Management
+- **Initialize once**: Create and initialize clients at application startup
+- **Handle disconnections**: Implement reconnection logic for network transports
+- **Clean shutdown**: Always close clients properly
+- **Connection pooling**: Reuse connections when possible
+
+### Error Handling
+- **Distinguish error types**: Handle different error categories appropriately
+- **Implement retries**: Retry transient failures with exponential backoff
+- **Log appropriately**: Log errors with sufficient context
+- **Graceful degradation**: Continue operation when possible
+
+### Performance
+- **Batch operations**: Group multiple calls when possible
+- **Cache results**: Cache expensive or frequently accessed data
+- **Use timeouts**: Set appropriate timeouts for all operations
+- **Monitor latency**: Track client performance metrics
+
+### Security
+- **Validate responses**: Don't trust server responses blindly
+- **Handle credentials**: Manage authentication tokens securely
+- **Use TLS**: Always use encrypted connections in production
+- **Rate limiting**: Respect server rate limits
+
+## Next Steps
+
+Explore each client topic in detail:
+
+- **[Client Basics](/clients/basics)** - Client lifecycle and error handling
+- **[Client Operations](/clients/operations)** - Tools, resources, and prompts
+- **[Client Transports](/clients/transports)** - Transport-specific implementations

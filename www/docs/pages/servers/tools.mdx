@@ -1,0 +1,735 @@
+# Implementing Tools
+
+Tools provide functionality that LLMs can invoke to take actions or perform computations. Think of them as function calls that extend the LLM's capabilities.
+
+## Tool Fundamentals
+
+Tools are the primary way LLMs interact with your server to perform actions. They have structured schemas that define parameters, types, and constraints, ensuring type-safe interactions.
+
+### Basic Tool Structure
+
+```go
+// Create a simple tool
+tool := mcp.NewTool("calculate",
+    mcp.WithDescription("Perform arithmetic operations"),
+    mcp.WithString("operation", 
+        mcp.Required(),
+        mcp.Enum("add", "subtract", "multiply", "divide"),
+        mcp.Description("The arithmetic operation to perform"),
+    ),
+    mcp.WithNumber("x", mcp.Required(), mcp.Description("First number")),
+    mcp.WithNumber("y", mcp.Required(), mcp.Description("Second number")),
+)
+```
+
+## Tool Definition
+
+### Parameter Types
+
+MCP-Go supports various parameter types with validation:
+
+```go
+// String parameters
+mcp.WithString("name", 
+    mcp.Required(),
+    mcp.Description("User's name"),
+    mcp.MinLength(1),
+    mcp.MaxLength(100),
+)
+
+// Number parameters  
+mcp.WithNumber("age",
+    mcp.Required(),
+    mcp.Description("User's age"),
+    mcp.Minimum(0),
+    mcp.Maximum(150),
+)
+
+// Integer parameters
+mcp.WithInteger("count",
+    mcp.Default(10),
+    mcp.Description("Number of items"),
+    mcp.Minimum(1),
+    mcp.Maximum(1000),
+)
+
+// Boolean parameters
+mcp.WithBoolean("enabled",
+    mcp.Default(true),
+    mcp.Description("Whether feature is enabled"),
+)
+
+// Array parameters
+mcp.WithArray("tags",
+    mcp.Description("List of tags"),
+    mcp.Items(mcp.StringSchema()),
+)
+
+// Object parameters
+mcp.WithObject("config",
+    mcp.Description("Configuration object"),
+    mcp.Properties(map[string]mcp.Schema{
+        "timeout": mcp.NumberSchema(),
+        "retries": mcp.IntegerSchema(),
+    }),
+)
+```
+
+### Enums and Constraints
+
+```go
+// Enum values
+mcp.WithString("priority",
+    mcp.Required(),
+    mcp.Enum("low", "medium", "high", "critical"),
+    mcp.Description("Task priority level"),
+)
+
+// String constraints
+mcp.WithString("email",
+    mcp.Required(),
+    mcp.Pattern(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`),
+    mcp.Description("Valid email address"),
+)
+
+// Number constraints
+mcp.WithNumber("price",
+    mcp.Required(),
+    mcp.Minimum(0),
+    mcp.ExclusiveMaximum(10000),
+    mcp.Description("Product price in USD"),
+)
+```
+
+## Tool Handlers
+
+Tool handlers process the actual function calls from LLMs. MCP-Go provides convenient helper methods for safe parameter extraction.
+
+### Parameter Extraction Methods
+
+MCP-Go offers several helper methods on `CallToolRequest` for type-safe parameter access:
+
+```go
+// Required parameters - return error if missing or wrong type
+name, err := req.RequireString("name")
+age, err := req.RequireInt("age") 
+price, err := req.RequireFloat("price")
+enabled, err := req.RequireBool("enabled")
+
+// Optional parameters with defaults
+name := req.GetString("name", "default")
+count := req.GetInt("count", 10)
+price := req.GetFloat("price", 0.0)
+enabled := req.GetBool("enabled", false)
+
+// Structured data binding
+type Config struct {
+    Timeout int    `json:"timeout"`
+    Retries int    `json:"retries"`
+    Debug   bool   `json:"debug"`
+}
+var config Config
+if err := req.BindArguments(&config); err != nil {
+    return mcp.NewToolResultError(err.Error()), nil
+}
+
+// Raw access (for backward compatibility)
+args := req.GetArguments() // returns map[string]any
+rawArgs := req.GetRawArguments() // returns any
+```
+
+### Basic Handler Pattern
+
+```go
+func handleCalculate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Extract parameters using helper methods
+    operation, err := req.RequireString("operation")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    x, err := req.RequireFloat("x")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    y, err := req.RequireFloat("y")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    // Perform calculation
+    var result float64
+    switch operation {
+    case "add":
+        result = x + y
+    case "subtract":
+        result = x - y
+    case "multiply":
+        result = x * y
+    case "divide":
+        if y == 0 {
+            return mcp.NewToolResultError("division by zero"), nil
+        }
+        result = x / y
+    default:
+        return mcp.NewToolResultError(fmt.Sprintf("unknown operation: %s", operation)), nil
+    }
+    
+    // Return result
+    return mcp.NewToolResultText(fmt.Sprintf("%.2f", result)), nil
+}
+```
+
+### File Operations Tool
+
+```go
+func main() {
+    s := server.NewMCPServer("File Tools", "1.0.0",
+        server.WithToolCapabilities(true),
+    )
+
+    // File creation tool
+    createFileTool := mcp.NewTool("create_file",
+        mcp.WithDescription("Create a new file with content"),
+        mcp.WithString("path", 
+            mcp.Required(),
+            mcp.Description("File path to create"),
+        ),
+        mcp.WithString("content",
+            mcp.Required(), 
+            mcp.Description("File content"),
+        ),
+        mcp.WithString("encoding",
+            mcp.Default("utf-8"),
+            mcp.Enum("utf-8", "ascii", "base64"),
+            mcp.Description("File encoding"),
+        ),
+    )
+
+    s.AddTool(createFileTool, handleCreateFile)
+    server.ServeStdio(s)
+}
+
+func handleCreateFile(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    path, err := req.RequireString("path")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    content, err := req.RequireString("content")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    encoding := req.GetString("encoding", "utf-8")
+    
+    // Validate path for security
+    if strings.Contains(path, "..") {
+        return mcp.NewToolResultError("invalid path: directory traversal not allowed"), nil
+    }
+    
+    // Handle different encodings
+    var data []byte
+    switch encoding {
+    case "utf-8":
+        data = []byte(content)
+    case "ascii":
+        data = []byte(content)
+    case "base64":
+        var err error
+        data, err = base64.StdEncoding.DecodeString(content)
+        if err != nil {
+            return mcp.NewToolResultError(fmt.Sprintf("invalid base64 content: %v", err)), nil
+        }
+    }
+    
+    // Create file
+    if err := os.WriteFile(path, data, 0644); err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to create file: %v", err)), nil
+    }
+    
+    return mcp.NewToolResultText(fmt.Sprintf("File created successfully: %s", path)), nil
+}
+```
+
+### Database Query Tool
+
+```go
+func handleDatabaseQuery(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    query, err := req.RequireString("query")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    // Handle optional params array
+    var params []interface{}
+    if err := req.BindArguments(&struct {
+        Query  string        `json:"query"`
+        Params []interface{} `json:"params"`
+    }{Params: params}); err == nil {
+        // params extracted successfully
+    }
+    
+    // Validate query for security (basic example)
+    if !isSelectQuery(query) {
+        return mcp.NewToolResultError("only SELECT queries are allowed"), nil
+    }
+    
+    // Execute query with timeout
+    ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+    defer cancel()
+    
+    rows, err := db.QueryContext(ctx, query, params...)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("query failed: %v", err)), nil
+    }
+    defer rows.Close()
+    
+    // Convert results to JSON
+    results, err := rowsToJSON(rows)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to process results: %v", err)), nil
+    }
+    
+    return mcp.NewToolResultJSON(map[string]interface{}{
+        "query":   query,
+        "results": results,
+        "count":   len(results),
+    }), nil
+}
+
+func isSelectQuery(query string) bool {
+    trimmed := strings.TrimSpace(strings.ToUpper(query))
+    return strings.HasPrefix(trimmed, "SELECT")
+}
+```
+
+### HTTP Request Tool
+
+```go
+func handleHTTPRequest(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    url, err := req.RequireString("url")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    method, err := req.RequireString("method")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    body := req.GetString("body", "")
+    
+    // Handle headers (optional object parameter)
+    var headers map[string]interface{}
+    if args := req.GetArguments(); args != nil {
+        if h, ok := args["headers"].(map[string]interface{}); ok {
+            headers = h
+        }
+    }
+    
+    // Create HTTP request
+    httpReq, err := http.NewRequestWithContext(ctx, method, url, strings.NewReader(body))
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to create request: %v", err)), nil
+    }
+    
+    // Add headers
+    for key, value := range headers {
+        httpReq.Header.Set(key, fmt.Sprintf("%v", value))
+    }
+    
+    // Execute request with timeout
+    client := &http.Client{Timeout: 30 * time.Second}
+    resp, err := client.Do(httpReq)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("request failed: %v", err)), nil
+    }
+    defer resp.Body.Close()
+    
+    // Read response
+    respBody, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to read response: %v", err)), nil
+    }
+    
+    return mcp.NewToolResultJSON(map[string]interface{}{
+        "status_code": resp.StatusCode,
+        "headers":     resp.Header,
+        "body":        string(respBody),
+    }), nil
+}
+```
+
+## Argument Validation
+
+### Type-Safe Parameter Extraction
+
+MCP-Go provides helper methods for safe parameter extraction:
+
+```go
+func handleValidatedTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Required parameters with validation
+    name, err := req.RequireString("name")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    age, err := req.RequireFloat("age")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    // Optional parameter with default
+    enabled := req.GetBool("enabled", true)
+    
+    // Validate constraints
+    if len(name) == 0 {
+        return mcp.NewToolResultError("name cannot be empty"), nil
+    }
+    
+    if age < 0 || age > 150 {
+        return mcp.NewToolResultError("age must be between 0 and 150"), nil
+    }
+    
+    // Process with validated parameters
+    result := processUser(name, int(age), enabled)
+    return mcp.NewToolResultJSON(result), nil
+}
+```
+
+### Available Helper Methods
+
+```go
+// Required parameters (return error if missing or wrong type)
+name, err := req.RequireString("name")
+age, err := req.RequireInt("age")
+price, err := req.RequireFloat("price")
+enabled, err := req.RequireBool("enabled")
+
+// Optional parameters with defaults
+name := req.GetString("name", "default")
+count := req.GetInt("count", 10)
+price := req.GetFloat("price", 0.0)
+enabled := req.GetBool("enabled", false)
+
+// Structured data binding
+type UserData struct {
+    Name string `json:"name"`
+    Age  int    `json:"age"`
+}
+var user UserData
+if err := req.BindArguments(&user); err != nil {
+    return mcp.NewToolResultError(err.Error()), nil
+}
+```
+```
+
+### Custom Validation Functions
+
+```go
+func validateEmail(email string) error {
+    emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+    if !emailRegex.MatchString(email) {
+        return fmt.Errorf("invalid email format")
+    }
+    return nil
+}
+
+func validateURL(url string) error {
+    parsed, err := url.Parse(url)
+    if err != nil {
+        return fmt.Errorf("invalid URL format: %w", err)
+    }
+    
+    if parsed.Scheme != "http" && parsed.Scheme != "https" {
+        return fmt.Errorf("URL must use http or https scheme")
+    }
+    
+    return nil
+}
+```
+
+## Result Types
+
+### Text Results
+
+```go
+func handleTextTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    message := "Operation completed successfully"
+    return mcp.NewToolResultText(message), nil
+}
+```
+
+### JSON Results
+
+```go
+func handleJSONTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    result := map[string]interface{}{
+        "status":    "success",
+        "timestamp": time.Now().Unix(),
+        "data": map[string]interface{}{
+            "processed": 42,
+            "errors":    0,
+        },
+    }
+    return mcp.NewToolResultJSON(result), nil
+}
+```
+
+### Multiple Content Types
+
+```go
+func handleMultiContentTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    data := map[string]interface{}{
+        "name": "John Doe",
+        "age":  30,
+    }
+    
+    return &mcp.CallToolResult{
+        Content: []mcp.Content{
+            {
+                Type: "text",
+                Text: "User information retrieved successfully",
+            },
+            {
+                Type: "text",
+                Text: fmt.Sprintf("Name: %s, Age: %d", data["name"], data["age"]),
+            },
+        },
+    }, nil
+}
+```
+
+### Error Results
+
+```go
+func handleToolWithErrors(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // For validation errors, return error result (not Go error)
+    name, err := req.RequireString("name")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    // For business logic errors, also return error result
+    if someCondition {
+        return mcp.NewToolResultError("invalid input: " + reason), nil
+    }
+    
+    // For system errors, you can return Go errors
+    if systemError {
+        return nil, fmt.Errorf("system failure: %v", err)
+    }
+    
+    // Or return structured error information
+    return &mcp.CallToolResult{
+        Content: []mcp.Content{
+            {
+                Type: "text", 
+                Text: "Operation failed",
+            },
+        },
+        IsError: true,
+    }, nil
+}
+```
+
+## Tool Annotations
+
+Provide hints to help LLMs use your tools effectively:
+
+```go
+tool := mcp.NewTool("search_database",
+    mcp.WithDescription("Search the product database"),
+    mcp.WithString("query",
+        mcp.Required(),
+        mcp.Description("Search query (supports wildcards with *)"),
+    ),
+    mcp.WithInteger("limit",
+        mcp.Default(10),
+        mcp.Minimum(1),
+        mcp.Maximum(100),
+        mcp.Description("Maximum number of results to return"),
+    ),
+    mcp.WithArray("categories",
+        mcp.Description("Filter by product categories"),
+        mcp.Items(mcp.StringSchema()),
+    ),
+    // Add usage examples
+    mcp.WithExamples([]mcp.ToolExample{
+        {
+            Description: "Search for laptops",
+            Arguments: map[string]interface{}{
+                "query": "laptop*",
+                "limit": 5,
+                "categories": []string{"electronics", "computers"},
+            },
+        },
+        {
+            Description: "Find all products in electronics category",
+            Arguments: map[string]interface{}{
+                "query": "*",
+                "categories": []string{"electronics"},
+            },
+        },
+    }),
+)
+```
+
+## Advanced Tool Patterns
+
+### Streaming Results
+
+For long-running operations, consider streaming results:
+
+```go
+func handleStreamingTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // For operations that take time, provide progress updates
+    results := []string{}
+    
+    for i := 0; i < 10; i++ {
+        // Simulate work
+        time.Sleep(100 * time.Millisecond)
+        
+        // Check for cancellation
+        select {
+        case <-ctx.Done():
+            return nil, ctx.Err()
+        default:
+        }
+        
+        results = append(results, fmt.Sprintf("Processed item %d", i+1))
+    }
+    
+    return mcp.NewToolResultJSON(map[string]interface{}{
+        "status":  "completed",
+        "results": results,
+    }), nil
+}
+```
+
+### Conditional Tools
+
+Tools that are only available under certain conditions:
+
+```go
+func addConditionalTools(s *server.MCPServer, userRole string) {
+    // Admin-only tools
+    if userRole == "admin" {
+        adminTool := mcp.NewTool("delete_user",
+            mcp.WithDescription("Delete a user account (admin only)"),
+            mcp.WithString("user_id", mcp.Required()),
+        )
+        s.AddTool(adminTool, handleDeleteUser)
+    }
+    
+    // User tools available to all
+    userTool := mcp.NewTool("get_profile",
+        mcp.WithDescription("Get user profile information"),
+    )
+    s.AddTool(userTool, handleGetProfile)
+}
+```
+
+## Testing Tools
+
+Test your tool implementations thoroughly:
+
+```go
+func TestCalculateTool(t *testing.T) {
+    tests := []struct {
+        name      string
+        operation string
+        x, y      float64
+        expected  string
+        wantError bool
+    }{
+        {"add", "add", 2, 3, "5.00", false},
+        {"subtract", "subtract", 5, 3, "2.00", false},
+        {"multiply", "multiply", 4, 3, "12.00", false},
+        {"divide", "divide", 10, 2, "5.00", false},
+        {"divide by zero", "divide", 10, 0, "", true},
+        {"invalid operation", "invalid", 1, 2, "", true},
+    }
+    
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            req := mcp.CallToolRequest{
+                Params: mcp.CallToolRequestParams{
+                    Name: "calculate",
+                    Arguments: map[string]interface{}{
+                        "operation": tt.operation,
+                        "x":         tt.x,
+                        "y":         tt.y,
+                    },
+                },
+            }
+            
+            result, err := handleCalculate(context.Background(), req)
+            
+            if tt.wantError {
+                // For tool errors, result should have IsError=true or be an error result
+                assert.True(t, err != nil || (result != nil && result.IsError))
+            } else {
+                assert.NoError(t, err)
+                assert.False(t, result.IsError)
+                assert.Equal(t, tt.expected, result.Content[0].Text)
+            }
+        })
+    }
+}
+```
+
+## Best Practices
+
+### Error Handling Strategy
+
+MCP distinguishes between two types of errors:
+
+1. **Tool Errors** - Business logic errors that the LLM should see and potentially recover from:
+   ```go
+   // Use mcp.NewToolResultError() for validation and business logic errors
+   if age < 0 {
+       return mcp.NewToolResultError("age cannot be negative"), nil
+   }
+   ```
+
+2. **System Errors** - Infrastructure errors that indicate server problems:
+   ```go
+   // Return Go errors for system failures
+   if err := database.Connect(); err != nil {
+       return nil, fmt.Errorf("database connection failed: %w", err)
+   }
+   ```
+
+### Security
+- Validate all input parameters thoroughly
+- Sanitize file paths and database queries
+- Implement proper access controls
+- Use timeouts for external operations
+- Never execute arbitrary code from parameters
+
+### Performance
+- Use context cancellation for long operations
+- Implement proper timeouts
+- Consider caching for expensive operations
+- Stream large results when possible
+
+### Error Handling
+- Return descriptive error messages
+- Use structured error responses when helpful
+- Log errors for debugging
+- Handle edge cases gracefully
+
+### Documentation
+- Provide clear tool descriptions
+- Include parameter constraints and examples
+- Document expected return formats
+- Add usage examples for complex tools
+
+## Next Steps
+
+- **[Prompts](/servers/prompts)** - Learn to create reusable interaction templates
+- **[Advanced Features](/servers/advanced)** - Explore typed tools, middleware, and hooks
+- **[Testing](/testing)** - Learn comprehensive testing strategies

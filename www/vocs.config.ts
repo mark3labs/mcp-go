@@ -10,6 +10,92 @@ export default defineConfig({
       link: '/getting-started',
     },
     {
+      text: 'Quick Start',
+      link: '/quick-start',
+    },
+    {
+      text: 'Core Concepts',
+      link: '/core-concepts',
+    },
+    {
+      text: 'Building MCP Servers',
+      collapsed: false,
+      items: [
+        {
+          text: 'Overview',
+          link: '/servers',
+        },
+        {
+          text: 'Server Basics',
+          link: '/servers/basics',
+        },
+        {
+          text: 'Resources',
+          link: '/servers/resources',
+        },
+        {
+          text: 'Tools',
+          link: '/servers/tools',
+        },
+        {
+          text: 'Prompts',
+          link: '/servers/prompts',
+        },
+        {
+          text: 'Advanced Features',
+          link: '/servers/advanced',
+        },
+      ],
+    },
+    {
+      text: 'Transport Options',
+      collapsed: false,
+      items: [
+        {
+          text: 'Overview',
+          link: '/transports',
+        },
+        {
+          text: 'STDIO Transport',
+          link: '/transports/stdio',
+        },
+        {
+          text: 'SSE Transport',
+          link: '/transports/sse',
+        },
+        {
+          text: 'HTTP Transport',
+          link: '/transports/http',
+        },
+        {
+          text: 'In-Process Transport',
+          link: '/transports/inprocess',
+        },
+      ],
+    },
+    {
+      text: 'Building MCP Clients',
+      collapsed: false,
+      items: [
+        {
+          text: 'Overview',
+          link: '/clients',
+        },
+        {
+          text: 'Client Basics',
+          link: '/clients/basics',
+        },
+        {
+          text: 'Client Operations',
+          link: '/clients/operations',
+        },
+        {
+          text: 'Client Transports',
+          link: '/clients/transports',
+        },
+      ],
+    },
+    {
       text: 'Example',
       link: '/example',
     },

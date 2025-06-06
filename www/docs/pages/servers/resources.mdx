@@ -1,0 +1,524 @@
+# Implementing Resources
+
+Resources expose data to LLMs in a read-only manner. Think of them as GET endpoints that provide access to files, databases, APIs, or any other data source.
+
+## Resource Fundamentals
+
+Resources in MCP are identified by URIs and can be either static (fixed content) or dynamic (generated on-demand). They're perfect for giving LLMs access to documentation, configuration files, database records, or API responses.
+
+### Basic Resource Structure
+
+```go
+// Create a simple resource
+resource := mcp.NewResource(
+    "docs://readme",           // URI - unique identifier
+    "Project README",          // Name - human-readable
+    mcp.WithResourceDescription("Main project documentation"),
+    mcp.WithMIMEType("text/markdown"),
+)
+```
+
+## Static Resources
+
+Static resources have fixed URIs and typically serve predetermined content.
+
+### File-Based Resources
+
+Expose files from your filesystem:
+
+```go
+func main() {
+    s := server.NewMCPServer("File Server", "1.0.0",
+        server.WithResourceCapabilities(true),
+    )
+
+    // Add a static file resource
+    s.AddResource(
+        mcp.NewResource(
+            "file://README.md",
+            "Project README",
+            mcp.WithResourceDescription("Main project documentation"),
+            mcp.WithMIMEType("text/markdown"),
+        ),
+        handleReadmeFile,
+    )
+
+    server.ServeStdio(s)
+}
+
+func handleReadmeFile(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+    content, err := os.ReadFile("README.md")
+    if err != nil {
+        return nil, fmt.Errorf("failed to read README: %w", err)
+    }
+
+    return &mcp.ReadResourceResult{
+        Contents: []mcp.ResourceContent{
+            {
+                URI:      req.Params.URI,
+                MIMEType: "text/markdown",
+                Text:     string(content),
+            },
+        },
+    }, nil
+}
+```
+
+### Configuration Resources
+
+Expose application configuration:
+
+```go
+// Configuration resource
+s.AddResource(
+    mcp.NewResource(
+        "config://app",
+        "Application Configuration", 
+        mcp.WithResourceDescription("Current application settings"),
+        mcp.WithMIMEType("application/json"),
+    ),
+    handleAppConfig,
+)
+
+func handleAppConfig(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+    config := map[string]interface{}{
+        "database_url": os.Getenv("DATABASE_URL"),
+        "debug_mode":   os.Getenv("DEBUG") == "true",
+        "version":      "1.0.0",
+        "features": []string{
+            "authentication",
+            "caching", 
+            "logging",
+        },
+    }
+
+    return mcp.NewResourceResultJSON(config), nil
+}
+```
+
+## Dynamic Resources
+
+Dynamic resources use URI templates with parameters, allowing for flexible, parameterized access to data.
+
+### URI Templates
+
+Use `{parameter}` syntax for dynamic parts:
+
+```go
+// User profile resource with dynamic user ID
+s.AddResource(
+    mcp.NewResource(
+        "users://{user_id}",
+        "User Profile",
+        mcp.WithResourceDescription("User profile information"),
+        mcp.WithMIMEType("application/json"),
+    ),
+    handleUserProfile,
+)
+
+func handleUserProfile(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+    // Extract user_id from URI
+    userID := extractUserID(req.Params.URI) // "users://123" -> "123"
+    
+    // Fetch user data (from database, API, etc.)
+    user, err := getUserFromDB(userID)
+    if err != nil {
+        return nil, fmt.Errorf("user not found: %w", err)
+    }
+
+    return mcp.NewResourceResultJSON(user), nil
+}
+
+func extractUserID(uri string) string {
+    // Extract ID from "users://123" format
+    parts := strings.Split(uri, "://")
+    if len(parts) == 2 {
+        return parts[1]
+    }
+    return ""
+}
+```
+
+### Database Resources
+
+Expose database records dynamically:
+
+```go
+// Database table resource
+s.AddResource(
+    mcp.NewResource(
+        "db://{table}/{id}",
+        "Database Record",
+        mcp.WithResourceDescription("Access database records by table and ID"),
+        mcp.WithMIMEType("application/json"),
+    ),
+    handleDatabaseRecord,
+)
+
+func handleDatabaseRecord(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+    table, id := parseDBURI(req.Params.URI) // "db://users/123" -> "users", "123"
+    
+    // Validate table name for security
+    allowedTables := map[string]bool{
+        "users":    true,
+        "products": true,
+        "orders":   true,
+    }
+    
+    if !allowedTables[table] {
+        return nil, fmt.Errorf("table not accessible: %s", table)
+    }
+
+    // Query database
+    query := fmt.Sprintf("SELECT * FROM %s WHERE id = ?", table)
+    row := db.QueryRowContext(ctx, query, id)
+    
+    var data map[string]interface{}
+    if err := scanRowToMap(row, &data); err != nil {
+        return nil, fmt.Errorf("record not found: %w", err)
+    }
+
+    return mcp.NewResourceResultJSON(data), nil
+}
+```
+
+### API Resources
+
+Proxy external APIs through resources:
+
+```go
+// Weather API resource
+s.AddResource(
+    mcp.NewResource(
+        "weather://{location}",
+        "Weather Data",
+        mcp.WithResourceDescription("Current weather for a location"),
+        mcp.WithMIMEType("application/json"),
+    ),
+    handleWeatherData,
+)
+
+func handleWeatherData(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+    location := extractLocation(req.Params.URI)
+    
+    // Call external weather API
+    apiURL := fmt.Sprintf("https://api.weather.com/v1/current?location=%s&key=%s", 
+        url.QueryEscape(location), os.Getenv("WEATHER_API_KEY"))
+    
+    resp, err := http.Get(apiURL)
+    if err != nil {
+        return nil, fmt.Errorf("weather API error: %w", err)
+    }
+    defer resp.Body.Close()
+
+    body, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return nil, fmt.Errorf("failed to read response: %w", err)
+    }
+
+    return &mcp.ReadResourceResult{
+        Contents: []mcp.ResourceContent{
+            {
+                URI:      req.Params.URI,
+                MIMEType: "application/json",
+                Text:     string(body),
+            },
+        },
+    }, nil
+}
+```
+
+## Content Types
+
+Resources can serve different types of content with appropriate MIME types.
+
+### Text Content
+
+```go
+func handleTextResource(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+    content := "This is plain text content"
+    
+    return &mcp.ReadResourceResult{
+        Contents: []mcp.ResourceContent{
+            {
+                URI:      req.Params.URI,
+                MIMEType: "text/plain",
+                Text:     content,
+            },
+        },
+    }, nil
+}
+```
+
+### JSON Content
+
+```go
+func handleJSONResource(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+    data := map[string]interface{}{
+        "message": "Hello, World!",
+        "timestamp": time.Now().Unix(),
+        "status": "success",
+    }
+    
+    return mcp.NewResourceResultJSON(data), nil
+}
+```
+
+### Binary Content
+
+```go
+func handleImageResource(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+    imageData, err := os.ReadFile("logo.png")
+    if err != nil {
+        return nil, err
+    }
+    
+    // Encode binary data as base64
+    encoded := base64.StdEncoding.EncodeToString(imageData)
+    
+    return &mcp.ReadResourceResult{
+        Contents: []mcp.ResourceContent{
+            {
+                URI:      req.Params.URI,
+                MIMEType: "image/png",
+                Blob:     encoded,
+            },
+        },
+    }, nil
+}
+```
+
+### Multiple Content Types
+
+A single resource can return multiple content representations:
+
+```go
+func handleMultiFormatResource(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+    data := map[string]interface{}{
+        "name": "John Doe",
+        "age":  30,
+        "city": "New York",
+    }
+    
+    // JSON representation
+    jsonData, _ := json.Marshal(data)
+    
+    // Text representation  
+    textData := fmt.Sprintf("Name: %s\nAge: %d\nCity: %s", 
+        data["name"], data["age"], data["city"])
+    
+    return &mcp.ReadResourceResult{
+        Contents: []mcp.ResourceContent{
+            {
+                URI:      req.Params.URI,
+                MIMEType: "application/json",
+                Text:     string(jsonData),
+            },
+            {
+                URI:      req.Params.URI,
+                MIMEType: "text/plain", 
+                Text:     textData,
+            },
+        },
+    }, nil
+}
+```
+
+## Error Handling
+
+Proper error handling ensures robust resource access:
+
+### Common Error Patterns
+
+```go
+func handleResourceWithErrors(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+    // Validate URI format
+    if !isValidURI(req.Params.URI) {
+        return nil, fmt.Errorf("invalid URI format: %s", req.Params.URI)
+    }
+    
+    // Check permissions
+    if !hasPermission(ctx, req.Params.URI) {
+        return nil, fmt.Errorf("access denied to resource: %s", req.Params.URI)
+    }
+    
+    // Handle resource not found
+    data, err := fetchResourceData(req.Params.URI)
+    if err != nil {
+        if errors.Is(err, ErrResourceNotFound) {
+            return nil, fmt.Errorf("resource not found: %s", req.Params.URI)
+        }
+        return nil, fmt.Errorf("failed to fetch resource: %w", err)
+    }
+    
+    return mcp.NewResourceResultJSON(data), nil
+}
+```
+
+### Timeout Handling
+
+```go
+func handleResourceWithTimeout(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+    // Create timeout context
+    ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+    defer cancel()
+    
+    // Use context in operations
+    data, err := fetchDataWithContext(ctx, req.Params.URI)
+    if err != nil {
+        if errors.Is(err, context.DeadlineExceeded) {
+            return nil, fmt.Errorf("resource fetch timeout: %s", req.Params.URI)
+        }
+        return nil, err
+    }
+    
+    return mcp.NewResourceResultJSON(data), nil
+}
+```
+
+## Resource Listing
+
+Implement resource discovery for clients:
+
+```go
+func main() {
+    s := server.NewMCPServer("Resource Server", "1.0.0",
+        server.WithResourceCapabilities(true),
+    )
+
+    // Add multiple resources
+    resources := []struct {
+        uri         string
+        name        string
+        description string
+        mimeType    string
+        handler     server.ResourceHandler
+    }{
+        {"docs://readme", "README", "Project documentation", "text/markdown", handleReadme},
+        {"config://app", "App Config", "Application settings", "application/json", handleConfig},
+        {"users://{id}", "User Profile", "User information", "application/json", handleUser},
+    }
+
+    for _, r := range resources {
+        s.AddResource(
+            mcp.NewResource(r.uri, r.name,
+                mcp.WithResourceDescription(r.description),
+                mcp.WithMIMEType(r.mimeType),
+            ),
+            r.handler,
+        )
+    }
+
+    server.ServeStdio(s)
+}
+```
+
+## Caching Resources
+
+Implement caching for expensive resources:
+
+```go
+type CachedResourceHandler struct {
+    cache map[string]cacheEntry
+    mutex sync.RWMutex
+    ttl   time.Duration
+}
+
+type cacheEntry struct {
+    data      *mcp.ReadResourceResult
+    timestamp time.Time
+}
+
+func (h *CachedResourceHandler) HandleResource(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+    h.mutex.RLock()
+    if entry, exists := h.cache[req.Params.URI]; exists {
+        if time.Since(entry.timestamp) < h.ttl {
+            h.mutex.RUnlock()
+            return entry.data, nil
+        }
+    }
+    h.mutex.RUnlock()
+
+    // Fetch fresh data
+    data, err := h.fetchFreshData(ctx, req)
+    if err != nil {
+        return nil, err
+    }
+
+    // Cache the result
+    h.mutex.Lock()
+    h.cache[req.Params.URI] = cacheEntry{
+        data:      data,
+        timestamp: time.Now(),
+    }
+    h.mutex.Unlock()
+
+    return data, nil
+}
+```
+
+## Testing Resources
+
+Test your resource implementations:
+
+```go
+func TestResourceHandler(t *testing.T) {
+    req := mcp.ReadResourceRequest{
+        Params: mcp.ReadResourceRequestParams{
+            URI: "test://example",
+        },
+    }
+
+    result, err := handleTestResource(context.Background(), req)
+    
+    assert.NoError(t, err)
+    assert.NotNil(t, result)
+    assert.Len(t, result.Contents, 1)
+    assert.Equal(t, "test://example", result.Contents[0].URI)
+}
+
+func TestDynamicResource(t *testing.T) {
+    req := mcp.ReadResourceRequest{
+        Params: mcp.ReadResourceRequestParams{
+            URI: "users://123",
+        },
+    }
+
+    result, err := handleUserProfile(context.Background(), req)
+    
+    assert.NoError(t, err)
+    assert.Contains(t, result.Contents[0].Text, "123")
+}
+```
+
+## Best Practices
+
+### Security
+- Validate all URI parameters
+- Implement proper access controls
+- Sanitize file paths to prevent directory traversal
+- Use allowlists for database table access
+
+### Performance
+- Implement caching for expensive operations
+- Use context timeouts for external API calls
+- Consider pagination for large datasets
+- Stream large files when possible
+
+### Error Handling
+- Return descriptive error messages
+- Use appropriate HTTP status codes
+- Log errors for debugging
+- Handle network timeouts gracefully
+
+### URI Design
+- Use clear, hierarchical URI schemes
+- Follow REST-like conventions
+- Make URIs predictable and discoverable
+- Document URI templates clearly
+
+## Next Steps
+
+- **[Tools](/servers/tools)** - Learn to implement interactive functionality
+- **[Prompts](/servers/prompts)** - Create reusable interaction templates
+- **[Advanced Features](/servers/advanced)** - Explore hooks, middleware, and more

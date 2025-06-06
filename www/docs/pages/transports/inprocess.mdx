@@ -1,0 +1,821 @@
+# In-Process Transport
+
+In-process transport enables direct integration of MCP servers within the same process, eliminating serialization overhead and providing the highest performance option for embedded scenarios.
+
+## Use Cases
+
+In-process transport is perfect for:
+
+- **Embedded servers**: MCP functionality within existing applications
+- **Testing and development**: Fast, reliable testing without network overhead
+- **High-performance scenarios**: Microsecond latency requirements
+- **Library integrations**: MCP as a library component
+- **Single-process architectures**: Monolithic applications with MCP capabilities
+
+**Example applications:**
+- Game engines with AI tool integration
+- Real-time trading systems
+- Embedded analytics engines
+- Testing frameworks
+- Desktop applications with plugin architectures
+- High-frequency data processing
+
+## Implementation
+
+### Basic In-Process Server
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "time"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/client"
+)
+
+func main() {
+    // Create server
+    s := server.NewMCPServer("In-Process Server", "1.0.0",
+        server.WithToolCapabilities(true),
+        server.WithResourceCapabilities(true),
+    )
+
+    // Add high-performance tools
+    s.AddTool(
+        mcp.NewTool("fast_calculation",
+            mcp.WithDescription("Perform fast mathematical calculations"),
+            mcp.WithString("operation", mcp.Required()),
+            mcp.WithArray("numbers", mcp.Required()),
+        ),
+        handleFastCalculation,
+    )
+
+    s.AddTool(
+        mcp.NewTool("process_data",
+            mcp.WithDescription("Process data with zero-copy operations"),
+            mcp.WithObject("data", mcp.Required()),
+            mcp.WithString("algorithm", mcp.Default("default")),
+        ),
+        handleProcessData,
+    )
+
+    // Add in-memory resources
+    s.AddResource(
+        mcp.NewResource(
+            "memory://cache/{key}",
+            "Memory Cache",
+            mcp.WithResourceDescription("In-memory cached data"),
+            mcp.WithMIMEType("application/json"),
+        ),
+        handleMemoryCache,
+    )
+
+    // Create in-process client
+    client := client.NewInProcessClient(s)
+    defer client.Close()
+
+    ctx := context.Background()
+
+    // Initialize (no network overhead)
+    if err := client.Initialize(ctx); err != nil {
+        log.Fatal(err)
+    }
+
+    // Demonstrate high-performance operations
+    demonstratePerformance(ctx, client)
+}
+
+func handleFastCalculation(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    operation := req.Params.Arguments["operation"].(string)
+    numbers := req.Params.Arguments["numbers"].([]interface{})
+
+    // Convert to float64 slice
+    values := make([]float64, len(numbers))
+    for i, n := range numbers {
+        values[i] = n.(float64)
+    }
+
+    // Perform calculation
+    var result float64
+    switch operation {
+    case "sum":
+        for _, v := range values {
+            result += v
+        }
+    case "product":
+        result = 1
+        for _, v := range values {
+            result *= v
+        }
+    case "average":
+        sum := 0.0
+        for _, v := range values {
+            sum += v
+        }
+        result = sum / float64(len(values))
+    default:
+        return nil, fmt.Errorf("unknown operation: %s", operation)
+    }
+
+    return mcp.NewToolResultJSON(map[string]interface{}{
+        "operation": operation,
+        "result":    result,
+        "count":     len(values),
+    }), nil
+}
+
+func handleProcessData(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    data := req.Params.Arguments["data"].(map[string]interface{})
+    algorithm := req.Params.Arguments["algorithm"].(string)
+
+    // Process data in-place (zero-copy when possible)
+    processed := processDataInPlace(data, algorithm)
+
+    return mcp.NewToolResultJSON(map[string]interface{}{
+        "algorithm": algorithm,
+        "processed": processed,
+        "timestamp": time.Now().UnixNano(),
+    }), nil
+}
+
+var memoryCache = make(map[string]interface{})
+
+func handleMemoryCache(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+    key := extractKeyFromURI(req.Params.URI)
+    
+    value, exists := memoryCache[key]
+    if !exists {
+        return nil, fmt.Errorf("key not found: %s", key)
+    }
+
+    return mcp.NewResourceResultJSON(map[string]interface{}{
+        "key":   key,
+        "value": value,
+        "type":  fmt.Sprintf("%T", value),
+    }), nil
+}
+
+func demonstratePerformance(ctx context.Context, client *client.InProcessClient) {
+    // Benchmark tool calls
+    start := time.Now()
+    iterations := 10000
+
+    for i := 0; i < iterations; i++ {
+        _, err := client.CallTool(ctx, mcp.CallToolRequest{
+            Params: mcp.CallToolRequestParams{
+                Name: "fast_calculation",
+                Arguments: map[string]interface{}{
+                    "operation": "sum",
+                    "numbers":   []interface{}{1.0, 2.0, 3.0, 4.0, 5.0},
+                },
+            },
+        })
+        if err != nil {
+            log.Printf("Tool call failed: %v", err)
+            break
+        }
+    }
+
+    duration := time.Since(start)
+    avgLatency := duration / time.Duration(iterations)
+    
+    log.Printf("Completed %d tool calls in %v", iterations, duration)
+    log.Printf("Average latency: %v", avgLatency)
+    log.Printf("Throughput: %.0f calls/second", float64(iterations)/duration.Seconds())
+}
+```
+
+### Advanced In-Process Integration
+
+```go
+// Embedded MCP server in a larger application
+type Application struct {
+    mcpServer *server.MCPServer
+    mcpClient *client.InProcessClient
+    dataStore *DataStore
+    config    *Config
+}
+
+func NewApplication(config *Config) *Application {
+    app := &Application{
+        config:    config,
+        dataStore: NewDataStore(),
+    }
+
+    // Create embedded MCP server
+    app.mcpServer = server.NewMCPServer("Embedded Server", "1.0.0",
+        server.WithAllCapabilities(),
+        server.WithRecovery(),
+    )
+
+    // Add application-specific tools
+    app.addApplicationTools()
+    app.addDataTools()
+    app.addAnalyticsTools()
+
+    // Create in-process client for internal use
+    app.mcpClient = client.NewInProcessClient(app.mcpServer)
+
+    return app
+}
+
+func (app *Application) addApplicationTools() {
+    // Direct access to application state
+    app.mcpServer.AddTool(
+        mcp.NewTool("get_app_status",
+            mcp.WithDescription("Get current application status"),
+        ),
+        func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            status := map[string]interface{}{
+                "uptime":     time.Since(app.startTime).String(),
+                "memory":     getMemoryUsage(),
+                "goroutines": runtime.NumGoroutine(),
+                "config":     app.config.Public(),
+            }
+            return mcp.NewToolResultJSON(status), nil
+        },
+    )
+
+    // Direct data store access
+    app.mcpServer.AddTool(
+        mcp.NewTool("query_data",
+            mcp.WithDescription("Query application data store"),
+            mcp.WithString("query", mcp.Required()),
+            mcp.WithObject("params", mcp.Description("Query parameters")),
+        ),
+        func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            query := req.Params.Arguments["query"].(string)
+            params := req.Params.Arguments["params"].(map[string]interface{})
+
+            // Direct access to data store (no serialization)
+            results, err := app.dataStore.Query(query, params)
+            if err != nil {
+                return nil, err
+            }
+
+            return mcp.NewToolResultJSON(results), nil
+        },
+    )
+}
+
+func (app *Application) ProcessWithMCP(ctx context.Context, input interface{}) (interface{}, error) {
+    // Use MCP tools internally for processing
+    result, err := app.mcpClient.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolRequestParams{
+            Name: "process_data",
+            Arguments: map[string]interface{}{
+                "data":      input,
+                "algorithm": "optimized",
+            },
+        },
+    })
+    if err != nil {
+        return nil, err
+    }
+
+    // Extract result (no JSON parsing overhead)
+    return result.Content[0].Text, nil
+}
+```
+
+### Zero-Copy Operations
+
+```go
+// Shared data structures for zero-copy operations
+type SharedBuffer struct {
+    data   []byte
+    offset int
+    length int
+    mutex  sync.RWMutex
+}
+
+func NewSharedBuffer(size int) *SharedBuffer {
+    return &SharedBuffer{
+        data: make([]byte, size),
+    }
+}
+
+func (sb *SharedBuffer) Write(data []byte) error {
+    sb.mutex.Lock()
+    defer sb.mutex.Unlock()
+
+    if len(data) > len(sb.data)-sb.offset {
+        return fmt.Errorf("buffer overflow")
+    }
+
+    copy(sb.data[sb.offset:], data)
+    sb.length = len(data)
+    return nil
+}
+
+func (sb *SharedBuffer) Read() []byte {
+    sb.mutex.RLock()
+    defer sb.mutex.RUnlock()
+
+    // Return slice of underlying array (zero-copy)
+    return sb.data[sb.offset : sb.offset+sb.length]
+}
+
+// Tool that operates on shared buffers
+func handleZeroCopyOperation(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Get shared buffer from context (passed by reference)
+    buffer := getSharedBuffer(ctx)
+    if buffer == nil {
+        return nil, fmt.Errorf("no shared buffer available")
+    }
+
+    // Operate directly on buffer data
+    data := buffer.Read()
+    processed := processInPlace(data) // Modifies data in-place
+
+    return mcp.NewToolResultText(fmt.Sprintf("Processed %d bytes", len(processed))), nil
+}
+```
+
+## Direct Server Integration
+
+### Library-Style Integration
+
+```go
+// MCP as a library component
+type MCPEngine struct {
+    server *server.MCPServer
+    client *client.InProcessClient
+}
+
+func NewMCPEngine() *MCPEngine {
+    s := server.NewMCPServer("Engine", "1.0.0")
+    
+    engine := &MCPEngine{
+        server: s,
+        client: client.NewInProcessClient(s),
+    }
+    
+    engine.registerBuiltinTools()
+    return engine
+}
+
+func (e *MCPEngine) RegisterTool(name, description string, handler server.ToolHandler) {
+    tool := mcp.NewTool(name, mcp.WithDescription(description))
+    e.server.AddTool(tool, handler)
+}
+
+func (e *MCPEngine) Execute(ctx context.Context, toolName string, args map[string]interface{}) (interface{}, error) {
+    result, err := e.client.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolRequestParams{
+            Name:      toolName,
+            Arguments: args,
+        },
+    })
+    if err != nil {
+        return nil, err
+    }
+
+    // Return native Go types (no JSON overhead)
+    return parseResult(result), nil
+}
+
+func (e *MCPEngine) registerBuiltinTools() {
+    // Math operations
+    e.RegisterTool("add", "Add two numbers", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        a := req.Params.Arguments["a"].(float64)
+        b := req.Params.Arguments["b"].(float64)
+        return mcp.NewToolResultJSON(a + b), nil
+    })
+
+    // String operations
+    e.RegisterTool("concat", "Concatenate strings", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        parts := req.Params.Arguments["parts"].([]interface{})
+        var result strings.Builder
+        for _, part := range parts {
+            result.WriteString(fmt.Sprintf("%v", part))
+        }
+        return mcp.NewToolResultText(result.String()), nil
+    })
+}
+
+// Usage in application
+func main() {
+    engine := NewMCPEngine()
+    
+    // Register custom tools
+    engine.RegisterTool("custom_logic", "Custom business logic", handleCustomLogic)
+    
+    ctx := context.Background()
+    
+    // Execute tools directly
+    result, err := engine.Execute(ctx, "add", map[string]interface{}{
+        "a": 10.0,
+        "b": 20.0,
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    fmt.Printf("Result: %v\n", result)
+}
+```
+
+### Plugin Architecture
+
+```go
+// Plugin interface
+type Plugin interface {
+    Name() string
+    Version() string
+    RegisterTools(server *server.MCPServer) error
+    RegisterResources(server *server.MCPServer) error
+}
+
+// Plugin manager with in-process MCP
+type PluginManager struct {
+    mcpServer *server.MCPServer
+    mcpClient *client.InProcessClient
+    plugins   map[string]Plugin
+}
+
+func NewPluginManager() *PluginManager {
+    s := server.NewMCPServer("Plugin Manager", "1.0.0",
+        server.WithAllCapabilities(),
+    )
+
+    return &PluginManager{
+        mcpServer: s,
+        mcpClient: client.NewInProcessClient(s),
+        plugins:   make(map[string]Plugin),
+    }
+}
+
+func (pm *PluginManager) LoadPlugin(plugin Plugin) error {
+    name := plugin.Name()
+    
+    if _, exists := pm.plugins[name]; exists {
+        return fmt.Errorf("plugin %s already loaded", name)
+    }
+
+    // Register plugin tools and resources
+    if err := plugin.RegisterTools(pm.mcpServer); err != nil {
+        return fmt.Errorf("failed to register tools for plugin %s: %w", name, err)
+    }
+
+    if err := plugin.RegisterResources(pm.mcpServer); err != nil {
+        return fmt.Errorf("failed to register resources for plugin %s: %w", name, err)
+    }
+
+    pm.plugins[name] = plugin
+    return nil
+}
+
+func (pm *PluginManager) ExecutePluginTool(ctx context.Context, toolName string, args map[string]interface{}) (interface{}, error) {
+    return pm.mcpClient.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolRequestParams{
+            Name:      toolName,
+            Arguments: args,
+        },
+    })
+}
+
+// Example plugin
+type MathPlugin struct{}
+
+func (p *MathPlugin) Name() string    { return "math" }
+func (p *MathPlugin) Version() string { return "1.0.0" }
+
+func (p *MathPlugin) RegisterTools(s *server.MCPServer) error {
+    s.AddTool(
+        mcp.NewTool("math.factorial",
+            mcp.WithDescription("Calculate factorial"),
+            mcp.WithInteger("n", mcp.Required(), mcp.Minimum(0)),
+        ),
+        p.handleFactorial,
+    )
+
+    s.AddTool(
+        mcp.NewTool("math.fibonacci",
+            mcp.WithDescription("Calculate Fibonacci number"),
+            mcp.WithInteger("n", mcp.Required(), mcp.Minimum(0)),
+        ),
+        p.handleFibonacci,
+    )
+
+    return nil
+}
+
+func (p *MathPlugin) RegisterResources(s *server.MCPServer) error {
+    s.AddResource(
+        mcp.NewResource(
+            "math://constants/{name}",
+            "Mathematical Constants",
+            mcp.WithResourceDescription("Common mathematical constants"),
+            mcp.WithMIMEType("application/json"),
+        ),
+        p.handleConstants,
+    )
+
+    return nil
+}
+
+func (p *MathPlugin) handleFactorial(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    n := int(req.Params.Arguments["n"].(float64))
+    
+    result := 1
+    for i := 2; i <= n; i++ {
+        result *= i
+    }
+
+    return mcp.NewToolResultJSON(map[string]interface{}{
+        "input":  n,
+        "result": result,
+    }), nil
+}
+
+func (p *MathPlugin) handleFibonacci(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    n := int(req.Params.Arguments["n"].(float64))
+    
+    if n <= 1 {
+        return mcp.NewToolResultJSON(n), nil
+    }
+
+    a, b := 0, 1
+    for i := 2; i <= n; i++ {
+        a, b = b, a+b
+    }
+
+    return mcp.NewToolResultJSON(b), nil
+}
+
+func (p *MathPlugin) handleConstants(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+    name := extractNameFromURI(req.Params.URI)
+    
+    constants := map[string]float64{
+        "pi":  3.141592653589793,
+        "e":   2.718281828459045,
+        "phi": 1.618033988749895,
+    }
+
+    value, exists := constants[name]
+    if !exists {
+        return nil, fmt.Errorf("unknown constant: %s", name)
+    }
+
+    return mcp.NewResourceResultJSON(map[string]interface{}{
+        "name":  name,
+        "value": value,
+    }), nil
+}
+```
+
+## Performance Benefits
+
+### Latency Comparison
+
+```go
+func benchmarkTransports() {
+    // In-process
+    inProcessServer := server.NewMCPServer("Benchmark", "1.0.0")
+    inProcessClient := client.NewInProcessClient(inProcessServer)
+    
+    // STDIO (for comparison)
+    stdioClient, _ := client.NewStdioClient("go", "run", "server.go")
+    
+    // HTTP (for comparison)
+    httpClient := client.NewHTTPClient("http://localhost:8080/mcp")
+
+    ctx := context.Background()
+    iterations := 10000
+
+    // Benchmark in-process
+    start := time.Now()
+    for i := 0; i < iterations; i++ {
+        inProcessClient.CallTool(ctx, simpleToolRequest)
+    }
+    inProcessDuration := time.Since(start)
+
+    // Benchmark STDIO
+    start = time.Now()
+    for i := 0; i < iterations; i++ {
+        stdioClient.CallTool(ctx, simpleToolRequest)
+    }
+    stdioDuration := time.Since(start)
+
+    // Benchmark HTTP
+    start = time.Now()
+    for i := 0; i < iterations; i++ {
+        httpClient.CallTool(ctx, simpleToolRequest)
+    }
+    httpDuration := time.Since(start)
+
+    fmt.Printf("In-Process: %v (%.2f μs/call)\n", 
+        inProcessDuration, 
+        float64(inProcessDuration.Nanoseconds())/float64(iterations)/1000)
+    
+    fmt.Printf("STDIO: %v (%.2f μs/call)\n", 
+        stdioDuration, 
+        float64(stdioDuration.Nanoseconds())/float64(iterations)/1000)
+    
+    fmt.Printf("HTTP: %v (%.2f μs/call)\n", 
+        httpDuration, 
+        float64(httpDuration.Nanoseconds())/float64(iterations)/1000)
+}
+```
+
+### Memory Efficiency
+
+```go
+// Shared data structures reduce memory allocation
+type SharedDataPool struct {
+    buffers chan []byte
+    size    int
+}
+
+func NewSharedDataPool(poolSize, bufferSize int) *SharedDataPool {
+    pool := &SharedDataPool{
+        buffers: make(chan []byte, poolSize),
+        size:    bufferSize,
+    }
+
+    // Pre-allocate buffers
+    for i := 0; i < poolSize; i++ {
+        pool.buffers <- make([]byte, bufferSize)
+    }
+
+    return pool
+}
+
+func (p *SharedDataPool) Get() []byte {
+    select {
+    case buffer := <-p.buffers:
+        return buffer[:0] // Reset length but keep capacity
+    default:
+        return make([]byte, 0, p.size) // Fallback allocation
+    }
+}
+
+func (p *SharedDataPool) Put(buffer []byte) {
+    if cap(buffer) != p.size {
+        return // Don't pool buffers of wrong size
+    }
+
+    select {
+    case p.buffers <- buffer:
+    default:
+        // Pool full, let GC handle it
+    }
+}
+
+// Use shared pool in tools
+var dataPool = NewSharedDataPool(100, 4096)
+
+func handlePooledOperation(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    buffer := dataPool.Get()
+    defer dataPool.Put(buffer)
+
+    // Use buffer for processing
+    result := processWithBuffer(buffer, req.Params.Arguments)
+    
+    return mcp.NewToolResultJSON(result), nil
+}
+```
+
+## Testing Integration
+
+### Unit Testing with In-Process
+
+```go
+func TestMCPTools(t *testing.T) {
+    // Create test server
+    s := server.NewMCPServer("Test Server", "1.0.0")
+    
+    // Add tools to test
+    s.AddTool(
+        mcp.NewTool("test_tool",
+            mcp.WithDescription("Tool for testing"),
+            mcp.WithString("input", mcp.Required()),
+        ),
+        handleTestTool,
+    )
+
+    // Create in-process client
+    client := client.NewInProcessClient(s)
+    defer client.Close()
+
+    ctx := context.Background()
+
+    // Initialize
+    err := client.Initialize(ctx)
+    require.NoError(t, err)
+
+    // Test tool call
+    result, err := client.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolRequestParams{
+            Name: "test_tool",
+            Arguments: map[string]interface{}{
+                "input": "test data",
+            },
+        },
+    })
+
+    require.NoError(t, err)
+    assert.Contains(t, result.Content[0].Text, "test data")
+}
+
+func TestMCPResources(t *testing.T) {
+    s := server.NewMCPServer("Test Server", "1.0.0")
+    
+    s.AddResource(
+        mcp.NewResource(
+            "test://{id}",
+            "Test Resource",
+            mcp.WithMIMEType("application/json"),
+        ),
+        handleTestResource,
+    )
+
+    client := client.NewInProcessClient(s)
+    defer client.Close()
+
+    ctx := context.Background()
+    err := client.Initialize(ctx)
+    require.NoError(t, err)
+
+    result, err := client.ReadResource(ctx, mcp.ReadResourceRequest{
+        Params: mcp.ReadResourceRequestParams{
+            URI: "test://123",
+        },
+    })
+
+    require.NoError(t, err)
+    assert.Equal(t, "test://123", result.Contents[0].URI)
+}
+```
+
+### Integration Testing
+
+```go
+func TestApplicationIntegration(t *testing.T) {
+    // Create application with embedded MCP
+    app := NewApplication(&Config{
+        DatabaseURL: "sqlite://test.db",
+        Debug:       true,
+    })
+    defer app.Close()
+
+    ctx := context.Background()
+
+    // Test application functionality through MCP
+    result, err := app.ProcessWithMCP(ctx, map[string]interface{}{
+        "type": "test_data",
+        "values": []int{1, 2, 3, 4, 5},
+    })
+
+    require.NoError(t, err)
+    assert.NotNil(t, result)
+
+    // Test direct MCP access
+    status, err := app.mcpClient.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolRequestParams{
+            Name: "get_app_status",
+        },
+    })
+
+    require.NoError(t, err)
+    assert.Contains(t, status.Content[0].Text, "uptime")
+}
+```
+
+## Best Practices
+
+### Performance
+- **Minimize allocations**: Reuse buffers and data structures
+- **Use object pools**: Pool expensive objects
+- **Avoid unnecessary copying**: Pass data by reference when possible
+- **Profile regularly**: Use Go's profiling tools to identify bottlenecks
+
+### Memory Management
+- **Implement proper cleanup**: Close resources and clear references
+- **Use weak references**: Avoid memory leaks in long-running applications
+- **Monitor memory usage**: Track allocations and GC pressure
+- **Pool large objects**: Reuse expensive allocations
+
+### Error Handling
+- **Handle panics**: Use recovery mechanisms
+- **Validate inputs**: Check all parameters thoroughly
+- **Provide context**: Include helpful error messages
+- **Log appropriately**: Balance detail with performance
+
+### Testing
+- **Test in isolation**: Use in-process transport for unit tests
+- **Mock dependencies**: Isolate components under test
+- **Benchmark performance**: Measure latency and throughput
+- **Test error conditions**: Verify error handling paths
+
+## Next Steps
+
+- **[Client Development](/clients)** - Build MCP clients for all transports
+- **[Testing](/testing)** - Comprehensive testing strategies
+- **[Performance](/performance)** - Optimization techniques and benchmarking

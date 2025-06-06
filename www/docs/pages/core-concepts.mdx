@@ -1,0 +1,289 @@
+# Core Concepts
+
+Understanding the fundamental concepts of MCP and how MCP-Go implements them is essential for building effective MCP servers and clients.
+
+## MCP Protocol Fundamentals
+
+The Model Context Protocol defines four core concepts that enable LLMs to interact with external systems safely and effectively.
+
+### Resources
+
+Resources are like GET endpoints - they expose data to LLMs in a read-only manner. Think of them as files, database records, or API responses that an LLM can access.
+
+**Key characteristics:**
+- **Read-only**: LLMs can fetch but not modify resources
+- **URI-based**: Each resource has a unique identifier
+- **Typed content**: Resources specify their MIME type (text, JSON, binary, etc.)
+- **Dynamic or static**: Can be pre-defined or generated on-demand
+
+**Example use cases:**
+- File system access (`file:///path/to/document.txt`)
+- Database records (`db://users/123`)
+- API data (`api://weather/current`)
+- Configuration files (`config://app.json`)
+
+```go
+// Static resource
+resource := mcp.NewResource(
+    "docs://readme",
+    "Project README",
+    mcp.WithResourceDescription("The project's main documentation"),
+    mcp.WithMIMEType("text/markdown"),
+)
+
+// Dynamic resource with template
+userResource := mcp.NewResource(
+    "users://{user_id}",
+    "User Profile",
+    mcp.WithResourceDescription("User profile information"),
+    mcp.WithMIMEType("application/json"),
+)
+```
+
+### Tools
+
+Tools are like POST endpoints - they provide functionality that LLMs can invoke to take actions or perform computations.
+
+**Key characteristics:**
+- **Action-oriented**: Tools do things rather than just return data
+- **Parameterized**: Accept structured input arguments
+- **Typed schemas**: Define expected parameter types and constraints
+- **Return results**: Provide structured output back to the LLM
+
+**Example use cases:**
+- Calculations (`calculate`, `convert_units`)
+- File operations (`create_file`, `search_files`)
+- API calls (`send_email`, `create_ticket`)
+- System commands (`run_command`, `check_status`)
+
+```go
+// Simple calculation tool
+calcTool := mcp.NewTool("calculate",
+    mcp.WithDescription("Perform arithmetic operations"),
+    mcp.WithString("operation", 
+        mcp.Required(),
+        mcp.Enum("add", "subtract", "multiply", "divide"),
+    ),
+    mcp.WithNumber("x", mcp.Required()),
+    mcp.WithNumber("y", mcp.Required()),
+)
+
+// File creation tool
+fileTool := mcp.NewTool("create_file",
+    mcp.WithDescription("Create a new file with content"),
+    mcp.WithString("path", mcp.Required()),
+    mcp.WithString("content", mcp.Required()),
+    mcp.WithString("encoding", mcp.Default("utf-8")),
+)
+```
+
+### Prompts
+
+Prompts are reusable interaction templates that help structure conversations between users and LLMs.
+
+**Key characteristics:**
+- **Template-based**: Use placeholders for dynamic content
+- **Reusable**: Can be invoked multiple times with different arguments
+- **Structured**: Define clear input parameters and expected outputs
+- **Context-aware**: Can include relevant resources or tool suggestions
+
+**Example use cases:**
+- Code review templates
+- Documentation generation
+- Data analysis workflows
+- Creative writing prompts
+
+```go
+// Code review prompt
+reviewPrompt := mcp.NewPrompt("code_review",
+    mcp.WithPromptDescription("Review code for best practices and issues"),
+    mcp.WithPromptArgument("code", 
+        mcp.Required(),
+        mcp.Description("The code to review"),
+    ),
+    mcp.WithPromptArgument("language",
+        mcp.Description("Programming language"),
+    ),
+)
+
+// Data analysis prompt
+analysisPrompt := mcp.NewPrompt("analyze_data",
+    mcp.WithPromptDescription("Analyze dataset and provide insights"),
+    mcp.WithPromptArgument("dataset_uri", mcp.Required()),
+    mcp.WithPromptArgument("focus_areas", 
+        mcp.Description("Specific areas to focus analysis on"),
+    ),
+)
+```
+
+### Transports
+
+Transports define how MCP clients and servers communicate. MCP-Go supports multiple transport methods to fit different deployment scenarios.
+
+**Available transports:**
+
+1. **Stdio** - Standard input/output (most common)
+   - Best for: Local tools, CLI integration, desktop applications
+   - Pros: Simple, secure, no network setup
+   - Cons: Local only, single client
+
+2. **Server-Sent Events (SSE)** - HTTP-based streaming
+   - Best for: Web applications, real-time updates
+   - Pros: Web-friendly, real-time, multiple clients
+   - Cons: HTTP overhead, one-way streaming
+
+3. **HTTP** - Traditional request/response
+   - Best for: Web services, REST-like APIs
+   - Pros: Standard protocol, caching, load balancing
+   - Cons: No real-time updates, more complex
+
+```go
+// Stdio transport (most common)
+server.ServeStdio(s)
+
+// HTTP transport
+server.ServeHTTP(s, ":8080")
+
+// SSE transport
+server.ServeSSE(s, ":8080")
+```
+
+## SDK Architecture
+
+MCP-Go provides a clean architecture that abstracts the complexity of the MCP protocol while giving you full control when needed.
+
+### Server vs Client
+
+Understanding when to build servers versus clients is crucial for effective MCP integration.
+
+**MCP Servers:**
+- **Purpose**: Expose tools, resources, and prompts to LLMs
+- **Use cases**: 
+  - Database access layers
+  - File system tools
+  - API integrations
+  - Custom business logic
+- **Characteristics**: Passive, respond to requests, stateful
+
+```go
+// Server example - exposes functionality
+s := server.NewMCPServer("Database Tools", "1.0.0")
+s.AddTool(queryTool, handleQuery)
+s.AddResource(tableResource, handleTableAccess)
+server.ServeStdio(s)
+```
+
+**MCP Clients:**
+- **Purpose**: Connect to and use MCP servers
+- **Use cases**:
+  - LLM applications
+  - Orchestration tools
+  - Testing and debugging
+  - Server composition
+- **Characteristics**: Active, make requests, coordinate multiple servers
+
+```go
+// Client example - uses functionality
+client := client.NewStdioClient("database-server")
+tools, _ := client.ListTools(ctx)
+result, _ := client.CallTool(ctx, queryRequest)
+```
+
+### Transport Layer
+
+The transport layer abstracts communication protocols, allowing you to focus on business logic rather than protocol details.
+
+**Key benefits:**
+- **Protocol agnostic**: Same server code works with any transport
+- **Automatic serialization**: JSON marshaling/unmarshaling handled automatically
+- **Error handling**: Transport-specific errors are normalized
+- **Connection management**: Automatic reconnection and cleanup
+
+```go
+// Same server works with any transport
+s := server.NewMCPServer("My Server", "1.0.0")
+
+// Choose transport at runtime
+switch transport {
+case "stdio":
+    server.ServeStdio(s)
+case "http":
+    server.ServeHTTP(s, ":8080")
+case "sse":
+    server.ServeSSE(s, ":8080")
+}
+```
+
+### Session Management
+
+MCP-Go handles session management automatically, supporting multiple concurrent clients with proper isolation.
+
+**Features:**
+- **Multi-client support**: Multiple LLMs can connect simultaneously
+- **Session isolation**: Each client has independent state
+- **Resource cleanup**: Automatic cleanup when clients disconnect
+- **Concurrent safety**: Thread-safe operations across all sessions
+
+**Session lifecycle:**
+1. **Initialize**: Client connects and exchanges capabilities
+2. **Active**: Client makes requests, server responds
+3. **Cleanup**: Connection closes, resources are freed
+
+```go
+// Server automatically handles multiple sessions
+s := server.NewMCPServer("Multi-Client Server", "1.0.0",
+    server.WithHooks(&server.Hooks{
+        OnSessionStart: func(sessionID string) {
+            log.Printf("Client %s connected", sessionID)
+        },
+        OnSessionEnd: func(sessionID string) {
+            log.Printf("Client %s disconnected", sessionID)
+        },
+    }),
+)
+```
+
+**State management patterns:**
+
+```go
+// Per-session state
+type SessionState struct {
+    UserID   string
+    Settings map[string]interface{}
+}
+
+var sessions = make(map[string]*SessionState)
+
+func toolHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    sessionID := server.GetSessionID(ctx)
+    state := sessions[sessionID]
+    
+    // Use session-specific state
+    return processWithState(state, req)
+}
+```
+
+## Best Practices
+
+### Resource Design
+- Use clear, hierarchical URIs (`docs://api/endpoints` not `doc1`)
+- Implement proper MIME types for content
+- Consider caching for expensive resources
+- Provide meaningful descriptions
+
+### Tool Design
+- Keep tools focused on single responsibilities
+- Use descriptive parameter names and types
+- Provide comprehensive error messages
+- Validate inputs thoroughly
+
+### Transport Selection
+- **Stdio**: Default choice for most applications
+- **HTTP**: When you need REST-like access or load balancing
+- **SSE**: When you need real-time updates or web integration
+
+### Performance Considerations
+- Use connection pooling for HTTP clients
+- Implement proper timeouts and retries
+- Consider resource caching strategies
+- Monitor session resource usage

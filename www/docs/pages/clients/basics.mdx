@@ -1,0 +1,789 @@
+# Client Basics
+
+Learn the fundamentals of creating and managing MCP clients, including lifecycle management, initialization, and error handling.
+
+## Creating Clients
+
+MCP-Go provides client constructors for each supported transport. The choice of transport determines how your client communicates with the server.
+
+### Client Constructor Patterns
+
+```go
+// STDIO client - for command-line tools
+client, err := client.NewStdioClient("command", "arg1", "arg2")
+
+// HTTP client - for web services
+client := client.NewHTTPClient("http://localhost:8080/mcp")
+
+// SSE client - for real-time web applications
+client := client.NewSSEClient("http://localhost:8080/mcp/sse")
+
+// In-process client - for testing and embedded scenarios
+client := client.NewInProcessClient(server)
+```
+
+### STDIO Client Creation
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+
+    "github.com/mark3labs/mcp-go/client"
+)
+
+func createStdioClient() (client.Client, error) {
+    // Create client that spawns a subprocess
+    c, err := client.NewStdioClient(
+        "go", "run", "/path/to/server/main.go",
+    )
+    if err != nil {
+        return nil, fmt.Errorf("failed to create STDIO client: %w", err)
+    }
+
+    return c, nil
+}
+
+// With custom environment variables
+func createStdioClientWithEnv() (client.Client, error) {
+    c, err := client.NewStdioClientWithOptions(client.StdioOptions{
+        Command: "go",
+        Args:    []string{"run", "/path/to/server/main.go"},
+        Env: []string{
+            "LOG_LEVEL=debug",
+            "DATABASE_URL=sqlite://test.db",
+        },
+        WorkingDir: "/path/to/server",
+        Timeout:    30 * time.Second,
+    })
+    if err != nil {
+        return nil, fmt.Errorf("failed to create STDIO client: %w", err)
+    }
+
+    return c, nil
+}
+```
+
+### HTTP Client Creation
+
+```go
+func createHTTPClient() client.Client {
+    // Basic HTTP client
+    c := client.NewHTTPClient("http://localhost:8080/mcp")
+    
+    // Set custom headers
+    c.SetHeader("Authorization", "Bearer your-token")
+    c.SetHeader("X-API-Version", "v1")
+    
+    // Set timeout
+    c.SetTimeout(30 * time.Second)
+    
+    return c
+}
+
+// With custom HTTP client
+func createCustomHTTPClient() client.Client {
+    httpClient := &http.Client{
+        Timeout: 30 * time.Second,
+        Transport: &http.Transport{
+            MaxIdleConns:        100,
+            MaxIdleConnsPerHost: 10,
+            IdleConnTimeout:     90 * time.Second,
+        },
+    }
+
+    return client.NewHTTPClientWithClient("http://localhost:8080/mcp", httpClient)
+}
+```
+
+### SSE Client Creation
+
+```go
+func createSSEClient() client.Client {
+    // Basic SSE client
+    c := client.NewSSEClient("http://localhost:8080/mcp/sse")
+    
+    // Set authentication
+    c.SetHeader("Authorization", "Bearer your-token")
+    
+    return c
+}
+
+// With custom options
+func createSSEClientWithOptions() client.Client {
+    options := client.SSEOptions{
+        URL: "http://localhost:8080/mcp/sse",
+        Headers: map[string]string{
+            "Authorization": "Bearer your-token",
+            "X-Client-ID":   "my-app",
+        },
+        ReconnectInterval: 5 * time.Second,
+        MaxReconnects:     10,
+        BufferSize:        1000,
+    }
+
+    return client.NewSSEClientWithOptions(options)
+}
+```
+
+## Client Lifecycle
+
+Understanding the client lifecycle is crucial for proper resource management and error handling.
+
+### Lifecycle Stages
+
+1. **Creation** - Instantiate the client
+2. **Initialization** - Establish connection and exchange capabilities
+3. **Operation** - Use tools, resources, and prompts
+4. **Cleanup** - Close connections and free resources
+
+### Complete Lifecycle Example
+
+```go
+func demonstrateClientLifecycle() error {
+    // 1. Creation
+    c, err := client.NewStdioClient("server-command")
+    if err != nil {
+        return fmt.Errorf("client creation failed: %w", err)
+    }
+
+    // Ensure cleanup happens
+    defer func() {
+        if closeErr := c.Close(); closeErr != nil {
+            log.Printf("Error closing client: %v", closeErr)
+        }
+    }()
+
+    ctx := context.Background()
+
+    // 2. Initialization
+    if err := c.Initialize(ctx); err != nil {
+        return fmt.Errorf("client initialization failed: %w", err)
+    }
+
+    // 3. Operation
+    if err := performClientOperations(ctx, c); err != nil {
+        return fmt.Errorf("client operations failed: %w", err)
+    }
+
+    // 4. Cleanup (handled by defer)
+    return nil
+}
+
+func performClientOperations(ctx context.Context, c client.Client) error {
+    // List available tools
+    tools, err := c.ListTools(ctx)
+    if err != nil {
+        return err
+    }
+
+    log.Printf("Found %d tools", len(tools.Tools))
+
+    // Use the tools
+    for _, tool := range tools.Tools {
+        result, err := c.CallTool(ctx, mcp.CallToolRequest{
+            Params: mcp.CallToolRequestParams{
+                Name:      tool.Name,
+                Arguments: map[string]interface{}{},
+            },
+        })
+        if err != nil {
+            log.Printf("Tool %s failed: %v", tool.Name, err)
+            continue
+        }
+
+        log.Printf("Tool %s result: %+v", tool.Name, result)
+    }
+
+    return nil
+}
+```
+
+### Initialization Process
+
+The initialization process establishes the MCP connection and exchanges capabilities:
+
+```go
+func initializeClientWithDetails(ctx context.Context, c client.Client) error {
+    // Initialize with custom client info
+    initReq := mcp.InitializeRequest{
+        Params: mcp.InitializeRequestParams{
+            ProtocolVersion: "2024-11-05",
+            Capabilities: mcp.ClientCapabilities{
+                Tools:     &mcp.ToolsCapability{},
+                Resources: &mcp.ResourcesCapability{},
+                Prompts:   &mcp.PromptsCapability{},
+            },
+            ClientInfo: mcp.ClientInfo{
+                Name:    "My Application",
+                Version: "1.0.0",
+            },
+        },
+    }
+
+    result, err := c.InitializeWithRequest(ctx, initReq)
+    if err != nil {
+        return fmt.Errorf("initialization failed: %w", err)
+    }
+
+    log.Printf("Connected to server: %s v%s", 
+        result.ServerInfo.Name, 
+        result.ServerInfo.Version)
+    
+    log.Printf("Server capabilities: %+v", result.Capabilities)
+
+    return nil
+}
+```
+
+### Graceful Shutdown
+
+```go
+type ManagedClient struct {
+    client client.Client
+    ctx    context.Context
+    cancel context.CancelFunc
+    done   chan struct{}
+}
+
+func NewManagedClient(clientType, address string) (*ManagedClient, error) {
+    var c client.Client
+    var err error
+
+    switch clientType {
+    case "stdio":
+        c, err = client.NewStdioClient("server-command")
+    case "http":
+        c = client.NewHTTPClient(address)
+    case "sse":
+        c = client.NewSSEClient(address)
+    default:
+        return nil, fmt.Errorf("unknown client type: %s", clientType)
+    }
+
+    if err != nil {
+        return nil, err
+    }
+
+    ctx, cancel := context.WithCancel(context.Background())
+
+    mc := &ManagedClient{
+        client: c,
+        ctx:    ctx,
+        cancel: cancel,
+        done:   make(chan struct{}),
+    }
+
+    // Initialize in background
+    go func() {
+        defer close(mc.done)
+        if err := c.Initialize(ctx); err != nil {
+            log.Printf("Client initialization failed: %v", err)
+        }
+    }()
+
+    return mc, nil
+}
+
+func (mc *ManagedClient) WaitForReady(timeout time.Duration) error {
+    select {
+    case <-mc.done:
+        return nil
+    case <-time.After(timeout):
+        return fmt.Errorf("client initialization timeout")
+    case <-mc.ctx.Done():
+        return mc.ctx.Err()
+    }
+}
+
+func (mc *ManagedClient) Close() error {
+    mc.cancel()
+    
+    // Wait for initialization to complete or timeout
+    select {
+    case <-mc.done:
+    case <-time.After(5 * time.Second):
+        log.Println("Timeout waiting for client shutdown")
+    }
+
+    return mc.client.Close()
+}
+```
+
+## Error Handling
+
+Proper error handling is essential for robust client applications.
+
+### Error Types
+
+```go
+// Connection errors
+var (
+    ErrConnectionFailed = errors.New("connection failed")
+    ErrConnectionLost   = errors.New("connection lost")
+    ErrTimeout          = errors.New("operation timeout")
+)
+
+// Protocol errors
+var (
+    ErrInvalidResponse    = errors.New("invalid response")
+    ErrProtocolViolation  = errors.New("protocol violation")
+    ErrUnsupportedVersion = errors.New("unsupported protocol version")
+)
+
+// Operation errors
+var (
+    ErrToolNotFound       = errors.New("tool not found")
+    ErrResourceNotFound   = errors.New("resource not found")
+    ErrInvalidArguments   = errors.New("invalid arguments")
+    ErrPermissionDenied   = errors.New("permission denied")
+)
+```
+
+### Comprehensive Error Handling
+
+```go
+func handleClientErrors(ctx context.Context, c client.Client) {
+    result, err := c.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolRequestParams{
+            Name: "example_tool",
+            Arguments: map[string]interface{}{
+                "param": "value",
+            },
+        },
+    })
+
+    if err != nil {
+        switch {
+        // Connection errors - may be recoverable
+        case errors.Is(err, client.ErrConnectionLost):
+            log.Println("Connection lost, attempting reconnect...")
+            if reconnectErr := reconnectClient(c); reconnectErr != nil {
+                log.Printf("Reconnection failed: %v", reconnectErr)
+                return
+            }
+            // Retry the operation
+            return handleClientErrors(ctx, c)
+
+        case errors.Is(err, client.ErrTimeout):
+            log.Println("Operation timed out, retrying with longer timeout...")
+            ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+            defer cancel()
+            return handleClientErrors(ctx, c)
+
+        // Protocol errors - usually not recoverable
+        case errors.Is(err, client.ErrProtocolViolation):
+            log.Printf("Protocol violation: %v", err)
+            return
+
+        case errors.Is(err, client.ErrUnsupportedVersion):
+            log.Printf("Unsupported protocol version: %v", err)
+            return
+
+        // Operation errors - check and fix request
+        case errors.Is(err, client.ErrToolNotFound):
+            log.Printf("Tool not found: %v", err)
+            // Maybe list available tools and suggest alternatives
+            suggestAlternativeTools(ctx, c)
+            return
+
+        case errors.Is(err, client.ErrInvalidArguments):
+            log.Printf("Invalid arguments: %v", err)
+            // Maybe get tool schema and show required parameters
+            showToolSchema(ctx, c, "example_tool")
+            return
+
+        case errors.Is(err, client.ErrPermissionDenied):
+            log.Printf("Permission denied: %v", err)
+            // Maybe prompt for authentication
+            return
+
+        // Unknown errors
+        default:
+            log.Printf("Unexpected error: %v", err)
+            return
+        }
+    }
+
+    // Process successful result
+    log.Printf("Tool result: %+v", result)
+}
+
+func reconnectClient(c client.Client) error {
+    // Close existing connection
+    if err := c.Close(); err != nil {
+        log.Printf("Error closing client: %v", err)
+    }
+
+    // Wait before reconnecting
+    time.Sleep(1 * time.Second)
+
+    // Reinitialize
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+
+    return c.Initialize(ctx)
+}
+
+func suggestAlternativeTools(ctx context.Context, c client.Client) {
+    tools, err := c.ListTools(ctx)
+    if err != nil {
+        log.Printf("Failed to list tools: %v", err)
+        return
+    }
+
+    log.Println("Available tools:")
+    for _, tool := range tools.Tools {
+        log.Printf("- %s: %s", tool.Name, tool.Description)
+    }
+}
+
+func showToolSchema(ctx context.Context, c client.Client, toolName string) {
+    tools, err := c.ListTools(ctx)
+    if err != nil {
+        log.Printf("Failed to list tools: %v", err)
+        return
+    }
+
+    for _, tool := range tools.Tools {
+        if tool.Name == toolName {
+            log.Printf("Tool schema for %s:", toolName)
+            log.Printf("Description: %s", tool.Description)
+            log.Printf("Input schema: %+v", tool.InputSchema)
+            return
+        }
+    }
+
+    log.Printf("Tool %s not found", toolName)
+}
+```
+
+### Retry Logic with Exponential Backoff
+
+```go
+type RetryConfig struct {
+    MaxRetries      int
+    InitialDelay    time.Duration
+    MaxDelay        time.Duration
+    BackoffFactor   float64
+    RetryableErrors []error
+}
+
+func DefaultRetryConfig() RetryConfig {
+    return RetryConfig{
+        MaxRetries:    3,
+        InitialDelay:  1 * time.Second,
+        MaxDelay:      30 * time.Second,
+        BackoffFactor: 2.0,
+        RetryableErrors: []error{
+            client.ErrConnectionLost,
+            client.ErrTimeout,
+            client.ErrConnectionFailed,
+        },
+    }
+}
+
+func (rc RetryConfig) IsRetryable(err error) bool {
+    for _, retryableErr := range rc.RetryableErrors {
+        if errors.Is(err, retryableErr) {
+            return true
+        }
+    }
+    return false
+}
+
+func WithRetry[T any](ctx context.Context, config RetryConfig, operation func() (T, error)) (T, error) {
+    var lastErr error
+    var zero T
+
+    for attempt := 0; attempt <= config.MaxRetries; attempt++ {
+        result, err := operation()
+        if err == nil {
+            return result, nil
+        }
+
+        lastErr = err
+
+        // Don't retry non-retryable errors
+        if !config.IsRetryable(err) {
+            break
+        }
+
+        // Don't retry on last attempt
+        if attempt == config.MaxRetries {
+            break
+        }
+
+        // Calculate delay with exponential backoff
+        delay := time.Duration(float64(config.InitialDelay) * math.Pow(config.BackoffFactor, float64(attempt)))
+        if delay > config.MaxDelay {
+            delay = config.MaxDelay
+        }
+
+        log.Printf("Attempt %d failed, retrying in %v: %v", attempt+1, delay, err)
+
+        // Wait with context cancellation support
+        select {
+        case <-time.After(delay):
+        case <-ctx.Done():
+            return zero, ctx.Err()
+        }
+    }
+
+    return zero, fmt.Errorf("failed after %d attempts: %w", config.MaxRetries+1, lastErr)
+}
+
+// Usage example
+func callToolWithRetry(ctx context.Context, c client.Client, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    config := DefaultRetryConfig()
+    
+    return WithRetry(ctx, config, func() (*mcp.CallToolResult, error) {
+        return c.CallTool(ctx, req)
+    })
+}
+```
+
+### Context and Timeout Management
+
+```go
+func demonstrateContextUsage(c client.Client) {
+    // Operation with timeout
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+
+    result, err := c.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolRequestParams{
+            Name: "long_running_tool",
+            Arguments: map[string]interface{}{
+                "duration": 60, // seconds
+            },
+        },
+    })
+
+    if err != nil {
+        if errors.Is(err, context.DeadlineExceeded) {
+            log.Println("Tool call timed out")
+        } else {
+            log.Printf("Tool call failed: %v", err)
+        }
+        return
+    }
+
+    log.Printf("Tool completed: %+v", result)
+}
+
+func demonstrateCancellation(c client.Client) {
+    ctx, cancel := context.WithCancel(context.Background())
+
+    // Start operation in goroutine
+    go func() {
+        result, err := c.CallTool(ctx, mcp.CallToolRequest{
+            Params: mcp.CallToolRequestParams{
+                Name: "long_running_tool",
+            },
+        })
+
+        if err != nil {
+            if errors.Is(err, context.Canceled) {
+                log.Println("Tool call was cancelled")
+            } else {
+                log.Printf("Tool call failed: %v", err)
+            }
+            return
+        }
+
+        log.Printf("Tool completed: %+v", result)
+    }()
+
+    // Cancel after 5 seconds
+    time.Sleep(5 * time.Second)
+    cancel()
+    
+    // Wait a bit to see the cancellation
+    time.Sleep(1 * time.Second)
+}
+```
+
+## Connection Monitoring
+
+### Health Checks
+
+```go
+type ClientHealthMonitor struct {
+    client   client.Client
+    interval time.Duration
+    timeout  time.Duration
+    healthy  bool
+    mutex    sync.RWMutex
+}
+
+func NewClientHealthMonitor(c client.Client, interval, timeout time.Duration) *ClientHealthMonitor {
+    return &ClientHealthMonitor{
+        client:   c,
+        interval: interval,
+        timeout:  timeout,
+        healthy:  false,
+    }
+}
+
+func (chm *ClientHealthMonitor) Start(ctx context.Context) {
+    ticker := time.NewTicker(chm.interval)
+    defer ticker.Stop()
+
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case <-ticker.C:
+            chm.checkHealth(ctx)
+        }
+    }
+}
+
+func (chm *ClientHealthMonitor) checkHealth(ctx context.Context) {
+    ctx, cancel := context.WithTimeout(ctx, chm.timeout)
+    defer cancel()
+
+    // Try to list tools as a health check
+    _, err := chm.client.ListTools(ctx)
+    
+    chm.mutex.Lock()
+    chm.healthy = (err == nil)
+    chm.mutex.Unlock()
+
+    if err != nil {
+        log.Printf("Health check failed: %v", err)
+    }
+}
+
+func (chm *ClientHealthMonitor) IsHealthy() bool {
+    chm.mutex.RLock()
+    defer chm.mutex.RUnlock()
+    return chm.healthy
+}
+```
+
+### Connection Recovery
+
+```go
+type ResilientClient struct {
+    factory    func() (client.Client, error)
+    client     client.Client
+    mutex      sync.RWMutex
+    recovering bool
+}
+
+func NewResilientClient(factory func() (client.Client, error)) *ResilientClient {
+    return &ResilientClient{
+        factory: factory,
+    }
+}
+
+func (rc *ResilientClient) ensureConnected(ctx context.Context) error {
+    rc.mutex.RLock()
+    if rc.client != nil && !rc.recovering {
+        rc.mutex.RUnlock()
+        return nil
+    }
+    rc.mutex.RUnlock()
+
+    rc.mutex.Lock()
+    defer rc.mutex.Unlock()
+
+    // Double-check after acquiring write lock
+    if rc.client != nil && !rc.recovering {
+        return nil
+    }
+
+    rc.recovering = true
+    defer func() { rc.recovering = false }()
+
+    // Close existing client if any
+    if rc.client != nil {
+        rc.client.Close()
+    }
+
+    // Create new client
+    newClient, err := rc.factory()
+    if err != nil {
+        return fmt.Errorf("failed to create client: %w", err)
+    }
+
+    // Initialize new client
+    if err := newClient.Initialize(ctx); err != nil {
+        newClient.Close()
+        return fmt.Errorf("failed to initialize client: %w", err)
+    }
+
+    rc.client = newClient
+    return nil
+}
+
+func (rc *ResilientClient) CallTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    if err := rc.ensureConnected(ctx); err != nil {
+        return nil, err
+    }
+
+    rc.mutex.RLock()
+    client := rc.client
+    rc.mutex.RUnlock()
+
+    result, err := client.CallTool(ctx, req)
+    if err != nil && isConnectionError(err) {
+        // Mark for recovery and retry once
+        rc.mutex.Lock()
+        rc.recovering = true
+        rc.mutex.Unlock()
+
+        if retryErr := rc.ensureConnected(ctx); retryErr != nil {
+            return nil, fmt.Errorf("recovery failed: %w", retryErr)
+        }
+
+        rc.mutex.RLock()
+        client = rc.client
+        rc.mutex.RUnlock()
+
+        return client.CallTool(ctx, req)
+    }
+
+    return result, err
+}
+
+func isConnectionError(err error) bool {
+    return errors.Is(err, client.ErrConnectionLost) ||
+           errors.Is(err, client.ErrConnectionFailed)
+}
+```
+
+## Best Practices
+
+### Client Creation
+- **Choose appropriate transport**: Match transport to your use case
+- **Set reasonable timeouts**: Prevent hanging operations
+- **Configure authentication**: Set up credentials before initialization
+- **Handle creation errors**: Always check for errors during client creation
+
+### Lifecycle Management
+- **Initialize once**: Don't repeatedly initialize the same client
+- **Use defer for cleanup**: Ensure clients are always closed
+- **Handle initialization errors**: Check for connection and protocol errors
+- **Monitor connection health**: Implement health checks for long-running clients
+
+### Error Handling
+- **Distinguish error types**: Handle different errors appropriately
+- **Implement retry logic**: Retry transient failures with backoff
+- **Use context for cancellation**: Support operation cancellation
+- **Log errors appropriately**: Include sufficient context for debugging
+
+### Performance
+- **Reuse clients**: Don't create new clients for each operation
+- **Use connection pooling**: For HTTP clients, configure connection pools
+- **Set appropriate timeouts**: Balance responsiveness with reliability
+- **Monitor metrics**: Track success rates, latency, and error rates
+
+## Next Steps
+
+- **[Client Operations](/clients/operations)** - Learn to use tools, resources, and prompts
+- **[Client Transports](/clients/transports)** - Explore transport-specific features

@@ -1,0 +1,829 @@
+# SSE Transport
+
+Server-Sent Events (SSE) transport enables real-time, web-friendly communication between MCP clients and servers. Perfect for web applications that need live updates and multi-client support.
+
+## Use Cases
+
+SSE transport is ideal for:
+
+- **Web applications**: Browser-based LLM interfaces
+- **Real-time dashboards**: Live data monitoring and visualization
+- **Collaborative tools**: Multi-user environments with shared state
+- **Streaming responses**: Long-running operations with progress updates
+- **Event-driven systems**: Applications that need server-initiated communication
+
+**Example applications:**
+- Web-based chat interfaces with LLMs
+- Real-time analytics dashboards
+- Collaborative document editing
+- Live system monitoring tools
+- Streaming data processing interfaces
+
+## Implementation
+
+### Basic SSE Server
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "time"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func main() {
+    s := server.NewMCPServer("SSE Server", "1.0.0",
+        server.WithToolCapabilities(true),
+        server.WithResourceCapabilities(true),
+    )
+
+    // Add real-time tools
+    s.AddTool(
+        mcp.NewTool("stream_data",
+            mcp.WithDescription("Stream data with real-time updates"),
+            mcp.WithString("source", mcp.Required()),
+            mcp.WithInteger("count", mcp.Default(10)),
+        ),
+        handleStreamData,
+    )
+
+    s.AddTool(
+        mcp.NewTool("monitor_system",
+            mcp.WithDescription("Monitor system metrics in real-time"),
+            mcp.WithInteger("duration", mcp.Default(60)),
+        ),
+        handleSystemMonitor,
+    )
+
+    // Add dynamic resources
+    s.AddResource(
+        mcp.NewResource(
+            "metrics://current",
+            "Current System Metrics",
+            mcp.WithResourceDescription("Real-time system metrics"),
+            mcp.WithMIMEType("application/json"),
+        ),
+        handleCurrentMetrics,
+    )
+
+    // Start SSE server
+    log.Println("Starting SSE server on :8080")
+    if err := server.ServeSSE(s, ":8080"); err != nil {
+        log.Fatal(err)
+    }
+}
+
+func handleStreamData(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    source := req.Params.Arguments["source"].(string)
+    count := int(req.Params.Arguments["count"].(float64))
+
+    // Get notifier for real-time updates
+    notifier := server.GetNotifier(ctx)
+    sessionID := server.GetSessionID(ctx)
+
+    // Stream data with progress updates
+    var results []map[string]interface{}
+    for i := 0; i < count; i++ {
+        // Check for cancellation
+        select {
+        case <-ctx.Done():
+            return nil, ctx.Err()
+        default:
+        }
+
+        // Simulate data processing
+        data := generateData(source, i)
+        results = append(results, data)
+
+        // Send progress notification
+        if notifier != nil {
+            notifier.SendProgress(sessionID, mcp.ProgressNotification{
+                Progress: i + 1,
+                Total:    count,
+                Message:  fmt.Sprintf("Processed %d/%d items from %s", i+1, count, source),
+            })
+        }
+
+        time.Sleep(100 * time.Millisecond)
+    }
+
+    return mcp.NewToolResultJSON(map[string]interface{}{
+        "source":  source,
+        "results": results,
+        "count":   len(results),
+    }), nil
+}
+
+func handleSystemMonitor(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    duration := int(req.Params.Arguments["duration"].(float64))
+    
+    notifier := server.GetNotifier(ctx)
+    sessionID := server.GetSessionID(ctx)
+
+    // Monitor system for specified duration
+    ticker := time.NewTicker(5 * time.Second)
+    defer ticker.Stop()
+
+    timeout := time.After(time.Duration(duration) * time.Second)
+    var metrics []map[string]interface{}
+
+    for {
+        select {
+        case <-ctx.Done():
+            return nil, ctx.Err()
+        case <-timeout:
+            return mcp.NewToolResultJSON(map[string]interface{}{
+                "duration": duration,
+                "metrics":  metrics,
+                "samples":  len(metrics),
+            }), nil
+        case <-ticker.C:
+            // Collect current metrics
+            currentMetrics := collectSystemMetrics()
+            metrics = append(metrics, currentMetrics)
+
+            // Send real-time update
+            if notifier != nil {
+                notifier.SendCustom(sessionID, "system_metrics", currentMetrics)
+            }
+        }
+    }
+}
+
+func handleCurrentMetrics(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+    metrics := collectSystemMetrics()
+    return mcp.NewResourceResultJSON(metrics), nil
+}
+```
+
+### Advanced SSE Configuration
+
+```go
+func main() {
+    s := server.NewMCPServer("Advanced SSE Server", "1.0.0",
+        server.WithAllCapabilities(),
+        server.WithRecovery(),
+        server.WithHooks(&server.Hooks{
+            OnSessionStart: func(sessionID string) {
+                log.Printf("SSE client connected: %s", sessionID)
+                broadcastUserCount()
+            },
+            OnSessionEnd: func(sessionID string) {
+                log.Printf("SSE client disconnected: %s", sessionID)
+                broadcastUserCount()
+            },
+        }),
+    )
+
+    // Configure SSE-specific options
+    sseOptions := server.SSEOptions{
+        BasePath:           "/mcp",
+        AllowedOrigins:     []string{"http://localhost:3000", "https://myapp.com"},
+        HeartbeatInterval:  30 * time.Second,
+        MaxConnections:     100,
+        ConnectionTimeout:  5 * time.Minute,
+        EnableCompression:  true,
+    }
+
+    // Add collaborative tools
+    addCollaborativeTools(s)
+    addRealTimeResources(s)
+
+    log.Println("Starting advanced SSE server on :8080")
+    if err := server.ServeSSEWithOptions(s, ":8080", sseOptions); err != nil {
+        log.Fatal(err)
+    }
+}
+
+func addCollaborativeTools(s *server.MCPServer) {
+    // Shared document editing
+    s.AddTool(
+        mcp.NewTool("edit_document",
+            mcp.WithDescription("Edit a shared document"),
+            mcp.WithString("doc_id", mcp.Required()),
+            mcp.WithString("operation", mcp.Required()),
+            mcp.WithObject("data", mcp.Required()),
+        ),
+        handleDocumentEdit,
+    )
+
+    // Real-time chat
+    s.AddTool(
+        mcp.NewTool("send_message",
+            mcp.WithDescription("Send a message to all connected clients"),
+            mcp.WithString("message", mcp.Required()),
+            mcp.WithString("channel", mcp.Default("general")),
+        ),
+        handleSendMessage,
+    )
+
+    // Live data updates
+    s.AddTool(
+        mcp.NewTool("subscribe_updates",
+            mcp.WithDescription("Subscribe to real-time data updates"),
+            mcp.WithString("topic", mcp.Required()),
+            mcp.WithArray("filters", mcp.Description("Optional filters")),
+        ),
+        handleSubscribeUpdates,
+    )
+}
+```
+
+## Configuration
+
+### Base URLs and Paths
+
+```go
+// Custom SSE endpoint configuration
+sseOptions := server.SSEOptions{
+    BasePath: "/api/mcp",  // SSE endpoint will be /api/mcp/sse
+    
+    // Additional HTTP endpoints
+    HealthPath:   "/api/health",
+    MetricsPath:  "/api/metrics",
+    StatusPath:   "/api/status",
+}
+
+// Start server with custom paths
+server.ServeSSEWithOptions(s, ":8080", sseOptions)
+```
+
+**Resulting endpoints:**
+- SSE stream: `http://localhost:8080/api/mcp/sse`
+- Health check: `http://localhost:8080/api/health`
+- Metrics: `http://localhost:8080/api/metrics`
+- Status: `http://localhost:8080/api/status`
+
+### CORS Configuration
+
+```go
+sseOptions := server.SSEOptions{
+    // Allow specific origins
+    AllowedOrigins: []string{
+        "http://localhost:3000",
+        "https://myapp.com",
+        "https://*.myapp.com",
+    },
+    
+    // Allow all origins (development only)
+    AllowAllOrigins: true,
+    
+    // Custom CORS headers
+    AllowedHeaders: []string{
+        "Authorization",
+        "Content-Type",
+        "X-API-Key",
+    },
+    
+    // Allow credentials
+    AllowCredentials: true,
+}
+```
+
+### Connection Management
+
+```go
+sseOptions := server.SSEOptions{
+    // Connection limits
+    MaxConnections:    100,
+    MaxConnectionsPerIP: 10,
+    
+    // Timeouts
+    ConnectionTimeout: 5 * time.Minute,
+    WriteTimeout:     30 * time.Second,
+    ReadTimeout:      30 * time.Second,
+    
+    // Heartbeat to keep connections alive
+    HeartbeatInterval: 30 * time.Second,
+    
+    // Buffer sizes
+    WriteBufferSize: 4096,
+    ReadBufferSize:  4096,
+    
+    // Compression
+    EnableCompression: true,
+    CompressionLevel:  6,
+}
+```
+
+## Session Handling
+
+### Multi-Client State Management
+
+```go
+type SessionManager struct {
+    sessions map[string]*ClientSession
+    mutex    sync.RWMutex
+    notifier *SSENotifier
+}
+
+type ClientSession struct {
+    ID          string
+    UserID      string
+    ConnectedAt time.Time
+    LastSeen    time.Time
+    Subscriptions map[string]bool
+    Metadata    map[string]interface{}
+}
+
+func NewSessionManager() *SessionManager {
+    return &SessionManager{
+        sessions: make(map[string]*ClientSession),
+        notifier: NewSSENotifier(),
+    }
+}
+
+func (sm *SessionManager) OnSessionStart(sessionID string) {
+    sm.mutex.Lock()
+    defer sm.mutex.Unlock()
+    
+    session := &ClientSession{
+        ID:            sessionID,
+        ConnectedAt:   time.Now(),
+        LastSeen:      time.Now(),
+        Subscriptions: make(map[string]bool),
+        Metadata:      make(map[string]interface{}),
+    }
+    
+    sm.sessions[sessionID] = session
+    
+    // Notify other clients
+    sm.notifier.BroadcastExcept(sessionID, "user_joined", map[string]interface{}{
+        "session_id": sessionID,
+        "timestamp":  time.Now().Unix(),
+    })
+}
+
+func (sm *SessionManager) OnSessionEnd(sessionID string) {
+    sm.mutex.Lock()
+    defer sm.mutex.Unlock()
+    
+    delete(sm.sessions, sessionID)
+    
+    // Notify other clients
+    sm.notifier.Broadcast("user_left", map[string]interface{}{
+        "session_id": sessionID,
+        "timestamp":  time.Now().Unix(),
+    })
+}
+
+func (sm *SessionManager) GetActiveSessions() []ClientSession {
+    sm.mutex.RLock()
+    defer sm.mutex.RUnlock()
+    
+    var sessions []ClientSession
+    for _, session := range sm.sessions {
+        sessions = append(sessions, *session)
+    }
+    
+    return sessions
+}
+```
+
+### Real-Time Notifications
+
+```go
+type SSENotifier struct {
+    clients map[string]chan mcp.Notification
+    mutex   sync.RWMutex
+}
+
+func NewSSENotifier() *SSENotifier {
+    return &SSENotifier{
+        clients: make(map[string]chan mcp.Notification),
+    }
+}
+
+func (n *SSENotifier) RegisterClient(sessionID string) <-chan mcp.Notification {
+    n.mutex.Lock()
+    defer n.mutex.Unlock()
+    
+    ch := make(chan mcp.Notification, 100)
+    n.clients[sessionID] = ch
+    return ch
+}
+
+func (n *SSENotifier) UnregisterClient(sessionID string) {
+    n.mutex.Lock()
+    defer n.mutex.Unlock()
+    
+    if ch, exists := n.clients[sessionID]; exists {
+        close(ch)
+        delete(n.clients, sessionID)
+    }
+}
+
+func (n *SSENotifier) SendToClient(sessionID string, notification mcp.Notification) {
+    n.mutex.RLock()
+    defer n.mutex.RUnlock()
+    
+    if ch, exists := n.clients[sessionID]; exists {
+        select {
+        case ch <- notification:
+        default:
+            // Channel full, drop notification
+        }
+    }
+}
+
+func (n *SSENotifier) Broadcast(eventType string, data interface{}) {
+    notification := mcp.Notification{
+        Type: eventType,
+        Data: data,
+    }
+    
+    n.mutex.RLock()
+    defer n.mutex.RUnlock()
+    
+    for _, ch := range n.clients {
+        select {
+        case ch <- notification:
+        default:
+            // Channel full, skip this client
+        }
+    }
+}
+
+func (n *SSENotifier) BroadcastExcept(excludeSessionID, eventType string, data interface{}) {
+    notification := mcp.Notification{
+        Type: eventType,
+        Data: data,
+    }
+    
+    n.mutex.RLock()
+    defer n.mutex.RUnlock()
+    
+    for sessionID, ch := range n.clients {
+        if sessionID == excludeSessionID {
+            continue
+        }
+        
+        select {
+        case ch <- notification:
+        default:
+            // Channel full, skip this client
+        }
+    }
+}
+```
+
+## Client Integration
+
+### JavaScript/Browser Client
+
+```javascript
+class MCPSSEClient {
+    constructor(baseURL) {
+        this.baseURL = baseURL;
+        this.eventSource = null;
+        this.requestId = 1;
+        this.pendingRequests = new Map();
+    }
+
+    async connect() {
+        // Initialize SSE connection
+        this.eventSource = new EventSource(`${this.baseURL}/sse`);
+        
+        this.eventSource.onopen = () => {
+            console.log('SSE connection opened');
+        };
+        
+        this.eventSource.onmessage = (event) => {
+            this.handleMessage(JSON.parse(event.data));
+        };
+        
+        this.eventSource.onerror = (error) => {
+            console.error('SSE error:', error);
+        };
+
+        // Send initialization request
+        return this.sendRequest('initialize', {
+            protocolVersion: '2024-11-05',
+            capabilities: { tools: {} },
+            clientInfo: { name: 'Web Client', version: '1.0.0' }
+        });
+    }
+
+    async sendRequest(method, params = {}) {
+        const id = this.requestId++;
+        const request = {
+            jsonrpc: '2.0',
+            id,
+            method,
+            params
+        };
+
+        // Send via HTTP POST
+        const response = await fetch(`${this.baseURL}/request`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(request)
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        return response.json();
+    }
+
+    handleMessage(message) {
+        if (message.id && this.pendingRequests.has(message.id)) {
+            // Handle response to our request
+            const { resolve, reject } = this.pendingRequests.get(message.id);
+            this.pendingRequests.delete(message.id);
+            
+            if (message.error) {
+                reject(new Error(message.error.message));
+            } else {
+                resolve(message.result);
+            }
+        } else if (message.method) {
+            // Handle server-initiated notification
+            this.handleNotification(message);
+        }
+    }
+
+    handleNotification(notification) {
+        switch (notification.method) {
+            case 'notifications/progress':
+                this.onProgress(notification.params);
+                break;
+            case 'notifications/message':
+                this.onMessage(notification.params);
+                break;
+            default:
+                console.log('Unknown notification:', notification);
+        }
+    }
+
+    onProgress(progress) {
+        console.log(`Progress: ${progress.progress}/${progress.total} - ${progress.message}`);
+    }
+
+    onMessage(message) {
+        console.log('Server message:', message);
+    }
+
+    async listTools() {
+        return this.sendRequest('tools/list');
+    }
+
+    async callTool(name, arguments) {
+        return this.sendRequest('tools/call', { name, arguments });
+    }
+
+    disconnect() {
+        if (this.eventSource) {
+            this.eventSource.close();
+            this.eventSource = null;
+        }
+    }
+}
+
+// Usage
+const client = new MCPSSEClient('http://localhost:8080/mcp');
+
+async function main() {
+    try {
+        await client.connect();
+        
+        const tools = await client.listTools();
+        console.log('Available tools:', tools);
+        
+        const result = await client.callTool('stream_data', {
+            source: 'api',
+            count: 5
+        });
+        console.log('Tool result:', result);
+        
+    } catch (error) {
+        console.error('Error:', error);
+    }
+}
+
+main();
+```
+
+### React Integration
+
+```jsx
+import React, { useState, useEffect, useCallback } from 'react';
+
+function MCPDashboard() {
+    const [client, setClient] = useState(null);
+    const [connected, setConnected] = useState(false);
+    const [tools, setTools] = useState([]);
+    const [messages, setMessages] = useState([]);
+    const [progress, setProgress] = useState(null);
+
+    useEffect(() => {
+        const mcpClient = new MCPSSEClient('http://localhost:8080/mcp');
+        
+        mcpClient.onProgress = (progressData) => {
+            setProgress(progressData);
+        };
+        
+        mcpClient.onMessage = (message) => {
+            setMessages(prev => [...prev, message]);
+        };
+
+        mcpClient.connect()
+            .then(() => {
+                setConnected(true);
+                return mcpClient.listTools();
+            })
+            .then(toolList => {
+                setTools(toolList.tools);
+            })
+            .catch(error => {
+                console.error('Connection failed:', error);
+            });
+
+        setClient(mcpClient);
+
+        return () => {
+            mcpClient.disconnect();
+        };
+    }, []);
+
+    const callTool = useCallback(async (toolName, args) => {
+        if (!client) return;
+        
+        try {
+            const result = await client.callTool(toolName, args);
+            setMessages(prev => [...prev, {
+                type: 'tool_result',
+                tool: toolName,
+                result,
+                timestamp: Date.now()
+            }]);
+        } catch (error) {
+            console.error('Tool call failed:', error);
+        }
+    }, [client]);
+
+    return (
+        <div className="mcp-dashboard">
+            <div className="status">
+                Status: {connected ? 'Connected' : 'Disconnected'}
+            </div>
+            
+            {progress && (
+                <div className="progress">
+                    <div className="progress-bar">
+                        <div 
+                            className="progress-fill"
+                            style={{ width: `${(progress.progress / progress.total) * 100}%` }}
+                        />
+                    </div>
+                    <div className="progress-text">
+                        {progress.message} ({progress.progress}/{progress.total})
+                    </div>
+                </div>
+            )}
+            
+            <div className="tools">
+                <h3>Available Tools</h3>
+                {tools.map(tool => (
+                    <div key={tool.name} className="tool">
+                        <h4>{tool.name}</h4>
+                        <p>{tool.description}</p>
+                        <button onClick={() => callTool(tool.name, {})}>
+                            Call Tool
+                        </button>
+                    </div>
+                ))}
+            </div>
+            
+            <div className="messages">
+                <h3>Messages</h3>
+                {messages.map((message, index) => (
+                    <div key={index} className="message">
+                        <pre>{JSON.stringify(message, null, 2)}</pre>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+export default MCPDashboard;
+```
+
+## Performance and Scaling
+
+### Connection Pooling
+
+```go
+type ConnectionPool struct {
+    connections map[string]*Connection
+    mutex       sync.RWMutex
+    maxConns    int
+    cleanup     *time.Ticker
+}
+
+func NewConnectionPool(maxConns int) *ConnectionPool {
+    pool := &ConnectionPool{
+        connections: make(map[string]*Connection),
+        maxConns:    maxConns,
+        cleanup:     time.NewTicker(1 * time.Minute),
+    }
+    
+    go pool.cleanupLoop()
+    return pool
+}
+
+func (p *ConnectionPool) cleanupLoop() {
+    for range p.cleanup.C {
+        p.mutex.Lock()
+        now := time.Now()
+        
+        for id, conn := range p.connections {
+            if now.Sub(conn.LastSeen) > 5*time.Minute {
+                conn.Close()
+                delete(p.connections, id)
+            }
+        }
+        
+        p.mutex.Unlock()
+    }
+}
+```
+
+### Load Balancing
+
+```go
+type LoadBalancer struct {
+    servers []string
+    current int
+    mutex   sync.Mutex
+}
+
+func NewLoadBalancer(servers []string) *LoadBalancer {
+    return &LoadBalancer{
+        servers: servers,
+    }
+}
+
+func (lb *LoadBalancer) NextServer() string {
+    lb.mutex.Lock()
+    defer lb.mutex.Unlock()
+    
+    server := lb.servers[lb.current]
+    lb.current = (lb.current + 1) % len(lb.servers)
+    return server
+}
+
+// Use with reverse proxy
+func setupReverseProxy() {
+    lb := NewLoadBalancer([]string{
+        "http://server1:8080",
+        "http://server2:8080",
+        "http://server3:8080",
+    })
+    
+    http.HandleFunc("/mcp/", func(w http.ResponseWriter, r *http.Request) {
+        target := lb.NextServer()
+        proxy := httputil.NewSingleHostReverseProxy(mustParseURL(target))
+        proxy.ServeHTTP(w, r)
+    })
+}
+```
+
+## Best Practices
+
+### Security
+- **Use HTTPS in production**: Encrypt all SSE traffic
+- **Implement authentication**: Validate clients before allowing connections
+- **Rate limiting**: Prevent abuse and DoS attacks
+- **CORS configuration**: Restrict origins to trusted domains
+
+### Performance
+- **Connection limits**: Set reasonable maximum connections
+- **Message buffering**: Use buffered channels to prevent blocking
+- **Compression**: Enable gzip compression for large messages
+- **Heartbeat**: Keep connections alive with periodic pings
+
+### Reliability
+- **Graceful degradation**: Handle connection failures gracefully
+- **Reconnection logic**: Implement automatic reconnection in clients
+- **Message persistence**: Consider persisting important messages
+- **Health monitoring**: Monitor connection health and performance
+
+### Development
+- **Use development CORS**: Allow localhost origins during development
+- **Debug logging**: Log connection events and message flow
+- **Testing tools**: Use browser dev tools to inspect SSE streams
+- **Error handling**: Provide clear error messages and recovery paths
+
+## Next Steps
+
+- **[HTTP Transport](/transports/http)** - Learn about traditional web service patterns
+- **[In-Process Transport](/transports/inprocess)** - Explore embedded scenarios
+- **[Client Development](/clients)** - Build MCP clients for different transports

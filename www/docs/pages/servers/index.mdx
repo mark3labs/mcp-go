@@ -1,0 +1,134 @@
+# Building MCP Servers
+
+Learn how to build powerful MCP servers with MCP-Go. This section covers everything from basic server setup to advanced features like typed tools and session management.
+
+## Overview
+
+MCP servers expose tools, resources, and prompts to LLM clients. MCP-Go makes it easy to build robust servers with minimal boilerplate while providing full control over advanced features.
+
+## What You'll Learn
+
+- **[Server Basics](/servers/basics)** - Creating and configuring servers
+- **[Resources](/servers/resources)** - Exposing data to LLMs
+- **[Tools](/servers/tools)** - Providing functionality to LLMs
+- **[Prompts](/servers/prompts)** - Creating reusable interaction templates
+- **[Advanced Features](/servers/advanced)** - Typed tools, middleware, hooks, and more
+
+## Quick Example
+
+Here's a complete MCP server that demonstrates the key concepts:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "time"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func main() {
+    // Create server with capabilities
+    s := server.NewMCPServer(
+        "Demo Server",
+        "1.0.0",
+        server.WithToolCapabilities(true),
+        server.WithResourceCapabilities(true),
+        server.WithPromptCapabilities(true),
+    )
+
+    // Add a tool
+    s.AddTool(
+        mcp.NewTool("get_time",
+            mcp.WithDescription("Get the current time"),
+            mcp.WithString("format", 
+                mcp.Description("Time format (RFC3339, Unix, etc.)"),
+                mcp.Default("RFC3339"),
+            ),
+        ),
+        handleGetTime,
+    )
+
+    // Add a resource
+    s.AddResource(
+        mcp.NewResource(
+            "config://server",
+            "Server Configuration",
+            mcp.WithResourceDescription("Current server configuration"),
+            mcp.WithMIMEType("application/json"),
+        ),
+        handleConfig,
+    )
+
+    // Add a prompt
+    s.AddPrompt(
+        mcp.NewPrompt("analyze_logs",
+            mcp.WithPromptDescription("Analyze server logs for issues"),
+            mcp.WithPromptArgument("log_level",
+                mcp.Description("Minimum log level to analyze"),
+                mcp.Default("error"),
+            ),
+        ),
+        handleAnalyzeLogs,
+    )
+
+    // Start the server
+    if err := server.ServeStdio(s); err != nil {
+        fmt.Printf("Server error: %v\n", err)
+    }
+}
+
+func handleGetTime(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    format := req.GetString("format", "RFC3339")
+    
+    var timeStr string
+    switch format {
+    case "Unix":
+        timeStr = fmt.Sprintf("%d", time.Now().Unix())
+    default:
+        timeStr = time.Now().Format(time.RFC3339)
+    }
+    
+    return mcp.NewToolResultText(timeStr), nil
+}
+
+func handleConfig(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+    config := map[string]interface{}{
+        "name": "Demo Server",
+        "version": "1.0.0",
+        "uptime": time.Since(startTime).String(),
+    }
+    
+    return mcp.NewResourceResultJSON(config), nil
+}
+
+func handleAnalyzeLogs(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+    logLevel := "error" // default value
+    if args := req.Params.Arguments; args != nil {
+        if level, ok := args["log_level"].(string); ok {
+            logLevel = level
+        }
+    }
+    
+    return &mcp.GetPromptResult{
+        Description: "Analyze server logs for potential issues",
+        Messages: []mcp.PromptMessage{
+            {
+                Role: "user",
+                Content: mcp.TextContent(fmt.Sprintf(
+                    "Please analyze the server logs for entries at %s level or higher. "+
+                    "Look for patterns, errors, and potential issues that need attention.",
+                    logLevel,
+                )),
+            },
+        },
+    }, nil
+}
+```
+
+## Next Steps
+
+Start with [Server Basics](/servers/basics) to learn how to create and configure your first MCP server, then explore the other sections to add resources, tools, and advanced features.

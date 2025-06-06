@@ -1,0 +1,650 @@
+# Implementing Prompts
+
+Prompts are reusable interaction templates that help structure conversations between users and LLMs. They provide context, instructions, and can include dynamic content from resources.
+
+## Prompt Fundamentals
+
+Prompts in MCP serve as templates that can be invoked by LLMs to generate structured interactions. They're particularly useful for complex workflows, analysis tasks, or any scenario where you want to provide consistent context and instructions.
+
+### Basic Prompt Structure
+
+```go
+// Create a simple prompt
+prompt := mcp.NewPrompt("code_review",
+    mcp.WithPromptDescription("Review code for best practices and issues"),
+    mcp.WithPromptArgument("code",
+        mcp.Required(),
+        mcp.Description("The code to review"),
+    ),
+    mcp.WithPromptArgument("language",
+        mcp.Description("Programming language"),
+        mcp.Default("auto-detect"),
+    ),
+)
+```
+
+## Prompt Templates
+
+### Basic Code Review Prompt
+
+```go
+func main() {
+    s := server.NewMCPServer("Code Assistant", "1.0.0",
+        server.WithPromptCapabilities(true),
+    )
+
+    // Code review prompt
+    codeReviewPrompt := mcp.NewPrompt("code_review",
+        mcp.WithPromptDescription("Review code for best practices, bugs, and improvements"),
+        mcp.WithPromptArgument("code",
+            mcp.Required(),
+            mcp.Description("The code to review"),
+        ),
+        mcp.WithPromptArgument("language",
+            mcp.Description("Programming language (auto-detected if not specified)"),
+        ),
+        mcp.WithPromptArgument("focus",
+            mcp.Description("Specific areas to focus on"),
+            mcp.Enum("security", "performance", "readability", "best-practices", "all"),
+            mcp.Default("all"),
+        ),
+    )
+
+    s.AddPrompt(codeReviewPrompt, handleCodeReview)
+    server.ServeStdio(s)
+}
+
+func handleCodeReview(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+    // Extract arguments safely
+    args := req.Params.Arguments
+    if args == nil {
+        return nil, fmt.Errorf("missing required arguments")
+    }
+    
+    code, ok := args["code"].(string)
+    if !ok {
+        return nil, fmt.Errorf("code argument is required and must be a string")
+    }
+    
+    language := getStringArg(args, "language", "auto-detect")
+    focus := getStringArg(args, "focus", "all")
+
+    // Build the prompt based on focus area
+    var instructions string
+    switch focus {
+    case "security":
+        instructions = "Focus specifically on security vulnerabilities, input validation, and potential attack vectors."
+    case "performance":
+        instructions = "Focus on performance optimizations, algorithmic efficiency, and resource usage."
+    case "readability":
+        instructions = "Focus on code clarity, naming conventions, and maintainability."
+    case "best-practices":
+        instructions = "Focus on language-specific best practices and design patterns."
+    default:
+        instructions = "Provide a comprehensive review covering security, performance, readability, and best practices."
+    }
+
+    return &mcp.GetPromptResult{
+        Description: fmt.Sprintf("Code review for %s code", language),
+        Messages: []mcp.PromptMessage{
+            {
+                Role: "user",
+                Content: mcp.TextContent(fmt.Sprintf(`Please review the following %s code:
+
+%s
+
+Instructions: %s
+
+Please provide:
+1. Overall assessment
+2. Specific issues found
+3. Suggested improvements
+4. Best practice recommendations
+
+Code:
+```%s
+%s
+````, language, instructions, language, code)),
+            },
+        },
+    }, nil
+}
+```
+
+### Data Analysis Prompt
+
+```go
+func handleDataAnalysis(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+    datasetURI := req.Params.Arguments["dataset_uri"].(string)
+    analysisType := getStringArg(req.Params.Arguments, "analysis_type", "exploratory")
+    focusAreas := getStringSliceArg(req.Params.Arguments, "focus_areas", []string{})
+
+    // Fetch the dataset (this would typically read from a resource)
+    dataset, err := fetchDataset(ctx, datasetURI)
+    if err != nil {
+        return nil, fmt.Errorf("failed to fetch dataset: %w", err)
+    }
+
+    // Build analysis instructions
+    var instructions strings.Builder
+    instructions.WriteString("Please analyze the provided dataset. ")
+
+    switch analysisType {
+    case "exploratory":
+        instructions.WriteString("Perform exploratory data analysis including summary statistics, distributions, and patterns.")
+    case "predictive":
+        instructions.WriteString("Focus on predictive modeling opportunities and feature relationships.")
+    case "diagnostic":
+        instructions.WriteString("Identify data quality issues, outliers, and potential problems.")
+    }
+
+    if len(focusAreas) > 0 {
+        instructions.WriteString(fmt.Sprintf(" Pay special attention to: %s.", strings.Join(focusAreas, ", ")))
+    }
+
+    return &mcp.GetPromptResult{
+        Description: fmt.Sprintf("%s analysis of dataset", strings.Title(analysisType)),
+        Messages: []mcp.PromptMessage{
+            {
+                Role: "user",
+                Content: mcp.TextContent(fmt.Sprintf(`%s
+
+Dataset Information:
+- Source: %s
+- Records: %d
+- Columns: %s
+
+Dataset Preview:
+%s
+
+Please provide a comprehensive analysis including:
+1. Data overview and quality assessment
+2. Key insights and patterns
+3. Recommendations for further analysis
+4. Potential issues or concerns`,
+                    instructions.String(),
+                    datasetURI,
+                    dataset.RecordCount,
+                    strings.Join(dataset.Columns, ", "),
+                    dataset.Preview,
+                )),
+            },
+        },
+    }, nil
+}
+```
+
+## Prompt Arguments
+
+### Flexible Parameter Handling
+
+```go
+func handleFlexiblePrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+    // Required arguments
+    task := req.Params.Arguments["task"].(string)
+    
+    // Optional arguments with defaults
+    tone := getStringArg(req.Params.Arguments, "tone", "professional")
+    length := getStringArg(req.Params.Arguments, "length", "medium")
+    audience := getStringArg(req.Params.Arguments, "audience", "general")
+    
+    // Array arguments
+    keywords := getStringSliceArg(req.Params.Arguments, "keywords", []string{})
+    
+    // Object arguments
+    var constraints map[string]interface{}
+    if c, exists := req.Params.Arguments["constraints"]; exists {
+        constraints = c.(map[string]interface{})
+    }
+
+    // Build prompt based on parameters
+    prompt := buildDynamicPrompt(task, tone, length, audience, keywords, constraints)
+    
+    return &mcp.GetPromptResult{
+        Description: fmt.Sprintf("Generate %s content", task),
+        Messages: []mcp.PromptMessage{
+            {
+                Role: "user",
+                Content: mcp.TextContent(prompt),
+            },
+        },
+    }, nil
+}
+
+func getStringArg(args map[string]interface{}, key, defaultValue string) string {
+    if val, exists := args[key]; exists {
+        if str, ok := val.(string); ok {
+            return str
+        }
+    }
+    return defaultValue
+}
+
+func getStringSliceArg(args map[string]interface{}, key string, defaultValue []string) []string {
+    if val, exists := args[key]; exists {
+        if slice, ok := val.([]interface{}); ok {
+            result := make([]string, len(slice))
+            for i, v := range slice {
+                if str, ok := v.(string); ok {
+                    result[i] = str
+                }
+            }
+            return result
+        }
+    }
+    return defaultValue
+}
+```
+
+## Message Types
+
+### Multi-Message Conversations
+
+```go
+func handleConversationPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+    scenario := req.Params.Arguments["scenario"].(string)
+    userRole := getStringArg(req.Params.Arguments, "user_role", "customer")
+    
+    var messages []mcp.PromptMessage
+    
+    switch scenario {
+    case "customer_support":
+        messages = []mcp.PromptMessage{
+            {
+                Role: "system",
+                Content: mcp.TextContent("You are a helpful customer support representative. Be polite, professional, and solution-oriented."),
+            },
+            {
+                Role: "user",
+                Content: mcp.TextContent(fmt.Sprintf("I'm a %s with a question about your service.", userRole)),
+            },
+            {
+                Role: "assistant", 
+                Content: mcp.TextContent("Hello! I'm here to help. What can I assist you with today?"),
+            },
+            {
+                Role: "user",
+                Content: mcp.TextContent("Please continue the conversation based on the customer's needs."),
+            },
+        }
+        
+    case "technical_interview":
+        messages = []mcp.PromptMessage{
+            {
+                Role: "system",
+                Content: mcp.TextContent("You are conducting a technical interview. Ask thoughtful questions and provide constructive feedback."),
+            },
+            {
+                Role: "user",
+                Content: mcp.TextContent("Let's begin the technical interview. Please start with an appropriate question."),
+            },
+        }
+    }
+    
+    return &mcp.GetPromptResult{
+        Description: fmt.Sprintf("%s conversation scenario", strings.Title(scenario)),
+        Messages:    messages,
+    }, nil
+}
+```
+
+### System and User Roles
+
+```go
+func handleRoleBasedPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+    expertise := req.Params.Arguments["expertise"].(string)
+    task := req.Params.Arguments["task"].(string)
+    context := getStringArg(req.Params.Arguments, "context", "")
+
+    // Define system message based on expertise
+    var systemMessage string
+    switch expertise {
+    case "software_engineer":
+        systemMessage = "You are an experienced software engineer with expertise in system design, code quality, and best practices."
+    case "data_scientist":
+        systemMessage = "You are a data scientist with expertise in statistical analysis, machine learning, and data visualization."
+    case "product_manager":
+        systemMessage = "You are a product manager with expertise in user experience, market analysis, and feature prioritization."
+    default:
+        systemMessage = fmt.Sprintf("You are an expert in %s.", expertise)
+    }
+
+    messages := []mcp.PromptMessage{
+        {
+            Role: "system",
+            Content: mcp.TextContent(systemMessage),
+        },
+    }
+
+    // Add context if provided
+    if context != "" {
+        messages = append(messages, mcp.PromptMessage{
+            Role: "user",
+            Content: mcp.TextContent(fmt.Sprintf("Context: %s", context)),
+        })
+    }
+
+    // Add the main task
+    messages = append(messages, mcp.PromptMessage{
+        Role: "user",
+        Content: mcp.TextContent(task),
+    })
+
+    return &mcp.GetPromptResult{
+        Description: fmt.Sprintf("%s task", strings.Title(expertise)),
+        Messages:    messages,
+    }, nil
+}
+```
+
+## Embedded Resources
+
+### Including Resource Data
+
+```go
+func handleResourceEmbeddedPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+    documentURI := req.Params.Arguments["document_uri"].(string)
+    analysisType := getStringArg(req.Params.Arguments, "analysis_type", "summary")
+
+    // Fetch the document content
+    document, err := fetchResource(ctx, documentURI)
+    if err != nil {
+        return nil, fmt.Errorf("failed to fetch document: %w", err)
+    }
+
+    // Build analysis prompt with embedded content
+    var instructions string
+    switch analysisType {
+    case "summary":
+        instructions = "Please provide a concise summary of the key points in this document."
+    case "critique":
+        instructions = "Please provide a critical analysis of the arguments and evidence presented."
+    case "questions":
+        instructions = "Please generate thoughtful questions that this document raises or could be used to explore."
+    case "action_items":
+        instructions = "Please extract actionable items and recommendations from this document."
+    }
+
+    return &mcp.GetPromptResult{
+        Description: fmt.Sprintf("Document %s", analysisType),
+        Messages: []mcp.PromptMessage{
+            {
+                Role: "user",
+                Content: mcp.TextContent(fmt.Sprintf(`%s
+
+Document: %s
+Content:
+---
+%s
+---
+
+Please provide your analysis following the instructions above.`,
+                    instructions,
+                    documentURI,
+                    document.Content,
+                )),
+            },
+        },
+    }, nil
+}
+```
+
+### Dynamic Resource Integration
+
+```go
+func handleDynamicResourcePrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+    resourceURIs := req.Params.Arguments["resource_uris"].([]interface{})
+    promptType := getStringArg(req.Params.Arguments, "prompt_type", "compare")
+
+    // Fetch all resources
+    var resources []ResourceData
+    for _, uri := range resourceURIs {
+        if uriStr, ok := uri.(string); ok {
+            resource, err := fetchResource(ctx, uriStr)
+            if err != nil {
+                return nil, fmt.Errorf("failed to fetch resource %s: %w", uriStr, err)
+            }
+            resources = append(resources, resource)
+        }
+    }
+
+    // Build prompt based on type and resources
+    var content strings.Builder
+    
+    switch promptType {
+    case "compare":
+        content.WriteString("Please compare and contrast the following documents:\n\n")
+        for i, resource := range resources {
+            content.WriteString(fmt.Sprintf("Document %d (%s):\n%s\n\n", i+1, resource.URI, resource.Content))
+        }
+        content.WriteString("Please provide:\n1. Key similarities\n2. Important differences\n3. Overall assessment")
+        
+    case "synthesize":
+        content.WriteString("Please synthesize information from the following sources:\n\n")
+        for i, resource := range resources {
+            content.WriteString(fmt.Sprintf("Source %d (%s):\n%s\n\n", i+1, resource.URI, resource.Content))
+        }
+        content.WriteString("Please create a unified analysis that incorporates insights from all sources.")
+    }
+
+    return &mcp.GetPromptResult{
+        Description: fmt.Sprintf("%s multiple resources", strings.Title(promptType)),
+        Messages: []mcp.PromptMessage{
+            {
+                Role: "user",
+                Content: mcp.TextContent(content.String()),
+            },
+        },
+    }, nil
+}
+```
+
+## Advanced Prompt Patterns
+
+### Conditional Prompts
+
+```go
+func handleConditionalPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+    userLevel := getStringArg(req.Params.Arguments, "user_level", "beginner")
+    topic := req.Params.Arguments["topic"].(string)
+    includeExamples := getBoolArg(req.Params.Arguments, "include_examples", true)
+
+    var prompt strings.Builder
+    
+    // Adjust complexity based on user level
+    switch userLevel {
+    case "beginner":
+        prompt.WriteString(fmt.Sprintf("Please explain %s in simple terms suitable for someone new to the topic. ", topic))
+        prompt.WriteString("Use clear language and avoid jargon. ")
+    case "intermediate":
+        prompt.WriteString(fmt.Sprintf("Please provide a detailed explanation of %s. ", topic))
+        prompt.WriteString("Include technical details but ensure clarity. ")
+    case "advanced":
+        prompt.WriteString(fmt.Sprintf("Please provide an in-depth analysis of %s. ", topic))
+        prompt.WriteString("Include advanced concepts, edge cases, and technical nuances. ")
+    }
+
+    if includeExamples {
+        prompt.WriteString("Please include relevant examples and practical applications.")
+    }
+
+    return &mcp.GetPromptResult{
+        Description: fmt.Sprintf("%s explanation for %s level", topic, userLevel),
+        Messages: []mcp.PromptMessage{
+            {
+                Role: "user",
+                Content: mcp.TextContent(prompt.String()),
+            },
+        },
+    }, nil
+}
+
+func getBoolArg(args map[string]interface{}, key string, defaultValue bool) bool {
+    if val, exists := args[key]; exists {
+        if b, ok := val.(bool); ok {
+            return b
+        }
+    }
+    return defaultValue
+}
+```
+
+### Template-Based Prompts
+
+```go
+type PromptTemplate struct {
+    Name        string
+    Description string
+    Template    string
+    Variables   []string
+}
+
+var promptTemplates = map[string]PromptTemplate{
+    "bug_report": {
+        Name:        "Bug Report Analysis",
+        Description: "Analyze a bug report and suggest solutions",
+        Template: `Please analyze this bug report:
+
+**Bug Description:** {{.description}}
+**Steps to Reproduce:** {{.steps}}
+**Expected Behavior:** {{.expected}}
+**Actual Behavior:** {{.actual}}
+**Environment:** {{.environment}}
+
+Please provide:
+1. Root cause analysis
+2. Potential solutions
+3. Prevention strategies
+4. Priority assessment`,
+        Variables: []string{"description", "steps", "expected", "actual", "environment"},
+    },
+    "feature_request": {
+        Name:        "Feature Request Evaluation",
+        Description: "Evaluate a feature request",
+        Template: `Please evaluate this feature request:
+
+**Feature:** {{.feature}}
+**Use Case:** {{.use_case}}
+**User Story:** {{.user_story}}
+**Acceptance Criteria:** {{.criteria}}
+
+Please assess:
+1. Business value and impact
+2. Technical feasibility
+3. Implementation complexity
+4. Potential risks and considerations`,
+        Variables: []string{"feature", "use_case", "user_story", "criteria"},
+    },
+}
+
+func handleTemplatePrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+    templateName := req.Params.Arguments["template"].(string)
+    variables := req.Params.Arguments["variables"].(map[string]interface{})
+
+    template, exists := promptTemplates[templateName]
+    if !exists {
+        return nil, fmt.Errorf("unknown template: %s", templateName)
+    }
+
+    // Replace template variables
+    content := template.Template
+    for _, variable := range template.Variables {
+        if value, exists := variables[variable]; exists {
+            placeholder := fmt.Sprintf("{{.%s}}", variable)
+            content = strings.ReplaceAll(content, placeholder, fmt.Sprintf("%v", value))
+        }
+    }
+
+    return &mcp.GetPromptResult{
+        Description: template.Description,
+        Messages: []mcp.PromptMessage{
+            {
+                Role: "user",
+                Content: mcp.TextContent(content),
+            },
+        },
+    }, nil
+}
+```
+
+## Testing Prompts
+
+```go
+func TestPromptGeneration(t *testing.T) {
+    req := mcp.GetPromptRequest{
+        Params: mcp.GetPromptRequestParams{
+            Name: "code_review",
+            Arguments: map[string]interface{}{
+                "code":     "func main() { fmt.Println(\"Hello\") }",
+                "language": "go",
+                "focus":    "best-practices",
+            },
+        },
+    }
+
+    result, err := handleCodeReview(context.Background(), req)
+    
+    assert.NoError(t, err)
+    assert.NotNil(t, result)
+    assert.NotEmpty(t, result.Messages)
+    assert.Contains(t, result.Messages[0].Content.Text, "best practices")
+}
+
+func TestPromptWithResources(t *testing.T) {
+    // Mock resource fetching
+    mockFetchResource := func(ctx context.Context, uri string) (ResourceData, error) {
+        return ResourceData{
+            URI:     uri,
+            Content: "Sample document content",
+        }, nil
+    }
+    
+    // Test with mocked resource
+    req := mcp.GetPromptRequest{
+        Params: mcp.GetPromptRequestParams{
+            Name: "document_analysis",
+            Arguments: map[string]interface{}{
+                "document_uri":   "docs://sample",
+                "analysis_type": "summary",
+            },
+        },
+    }
+
+    result, err := handleResourceEmbeddedPrompt(context.Background(), req)
+    
+    assert.NoError(t, err)
+    assert.Contains(t, result.Messages[0].Content.Text, "Sample document content")
+}
+```
+
+## Best Practices
+
+### Prompt Design
+- Keep instructions clear and specific
+- Provide context and examples when helpful
+- Structure prompts for consistent outputs
+- Consider different user skill levels
+
+### Parameter Handling
+- Validate all input parameters
+- Provide sensible defaults
+- Handle optional parameters gracefully
+- Document parameter requirements clearly
+
+### Resource Integration
+- Cache frequently accessed resources
+- Handle resource fetch failures gracefully
+- Validate resource content before embedding
+- Consider resource size limits
+
+### Performance
+- Minimize resource fetching in prompts
+- Use efficient string building for large prompts
+- Consider prompt caching for expensive operations
+- Implement timeouts for resource access
+
+## Next Steps
+
+- **[Advanced Features](/servers/advanced)** - Explore typed tools, middleware, and hooks
+- **[Client Integration](/clients)** - Learn how to build MCP clients
+- **[Testing](/testing)** - Comprehensive testing strategies

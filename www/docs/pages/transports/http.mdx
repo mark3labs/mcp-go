@@ -1,0 +1,958 @@
+# HTTP Transport
+
+HTTP transport provides traditional request/response communication for MCP servers, perfect for REST-like interactions, stateless clients, and integration with existing web infrastructure.
+
+## Use Cases
+
+HTTP transport excels in scenarios requiring:
+
+- **Web services**: Traditional REST API patterns
+- **Stateless interactions**: Each request is independent
+- **Load balancing**: Distribute requests across multiple servers
+- **Caching**: Leverage HTTP caching mechanisms
+- **Integration**: Work with existing HTTP infrastructure
+- **Public APIs**: Expose MCP functionality as web APIs
+
+**Example applications:**
+- Microservice architectures
+- Public API endpoints
+- Integration with API gateways
+- Cached data services
+- Rate-limited services
+- Multi-tenant applications
+
+## Implementation
+
+### Basic HTTP Server
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "net/http"
+    "time"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func main() {
+    s := server.NewMCPServer("HTTP API Server", "1.0.0",
+        server.WithToolCapabilities(true),
+        server.WithResourceCapabilities(true),
+    )
+
+    // Add RESTful tools
+    s.AddTool(
+        mcp.NewTool("get_user",
+            mcp.WithDescription("Get user information"),
+            mcp.WithString("user_id", mcp.Required()),
+        ),
+        handleGetUser,
+    )
+
+    s.AddTool(
+        mcp.NewTool("create_user",
+            mcp.WithDescription("Create a new user"),
+            mcp.WithString("name", mcp.Required()),
+            mcp.WithString("email", mcp.Required()),
+            mcp.WithInteger("age", mcp.Minimum(0)),
+        ),
+        handleCreateUser,
+    )
+
+    s.AddTool(
+        mcp.NewTool("search_users",
+            mcp.WithDescription("Search users with filters"),
+            mcp.WithString("query", mcp.Description("Search query")),
+            mcp.WithInteger("limit", mcp.Default(10), mcp.Maximum(100)),
+            mcp.WithInteger("offset", mcp.Default(0), mcp.Minimum(0)),
+        ),
+        handleSearchUsers,
+    )
+
+    // Add resources
+    s.AddResource(
+        mcp.NewResource(
+            "users://{user_id}",
+            "User Profile",
+            mcp.WithResourceDescription("User profile data"),
+            mcp.WithMIMEType("application/json"),
+        ),
+        handleUserResource,
+    )
+
+    // Start HTTP server
+    log.Println("Starting HTTP server on :8080")
+    if err := server.ServeHTTP(s, ":8080"); err != nil {
+        log.Fatal(err)
+    }
+}
+
+func handleGetUser(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    userID := req.Params.Arguments["user_id"].(string)
+    
+    // Simulate database lookup
+    user, err := getUserFromDB(userID)
+    if err != nil {
+        return nil, fmt.Errorf("user not found: %s", userID)
+    }
+
+    return mcp.NewToolResultJSON(user), nil
+}
+
+func handleCreateUser(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    name := req.Params.Arguments["name"].(string)
+    email := req.Params.Arguments["email"].(string)
+    age := int(req.Params.Arguments["age"].(float64))
+
+    // Validate input
+    if !isValidEmail(email) {
+        return nil, fmt.Errorf("invalid email format: %s", email)
+    }
+
+    // Create user
+    user := &User{
+        ID:        generateID(),
+        Name:      name,
+        Email:     email,
+        Age:       age,
+        CreatedAt: time.Now(),
+    }
+
+    if err := saveUserToDB(user); err != nil {
+        return nil, fmt.Errorf("failed to create user: %w", err)
+    }
+
+    return mcp.NewToolResultJSON(map[string]interface{}{
+        "id":      user.ID,
+        "message": "User created successfully",
+        "user":    user,
+    }), nil
+}
+
+func handleSearchUsers(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    query := getStringParam(req.Params.Arguments, "query", "")
+    limit := int(getFloatParam(req.Params.Arguments, "limit", 10))
+    offset := int(getFloatParam(req.Params.Arguments, "offset", 0))
+
+    // Search users with pagination
+    users, total, err := searchUsersInDB(query, limit, offset)
+    if err != nil {
+        return nil, fmt.Errorf("search failed: %w", err)
+    }
+
+    return mcp.NewToolResultJSON(map[string]interface{}{
+        "users":  users,
+        "total":  total,
+        "limit":  limit,
+        "offset": offset,
+        "query":  query,
+    }), nil
+}
+
+func handleUserResource(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+    userID := extractUserIDFromURI(req.Params.URI)
+    
+    user, err := getUserFromDB(userID)
+    if err != nil {
+        return nil, fmt.Errorf("user not found: %s", userID)
+    }
+
+    return mcp.NewResourceResultJSON(user), nil
+}
+```
+
+### Advanced HTTP Configuration
+
+```go
+func main() {
+    s := server.NewMCPServer("Advanced HTTP Server", "1.0.0",
+        server.WithAllCapabilities(),
+        server.WithRecovery(),
+        server.WithHooks(&server.Hooks{
+            OnToolCall: logToolCall,
+            OnResourceRead: logResourceRead,
+        }),
+    )
+
+    // Configure HTTP-specific options
+    httpOptions := server.HTTPOptions{
+        BasePath:         "/api/v1/mcp",
+        ReadTimeout:      30 * time.Second,
+        WriteTimeout:     30 * time.Second,
+        IdleTimeout:      60 * time.Second,
+        MaxBodySize:      10 * 1024 * 1024, // 10MB
+        EnableCORS:       true,
+        AllowedOrigins:   []string{"https://myapp.com", "http://localhost:3000"},
+        AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
+        AllowedHeaders:   []string{"Content-Type", "Authorization"},
+        EnableGzip:       true,
+        TrustedProxies:   []string{"10.0.0.0/8", "172.16.0.0/12"},
+    }
+
+    // Add middleware
+    addHTTPMiddleware(s)
+    
+    // Add comprehensive tools
+    addCRUDTools(s)
+    addBatchTools(s)
+    addAnalyticsTools(s)
+
+    log.Println("Starting advanced HTTP server on :8080")
+    if err := server.ServeHTTPWithOptions(s, ":8080", httpOptions); err != nil {
+        log.Fatal(err)
+    }
+}
+
+func addHTTPMiddleware(s *server.MCPServer) {
+    // Authentication middleware
+    s.AddToolMiddleware(func(next server.ToolHandler) server.ToolHandler {
+        return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            // Extract and validate auth token
+            token := extractAuthToken(ctx)
+            if token == "" {
+                return nil, fmt.Errorf("authentication required")
+            }
+            
+            user, err := validateToken(token)
+            if err != nil {
+                return nil, fmt.Errorf("invalid token: %w", err)
+            }
+            
+            // Add user to context
+            ctx = context.WithValue(ctx, "user", user)
+            return next(ctx, req)
+        }
+    })
+
+    // Rate limiting middleware
+    s.AddToolMiddleware(func(next server.ToolHandler) server.ToolHandler {
+        return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            clientIP := getClientIP(ctx)
+            if !rateLimiter.Allow(clientIP) {
+                return nil, fmt.Errorf("rate limit exceeded")
+            }
+            return next(ctx, req)
+        }
+    })
+
+    // Caching middleware
+    s.AddResourceMiddleware(func(next server.ResourceHandler) server.ResourceHandler {
+        return func(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+            // Check cache first
+            if cached := getFromCache(req.Params.URI); cached != nil {
+                return cached, nil
+            }
+            
+            result, err := next(ctx, req)
+            if err == nil {
+                // Cache successful results
+                setCache(req.Params.URI, result, 5*time.Minute)
+            }
+            
+            return result, err
+        }
+    })
+}
+```
+
+## Endpoints
+
+### Standard MCP Endpoints
+
+When you start an HTTP MCP server, it automatically creates these endpoints:
+
+```
+POST /mcp/initialize     - Initialize MCP session
+POST /mcp/tools/list     - List available tools
+POST /mcp/tools/call     - Call a tool
+POST /mcp/resources/list - List available resources
+POST /mcp/resources/read - Read a resource
+POST /mcp/prompts/list   - List available prompts
+POST /mcp/prompts/get    - Get a prompt
+GET  /mcp/health         - Health check
+GET  /mcp/capabilities   - Server capabilities
+```
+
+### Custom Endpoints
+
+Add custom HTTP endpoints alongside MCP:
+
+```go
+func main() {
+    s := server.NewMCPServer("Custom HTTP Server", "1.0.0")
+    
+    // Create HTTP server with custom routes
+    mux := http.NewServeMux()
+    
+    // Add MCP endpoints
+    server.AddMCPRoutes(mux, s, "/mcp")
+    
+    // Add custom endpoints
+    mux.HandleFunc("/api/status", handleStatus)
+    mux.HandleFunc("/api/metrics", handleMetrics)
+    mux.HandleFunc("/api/users", handleUsersAPI)
+    mux.HandleFunc("/api/upload", handleFileUpload)
+    
+    // Add middleware
+    handler := addMiddleware(mux)
+    
+    log.Println("Starting custom HTTP server on :8080")
+    if err := http.ListenAndServe(":8080", handler); err != nil {
+        log.Fatal(err)
+    }
+}
+
+func handleStatus(w http.ResponseWriter, r *http.Request) {
+    status := map[string]interface{}{
+        "status":    "healthy",
+        "timestamp": time.Now().Unix(),
+        "version":   "1.0.0",
+        "uptime":    time.Since(startTime).String(),
+    }
+    
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(status)
+}
+
+func handleMetrics(w http.ResponseWriter, r *http.Request) {
+    metrics := collectMetrics()
+    
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(metrics)
+}
+
+func handleUsersAPI(w http.ResponseWriter, r *http.Request) {
+    switch r.Method {
+    case "GET":
+        handleListUsers(w, r)
+    case "POST":
+        handleCreateUserAPI(w, r)
+    case "PUT":
+        handleUpdateUser(w, r)
+    case "DELETE":
+        handleDeleteUser(w, r)
+    default:
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+    }
+}
+```
+
+### Request/Response Patterns
+
+#### Standard MCP Request
+
+```json
+POST /mcp/tools/call
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "search_users",
+    "arguments": {
+      "query": "john",
+      "limit": 10,
+      "offset": 0
+    }
+  }
+}
+```
+
+#### Standard MCP Response
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"users\":[...],\"total\":25,\"limit\":10,\"offset\":0}"
+      }
+    ]
+  }
+}
+```
+
+#### Error Response
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32602,
+    "message": "Invalid params",
+    "data": {
+      "details": "user_id is required"
+    }
+  }
+}
+```
+
+## Session Management
+
+### Stateful vs Stateless
+
+#### Stateless Design (Recommended)
+
+```go
+// Each request is independent
+func handleStatelessTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Extract all needed information from request
+    userID := extractUserFromToken(ctx)
+    params := req.Params.Arguments
+    
+    // Process without relying on server state
+    result, err := processRequest(userID, params)
+    if err != nil {
+        return nil, err
+    }
+    
+    return mcp.NewToolResultJSON(result), nil
+}
+
+// Use external storage for persistence
+func getUserPreferences(userID string) (map[string]interface{}, error) {
+    // Load from database, cache, etc.
+    return loadFromRedis(fmt.Sprintf("user:%s:prefs", userID))
+}
+```
+
+#### Stateful Design (When Needed)
+
+```go
+type HTTPSessionManager struct {
+    sessions map[string]*HTTPSession
+    mutex    sync.RWMutex
+    cleanup  *time.Ticker
+}
+
+type HTTPSession struct {
+    ID          string
+    UserID      string
+    CreatedAt   time.Time
+    LastAccess  time.Time
+    Data        map[string]interface{}
+    ExpiresAt   time.Time
+}
+
+func NewHTTPSessionManager() *HTTPSessionManager {
+    sm := &HTTPSessionManager{
+        sessions: make(map[string]*HTTPSession),
+        cleanup:  time.NewTicker(1 * time.Minute),
+    }
+    
+    go sm.cleanupExpiredSessions()
+    return sm
+}
+
+func (sm *HTTPSessionManager) CreateSession(userID string) *HTTPSession {
+    sm.mutex.Lock()
+    defer sm.mutex.Unlock()
+    
+    session := &HTTPSession{
+        ID:         generateSessionID(),
+        UserID:     userID,
+        CreatedAt:  time.Now(),
+        LastAccess: time.Now(),
+        Data:       make(map[string]interface{}),
+        ExpiresAt:  time.Now().Add(30 * time.Minute),
+    }
+    
+    sm.sessions[session.ID] = session
+    return session
+}
+
+func (sm *HTTPSessionManager) GetSession(sessionID string) (*HTTPSession, bool) {
+    sm.mutex.RLock()
+    defer sm.mutex.RUnlock()
+    
+    session, exists := sm.sessions[sessionID]
+    if !exists || time.Now().After(session.ExpiresAt) {
+        return nil, false
+    }
+    
+    // Update last access
+    session.LastAccess = time.Now()
+    session.ExpiresAt = time.Now().Add(30 * time.Minute)
+    
+    return session, true
+}
+
+func (sm *HTTPSessionManager) cleanupExpiredSessions() {
+    for range sm.cleanup.C {
+        sm.mutex.Lock()
+        now := time.Now()
+        
+        for id, session := range sm.sessions {
+            if now.After(session.ExpiresAt) {
+                delete(sm.sessions, id)
+            }
+        }
+        
+        sm.mutex.Unlock()
+    }
+}
+```
+
+### Authentication and Authorization
+
+```go
+type AuthMiddleware struct {
+    jwtSecret []byte
+    userStore UserStore
+}
+
+func NewAuthMiddleware(secret []byte, store UserStore) *AuthMiddleware {
+    return &AuthMiddleware{
+        jwtSecret: secret,
+        userStore: store,
+    }
+}
+
+func (m *AuthMiddleware) Middleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // Extract token from Authorization header
+        authHeader := r.Header.Get("Authorization")
+        if !strings.HasPrefix(authHeader, "Bearer ") {
+            http.Error(w, "Missing or invalid authorization header", http.StatusUnauthorized)
+            return
+        }
+        
+        token := strings.TrimPrefix(authHeader, "Bearer ")
+        
+        // Validate JWT token
+        claims, err := m.validateJWT(token)
+        if err != nil {
+            http.Error(w, "Invalid token", http.StatusUnauthorized)
+            return
+        }
+        
+        // Load user information
+        user, err := m.userStore.GetUser(claims.UserID)
+        if err != nil {
+            http.Error(w, "User not found", http.StatusUnauthorized)
+            return
+        }
+        
+        // Add user to request context
+        ctx := context.WithValue(r.Context(), "user", user)
+        next.ServeHTTP(w, r.WithContext(ctx))
+    })
+}
+
+func (m *AuthMiddleware) validateJWT(tokenString string) (*Claims, error) {
+    token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+        return m.jwtSecret, nil
+    })
+    
+    if err != nil {
+        return nil, err
+    }
+    
+    if claims, ok := token.Claims.(*Claims); ok && token.Valid {
+        return claims, nil
+    }
+    
+    return nil, fmt.Errorf("invalid token")
+}
+
+type Claims struct {
+    UserID string `json:"user_id"`
+    Role   string `json:"role"`
+    jwt.StandardClaims
+}
+```
+
+## Client Integration
+
+### Go HTTP Client
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+
+    "github.com/mark3labs/mcp-go/client"
+)
+
+func main() {
+    // Create HTTP client
+    c := client.NewHTTPClient("http://localhost:8080/mcp")
+    
+    // Add authentication
+    c.SetHeader("Authorization", "Bearer your-jwt-token")
+    
+    // Set custom headers
+    c.SetHeader("X-API-Version", "v1")
+    c.SetHeader("X-Client-ID", "my-app")
+
+    ctx := context.Background()
+
+    // Initialize connection
+    if err := c.Initialize(ctx); err != nil {
+        log.Fatal(err)
+    }
+
+    // List tools
+    tools, err := c.ListTools(ctx)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    log.Printf("Available tools: %d", len(tools.Tools))
+
+    // Call tool
+    result, err := c.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolRequestParams{
+            Name: "search_users",
+            Arguments: map[string]interface{}{
+                "query": "john",
+                "limit": 5,
+            },
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    log.Printf("Tool result: %+v", result)
+}
+```
+
+### JavaScript/Fetch Client
+
+```javascript
+class MCPHTTPClient {
+    constructor(baseURL, options = {}) {
+        this.baseURL = baseURL;
+        this.headers = {
+            'Content-Type': 'application/json',
+            ...options.headers
+        };
+        this.requestId = 1;
+    }
+
+    setAuthToken(token) {
+        this.headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    async sendRequest(method, params = {}) {
+        const id = this.requestId++;
+        const request = {
+            jsonrpc: '2.0',
+            id,
+            method,
+            params
+        };
+
+        const response = await fetch(`${this.baseURL}/${method.replace('/', '/')}`, {
+            method: 'POST',
+            headers: this.headers,
+            body: JSON.stringify(request)
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+        
+        if (result.error) {
+            throw new Error(result.error.message);
+        }
+
+        return result.result;
+    }
+
+    async initialize() {
+        return this.sendRequest('initialize', {
+            protocolVersion: '2024-11-05',
+            capabilities: { tools: {} },
+            clientInfo: { name: 'Web Client', version: '1.0.0' }
+        });
+    }
+
+    async listTools() {
+        return this.sendRequest('tools/list');
+    }
+
+    async callTool(name, arguments) {
+        return this.sendRequest('tools/call', { name, arguments });
+    }
+
+    async listResources() {
+        return this.sendRequest('resources/list');
+    }
+
+    async readResource(uri) {
+        return this.sendRequest('resources/read', { uri });
+    }
+}
+
+// Usage
+const client = new MCPHTTPClient('http://localhost:8080/mcp');
+client.setAuthToken('your-jwt-token');
+
+async function main() {
+    try {
+        await client.initialize();
+        
+        const tools = await client.listTools();
+        console.log('Available tools:', tools);
+        
+        const result = await client.callTool('search_users', {
+            query: 'john',
+            limit: 10
+        });
+        console.log('Search result:', result);
+        
+    } catch (error) {
+        console.error('Error:', error);
+    }
+}
+
+main();
+```
+
+### cURL Examples
+
+```bash
+# Initialize session
+curl -X POST http://localhost:8080/mcp/initialize \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-token" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "2024-11-05",
+      "capabilities": {"tools": {}},
+      "clientInfo": {"name": "curl", "version": "1.0.0"}
+    }
+  }'
+
+# List tools
+curl -X POST http://localhost:8080/mcp/tools/list \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-token" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "tools/list",
+    "params": {}
+  }'
+
+# Call tool
+curl -X POST http://localhost:8080/mcp/tools/call \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-token" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/call",
+    "params": {
+      "name": "search_users",
+      "arguments": {
+        "query": "john",
+        "limit": 10
+      }
+    }
+  }'
+
+# Read resource
+curl -X POST http://localhost:8080/mcp/resources/read \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-token" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 4,
+    "method": "resources/read",
+    "params": {
+      "uri": "users://123"
+    }
+  }'
+```
+
+## Performance and Scaling
+
+### Load Balancing
+
+```go
+// Use with nginx or HAProxy
+upstream mcp_servers {
+    server 127.0.0.1:8080;
+    server 127.0.0.1:8081;
+    server 127.0.0.1:8082;
+}
+
+server {
+    listen 80;
+    server_name api.example.com;
+    
+    location /mcp/ {
+        proxy_pass http://mcp_servers;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+### Caching Strategies
+
+```go
+type CacheMiddleware struct {
+    cache map[string]cacheEntry
+    mutex sync.RWMutex
+    ttl   time.Duration
+}
+
+type cacheEntry struct {
+    data      *mcp.ReadResourceResult
+    timestamp time.Time
+    etag      string
+}
+
+func (m *CacheMiddleware) ResourceMiddleware(next server.ResourceHandler) server.ResourceHandler {
+    return func(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+        // Check cache
+        m.mutex.RLock()
+        entry, exists := m.cache[req.Params.URI]
+        m.mutex.RUnlock()
+        
+        if exists && time.Since(entry.timestamp) < m.ttl {
+            // Add cache headers
+            if httpCtx := getHTTPContext(ctx); httpCtx != nil {
+                httpCtx.Header().Set("Cache-Control", fmt.Sprintf("max-age=%d", int(m.ttl.Seconds())))
+                httpCtx.Header().Set("ETag", entry.etag)
+            }
+            return entry.data, nil
+        }
+        
+        // Fetch fresh data
+        result, err := next(ctx, req)
+        if err != nil {
+            return nil, err
+        }
+        
+        // Cache result
+        etag := generateETag(result)
+        m.mutex.Lock()
+        m.cache[req.Params.URI] = cacheEntry{
+            data:      result,
+            timestamp: time.Now(),
+            etag:      etag,
+        }
+        m.mutex.Unlock()
+        
+        // Set cache headers
+        if httpCtx := getHTTPContext(ctx); httpCtx != nil {
+            httpCtx.Header().Set("Cache-Control", fmt.Sprintf("max-age=%d", int(m.ttl.Seconds())))
+            httpCtx.Header().Set("ETag", etag)
+        }
+        
+        return result, nil
+    }
+}
+```
+
+### Rate Limiting
+
+```go
+type RateLimiter struct {
+    limiters map[string]*rate.Limiter
+    mutex    sync.RWMutex
+    rate     rate.Limit
+    burst    int
+}
+
+func NewRateLimiter(requestsPerSecond float64, burst int) *RateLimiter {
+    return &RateLimiter{
+        limiters: make(map[string]*rate.Limiter),
+        rate:     rate.Limit(requestsPerSecond),
+        burst:    burst,
+    }
+}
+
+func (rl *RateLimiter) getLimiter(clientIP string) *rate.Limiter {
+    rl.mutex.RLock()
+    limiter, exists := rl.limiters[clientIP]
+    rl.mutex.RUnlock()
+    
+    if !exists {
+        rl.mutex.Lock()
+        limiter = rate.NewLimiter(rl.rate, rl.burst)
+        rl.limiters[clientIP] = limiter
+        rl.mutex.Unlock()
+    }
+    
+    return limiter
+}
+
+func (rl *RateLimiter) Allow(clientIP string) bool {
+    return rl.getLimiter(clientIP).Allow()
+}
+
+// HTTP middleware
+func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        clientIP := getClientIP(r)
+        
+        if !rl.Allow(clientIP) {
+            http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+            return
+        }
+        
+        next.ServeHTTP(w, r)
+    })
+}
+```
+
+## Best Practices
+
+### Security
+- **Use HTTPS**: Always encrypt HTTP traffic in production
+- **Implement authentication**: Validate all requests
+- **Rate limiting**: Prevent abuse and DoS attacks
+- **Input validation**: Sanitize all user inputs
+- **CORS configuration**: Restrict origins appropriately
+
+### Performance
+- **Connection pooling**: Reuse HTTP connections
+- **Caching**: Cache expensive operations and resources
+- **Compression**: Enable gzip compression
+- **Load balancing**: Distribute load across multiple servers
+- **Database optimization**: Use connection pools and prepared statements
+
+### Reliability
+- **Health checks**: Implement health check endpoints
+- **Graceful shutdown**: Handle shutdown signals properly
+- **Circuit breakers**: Prevent cascading failures
+- **Retry logic**: Handle transient failures
+- **Monitoring**: Track metrics and errors
+
+### Development
+- **API documentation**: Document all endpoints and parameters
+- **Testing**: Write comprehensive tests for all endpoints
+- **Logging**: Log all requests and errors
+- **Versioning**: Version your APIs for backward compatibility
+
+## Next Steps
+
+- **[In-Process Transport](/transports/inprocess)** - Learn about embedded scenarios
+- **[Client Development](/clients)** - Build MCP clients for HTTP transport
+- **[Testing](/testing)** - Test HTTP MCP servers comprehensively

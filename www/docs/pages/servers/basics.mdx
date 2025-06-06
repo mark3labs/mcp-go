@@ -1,0 +1,314 @@
+# Server Basics
+
+Learn how to create, configure, and start MCP servers with different transport options.
+
+## Creating a Server
+
+The foundation of any MCP server is the `NewMCPServer()` function. This creates a server instance with basic metadata and optional configuration.
+
+### Basic Server Creation
+
+```go
+package main
+
+import (
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func main() {
+    // Create a basic server
+    s := server.NewMCPServer(
+        "My MCP Server",  // Server name
+        "1.0.0",          // Server version
+    )
+    
+    // Start the server (stdio transport)
+    server.ServeStdio(s)
+}
+```
+
+### Server with Options
+
+Use server options to configure capabilities and behavior:
+
+```go
+s := server.NewMCPServer(
+    "Advanced Server",
+    "2.0.0",
+    server.WithToolCapabilities(true),      // Enable tools
+    server.WithResourceCapabilities(true),  // Enable resources  
+    server.WithPromptCapabilities(true),    // Enable prompts
+    server.WithRecovery(),                  // Add panic recovery
+    server.WithHooks(myHooks),              // Add lifecycle hooks
+)
+```
+
+## Server Configuration
+
+### Capabilities
+
+Capabilities tell clients what features your server supports:
+
+```go
+// Enable specific capabilities
+s := server.NewMCPServer(
+    "Specialized Server",
+    "1.0.0",
+    server.WithToolCapabilities(true),      // Can execute tools
+    server.WithResourceCapabilities(true),  // Can provide resources
+    server.WithPromptCapabilities(true),    // Can provide prompts
+)
+
+// Or enable all capabilities
+s := server.NewMCPServer(
+    "Full-Featured Server", 
+    "1.0.0",
+    server.WithAllCapabilities(),
+)
+```
+
+**Capability types:**
+- **Tools**: Server can execute function calls from LLMs
+- **Resources**: Server can provide data/content to LLMs  
+- **Prompts**: Server can provide prompt templates
+
+### Recovery Middleware
+
+Add automatic panic recovery to prevent server crashes:
+
+```go
+s := server.NewMCPServer(
+    "Robust Server",
+    "1.0.0", 
+    server.WithRecovery(), // Automatically recover from panics
+)
+```
+
+This catches panics in handlers and returns proper error responses instead of crashing.
+
+### Custom Metadata
+
+Add additional server information:
+
+```go
+s := server.NewMCPServer(
+    "My Server",
+    "1.0.0",
+    server.WithServerInfo(server.ServerInfo{
+        Name:        "My Custom Server",
+        Version:     "1.0.0", 
+        Description: "A server that does amazing things",
+        Author:      "Your Name",
+        Homepage:    "https://example.com",
+        License:     "MIT",
+    }),
+)
+```
+
+## Starting Servers
+
+MCP-Go supports multiple transport methods for different deployment scenarios.
+
+### Stdio Transport
+
+Standard input/output - most common for local tools:
+
+```go
+func main() {
+    s := server.NewMCPServer("My Server", "1.0.0")
+    
+    // Start stdio server (blocks until terminated)
+    if err := server.ServeStdio(s); err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+**Best for:**
+- Local development tools
+- CLI integrations  
+- Desktop applications
+- Single-client scenarios
+
+### HTTP Transport
+
+Traditional HTTP request/response:
+
+```go
+func main() {
+    s := server.NewMCPServer("HTTP Server", "1.0.0")
+    
+    // Start HTTP server on port 8080
+    if err := server.ServeHTTP(s, ":8080"); err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+**Best for:**
+- Web services
+- Load-balanced deployments
+- REST-like APIs
+- Caching scenarios
+
+### Server-Sent Events (SSE)
+
+HTTP-based streaming for real-time updates:
+
+```go
+func main() {
+    s := server.NewMCPServer("SSE Server", "1.0.0")
+    
+    // Start SSE server on port 8080
+    if err := server.ServeSSE(s, ":8080"); err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+**Best for:**
+- Web applications
+- Real-time notifications
+- Multiple concurrent clients
+- Browser-based tools
+
+### Custom Transport Options
+
+Configure transport-specific options:
+
+```go
+// HTTP with custom options
+httpOpts := server.HTTPTransportOptions{
+    ReadTimeout:  30 * time.Second,
+    WriteTimeout: 30 * time.Second,
+    IdleTimeout:  60 * time.Second,
+    MaxBodySize:  10 * 1024 * 1024, // 10MB
+}
+
+if err := server.ServeHTTPWithOptions(s, ":8080", httpOpts); err != nil {
+    log.Fatal(err)
+}
+```
+
+## Environment-Based Configuration
+
+Configure servers based on environment variables:
+
+```go
+func main() {
+    s := server.NewMCPServer("Configurable Server", "1.0.0")
+    
+    // Choose transport based on environment
+    transport := os.Getenv("MCP_TRANSPORT")
+    port := os.Getenv("PORT")
+    if port == "" {
+        port = "8080"
+    }
+    
+    switch transport {
+    case "http":
+        server.ServeHTTP(s, ":"+port)
+    case "sse":
+        server.ServeSSE(s, ":"+port)
+    default:
+        server.ServeStdio(s)
+    }
+}
+```
+
+## Server Lifecycle
+
+Understanding the server lifecycle helps with proper resource management:
+
+```go
+func main() {
+    s := server.NewMCPServer("Lifecycle Server", "1.0.0",
+        server.WithHooks(&server.Hooks{
+            OnServerStart: func() {
+                log.Println("Server starting...")
+                // Initialize resources, connections, etc.
+            },
+            OnServerStop: func() {
+                log.Println("Server stopping...")
+                // Cleanup resources, close connections, etc.
+            },
+            OnSessionStart: func(sessionID string) {
+                log.Printf("Client %s connected", sessionID)
+            },
+            OnSessionEnd: func(sessionID string) {
+                log.Printf("Client %s disconnected", sessionID)
+            },
+        }),
+    )
+    
+    // Graceful shutdown
+    c := make(chan os.Signal, 1)
+    signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+    
+    go func() {
+        <-c
+        log.Println("Shutting down server...")
+        s.Shutdown()
+    }()
+    
+    server.ServeStdio(s)
+}
+```
+
+## Error Handling
+
+Proper error handling ensures robust server operation:
+
+```go
+func main() {
+    s := server.NewMCPServer("Error-Safe Server", "1.0.0",
+        server.WithRecovery(), // Panic recovery
+    )
+    
+    // Add error handling for server startup
+    if err := server.ServeStdio(s); err != nil {
+        if errors.Is(err, server.ErrServerClosed) {
+            log.Println("Server closed gracefully")
+        } else {
+            log.Fatalf("Server error: %v", err)
+        }
+    }
+}
+```
+
+## Testing Your Server
+
+Test server creation and basic functionality:
+
+```go
+func TestServerCreation(t *testing.T) {
+    s := server.NewMCPServer("Test Server", "1.0.0")
+    
+    // Verify server properties
+    assert.Equal(t, "Test Server", s.Name())
+    assert.Equal(t, "1.0.0", s.Version())
+    
+    // Test capabilities
+    caps := s.Capabilities()
+    assert.NotNil(t, caps)
+}
+
+func TestServerWithOptions(t *testing.T) {
+    s := server.NewMCPServer("Test Server", "1.0.0",
+        server.WithToolCapabilities(true),
+        server.WithRecovery(),
+    )
+    
+    caps := s.Capabilities()
+    assert.True(t, caps.Tools != nil)
+}
+```
+
+## Next Steps
+
+Now that you understand server basics, learn how to add functionality:
+
+- **[Resources](/servers/resources)** - Expose data to LLMs
+- **[Tools](/servers/tools)** - Provide functionality to LLMs  
+- **[Prompts](/servers/prompts)** - Create reusable interaction templates
+- **[Advanced Features](/servers/advanced)** - Hooks, middleware, and more

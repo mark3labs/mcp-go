@@ -1,0 +1,919 @@
+# Client Operations
+
+Learn how to use MCP clients to interact with servers through tools, resources, prompts, and subscriptions.
+
+## Listing Resources
+
+Resources provide read-only access to data. Before reading resources, you typically need to discover what's available.
+
+### Basic Resource Listing
+
+```go
+func listResources(ctx context.Context, c client.Client) error {
+    // List all available resources
+    resources, err := c.ListResources(ctx)
+    if err != nil {
+        return fmt.Errorf("failed to list resources: %w", err)
+    }
+
+    fmt.Printf("Available resources: %d\n", len(resources.Resources))
+    for _, resource := range resources.Resources {
+        fmt.Printf("- %s (%s): %s\n", 
+            resource.URI, 
+            resource.MIMEType, 
+            resource.Name)
+        
+        if resource.Description != "" {
+            fmt.Printf("  Description: %s\n", resource.Description)
+        }
+    }
+
+    return nil
+}
+```
+
+### Filtered Resource Listing
+
+```go
+func listResourcesByType(ctx context.Context, c client.Client, mimeType string) ([]mcp.Resource, error) {
+    resources, err := c.ListResources(ctx)
+    if err != nil {
+        return nil, err
+    }
+
+    var filtered []mcp.Resource
+    for _, resource := range resources.Resources {
+        if resource.MIMEType == mimeType {
+            filtered = append(filtered, resource)
+        }
+    }
+
+    return filtered, nil
+}
+
+func listResourcesByPattern(ctx context.Context, c client.Client, pattern string) ([]mcp.Resource, error) {
+    resources, err := c.ListResources(ctx)
+    if err != nil {
+        return nil, err
+    }
+
+    regex, err := regexp.Compile(pattern)
+    if err != nil {
+        return nil, fmt.Errorf("invalid pattern: %w", err)
+    }
+
+    var filtered []mcp.Resource
+    for _, resource := range resources.Resources {
+        if regex.MatchString(resource.URI) {
+            filtered = append(filtered, resource)
+        }
+    }
+
+    return filtered, nil
+}
+
+// Usage examples
+func demonstrateResourceFiltering(ctx context.Context, c client.Client) {
+    // Find all JSON resources
+    jsonResources, err := listResourcesByType(ctx, c, "application/json")
+    if err != nil {
+        log.Printf("Error listing JSON resources: %v", err)
+    } else {
+        fmt.Printf("Found %d JSON resources\n", len(jsonResources))
+    }
+
+    // Find all user-related resources
+    userResources, err := listResourcesByPattern(ctx, c, `users?://.*`)
+    if err != nil {
+        log.Printf("Error listing user resources: %v", err)
+    } else {
+        fmt.Printf("Found %d user resources\n", len(userResources))
+    }
+}
+```
+
+## Reading Resources
+
+Once you know what resources are available, you can read their content.
+
+### Basic Resource Reading
+
+```go
+func readResource(ctx context.Context, c client.Client, uri string) (*mcp.ReadResourceResult, error) {
+    result, err := c.ReadResource(ctx, mcp.ReadResourceRequest{
+        Params: mcp.ReadResourceRequestParams{
+            URI: uri,
+        },
+    })
+    if err != nil {
+        return nil, fmt.Errorf("failed to read resource %s: %w", uri, err)
+    }
+
+    return result, nil
+}
+
+func demonstrateResourceReading(ctx context.Context, c client.Client) {
+    // List resources first
+    resources, err := c.ListResources(ctx)
+    if err != nil {
+        log.Printf("Failed to list resources: %v", err)
+        return
+    }
+
+    // Read each resource
+    for _, resource := range resources.Resources {
+        fmt.Printf("\nReading resource: %s\n", resource.URI)
+        
+        result, err := readResource(ctx, c, resource.URI)
+        if err != nil {
+            log.Printf("Failed to read resource %s: %v", resource.URI, err)
+            continue
+        }
+
+        // Process resource contents
+        for i, content := range result.Contents {
+            fmt.Printf("Content %d:\n", i+1)
+            fmt.Printf("  URI: %s\n", content.URI)
+            fmt.Printf("  MIME Type: %s\n", content.MIMEType)
+            
+            if content.Text != "" {
+                fmt.Printf("  Text: %s\n", truncateString(content.Text, 100))
+            }
+            
+            if content.Blob != "" {
+                fmt.Printf("  Blob: %d bytes\n", len(content.Blob))
+            }
+        }
+    }
+}
+
+func truncateString(s string, maxLen int) string {
+    if len(s) <= maxLen {
+        return s
+    }
+    return s[:maxLen] + "..."
+}
+```
+
+### Typed Resource Reading
+
+```go
+// Helper functions for common resource types
+func readJSONResource(ctx context.Context, c client.Client, uri string) (map[string]interface{}, error) {
+    result, err := readResource(ctx, c, uri)
+    if err != nil {
+        return nil, err
+    }
+
+    if len(result.Contents) == 0 {
+        return nil, fmt.Errorf("no content in resource")
+    }
+
+    content := result.Contents[0]
+    if content.MIMEType != "application/json" {
+        return nil, fmt.Errorf("expected JSON, got %s", content.MIMEType)
+    }
+
+    var data map[string]interface{}
+    if err := json.Unmarshal([]byte(content.Text), &data); err != nil {
+        return nil, fmt.Errorf("failed to parse JSON: %w", err)
+    }
+
+    return data, nil
+}
+
+func readTextResource(ctx context.Context, c client.Client, uri string) (string, error) {
+    result, err := readResource(ctx, c, uri)
+    if err != nil {
+        return "", err
+    }
+
+    if len(result.Contents) == 0 {
+        return "", fmt.Errorf("no content in resource")
+    }
+
+    content := result.Contents[0]
+    if !strings.HasPrefix(content.MIMEType, "text/") {
+        return "", fmt.Errorf("expected text, got %s", content.MIMEType)
+    }
+
+    return content.Text, nil
+}
+
+func readBinaryResource(ctx context.Context, c client.Client, uri string) ([]byte, error) {
+    result, err := readResource(ctx, c, uri)
+    if err != nil {
+        return nil, err
+    }
+
+    if len(result.Contents) == 0 {
+        return nil, fmt.Errorf("no content in resource")
+    }
+
+    content := result.Contents[0]
+    if content.Blob == "" {
+        return nil, fmt.Errorf("no binary data in resource")
+    }
+
+    data, err := base64.StdEncoding.DecodeString(content.Blob)
+    if err != nil {
+        return nil, fmt.Errorf("failed to decode binary data: %w", err)
+    }
+
+    return data, nil
+}
+```
+
+### Resource Caching
+
+```go
+type ResourceCache struct {
+    cache map[string]cacheEntry
+    mutex sync.RWMutex
+    ttl   time.Duration
+}
+
+type cacheEntry struct {
+    result    *mcp.ReadResourceResult
+    timestamp time.Time
+}
+
+func NewResourceCache(ttl time.Duration) *ResourceCache {
+    return &ResourceCache{
+        cache: make(map[string]cacheEntry),
+        ttl:   ttl,
+    }
+}
+
+func (rc *ResourceCache) Get(uri string) (*mcp.ReadResourceResult, bool) {
+    rc.mutex.RLock()
+    defer rc.mutex.RUnlock()
+
+    entry, exists := rc.cache[uri]
+    if !exists || time.Since(entry.timestamp) > rc.ttl {
+        return nil, false
+    }
+
+    return entry.result, true
+}
+
+func (rc *ResourceCache) Set(uri string, result *mcp.ReadResourceResult) {
+    rc.mutex.Lock()
+    defer rc.mutex.Unlock()
+
+    rc.cache[uri] = cacheEntry{
+        result:    result,
+        timestamp: time.Now(),
+    }
+}
+
+func (rc *ResourceCache) ReadResource(ctx context.Context, c client.Client, uri string) (*mcp.ReadResourceResult, error) {
+    // Check cache first
+    if cached, found := rc.Get(uri); found {
+        return cached, nil
+    }
+
+    // Read from server
+    result, err := readResource(ctx, c, uri)
+    if err != nil {
+        return nil, err
+    }
+
+    // Cache the result
+    rc.Set(uri, result)
+    return result, nil
+}
+```
+
+## Calling Tools
+
+Tools provide functionality that can be invoked with parameters.
+
+### Basic Tool Calling
+
+```go
+func callTool(ctx context.Context, c client.Client, name string, args map[string]interface{}) (*mcp.CallToolResult, error) {
+    result, err := c.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolRequestParams{
+            Name:      name,
+            Arguments: args,
+        },
+    })
+    if err != nil {
+        return nil, fmt.Errorf("tool call failed: %w", err)
+    }
+
+    return result, nil
+}
+
+func demonstrateToolCalling(ctx context.Context, c client.Client) {
+    // List available tools
+    tools, err := c.ListTools(ctx)
+    if err != nil {
+        log.Printf("Failed to list tools: %v", err)
+        return
+    }
+
+    fmt.Printf("Available tools: %d\n", len(tools.Tools))
+    for _, tool := range tools.Tools {
+        fmt.Printf("- %s: %s\n", tool.Name, tool.Description)
+    }
+
+    // Call a specific tool
+    if len(tools.Tools) > 0 {
+        tool := tools.Tools[0]
+        fmt.Printf("\nCalling tool: %s\n", tool.Name)
+
+        result, err := callTool(ctx, c, tool.Name, map[string]interface{}{
+            // Add appropriate arguments based on tool schema
+        })
+        if err != nil {
+            log.Printf("Tool call failed: %v", err)
+            return
+        }
+
+        fmt.Printf("Tool result:\n")
+        for i, content := range result.Content {
+            fmt.Printf("Content %d (%s): %s\n", i+1, content.Type, content.Text)
+        }
+    }
+}
+```
+
+### Tool Schema Validation
+
+```go
+func validateToolArguments(tool mcp.Tool, args map[string]interface{}) error {
+    schema := tool.InputSchema
+    
+    // Check required properties
+    if schema.Required != nil {
+        for _, required := range schema.Required {
+            if _, exists := args[required]; !exists {
+                return fmt.Errorf("missing required argument: %s", required)
+            }
+        }
+    }
+
+    // Validate argument types
+    if schema.Properties != nil {
+        for name, value := range args {
+            propSchema, exists := schema.Properties[name]
+            if !exists {
+                return fmt.Errorf("unknown argument: %s", name)
+            }
+
+            if err := validateValue(value, propSchema); err != nil {
+                return fmt.Errorf("invalid argument %s: %w", name, err)
+            }
+        }
+    }
+
+    return nil
+}
+
+func validateValue(value interface{}, schema mcp.Schema) error {
+    switch schema.Type {
+    case "string":
+        if _, ok := value.(string); !ok {
+            return fmt.Errorf("expected string, got %T", value)
+        }
+    case "number":
+        if _, ok := value.(float64); !ok {
+            return fmt.Errorf("expected number, got %T", value)
+        }
+    case "integer":
+        if _, ok := value.(float64); !ok {
+            return fmt.Errorf("expected integer, got %T", value)
+        }
+    case "boolean":
+        if _, ok := value.(bool); !ok {
+            return fmt.Errorf("expected boolean, got %T", value)
+        }
+    case "array":
+        if _, ok := value.([]interface{}); !ok {
+            return fmt.Errorf("expected array, got %T", value)
+        }
+    case "object":
+        if _, ok := value.(map[string]interface{}); !ok {
+            return fmt.Errorf("expected object, got %T", value)
+        }
+    }
+
+    return nil
+}
+
+func callToolWithValidation(ctx context.Context, c client.Client, toolName string, args map[string]interface{}) (*mcp.CallToolResult, error) {
+    // Get tool schema
+    tools, err := c.ListTools(ctx)
+    if err != nil {
+        return nil, fmt.Errorf("failed to list tools: %w", err)
+    }
+
+    var tool *mcp.Tool
+    for _, t := range tools.Tools {
+        if t.Name == toolName {
+            tool = &t
+            break
+        }
+    }
+
+    if tool == nil {
+        return nil, fmt.Errorf("tool not found: %s", toolName)
+    }
+
+    // Validate arguments
+    if err := validateToolArguments(*tool, args); err != nil {
+        return nil, fmt.Errorf("argument validation failed: %w", err)
+    }
+
+    // Call tool
+    return callTool(ctx, c, toolName, args)
+}
+```
+
+### Batch Tool Operations
+
+```go
+type ToolCall struct {
+    Name      string
+    Arguments map[string]interface{}
+}
+
+type ToolResult struct {
+    Call   ToolCall
+    Result *mcp.CallToolResult
+    Error  error
+}
+
+func callToolsBatch(ctx context.Context, c client.Client, calls []ToolCall) []ToolResult {
+    results := make([]ToolResult, len(calls))
+    
+    // Use goroutines for concurrent calls
+    var wg sync.WaitGroup
+    for i, call := range calls {
+        wg.Add(1)
+        go func(index int, toolCall ToolCall) {
+            defer wg.Done()
+            
+            result, err := callTool(ctx, c, toolCall.Name, toolCall.Arguments)
+            results[index] = ToolResult{
+                Call:   toolCall,
+                Result: result,
+                Error:  err,
+            }
+        }(i, call)
+    }
+    
+    wg.Wait()
+    return results
+}
+
+func demonstrateBatchToolCalls(ctx context.Context, c client.Client) {
+    calls := []ToolCall{
+        {
+            Name: "get_weather",
+            Arguments: map[string]interface{}{
+                "location": "New York",
+            },
+        },
+        {
+            Name: "get_weather",
+            Arguments: map[string]interface{}{
+                "location": "London",
+            },
+        },
+        {
+            Name: "calculate",
+            Arguments: map[string]interface{}{
+                "operation": "add",
+                "x":         10,
+                "y":         20,
+            },
+        },
+    }
+
+    results := callToolsBatch(ctx, c, calls)
+    
+    for i, result := range results {
+        fmt.Printf("Call %d (%s):\n", i+1, result.Call.Name)
+        if result.Error != nil {
+            fmt.Printf("  Error: %v\n", result.Error)
+        } else {
+            fmt.Printf("  Success: %+v\n", result.Result)
+        }
+    }
+}
+```
+
+## Using Prompts
+
+Prompts provide reusable templates for LLM interactions.
+
+### Basic Prompt Usage
+
+```go
+func getPrompt(ctx context.Context, c client.Client, name string, args map[string]interface{}) (*mcp.GetPromptResult, error) {
+    result, err := c.GetPrompt(ctx, mcp.GetPromptRequest{
+        Params: mcp.GetPromptRequestParams{
+            Name:      name,
+            Arguments: args,
+        },
+    })
+    if err != nil {
+        return nil, fmt.Errorf("failed to get prompt: %w", err)
+    }
+
+    return result, nil
+}
+
+func demonstratePromptUsage(ctx context.Context, c client.Client) {
+    // List available prompts
+    prompts, err := c.ListPrompts(ctx)
+    if err != nil {
+        log.Printf("Failed to list prompts: %v", err)
+        return
+    }
+
+    fmt.Printf("Available prompts: %d\n", len(prompts.Prompts))
+    for _, prompt := range prompts.Prompts {
+        fmt.Printf("- %s: %s\n", prompt.Name, prompt.Description)
+        
+        if len(prompt.Arguments) > 0 {
+            fmt.Printf("  Arguments:\n")
+            for _, arg := range prompt.Arguments {
+                fmt.Printf("    - %s: %s\n", arg.Name, arg.Description)
+            }
+        }
+    }
+
+    // Use a specific prompt
+    if len(prompts.Prompts) > 0 {
+        prompt := prompts.Prompts[0]
+        fmt.Printf("\nUsing prompt: %s\n", prompt.Name)
+
+        result, err := getPrompt(ctx, c, prompt.Name, map[string]interface{}{
+            // Add appropriate arguments based on prompt schema
+        })
+        if err != nil {
+            log.Printf("Failed to get prompt: %v", err)
+            return
+        }
+
+        fmt.Printf("Prompt result:\n")
+        fmt.Printf("Description: %s\n", result.Description)
+        fmt.Printf("Messages: %d\n", len(result.Messages))
+        
+        for i, message := range result.Messages {
+            fmt.Printf("Message %d (%s): %s\n", i+1, message.Role, message.Content.Text)
+        }
+    }
+}
+```
+
+### Prompt Template Processing
+
+```go
+type PromptProcessor struct {
+    client client.Client
+}
+
+func NewPromptProcessor(c client.Client) *PromptProcessor {
+    return &PromptProcessor{client: c}
+}
+
+func (pp *PromptProcessor) ProcessPrompt(ctx context.Context, name string, args map[string]interface{}) ([]mcp.PromptMessage, error) {
+    result, err := pp.client.GetPrompt(ctx, mcp.GetPromptRequest{
+        Params: mcp.GetPromptRequestParams{
+            Name:      name,
+            Arguments: args,
+        },
+    })
+    if err != nil {
+        return nil, err
+    }
+
+    return result.Messages, nil
+}
+
+func (pp *PromptProcessor) BuildConversation(ctx context.Context, promptName string, args map[string]interface{}, userMessage string) ([]mcp.PromptMessage, error) {
+    // Get prompt template
+    messages, err := pp.ProcessPrompt(ctx, promptName, args)
+    if err != nil {
+        return nil, err
+    }
+
+    // Add user message
+    messages = append(messages, mcp.PromptMessage{
+        Role: "user",
+        Content: mcp.TextContent(userMessage),
+    })
+
+    return messages, nil
+}
+
+func (pp *PromptProcessor) FormatForLLM(messages []mcp.PromptMessage) []map[string]interface{} {
+    formatted := make([]map[string]interface{}, len(messages))
+    
+    for i, message := range messages {
+        formatted[i] = map[string]interface{}{
+            "role":    message.Role,
+            "content": message.Content.Text,
+        }
+    }
+    
+    return formatted
+}
+```
+
+### Dynamic Prompt Generation
+
+```go
+func generateCodeReviewPrompt(ctx context.Context, c client.Client, code, language string) ([]mcp.PromptMessage, error) {
+    processor := NewPromptProcessor(c)
+    
+    return processor.ProcessPrompt(ctx, "code_review", map[string]interface{}{
+        "code":     code,
+        "language": language,
+        "focus":    "best-practices",
+    })
+}
+
+func generateDataAnalysisPrompt(ctx context.Context, c client.Client, datasetURI string, analysisType string) ([]mcp.PromptMessage, error) {
+    processor := NewPromptProcessor(c)
+    
+    return processor.ProcessPrompt(ctx, "analyze_data", map[string]interface{}{
+        "dataset_uri":   datasetURI,
+        "analysis_type": analysisType,
+        "focus_areas":   []string{"trends", "outliers", "correlations"},
+    })
+}
+
+func demonstrateDynamicPrompts(ctx context.Context, c client.Client) {
+    // Generate code review prompt
+    codeReviewMessages, err := generateCodeReviewPrompt(ctx, c, 
+        "func main() { fmt.Println(\"Hello\") }", 
+        "go")
+    if err != nil {
+        log.Printf("Failed to generate code review prompt: %v", err)
+    } else {
+        fmt.Printf("Code review prompt: %d messages\n", len(codeReviewMessages))
+    }
+
+    // Generate data analysis prompt
+    analysisMessages, err := generateDataAnalysisPrompt(ctx, c, 
+        "dataset://sales_data", 
+        "exploratory")
+    if err != nil {
+        log.Printf("Failed to generate analysis prompt: %v", err)
+    } else {
+        fmt.Printf("Data analysis prompt: %d messages\n", len(analysisMessages))
+    }
+}
+```
+
+## Subscriptions
+
+Some transports support subscriptions for receiving real-time notifications.
+
+### Basic Subscription Handling
+
+```go
+func handleSubscriptions(ctx context.Context, c client.Client) {
+    // Check if client supports subscriptions
+    subscriber, ok := c.(client.Subscriber)
+    if !ok {
+        log.Println("Client does not support subscriptions")
+        return
+    }
+
+    // Subscribe to notifications
+    notifications, err := subscriber.Subscribe(ctx)
+    if err != nil {
+        log.Printf("Failed to subscribe: %v", err)
+        return
+    }
+
+    // Handle notifications
+    for {
+        select {
+        case notification := <-notifications:
+            handleNotification(notification)
+        case <-ctx.Done():
+            log.Println("Subscription cancelled")
+            return
+        }
+    }
+}
+
+func handleNotification(notification mcp.Notification) {
+    switch notification.Method {
+    case "notifications/progress":
+        handleProgressNotification(notification)
+    case "notifications/message":
+        handleMessageNotification(notification)
+    case "notifications/resources/updated":
+        handleResourceUpdateNotification(notification)
+    case "notifications/tools/updated":
+        handleToolUpdateNotification(notification)
+    default:
+        log.Printf("Unknown notification: %s", notification.Method)
+    }
+}
+
+func handleProgressNotification(notification mcp.Notification) {
+    var progress mcp.ProgressNotification
+    if err := json.Unmarshal(notification.Params, &progress); err != nil {
+        log.Printf("Failed to parse progress notification: %v", err)
+        return
+    }
+
+    fmt.Printf("Progress: %d/%d - %s\n", 
+        progress.Progress, 
+        progress.Total, 
+        progress.Message)
+}
+
+func handleMessageNotification(notification mcp.Notification) {
+    var message mcp.MessageNotification
+    if err := json.Unmarshal(notification.Params, &message); err != nil {
+        log.Printf("Failed to parse message notification: %v", err)
+        return
+    }
+
+    fmt.Printf("Server message: %s\n", message.Text)
+}
+
+func handleResourceUpdateNotification(notification mcp.Notification) {
+    log.Println("Resources updated, refreshing cache...")
+    // Invalidate resource cache or refresh resource list
+}
+
+func handleToolUpdateNotification(notification mcp.Notification) {
+    log.Println("Tools updated, refreshing tool list...")
+    // Refresh tool list
+}
+```
+
+### Advanced Subscription Management
+
+```go
+type SubscriptionManager struct {
+    client        client.Client
+    subscriber    client.Subscriber
+    notifications chan mcp.Notification
+    handlers      map[string][]NotificationHandler
+    ctx           context.Context
+    cancel        context.CancelFunc
+    wg            sync.WaitGroup
+    mutex         sync.RWMutex
+}
+
+type NotificationHandler func(mcp.Notification) error
+
+func NewSubscriptionManager(c client.Client) (*SubscriptionManager, error) {
+    subscriber, ok := c.(client.Subscriber)
+    if !ok {
+        return nil, fmt.Errorf("client does not support subscriptions")
+    }
+
+    ctx, cancel := context.WithCancel(context.Background())
+
+    sm := &SubscriptionManager{
+        client:     c,
+        subscriber: subscriber,
+        handlers:   make(map[string][]NotificationHandler),
+        ctx:        ctx,
+        cancel:     cancel,
+    }
+
+    return sm, nil
+}
+
+func (sm *SubscriptionManager) Start() error {
+    notifications, err := sm.subscriber.Subscribe(sm.ctx)
+    if err != nil {
+        return fmt.Errorf("failed to subscribe: %w", err)
+    }
+
+    sm.notifications = notifications
+
+    sm.wg.Add(1)
+    go sm.handleNotifications()
+
+    return nil
+}
+
+func (sm *SubscriptionManager) Stop() {
+    sm.cancel()
+    sm.wg.Wait()
+}
+
+func (sm *SubscriptionManager) AddHandler(method string, handler NotificationHandler) {
+    sm.mutex.Lock()
+    defer sm.mutex.Unlock()
+
+    sm.handlers[method] = append(sm.handlers[method], handler)
+}
+
+func (sm *SubscriptionManager) RemoveHandler(method string, handler NotificationHandler) {
+    sm.mutex.Lock()
+    defer sm.mutex.Unlock()
+
+    handlers := sm.handlers[method]
+    for i, h := range handlers {
+        if reflect.ValueOf(h).Pointer() == reflect.ValueOf(handler).Pointer() {
+            sm.handlers[method] = append(handlers[:i], handlers[i+1:]...)
+            break
+        }
+    }
+}
+
+func (sm *SubscriptionManager) handleNotifications() {
+    defer sm.wg.Done()
+
+    for {
+        select {
+        case notification := <-sm.notifications:
+            sm.processNotification(notification)
+        case <-sm.ctx.Done():
+            return
+        }
+    }
+}
+
+func (sm *SubscriptionManager) processNotification(notification mcp.Notification) {
+    sm.mutex.RLock()
+    handlers := sm.handlers[notification.Method]
+    sm.mutex.RUnlock()
+
+    for _, handler := range handlers {
+        if err := handler(notification); err != nil {
+            log.Printf("Handler error for %s: %v", notification.Method, err)
+        }
+    }
+}
+
+// Usage example
+func demonstrateSubscriptionManager(c client.Client) {
+    sm, err := NewSubscriptionManager(c)
+    if err != nil {
+        log.Printf("Failed to create subscription manager: %v", err)
+        return
+    }
+
+    // Add handlers
+    sm.AddHandler("notifications/progress", func(n mcp.Notification) error {
+        log.Printf("Progress notification: %+v", n)
+        return nil
+    })
+
+    sm.AddHandler("notifications/message", func(n mcp.Notification) error {
+        log.Printf("Message notification: %+v", n)
+        return nil
+    })
+
+    // Start handling
+    if err := sm.Start(); err != nil {
+        log.Printf("Failed to start subscription manager: %v", err)
+        return
+    }
+
+    // Let it run for a while
+    time.Sleep(30 * time.Second)
+
+    // Stop
+    sm.Stop()
+}
+```
+
+## Best Practices
+
+### Resource Operations
+- **Cache frequently accessed resources**: Implement caching with appropriate TTL
+- **Handle different content types**: Support text, JSON, and binary resources
+- **Validate resource URIs**: Check URI format before making requests
+- **Handle missing resources**: Gracefully handle resource not found errors
+
+### Tool Operations
+- **Validate arguments**: Check tool schemas before calling
+- **Handle tool errors**: Distinguish between different error types
+- **Use appropriate timeouts**: Set timeouts based on expected tool execution time
+- **Batch operations**: Use concurrent calls for independent operations
+
+### Prompt Operations
+- **Understand prompt structure**: Know how to work with prompt messages
+- **Handle dynamic arguments**: Support parameterized prompts
+- **Format for LLMs**: Convert prompt results to LLM-compatible format
+- **Cache prompt templates**: Cache static prompt templates
+
+### Subscription Operations
+- **Handle connection loss**: Implement reconnection logic for subscriptions
+- **Process notifications asynchronously**: Don't block notification handling
+- **Filter relevant notifications**: Only handle notifications you care about
+- **Clean up subscriptions**: Always clean up subscription resources
+
+## Next Steps
+
+- **[Client Transports](/clients/transports)** - Learn transport-specific client features
+- **[Testing](/testing)** - Test client implementations thoroughly

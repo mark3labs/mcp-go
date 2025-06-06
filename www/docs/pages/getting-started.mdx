@@ -1,14 +1,36 @@
 # Getting Started
 
-MCP-Go makes it easy to build Model Context Protocol (MCP) servers in Go. This guide will help you create your first MCP server in just a few minutes.
+## Introduction
 
-## Installation
+### What is MCP?
+
+The Model Context Protocol (MCP) is an open standard that enables secure, controlled connections between AI applications and external data sources and tools. It provides a standardized way for Large Language Models (LLMs) to access and interact with external systems while maintaining security and user control.
+
+### Why MCP Go?
+
+MCP-Go is designed to make building MCP servers in Go fast, simple, and complete:
+
+- **Fast**: Minimal overhead with efficient Go implementation
+- **Simple**: Clean, intuitive API with minimal boilerplate
+- **Complete**: Full support for the MCP specification including tools, resources, and prompts
+
+### Key Features
+
+- **High-level interface**: Focus on your business logic, not protocol details
+- **Minimal boilerplate**: Get started with just a few lines of code
+- **Full MCP spec support**: Tools, resources, prompts, and all transport methods
+- **Type safety**: Leverage Go's type system for robust MCP servers
+- **Multiple transports**: Stdio, HTTP, and Server-Sent Events support
+
+### Installation
 
 Add MCP-Go to your Go project:
 
 ```bash
 go get github.com/mark3labs/mcp-go
 ```
+
+MCP-Go makes it easy to build Model Context Protocol (MCP) servers in Go. This guide will help you create your first MCP server in just a few minutes.
 
 ## Your First MCP Server
 
@@ -53,9 +75,9 @@ func main() {
 }
 
 func helloHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    name, ok := request.Params.Arguments["name"].(string)
-    if !ok {
-        return nil, errors.New("name must be a string")
+    name, err := request.RequireString("name")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
     }
 
     return mcp.NewToolResultText(fmt.Sprintf("Hello, %s!", name)), nil
