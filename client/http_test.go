@@ -12,7 +12,6 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// SafeMap is a thread-safe map wrapper
 
 func TestHTTPClient(t *testing.T) {
 	hooks := &server.Hooks{}
