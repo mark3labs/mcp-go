@@ -36,13 +36,21 @@ func main() {
         server.WithToolCapabilities(true),
     )
 
-    // Add typed tool
-    s.AddTypedTool("calculate", "Perform arithmetic operations", handleCalculateTyped)
+    // Create typed tool
+    tool := mcp.NewTool("calculate",
+        mcp.WithDescription("Perform arithmetic operations"),
+        mcp.WithString("operation", mcp.Required()),
+        mcp.WithNumber("x", mcp.Required()),
+        mcp.WithNumber("y", mcp.Required()),
+    )
+    
+    // Add tool with typed handler
+    s.AddTool(tool, mcp.NewTypedToolHandler(handleCalculateTyped))
 
     server.ServeStdio(s)
 }
 
-func handleCalculateTyped(ctx context.Context, input CalculateInput) (*CalculateOutput, error) {
+func handleCalculateTyped(ctx context.Context, req mcp.CallToolRequest, input CalculateInput) (*mcp.CallToolResult, error) {
     var result float64
     
     switch input.Operation {
@@ -54,15 +62,22 @@ func handleCalculateTyped(ctx context.Context, input CalculateInput) (*Calculate
         result = input.X * input.Y
     case "divide":
         if input.Y == 0 {
-            return nil, fmt.Errorf("division by zero")
+            return mcp.NewToolResultError("division by zero"), nil
         }
         result = input.X / input.Y
     }
 
-    return &CalculateOutput{
+    output := CalculateOutput{
         Result:    result,
         Operation: input.Operation,
-    }, nil
+    }
+    
+    jsonData, err := json.Marshal(output)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to marshal result: %v", err)), nil
+    }
+    
+    return mcp.NewToolResultText(string(jsonData)), nil
 }
 ```
 
@@ -86,7 +101,7 @@ type UserCreateOutput struct {
     Status    string    `json:"status"`
 }
 
-func handleCreateUser(ctx context.Context, input UserCreateInput) (*UserCreateOutput, error) {
+func handleCreateUser(ctx context.Context, req mcp.CallToolRequest, input UserCreateInput) (*mcp.CallToolResult, error) {
     // Validation is automatic based on struct tags
     
     // Create user in database
@@ -208,19 +223,22 @@ func (sm *SessionManager) RemoveSession(sessionID string) {
 func main() {
     sessionManager := NewSessionManager()
     
+    hooks := &server.Hooks{}
+    
+    hooks.AddOnRegisterSession(func(ctx context.Context, session server.ClientSession) {
+        // Initialize session with default permissions
+        sessionManager.CreateSession(session.ID(), "anonymous", []string{"read"})
+        log.Printf("Session %s started", session.ID())
+    })
+    
+    hooks.AddOnUnregisterSession(func(ctx context.Context, session server.ClientSession) {
+        sessionManager.RemoveSession(session.ID())
+        log.Printf("Session %s ended", session.ID())
+    })
+    
     s := server.NewMCPServer("Session Server", "1.0.0",
         server.WithToolCapabilities(true),
-        server.WithHooks(&server.Hooks{
-            OnSessionStart: func(sessionID string) {
-                // Initialize session with default permissions
-                sessionManager.CreateSession(sessionID, "anonymous", []string{"read"})
-                log.Printf("Session %s started", sessionID)
-            },
-            OnSessionEnd: func(sessionID string) {
-                sessionManager.RemoveSession(sessionID)
-                log.Printf("Session %s ended", sessionID)
-            },
-        }),
+        server.WithHooks(hooks),
     )
 
     // Add session-aware tool
@@ -256,7 +274,12 @@ func createSessionAwareTool(sm *SessionManager) server.ToolHandler {
             return nil, err
         }
 
-        return mcp.NewToolResultJSON(data), nil
+        jsonData, err := json.Marshal(data)
+        if err != nil {
+            return mcp.NewToolResultError(fmt.Sprintf("failed to marshal result: %v", err)), nil
+        }
+        
+        return mcp.NewToolResultText(string(jsonData)), nil
     }
 }
 ```
@@ -276,12 +299,11 @@ func NewLoggingMiddleware(logger *log.Logger) *LoggingMiddleware {
     return &LoggingMiddleware{logger: logger}
 }
 
-func (m *LoggingMiddleware) ToolMiddleware(next server.ToolHandler) server.ToolHandler {
+func (m *LoggingMiddleware) ToolMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
     return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
         start := time.Now()
-        sessionID := server.GetSessionID(ctx)
         
-        m.logger.Printf("Tool call started: session=%s tool=%s", sessionID, req.Params.Name)
+        m.logger.Printf("Tool call started: tool=%s", req.Params.Name)
         
         result, err := next(ctx, req)
         
@@ -620,50 +642,28 @@ func (f *ContextFilter) shouldIncludeTool(tool mcp.Tool, hour int, env string) b
 
 Send server-to-client messages for real-time updates.
 
-### Progress Notifications
+### Custom Notifications
 
 ```go
 func handleLongRunningTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    sessionID := server.GetSessionID(ctx)
-    notifier := server.GetNotifier(ctx)
+    srv := server.ServerFromContext(ctx)
     
-    // Send initial notification
-    notifier.SendProgress(sessionID, mcp.ProgressNotification{
-        Progress: 0,
-        Total:    100,
-        Message:  "Starting long operation...",
-    })
-    
-    // Simulate long-running work with progress updates
+    // Simulate long-running work
     for i := 0; i < 100; i++ {
-        // Check for cancellation
-        select {
-        case <-ctx.Done():
-            return nil, ctx.Err()
-        default:
-        }
-        
-        // Do work
         time.Sleep(100 * time.Millisecond)
         
-        // Send progress update
-        if i%10 == 0 {
-            notifier.SendProgress(sessionID, mcp.ProgressNotification{
-                Progress: i + 1,
-                Total:    100,
-                Message:  fmt.Sprintf("Processed %d/100 items", i+1),
-            })
+        // Send custom notification to all clients
+        notification := map[string]interface{}{
+            "type":     "progress",
+            "progress": i + 1,
+            "total":    100,
+            "message":  fmt.Sprintf("Processing step %d/100", i+1),
         }
+        
+        srv.SendNotificationToAllClients("progress", notification)
     }
     
-    // Send completion notification
-    notifier.SendProgress(sessionID, mcp.ProgressNotification{
-        Progress: 100,
-        Total:    100,
-        Message:  "Operation completed successfully",
-    })
-    
-    return mcp.NewToolResultText("Long operation completed"), nil
+    return mcp.NewToolResultText("Long operation completed successfully"), nil
 }
 ```
 
@@ -763,16 +763,13 @@ func main() {
     
     // Create server with all features
     s := server.NewMCPServer("Production Server", "1.0.0",
-        server.WithAllCapabilities(),
+        server.WithToolCapabilities(true),
+        server.WithResourceCapabilities(false, true),
+        server.WithPromptCapabilities(true),
         server.WithRecovery(),
         server.WithHooks(telemetryHooks),
-        server.WithHooks(businessHooks),
-        server.WithToolMiddleware(loggingMW.ToolMiddleware),
-        server.WithToolMiddleware(rateLimitMW.ToolMiddleware),
-        server.WithToolMiddleware(authMW.ToolMiddleware),
-        server.WithResourceMiddleware(loggingMW.ResourceMiddleware),
+        server.WithToolHandlerMiddleware(loggingMW.ToolMiddleware),
         server.WithToolFilter(NewPermissionFilter(sessionManager)),
-        server.WithNotifier(notifier),
     )
     
     // Add tools and resources

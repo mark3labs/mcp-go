@@ -292,11 +292,18 @@ func handleDatabaseQuery(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
         return mcp.NewToolResultError(fmt.Sprintf("failed to process results: %v", err)), nil
     }
     
-    return mcp.NewToolResultJSON(map[string]interface{}{
+    resultData := map[string]interface{}{
         "query":   query,
         "results": results,
         "count":   len(results),
-    }), nil
+    }
+    
+    jsonData, err := json.Marshal(resultData)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to marshal results: %v", err)), nil
+    }
+    
+    return mcp.NewToolResultText(string(jsonData)), nil
 }
 
 func isSelectQuery(query string) bool {
@@ -354,11 +361,18 @@ func handleHTTPRequest(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallT
         return mcp.NewToolResultError(fmt.Sprintf("failed to read response: %v", err)), nil
     }
     
-    return mcp.NewToolResultJSON(map[string]interface{}{
+    resultData := map[string]interface{}{
         "status_code": resp.StatusCode,
         "headers":     resp.Header,
         "body":        string(respBody),
-    }), nil
+    }
+    
+    jsonData, err := json.Marshal(resultData)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to marshal result: %v", err)), nil
+    }
+    
+    return mcp.NewToolResultText(string(jsonData)), nil
 }
 ```
 
@@ -395,7 +409,13 @@ func handleValidatedTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
     
     // Process with validated parameters
     result := processUser(name, int(age), enabled)
-    return mcp.NewToolResultJSON(result), nil
+    
+    jsonData, err := json.Marshal(result)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to marshal result: %v", err)), nil
+    }
+    
+    return mcp.NewToolResultText(string(jsonData)), nil
 }
 ```
 
@@ -474,7 +494,13 @@ func handleJSONTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallTool
             "errors":    0,
         },
     }
-    return mcp.NewToolResultJSON(result), nil
+    
+    jsonData, err := json.Marshal(result)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to marshal result: %v", err)), nil
+    }
+    
+    return mcp.NewToolResultText(string(jsonData)), nil
 }
 ```
 
@@ -546,8 +572,8 @@ tool := mcp.NewTool("search_database",
         mcp.Required(),
         mcp.Description("Search query (supports wildcards with *)"),
     ),
-    mcp.WithInteger("limit",
-        mcp.Default(10),
+    mcp.WithNumber("limit",
+        mcp.DefaultNumber(10),
         mcp.Minimum(1),
         mcp.Maximum(100),
         mcp.Description("Maximum number of results to return"),
@@ -556,15 +582,7 @@ tool := mcp.NewTool("search_database",
         mcp.Description("Filter by product categories"),
         mcp.Items(mcp.StringSchema()),
     ),
-    // Add usage examples
-    mcp.WithExamples([]mcp.ToolExample{
-        {
-            Description: "Search for laptops",
-            Arguments: map[string]interface{}{
-                "query": "laptop*",
-                "limit": 5,
-                "categories": []string{"electronics", "computers"},
-            },
+)
         },
         {
             Description: "Find all products in electronics category",
@@ -572,9 +590,10 @@ tool := mcp.NewTool("search_database",
                 "query": "*",
                 "categories": []string{"electronics"},
             },
-        },
-    }),
+    ),
 )
+
+s.AddTool(tool, handleSearchDatabase)
 ```
 
 ## Advanced Tool Patterns
@@ -602,10 +621,17 @@ func handleStreamingTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
         results = append(results, fmt.Sprintf("Processed item %d", i+1))
     }
     
-    return mcp.NewToolResultJSON(map[string]interface{}{
+    resultData := map[string]interface{}{
         "status":  "completed",
         "results": results,
-    }), nil
+    }
+    
+    jsonData, err := json.Marshal(resultData)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to marshal result: %v", err)), nil
+    }
+    
+    return mcp.NewToolResultText(string(jsonData)), nil
 }
 ```
 

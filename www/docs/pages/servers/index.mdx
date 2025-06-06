@@ -23,6 +23,7 @@ package main
 
 import (
     "context"
+    "encoding/json"
     "fmt"
     "time"
 
@@ -36,7 +37,7 @@ func main() {
         "Demo Server",
         "1.0.0",
         server.WithToolCapabilities(true),
-        server.WithResourceCapabilities(true),
+        server.WithResourceCapabilities(false, true),
         server.WithPromptCapabilities(true),
     )
 
@@ -46,7 +47,7 @@ func main() {
             mcp.WithDescription("Get the current time"),
             mcp.WithString("format", 
                 mcp.Description("Time format (RFC3339, Unix, etc.)"),
-                mcp.Default("RFC3339"),
+                mcp.DefaultString("RFC3339"),
             ),
         ),
         handleGetTime,
@@ -67,9 +68,8 @@ func main() {
     s.AddPrompt(
         mcp.NewPrompt("analyze_logs",
             mcp.WithPromptDescription("Analyze server logs for issues"),
-            mcp.WithPromptArgument("log_level",
-                mcp.Description("Minimum log level to analyze"),
-                mcp.Default("error"),
+            mcp.WithArgument("log_level",
+                mcp.ArgumentDescription("Minimum log level to analyze"),
             ),
         ),
         handleAnalyzeLogs,
@@ -95,20 +95,31 @@ func handleGetTime(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolR
     return mcp.NewToolResultText(timeStr), nil
 }
 
-func handleConfig(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+func handleConfig(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
     config := map[string]interface{}{
         "name": "Demo Server",
         "version": "1.0.0",
-        "uptime": time.Since(startTime).String(),
+        "uptime": time.Since(time.Now()).String(),
     }
     
-    return mcp.NewResourceResultJSON(config), nil
+    configJSON, err := json.Marshal(config)
+    if err != nil {
+        return nil, err
+    }
+    
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "application/json",
+            Text:     string(configJSON),
+        },
+    }, nil
 }
 
 func handleAnalyzeLogs(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
     logLevel := "error" // default value
     if args := req.Params.Arguments; args != nil {
-        if level, ok := args["log_level"].(string); ok {
+        if level, ok := args["log_level"]; ok {
             logLevel = level
         }
     }
@@ -117,8 +128,8 @@ func handleAnalyzeLogs(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetP
         Description: "Analyze server logs for potential issues",
         Messages: []mcp.PromptMessage{
             {
-                Role: "user",
-                Content: mcp.TextContent(fmt.Sprintf(
+                Role: mcp.RoleUser,
+                Content: mcp.NewTextContent(fmt.Sprintf(
                     "Please analyze the server logs for entries at %s level or higher. "+
                     "Look for patterns, errors, and potential issues that need attention.",
                     logLevel,

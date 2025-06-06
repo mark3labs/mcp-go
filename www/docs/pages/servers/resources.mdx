@@ -92,7 +92,18 @@ func handleAppConfig(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.Rea
         },
     }
 
-    return mcp.NewResourceResultJSON(config), nil
+    configJSON, err := json.Marshal(config)
+    if err != nil {
+        return nil, err
+    }
+    
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "application/json",
+            Text:     string(configJSON),
+        },
+    }, nil
 }
 ```
 
@@ -126,7 +137,18 @@ func handleUserProfile(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.R
         return nil, fmt.Errorf("user not found: %w", err)
     }
 
-    return mcp.NewResourceResultJSON(user), nil
+    jsonData, err := json.Marshal(user)
+    if err != nil {
+        return nil, err
+    }
+    
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "application/json",
+            Text:     string(jsonData),
+        },
+    }, nil
 }
 
 func extractUserID(uri string) string {
@@ -178,7 +200,18 @@ func handleDatabaseRecord(ctx context.Context, req mcp.ReadResourceRequest) (*mc
         return nil, fmt.Errorf("record not found: %w", err)
     }
 
-    return mcp.NewResourceResultJSON(data), nil
+    jsonData, err := json.Marshal(data)
+    if err != nil {
+        return nil, err
+    }
+    
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "application/json",
+            Text:     string(jsonData),
+        },
+    }, nil
 }
 ```
 
@@ -253,14 +286,25 @@ func handleTextResource(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.
 ### JSON Content
 
 ```go
-func handleJSONResource(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+func handleJSONResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
     data := map[string]interface{}{
         "message": "Hello, World!",
         "timestamp": time.Now().Unix(),
         "status": "success",
     }
     
-    return mcp.NewResourceResultJSON(data), nil
+    jsonData, err := json.Marshal(data)
+    if err != nil {
+        return nil, err
+    }
+    
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "application/json",
+            Text:     string(jsonData),
+        },
+    }, nil
 }
 ```
 
@@ -351,7 +395,18 @@ func handleResourceWithErrors(ctx context.Context, req mcp.ReadResourceRequest) 
         return nil, fmt.Errorf("failed to fetch resource: %w", err)
     }
     
-    return mcp.NewResourceResultJSON(data), nil
+    jsonData, err := json.Marshal(data)
+    if err != nil {
+        return nil, err
+    }
+    
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "application/json",
+            Text:     string(jsonData),
+        },
+    }, nil
 }
 ```
 
@@ -372,7 +427,18 @@ func handleResourceWithTimeout(ctx context.Context, req mcp.ReadResourceRequest)
         return nil, err
     }
     
-    return mcp.NewResourceResultJSON(data), nil
+    jsonData, err := json.Marshal(data)
+    if err != nil {
+        return nil, err
+    }
+    
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "application/json",
+            Text:     string(jsonData),
+        },
+    }, nil
 }
 ```
 

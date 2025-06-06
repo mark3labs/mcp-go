@@ -89,7 +89,7 @@ func handleCodeReview(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPr
         Messages: []mcp.PromptMessage{
             {
                 Role: "user",
-                Content: mcp.TextContent(fmt.Sprintf(`Please review the following %s code:
+                Content: mcp.NewTextContent(fmt.Sprintf(`Please review the following %s code:
 
 %s
 
@@ -147,7 +147,7 @@ func handleDataAnalysis(ctx context.Context, req mcp.GetPromptRequest) (*mcp.Get
         Messages: []mcp.PromptMessage{
             {
                 Role: "user",
-                Content: mcp.TextContent(fmt.Sprintf(`%s
+                Content: mcp.NewTextContent(fmt.Sprintf(`%s
 
 Dataset Information:
 - Source: %s
@@ -205,7 +205,7 @@ func handleFlexiblePrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.G
         Messages: []mcp.PromptMessage{
             {
                 Role: "user",
-                Content: mcp.TextContent(prompt),
+                Content: mcp.NewTextContent(prompt),
             },
         },
     }, nil
@@ -252,19 +252,19 @@ func handleConversationPrompt(ctx context.Context, req mcp.GetPromptRequest) (*m
         messages = []mcp.PromptMessage{
             {
                 Role: "system",
-                Content: mcp.TextContent("You are a helpful customer support representative. Be polite, professional, and solution-oriented."),
+                Content: mcp.NewTextContent("You are a helpful customer support representative. Be polite, professional, and solution-oriented."),
             },
             {
                 Role: "user",
-                Content: mcp.TextContent(fmt.Sprintf("I'm a %s with a question about your service.", userRole)),
+                Content: mcp.NewTextContent(fmt.Sprintf("I'm a %s with a question about your service.", userRole)),
             },
             {
                 Role: "assistant", 
-                Content: mcp.TextContent("Hello! I'm here to help. What can I assist you with today?"),
+                Content: mcp.NewTextContent("Hello! I'm here to help. What can I assist you with today?"),
             },
             {
                 Role: "user",
-                Content: mcp.TextContent("Please continue the conversation based on the customer's needs."),
+                Content: mcp.NewTextContent("Please continue the conversation based on the customer's needs."),
             },
         }
         
@@ -272,11 +272,11 @@ func handleConversationPrompt(ctx context.Context, req mcp.GetPromptRequest) (*m
         messages = []mcp.PromptMessage{
             {
                 Role: "system",
-                Content: mcp.TextContent("You are conducting a technical interview. Ask thoughtful questions and provide constructive feedback."),
+                Content: mcp.NewTextContent("You are conducting a technical interview. Ask thoughtful questions and provide constructive feedback."),
             },
             {
                 Role: "user",
-                Content: mcp.TextContent("Let's begin the technical interview. Please start with an appropriate question."),
+                Content: mcp.NewTextContent("Let's begin the technical interview. Please start with an appropriate question."),
             },
         }
     }
@@ -312,7 +312,7 @@ func handleRoleBasedPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.
     messages := []mcp.PromptMessage{
         {
             Role: "system",
-            Content: mcp.TextContent(systemMessage),
+            Content: mcp.NewTextContent(systemMessage),
         },
     }
 
@@ -320,14 +320,14 @@ func handleRoleBasedPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.
     if context != "" {
         messages = append(messages, mcp.PromptMessage{
             Role: "user",
-            Content: mcp.TextContent(fmt.Sprintf("Context: %s", context)),
+            Content: mcp.NewTextContent(fmt.Sprintf("Context: %s", context)),
         })
     }
 
     // Add the main task
     messages = append(messages, mcp.PromptMessage{
         Role: "user",
-        Content: mcp.TextContent(task),
+        Content: mcp.NewTextContent(task),
     })
 
     return &mcp.GetPromptResult{
@@ -370,7 +370,7 @@ func handleResourceEmbeddedPrompt(ctx context.Context, req mcp.GetPromptRequest)
         Messages: []mcp.PromptMessage{
             {
                 Role: "user",
-                Content: mcp.TextContent(fmt.Sprintf(`%s
+                Content: mcp.NewTextContent(fmt.Sprintf(`%s
 
 Document: %s
 Content:
@@ -432,7 +432,7 @@ func handleDynamicResourcePrompt(ctx context.Context, req mcp.GetPromptRequest) 
         Messages: []mcp.PromptMessage{
             {
                 Role: "user",
-                Content: mcp.TextContent(content.String()),
+                Content: mcp.NewTextContent(content.String()),
             },
         },
     }, nil
@@ -473,7 +473,7 @@ func handleConditionalPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mc
         Messages: []mcp.PromptMessage{
             {
                 Role: "user",
-                Content: mcp.TextContent(prompt.String()),
+                Content: mcp.NewTextContent(prompt.String()),
             },
         },
     }, nil
@@ -560,7 +560,7 @@ func handleTemplatePrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.G
         Messages: []mcp.PromptMessage{
             {
                 Role: "user",
-                Content: mcp.TextContent(content),
+                Content: mcp.NewTextContent(content),
             },
         },
     }, nil

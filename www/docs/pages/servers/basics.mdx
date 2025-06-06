@@ -63,7 +63,9 @@ s := server.NewMCPServer(
 s := server.NewMCPServer(
     "Full-Featured Server", 
     "1.0.0",
-    server.WithAllCapabilities(),
+    server.WithToolCapabilities(true),
+    server.WithResourceCapabilities(false, true),
+    server.WithPromptCapabilities(true),
 )
 ```
 
@@ -94,14 +96,7 @@ Add additional server information:
 s := server.NewMCPServer(
     "My Server",
     "1.0.0",
-    server.WithServerInfo(server.ServerInfo{
-        Name:        "My Custom Server",
-        Version:     "1.0.0", 
-        Description: "A server that does amazing things",
-        Author:      "Your Name",
-        Homepage:    "https://example.com",
-        License:     "MIT",
-    }),
+    server.WithInstructions("A server that does amazing things"),
 )
 ```
 
@@ -138,8 +133,11 @@ Traditional HTTP request/response:
 func main() {
     s := server.NewMCPServer("HTTP Server", "1.0.0")
     
+    // Create HTTP server
+    httpServer := server.NewStreamableHTTPServer(s)
+    
     // Start HTTP server on port 8080
-    if err := server.ServeHTTP(s, ":8080"); err != nil {
+    if err := httpServer.Start(":8080"); err != nil {
         log.Fatal(err)
     }
 }
@@ -159,8 +157,11 @@ HTTP-based streaming for real-time updates:
 func main() {
     s := server.NewMCPServer("SSE Server", "1.0.0")
     
+    // Create SSE server
+    sseServer := server.NewSSEServer(s)
+    
     // Start SSE server on port 8080
-    if err := server.ServeSSE(s, ":8080"); err != nil {
+    if err := sseServer.Start(":8080"); err != nil {
         log.Fatal(err)
     }
 }
@@ -178,14 +179,23 @@ Configure transport-specific options:
 
 ```go
 // HTTP with custom options
-httpOpts := server.HTTPTransportOptions{
-    ReadTimeout:  30 * time.Second,
-    WriteTimeout: 30 * time.Second,
-    IdleTimeout:  60 * time.Second,
-    MaxBodySize:  10 * 1024 * 1024, // 10MB
+httpServer := server.NewStreamableHTTPServer(s,
+    server.WithEndpointPath("/mcp"),
+    server.WithStateLess(true),
+)
+
+if err := httpServer.Start(":8080"); err != nil {
+    log.Fatal(err)
 }
 
-if err := server.ServeHTTPWithOptions(s, ":8080", httpOpts); err != nil {
+// SSE with custom options
+sseServer := server.NewSSEServer(s,
+    server.WithSSEEndpoint("/events"),
+    server.WithMessageEndpoint("/message"),
+    server.WithKeepAlive(true),
+)
+
+if err := sseServer.Start(":8080"); err != nil {
     log.Fatal(err)
 }
 ```
@@ -207,12 +217,15 @@ func main() {
     
     switch transport {
     case "http":
-        server.ServeHTTP(s, ":"+port)
+        httpServer := server.NewStreamableHTTPServer(s)
+        httpServer.Start(":"+port)
     case "sse":
-        server.ServeSSE(s, ":"+port)
+        sseServer := server.NewSSEServer(s)
+        sseServer.Start(":"+port)
     default:
         server.ServeStdio(s)
     }
+}
 }
 ```
 
@@ -222,23 +235,28 @@ Understanding the server lifecycle helps with proper resource management:
 
 ```go
 func main() {
+    hooks := &server.Hooks{}
+    
+    // Add session lifecycle hooks
+    hooks.AddOnRegisterSession(func(ctx context.Context, session server.ClientSession) {
+        log.Printf("Client %s connected", session.ID())
+    })
+    
+    hooks.AddOnUnregisterSession(func(ctx context.Context, session server.ClientSession) {
+        log.Printf("Client %s disconnected", session.ID())
+    })
+    
+    // Add request hooks
+    hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, message any) {
+        log.Printf("Processing %s request", method)
+    })
+    
+    hooks.AddOnError(func(ctx context.Context, id any, method mcp.MCPMethod, message any, err error) {
+        log.Printf("Error in %s: %v", method, err)
+    })
+    
     s := server.NewMCPServer("Lifecycle Server", "1.0.0",
-        server.WithHooks(&server.Hooks{
-            OnServerStart: func() {
-                log.Println("Server starting...")
-                // Initialize resources, connections, etc.
-            },
-            OnServerStop: func() {
-                log.Println("Server stopping...")
-                // Cleanup resources, close connections, etc.
-            },
-            OnSessionStart: func(sessionID string) {
-                log.Printf("Client %s connected", sessionID)
-            },
-            OnSessionEnd: func(sessionID string) {
-                log.Printf("Client %s disconnected", sessionID)
-            },
-        }),
+        server.WithHooks(hooks),
     )
     
     // Graceful shutdown
