@@ -400,11 +400,13 @@ func handleResourceWithErrors(ctx context.Context, req mcp.ReadResourceRequest) 
         return nil, err
     }
     
-    return []mcp.ResourceContents{
-        mcp.TextResourceContents{
-            URI:      req.Params.URI,
-            MIMEType: "application/json",
-            Text:     string(jsonData),
+    return &mcp.ReadResourceResult{
+        Contents: []mcp.ResourceContents{
+            mcp.TextResourceContents{
+                URI:      req.Params.URI,
+                MIMEType: "application/json",
+                Text:     string(jsonData),
+            },
         },
     }, nil
 }

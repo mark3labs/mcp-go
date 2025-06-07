@@ -74,7 +74,10 @@ func main() {
 }
 
 func handleEcho(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    message := req.Params.Arguments["message"].(string)
+    message, err := req.RequireString("message")
+    if err != nil {
+        return nil, err
+    }
     return mcp.NewToolResultText(fmt.Sprintf("Echo: %s", message)), nil
 }
 ```

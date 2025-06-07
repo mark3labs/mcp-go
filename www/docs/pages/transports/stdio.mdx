@@ -124,13 +124,35 @@ func handleFileContent(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.R
 }
 
 func isValidPath(path string) bool {
-    // Prevent directory traversal
-    if filepath.IsAbs(path) {
+    // Clean the path to resolve any . or .. components
+    clean := filepath.Clean(path)
+    
+    // Check for directory traversal patterns
+    if strings.Contains(clean, "..") {
         return false
     }
     
-    clean := filepath.Clean(path)
-    return !filepath.IsAbs(clean) && !strings.Contains(clean, "..")
+    // For absolute paths, ensure they're within a safe base directory
+    if filepath.IsAbs(clean) {
+        // Define safe base directories (adjust as needed for your use case)
+        safeBaseDirs := []string{
+            "/tmp",
+            "/var/tmp", 
+            "/home",
+            "/Users", // macOS
+        }
+        
+        // Check if the path starts with any safe base directory
+        for _, baseDir := range safeBaseDirs {
+            if strings.HasPrefix(clean, baseDir) {
+                return true
+            }
+        }
+        return false
+    }
+    
+    // For relative paths, ensure they don't escape the current directory
+    return !strings.HasPrefix(clean, "..")
 }
 
 // Helper functions for the examples

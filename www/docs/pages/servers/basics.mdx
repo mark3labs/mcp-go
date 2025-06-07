@@ -181,7 +181,7 @@ Configure transport-specific options:
 // HTTP with custom options
 httpServer := server.NewStreamableHTTPServer(s,
     server.WithEndpointPath("/mcp"),
-    server.WithStateLess(true),
+    server.WithStateless(true),
 )
 
 if err := httpServer.Start(":8080"); err != nil {

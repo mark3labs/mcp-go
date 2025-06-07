@@ -116,14 +116,14 @@ func handleStdioErrors(c *client.StdioClient) {
 
     if err != nil {
         switch {
-        case errors.Is(err, client.ErrProcessExited):
+        case errors.Is(err, ErrProcessExited):
             log.Println("Server process exited unexpectedly")
             // Attempt to restart
             if restartErr := c.Restart(); restartErr != nil {
                 log.Printf("Failed to restart: %v", restartErr)
             }
 
-        case errors.Is(err, client.ErrProcessTimeout):
+        case errors.Is(err, ErrProcessTimeout):
             log.Println("Server process timed out")
             // Kill and restart process
             c.Kill()
@@ -131,7 +131,7 @@ func handleStdioErrors(c *client.StdioClient) {
                 log.Printf("Failed to restart: %v", restartErr)
             }
 
-        case errors.Is(err, client.ErrBrokenPipe):
+        case errors.Is(err, ErrBrokenPipe):
             log.Println("Communication pipe broken")
             // Process likely crashed, restart
             if restartErr := c.Restart(); restartErr != nil {

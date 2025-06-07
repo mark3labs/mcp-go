@@ -31,7 +31,10 @@ import (
     "github.com/mark3labs/mcp-go/server"
 )
 
+var start time.Time
+
 func main() {
+    start = time.Now()
     // Create server with capabilities
     s := server.NewMCPServer(
         "Demo Server",
@@ -99,7 +102,7 @@ func handleConfig(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.Resou
     config := map[string]interface{}{
         "name": "Demo Server",
         "version": "1.0.0",
-        "uptime": time.Since(time.Now()).String(),
+        "uptime": time.Since(start).String(),
     }
     
     configJSON, err := json.Marshal(config)
@@ -119,7 +122,7 @@ func handleConfig(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.Resou
 func handleAnalyzeLogs(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
     logLevel := "error" // default value
     if args := req.Params.Arguments; args != nil {
-        if level, ok := args["log_level"]; ok {
+        if level, ok := args["log_level"].(string); ok {
             logLevel = level
         }
     }

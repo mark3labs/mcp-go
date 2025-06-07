@@ -400,15 +400,45 @@ func handleZeroCopyOperation(ctx context.Context, req mcp.CallToolRequest) (*mcp
     return mcp.NewToolResultText(fmt.Sprintf("Processed %d bytes", len(processed))), nil
 }
 
+// Context key for shared buffer
+type sharedBufferKey struct{}
+
 // Helper functions for zero-copy operations
 func getSharedBuffer(ctx context.Context) *SharedBuffer {
-    // Placeholder implementation - would extract buffer from context
+    if buffer, ok := ctx.Value(sharedBufferKey{}).(*SharedBuffer); ok {
+        return buffer
+    }
     return nil
+}
+
+// Helper function to add shared buffer to context
+func withSharedBuffer(ctx context.Context, buffer *SharedBuffer) context.Context {
+    return context.WithValue(ctx, sharedBufferKey{}, buffer)
 }
 
 func processInPlace(data []byte) []byte {
     // Placeholder implementation - would process data in-place
     return data
+}
+
+// Example usage of shared buffer with context
+func exampleZeroCopyUsage() {
+    // Create a shared buffer
+    buffer := NewSharedBuffer(1024)
+    buffer.Write([]byte("example data"))
+    
+    // Create context with shared buffer
+    ctx := withSharedBuffer(context.Background(), buffer)
+    
+    // Call tool with shared buffer context
+    req := mcp.CallToolRequest{Name: "zero-copy-op"}
+    result, err := handleZeroCopyOperation(ctx, req)
+    if err != nil {
+        log.Printf("Error: %v", err)
+        return
+    }
+    
+    log.Printf("Result: %s", result.Content[0].Text)
 }
 ```
 

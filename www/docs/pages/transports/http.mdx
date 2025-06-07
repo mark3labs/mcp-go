@@ -267,7 +267,7 @@ func main() {
     }
 
     // Add middleware
-    addHTTPMiddleware(s)
+    setupHTTPMiddleware(s)
     
     // Add comprehensive tools
     addCRUDTools(s)
@@ -281,7 +281,7 @@ func main() {
 }
 
 // Helper functions for the advanced example
-func addHTTPMiddleware(s *server.MCPServer) {
+func setupHTTPMiddleware(s *server.MCPServer) {
     // Placeholder implementation - would add middleware
 }
 
