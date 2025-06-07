@@ -645,8 +645,8 @@ func (rsc *ResilientSSEClient) Close() error {
 
 // Helper function to check if an error is a connection error
 func isConnectionError(err error) bool {
-    return errors.Is(err, client.ErrConnectionLost) ||
-           errors.Is(err, client.ErrConnectionFailed)
+    return errors.Is(err, ErrConnectionLost) ||
+           errors.Is(err, ErrConnectionFailed)
 }
 ```
 
