@@ -258,9 +258,9 @@ func (msc *ManagedStdioClient) Close() error {
 }
 
 func isProcessError(err error) bool {
-    return errors.Is(err, client.ErrProcessExited) ||
-           errors.Is(err, client.ErrBrokenPipe) ||
-           errors.Is(err, client.ErrProcessTimeout)
+    return errors.Is(err, ErrProcessExited) ||
+           errors.Is(err, ErrBrokenPipe) ||
+           errors.Is(err, ErrProcessTimeout)
 }
 ```
 
