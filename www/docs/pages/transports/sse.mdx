@@ -864,32 +864,6 @@ func setupReverseProxy() {
 }
 ```
 
-## Best Practices
-
-### Security
-- **Use HTTPS in production**: Encrypt all SSE traffic
-- **Implement authentication**: Validate clients before allowing connections
-- **Rate limiting**: Prevent abuse and DoS attacks
-- **CORS configuration**: Restrict origins to trusted domains
-
-### Performance
-- **Connection limits**: Set reasonable maximum connections
-- **Message buffering**: Use buffered channels to prevent blocking
-- **Compression**: Enable gzip compression for large messages
-- **Heartbeat**: Keep connections alive with periodic pings
-
-### Reliability
-- **Graceful degradation**: Handle connection failures gracefully
-- **Reconnection logic**: Implement automatic reconnection in clients
-- **Message persistence**: Consider persisting important messages
-- **Health monitoring**: Monitor connection health and performance
-
-### Development
-- **Use development CORS**: Allow localhost origins during development
-- **Debug logging**: Log connection events and message flow
-- **Testing tools**: Use browser dev tools to inspect SSE streams
-- **Error handling**: Provide clear error messages and recovery paths
-
 ## Next Steps
 
 - **[HTTP Transport](/transports/http)** - Learn about traditional web service patterns

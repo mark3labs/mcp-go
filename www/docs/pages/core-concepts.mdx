@@ -262,28 +262,3 @@ func toolHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolRes
     return processWithState(state, req)
 }
 ```
-
-## Best Practices
-
-### Resource Design
-- Use clear, hierarchical URIs (`docs://api/endpoints` not `doc1`)
-- Implement proper MIME types for content
-- Consider caching for expensive resources
-- Provide meaningful descriptions
-
-### Tool Design
-- Keep tools focused on single responsibilities
-- Use descriptive parameter names and types
-- Provide comprehensive error messages
-- Validate inputs thoroughly
-
-### Transport Selection
-- **Stdio**: Default choice for most applications
-- **HTTP**: When you need REST-like access or load balancing
-- **SSE**: When you need real-time updates or web integration
-
-### Performance Considerations
-- Use connection pooling for HTTP clients
-- Implement proper timeouts and retries
-- Consider resource caching strategies
-- Monitor session resource usage

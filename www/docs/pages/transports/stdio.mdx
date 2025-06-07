@@ -646,32 +646,6 @@ func handleLargeFile(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 }
 ```
 
-## Best Practices
-
-### Security
-- **Validate all inputs**: Never trust user-provided paths or commands
-- **Sandbox operations**: Restrict file system access to safe directories
-- **Use least privilege**: Run with minimal required permissions
-- **Log security events**: Track access attempts and failures
-
-### Reliability
-- **Handle signals gracefully**: Respond to SIGTERM and SIGINT
-- **Implement timeouts**: Prevent hanging operations
-- **Add retry logic**: Handle transient failures
-- **Use panic recovery**: Prevent crashes from bringing down the server
-
-### Performance
-- **Cache frequently accessed data**: Reduce repeated file system calls
-- **Use connection pooling**: For database and network resources
-- **Stream large data**: Avoid loading everything into memory
-- **Implement proper cleanup**: Close files, connections, and resources
-
-### Debugging
-- **Add comprehensive logging**: Log all operations and errors
-- **Use structured logging**: Make logs searchable and parseable
-- **Implement health checks**: Provide status and diagnostic information
-- **Test with real clients**: Use Claude Desktop or custom clients
-
 ## Next Steps
 
 - **[SSE Transport](/transports/sse)** - Learn about real-time web communication

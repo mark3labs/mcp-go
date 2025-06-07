@@ -95,10 +95,6 @@ export default defineConfig({
         },
       ],
     },
-    {
-      text: 'Example',
-      link: '/example',
-    },
   ],
   socials: [
     {

@@ -904,32 +904,6 @@ func demonstrateSubscriptionManager(c client.Client) {
 }
 ```
 
-## Best Practices
-
-### Resource Operations
-- **Cache frequently accessed resources**: Implement caching with appropriate TTL
-- **Handle different content types**: Support text, JSON, and binary resources
-- **Validate resource URIs**: Check URI format before making requests
-- **Handle missing resources**: Gracefully handle resource not found errors
-
-### Tool Operations
-- **Validate arguments**: Check tool schemas before calling
-- **Handle tool errors**: Distinguish between different error types
-- **Use appropriate timeouts**: Set timeouts based on expected tool execution time
-- **Batch operations**: Use concurrent calls for independent operations
-
-### Prompt Operations
-- **Understand prompt structure**: Know how to work with prompt messages
-- **Handle dynamic arguments**: Support parameterized prompts
-- **Format for LLMs**: Convert prompt results to LLM-compatible format
-- **Cache prompt templates**: Cache static prompt templates
-
-### Subscription Operations
-- **Handle connection loss**: Implement reconnection logic for subscriptions
-- **Process notifications asynchronously**: Don't block notification handling
-- **Filter relevant notifications**: Only handle notifications you care about
-- **Clean up subscriptions**: Always clean up subscription resources
-
 ## Next Steps
 
 - **[Client Transports](/clients/transports)** - Learn transport-specific client features

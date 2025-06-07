@@ -1031,35 +1031,6 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 }
 ```
 
-## Best Practices
-
-### Security
-- **Use HTTPS**: Always encrypt HTTP traffic in production
-- **Implement authentication**: Validate all requests
-- **Rate limiting**: Prevent abuse and DoS attacks
-- **Input validation**: Sanitize all user inputs
-- **CORS configuration**: Restrict origins appropriately
-
-### Performance
-- **Connection pooling**: Reuse HTTP connections
-- **Caching**: Cache expensive operations and resources
-- **Compression**: Enable gzip compression
-- **Load balancing**: Distribute load across multiple servers
-- **Database optimization**: Use connection pools and prepared statements
-
-### Reliability
-- **Health checks**: Implement health check endpoints
-- **Graceful shutdown**: Handle shutdown signals properly
-- **Circuit breakers**: Prevent cascading failures
-- **Retry logic**: Handle transient failures
-- **Monitoring**: Track metrics and errors
-
-### Development
-- **API documentation**: Document all endpoints and parameters
-- **Testing**: Write comprehensive tests for all endpoints
-- **Logging**: Log all requests and errors
-- **Versioning**: Version your APIs for backward compatibility
-
 ## Next Steps
 
 - **[In-Process Transport](/transports/inprocess)** - Learn about embedded scenarios

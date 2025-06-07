@@ -767,32 +767,6 @@ func isConnectionError(err error) bool {
 }
 ```
 
-## Best Practices
-
-### Client Creation
-- **Choose appropriate transport**: Match transport to your use case
-- **Set reasonable timeouts**: Prevent hanging operations
-- **Configure authentication**: Set up credentials before initialization
-- **Handle creation errors**: Always check for errors during client creation
-
-### Lifecycle Management
-- **Initialize once**: Don't repeatedly initialize the same client
-- **Use defer for cleanup**: Ensure clients are always closed
-- **Handle initialization errors**: Check for connection and protocol errors
-- **Monitor connection health**: Implement health checks for long-running clients
-
-### Error Handling
-- **Distinguish error types**: Handle different errors appropriately
-- **Implement retry logic**: Retry transient failures with backoff
-- **Use context for cancellation**: Support operation cancellation
-- **Log errors appropriately**: Include sufficient context for debugging
-
-### Performance
-- **Reuse clients**: Don't create new clients for each operation
-- **Use connection pooling**: For HTTP clients, configure connection pools
-- **Set appropriate timeouts**: Balance responsiveness with reliability
-- **Monitor metrics**: Track success rates, latency, and error rates
-
 ## Next Steps
 
 - **[Client Operations](/clients/operations)** - Learn to use tools, resources, and prompts

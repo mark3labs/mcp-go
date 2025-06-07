@@ -1045,34 +1045,3 @@ func demonstrateClientFactory() {
 }
 ```
 
-## Best Practices
-
-### STDIO Clients
-- **Handle process lifecycle**: Monitor process health and restart when needed
-- **Set appropriate timeouts**: Prevent hanging on unresponsive processes
-- **Manage environment**: Set proper environment variables and working directory
-- **Handle stderr**: Monitor and log server error output
-
-### HTTP Clients
-- **Use connection pooling**: Reuse HTTP connections for better performance
-- **Implement authentication**: Handle token refresh and authentication errors
-- **Set timeouts**: Configure appropriate request timeouts
-- **Handle rate limiting**: Respect server rate limits and implement backoff
-
-### SSE Clients
-- **Implement reconnection**: Handle connection drops gracefully
-- **Process events asynchronously**: Don't block event processing
-- **Handle buffering**: Manage event buffer sizes appropriately
-- **Monitor connection health**: Implement heartbeat or ping mechanisms
-
-### In-Process Clients
-- **Use for testing**: Ideal for unit and integration tests
-- **Avoid in production**: Generally not suitable for production use
-- **Handle shared state**: Be careful with shared mutable state
-- **Optimize performance**: Take advantage of zero-copy operations
-
-## Next Steps
-
-- **[Testing](/testing)** - Learn comprehensive testing strategies for clients
-- **[Performance](/performance)** - Optimize client performance
-- **[Examples](/examples)** - See real-world client implementations

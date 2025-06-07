@@ -294,34 +294,6 @@ func main() {
 }
 ```
 
-## Testing Your Server
-
-Test server creation and basic functionality:
-
-```go
-func TestServerCreation(t *testing.T) {
-    s := server.NewMCPServer("Test Server", "1.0.0")
-    
-    // Verify server properties
-    assert.Equal(t, "Test Server", s.Name())
-    assert.Equal(t, "1.0.0", s.Version())
-    
-    // Test capabilities
-    caps := s.Capabilities()
-    assert.NotNil(t, caps)
-}
-
-func TestServerWithOptions(t *testing.T) {
-    s := server.NewMCPServer("Test Server", "1.0.0",
-        server.WithToolCapabilities(true),
-        server.WithRecovery(),
-    )
-    
-    caps := s.Capabilities()
-    assert.True(t, caps.Tools != nil)
-}
-```
-
 ## Next Steps
 
 Now that you understand server basics, learn how to add functionality:
