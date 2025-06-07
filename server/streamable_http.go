@@ -534,17 +534,9 @@ func (s *sessionToolsStore) set(sessionID string, tools map[string]ServerTool) {
 }
 
 func (s *sessionToolsStore) delete(sessionID string) {
-	s.mu.RLock()
-	_, exists := s.tools[sessionID]
-	s.mu.RUnlock()
-
-	if !exists {
-		return
-	}
-
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	delete(s.tools, sessionID)
-	s.mu.Unlock()
 }
 
 // streamableHttpSession is a session for streamable-http transport
