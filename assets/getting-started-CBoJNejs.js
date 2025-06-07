@@ -1,8 +1,26 @@
-import{u as l,j as s}from"./index-C3RtcMXj.js";const a={title:"Getting Started",description:"undefined"};function r(i){const e={a:"a",code:"code",div:"div",h1:"h1",h2:"h2",h3:"h3",header:"header",li:"li",ol:"ol",p:"p",pre:"pre",span:"span",strong:"strong",ul:"ul",...l(),...i.components};return s.jsxs(s.Fragment,{children:[s.jsx(e.header,{children:s.jsxs(e.h1,{id:"getting-started",children:["Getting Started",s.jsx(e.a,{"aria-hidden":"true",tabIndex:"-1",href:"#getting-started",children:s.jsx(e.div,{"data-autolink-icon":!0})})]})}),`
-`,s.jsx(e.p,{children:"MCP-Go makes it easy to build Model Context Protocol (MCP) servers in Go. This guide will help you create your first MCP server in just a few minutes."}),`
-`,s.jsxs(e.h2,{id:"installation",children:["Installation",s.jsx(e.a,{"aria-hidden":"true",tabIndex:"-1",href:"#installation",children:s.jsx(e.div,{"data-autolink-icon":!0})})]}),`
+import{u as l,j as s}from"./index-BixWHG1T.js";const a={title:"Getting Started",description:"undefined"};function r(i){const e={a:"a",code:"code",div:"div",h1:"h1",h2:"h2",h3:"h3",header:"header",li:"li",ol:"ol",p:"p",pre:"pre",span:"span",strong:"strong",ul:"ul",...l(),...i.components};return s.jsxs(s.Fragment,{children:[s.jsx(e.header,{children:s.jsxs(e.h1,{id:"getting-started",children:["Getting Started",s.jsx(e.a,{"aria-hidden":"true",tabIndex:"-1",href:"#getting-started",children:s.jsx(e.div,{"data-autolink-icon":!0})})]})}),`
+`,s.jsxs(e.h2,{id:"introduction",children:["Introduction",s.jsx(e.a,{"aria-hidden":"true",tabIndex:"-1",href:"#introduction",children:s.jsx(e.div,{"data-autolink-icon":!0})})]}),`
+`,s.jsxs(e.h3,{id:"what-is-mcp",children:["What is MCP?",s.jsx(e.a,{"aria-hidden":"true",tabIndex:"-1",href:"#what-is-mcp",children:s.jsx(e.div,{"data-autolink-icon":!0})})]}),`
+`,s.jsx(e.p,{children:"The Model Context Protocol (MCP) is an open standard that enables secure, controlled connections between AI applications and external data sources and tools. It provides a standardized way for Large Language Models (LLMs) to access and interact with external systems while maintaining security and user control."}),`
+`,s.jsxs(e.h3,{id:"why-mcp-go",children:["Why MCP Go?",s.jsx(e.a,{"aria-hidden":"true",tabIndex:"-1",href:"#why-mcp-go",children:s.jsx(e.div,{"data-autolink-icon":!0})})]}),`
+`,s.jsx(e.p,{children:"MCP-Go is designed to make building MCP servers in Go fast, simple, and complete:"}),`
+`,s.jsxs(e.ul,{children:[`
+`,s.jsxs(e.li,{children:[s.jsx(e.strong,{children:"Fast"}),": Minimal overhead with efficient Go implementation"]}),`
+`,s.jsxs(e.li,{children:[s.jsx(e.strong,{children:"Simple"}),": Clean, intuitive API with minimal boilerplate"]}),`
+`,s.jsxs(e.li,{children:[s.jsx(e.strong,{children:"Complete"}),": Full support for the MCP specification including tools, resources, and prompts"]}),`
+`]}),`
+`,s.jsxs(e.h3,{id:"key-features",children:["Key Features",s.jsx(e.a,{"aria-hidden":"true",tabIndex:"-1",href:"#key-features",children:s.jsx(e.div,{"data-autolink-icon":!0})})]}),`
+`,s.jsxs(e.ul,{children:[`
+`,s.jsxs(e.li,{children:[s.jsx(e.strong,{children:"High-level interface"}),": Focus on your business logic, not protocol details"]}),`
+`,s.jsxs(e.li,{children:[s.jsx(e.strong,{children:"Minimal boilerplate"}),": Get started with just a few lines of code"]}),`
+`,s.jsxs(e.li,{children:[s.jsx(e.strong,{children:"Full MCP spec support"}),": Tools, resources, prompts, and all transport methods"]}),`
+`,s.jsxs(e.li,{children:[s.jsx(e.strong,{children:"Type safety"}),": Leverage Go's type system for robust MCP servers"]}),`
+`,s.jsxs(e.li,{children:[s.jsx(e.strong,{children:"Multiple transports"}),": Stdio, HTTP, and Server-Sent Events support"]}),`
+`]}),`
+`,s.jsxs(e.h3,{id:"installation",children:["Installation",s.jsx(e.a,{"aria-hidden":"true",tabIndex:"-1",href:"#installation",children:s.jsx(e.div,{"data-autolink-icon":!0})})]}),`
 `,s.jsx(e.p,{children:"Add MCP-Go to your Go project:"}),`
 `,s.jsx(s.Fragment,{children:s.jsx(e.pre,{className:"shiki shiki-themes github-light github-dark-dimmed",style:{backgroundColor:"#fff","--shiki-dark-bg":"#22272e",color:"#24292e","--shiki-dark":"#adbac7"},tabIndex:"0",children:s.jsx(e.code,{children:s.jsxs(e.span,{className:"line",children:[s.jsx(e.span,{style:{color:"#6F42C1","--shiki-dark":"#F69D50"},children:"go"}),s.jsx(e.span,{style:{color:"#032F62","--shiki-dark":"#96D0FF"},children:" get"}),s.jsx(e.span,{style:{color:"#032F62","--shiki-dark":"#96D0FF"},children:" github.com/mark3labs/mcp-go"})]})})})}),`
+`,s.jsx(e.p,{children:"MCP-Go makes it easy to build Model Context Protocol (MCP) servers in Go. This guide will help you create your first MCP server in just a few minutes."}),`
 `,s.jsxs(e.h2,{id:"your-first-mcp-server",children:["Your First MCP Server",s.jsx(e.a,{"aria-hidden":"true",tabIndex:"-1",href:"#your-first-mcp-server",children:s.jsx(e.div,{"data-autolink-icon":!0})})]}),`
 `,s.jsx(e.p,{children:`Let's create a simple MCP server with a "hello world" tool:`}),`
 `,s.jsx(s.Fragment,{children:s.jsx(e.pre,{className:"shiki shiki-themes github-light github-dark-dimmed",style:{backgroundColor:"#fff","--shiki-dark-bg":"#22272e",color:"#24292e","--shiki-dark":"#adbac7"},tabIndex:"0",children:s.jsxs(e.code,{children:[s.jsxs(e.span,{className:"line",children:[s.jsx(e.span,{style:{color:"#D73A49","--shiki-dark":"#F47067"},children:"package"}),s.jsx(e.span,{style:{color:"#6F42C1","--shiki-dark":"#F69D50"},children:" main"})]}),`

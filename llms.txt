@@ -4,5 +4,21 @@
 
 ## Docs
 
-- [Example](/example): This is an example page.
-- [Getting Started](/getting-started): MCP-Go makes it easy to build Model Context Protocol (MCP) servers in Go. This guide will help you create your first MCP server in just a few minutes.
+- [Core Concepts](/core-concepts): Understanding the fundamental concepts of MCP and how MCP-Go implements them is essential for building effective MCP servers and clients.
+- [Getting Started](/getting-started): The Model Context Protocol (MCP) is an open standard that enables secure, controlled connections between AI applications and external data sources and tools. It provides a standardized way for Large Language Models (LLMs) to access and interact with external systems while maintaining security and user control.
+- [Quick Start](/quick-start): Get up and running with MCP-Go in minutes. This guide walks you through creating your first MCP server and client.
+- [Client Basics](/clients/basics): Learn the fundamentals of creating and managing MCP clients, including lifecycle management, initialization, and error handling.
+- [Building MCP Clients](/clients): Learn how to build MCP clients that connect to and interact with MCP servers. This section covers client creation, operations, and transport-specific implementations.
+- [Client Operations](/clients/operations): Learn how to use MCP clients to interact with servers through tools, resources, prompts, and subscriptions.
+- [Client Transports](/clients/transports): Learn about transport-specific client implementations and how to choose the right transport for your use case.
+- [Advanced Server Features](/servers/advanced): Explore powerful features that make MCP-Go servers production-ready: typed tools, session management, middleware, hooks, and more.
+- [Server Basics](/servers/basics): Learn how to create, configure, and start MCP servers with different transport options.
+- [Building MCP Servers](/servers): Learn how to build powerful MCP servers with MCP-Go. This section covers everything from basic server setup to advanced features like typed tools and session management.
+- [Implementing Prompts](/servers/prompts): Prompts are reusable interaction templates that help structure conversations between users and LLMs. They provide context, instructions, and can include dynamic content from resources.
+- [Implementing Resources](/servers/resources): Resources expose data to LLMs in a read-only manner. Think of them as GET endpoints that provide access to files, databases, APIs, or any other data source.
+- [Implementing Tools](/servers/tools): Tools provide functionality that LLMs can invoke to take actions or perform computations. Think of them as function calls that extend the LLM's capabilities.
+- [HTTP Transport](/transports/http): HTTP transport provides traditional request/response communication for MCP servers, perfect for REST-like interactions, stateless clients, and integration with existing web infrastructure.
+- [Transport Options](/transports): MCP-Go supports multiple transport methods to fit different deployment scenarios and integration patterns. Choose the right transport based on your use case, performance requirements, and client capabilities.
+- [In-Process Transport](/transports/inprocess): In-process transport enables direct integration of MCP servers within the same process, eliminating serialization overhead and providing the highest performance option for embedded scenarios.
+- [SSE Transport](/transports/sse): Server-Sent Events (SSE) transport enables real-time, web-friendly communication between MCP clients and servers. Perfect for web applications that need live updates and multi-client support.
+- [STDIO Transport](/transports/stdio): STDIO (Standard Input/Output) transport is the most common MCP transport method, perfect for command-line tools, desktop applications, and local integrations.
