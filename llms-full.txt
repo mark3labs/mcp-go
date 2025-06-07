@@ -7627,355 +7627,6 @@ type Claims struct {
 }
 ```
 
-### Client Integration
-
-#### Go HTTP Client
-
-```go
-package main
-
-import (
-    "context"
-    "log"
-
-    "github.com/mark3labs/mcp-go/client"
-)
-
-func main() {
-    // Create HTTP client
-    c := client.NewHTTPClient("http://localhost:8080/mcp")
-    
-    // Add authentication
-    c.SetHeader("Authorization", "Bearer your-jwt-token")
-    
-    // Set custom headers
-    c.SetHeader("X-API-Version", "v1")
-    c.SetHeader("X-Client-ID", "my-app")
-
-    ctx := context.Background()
-
-    // Initialize connection
-    if err := c.Initialize(ctx); err != nil {
-        log.Fatal(err)
-    }
-
-    // List tools
-    tools, err := c.ListTools(ctx)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    log.Printf("Available tools: %d", len(tools.Tools))
-
-    // Call tool
-    result, err := c.CallTool(ctx, mcp.CallToolRequest{
-        Params: mcp.CallToolRequestParams{
-            Name: "search_users",
-            Arguments: map[string]interface{}{
-                "query": "john",
-                "limit": 5,
-            },
-        },
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    log.Printf("Tool result: %+v", result)
-}
-```
-
-#### JavaScript/Fetch Client
-
-```javascript
-class MCPHTTPClient {
-    constructor(baseURL, options = {}) {
-        this.baseURL = baseURL;
-        this.headers = {
-            'Content-Type': 'application/json',
-            ...options.headers
-        };
-        this.requestId = 1;
-    }
-
-    setAuthToken(token) {
-        this.headers['Authorization'] = `Bearer ${token}`;
-    }
-
-    async sendRequest(method, params = {}) {
-        const id = this.requestId++;
-        const request = {
-            jsonrpc: '2.0',
-            id,
-            method,
-            params
-        };
-
-        const response = await fetch(`${this.baseURL}/${method.replace('/', '/')}`, {
-            method: 'POST',
-            headers: this.headers,
-            body: JSON.stringify(request)
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const result = await response.json();
-        
-        if (result.error) {
-            throw new Error(result.error.message);
-        }
-
-        return result.result;
-    }
-
-    async initialize() {
-        return this.sendRequest('initialize', {
-            protocolVersion: '2024-11-05',
-            capabilities: { tools: {} },
-            clientInfo: { name: 'Web Client', version: '1.0.0' }
-        });
-    }
-
-    async listTools() {
-        return this.sendRequest('tools/list');
-    }
-
-    async callTool(name, arguments) {
-        return this.sendRequest('tools/call', { name, arguments });
-    }
-
-    async listResources() {
-        return this.sendRequest('resources/list');
-    }
-
-    async readResource(uri) {
-        return this.sendRequest('resources/read', { uri });
-    }
-}
-
-// Usage
-const client = new MCPHTTPClient('http://localhost:8080/mcp');
-client.setAuthToken('your-jwt-token');
-
-async function main() {
-    try {
-        await client.initialize();
-        
-        const tools = await client.listTools();
-        console.log('Available tools:', tools);
-        
-        const result = await client.callTool('search_users', {
-            query: 'john',
-            limit: 10
-        });
-        console.log('Search result:', result);
-        
-    } catch (error) {
-        console.error('Error:', error);
-    }
-}
-
-main();
-```
-
-#### cURL Examples
-
-```bash
-# Initialize session
-curl -X POST http://localhost:8080/mcp/initialize \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-token" \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "initialize",
-    "params": {
-      "protocolVersion": "2024-11-05",
-      "capabilities": {"tools": {}},
-      "clientInfo": {"name": "curl", "version": "1.0.0"}
-    }
-  }'
-
-# List tools
-curl -X POST http://localhost:8080/mcp/tools/list \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-token" \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 2,
-    "method": "tools/list",
-    "params": {}
-  }'
-
-# Call tool
-curl -X POST http://localhost:8080/mcp/tools/call \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-token" \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 3,
-    "method": "tools/call",
-    "params": {
-      "name": "search_users",
-      "arguments": {
-        "query": "john",
-        "limit": 10
-      }
-    }
-  }'
-
-# Read resource
-curl -X POST http://localhost:8080/mcp/resources/read \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-token" \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 4,
-    "method": "resources/read",
-    "params": {
-      "uri": "users://123"
-    }
-  }'
-```
-
-### Performance and Scaling
-
-#### Load Balancing
-
-```go
-// Use with nginx or HAProxy
-upstream mcp_servers {
-    server 127.0.0.1:8080;
-    server 127.0.0.1:8081;
-    server 127.0.0.1:8082;
-}
-
-server {
-    listen 80;
-    server_name api.example.com;
-    
-    location /mcp/ {
-        proxy_pass http://mcp_servers;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-#### Caching Strategies
-
-```go
-type CacheMiddleware struct {
-    cache map[string]cacheEntry
-    mutex sync.RWMutex
-    ttl   time.Duration
-}
-
-type cacheEntry struct {
-    data      *mcp.ReadResourceResult
-    timestamp time.Time
-    etag      string
-}
-
-func (m *CacheMiddleware) ResourceMiddleware(next server.ResourceHandler) server.ResourceHandler {
-    return func(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-        // Check cache
-        m.mutex.RLock()
-        entry, exists := m.cache[req.Params.URI]
-        m.mutex.RUnlock()
-        
-        if exists && time.Since(entry.timestamp) < m.ttl {
-            // Add cache headers
-            if httpCtx := getHTTPContext(ctx); httpCtx != nil {
-                httpCtx.Header().Set("Cache-Control", fmt.Sprintf("max-age=%d", int(m.ttl.Seconds())))
-                httpCtx.Header().Set("ETag", entry.etag)
-            }
-            return entry.data, nil
-        }
-        
-        // Fetch fresh data
-        result, err := next(ctx, req)
-        if err != nil {
-            return nil, err
-        }
-        
-        // Cache result
-        etag := generateETag(result)
-        m.mutex.Lock()
-        m.cache[req.Params.URI] = cacheEntry{
-            data:      result,
-            timestamp: time.Now(),
-            etag:      etag,
-        }
-        m.mutex.Unlock()
-        
-        // Set cache headers
-        if httpCtx := getHTTPContext(ctx); httpCtx != nil {
-            httpCtx.Header().Set("Cache-Control", fmt.Sprintf("max-age=%d", int(m.ttl.Seconds())))
-            httpCtx.Header().Set("ETag", etag)
-        }
-        
-        return result, nil
-    }
-}
-```
-
-#### Rate Limiting
-
-```go
-type RateLimiter struct {
-    limiters map[string]*rate.Limiter
-    mutex    sync.RWMutex
-    rate     rate.Limit
-    burst    int
-}
-
-func NewRateLimiter(requestsPerSecond float64, burst int) *RateLimiter {
-    return &RateLimiter{
-        limiters: make(map[string]*rate.Limiter),
-        rate:     rate.Limit(requestsPerSecond),
-        burst:    burst,
-    }
-}
-
-func (rl *RateLimiter) getLimiter(clientIP string) *rate.Limiter {
-    rl.mutex.RLock()
-    limiter, exists := rl.limiters[clientIP]
-    rl.mutex.RUnlock()
-    
-    if !exists {
-        rl.mutex.Lock()
-        limiter = rate.NewLimiter(rl.rate, rl.burst)
-        rl.limiters[clientIP] = limiter
-        rl.mutex.Unlock()
-    }
-    
-    return limiter
-}
-
-func (rl *RateLimiter) Allow(clientIP string) bool {
-    return rl.getLimiter(clientIP).Allow()
-}
-
-// HTTP middleware
-func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        clientIP := getClientIP(r)
-        
-        if !rl.Allow(clientIP) {
-            http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
-            return
-        }
-        
-        next.ServeHTTP(w, r)
-    })
-}
-```
-
 ### Next Steps
 
 * **[In-Process Transport](/transports/inprocess)** - Learn about embedded scenarios
@@ -8268,7 +7919,7 @@ Explore each transport in detail:
 
 ## In-Process Transport
 
-In-process transport enables direct integration of MCP servers within the same process, eliminating serialization overhead and providing the highest performance option for embedded scenarios.
+In-process transport enables direct integration of MCP servers within the same process, eliminating network overhead and providing seamless integration for embedded scenarios.
 
 ### Use Cases
 
@@ -8276,18 +7927,15 @@ In-process transport is perfect for:
 
 * **Embedded servers**: MCP functionality within existing applications
 * **Testing and development**: Fast, reliable testing without network overhead
-* **High-performance scenarios**: Microsecond latency requirements
 * **Library integrations**: MCP as a library component
 * **Single-process architectures**: Monolithic applications with MCP capabilities
 
 **Example applications:**
 
-* Game engines with AI tool integration
-* Real-time trading systems
-* Embedded analytics engines
-* Testing frameworks
 * Desktop applications with plugin architectures
-* High-frequency data processing
+* Testing frameworks
+* Embedded analytics engines
+* Game engines with AI tool integration
 
 ### Implementation
 
@@ -8300,10 +7948,6 @@ import (
     "context"
     "fmt"
     "log"
-    "runtime"
-    "strings"
-    "time"
-    "sync"
 
     "github.com/mark3labs/mcp-go/mcp"
     "github.com/mark3labs/mcp-go/server"
@@ -8312,39 +7956,23 @@ import (
 
 func main() {
     // Create server
-    s := server.NewMCPServer("In-Process Server", "1.0.0",
+    s := server.NewMCPServer("Calculator Server", "1.0.0",
         server.WithToolCapabilities(true),
-        server.WithResourceCapabilities(true),
     )
 
-    // Add high-performance tools
+    // Add calculator tool
     s.AddTool(
-        mcp.NewTool("fast_calculation",
-            mcp.WithDescription("Perform fast mathematical calculations"),
-            mcp.WithString("operation", mcp.Required()),
-            mcp.WithArray("numbers", mcp.Required()),
+        mcp.NewTool("calculate",
+            mcp.WithDescription("Perform basic mathematical calculations"),
+            mcp.WithString("operation", 
+                mcp.Required(),
+                mcp.Enum("add", "subtract", "multiply", "divide"),
+                mcp.Description("The operation to perform"),
+            ),
+            mcp.WithNumber("x", mcp.Required(), mcp.Description("First number")),
+            mcp.WithNumber("y", mcp.Required(), mcp.Description("Second number")),
         ),
-        handleFastCalculation,
-    )
-
-    s.AddTool(
-        mcp.NewTool("process_data",
-            mcp.WithDescription("Process data with zero-copy operations"),
-            mcp.WithObject("data", mcp.Required()),
-            mcp.WithString("algorithm", mcp.Default("default")),
-        ),
-        handleProcessData,
-    )
-
-    // Add in-memory resources
-    s.AddResource(
-        mcp.NewResource(
-            "memory://cache/{key}",
-            "Memory Cache",
-            mcp.WithResourceDescription("In-memory cached data"),
-            mcp.WithMIMEType("application/json"),
-        ),
-        handleMemoryCache,
+        handleCalculate,
     )
 
     // Create in-process client
@@ -8353,169 +7981,77 @@ func main() {
 
     ctx := context.Background()
 
-    // Initialize (no network overhead)
+    // Initialize
     if err := client.Initialize(ctx); err != nil {
         log.Fatal(err)
     }
 
-    // Demonstrate high-performance operations
-    demonstratePerformance(ctx, client)
-}
-
-func handleFastCalculation(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    operation := req.Params.Arguments["operation"].(string)
-    numbers := req.Params.Arguments["numbers"].([]interface{})
-
-    // Convert to float64 slice
-    values := make([]float64, len(numbers))
-    for i, n := range numbers {
-        values[i] = n.(float64)
+    // Use the calculator
+    result, err := client.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolRequestParams{
+            Name: "calculate",
+            Arguments: map[string]interface{}{
+                "operation": "add",
+                "x":         10.0,
+                "y":         5.0,
+            },
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
     }
 
-    // Perform calculation
+    fmt.Printf("Result: %s\n", result.Content[0].Text)
+}
+
+func handleCalculate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    operation := req.Params.Arguments["operation"].(string)
+    x := req.Params.Arguments["x"].(float64)
+    y := req.Params.Arguments["y"].(float64)
+
     var result float64
     switch operation {
-    case "sum":
-        for _, v := range values {
-            result += v
+    case "add":
+        result = x + y
+    case "subtract":
+        result = x - y
+    case "multiply":
+        result = x * y
+    case "divide":
+        if y == 0 {
+            return mcp.NewToolResultError("division by zero"), nil
         }
-    case "product":
-        result = 1
-        for _, v := range values {
-            result *= v
-        }
-    case "average":
-        sum := 0.0
-        for _, v := range values {
-            sum += v
-        }
-        result = sum / float64(len(values))
+        result = x / y
     default:
         return nil, fmt.Errorf("unknown operation: %s", operation)
     }
 
-    return mcp.NewToolResultJSON(map[string]interface{}{
-        "operation": operation,
-        "result":    result,
-        "count":     len(values),
-    }), nil
-}
-
-func handleProcessData(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    data := req.Params.Arguments["data"].(map[string]interface{})
-    algorithm := req.Params.Arguments["algorithm"].(string)
-
-    // Process data in-place (zero-copy when possible)
-    processed := processDataInPlace(data, algorithm)
-
-    return mcp.NewToolResultJSON(map[string]interface{}{
-        "algorithm": algorithm,
-        "processed": processed,
-        "timestamp": time.Now().UnixNano(),
-    }), nil
-}
-
-var (
-    memoryCache = make(map[string]interface{})
-    cacheMutex  sync.RWMutex
-)
-
-func handleMemoryCache(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-    key := extractKeyFromURI(req.Params.URI)
-    
-    cacheMutex.RLock()
-    value, exists := memoryCache[key]
-    cacheMutex.RUnlock()
-    
-    if !exists {
-        return nil, fmt.Errorf("key not found: %s", key)
-    }
-
-    return mcp.NewResourceResultJSON(map[string]interface{}{
-        "key":   key,
-        "value": value,
-        "type":  fmt.Sprintf("%T", value),
-    }), nil
-}
-
-// Helper functions for the examples
-func processDataInPlace(data map[string]interface{}, algorithm string) map[string]interface{} {
-    // Placeholder implementation - would process data according to algorithm
-    result := make(map[string]interface{})
-    for k, v := range data {
-        result[k] = fmt.Sprintf("processed_%v", v)
-    }
-    return result
-}
-
-func extractKeyFromURI(uri string) string {
-    // Extract key from URI like "memory://cache/mykey"
-    parts := strings.Split(uri, "/")
-    if len(parts) > 0 {
-        return parts[len(parts)-1]
-    }
-    return uri
-}
-
-func demonstratePerformance(ctx context.Context, client *client.InProcessClient) {
-    // Benchmark tool calls
-    start := time.Now()
-    iterations := 10000
-
-    for i := 0; i < iterations; i++ {
-        _, err := client.CallTool(ctx, mcp.CallToolRequest{
-            Params: mcp.CallToolRequestParams{
-                Name: "fast_calculation",
-                Arguments: map[string]interface{}{
-                    "operation": "sum",
-                    "numbers":   []interface{}{1.0, 2.0, 3.0, 4.0, 5.0},
-                },
-            },
-        })
-        if err != nil {
-            log.Printf("Tool call failed: %v", err)
-            break
-        }
-    }
-
-    duration := time.Since(start)
-    avgLatency := duration / time.Duration(iterations)
-    
-    log.Printf("Completed %d tool calls in %v", iterations, duration)
-    log.Printf("Average latency: %v", avgLatency)
-    log.Printf("Throughput: %.0f calls/second", float64(iterations)/duration.Seconds())
+    return mcp.NewToolResultText(fmt.Sprintf("%.2f", result)), nil
 }
 ```
 
-#### Advanced In-Process Integration
+#### Embedded Application Integration
 
 ```go
 // Embedded MCP server in a larger application
 type Application struct {
     mcpServer *server.MCPServer
     mcpClient *client.InProcessClient
-    dataStore *DataStore
     config    *Config
-    startTime time.Time
 }
 
 func NewApplication(config *Config) *Application {
     app := &Application{
-        config:    config,
-        dataStore: NewDataStore(),
-        startTime: time.Now(),
+        config: config,
     }
 
     // Create embedded MCP server
     app.mcpServer = server.NewMCPServer("Embedded Server", "1.0.0",
-        server.WithAllCapabilities(),
-        server.WithRecovery(),
+        server.WithToolCapabilities(true),
     )
 
     // Add application-specific tools
     app.addApplicationTools()
-    app.addDataTools()
-    app.addAnalyticsTools()
 
     // Create in-process client for internal use
     app.mcpClient = client.NewInProcessClient(app.mcpServer)
@@ -8523,94 +8059,62 @@ func NewApplication(config *Config) *Application {
     return app
 }
 
-// Helper types and functions for the application example
-type DataStore struct {
-    // Placeholder implementation
-}
-
 type Config struct {
-    // Placeholder implementation
-}
-
-func NewDataStore() *DataStore {
-    return &DataStore{}
-}
-
-func (ds *DataStore) Query(query string, params map[string]interface{}) (interface{}, error) {
-    // Placeholder implementation
-    return map[string]interface{}{"result": "data"}, nil
-}
-
-func (c *Config) Public() map[string]interface{} {
-    // Placeholder implementation
-    return map[string]interface{}{"debug": true}
-}
-
-func getMemoryUsage() map[string]interface{} {
-    var m runtime.MemStats
-    runtime.ReadMemStats(&m)
-    return map[string]interface{}{
-        "alloc":      m.Alloc,
-        "total_alloc": m.TotalAlloc,
-        "sys":        m.Sys,
-    }
-}
-
-func (app *Application) addDataTools() {
-    // Placeholder implementation
-}
-
-func (app *Application) addAnalyticsTools() {
-    // Placeholder implementation
+    AppName string
+    Debug   bool
 }
 
 func (app *Application) addApplicationTools() {
-    // Direct access to application state
+    // Application status tool
     app.mcpServer.AddTool(
         mcp.NewTool("get_app_status",
             mcp.WithDescription("Get current application status"),
         ),
         func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
             status := map[string]interface{}{
-                "uptime":     time.Since(app.startTime).String(),
-                "memory":     getMemoryUsage(),
-                "goroutines": runtime.NumGoroutine(),
-                "config":     app.config.Public(),
+                "app_name": app.config.AppName,
+                "debug":    app.config.Debug,
+                "status":   "running",
             }
             return mcp.NewToolResultJSON(status), nil
         },
     )
 
-    // Direct data store access
+    // Configuration tool
     app.mcpServer.AddTool(
-        mcp.NewTool("query_data",
-            mcp.WithDescription("Query application data store"),
-            mcp.WithString("query", mcp.Required()),
-            mcp.WithObject("params", mcp.Description("Query parameters")),
+        mcp.NewTool("update_config",
+            mcp.WithDescription("Update application configuration"),
+            mcp.WithString("key", mcp.Required()),
+            mcp.WithString("value", mcp.Required()),
         ),
         func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-            query := req.Params.Arguments["query"].(string)
-            params := req.Params.Arguments["params"].(map[string]interface{})
+            key := req.Params.Arguments["key"].(string)
+            value := req.Params.Arguments["value"].(string)
 
-            // Direct access to data store (no serialization)
-            results, err := app.dataStore.Query(query, params)
-            if err != nil {
-                return nil, err
+            // Update configuration based on key
+            switch key {
+            case "debug":
+                app.config.Debug = value == "true"
+            case "app_name":
+                app.config.AppName = value
+            default:
+                return mcp.NewToolResultError(fmt.Sprintf("unknown config key: %s", key)), nil
             }
 
-            return mcp.NewToolResultJSON(results), nil
+            return mcp.NewToolResultText(fmt.Sprintf("Updated %s to %s", key, value)), nil
         },
     )
 }
 
-func (app *Application) ProcessWithMCP(ctx context.Context, input interface{}) (interface{}, error) {
+func (app *Application) ProcessWithMCP(ctx context.Context, operation string) (interface{}, error) {
     // Use MCP tools internally for processing
     result, err := app.mcpClient.CallTool(ctx, mcp.CallToolRequest{
         Params: mcp.CallToolRequestParams{
-            Name: "process_data",
+            Name: "calculate",
             Arguments: map[string]interface{}{
-                "data":      input,
-                "algorithm": "optimized",
+                "operation": operation,
+                "x":         10.0,
+                "y":         5.0,
             },
         },
     })
@@ -8618,448 +8122,31 @@ func (app *Application) ProcessWithMCP(ctx context.Context, input interface{}) (
         return nil, err
     }
 
-    // Extract result (no JSON parsing overhead)
     return result.Content[0].Text, nil
 }
-```
 
-#### Zero-Copy Operations
-
-```go
-// Shared data structures for zero-copy operations
-type SharedBuffer struct {
-    data   []byte
-    offset int
-    length int
-    mutex  sync.RWMutex
-}
-
-func NewSharedBuffer(size int) *SharedBuffer {
-    return &SharedBuffer{
-        data: make([]byte, size),
-    }
-}
-
-func (sb *SharedBuffer) Write(data []byte) error {
-    sb.mutex.Lock()
-    defer sb.mutex.Unlock()
-
-    if len(data) > len(sb.data)-sb.offset {
-        return fmt.Errorf("buffer overflow")
-    }
-
-    copy(sb.data[sb.offset:], data)
-    sb.length = len(data)
-    return nil
-}
-
-func (sb *SharedBuffer) Read() []byte {
-    sb.mutex.RLock()
-    defer sb.mutex.RUnlock()
-
-    // Return slice of underlying array (zero-copy)
-    return sb.data[sb.offset : sb.offset+sb.length]
-}
-
-// Tool that operates on shared buffers
-func handleZeroCopyOperation(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    // Get shared buffer from context (passed by reference)
-    buffer := getSharedBuffer(ctx)
-    if buffer == nil {
-        return nil, fmt.Errorf("no shared buffer available")
-    }
-
-    // Operate directly on buffer data
-    data := buffer.Read()
-    processed := processInPlace(data) // Modifies data in-place
-
-    return mcp.NewToolResultText(fmt.Sprintf("Processed %d bytes", len(processed))), nil
-}
-
-// Context key for shared buffer
-type sharedBufferKey struct{}
-
-// Helper functions for zero-copy operations
-func getSharedBuffer(ctx context.Context) *SharedBuffer {
-    if buffer, ok := ctx.Value(sharedBufferKey{}).(*SharedBuffer); ok {
-        return buffer
-    }
-    return nil
-}
-
-// Helper function to add shared buffer to context
-func withSharedBuffer(ctx context.Context, buffer *SharedBuffer) context.Context {
-    return context.WithValue(ctx, sharedBufferKey{}, buffer)
-}
-
-func processInPlace(data []byte) []byte {
-    // Placeholder implementation - would process data in-place
-    return data
-}
-
-// Example usage of shared buffer with context
-func exampleZeroCopyUsage() {
-    // Create a shared buffer
-    buffer := NewSharedBuffer(1024)
-    buffer.Write([]byte("example data"))
-    
-    // Create context with shared buffer
-    ctx := withSharedBuffer(context.Background(), buffer)
-    
-    // Call tool with shared buffer context
-    req := mcp.CallToolRequest{Name: "zero-copy-op"}
-    result, err := handleZeroCopyOperation(ctx, req)
-    if err != nil {
-        log.Printf("Error: %v", err)
-        return
-    }
-    
-    log.Printf("Result: %s", result.Content[0].Text)
-}
-```
-
-### Direct Server Integration
-
-#### Library-Style Integration
-
-```go
-// MCP as a library component
-type MCPEngine struct {
-    server *server.MCPServer
-    client *client.InProcessClient
-}
-
-func NewMCPEngine() *MCPEngine {
-    s := server.NewMCPServer("Engine", "1.0.0")
-    
-    engine := &MCPEngine{
-        server: s,
-        client: client.NewInProcessClient(s),
-    }
-    
-    engine.registerBuiltinTools()
-    return engine
-}
-
-func (e *MCPEngine) RegisterTool(name, description string, handler server.ToolHandler) {
-    tool := mcp.NewTool(name, mcp.WithDescription(description))
-    e.server.AddTool(tool, handler)
-}
-
-func (e *MCPEngine) Execute(ctx context.Context, toolName string, args map[string]interface{}) (interface{}, error) {
-    result, err := e.client.CallTool(ctx, mcp.CallToolRequest{
-        Params: mcp.CallToolRequestParams{
-            Name:      toolName,
-            Arguments: args,
-        },
-    })
-    if err != nil {
-        return nil, err
-    }
-
-    // Return native Go types (no JSON overhead)
-    return parseResult(result), nil
-}
-
-func (e *MCPEngine) registerBuiltinTools() {
-    // Math operations
-    e.RegisterTool("add", "Add two numbers", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-        a := req.Params.Arguments["a"].(float64)
-        b := req.Params.Arguments["b"].(float64)
-        return mcp.NewToolResultJSON(a + b), nil
-    })
-
-    // String operations
-    e.RegisterTool("concat", "Concatenate strings", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-        parts := req.Params.Arguments["parts"].([]interface{})
-        var result strings.Builder
-        for _, part := range parts {
-            result.WriteString(fmt.Sprintf("%v", part))
-        }
-        return mcp.NewToolResultText(result.String()), nil
-    })
-}
-
-// Usage in application
+// Usage example
 func main() {
-    engine := NewMCPEngine()
-    
-    // Register custom tools
-    engine.RegisterTool("custom_logic", "Custom business logic", handleCustomLogic)
-    
+    config := &Config{
+        AppName: "My App",
+        Debug:   true,
+    }
+
+    app := NewApplication(config)
     ctx := context.Background()
-    
-    // Execute tools directly
-    result, err := engine.Execute(ctx, "add", map[string]interface{}{
-        "a": 10.0,
-        "b": 20.0,
-    })
+
+    // Initialize the embedded MCP client
+    if err := app.mcpClient.Initialize(ctx); err != nil {
+        log.Fatal(err)
+    }
+
+    // Use MCP functionality within the application
+    result, err := app.ProcessWithMCP(ctx, "add")
     if err != nil {
         log.Fatal(err)
     }
-    
-    fmt.Printf("Result: %v\n", result)
-}
-```
 
-#### Plugin Architecture
-
-```go
-// Plugin interface
-type Plugin interface {
-    Name() string
-    Version() string
-    RegisterTools(server *server.MCPServer) error
-    RegisterResources(server *server.MCPServer) error
-}
-
-// Plugin manager with in-process MCP
-type PluginManager struct {
-    mcpServer *server.MCPServer
-    mcpClient *client.InProcessClient
-    plugins   map[string]Plugin
-}
-
-func NewPluginManager() *PluginManager {
-    s := server.NewMCPServer("Plugin Manager", "1.0.0",
-        server.WithAllCapabilities(),
-    )
-
-    return &PluginManager{
-        mcpServer: s,
-        mcpClient: client.NewInProcessClient(s),
-        plugins:   make(map[string]Plugin),
-    }
-}
-
-func (pm *PluginManager) LoadPlugin(plugin Plugin) error {
-    name := plugin.Name()
-    
-    if _, exists := pm.plugins[name]; exists {
-        return fmt.Errorf("plugin %s already loaded", name)
-    }
-
-    // Register plugin tools and resources
-    if err := plugin.RegisterTools(pm.mcpServer); err != nil {
-        return fmt.Errorf("failed to register tools for plugin %s: %w", name, err)
-    }
-
-    if err := plugin.RegisterResources(pm.mcpServer); err != nil {
-        return fmt.Errorf("failed to register resources for plugin %s: %w", name, err)
-    }
-
-    pm.plugins[name] = plugin
-    return nil
-}
-
-func (pm *PluginManager) ExecutePluginTool(ctx context.Context, toolName string, args map[string]interface{}) (interface{}, error) {
-    return pm.mcpClient.CallTool(ctx, mcp.CallToolRequest{
-        Params: mcp.CallToolRequestParams{
-            Name:      toolName,
-            Arguments: args,
-        },
-    })
-}
-
-// Example plugin
-type MathPlugin struct{}
-
-func (p *MathPlugin) Name() string    { return "math" }
-func (p *MathPlugin) Version() string { return "1.0.0" }
-
-func (p *MathPlugin) RegisterTools(s *server.MCPServer) error {
-    s.AddTool(
-        mcp.NewTool("math.factorial",
-            mcp.WithDescription("Calculate factorial"),
-            mcp.WithInteger("n", mcp.Required(), mcp.Minimum(0)),
-        ),
-        p.handleFactorial,
-    )
-
-    s.AddTool(
-        mcp.NewTool("math.fibonacci",
-            mcp.WithDescription("Calculate Fibonacci number"),
-            mcp.WithInteger("n", mcp.Required(), mcp.Minimum(0)),
-        ),
-        p.handleFibonacci,
-    )
-
-    return nil
-}
-
-func (p *MathPlugin) RegisterResources(s *server.MCPServer) error {
-    s.AddResource(
-        mcp.NewResource(
-            "math://constants/{name}",
-            "Mathematical Constants",
-            mcp.WithResourceDescription("Common mathematical constants"),
-            mcp.WithMIMEType("application/json"),
-        ),
-        p.handleConstants,
-    )
-
-    return nil
-}
-
-func (p *MathPlugin) handleFactorial(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    n := int(req.Params.Arguments["n"].(float64))
-    
-    result := 1
-    for i := 2; i <= n; i++ {
-        result *= i
-    }
-
-    return mcp.NewToolResultJSON(map[string]interface{}{
-        "input":  n,
-        "result": result,
-    }), nil
-}
-
-func (p *MathPlugin) handleFibonacci(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    n := int(req.Params.Arguments["n"].(float64))
-    
-    if n <= 1 {
-        return mcp.NewToolResultJSON(n), nil
-    }
-
-    a, b := 0, 1
-    for i := 2; i <= n; i++ {
-        a, b = b, a+b
-    }
-
-    return mcp.NewToolResultJSON(b), nil
-}
-
-func (p *MathPlugin) handleConstants(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-    name := extractNameFromURI(req.Params.URI)
-    
-    constants := map[string]float64{
-        "pi":  3.141592653589793,
-        "e":   2.718281828459045,
-        "phi": 1.618033988749895,
-    }
-
-    value, exists := constants[name]
-    if !exists {
-        return nil, fmt.Errorf("unknown constant: %s", name)
-    }
-
-    return mcp.NewResourceResultJSON(map[string]interface{}{
-        "name":  name,
-        "value": value,
-    }), nil
-}
-```
-
-### Performance Benefits
-
-#### Latency Comparison
-
-```go
-func benchmarkTransports() {
-    // In-process
-    inProcessServer := server.NewMCPServer("Benchmark", "1.0.0")
-    inProcessClient := client.NewInProcessClient(inProcessServer)
-    
-    // STDIO (for comparison)
-    stdioClient, _ := client.NewStdioClient("go", "run", "server.go")
-    
-    // HTTP (for comparison)
-    httpClient := client.NewHTTPClient("http://localhost:8080/mcp")
-
-    ctx := context.Background()
-    iterations := 10000
-
-    // Benchmark in-process
-    start := time.Now()
-    for i := 0; i < iterations; i++ {
-        inProcessClient.CallTool(ctx, simpleToolRequest)
-    }
-    inProcessDuration := time.Since(start)
-
-    // Benchmark STDIO
-    start = time.Now()
-    for i := 0; i < iterations; i++ {
-        stdioClient.CallTool(ctx, simpleToolRequest)
-    }
-    stdioDuration := time.Since(start)
-
-    // Benchmark HTTP
-    start = time.Now()
-    for i := 0; i < iterations; i++ {
-        httpClient.CallTool(ctx, simpleToolRequest)
-    }
-    httpDuration := time.Since(start)
-
-    fmt.Printf("In-Process: %v (%.2f μs/call)\n", 
-        inProcessDuration, 
-        float64(inProcessDuration.Nanoseconds())/float64(iterations)/1000)
-    
-    fmt.Printf("STDIO: %v (%.2f μs/call)\n", 
-        stdioDuration, 
-        float64(stdioDuration.Nanoseconds())/float64(iterations)/1000)
-    
-    fmt.Printf("HTTP: %v (%.2f μs/call)\n", 
-        httpDuration, 
-        float64(httpDuration.Nanoseconds())/float64(iterations)/1000)
-}
-```
-
-#### Memory Efficiency
-
-```go
-// Shared data structures reduce memory allocation
-type SharedDataPool struct {
-    buffers chan []byte
-    size    int
-}
-
-func NewSharedDataPool(poolSize, bufferSize int) *SharedDataPool {
-    pool := &SharedDataPool{
-        buffers: make(chan []byte, poolSize),
-        size:    bufferSize,
-    }
-
-    // Pre-allocate buffers
-    for i := 0; i < poolSize; i++ {
-        pool.buffers <- make([]byte, bufferSize)
-    }
-
-    return pool
-}
-
-func (p *SharedDataPool) Get() []byte {
-    select {
-    case buffer := <-p.buffers:
-        return buffer[:0] // Reset length but keep capacity
-    default:
-        return make([]byte, 0, p.size) // Fallback allocation
-    }
-}
-
-func (p *SharedDataPool) Put(buffer []byte) {
-    if cap(buffer) != p.size {
-        return // Don't pool buffers of wrong size
-    }
-
-    select {
-    case p.buffers <- buffer:
-    default:
-        // Pool full, let GC handle it
-    }
-}
-
-// Use shared pool in tools
-var dataPool = NewSharedDataPool(100, 4096)
-
-func handlePooledOperation(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    buffer := dataPool.Get()
-    defer dataPool.Put(buffer)
-
-    // Use buffer for processing
-    result := processWithBuffer(buffer, req.Params.Arguments)
-    
-    return mcp.NewToolResultJSON(result), nil
+    fmt.Printf("Application result: %v\n", result)
 }
 ```
 
@@ -9588,353 +8675,6 @@ func (n *SSENotifier) BroadcastExcept(excludeSessionID, eventType string, data i
             // Channel full, skip this client
         }
     }
-}
-```
-
-### Client Integration
-
-#### JavaScript/Browser Client
-
-```javascript
-class MCPSSEClient {
-    constructor(baseURL) {
-        this.baseURL = baseURL;
-        this.eventSource = null;
-        this.requestId = 1;
-        this.pendingRequests = new Map();
-    }
-
-    async connect() {
-        // Initialize SSE connection
-        this.eventSource = new EventSource(`${this.baseURL}/sse`);
-        
-        this.eventSource.onopen = () => {
-            console.log('SSE connection opened');
-        };
-        
-        this.eventSource.onmessage = (event) => {
-            this.handleMessage(JSON.parse(event.data));
-        };
-        
-        this.eventSource.onerror = (error) => {
-            console.error('SSE error:', error);
-        };
-
-        // Send initialization request via separate HTTP endpoint
-        // Note: SSE is unidirectional - initialization would typically happen
-        // via a separate HTTP POST endpoint, not through the SSE stream
-        return this.sendInitRequest('initialize', {
-            protocolVersion: '2024-11-05',
-            capabilities: { tools: {} },
-            clientInfo: { name: 'Web Client', version: '1.0.0' }
-        });
-    }
-
-    async sendInitRequest(method, params = {}) {
-        // Use a separate HTTP endpoint for initialization and commands
-        const response = await fetch(`${this.baseURL}/init`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                jsonrpc: '2.0',
-                id: this.requestId++,
-                method,
-                params
-            })
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        return response.json();
-    }
-
-    async sendRequest(method, params = {}) {
-        // For tool calls and other requests, use HTTP POST
-        // SSE is only for receiving server-initiated notifications
-        const id = this.requestId++;
-        const request = {
-            jsonrpc: '2.0',
-            id,
-            method,
-            params
-        };
-
-        const response = await fetch(`${this.baseURL}/request`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(request)
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        return response.json();
-    }
-
-    handleMessage(message) {
-        if (message.id && this.pendingRequests.has(message.id)) {
-            // Handle response to our request
-            const { resolve, reject } = this.pendingRequests.get(message.id);
-            this.pendingRequests.delete(message.id);
-            
-            if (message.error) {
-                reject(new Error(message.error.message));
-            } else {
-                resolve(message.result);
-            }
-        } else if (message.method) {
-            // Handle server-initiated notification
-            this.handleNotification(message);
-        }
-    }
-
-    handleNotification(notification) {
-        switch (notification.method) {
-            case 'notifications/progress':
-                this.onProgress(notification.params);
-                break;
-            case 'notifications/message':
-                this.onMessage(notification.params);
-                break;
-            default:
-                console.log('Unknown notification:', notification);
-        }
-    }
-
-    onProgress(progress) {
-        console.log(`Progress: ${progress.progress}/${progress.total} - ${progress.message}`);
-    }
-
-    onMessage(message) {
-        console.log('Server message:', message);
-    }
-
-    async listTools() {
-        return this.sendRequest('tools/list');
-    }
-
-    async callTool(name, arguments) {
-        return this.sendRequest('tools/call', { name, arguments });
-    }
-
-    disconnect() {
-        if (this.eventSource) {
-            this.eventSource.close();
-            this.eventSource = null;
-        }
-    }
-}
-
-// Usage
-const client = new MCPSSEClient('http://localhost:8080/mcp');
-
-async function main() {
-    try {
-        await client.connect();
-        
-        const tools = await client.listTools();
-        console.log('Available tools:', tools);
-        
-        const result = await client.callTool('stream_data', {
-            source: 'api',
-            count: 5
-        });
-        console.log('Tool result:', result);
-        
-    } catch (error) {
-        console.error('Error:', error);
-    }
-}
-
-main();
-```
-
-#### React Integration
-
-```jsx
-import React, { useState, useEffect, useCallback } from 'react';
-
-function MCPDashboard() {
-    const [client, setClient] = useState(null);
-    const [connected, setConnected] = useState(false);
-    const [tools, setTools] = useState([]);
-    const [messages, setMessages] = useState([]);
-    const [progress, setProgress] = useState(null);
-
-    useEffect(() => {
-        const mcpClient = new MCPSSEClient('http://localhost:8080/mcp');
-        
-        mcpClient.onProgress = (progressData) => {
-            setProgress(progressData);
-        };
-        
-        mcpClient.onMessage = (message) => {
-            setMessages(prev => [...prev, message]);
-        };
-
-        mcpClient.connect()
-            .then(() => {
-                setConnected(true);
-                return mcpClient.listTools();
-            })
-            .then(toolList => {
-                setTools(toolList.tools);
-            })
-            .catch(error => {
-                console.error('Connection failed:', error);
-            });
-
-        setClient(mcpClient);
-
-        return () => {
-            mcpClient.disconnect();
-        };
-    }, []);
-
-    const callTool = useCallback(async (toolName, args) => {
-        if (!client) return;
-        
-        try {
-            const result = await client.callTool(toolName, args);
-            setMessages(prev => [...prev, {
-                type: 'tool_result',
-                tool: toolName,
-                result,
-                timestamp: Date.now()
-            }]);
-        } catch (error) {
-            console.error('Tool call failed:', error);
-        }
-    }, [client]);
-
-    return (
-        <div className="mcp-dashboard">
-            <div className="status">
-                Status: {connected ? 'Connected' : 'Disconnected'}
-            </div>
-            
-            {progress && (
-                <div className="progress">
-                    <div className="progress-bar">
-                        <div 
-                            className="progress-fill"
-                            style={{ width: `${(progress.progress / progress.total) * 100}%` }}
-                        />
-                    </div>
-                    <div className="progress-text">
-                        {progress.message} ({progress.progress}/{progress.total})
-                    </div>
-                </div>
-            )}
-            
-            <div className="tools">
-                <h3>Available Tools</h3>
-                {tools.map(tool => (
-                    <div key={tool.name} className="tool">
-                        <h4>{tool.name}</h4>
-                        <p>{tool.description}</p>
-                        <button onClick={() => callTool(tool.name, {})}>
-                            Call Tool
-                        </button>
-                    </div>
-                ))}
-            </div>
-            
-            <div className="messages">
-                <h3>Messages</h3>
-                {messages.map((message, index) => (
-                    <div key={index} className="message">
-                        <pre>{JSON.stringify(message, null, 2)}</pre>
-                    </div>
-                ))}
-            </div>
-        </div>
-    );
-}
-
-export default MCPDashboard;
-```
-
-### Performance and Scaling
-
-#### Connection Pooling
-
-```go
-type ConnectionPool struct {
-    connections map[string]*Connection
-    mutex       sync.RWMutex
-    maxConns    int
-    cleanup     *time.Ticker
-}
-
-func NewConnectionPool(maxConns int) *ConnectionPool {
-    pool := &ConnectionPool{
-        connections: make(map[string]*Connection),
-        maxConns:    maxConns,
-        cleanup:     time.NewTicker(1 * time.Minute),
-    }
-    
-    go pool.cleanupLoop()
-    return pool
-}
-
-func (p *ConnectionPool) cleanupLoop() {
-    for range p.cleanup.C {
-        p.mutex.Lock()
-        now := time.Now()
-        
-        for id, conn := range p.connections {
-            if now.Sub(conn.LastSeen) > 5*time.Minute {
-                conn.Close()
-                delete(p.connections, id)
-            }
-        }
-        
-        p.mutex.Unlock()
-    }
-}
-```
-
-#### Load Balancing
-
-```go
-type LoadBalancer struct {
-    servers []string
-    current int
-    mutex   sync.Mutex
-}
-
-func NewLoadBalancer(servers []string) *LoadBalancer {
-    return &LoadBalancer{
-        servers: servers,
-    }
-}
-
-func (lb *LoadBalancer) NextServer() string {
-    lb.mutex.Lock()
-    defer lb.mutex.Unlock()
-    
-    server := lb.servers[lb.current]
-    lb.current = (lb.current + 1) % len(lb.servers)
-    return server
-}
-
-// Use with reverse proxy
-func setupReverseProxy() {
-    lb := NewLoadBalancer([]string{
-        "http://server1:8080",
-        "http://server2:8080",
-        "http://server3:8080",
-    })
-    
-    http.HandleFunc("/mcp/", func(w http.ResponseWriter, r *http.Request) {
-        target := lb.NextServer()
-        proxy := httputil.NewSingleHostReverseProxy(mustParseURL(target))
-        proxy.ServeHTTP(w, r)
-    })
 }
 ```
 
