@@ -29,9 +29,16 @@ package main
 
 import (
     "context"
+    "errors"
+    "fmt"
     "log"
+    "math"
+    "net/http"
+    "sync"
+    "time"
 
     "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/mcp"
 )
 
 func createStdioClient() (client.Client, error) {
@@ -186,7 +193,10 @@ func performClientOperations(ctx context.Context, c client.Client) error {
         result, err := c.CallTool(ctx, mcp.CallToolRequest{
             Params: mcp.CallToolRequestParams{
                 Name:      tool.Name,
-                Arguments: map[string]interface{}{},
+                Arguments: map[string]interface{}{
+                    "input": "example input",
+                    "format": "json",
+                },
             },
         })
         if err != nil {

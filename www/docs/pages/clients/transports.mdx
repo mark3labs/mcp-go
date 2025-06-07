@@ -24,9 +24,18 @@ package main
 
 import (
     "context"
+    "crypto/tls"
+    "errors"
+    "fmt"
     "log"
+    "net/http"
+    "os"
+    "sync"
+    "time"
 
     "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
 )
 
 func createStdioClient() {
@@ -89,6 +98,13 @@ func createAdvancedStdioClient() {
 ### STDIO Error Handling
 
 ```go
+// Define error constants for STDIO client errors
+var (
+    ErrProcessExited  = errors.New("process exited")
+    ErrProcessTimeout = errors.New("process timeout")
+    ErrBrokenPipe     = errors.New("broken pipe")
+)
+
 func handleStdioErrors(c *client.StdioClient) {
     ctx := context.Background()
 
@@ -246,6 +262,16 @@ func isProcessError(err error) bool {
            errors.Is(err, client.ErrBrokenPipe) ||
            errors.Is(err, client.ErrProcessTimeout)
 }
+```
+
+```go
+// Define connection error constants
+var (
+    ErrConnectionLost   = errors.New("connection lost")
+    ErrConnectionFailed = errors.New("connection failed")
+    ErrUnauthorized     = errors.New("unauthorized")
+    ErrForbidden        = errors.New("forbidden")
+)
 ```
 
 ## HTTP Client
@@ -615,6 +641,12 @@ func (rsc *ResilientSSEClient) Close() error {
     }
     
     return nil
+}
+
+// Helper function to check if an error is a connection error
+func isConnectionError(err error) bool {
+    return errors.Is(err, client.ErrConnectionLost) ||
+           errors.Is(err, client.ErrConnectionFailed)
 }
 ```
 

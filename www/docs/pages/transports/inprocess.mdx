@@ -31,6 +31,8 @@ import (
     "context"
     "fmt"
     "log"
+    "runtime"
+    "strings"
     "time"
 
     "github.com/mark3labs/mcp-go/mcp"
@@ -160,6 +162,25 @@ func handleMemoryCache(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.R
     }), nil
 }
 
+// Helper functions for the examples
+func processDataInPlace(data map[string]interface{}, algorithm string) map[string]interface{} {
+    // Placeholder implementation - would process data according to algorithm
+    result := make(map[string]interface{})
+    for k, v := range data {
+        result[k] = fmt.Sprintf("processed_%v", v)
+    }
+    return result
+}
+
+func extractKeyFromURI(uri string) string {
+    // Extract key from URI like "memory://cache/mykey"
+    parts := strings.Split(uri, "/")
+    if len(parts) > 0 {
+        return parts[len(parts)-1]
+    }
+    return uri
+}
+
 func demonstratePerformance(ctx context.Context, client *client.InProcessClient) {
     // Benchmark tool calls
     start := time.Now()
@@ -199,12 +220,14 @@ type Application struct {
     mcpClient *client.InProcessClient
     dataStore *DataStore
     config    *Config
+    startTime time.Time
 }
 
 func NewApplication(config *Config) *Application {
     app := &Application{
         config:    config,
         dataStore: NewDataStore(),
+        startTime: time.Now(),
     }
 
     // Create embedded MCP server
@@ -222,6 +245,47 @@ func NewApplication(config *Config) *Application {
     app.mcpClient = client.NewInProcessClient(app.mcpServer)
 
     return app
+}
+
+// Helper types and functions for the application example
+type DataStore struct {
+    // Placeholder implementation
+}
+
+type Config struct {
+    // Placeholder implementation
+}
+
+func NewDataStore() *DataStore {
+    return &DataStore{}
+}
+
+func (ds *DataStore) Query(query string, params map[string]interface{}) (interface{}, error) {
+    // Placeholder implementation
+    return map[string]interface{}{"result": "data"}, nil
+}
+
+func (c *Config) Public() map[string]interface{} {
+    // Placeholder implementation
+    return map[string]interface{}{"debug": true}
+}
+
+func getMemoryUsage() map[string]interface{} {
+    var m runtime.MemStats
+    runtime.ReadMemStats(&m)
+    return map[string]interface{}{
+        "alloc":      m.Alloc,
+        "total_alloc": m.TotalAlloc,
+        "sys":        m.Sys,
+    }
+}
+
+func (app *Application) addDataTools() {
+    // Placeholder implementation
+}
+
+func (app *Application) addAnalyticsTools() {
+    // Placeholder implementation
 }
 
 func (app *Application) addApplicationTools() {
@@ -334,6 +398,17 @@ func handleZeroCopyOperation(ctx context.Context, req mcp.CallToolRequest) (*mcp
     processed := processInPlace(data) // Modifies data in-place
 
     return mcp.NewToolResultText(fmt.Sprintf("Processed %d bytes", len(processed))), nil
+}
+
+// Helper functions for zero-copy operations
+func getSharedBuffer(ctx context.Context) *SharedBuffer {
+    // Placeholder implementation - would extract buffer from context
+    return nil
+}
+
+func processInPlace(data []byte) []byte {
+    // Placeholder implementation - would process data in-place
+    return data
 }
 ```
 

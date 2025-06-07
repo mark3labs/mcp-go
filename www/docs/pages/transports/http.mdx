@@ -33,6 +33,7 @@ import (
     "fmt"
     "log"
     "net/http"
+    "strings"
     "time"
 
     "github.com/mark3labs/mcp-go/mcp"
@@ -134,6 +135,40 @@ func handleCreateUser(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallTo
     }), nil
 }
 
+// Helper functions and types for the examples
+type User struct {
+    ID        string    `json:"id"`
+    Name      string    `json:"name"`
+    Email     string    `json:"email"`
+    Age       int       `json:"age"`
+    CreatedAt time.Time `json:"created_at"`
+}
+
+func getUserFromDB(userID string) (*User, error) {
+    // Placeholder implementation
+    return &User{
+        ID:    userID,
+        Name:  "John Doe",
+        Email: "john@example.com",
+        Age:   30,
+    }, nil
+}
+
+func isValidEmail(email string) bool {
+    // Simple email validation
+    return strings.Contains(email, "@") && strings.Contains(email, ".")
+}
+
+func generateID() string {
+    // Placeholder implementation
+    return fmt.Sprintf("user_%d", time.Now().UnixNano())
+}
+
+func saveUserToDB(user *User) error {
+    // Placeholder implementation
+    return nil
+}
+
 func handleSearchUsers(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
     query := getStringParam(req.Params.Arguments, "query", "")
     limit := int(getFloatParam(req.Params.Arguments, "limit", 10))
@@ -163,6 +198,43 @@ func handleUserResource(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.
     }
 
     return mcp.NewResourceResultJSON(user), nil
+}
+
+// Additional helper functions for parameter handling
+func getStringParam(args map[string]interface{}, key, defaultValue string) string {
+    if val, ok := args[key]; ok && val != nil {
+        if str, ok := val.(string); ok {
+            return str
+        }
+    }
+    return defaultValue
+}
+
+func getFloatParam(args map[string]interface{}, key string, defaultValue float64) float64 {
+    if val, ok := args[key]; ok && val != nil {
+        if f, ok := val.(float64); ok {
+            return f
+        }
+    }
+    return defaultValue
+}
+
+func searchUsersInDB(query string, limit, offset int) ([]*User, int, error) {
+    // Placeholder implementation
+    users := []*User{
+        {ID: "1", Name: "John Doe", Email: "john@example.com", Age: 30},
+        {ID: "2", Name: "Jane Smith", Email: "jane@example.com", Age: 25},
+    }
+    return users, len(users), nil
+}
+
+func extractUserIDFromURI(uri string) string {
+    // Extract user ID from URI like "users://123"
+    parts := strings.Split(uri, "://")
+    if len(parts) > 1 {
+        return parts[1]
+    }
+    return uri
 }
 ```
 
@@ -205,6 +277,41 @@ func main() {
     log.Println("Starting advanced HTTP server on :8080")
     if err := server.ServeHTTPWithOptions(s, ":8080", httpOptions); err != nil {
         log.Fatal(err)
+    }
+}
+
+// Helper functions for the advanced example
+func addHTTPMiddleware(s *server.MCPServer) {
+    // Placeholder implementation - would add middleware
+}
+
+func addCRUDTools(s *server.MCPServer) {
+    // Placeholder implementation - would add CRUD tools
+}
+
+func addBatchTools(s *server.MCPServer) {
+    // Placeholder implementation - would add batch processing tools
+}
+
+func addAnalyticsTools(s *server.MCPServer) {
+    // Placeholder implementation - would add analytics tools
+}
+
+func logToolCall(sessionID, toolName string, duration time.Duration, err error) {
+    // Placeholder implementation
+    if err != nil {
+        log.Printf("Tool %s failed: %v", toolName, err)
+    } else {
+        log.Printf("Tool %s completed in %v", toolName, duration)
+    }
+}
+
+func logResourceRead(sessionID, uri string, duration time.Duration, err error) {
+    // Placeholder implementation
+    if err != nil {
+        log.Printf("Resource read %s failed: %v", uri, err)
+    } else {
+        log.Printf("Resource read %s completed in %v", uri, duration)
     }
 }
 
@@ -551,6 +658,8 @@ func (m *AuthMiddleware) Middleware(next http.Handler) http.Handler {
 }
 
 func (m *AuthMiddleware) validateJWT(tokenString string) (*Claims, error) {
+    // Note: This example uses a hypothetical JWT library
+    // In practice, you would use a real JWT library like github.com/golang-jwt/jwt
     token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
         return m.jwtSecret, nil
     })

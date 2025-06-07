@@ -31,6 +31,7 @@ import (
     "fmt"
     "os"
     "path/filepath"
+    "strings"
 
     "github.com/mark3labs/mcp-go/mcp"
     "github.com/mark3labs/mcp-go/server"
@@ -131,6 +132,35 @@ func isValidPath(path string) bool {
     clean := filepath.Clean(path)
     return !filepath.IsAbs(clean) && !strings.Contains(clean, "..")
 }
+
+// Helper functions for the examples
+func listFiles(path string, recursive bool) ([]string, error) {
+    // Placeholder implementation
+    return []string{"file1.txt", "file2.txt"}, nil
+}
+
+func extractPathFromURI(uri string) string {
+    // Extract path from URI: "file:///path/to/file" -> "/path/to/file"
+    if strings.HasPrefix(uri, "file://") {
+        return strings.TrimPrefix(uri, "file://")
+    }
+    return uri
+}
+
+func detectMIMEType(path string) string {
+    // Simple MIME type detection based on extension
+    ext := filepath.Ext(path)
+    switch ext {
+    case ".txt":
+        return "text/plain"
+    case ".json":
+        return "application/json"
+    case ".html":
+        return "text/html"
+    default:
+        return "application/octet-stream"
+    }
+}
 ```
 
 ### Advanced STDIO Server
@@ -149,6 +179,18 @@ func main() {
             },
         }),
     )
+import (
+    "context"
+    "fmt"
+    "log"
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
 
     // Add comprehensive tools
     addSystemTools(s)
@@ -164,6 +206,33 @@ func main() {
         logError(fmt.Sprintf("Server error: %v", err))
         os.Exit(1)
     }
+}
+
+// Helper functions for the advanced example
+func logToFile(message string) {
+    // Placeholder implementation
+    log.Println(message)
+}
+
+func logError(message string) {
+    // Placeholder implementation
+    log.Printf("ERROR: %s", message)
+}
+
+func addSystemTools(s *server.MCPServer) {
+    // Placeholder implementation
+}
+
+func addFileTools(s *server.MCPServer) {
+    // Placeholder implementation
+}
+
+func addGitTools(s *server.MCPServer) {
+    // Placeholder implementation
+}
+
+func addDatabaseTools(s *server.MCPServer) {
+    // Placeholder implementation
 }
 
 func setupGracefulShutdown(s *server.MCPServer) {

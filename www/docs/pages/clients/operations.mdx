@@ -9,6 +9,22 @@ Resources provide read-only access to data. Before reading resources, you typica
 ### Basic Resource Listing
 
 ```go
+import (
+    "base64"
+    "context"
+    "encoding/json"
+    "fmt"
+    "log"
+    "reflect"
+    "regexp"
+    "strings"
+    "sync"
+    "time"
+
+    "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/mcp"
+)
+
 func listResources(ctx context.Context, c client.Client) error {
     // List all available resources
     resources, err := c.ListResources(ctx)
@@ -325,7 +341,8 @@ func demonstrateToolCalling(ctx context.Context, c client.Client) {
         fmt.Printf("\nCalling tool: %s\n", tool.Name)
 
         result, err := callTool(ctx, c, tool.Name, map[string]interface{}{
-            // Add appropriate arguments based on tool schema
+            "input": "example input",
+            "format": "text",
         })
         if err != nil {
             log.Printf("Tool call failed: %v", err)

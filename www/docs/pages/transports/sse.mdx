@@ -82,9 +82,10 @@ func handleStreamData(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallTo
     source := req.Params.Arguments["source"].(string)
     count := int(req.Params.Arguments["count"].(float64))
 
-    // Get notifier for real-time updates
-    notifier := server.GetNotifier(ctx)
-    sessionID := server.GetSessionID(ctx)
+    // Get notifier for real-time updates (hypothetical functions)
+    // Note: These functions would be provided by the SSE transport implementation
+    notifier := getNotifierFromContext(ctx) // Hypothetical function
+    sessionID := getSessionIDFromContext(ctx) // Hypothetical function
 
     // Stream data with progress updates
     var results []map[string]interface{}
@@ -102,10 +103,11 @@ func handleStreamData(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallTo
 
         // Send progress notification
         if notifier != nil {
-            notifier.SendProgress(sessionID, mcp.ProgressNotification{
-                Progress: i + 1,
-                Total:    count,
-                Message:  fmt.Sprintf("Processed %d/%d items from %s", i+1, count, source),
+            // Note: ProgressNotification would be defined by the MCP protocol
+            notifier.SendProgress(sessionID, map[string]interface{}{
+                "progress": i + 1,
+                "total":    count,
+                "message":  fmt.Sprintf("Processed %d/%d items from %s", i+1, count, source),
             })
         }
 
@@ -119,11 +121,30 @@ func handleStreamData(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallTo
     }), nil
 }
 
+// Helper functions for the examples
+func generateData(source string, index int) map[string]interface{} {
+    return map[string]interface{}{
+        "source": source,
+        "index":  index,
+        "value":  fmt.Sprintf("data_%d", index),
+    }
+}
+
+func getNotifierFromContext(ctx context.Context) interface{} {
+    // Placeholder implementation - would be provided by SSE transport
+    return nil
+}
+
+func getSessionIDFromContext(ctx context.Context) string {
+    // Placeholder implementation - would be provided by SSE transport
+    return "session_123"
+}
+
 func handleSystemMonitor(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
     duration := int(req.Params.Arguments["duration"].(float64))
     
-    notifier := server.GetNotifier(ctx)
-    sessionID := server.GetSessionID(ctx)
+    notifier := getNotifierFromContext(ctx)
+    sessionID := getSessionIDFromContext(ctx)
 
     // Monitor system for specified duration
     ticker := time.NewTicker(5 * time.Second)
@@ -149,9 +170,19 @@ func handleSystemMonitor(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 
             // Send real-time update
             if notifier != nil {
-                notifier.SendCustom(sessionID, "system_metrics", currentMetrics)
+                // Note: SendCustom would be a method on the notifier interface
+                // notifier.SendCustom(sessionID, "system_metrics", currentMetrics)
             }
         }
+    }
+}
+
+func collectSystemMetrics() map[string]interface{} {
+    // Placeholder implementation
+    return map[string]interface{}{
+        "cpu":    50.5,
+        "memory": 75.2,
+        "disk":   30.1,
     }
 }
 
@@ -198,6 +229,20 @@ func main() {
     if err := server.ServeSSEWithOptions(s, ":8080", sseOptions); err != nil {
         log.Fatal(err)
     }
+}
+
+// Helper functions for the advanced example
+func broadcastUserCount() {
+    // Placeholder implementation
+    log.Println("Broadcasting user count update")
+}
+
+func addCollaborativeTools(s *server.MCPServer) {
+    // Placeholder implementation - would add collaborative tools
+}
+
+func addRealTimeResources(s *server.MCPServer) {
+    // Placeholder implementation - would add real-time resources
 }
 
 func addCollaborativeTools(s *server.MCPServer) {
@@ -501,15 +546,39 @@ class MCPSSEClient {
             console.error('SSE error:', error);
         };
 
-        // Send initialization request
-        return this.sendRequest('initialize', {
+        // Send initialization request via separate HTTP endpoint
+        // Note: SSE is unidirectional - initialization would typically happen
+        // via a separate HTTP POST endpoint, not through the SSE stream
+        return this.sendInitRequest('initialize', {
             protocolVersion: '2024-11-05',
             capabilities: { tools: {} },
             clientInfo: { name: 'Web Client', version: '1.0.0' }
         });
     }
 
+    async sendInitRequest(method, params = {}) {
+        // Use a separate HTTP endpoint for initialization and commands
+        const response = await fetch(`${this.baseURL}/init`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: this.requestId++,
+                method,
+                params
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        return response.json();
+    }
+
     async sendRequest(method, params = {}) {
+        // For tool calls and other requests, use HTTP POST
+        // SSE is only for receiving server-initiated notifications
         const id = this.requestId++;
         const request = {
             jsonrpc: '2.0',
@@ -518,7 +587,6 @@ class MCPSSEClient {
             params
         };
 
-        // Send via HTTP POST
         const response = await fetch(`${this.baseURL}/request`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

@@ -83,7 +83,8 @@ func demonstrateClientOperations(ctx context.Context, c client.Client) error {
             Params: mcp.CallToolRequestParams{
                 Name: tool.Name,
                 Arguments: map[string]interface{}{
-                    // Add appropriate arguments based on tool schema
+                    "input": "example input",
+                    "format": "text",
                 },
             },
         })
@@ -170,6 +171,18 @@ client := client.NewInProcessClient(server)
 ### Connection Management
 
 ```go
+import (
+    "context"
+    "errors"
+    "fmt"
+    "log"
+    "sync"
+    "time"
+
+    "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/mcp"
+)
+
 type MCPClientManager struct {
     client client.Client
     ctx    context.Context

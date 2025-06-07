@@ -30,10 +30,12 @@ package main
 import (
     "context"
     "fmt"
+    "log"
     "os"
 
     "github.com/mark3labs/mcp-go/mcp"
     "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/client"
 )
 
 func main() {
@@ -143,7 +145,12 @@ func startServer(s *server.MCPServer) error {
     case "http":
         return server.ServeHTTP(s, getPort())
     case "inprocess":
-        return server.ServeInProcess(s)
+        // Note: In-process transport doesn't use network ports
+        // This would typically be used differently in practice
+        client := client.NewInProcessClient(s)
+        defer client.Close()
+        // Keep the process running
+        select {}
     default:
         return server.ServeStdio(s)
     }
@@ -166,11 +173,14 @@ func main() {
     // Add your tools, resources, prompts...
     setupServer(s)
     
-    // Start multiple transports concurrently
+    // Start multiple transports concurrently with proper error handling
+    errChan := make(chan error, 3)
+    
     go func() {
         log.Println("Starting STDIO server...")
         if err := server.ServeStdio(s); err != nil {
             log.Printf("STDIO server error: %v", err)
+            errChan <- fmt.Errorf("STDIO server failed: %w", err)
         }
     }()
     
@@ -178,13 +188,27 @@ func main() {
         log.Println("Starting SSE server on :8080...")
         if err := server.ServeSSE(s, ":8080"); err != nil {
             log.Printf("SSE server error: %v", err)
+            errChan <- fmt.Errorf("SSE server failed: %w", err)
         }
     }()
     
     log.Println("Starting HTTP server on :8081...")
     if err := server.ServeHTTP(s, ":8081"); err != nil {
         log.Printf("HTTP server error: %v", err)
+        errChan <- fmt.Errorf("HTTP server failed: %w", err)
     }
+    
+    // Wait for any server to fail
+    select {
+    case err := <-errChan:
+        log.Printf("Server failed: %v", err)
+        return
+    }
+}
+
+// Helper function for the multi-transport example
+func setupServer(s *server.MCPServer) {
+    // Placeholder implementation - would add tools, resources, etc.
 }
 ```
 
