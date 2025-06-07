@@ -146,12 +146,18 @@ func handleProcessData(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallT
     }), nil
 }
 
-var memoryCache = make(map[string]interface{})
+var (
+    memoryCache = make(map[string]interface{})
+    cacheMutex  sync.RWMutex
+)
 
 func handleMemoryCache(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
     key := extractKeyFromURI(req.Params.URI)
     
+    cacheMutex.RLock()
     value, exists := memoryCache[key]
+    cacheMutex.RUnlock()
+    
     if !exists {
         return nil, fmt.Errorf("key not found: %s", key)
     }
