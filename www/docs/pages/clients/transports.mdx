@@ -410,8 +410,8 @@ func (ahc *AuthenticatedHTTPClient) CallTool(ctx context.Context, req mcp.CallTo
 }
 
 func isAuthError(err error) bool {
-    return errors.Is(err, client.ErrUnauthorized) ||
-           errors.Is(err, client.ErrForbidden)
+    return errors.Is(err, ErrUnauthorized) ||
+           errors.Is(err, ErrForbidden)
 }
 ```
 
