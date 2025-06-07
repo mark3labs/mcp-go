@@ -78,17 +78,24 @@ func main() {
 }
 
 func handleListFiles(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    path := req.Params.Arguments["path"].(string)
-    recursive := req.Params.Arguments["recursive"].(bool)
+    path, err := req.RequireString("path")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    recursive, err := req.RequireBool("recursive")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
 
     // Security: validate path
     if !isValidPath(path) {
-        return nil, fmt.Errorf("invalid path: %s", path)
+        return mcp.NewToolResultError(fmt.Sprintf("invalid path: %s", path)), nil
     }
 
     files, err := listFiles(path, recursive)
     if err != nil {
-        return nil, fmt.Errorf("failed to list files: %w", err)
+        return mcp.NewToolResultError(fmt.Sprintf("failed to list files: %v", err)), nil
     }
 
     return mcp.NewToolResultJSON(map[string]interface{}{

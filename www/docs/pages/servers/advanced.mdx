@@ -15,6 +15,7 @@ import (
     "context"
     "encoding/json"
     "fmt"
+    "time"
 
     "github.com/mark3labs/mcp-go/mcp"
     "github.com/mark3labs/mcp-go/server"
@@ -136,6 +137,13 @@ func handleCreateUser(ctx context.Context, req mcp.CallToolRequest, input UserCr
 ### Custom Validation
 
 ```go
+import (
+    "path/filepath"
+    "strings"
+
+    "github.com/go-playground/validator/v10"
+)
+
 type FileOperationInput struct {
     Path      string `json:"path" validate:"required,filepath"`
     Operation string `json:"operation" validate:"required,oneof=read write delete"`

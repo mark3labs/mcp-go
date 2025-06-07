@@ -28,6 +28,14 @@ prompt := mcp.NewPrompt("code_review",
 ### Basic Code Review Prompt
 
 ```go
+import (
+    "context"
+    "fmt"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
 func main() {
     s := server.NewMCPServer("Code Assistant", "1.0.0",
         server.WithPromptCapabilities(true),
