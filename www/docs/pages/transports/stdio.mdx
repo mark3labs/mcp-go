@@ -188,6 +188,19 @@ func detectMIMEType(path string) string {
 ### Advanced STDIO Server
 
 ```go
+import (
+    "context"
+    "fmt"
+    "log"
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
 func main() {
     s := server.NewMCPServer("Advanced CLI Tool", "1.0.0",
         server.WithAllCapabilities(),
@@ -201,18 +214,6 @@ func main() {
             },
         }),
     )
-import (
-    "context"
-    "fmt"
-    "log"
-    "os"
-    "os/signal"
-    "syscall"
-    "time"
-
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
-)
 
     // Add comprehensive tools
     addSystemTools(s)

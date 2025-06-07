@@ -257,19 +257,20 @@ func handleCreateFile(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallTo
 
 ```go
 func handleDatabaseQuery(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    query, err := req.RequireString("query")
-    if err != nil {
+    // Define struct to bind both Query and Params
+    var args struct {
+        Query  string        `json:"query"`
+        Params []interface{} `json:"params"`
+    }
+    
+    // Bind arguments to the struct
+    if err := req.BindArguments(&args); err != nil {
         return mcp.NewToolResultError(err.Error()), nil
     }
     
-    // Handle optional params array
-    var params []interface{}
-    if err := req.BindArguments(&struct {
-        Query  string        `json:"query"`
-        Params []interface{} `json:"params"`
-    }{Params: params}); err == nil {
-        // params extracted successfully
-    }
+    // Extract values from the bound struct
+    query := args.Query
+    params := args.Params
     
     // Validate query for security (basic example)
     if !isSelectQuery(query) {
@@ -581,15 +582,6 @@ tool := mcp.NewTool("search_database",
     mcp.WithArray("categories",
         mcp.Description("Filter by product categories"),
         mcp.Items(mcp.StringSchema()),
-    ),
-)
-        },
-        {
-            Description: "Find all products in electronics category",
-            Arguments: map[string]interface{}{
-                "query": "*",
-                "categories": []string{"electronics"},
-            },
     ),
 )
 

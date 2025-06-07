@@ -13,6 +13,7 @@ package main
 
 import (
     "context"
+    "encoding/json"
     "fmt"
 
     "github.com/mark3labs/mcp-go/mcp"
@@ -120,13 +121,15 @@ func handleCreateUser(ctx context.Context, req mcp.CallToolRequest, input UserCr
         return nil, fmt.Errorf("failed to create user: %w", err)
     }
 
-    return &UserCreateOutput{
+    output := &UserCreateOutput{
         ID:        user.ID,
         Name:      user.Name,
         Email:     user.Email,
         CreatedAt: user.CreatedAt,
         Status:    "created",
-    }, nil
+    }
+
+    return mcp.NewToolResultJSON(output), nil
 }
 ```
 
@@ -302,6 +305,7 @@ func NewLoggingMiddleware(logger *log.Logger) *LoggingMiddleware {
 func (m *LoggingMiddleware) ToolMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
     return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
         start := time.Now()
+        sessionID := server.GetSessionID(ctx)
         
         m.logger.Printf("Tool call started: tool=%s", req.Params.Name)
         

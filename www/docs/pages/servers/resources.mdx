@@ -97,11 +97,13 @@ func handleAppConfig(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.Rea
         return nil, err
     }
     
-    return []mcp.ResourceContents{
-        mcp.TextResourceContents{
-            URI:      req.Params.URI,
-            MIMEType: "application/json",
-            Text:     string(configJSON),
+    return &mcp.ReadResourceResult{
+        Contents: []mcp.ResourceContent{
+            mcp.TextResourceContent{
+                URI:      req.Params.URI,
+                MIMEType: "application/json",
+                Text:     string(configJSON),
+            },
         },
     }, nil
 }
@@ -166,6 +168,16 @@ func extractUserID(uri string) string {
 Expose database records dynamically:
 
 ```go
+import (
+    "context"
+    "database/sql"
+    "encoding/json"
+    "fmt"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
 // Database table resource
 s.AddResource(
     mcp.NewResource(
@@ -205,13 +217,16 @@ func handleDatabaseRecord(ctx context.Context, req mcp.ReadResourceRequest) (*mc
         return nil, err
     }
     
-    return []mcp.ResourceContents{
-        mcp.TextResourceContents{
-            URI:      req.Params.URI,
-            MIMEType: "application/json",
-            Text:     string(jsonData),
+    return &mcp.ReadResourceResult{
+        Contents: []mcp.ResourceContent{
+            mcp.TextResourceContent{
+                URI:      req.Params.URI,
+                MIMEType: "application/json",
+                Text:     string(jsonData),
+            },
         },
     }, nil
+}
 }
 ```
 
@@ -434,13 +449,16 @@ func handleResourceWithTimeout(ctx context.Context, req mcp.ReadResourceRequest)
         return nil, err
     }
     
-    return []mcp.ResourceContents{
-        mcp.TextResourceContents{
-            URI:      req.Params.URI,
-            MIMEType: "application/json",
-            Text:     string(jsonData),
+    return &mcp.ReadResourceResult{
+        Contents: []mcp.ResourceContent{
+            mcp.TextResourceContent{
+                URI:      req.Params.URI,
+                MIMEType: "application/json",
+                Text:     string(jsonData),
+            },
         },
     }, nil
+}
 }
 ```
 
