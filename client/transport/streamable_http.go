@@ -380,7 +380,11 @@ func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, hand
 			if err != nil {
 				if err == io.EOF {
 					// Process any pending event before exit
-					if event != "" && data != "" {
+					if data != "" {
+						// If no event type is specified, use empty string (default event type)
+						if event == "" {
+							event = "message"
+						}
 						handler(event, data)
 					}
 					return
@@ -398,7 +402,11 @@ func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, hand
 			line = strings.TrimRight(line, "\r\n")
 			if line == "" {
 				// Empty line means end of event
-				if event != "" && data != "" {
+				if data != "" {
+					// If no event type is specified, use empty string (default event type)
+					if event == "" {
+						event = "message"
+					}
 					handler(event, data)
 					event = ""
 					data = ""

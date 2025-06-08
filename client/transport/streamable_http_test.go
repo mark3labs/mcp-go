@@ -413,6 +413,82 @@ func TestStreamableHTTP(t *testing.T) {
 			t.Errorf("Expected JSONRPC '2.0', got '%s'", responseError.JSONRPC)
 		}
 	})
+
+	t.Run("SSEEventWithoutEventField", func(t *testing.T) {
+		// Test that SSE events with only data field (no event field) are processed correctly
+		// This tests the fix for issue #369
+		
+		// Create a custom mock server that sends SSE events without event field
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			// Parse incoming JSON-RPC request
+			var request map[string]any
+			decoder := json.NewDecoder(r.Body)
+			if err := decoder.Decode(&request); err != nil {
+				http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+				return
+			}
+
+			// Send response via SSE WITHOUT event field (only data field)
+			// This should be processed as a "message" event according to SSE spec
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			
+			response := map[string]any{
+				"jsonrpc": "2.0",
+				"id":      request["id"],
+				"result":  "test response without event field",
+			}
+			responseBytes, _ := json.Marshal(response)
+			// Note: No "event:" field, only "data:" field
+			fmt.Fprintf(w, "data: %s\n\n", responseBytes)
+		})
+
+		// Create test server
+		testServer := httptest.NewServer(handler)
+		defer testServer.Close()
+
+		// Create StreamableHTTP transport
+		trans, err := NewStreamableHTTP(testServer.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer trans.Close()
+
+		// Send a request
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		request := JSONRPCRequest{
+			JSONRPC: "2.0",
+			ID:      mcp.NewRequestId(int64(1)),
+			Method:  "test",
+		}
+
+		// This should succeed because the SSE event without event field should be processed
+		response, err := trans.SendRequest(ctx, request)
+		if err != nil {
+			t.Fatalf("SendRequest failed: %v", err)
+		}
+
+		if response == nil {
+			t.Fatal("Expected response, got nil")
+		}
+
+		// Verify the response
+		var result string
+		if err := json.Unmarshal(response.Result, &result); err != nil {
+			t.Fatalf("Failed to unmarshal result: %v", err)
+		}
+
+		if result != "test response without event field" {
+			t.Errorf("Expected 'test response without event field', got '%s'", result)
+		}
+	})
 }
 
 func TestStreamableHTTPErrors(t *testing.T) {
