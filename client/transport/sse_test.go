@@ -409,19 +409,10 @@ func TestSSE(t *testing.T) {
 		// Test that SSE events with only data field (no event field) are processed correctly
 		// This tests the fix for issue #369
 		
-		var sseWriter http.ResponseWriter
-		var flush func()
-		var mu sync.Mutex
+		var messageReceived chan struct{}
 		
 		// Create a custom mock server that sends SSE events without event field
 		sseHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			defer func() {
-				mu.Lock()
-				sseWriter = nil
-				flush = nil
-				mu.Unlock()
-			}()
-			
 			w.Header().Set("Content-Type", "text/event-stream")
 			flusher, ok := w.(http.Flusher)
 			if !ok {
@@ -429,14 +420,26 @@ func TestSSE(t *testing.T) {
 				return
 			}
 
-			mu.Lock()
-			sseWriter = w
-			flush = flusher.Flush
-			mu.Unlock()
-
 			// Send initial endpoint event
 			fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", "/message")
 			flusher.Flush()
+
+			// Wait for message to be received, then send response
+			select {
+			case <-messageReceived:
+				// Send response via SSE WITHOUT event field (only data field)
+				// This should be processed as a "message" event according to SSE spec
+				response := map[string]any{
+					"jsonrpc": "2.0",
+					"id":      1,
+					"result":  "test response without event field",
+				}
+				responseBytes, _ := json.Marshal(response)
+				fmt.Fprintf(w, "data: %s\n\n", responseBytes)
+				flusher.Flush()
+			case <-r.Context().Done():
+				return
+			}
 
 			// Keep connection open
 			<-r.Context().Done()
@@ -446,25 +449,13 @@ func TestSSE(t *testing.T) {
 		messageHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusAccepted)
-
-			// Send response via SSE WITHOUT event field (only data field)
-			// This should be processed as a "message" event according to SSE spec
-			response := map[string]any{
-				"jsonrpc": "2.0",
-				"id":      1,
-				"result":  "test response without event field",
-			}
-			responseBytes, _ := json.Marshal(response)
 			
-			go func() {
-				mu.Lock()
-				defer mu.Unlock()
-				if sseWriter != nil && flush != nil {
-					fmt.Fprintf(sseWriter, "data: %s\n\n", responseBytes)
-					flush()
-				}
-			}()
+			// Signal that message was received
+			close(messageReceived)
 		})
+
+		// Initialize the channel
+		messageReceived = make(chan struct{})
 
 		// Create test server
 		mux := http.NewServeMux()
