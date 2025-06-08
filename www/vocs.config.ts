@@ -2,6 +2,7 @@ import { defineConfig } from 'vocs'
 
 export default defineConfig({
   title: 'MCP-Go',
+  search: {},
   baseUrl: 'https://mcp-go.dev',
   basePath: '/',
   logoUrl: '/logo.png',
