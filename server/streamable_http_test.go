@@ -419,8 +419,8 @@ func TestStreamableHTTP_POST_SendAndReceive_stateless(t *testing.T) {
 		}
 	})
 
-	t.Run("Invalid session id", func(t *testing.T) {
-		// send ping message
+	t.Run("Session id ignored in stateless mode", func(t *testing.T) {
+		// send ping message with session ID - should be ignored in stateless mode
 		pingMessage := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      123,
@@ -441,8 +441,63 @@ func TestStreamableHTTP_POST_SendAndReceive_stateless(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != 400 {
-			t.Errorf("Expected status 400, got %d", resp.StatusCode)
+		// In stateless mode, session IDs should be ignored and request should succeed
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", resp.StatusCode)
+		}
+
+		// Verify the response is valid
+		responseBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Failed to read response: %v", err)
+		}
+		var response map[string]any
+		if err := json.Unmarshal(responseBody, &response); err != nil {
+			t.Fatalf("Failed to unmarshal response: %v", err)
+		}
+		if response["id"].(float64) != 123 {
+			t.Errorf("Expected id 123, got %v", response["id"])
+		}
+	})
+
+	t.Run("tools/list with session id in stateless mode", func(t *testing.T) {
+		// Test the specific scenario from the issue - tools/list with session ID
+		toolsListMessage := map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "tools/list",
+			"id":      1,
+		}
+		toolsListBody, _ := json.Marshal(toolsListMessage)
+		req, err := http.NewRequest("POST", server.URL, bytes.NewBuffer(toolsListBody))
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(headerKeySessionID, "mcp-session-2c44d701-fd50-44ce-92b8-dec46185a741")
+
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to send message: %v", err)
+		}
+		defer resp.Body.Close()
+
+		// Should succeed in stateless mode even with session ID
+		if resp.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			t.Errorf("Expected status 200, got %d. Response: %s", resp.StatusCode, string(bodyBytes))
+		}
+
+		// Verify the response is valid
+		responseBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Failed to read response: %v", err)
+		}
+		var response map[string]any
+		if err := json.Unmarshal(responseBody, &response); err != nil {
+			t.Fatalf("Failed to unmarshal response: %v", err)
+		}
+		if response["id"].(float64) != 1 {
+			t.Errorf("Expected id 1, got %v", response["id"])
 		}
 	})
 }
