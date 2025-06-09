@@ -347,6 +347,8 @@ func (c *StreamableHTTP) SendRequest(
 // session id and the last event id, expecting the server to return an
 // SSE streaming response sending the events with ids after the last event id.
 // It returns the final result for the request once received, or an error.
+// A boolean is returned as well to indicate whether it is appropriate to
+// attempt resumption if an error is returned.
 func (c *StreamableHTTP) performSSEResumption(
 	ctx context.Context,
 	lastEventId string,
