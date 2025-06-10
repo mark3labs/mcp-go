@@ -40,8 +40,8 @@ import (
 
 func createStdioClient() {
     // Create client that spawns a subprocess
-    c, err := client.NewStdioClient(
-        "go", "run", "/path/to/server/main.go",
+    c, err := client.NewStdioMCPClient(
+        "go", []string{}, "run", "/path/to/server/main.go",
     )
     if err != nil {
         log.Fatal(err)
@@ -51,47 +51,17 @@ func createStdioClient() {
     ctx := context.Background()
 
     // Initialize connection
-    if err := c.Initialize(ctx); err != nil {
+    if err := c.Initialize(ctx, initRequest); err != nil {
         log.Fatal(err)
     }
 
     // Use the client
-    tools, err := c.ListTools(ctx)
+    tools, err := c.ListTools(ctx, listToolsRequest)
     if err != nil {
         log.Fatal(err)
     }
 
     log.Printf("Available tools: %d", len(tools.Tools))
-}
-```
-
-### Advanced STDIO Configuration
-
-```go
-func createAdvancedStdioClient() {
-    options := client.StdioOptions{
-        Command: "python",
-        Args:    []string{"/path/to/server.py"},
-        Env: []string{
-            "PYTHONPATH=/custom/path",
-            "LOG_LEVEL=debug",
-            "DATABASE_URL=sqlite:///data.db",
-        },
-        WorkingDir:      "/path/to/server",
-        Timeout:         30 * time.Second,
-        BufferSize:      8192,
-        RestartOnError:  true,
-        MaxRestarts:     3,
-        RestartDelay:    1 * time.Second,
-    }
-
-    c, err := client.NewStdioClientWithOptions(options)
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer c.Close()
-
-    // Use client...
 }
 ```
 
