@@ -13,7 +13,7 @@ MCP-Go provides client constructors for each supported transport. The choice of 
 client, err := client.NewStdioMCPClient("command", "arg1", "arg2")
 
 // HTTP client - for web services
-client := client.NewStreamableHTTP("http://localhost:8080/mcp")
+client := client.NewStreamableHTTPClient("http://localhost:8080/mcp")
 
 // SSE client - for real-time web applications
 client := client.NewSSEMCPClient("http://localhost:8080/mcp/sse")
