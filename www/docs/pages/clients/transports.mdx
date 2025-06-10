@@ -295,6 +295,10 @@ func createHTTPClient() {
 
     ctx := context.Background()
 
+    if err := c.Start(ctx); err != nil {
+        return
+    }
+
     // Initialize
     if err := c.Initialize(ctx); err != nil {
         log.Fatal(err)

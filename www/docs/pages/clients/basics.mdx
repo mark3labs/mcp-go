@@ -10,7 +10,7 @@ MCP-Go provides client constructors for each supported transport. The choice of 
 
 ```go
 // STDIO client - for command-line tools
-client, err := client.NewStdioClient("command", "arg1", "arg2")
+client, err := client.NewSSEMCPClient("command", "arg1", "arg2")
 
 // HTTP client - for web services
 client := client.NewHTTPClient("http://localhost:8080/mcp")
@@ -43,7 +43,7 @@ import (
 
 func createStdioClient() (client.Client, error) {
     // Create client that spawns a subprocess
-    c, err := client.NewStdioClient(
+    c, err := client.NewSSEMCPClient(
         "go", "run", "/path/to/server/main.go",
     )
     if err != nil {
@@ -151,7 +151,7 @@ Understanding the client lifecycle is crucial for proper resource management and
 ```go
 func demonstrateClientLifecycle() error {
     // 1. Creation
-    c, err := client.NewStdioClient("server-command")
+    c, err := client.NewSSEMCPClient("server-command")
     if err != nil {
         return fmt.Errorf("client creation failed: %w", err)
     }
@@ -264,11 +264,11 @@ func NewManagedClient(clientType, address string) (*ManagedClient, error) {
 
     switch clientType {
     case "stdio":
-        c, err = client.NewStdioClient("server-command")
+        c, err = client.NewSSEMCPClient("server-command")
     case "http":
-        c = client.NewHTTPClient(address)
+        c = client.NewStreamableHttpClient(address)
     case "sse":
-        c = client.NewSSEClient(address)
+        c = client.NewSSEMCPClient(address)
     default:
         return nil, fmt.Errorf("unknown client type: %s", clientType)
     }

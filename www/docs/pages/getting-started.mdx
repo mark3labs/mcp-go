@@ -20,7 +20,7 @@ MCP-Go is designed to make building MCP servers in Go fast, simple, and complete
 - **Minimal boilerplate**: Get started with just a few lines of code
 - **Full MCP spec support**: Tools, resources, prompts, and all transport methods
 - **Type safety**: Leverage Go's type system for robust MCP servers
-- **Multiple transports**: Stdio, HTTP, and Server-Sent Events support
+- **Multiple transports**: Stdio, HTTP, Server-Sent Events and In-Process support
 
 ### Installation
 
@@ -151,6 +151,7 @@ MCP-Go supports multiple transport methods:
 - **Stdio** (most common): `server.ServeStdio(s)`
 - **HTTP**: `server.ServeHTTP(s, ":8080")`
 - **Server-Sent Events**: `server.ServeSSE(s, ":8080")`
+- **In-Process**: `client.NewInProcessClient(server)`
 
 ## Need Help?
 

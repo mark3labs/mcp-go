@@ -121,7 +121,8 @@ import (
 
 func main() {
     // Create a stdio client that connects to another MCP server
-    c, err := client.NewStdioClient(
+	// NTOE: NewStdioMCPClient will start the connection automatically. Don't call the Start method manually
+    c, err := client.NewStdioMCPClient(
         "go", "run", "path/to/server/main.go",
     )
     if err != nil {
@@ -149,7 +150,7 @@ func main() {
 
     // Call a tool
     result, err := c.CallTool(ctx, mcp.CallToolRequest{
-        Params: mcp.CallToolRequestParams{
+        Params: mcp.CallToolParams{
             Name: "hello_world",
             Arguments: map[string]interface{}{
                 "name": "World",
@@ -187,10 +188,16 @@ import (
 
 func main() {
     // Create an HTTP client
-    c := client.NewHTTPClient("http://localhost:8080/mcp")
+    c, _ := client.NewStreamableHttpClient("http://localhost:8080/mcp")
     defer c.Close()
 
     ctx := context.Background()
+
+	// Start initiates the connection to the server
+	if err := c.Start(ctx); err != nil {
+		log.Fatal(err)
+		return
+	}
 
     // Initialize and use the client
     if err := c.Initialize(ctx); err != nil {

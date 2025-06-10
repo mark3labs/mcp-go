@@ -30,7 +30,7 @@ import (
 
 func main() {
     // Create STDIO client
-    c, err := client.NewStdioClient(
+    c, err := client.NewStdioMCPClient(
         "go", "run", "/path/to/server/main.go",
     )
     if err != nil {
@@ -127,7 +127,7 @@ func demonstrateClientOperations(ctx context.Context, c client.Client) error {
 
 ```go
 // Create STDIO client
-client, err := client.NewStdioClient("server-command", "arg1", "arg2")
+client, err := client.NewStdioMCPClient("server-command", "arg1", "arg2")
 ```
 
 ### HTTP Client
@@ -139,7 +139,7 @@ client, err := client.NewStdioClient("server-command", "arg1", "arg2")
 
 ```go
 // Create HTTP client
-client := client.NewHTTPClient("http://localhost:8080/mcp")
+client := client.NewStreamableHttpClient("http://localhost:8080/mcp")
 ```
 
 ### SSE Client
@@ -151,7 +151,7 @@ client := client.NewHTTPClient("http://localhost:8080/mcp")
 
 ```go
 // Create SSE client
-client := client.NewSSEClient("http://localhost:8080/mcp/sse")
+client := client.NewSSEMCPClient("http://localhost:8080/mcp/sse")
 ```
 
 ### In-Process Client
@@ -195,11 +195,11 @@ func NewMCPClientManager(clientType, address string) (*MCPClientManager, error) 
 
     switch clientType {
     case "stdio":
-        c, err = client.NewStdioClient("server-command")
+        c, err = client.NewStdioMCPClient("server-command")
     case "http":
-        c = client.NewHTTPClient(address)
+        c = client.NewStreamableHttpClient(address)
     case "sse":
-        c = client.NewSSEClient(address)
+        c = client.NewSSEMCPClient(address)
     default:
         return nil, fmt.Errorf("unknown client type: %s", clientType)
     }
