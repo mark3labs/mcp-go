@@ -108,22 +108,6 @@ func createSSEClient() client.Client {
 	)
     return c
 }
-
-// With custom options
-func createSSEClientWithOptions() client.Client {
-    options := client.SSEOptions{
-        URL: "http://localhost:8080/mcp/sse",
-        Headers: map[string]string{
-            "Authorization": "Bearer your-token",
-            "X-Client-ID":   "my-app",
-        },
-        ReconnectInterval: 5 * time.Second,
-        MaxReconnects:     10,
-        BufferSize:        1000,
-    }
-
-    return client.NewSSEClientWithOptions(options)
-}
 ```
 
 ## Client Lifecycle
