@@ -31,7 +31,7 @@ import (
 func main() {
     // Create STDIO client
     c, err := client.NewStdioMCPClient(
-        "go", "run", "/path/to/server/main.go",
+        "go", []string{} , "run", "/path/to/server/main.go",
     )
     if err != nil {
         log.Fatal(err)
@@ -41,7 +41,7 @@ func main() {
     ctx := context.Background()
 
     // Initialize the connection
-    if err := c.Initialize(ctx); err != nil {
+    if err := c.Initialize(ctx, initRequest); err != nil {
         log.Fatal(err)
     }
 
@@ -385,9 +385,9 @@ func (msc *MultiServerClient) AddServer(name, address string, clientType string)
 
     switch clientType {
     case "http":
-        c = client.NewHTTPClient(address)
+        c = client.NewStreamableHttpClient(address)
     case "sse":
-        c = client.NewSSEClient(address)
+        c = client.NewSSEMCPClient(address)
     default:
         return fmt.Errorf("unsupported client type: %s", clientType)
     }
