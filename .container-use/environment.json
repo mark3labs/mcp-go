@@ -1,6 +1,6 @@
 {
   "workdir": "/workdir",
-  "base_image": "golang:1.21",
+  "base_image": "golang:1.23",
   "setup_commands": [
     "apt-get update \u0026\u0026 apt-get install -y git vim curl",
     "go version"
