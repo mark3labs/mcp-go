@@ -291,7 +291,7 @@ func (c *SSE) SetNotificationHandler(handler func(notification mcp.JSONRPCNotifi
 
 // SetRequestHandler sets the handler for incoming requests from the server.
 // Note: SSE transport does not currently support bidirectional requests.
-func (c *SSE) SetRequestHandler(handler func(context.Context, JSONRPCRequest) (any, error)) {
+func (c *SSE) SetRequestHandler(handler RequestHandler) {
 	// SSE transport does not support server-to-client requests yet
 	// This is a placeholder for interface compatibility
 }
