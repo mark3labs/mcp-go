@@ -48,6 +48,14 @@ type SessionWithClientInfo interface {
 	SetClientInfo(clientInfo mcp.Implementation)
 }
 
+// SessionWithRequests is an extension of ClientSession that supports sending requests to the client
+// This enables bidirectional communication for features like sampling
+type SessionWithRequests interface {
+	ClientSession
+	// SendRequest sends a request to the client and waits for a response
+	SendRequest(ctx context.Context, method string, params any) (*mcp.JSONRPCResponse, error)
+}
+
 // SessionWithStreamableHTTPConfig extends ClientSession to support streamable HTTP transport configurations
 type SessionWithStreamableHTTPConfig interface {
 	ClientSession
