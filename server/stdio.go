@@ -356,7 +356,7 @@ func ServeStdio(server *MCPServer, options ...StdioOption) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	if err := stdioServer.Serve(ctx, os.Stdin, os.Stdout); err != nil {
+	err := stdioServer.Serve(ctx, os.Stdin, os.Stdout)
 		stdioServer.errLogger.Printf("Server error: %v", err)
 		os.Exit(1)
 	}
