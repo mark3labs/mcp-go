@@ -568,9 +568,9 @@ func (s *MCPServer) handleInitialize(
 	if s.capabilities.logging != nil && *s.capabilities.logging {
 		capabilities.Logging = &struct{}{}
 
-	if s.capabilities.sampling != nil && *s.capabilities.sampling {
-		capabilities.Sampling = &struct{}{}
-	}
+		if s.capabilities.sampling != nil && *s.capabilities.sampling {
+			capabilities.Sampling = &struct{}{}
+		}
 	}
 
 	result := mcp.InitializeResult{
@@ -1089,7 +1089,6 @@ func createErrorResponse(
 	}
 }
 
-
 // hasSamplingCapability checks if the server has sampling capability enabled
 func (s *MCPServer) hasSamplingCapability() bool {
 	return s.capabilities.sampling != nil && *s.capabilities.sampling
@@ -1099,10 +1098,10 @@ func (s *MCPServer) hasSamplingCapability() bool {
 func (s *MCPServer) WithContext(ctx context.Context, session ClientSession) context.Context {
 	// Add client session to context
 	ctx = context.WithValue(ctx, clientSessionKey{}, session)
-	
+
 	// Add server to context
 	ctx = context.WithValue(ctx, serverKey{}, s)
-	
+
 	// Add sampling context if capability is enabled
 	if s.hasSamplingCapability() {
 		samplingCtx := &samplingContext{
@@ -1111,6 +1110,6 @@ func (s *MCPServer) WithContext(ctx context.Context, session ClientSession) cont
 		}
 		ctx = context.WithValue(ctx, samplingContextKey{}, samplingCtx)
 	}
-	
+
 	return ctx
 }

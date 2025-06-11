@@ -14,7 +14,7 @@ func TestSamplingAPI(t *testing.T) {
 	t.Run("Server Sampling Capability", func(t *testing.T) {
 		// Test server with sampling capability
 		mcpServer := server.NewMCPServer(
-			"test-server", 
+			"test-server",
 			"1.0.0",
 			server.WithSampling(),
 		)
@@ -116,7 +116,7 @@ func TestSamplingAPI(t *testing.T) {
 		// Test that sampling context can be retrieved (even if nil)
 		ctx := context.Background()
 		samplingCtx := server.SamplingContextFromContext(ctx)
-		
+
 		// This should be nil since we haven't set up a proper context
 		if samplingCtx != nil {
 			t.Error("Sampling context should be nil without proper setup")

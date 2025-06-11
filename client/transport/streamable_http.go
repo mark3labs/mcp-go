@@ -501,7 +501,6 @@ func (c *StreamableHTTP) SetNotificationHandler(handler func(mcp.JSONRPCNotifica
 	c.notificationHandler = handler
 }
 
-
 // SetRequestHandler sets the handler for incoming requests from the server.
 // Note: StreamableHTTP transport does not currently support bidirectional requests.
 func (c *StreamableHTTP) SetRequestHandler(handler RequestHandler) {

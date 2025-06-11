@@ -196,9 +196,9 @@ func (c *Stdio) readResponses() {
 func (c *Stdio) handleMessage(line string) {
 	// Try to parse as a generic JSON-RPC message to determine type
 	var baseMessage struct {
-		JSONRPC string        `json:"jsonrpc"`
-		ID      *mcp.RequestId `json:"id,omitempty"`
-		Method  *string       `json:"method,omitempty"`
+		JSONRPC string          `json:"jsonrpc"`
+		ID      *mcp.RequestId  `json:"id,omitempty"`
+		Method  *string         `json:"method,omitempty"`
 		Result  json.RawMessage `json:"result,omitempty"`
 		Error   json.RawMessage `json:"error,omitempty"`
 	}

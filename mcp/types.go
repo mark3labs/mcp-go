@@ -790,10 +790,10 @@ type CreateMessageRequest struct {
 type CreateMessageParams struct {
 	Messages         []SamplingMessage `json:"messages"`
 	ModelPreferences *ModelPreferences `json:"modelPreferences,omitempty"`
-	SystemPrompt     *string            `json:"systemPrompt,omitempty"`
-	IncludeContext   *ContextInclusion            `json:"includeContext,omitempty"`
-	Temperature      *float64           `json:"temperature,omitempty"`
-	MaxTokens        *int               `json:"maxTokens"`
+	SystemPrompt     *string           `json:"systemPrompt,omitempty"`
+	IncludeContext   *ContextInclusion `json:"includeContext,omitempty"`
+	Temperature      *float64          `json:"temperature,omitempty"`
+	MaxTokens        *int              `json:"maxTokens"`
 	StopSequences    []string          `json:"stopSequences,omitempty"`
 	Metadata         any               `json:"metadata,omitempty"`
 }

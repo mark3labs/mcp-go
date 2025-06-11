@@ -1,8 +1,8 @@
 package server
 
 import (
-	"encoding/json"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -198,7 +198,6 @@ func (sc *samplingContext) supportsClientSampling() bool {
 	// For now, we'll assume it's supported if the server has sampling enabled
 	return sc.server.hasSamplingCapability()
 }
-
 
 func (sc *samplingContext) sendSamplingRequest(ctx context.Context, req *mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
 	// Check if the session supports bidirectional requests

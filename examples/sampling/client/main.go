@@ -194,7 +194,7 @@ Bugs become features.`
 
 	default:
 		// Generic response
-		return fmt.Sprintf("I understand your request about: %s. This is a simulated response from the example client's LLM handler.", 
+		return fmt.Sprintf("I understand your request about: %s. This is a simulated response from the example client's LLM handler.",
 			truncateString(conversation, 50))
 	}
 }

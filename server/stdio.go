@@ -58,12 +58,12 @@ type stdioSession struct {
 	initialized   atomic.Bool
 	loggingLevel  atomic.Value
 	clientInfo    atomic.Value // stores session-specific client info
-	
+
 	// Bidirectional communication support
-	stdout        io.Writer
-	requestID     atomic.Int64
-	responses     map[string]chan *JSONRPCResponse
-	responsesMu   sync.RWMutex
+	stdout      io.Writer
+	requestID   atomic.Int64
+	responses   map[string]chan *JSONRPCResponse
+	responsesMu sync.RWMutex
 }
 
 func (s *stdioSession) SessionID() string {
@@ -142,7 +142,7 @@ func (s *stdioSession) SendRequest(ctx context.Context, method string, params an
 	// Create response channel
 	responseChan := make(chan *JSONRPCResponse, 1)
 	idKey := requestID.String()
-	
+
 	s.responsesMu.Lock()
 	if s.responses == nil {
 		s.responses = make(map[string]chan *JSONRPCResponse)
@@ -183,7 +183,7 @@ func (s *stdioSession) handleResponse(response *JSONRPCResponse) {
 	}
 
 	idKey := response.ID.String()
-	
+
 	s.responsesMu.RLock()
 	ch, exists := s.responses[idKey]
 	s.responsesMu.RUnlock()
@@ -276,9 +276,9 @@ func (s *StdioServer) handleInput(ctx context.Context, stdin io.Reader, stdout i
 
 		// Try to determine if this is a response to a server request or a client request
 		var baseMessage struct {
-			JSONRPC string         `json:"jsonrpc"`
-			ID      *mcp.RequestId `json:"id,omitempty"`
-			Method  *string        `json:"method,omitempty"`
+			JSONRPC string          `json:"jsonrpc"`
+			ID      *mcp.RequestId  `json:"id,omitempty"`
+			Method  *string         `json:"method,omitempty"`
 			Result  json.RawMessage `json:"result,omitempty"`
 			Error   json.RawMessage `json:"error,omitempty"`
 		}
@@ -357,9 +357,9 @@ func ServeStdio(server *MCPServer, options ...StdioOption) error {
 	defer cancel()
 
 	err := stdioServer.Serve(ctx, os.Stdin, os.Stdout)
-		if err != nil {
+	if err != nil {
 		stdioServer.errLogger.Printf("Server error: %v", err)
-				os.Exit(1)
+		os.Exit(1)
 	}
 	return err
 }

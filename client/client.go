@@ -22,7 +22,7 @@ type Client struct {
 	requestID          atomic.Int64
 	clientCapabilities mcp.ClientCapabilities
 	serverCapabilities mcp.ServerCapabilities
-	samplingHandler     SamplingHandler
+	samplingHandler    SamplingHandler
 }
 
 type ClientOption func(*Client)
@@ -439,6 +439,7 @@ func (c *Client) GetServerCapabilities() mcp.ServerCapabilities {
 func (c *Client) GetClientCapabilities() mcp.ClientCapabilities {
 	return c.clientCapabilities
 }
+
 // Sampling-related client options and methods
 
 // WithSamplingHandler sets a sampling handler for the client and enables sampling capability
