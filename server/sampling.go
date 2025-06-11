@@ -198,10 +198,32 @@ func (sc *samplingContext) supportsClientSampling() bool {
 	return sc.server.hasSamplingCapability()
 }
 
+
 func (sc *samplingContext) sendSamplingRequest(ctx context.Context, req *mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
-	// This will be implemented when we add client-to-server request support
-	// For now, return a placeholder error
-	return nil, fmt.Errorf("sampling request mechanism not yet implemented - bidirectional communication needed")
+	// Check if the session supports bidirectional requests
+	sessionWithRequests, ok := sc.session.(SessionWithRequests)
+	if !ok {
+		return nil, fmt.Errorf("session does not support bidirectional requests - sampling requires SessionWithRequests interface")
+	}
+
+	// Send the sampling request to the client
+	response, err := sessionWithRequests.SendRequest(ctx, string(mcp.MethodSamplingCreateMessage), req.Params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send sampling request: %w", err)
+	}
+
+	// Check for JSON-RPC error
+	if response.Error != nil {
+		return nil, fmt.Errorf("sampling request failed: %s (code %d)", response.Error.Message, response.Error.Code)
+	}
+
+	// Parse the result
+	var result mcp.CreateMessageResult
+	if err := json.Unmarshal(response.Result, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal sampling result: %w", err)
+	}
+
+	return &result, nil
 }
 
 // Context key for sampling context
