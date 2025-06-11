@@ -529,8 +529,8 @@ func TestStreamableHTTP_GET(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusAccepted {
-		t.Errorf("Expected status 202, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", resp.StatusCode)
 	}
 
 	if resp.Header.Get("content-type") != "text/event-stream" {
