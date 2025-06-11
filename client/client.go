@@ -22,6 +22,7 @@ type Client struct {
 	requestID          atomic.Int64
 	clientCapabilities mcp.ClientCapabilities
 	serverCapabilities mcp.ServerCapabilities
+	samplingHandler     SamplingHandler
 }
 
 type ClientOption func(*Client)
