@@ -1113,3 +1113,9 @@ func createErrorResponse(
 		},
 	}
 }
+
+
+// hasSamplingCapability checks if the server has sampling capability enabled
+func (s *MCPServer) hasSamplingCapability() bool {
+	return s.capabilities.sampling != nil && *s.capabilities.sampling
+}
