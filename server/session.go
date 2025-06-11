@@ -8,6 +8,18 @@ import (
 	"encoding/json"
 )
 
+
+// JSONRPCResponse represents a response that can contain either a result or an error
+type JSONRPCResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      mcp.RequestId   `json:"id"`
+	Result  json.RawMessage `json:"result"`
+	Error   *struct {
+		Code    int             `json:"code"`
+		Message string          `json:"message"`
+		Data    json.RawMessage `json:"data"`
+	} `json:"error"`
+}
 // ClientSession represents an active session that can be used by MCPServer to interact with client.
 type ClientSession interface {
 	// Initialize marks session as fully initialized and ready for notifications
