@@ -60,16 +60,16 @@ func (c *InProcessTransport) SendNotification(ctx context.Context, notification 
 }
 
 func (c *InProcessTransport) SetNotificationHandler(handler func(notification mcp.JSONRPCNotification)) {
+	c.notifyMu.Lock()
+	defer c.notifyMu.Unlock()
+	c.onNotification = handler
+}
 
 // SetRequestHandler sets the handler for incoming requests from the server.
 // Note: InProcess transport does not currently support bidirectional requests.
 func (c *InProcessTransport) SetRequestHandler(handler RequestHandler) {
 	// InProcess transport does not support server-to-client requests yet
 	// This is a placeholder for interface compatibility
-}
-	c.notifyMu.Lock()
-	defer c.notifyMu.Unlock()
-	c.onNotification = handler
 }
 
 func (*InProcessTransport) Close() error {
