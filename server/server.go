@@ -596,6 +596,10 @@ func (s *MCPServer) handleInitialize(
 
 	if s.capabilities.logging != nil && *s.capabilities.logging {
 		capabilities.Logging = &struct{}{}
+
+	if s.capabilities.sampling != nil && *s.capabilities.sampling {
+		capabilities.Sampling = &struct{}{}
+	}
 	}
 
 	result := mcp.InitializeResult{
