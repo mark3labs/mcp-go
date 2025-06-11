@@ -12,14 +12,26 @@ import (
 
 func main() {
 	// Create a client with sampling handler
-	mcpClient := client.NewStdioMCPClient(
+	mcpClient, err := client.NewStdioMCPClient(
 		"go", []string{"run", "../server/main.go"}, "",
-		// Enable sampling with a custom handler
+	)
+	if err != nil {
+		log.Fatalf("Failed to create client: %v", err)
+	}
+
+	// Configure the client with sampling handler
+	mcpClient = client.NewClient(
+		mcpClient.GetTransport(),
 		client.WithSamplingHandler(client.SamplingHandlerFunc(handleSampling)),
 	)
 	defer mcpClient.Close()
 
 	ctx := context.Background()
+
+	// Start the client
+	if err := mcpClient.Start(ctx); err != nil {
+		log.Fatalf("Failed to start client: %v", err)
+	}
 
 	// Initialize the client
 	log.Println("Initializing MCP client with sampling support...")
