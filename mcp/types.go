@@ -802,7 +802,8 @@ type CreateMessageParams struct {
 // decide whether to allow the server to see it.
 type CreateMessageResult struct {
 	Result
-	SamplingMessage
+	Role    Role    `json:"role"`
+	Content Content `json:"content"`
 	// The name of the model that generated the message.
 	Model string `json:"model"`
 	// The reason why sampling stopped, if known.
