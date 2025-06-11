@@ -53,7 +53,7 @@ type SessionWithClientInfo interface {
 type SessionWithRequests interface {
 	ClientSession
 	// SendRequest sends a request to the client and waits for a response
-	SendRequest(ctx context.Context, method string, params any) (*mcp.JSONRPCResponse, error)
+	SendRequest(ctx context.Context, method string, params any) (*JSONRPCResponse, error)
 }
 
 // SessionWithStreamableHTTPConfig extends ClientSession to support streamable HTTP transport configurations
