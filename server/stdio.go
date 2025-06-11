@@ -290,7 +290,7 @@ func (s *StdioServer) handleInput(ctx context.Context, stdin io.Reader, stdout i
 
 		// If it has an ID but no method, it's likely a response to our request
 		if baseMessage.ID != nil && baseMessage.Method == nil {
-			var response mcp.JSONRPCResponse
+			var response JSONRPCResponse
 			if err := json.Unmarshal([]byte(line), &response); err == nil {
 				stdioSessionInstance.handleResponse(&response)
 				continue
