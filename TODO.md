@@ -1,41 +1,41 @@
 # MCP Sampling Implementation TODO
 
-## Phase 1: Core Types and Protocol Support ⏳
-- [ ] 1.1 Add Sampling Types to `mcp/types.go`
-  - [ ] SamplingMessage struct
-  - [ ] ModelPreferences struct
-  - [ ] ModelHint struct
-  - [ ] ContextInclusion enum
-  - [ ] CreateMessageRequest struct
-  - [ ] CreateMessageParams struct
-  - [ ] CreateMessageResult struct
-- [ ] 1.2 Add Sampling Method Constants
-  - [ ] MethodSamplingCreateMessage constant
-- [ ] 1.3 Update Server and Client Capabilities
-  - [ ] Update ClientCapabilities with Sampling field
-  - [ ] Update ServerCapabilities with Sampling field
+## Phase 1: Core Types and Protocol Support ✅ COMPLETED
+- [x] 1.1 Add Sampling Types to `mcp/types.go`
+  - [x] SamplingMessage struct ✅
+  - [x] ModelPreferences struct ✅
+  - [x] ModelHint struct ✅
+  - [x] ContextInclusion enum ✅
+  - [x] CreateMessageRequest struct ✅
+  - [x] CreateMessageParams struct ✅
+  - [x] CreateMessageResult struct ✅
+- [x] 1.2 Add Sampling Method Constants
+  - [x] MethodSamplingCreateMessage constant ✅
+- [x] 1.3 Update Server and Client Capabilities
+  - [x] Update ClientCapabilities with Sampling field ✅
+  - [x] Update ServerCapabilities with Sampling field ✅
 
-## Phase 2: Server-Side Sampling Context API ⏳
-- [ ] 2.1 Create Sampling Context Interface
-  - [ ] Create `server/sampling.go` file
-  - [ ] SamplingContext interface
-  - [ ] SampleInput interface and implementations
-  - [ ] SampleResult struct with helper methods
-  - [ ] SampleOption functions
-  - [ ] Error definitions
-- [ ] 2.2 Implement Sampling Context
-  - [ ] samplingContext struct implementation
-  - [ ] Sample method implementation
-  - [ ] SampleWithParams method implementation
-  - [ ] Support methods (supportsClientSampling, sendSamplingRequest)
-- [ ] 2.3 Update Server to Support Sampling Context
-  - [ ] Add sampling capability to serverCapabilities
-  - [ ] Add WithSampling() ServerOption
-  - [ ] Add hasSamplingCapability() method
-  - [ ] Update WithContext to include sampling context
-  - [ ] Add SamplingContextFromContext helper
+## Phase 2: Server-Side Sampling Context API ✅ COMPLETED
+- [x] 2.1 Create Sampling Context Interface
+  - [x] Create `server/sampling.go` file ✅
+  - [x] SamplingContext interface ✅
+  - [x] SampleInput interface and implementations ✅
+  - [x] SampleResult struct with helper methods ✅
+  - [x] SampleOption functions ✅
+  - [x] Error definitions ✅
+- [x] 2.2 Implement Sampling Context
+  - [x] samplingContext struct implementation ✅
+  - [x] Sample method implementation ✅
+  - [x] SampleWithParams method implementation ✅
+  - [x] Support methods (supportsClientSampling, sendSamplingRequest) ✅
+- [x] 2.3 Update Server to Support Sampling Context
+  - [x] Add sampling capability to serverCapabilities ✅
+  - [x] Add WithSampling() ServerOption ✅ (needs cleanup - duplicates exist)
+  - [x] Add hasSamplingCapability() method ✅
+  - [x] Update WithContext to include sampling context ✅
+  - [x] Add SamplingContextFromContext helper ✅
 
-## Phase 3: Client-Side Sampling Handler Support
+## Phase 3: Client-Side Sampling Handler Support ⏳ IN PROGRESS
 - [ ] 3.1 Add Sampling Handler Interface to Client
   - [ ] Create `client/sampling.go` file
   - [ ] SamplingHandler interface
@@ -53,7 +53,7 @@
   - [ ] Modify `server/request_handler.go` for sampling method
   - [ ] Add handleSamplingCreateMessage to server
 
-## Phase 5: Transport Layer Updates (Complex)
+## Phase 5: Transport Layer Updates (Complex) ⚠️ CRITICAL
 - [ ] 5.1 Enable Server-to-Client Requests
   - [ ] Update SSE transport for bidirectional communication
   - [ ] Update other transports (stdio, etc.)
@@ -62,12 +62,12 @@
   - [ ] Update Client.Start method
   - [ ] Add handleIncomingRequest method
 
-## Phase 6: Helper Functions and Utilities
-- [ ] 6.1 Add Utility Functions to `mcp/utils.go`
-  - [ ] NewSamplingMessage helper
-  - [ ] NewCreateMessageRequest helper
-  - [ ] NewCreateMessageResult helper
-  - [ ] Parse helpers for sampling types
+## Phase 6: Helper Functions and Utilities ✅ COMPLETED
+- [x] 6.1 Add Utility Functions to `mcp/sampling_utils.go`
+  - [x] NewSamplingMessage helper ✅
+  - [x] NewCreateMessageRequest helper ✅
+  - [x] NewCreateMessageResult helper ✅
+  - [x] Parse helpers for sampling types ✅
 
 ## Phase 7: Documentation and Examples
 - [ ] 7.1 Add Usage Examples
@@ -83,11 +83,18 @@
 - [ ] Performance Tests for sampling latency
 
 ## Current Status
-- **Started**: Phase 1 - Adding core types and protocol support
-- **Next**: Complete Phase 1.1 by adding all sampling types to mcp/types.go
+- **Completed**: Phases 1, 2, and 6 - Core types, server-side API, and utilities
+- **In Progress**: Phase 3 - Client-side sampling handler support
+- **Next**: Complete Phase 3, then tackle Phase 5 (bidirectional communication)
+
+## Key Issues Found
+1. **Duplicate WithSampling functions** in server/server.go (lines 281-314) - needs cleanup
+2. **Missing client-side sampling support** - need to create client/sampling.go
+3. **Bidirectional communication not implemented** - sendSamplingRequest returns placeholder error
+4. **Transport layer updates needed** - no support for server-to-client requests yet
 
 ## Notes
-- Need to examine existing codebase structure first
-- Most complex part will be Phase 5 (bidirectional communication)
-- Focus on backward compatibility throughout
-- Follow existing code patterns and conventions
+- Core types and server API are well implemented
+- Main challenge is implementing bidirectional communication (server-to-client requests)
+- Current sendSamplingRequest function returns "bidirectional communication needed" error
+- Need to examine transport layer architecture to understand how to add server-to-client requests
