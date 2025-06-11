@@ -275,7 +275,19 @@ func WithToolCapabilities(listChanged bool) ServerOption {
 	}
 }
 
-func WithInstructions(instructions string) ServerOption {
+// WithLogging enables logging capabilities for the server
+func WithLogging() ServerOption {
+	return func(s *MCPServer) {
+		s.capabilities.logging = mcp.ToBoolPtr(true)
+	}
+}
+
+// WithSampling enables sampling capabilities for the server
+func WithSampling() ServerOption {
+	return func(s *MCPServer) {
+		s.capabilities.sampling = mcp.ToBoolPtr(true)
+	}
+}func WithInstructions(instructions string) ServerOption {
 	return func(s *MCPServer) {
 		s.instructions = instructions
 	}
