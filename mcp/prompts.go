@@ -77,6 +77,7 @@ type Role string
 const (
 	RoleUser      Role = "user"
 	RoleAssistant Role = "assistant"
+	RoleSystem    Role = "system"
 )
 
 // PromptMessage describes a message returned as part of a prompt.
