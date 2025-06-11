@@ -478,6 +478,8 @@ type ServerCapabilities struct {
 		// Whether this server supports notifications for changes to the tool list.
 		ListChanged bool `json:"listChanged,omitempty"`
 	} `json:"tools,omitempty"`
+	// Present if the server supports requesting sampling from clients
+	Sampling *struct{} `json:"sampling,omitempty"`
 }
 
 // Implementation describes the name and version of an MCP implementation.
