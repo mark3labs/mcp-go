@@ -126,6 +126,7 @@ func TestSamplingIntegration(t *testing.T) {
 
 	textContent, ok := mcp.AsTextContent(result.Content)
 	if !ok {
+		t.Logf("Tool result content type: %T", result.Content)
 		t.Fatal("Tool result is not text content")
 	}
 
