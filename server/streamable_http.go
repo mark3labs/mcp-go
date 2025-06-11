@@ -40,7 +40,9 @@ func WithEndpointPath(endpointPath string) StreamableHTTPOption {
 // to StatelessSessionIdManager.
 func WithStateLess(stateLess bool) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {
-		s.sessionIdManager = &StatelessSessionIdManager{}
+		if stateLess {
+			s.sessionIdManager = &StatelessSessionIdManager{}
+		}
 	}
 }
 
