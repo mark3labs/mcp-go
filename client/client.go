@@ -467,7 +467,7 @@ func (c *Client) handleSamplingRequest(ctx context.Context, req *mcp.CreateMessa
 }
 
 // handleIncomingRequest processes incoming requests from the server (for bidirectional communication)
-func (c *Client) handleIncomingRequest(ctx context.Context, request mcp.JSONRPCRequest) (any, error) {
+func (c *Client) handleIncomingRequest(ctx context.Context, request transport.JSONRPCRequest) (any, error) {
 	switch request.Method {
 	case string(mcp.MethodSamplingCreateMessage):
 		var samplingRequest mcp.CreateMessageRequest
