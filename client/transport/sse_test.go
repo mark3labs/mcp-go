@@ -408,9 +408,9 @@ func TestSSE(t *testing.T) {
 	t.Run("SSEEventWithoutEventField", func(t *testing.T) {
 		// Test that SSE events with only data field (no event field) are processed correctly
 		// This tests the fix for issue #369
-		
+
 		var messageReceived chan struct{}
-		
+
 		// Create a custom mock server that sends SSE events without event field
 		sseHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/event-stream")
@@ -449,7 +449,7 @@ func TestSSE(t *testing.T) {
 		messageHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusAccepted)
-			
+
 			// Signal that message was received
 			close(messageReceived)
 		})
