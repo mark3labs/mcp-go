@@ -287,7 +287,9 @@ func WithSampling() ServerOption {
 	return func(s *MCPServer) {
 		s.capabilities.sampling = mcp.ToBoolPtr(true)
 	}
-}func WithInstructions(instructions string) ServerOption {
+}
+
+func WithInstructions(instructions string) ServerOption {
 	return func(s *MCPServer) {
 		s.instructions = instructions
 	}
