@@ -9,8 +9,10 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -50,11 +52,18 @@ func WithStdioContextFunc(fn StdioContextFunc) StdioOption {
 }
 
 // stdioSession is a static client session, since stdio has only one client.
+// Enhanced to support bidirectional requests for sampling.
 type stdioSession struct {
 	notifications chan mcp.JSONRPCNotification
 	initialized   atomic.Bool
 	loggingLevel  atomic.Value
 	clientInfo    atomic.Value // stores session-specific client info
+	
+	// Bidirectional communication support
+	stdout        io.Writer
+	requestID     atomic.Int64
+	responses     map[string]chan *mcp.JSONRPCResponse
+	responsesMu   sync.RWMutex
 }
 
 func (s *stdioSession) SessionID() string {
@@ -100,10 +109,99 @@ func (s *stdioSession) GetLogLevel() mcp.LoggingLevel {
 	return level.(mcp.LoggingLevel)
 }
 
+// SendRequest implements SessionWithRequests interface for bidirectional communication
+func (s *stdioSession) SendRequest(ctx context.Context, method string, params any) (*mcp.JSONRPCResponse, error) {
+	if s.stdout == nil {
+		return nil, fmt.Errorf("stdout not available for sending requests")
+	}
+
+	// Generate unique request ID
+	id := s.requestID.Add(1)
+	requestID := mcp.NewRequestId(id)
+
+	// Create JSON-RPC request
+	request := struct {
+		JSONRPC string        `json:"jsonrpc"`
+		ID      mcp.RequestId `json:"id"`
+		Method  string        `json:"method"`
+		Params  any           `json:"params,omitempty"`
+	}{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		ID:      requestID,
+		Method:  method,
+		Params:  params,
+	}
+
+	// Marshal request
+	requestBytes, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	requestBytes = append(requestBytes, '\n')
+
+	// Create response channel
+	responseChan := make(chan *mcp.JSONRPCResponse, 1)
+	idKey := requestID.String()
+	
+	s.responsesMu.Lock()
+	if s.responses == nil {
+		s.responses = make(map[string]chan *mcp.JSONRPCResponse)
+	}
+	s.responses[idKey] = responseChan
+	s.responsesMu.Unlock()
+
+	// Cleanup function
+	cleanup := func() {
+		s.responsesMu.Lock()
+		delete(s.responses, idKey)
+		s.responsesMu.Unlock()
+	}
+
+	// Send request
+	if _, err := s.stdout.Write(requestBytes); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("failed to write request: %w", err)
+	}
+
+	// Wait for response with timeout
+	select {
+	case <-ctx.Done():
+		cleanup()
+		return nil, ctx.Err()
+	case response := <-responseChan:
+		return response, nil
+	case <-time.After(30 * time.Second):
+		cleanup()
+		return nil, fmt.Errorf("request timed out")
+	}
+}
+
+// handleResponse processes incoming responses to server-initiated requests
+func (s *stdioSession) handleResponse(response *mcp.JSONRPCResponse) {
+	if response.ID.IsNil() {
+		return // Not a response to our request
+	}
+
+	idKey := response.ID.String()
+	
+	s.responsesMu.RLock()
+	ch, exists := s.responses[idKey]
+	s.responsesMu.RUnlock()
+
+	if exists {
+		select {
+		case ch <- response:
+		default:
+			// Channel is full or closed, ignore
+		}
+	}
+}
+
 var (
 	_ ClientSession         = (*stdioSession)(nil)
 	_ SessionWithLogging    = (*stdioSession)(nil)
 	_ SessionWithClientInfo = (*stdioSession)(nil)
+	_ SessionWithRequests   = (*stdioSession)(nil)
 )
 
 var stdioSessionInstance = stdioSession{
@@ -143,8 +241,16 @@ func (s *StdioServer) handleNotifications(ctx context.Context, stdout io.Writer)
 	for {
 		select {
 		case notification := <-stdioSessionInstance.notifications:
-			if err := s.writeResponse(notification, stdout); err != nil {
-				s.errLogger.Printf("Error writing notification: %v", err)
+			notificationBytes, err := json.Marshal(notification)
+			if err != nil {
+				s.errLogger.Printf("Failed to marshal notification: %v", err)
+				continue
+			}
+			notificationBytes = append(notificationBytes, '\n')
+
+			if _, err := stdout.Write(notificationBytes); err != nil {
+				s.errLogger.Printf("Failed to write notification: %v", err)
+				return
 			}
 		case <-ctx.Done():
 			return
@@ -152,163 +258,106 @@ func (s *StdioServer) handleNotifications(ctx context.Context, stdout io.Writer)
 	}
 }
 
-// processInputStream continuously reads and processes messages from the input stream.
-// It handles EOF gracefully as a normal termination condition.
-// The function returns when either:
-// - The context is cancelled (returns context.Err())
-// - EOF is encountered (returns nil)
-// - An error occurs while reading or processing messages (returns the error)
-func (s *StdioServer) processInputStream(ctx context.Context, reader *bufio.Reader, stdout io.Writer) error {
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
+// handleInput processes incoming messages from stdin, handling both regular client requests
+// and responses to server-initiated requests (for bidirectional communication).
+func (s *StdioServer) handleInput(ctx context.Context, stdin io.Reader, stdout io.Writer) {
+	scanner := bufio.NewScanner(stdin)
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			return
+		default:
 		}
 
-		line, err := s.readNextLine(ctx, reader)
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		// Try to determine if this is a response to a server request or a client request
+		var baseMessage struct {
+			JSONRPC string         `json:"jsonrpc"`
+			ID      *mcp.RequestId `json:"id,omitempty"`
+			Method  *string        `json:"method,omitempty"`
+			Result  json.RawMessage `json:"result,omitempty"`
+			Error   json.RawMessage `json:"error,omitempty"`
+		}
+
+		if err := json.Unmarshal([]byte(line), &baseMessage); err != nil {
+			s.errLogger.Printf("Failed to parse message: %v", err)
+			continue
+		}
+
+		// If it has an ID but no method, it's likely a response to our request
+		if baseMessage.ID != nil && baseMessage.Method == nil {
+			var response mcp.JSONRPCResponse
+			if err := json.Unmarshal([]byte(line), &response); err == nil {
+				stdioSessionInstance.handleResponse(&response)
+				continue
+			}
+		}
+
+		// Otherwise, treat it as a regular client request
+		response := s.server.HandleMessage(ctx, json.RawMessage(line))
+		responseBytes, err := json.Marshal(response)
 		if err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			s.errLogger.Printf("Error reading input: %v", err)
-			return err
+			s.errLogger.Printf("Failed to marshal response: %v", err)
+			continue
 		}
+		responseBytes = append(responseBytes, '\n')
 
-		if err := s.processMessage(ctx, line, stdout); err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			s.errLogger.Printf("Error handling message: %v", err)
-			return err
+		if _, err := stdout.Write(responseBytes); err != nil {
+			s.errLogger.Printf("Failed to write response: %v", err)
+			return
 		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		s.errLogger.Printf("Error reading from stdin: %v", err)
 	}
 }
 
-// readNextLine reads a single line from the input reader in a context-aware manner.
-// It uses channels to make the read operation cancellable via context.
-// Returns the read line and any error encountered. If the context is cancelled,
-// returns an empty string and the context's error. EOF is returned when the input
-// stream is closed.
-func (s *StdioServer) readNextLine(ctx context.Context, reader *bufio.Reader) (string, error) {
-	type result struct {
-		line string
-		err  error
-	}
+// Serve starts the stdio server and processes messages until the context is cancelled
+// or a termination signal is received. It handles both incoming requests from the client
+// and outgoing notifications to the client.
+func (s *StdioServer) Serve(ctx context.Context, stdin io.Reader, stdout io.Writer) error {
+	// Set up stdout for the session to enable bidirectional communication
+	stdioSessionInstance.stdout = stdout
 
-	resultCh := make(chan result, 1)
-
-	go func() {
-		line, err := reader.ReadString('\n')
-		resultCh <- result{line: line, err: err}
-	}()
-
-	select {
-	case <-ctx.Done():
-		return "", nil
-	case res := <-resultCh:
-		return res.line, res.err
-	}
-}
-
-// Listen starts listening for JSON-RPC messages on the provided input and writes responses to the provided output.
-// It runs until the context is cancelled or an error occurs.
-// Returns an error if there are issues with reading input or writing output.
-func (s *StdioServer) Listen(
-	ctx context.Context,
-	stdin io.Reader,
-	stdout io.Writer,
-) error {
-	// Set a static client context since stdio only has one client
-	if err := s.server.RegisterSession(ctx, &stdioSessionInstance); err != nil {
-		return fmt.Errorf("register session: %w", err)
-	}
-	defer s.server.UnregisterSession(ctx, stdioSessionInstance.SessionID())
-	ctx = s.server.WithContext(ctx, &stdioSessionInstance)
-
-	// Add in any custom context.
+	// Register the session with the server
+	serverCtx := s.server.WithContext(ctx, &stdioSessionInstance)
 	if s.contextFunc != nil {
-		ctx = s.contextFunc(ctx)
+		serverCtx = s.contextFunc(serverCtx)
 	}
 
-	reader := bufio.NewReader(stdin)
+	if err := s.server.RegisterSession(serverCtx, &stdioSessionInstance); err != nil {
+		return fmt.Errorf("failed to register session: %w", err)
+	}
+	defer s.server.UnregisterSession(serverCtx, stdioSessionInstance.SessionID())
 
 	// Start notification handler
-	go s.handleNotifications(ctx, stdout)
-	return s.processInputStream(ctx, reader, stdout)
-}
+	go s.handleNotifications(serverCtx, stdout)
 
-// processMessage handles a single JSON-RPC message and writes the response.
-// It parses the message, processes it through the wrapped MCPServer, and writes any response.
-// Returns an error if there are issues with message processing or response writing.
-func (s *StdioServer) processMessage(
-	ctx context.Context,
-	line string,
-	writer io.Writer,
-) error {
-	// If line is empty, likely due to ctx cancellation
-	if len(line) == 0 {
-		return nil
-	}
-
-	// Parse the message as raw JSON
-	var rawMessage json.RawMessage
-	if err := json.Unmarshal([]byte(line), &rawMessage); err != nil {
-		response := createErrorResponse(nil, mcp.PARSE_ERROR, "Parse error")
-		return s.writeResponse(response, writer)
-	}
-
-	// Handle the message using the wrapped server
-	response := s.server.HandleMessage(ctx, rawMessage)
-
-	// Only write response if there is one (not for notifications)
-	if response != nil {
-		if err := s.writeResponse(response, writer); err != nil {
-			return fmt.Errorf("failed to write response: %w", err)
-		}
-	}
+	// Handle input messages
+	s.handleInput(serverCtx, stdin, stdout)
 
 	return nil
 }
 
-// writeResponse marshals and writes a JSON-RPC response message followed by a newline.
-// Returns an error if marshaling or writing fails.
-func (s *StdioServer) writeResponse(
-	response mcp.JSONRPCMessage,
-	writer io.Writer,
-) error {
-	responseBytes, err := json.Marshal(response)
-	if err != nil {
-		return err
+// ServeStdio is a convenience function that creates a stdio server and serves it
+// using os.Stdin and os.Stdout. It blocks until a termination signal is received.
+func ServeStdio(server *MCPServer, options ...StdioOption) {
+	stdioServer := NewStdioServer(server)
+	for _, opt := range options {
+		opt(stdioServer)
 	}
 
-	// Write response followed by newline
-	if _, err := fmt.Fprintf(writer, "%s\n", responseBytes); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// ServeStdio is a convenience function that creates and starts a StdioServer with os.Stdin and os.Stdout.
-// It sets up signal handling for graceful shutdown on SIGTERM and SIGINT.
-// Returns an error if the server encounters any issues during operation.
-func ServeStdio(server *MCPServer, opts ...StdioOption) error {
-	s := NewStdioServer(server)
-
-	for _, opt := range opts {
-		opt(s)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
+	// Create context that cancels on interrupt signals
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// Set up signal handling
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
-
-	go func() {
-		<-sigChan
-		cancel()
-	}()
-
-	return s.Listen(ctx, os.Stdin, os.Stdout)
+	if err := stdioServer.Serve(ctx, os.Stdin, os.Stdout); err != nil {
+		stdioServer.errLogger.Printf("Server error: %v", err)
+		os.Exit(1)
+	}
 }
