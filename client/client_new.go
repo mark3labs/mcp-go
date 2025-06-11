@@ -54,3 +54,29 @@ func NewClient(transport transport.Interface, options ...ClientOption) *Client {
 	return client
 }
 
+// Start initiates the connection to the server.
+// Must be called before using the client.
+func (c *Client) Start(ctx context.Context) error {
+	if c.transport == nil {
+		return fmt.Errorf("transport is nil")
+	}
+	err := c.transport.Start(ctx)
+	if err != nil {
+		return err
+	}
+
+	c.transport.SetNotificationHandler(func(notification mcp.JSONRPCNotification) {
+		c.notifyMu.RLock()
+		defer c.notifyMu.RUnlock()
+		for _, handler := range c.notifications {
+			handler(notification)
+		}
+	})
+
+	// Set up bidirectional request handler for sampling if handler is available
+	if c.samplingHandler != nil {
+		c.transport.SetRequestHandler(c.handleIncomingRequest)
+	}
+
+	return nil
+}
