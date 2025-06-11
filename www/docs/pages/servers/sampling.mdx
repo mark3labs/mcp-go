@@ -1,0 +1,250 @@
+# Sampling
+
+MCP sampling enables sophisticated agentic workflows where servers can request LLM completions from clients. This allows servers to leverage AI capabilities while maintaining security and user control.
+
+## Overview
+
+MCP sampling allows servers to request LLM assistance for various tasks while the client maintains full discretion over which model to use and can implement human-in-the-loop approval processes.
+
+## Enabling Sampling
+
+To enable sampling capability in your server, use the `WithSampling()` option:
+
+```go
+package main
+
+import (
+    "context"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func main() {
+    s := server.NewMCPServer(
+        "sampling-server",
+        "1.0.0",
+        server.WithSampling(), // Enable sampling capability
+    )
+    
+    // Add your tools that use sampling
+    s.AddTool(analyzeTextTool())
+    
+    // Start server
+    if err := s.Serve(context.Background()); err != nil {
+        panic(err)
+    }
+}
+```
+
+## Using Sampling in Tools
+
+Access the sampling context within your tool handlers:
+
+```go
+func analyzeTextTool() *mcp.Tool {
+    return &mcp.Tool{
+        Name:        "analyze_text",
+        Description: "Analyzes text using LLM sampling",
+        InputSchema: map[string]interface{}{
+            "type": "object",
+            "properties": map[string]interface{}{
+                "text": map[string]interface{}{
+                    "type":        "string",
+                    "description": "Text to analyze",
+                },
+            },
+            "required": []string{"text"},
+        },
+        Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            // Get sampling context
+            samplingCtx := server.SamplingContextFromContext(ctx)
+            if samplingCtx == nil {
+                return nil, fmt.Errorf("sampling not available")
+            }
+            
+            // Extract text from arguments
+            text := request.Params.Arguments["text"].(string)
+            
+            // Create sampling request
+            result, err := samplingCtx.Sample(ctx, mcp.SamplingRequest{
+                Messages: []mcp.SamplingMessage{
+                    {
+                        Role: "user",
+                        Content: mcp.TextContent{
+                            Type: "text",
+                            Text: fmt.Sprintf("Analyze the sentiment of this text: %s", text),
+                        },
+                    },
+                },
+                SystemPrompt:    "You are a helpful text analysis assistant.",
+                Temperature:     0.3,
+                MaxTokens:       200,
+                ModelPreferences: []string{"gpt-4", "claude-3"},
+            })
+            
+            if err != nil {
+                return nil, fmt.Errorf("sampling failed: %w", err)
+            }
+            
+            return &mcp.CallToolResult{
+                Content: []interface{}{
+                    mcp.TextContent{
+                        Type: "text",
+                        Text: fmt.Sprintf("Analysis: %s", result.Content.Text),
+                    },
+                },
+            }, nil
+        },
+    }
+}
+```
+
+## Sampling Options
+
+The `SamplingRequest` supports various options:
+
+### Basic Options
+
+- **Messages**: Array of conversation messages
+- **SystemPrompt**: System prompt to guide the LLM
+- **Temperature**: Controls randomness (0.0 to 1.0)
+- **MaxTokens**: Maximum tokens in response
+- **ModelPreferences**: Preferred models in order
+
+### Advanced Options
+
+```go
+result, err := samplingCtx.Sample(ctx, mcp.SamplingRequest{
+    Messages: messages,
+    SystemPrompt: "You are an expert assistant.",
+    Temperature: 0.7,
+    MaxTokens: 500,
+    ModelPreferences: []string{"gpt-4", "claude-3-sonnet"},
+    StopSequences: []string{"\n\n", "END"},
+    TopP: 0.9,
+    TopK: 40,
+})
+```
+
+## Message Types
+
+Support different message types in conversations:
+
+```go
+messages := []mcp.SamplingMessage{
+    {
+        Role: "system",
+        Content: mcp.TextContent{
+            Type: "text",
+            Text: "You are an environmental science expert.",
+        },
+    },
+    {
+        Role: "user", 
+        Content: mcp.TextContent{
+            Type: "text",
+            Text: "What are the benefits of renewable energy?",
+        },
+    },
+}
+```
+
+## Error Handling
+
+Always handle sampling errors gracefully:
+
+```go
+result, err := samplingCtx.Sample(ctx, request)
+if err != nil {
+    // Check if sampling is unavailable
+    if errors.Is(err, mcp.ErrSamplingUnavailable) {
+        return &mcp.CallToolResult{
+            Content: []interface{}{
+                mcp.TextContent{
+                    Type: "text", 
+                    Text: "LLM assistance not available, using fallback response",
+                },
+            },
+        }, nil
+    }
+    
+    // Handle other errors
+    return nil, fmt.Errorf("sampling failed: %w", err)
+}
+```
+
+## Security Considerations
+
+When implementing sampling in servers:
+
+1. **Validate Input**: Always validate and sanitize text before sending to LLM
+2. **Handle Failures**: Implement fallback behavior when sampling fails
+3. **Respect Limits**: Don't exceed reasonable token limits or request rates
+4. **Sensitive Data**: Avoid including sensitive information in sampling requests
+
+## Example Use Cases
+
+### Code Analysis
+```go
+// Analyze code for potential issues
+result, err := samplingCtx.Sample(ctx, mcp.SamplingRequest{
+    Messages: []mcp.SamplingMessage{
+        {
+            Role: "user",
+            Content: mcp.TextContent{
+                Type: "text",
+                Text: fmt.Sprintf("Review this code for potential issues:\n\n%s", code),
+            },
+        },
+    },
+    SystemPrompt: "You are a code review expert. Identify potential bugs, security issues, and improvements.",
+    Temperature: 0.2,
+    MaxTokens: 400,
+})
+```
+
+### Document Summarization
+```go
+// Summarize long documents
+result, err := samplingCtx.Sample(ctx, mcp.SamplingRequest{
+    Messages: []mcp.SamplingMessage{
+        {
+            Role: "user",
+            Content: mcp.TextContent{
+                Type: "text", 
+                Text: fmt.Sprintf("Summarize this document in 3 key points:\n\n%s", document),
+            },
+        },
+    },
+    SystemPrompt: "You are a document summarization expert. Provide clear, concise summaries.",
+    Temperature: 0.4,
+    MaxTokens: 300,
+})
+```
+
+### Natural Language Queries
+```go
+// Convert natural language to structured queries
+result, err := samplingCtx.Sample(ctx, mcp.SamplingRequest{
+    Messages: []mcp.SamplingMessage{
+        {
+            Role: "user",
+            Content: mcp.TextContent{
+                Type: "text",
+                Text: fmt.Sprintf("Convert this natural language query to SQL: %s", query),
+            },
+        },
+    },
+    SystemPrompt: "You are a SQL expert. Convert natural language to valid SQL queries.",
+    Temperature: 0.1,
+    MaxTokens: 200,
+})
+```
+
+## Complete Example
+
+See the [sampling example](https://github.com/mark3labs/mcp-go/tree/main/examples/sampling) for a complete working implementation demonstrating:
+
+- Server with multiple sampling-enabled tools
+- Different sampling patterns and use cases
+- Error handling and fallback strategies
+- Integration with various transport types

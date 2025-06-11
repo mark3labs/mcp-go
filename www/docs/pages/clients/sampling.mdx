@@ -1,0 +1,484 @@
+# Sampling
+
+MCP sampling allows clients to handle LLM completion requests from servers, enabling sophisticated agentic workflows while maintaining full control over model selection and user approval processes.
+
+## Overview
+
+When servers need LLM assistance, they can send sampling requests to clients. The client has complete discretion over:
+
+- Which model to use for the request
+- Whether to approve or reject the request
+- How to process and respond to the request
+- Implementation of human-in-the-loop workflows
+
+## Enabling Sampling
+
+To enable sampling support in your client, provide a sampling handler:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/mcp"
+)
+
+func main() {
+    // Create client with sampling handler
+    c, err := client.NewStdioMCPClient(
+        context.Background(),
+        client.StdioMCPClientOptions{
+            Command: "go",
+            Args:    []string{"run", "server/main.go"},
+        },
+        client.WithSamplingHandler(handleSamplingRequest), // Enable sampling
+    )
+    if err != nil {
+        panic(err)
+    }
+    defer c.Close()
+    
+    // Use client normally
+    // Sampling requests will be handled automatically
+}
+```
+
+## Implementing a Sampling Handler
+
+Create a function that implements the `SamplingHandler` interface:
+
+```go
+func handleSamplingRequest(ctx context.Context, request mcp.SamplingRequest) (*mcp.SamplingResult, error) {
+    // Log the incoming request
+    fmt.Printf("Received sampling request with %d messages\n", len(request.Messages))
+    if request.SystemPrompt != "" {
+        fmt.Printf("System prompt: %s\n", request.SystemPrompt)
+    }
+    fmt.Printf("Temperature: %.2f\n", request.Temperature)
+    fmt.Printf("Max tokens: %d\n", request.MaxTokens)
+    
+    // Print conversation
+    fmt.Println("Conversation:")
+    for _, msg := range request.Messages {
+        fmt.Printf("%s: %s\n", msg.Role, msg.Content.Text)
+    }
+    
+    // Simulate LLM response (replace with actual LLM API call)
+    response := simulateLLMResponse(request)
+    
+    return &mcp.SamplingResult{
+        Content: mcp.TextContent{
+            Type: "text",
+            Text: response,
+        },
+        Model:       "simulated-llm-v1",
+        StopReason:  "end_turn",
+        Usage: mcp.SamplingUsage{
+            InputTokens:  countTokens(request),
+            OutputTokens: countTokens(response),
+        },
+    }, nil
+}
+```
+
+## Real LLM Integration
+
+Replace the simulation with actual LLM API calls:
+
+### OpenAI Integration
+
+```go
+import (
+    "github.com/sashabaranov/go-openai"
+)
+
+func handleSamplingWithOpenAI(ctx context.Context, request mcp.SamplingRequest) (*mcp.SamplingResult, error) {
+    client := openai.NewClient(os.Getenv("OPENAI_API_KEY"))
+    
+    // Convert MCP messages to OpenAI format
+    messages := make([]openai.ChatCompletionMessage, 0, len(request.Messages))
+    
+    // Add system prompt if provided
+    if request.SystemPrompt != "" {
+        messages = append(messages, openai.ChatCompletionMessage{
+            Role:    openai.ChatMessageRoleSystem,
+            Content: request.SystemPrompt,
+        })
+    }
+    
+    // Add conversation messages
+    for _, msg := range request.Messages {
+        role := openai.ChatMessageRoleUser
+        if msg.Role == "assistant" {
+            role = openai.ChatMessageRoleAssistant
+        }
+        
+        messages = append(messages, openai.ChatCompletionMessage{
+            Role:    role,
+            Content: msg.Content.Text,
+        })
+    }
+    
+    // Determine model (use preference or default)
+    model := "gpt-3.5-turbo"
+    for _, pref := range request.ModelPreferences {
+        if pref == "gpt-4" || pref == "gpt-3.5-turbo" {
+            model = pref
+            break
+        }
+    }
+    
+    // Make API request
+    resp, err := client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+        Model:       model,
+        Messages:    messages,
+        Temperature: float32(request.Temperature),
+        MaxTokens:   request.MaxTokens,
+        Stop:        request.StopSequences,
+        TopP:        float32(request.TopP),
+    })
+    
+    if err != nil {
+        return nil, fmt.Errorf("OpenAI API error: %w", err)
+    }
+    
+    if len(resp.Choices) == 0 {
+        return nil, fmt.Errorf("no response from OpenAI")
+    }
+    
+    choice := resp.Choices[0]
+    
+    return &mcp.SamplingResult{
+        Content: mcp.TextContent{
+            Type: "text",
+            Text: choice.Message.Content,
+        },
+        Model:      resp.Model,
+        StopReason: string(choice.FinishReason),
+        Usage: mcp.SamplingUsage{
+            InputTokens:  resp.Usage.PromptTokens,
+            OutputTokens: resp.Usage.CompletionTokens,
+        },
+    }, nil
+}
+```
+
+### Anthropic Integration
+
+```go
+import (
+    "github.com/anthropics/anthropic-sdk-go"
+)
+
+func handleSamplingWithAnthropic(ctx context.Context, request mcp.SamplingRequest) (*mcp.SamplingResult, error) {
+    client := anthropic.NewClient(
+        option.WithAPIKey(os.Getenv("ANTHROPIC_API_KEY")),
+    )
+    
+    // Convert messages to Anthropic format
+    messages := make([]anthropic.MessageParam, 0, len(request.Messages))
+    
+    for _, msg := range request.Messages {
+        role := anthropic.MessageParamRoleUser
+        if msg.Role == "assistant" {
+            role = anthropic.MessageParamRoleAssistant
+        }
+        
+        messages = append(messages, anthropic.MessageParam{
+            Role: role,
+            Content: anthropic.F(msg.Content.Text),
+        })
+    }
+    
+    // Determine model
+    model := anthropic.ModelClaude3Haiku20240307
+    for _, pref := range request.ModelPreferences {
+        if pref == "claude-3-sonnet" {
+            model = anthropic.ModelClaude3Sonnet20240229
+            break
+        } else if pref == "claude-3-opus" {
+            model = anthropic.ModelClaude3Opus20240229
+            break
+        }
+    }
+    
+    // Make API request
+    resp, err := client.Messages.New(ctx, anthropic.MessageNewParams{
+        Model:       anthropic.F(model),
+        Messages:    anthropic.F(messages),
+        System:      anthropic.F(request.SystemPrompt),
+        Temperature: anthropic.F(request.Temperature),
+        MaxTokens:   anthropic.F(request.MaxTokens),
+        StopSequences: anthropic.F(request.StopSequences),
+        TopP:        anthropic.F(request.TopP),
+        TopK:        anthropic.F(request.TopK),
+    })
+    
+    if err != nil {
+        return nil, fmt.Errorf("Anthropic API error: %w", err)
+    }
+    
+    if len(resp.Content) == 0 {
+        return nil, fmt.Errorf("no response from Anthropic")
+    }
+    
+    return &mcp.SamplingResult{
+        Content: mcp.TextContent{
+            Type: "text",
+            Text: resp.Content[0].Text,
+        },
+        Model:      string(resp.Model),
+        StopReason: string(resp.StopReason),
+        Usage: mcp.SamplingUsage{
+            InputTokens:  resp.Usage.InputTokens,
+            OutputTokens: resp.Usage.OutputTokens,
+        },
+    }, nil
+}
+```
+
+## Human-in-the-Loop Approval
+
+Implement user approval for sampling requests:
+
+```go
+func handleSamplingWithApproval(ctx context.Context, request mcp.SamplingRequest) (*mcp.SamplingResult, error) {
+    // Show request details to user
+    fmt.Println("\n=== SAMPLING REQUEST ===")
+    fmt.Printf("System: %s\n", request.SystemPrompt)
+    fmt.Printf("Temperature: %.2f, Max Tokens: %d\n", request.Temperature, request.MaxTokens)
+    fmt.Println("Messages:")
+    for _, msg := range request.Messages {
+        fmt.Printf("  %s: %s\n", msg.Role, msg.Content.Text)
+    }
+    
+    // Ask for user approval
+    fmt.Print("\nApprove this sampling request? (y/n): ")
+    var response string
+    fmt.Scanln(&response)
+    
+    if response != "y" && response != "yes" {
+        return nil, fmt.Errorf("sampling request rejected by user")
+    }
+    
+    // Proceed with approved request
+    return callActualLLM(ctx, request)
+}
+```
+
+## Content Filtering and Safety
+
+Implement safety measures:
+
+```go
+func handleSamplingWithSafety(ctx context.Context, request mcp.SamplingRequest) (*mcp.SamplingResult, error) {
+    // Check for sensitive content
+    if containsSensitiveContent(request) {
+        return nil, fmt.Errorf("request contains sensitive content")
+    }
+    
+    // Validate request parameters
+    if request.MaxTokens > 4000 {
+        return nil, fmt.Errorf("max tokens too high: %d", request.MaxTokens)
+    }
+    
+    if request.Temperature > 1.0 {
+        return nil, fmt.Errorf("temperature too high: %.2f", request.Temperature)
+    }
+    
+    // Process request
+    result, err := callLLM(ctx, request)
+    if err != nil {
+        return nil, err
+    }
+    
+    // Filter response content
+    if containsInappropriateContent(result.Content.Text) {
+        return nil, fmt.Errorf("response contains inappropriate content")
+    }
+    
+    return result, nil
+}
+
+func containsSensitiveContent(request mcp.SamplingRequest) bool {
+    sensitiveKeywords := []string{"password", "api_key", "secret", "token"}
+    
+    // Check system prompt
+    for _, keyword := range sensitiveKeywords {
+        if strings.Contains(strings.ToLower(request.SystemPrompt), keyword) {
+            return true
+        }
+    }
+    
+    // Check messages
+    for _, msg := range request.Messages {
+        for _, keyword := range sensitiveKeywords {
+            if strings.Contains(strings.ToLower(msg.Content.Text), keyword) {
+                return true
+            }
+        }
+    }
+    
+    return false
+}
+```
+
+## Error Handling
+
+Handle various error scenarios:
+
+```go
+func robustSamplingHandler(ctx context.Context, request mcp.SamplingRequest) (*mcp.SamplingResult, error) {
+    // Validate request
+    if len(request.Messages) == 0 {
+        return nil, fmt.Errorf("no messages in sampling request")
+    }
+    
+    // Check context cancellation
+    select {
+    case <-ctx.Done():
+        return nil, ctx.Err()
+    default:
+    }
+    
+    // Try primary LLM
+    result, err := callPrimaryLLM(ctx, request)
+    if err == nil {
+        return result, nil
+    }
+    
+    // Log error and try fallback
+    fmt.Printf("Primary LLM failed: %v, trying fallback\n", err)
+    
+    result, err = callFallbackLLM(ctx, request)
+    if err == nil {
+        return result, nil
+    }
+    
+    // Both failed
+    return nil, fmt.Errorf("all LLM providers failed: %w", err)
+}
+```
+
+## Rate Limiting and Quotas
+
+Implement usage controls:
+
+```go
+type SamplingLimiter struct {
+    requestCount int
+    tokenCount   int
+    lastReset    time.Time
+    maxRequests  int
+    maxTokens    int
+    resetPeriod  time.Duration
+    mu           sync.Mutex
+}
+
+func (l *SamplingLimiter) checkLimits(request mcp.SamplingRequest) error {
+    l.mu.Lock()
+    defer l.mu.Unlock()
+    
+    // Reset counters if period elapsed
+    if time.Since(l.lastReset) > l.resetPeriod {
+        l.requestCount = 0
+        l.tokenCount = 0
+        l.lastReset = time.Now()
+    }
+    
+    // Check request limit
+    if l.requestCount >= l.maxRequests {
+        return fmt.Errorf("request limit exceeded: %d/%d", l.requestCount, l.maxRequests)
+    }
+    
+    // Estimate tokens and check limit
+    estimatedTokens := estimateTokens(request)
+    if l.tokenCount+estimatedTokens > l.maxTokens {
+        return fmt.Errorf("token limit would be exceeded: %d+%d > %d", 
+            l.tokenCount, estimatedTokens, l.maxTokens)
+    }
+    
+    // Update counters
+    l.requestCount++
+    l.tokenCount += estimatedTokens
+    
+    return nil
+}
+
+func handleSamplingWithLimits(ctx context.Context, request mcp.SamplingRequest) (*mcp.SamplingResult, error) {
+    // Check rate limits
+    if err := limiter.checkLimits(request); err != nil {
+        return nil, err
+    }
+    
+    // Process request
+    return callLLM(ctx, request)
+}
+```
+
+## Logging and Monitoring
+
+Track sampling usage:
+
+```go
+type SamplingMetrics struct {
+    TotalRequests    int64
+    SuccessfulCalls  int64
+    FailedCalls      int64
+    TotalTokensUsed  int64
+    AverageLatency   time.Duration
+    mu               sync.RWMutex
+}
+
+func (m *SamplingMetrics) recordRequest(duration time.Duration, tokens int64, success bool) {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+    
+    m.TotalRequests++
+    m.TotalTokensUsed += tokens
+    
+    if success {
+        m.SuccessfulCalls++
+    } else {
+        m.FailedCalls++
+    }
+    
+    // Update average latency
+    m.AverageLatency = (m.AverageLatency*time.Duration(m.TotalRequests-1) + duration) / time.Duration(m.TotalRequests)
+}
+
+func handleSamplingWithMetrics(ctx context.Context, request mcp.SamplingRequest) (*mcp.SamplingResult, error) {
+    start := time.Now()
+    
+    result, err := callLLM(ctx, request)
+    
+    duration := time.Since(start)
+    tokens := int64(0)
+    success := err == nil
+    
+    if result != nil {
+        tokens = int64(result.Usage.InputTokens + result.Usage.OutputTokens)
+    }
+    
+    metrics.recordRequest(duration, tokens, success)
+    
+    // Log request
+    fmt.Printf("Sampling request: duration=%v, tokens=%d, success=%v\n", 
+        duration, tokens, success)
+    
+    return result, err
+}
+```
+
+## Complete Example
+
+See the [sampling example](https://github.com/mark3labs/mcp-go/tree/main/examples/sampling) for a complete working implementation demonstrating:
+
+- Client with sampling handler
+- Integration with multiple LLM providers
+- Human-in-the-loop approval workflows
+- Content filtering and safety measures
+- Rate limiting and usage tracking
+- Comprehensive error handling

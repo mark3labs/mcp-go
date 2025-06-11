@@ -47,6 +47,10 @@ export default defineConfig({
           link: '/servers/prompts',
         },
         {
+          text: 'Sampling',
+          link: '/servers/sampling',
+        },
+        {
           text: 'Advanced Features',
           link: '/servers/advanced',
         },
@@ -93,6 +97,10 @@ export default defineConfig({
         {
           text: 'Client Operations',
           link: '/clients/operations',
+        },
+        {
+          text: 'Sampling',
+          link: '/clients/sampling',
         },
         {
           text: 'Client Transports',
