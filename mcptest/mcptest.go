@@ -128,7 +128,7 @@ func (s *Server) Start(ctx context.Context) error {
 		stdioServer := server.NewStdioServer(mcpServer)
 		stdioServer.SetErrorLogger(logger)
 
-		if err := stdioServer.Listen(ctx, s.serverReader, s.serverWriter); err != nil {
+		if err := stdioServer.Serve(ctx, s.serverReader, s.serverWriter); err != nil {
 			logger.Println("StdioServer.Listen failed:", err)
 		}
 	}()
