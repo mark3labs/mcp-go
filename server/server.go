@@ -275,49 +275,6 @@ func WithToolCapabilities(listChanged bool) ServerOption {
 	}
 }
 
-// WithLogging enables logging capabilities for the server
-func WithLogging() ServerOption {
-
-// WithSampling enables sampling capabilities for the server
-func WithSampling() ServerOption {
-	return func(s *MCPServer) {
-		s.capabilities.sampling = mcp.ToBoolPtr(true)
-	}
-}
-	return func(s *MCPServer) {
-
-// WithSampling enables sampling capabilities for the server
-func WithSampling() ServerOption {
-	return func(s *MCPServer) {
-		s.capabilities.sampling = mcp.ToBoolPtr(true)
-	}
-}
-		s.capabilities.logging = mcp.ToBoolPtr(true)
-
-// WithSampling enables sampling capabilities for the server
-func WithSampling() ServerOption {
-	return func(s *MCPServer) {
-		s.capabilities.sampling = mcp.ToBoolPtr(true)
-	}
-}
-	}
-
-// WithSampling enables sampling capabilities for the server
-func WithSampling() ServerOption {
-	return func(s *MCPServer) {
-		s.capabilities.sampling = mcp.ToBoolPtr(true)
-	}
-}
-}
-
-// WithSampling enables sampling capabilities for the server
-func WithSampling() ServerOption {
-	return func(s *MCPServer) {
-		s.capabilities.sampling = mcp.ToBoolPtr(true)
-	}
-}
-
-// WithInstructions sets the server instructions for the client returned in the initialize response
 func WithInstructions(instructions string) ServerOption {
 	return func(s *MCPServer) {
 		s.instructions = instructions
