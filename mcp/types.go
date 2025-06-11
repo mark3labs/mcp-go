@@ -806,7 +806,7 @@ type CreateMessageResult struct {
 	// The name of the model that generated the message.
 	Model string `json:"model"`
 	// The reason why sampling stopped, if known.
-	StopReason string `json:"stopReason,omitempty"`
+	StopReason *string `json:"stopReason,omitempty"`
 }
 
 // SamplingMessage describes a message issued to or received from an LLM API.
