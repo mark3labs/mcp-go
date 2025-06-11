@@ -1,4 +1,8 @@
 {
   "workdir": "/workdir",
-  "base_image": "ubuntu:24.04"
+  "base_image": "golang:1.21",
+  "setup_commands": [
+    "apt-get update \u0026\u0026 apt-get install -y git vim curl",
+    "go version"
+  ]
 }
