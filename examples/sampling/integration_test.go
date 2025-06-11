@@ -59,12 +59,12 @@ func TestSamplingIntegration(t *testing.T) {
 		inProcessTransport,
 		client.WithSamplingHandler(client.SamplingHandlerFunc(func(ctx context.Context, req *mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
 			// Simple echo handler for testing
-			if len(req.Params.Messages) == 0 {
+			if len(req.Messages) == 0 {
 				return nil, fmt.Errorf("no messages in request")
 			}
 			
 			// Extract the text from the first message
-			firstMessage := req.Params.Messages[0]
+			firstMessage := req.Messages[0]
 			textContent, ok := mcp.AsTextContent(firstMessage.Content)
 			if !ok {
 				return nil, fmt.Errorf("first message is not text content")
