@@ -13,7 +13,7 @@ import (
 func main() {
 	// Create a client with sampling handler
 	mcpClient, err := client.NewStdioMCPClient(
-		"go", []string{"run", "../server/main.go"}, "",
+		"go", nil, "run", "../server/main.go",
 	)
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
@@ -154,7 +154,7 @@ func handleSampling(ctx context.Context, req *mcp.CreateMessageRequest) (*mcp.Cr
 	log.Printf("Conversation: %s", conversationText.String())
 
 	// Simulate LLM processing (in a real implementation, this would call an actual LLM)
-	response := simulateLLMResponse(conversationText.String(), req)
+	response := simulateLLMResponse(conversationText.String())
 
 	log.Printf("Generated response: %s", response)
 
@@ -167,7 +167,7 @@ func handleSampling(ctx context.Context, req *mcp.CreateMessageRequest) (*mcp.Cr
 }
 
 // simulateLLMResponse simulates an LLM response based on the input
-func simulateLLMResponse(conversation string, req *mcp.CreateMessageRequest) string {
+func simulateLLMResponse(conversation string) string {
 	// Simple rule-based responses for demonstration
 	lowerConv := strings.ToLower(conversation)
 

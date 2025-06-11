@@ -336,7 +336,7 @@ func (c *Stdio) sendResponse(response any) {
 	}
 	responseBytes = append(responseBytes, '\n')
 
-	c.stdin.Write(responseBytes)
+	_, _ = c.stdin.Write(responseBytes)
 }
 
 // SendRequest sends a JSON-RPC request to the server and waits for a response.

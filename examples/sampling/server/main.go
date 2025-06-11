@@ -164,5 +164,7 @@ func main() {
 	log.Println("  - advanced_sampling: Advanced sampling with custom parameters")
 	log.Println()
 
-	server.ServeStdio(mcpServer)
+	if err := server.ServeStdio(mcpServer); err != nil {
+		log.Fatalf("Server error: %v", err)
+	}
 }
