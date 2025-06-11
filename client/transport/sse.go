@@ -294,6 +294,13 @@ func (c *SSE) SetNotificationHandler(handler func(notification mcp.JSONRPCNotifi
 	c.onNotification = handler
 }
 
+// SetRequestHandler sets the handler for incoming requests from the server.
+// Note: SSE transport does not currently support bidirectional requests.
+func (c *SSE) SetRequestHandler(handler RequestHandler) {
+	// SSE transport does not support server-to-client requests yet
+	// This is a placeholder for interface compatibility
+}
+
 // SendRequest sends a JSON-RPC request to the server and waits for a response.
 // Returns the raw JSON response message or an error if the request fails.
 func (c *SSE) SendRequest(
