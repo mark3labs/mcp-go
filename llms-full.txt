@@ -301,7 +301,7 @@ MCP-Go is designed to make building MCP servers in Go fast, simple, and complete
 * **Minimal boilerplate**: Get started with just a few lines of code
 * **Full MCP spec support**: Tools, resources, prompts, and all transport methods
 * **Type safety**: Leverage Go's type system for robust MCP servers
-* **Multiple transports**: Stdio, HTTP, Server-Sent Events and In-Process support
+* **Multiple transports**: Stdio, StreamableHTTP, Server-Sent Events and In-Process support
 
 #### Installation
 
@@ -433,7 +433,7 @@ s := server.NewMCPServer(
 MCP-Go supports multiple transport methods:
 
 * **Stdio** (most common): `server.ServeStdio(s)`
-* **HTTP**: `server.ServeHTTP(s, ":8080")`
+* **StreamableHTTP**: `server.NewStreamableHTTPServer(s).Start(":8080")`
 * **Server-Sent Events**: `server.ServeSSE(s, ":8080")`
 * **In-Process**: `client.NewInProcessClient(server)`
 
@@ -616,9 +616,9 @@ func main() {
 }
 ```
 
-#### HTTP Client Example
+#### StreamableHTTP Client Example
 
-For HTTP-based servers, use the HTTP client:
+For StreamableHTTP-based servers, use the StreamableHTTP client:
 
 ```go
 package main
@@ -633,17 +633,11 @@ import (
 )
 
 func main() {
-    // Create an HTTP client
-    c, _ := client.NewStreamableHttpClient("http://localhost:8080/mcp")
+    // Create a StreamableHTTP client
+    c := client.NewStreamableHttpClient("http://localhost:8080/mcp")
     defer c.Close()
 
     ctx := context.Background()
-
-	// Start initiates the connection to the server
-	if err := c.Start(ctx); err != nil {
-		log.Fatal(err)
-		return
-	}
 
     // Initialize and use the client
     if err := c.Initialize(ctx); err != nil {
@@ -655,7 +649,7 @@ func main() {
         Params: mcp.CallToolRequestParams{
             Name: "hello_world",
             Arguments: map[string]interface{}{
-                "name": "HTTP World",
+                "name": "StreamableHTTP World",
             },
         },
     })
@@ -687,7 +681,7 @@ Now that you have a working MCP server and client:
 #### Client Connection Failed
 
 * Verify the server is running and accessible
-* Check network connectivity for HTTP clients
+* Check network connectivity for StreamableHTTP clients
 * Validate stdio command paths for stdio clients
 
 #### Tool Calls Failing
@@ -711,8 +705,8 @@ MCP-Go provides client constructors for each supported transport. The choice of 
 // STDIO client - for command-line tools
 client, err := client.NewStdioMCPClient("command", "arg1", "arg2")
 
-// HTTP client - for web services
-client := client.NewStreamableHTTPClient("http://localhost:8080/mcp")
+// StreamableHTTP client - for web services
+client := client.NewStreamableHttpClient("http://localhost:8080/mcp")
 
 // SSE client - for real-time web applications
 client := client.NewSSEMCPClient("http://localhost:8080/mcp/sse")
@@ -769,24 +763,24 @@ func createStdioClientWithEnv() (client.Client, error) {
 }
 ```
 
-#### HTTP Client Creation
+#### StreamableHTTP Client Creation
 
 ```go
-func createHTTPClient() client.Client {
-    // Basic HTTP client
-	httpTransport, err := NewStreamableHTTP(server.URL,
+func createStreamableHTTPClient() client.Client {
+    // Basic StreamableHTTP client
+	httpTransport, err := transport.NewStreamableHTTP(server.URL,
 		// Set timeout
-		WithHTTPTimeout(30*time.Second),
+		transport.WithHTTPTimeout(30*time.Second),
 		// Set custom headers
-		WithHTTPHeaders(map[string]string{
+		transport.WithHTTPHeaders(map[string]string{
 			"X-Custom-Header": "custom-value",
 			"Y-Another-Header": "another-value",
 		}),
 		// With custom HTTP client
-		WithHTTPBasicClient(&http.Client{}),
+		transport.WithHTTPBasicClient(&http.Client{}),
 	)
     if err != nil {
-        log.Fatalf("Failed to create HTTP transport: %v", err)
+        log.Fatalf("Failed to create StreamableHTTP transport: %v", err)
     }
     c := client.NewClient(httpTransport)
     return c
@@ -939,7 +933,7 @@ func NewManagedClient(clientType, address string) (*ManagedClient, error) {
     switch clientType {
     case "stdio":
         c, err = client.NewSSEMCPClient("server-command")
-    case "http":
+    case "streamablehttp":
         c = client.NewStreamableHttpClient(address)
     case "sse":
         c = client.NewSSEMCPClient(address)
@@ -1581,7 +1575,7 @@ func demonstrateClientOperations(ctx context.Context, c client.Client) error {
 client, err := client.NewStdioMCPClient("server-command", "arg1", "arg2")
 ```
 
-#### HTTP Client
+#### StreamableHTTP Client
 
 **Best for:**
 
@@ -1591,7 +1585,7 @@ client, err := client.NewStdioMCPClient("server-command", "arg1", "arg2")
 * REST-like interactions
 
 ```go
-// Create HTTP client
+// Create StreamableHTTP client
 client := client.NewStreamableHttpClient("http://localhost:8080/mcp")
 ```
 
@@ -1770,7 +1764,7 @@ type LLMApplication struct {
 }
 
 func NewLLMApplication(mcpAddress string) (*LLMApplication, error) {
-    mcpClient := client.NewHTTPClient(mcpAddress)
+    mcpClient := client.NewStreamableHttpClient(mcpAddress)
     
     ctx := context.Background()
     if err := mcpClient.Initialize(ctx); err != nil {
@@ -2822,12 +2816,12 @@ Learn about transport-specific client implementations and how to choose the righ
 
 MCP-Go provides client implementations for all supported transports. Each transport has different characteristics and is optimized for specific scenarios.
 
-| Transport      | Best For                | Connection         | Real-time | Multi-client |
-| -------------- | ----------------------- | ------------------ | --------- | ------------ |
-| **STDIO**      | CLI tools, desktop apps | Process pipes      | No        | No           |
-| **HTTP**       | Web services, APIs      | HTTP requests      | No        | Yes          |
-| **SSE**        | Web apps, real-time     | HTTP + EventSource | Yes       | Yes          |
-| **In-Process** | Testing, embedded       | Direct calls       | Yes       | No           |
+| Transport          | Best For                | Connection         | Real-time | Multi-client |
+| ------------------ | ----------------------- | ------------------ | --------- | ------------ |
+| **STDIO**          | CLI tools, desktop apps | Process pipes      | No        | No           |
+| **StreamableHTTP** | Web services, APIs      | HTTP requests      | No        | Yes          |
+| **SSE**            | Web apps, real-time     | HTTP + EventSource | Yes       | Yes          |
+| **In-Process**     | Testing, embedded       | Direct calls       | Yes       | No           |
 
 ### STDIO Client
 
@@ -3060,30 +3054,19 @@ var (
 )
 ```
 
-### HTTP Client
+### StreamableHTTP Client
 
-HTTP clients communicate with servers using traditional HTTP requests.
+StreamableHTTP clients communicate with servers using traditional HTTP requests.
 
-#### Basic HTTP Client
+#### Basic StreamableHTTP Client
 
 ```go
-func createHTTPClient() {
-    // Create HTTP client
-    c := client.NewHTTPClient("http://localhost:8080/mcp")
+func createStreamableHTTPClient() {
+    // Create StreamableHTTP client
+    c := client.NewStreamableHttpClient("http://localhost:8080/mcp")
     defer c.Close()
 
-    // Set authentication
-    c.SetHeader("Authorization", "Bearer your-token")
-    c.SetHeader("X-API-Version", "v1")
-
-    // Set timeout
-    c.SetTimeout(30 * time.Second)
-
     ctx := context.Background()
-
-    if err := c.Start(ctx); err != nil {
-        return
-    }
 
     // Initialize
     if err := c.Initialize(ctx); err != nil {
@@ -3100,30 +3083,29 @@ func createHTTPClient() {
 }
 ```
 
-#### HTTP Client with Custom Configuration
+#### StreamableHTTP Client with Custom Configuration
 
 ```go
-func createCustomHTTPClient() {
-    // Create custom HTTP client
-    httpClient := &http.Client{
-        Timeout: 30 * time.Second,
-        Transport: &http.Transport{
-            MaxIdleConns:        100,
-            MaxIdleConnsPerHost: 10,
-            IdleConnTimeout:     90 * time.Second,
-            TLSClientConfig: &tls.Config{
-                InsecureSkipVerify: false,
+func createCustomStreamableHTTPClient() {
+    // Create StreamableHTTP client with options
+    c := client.NewStreamableHttpClient("https://api.example.com/mcp",
+        transport.WithHTTPTimeout(30*time.Second),
+        transport.WithHTTPHeaders(map[string]string{
+            "User-Agent": "MyApp/1.0",
+            "Accept":     "application/json",
+        }),
+        transport.WithHTTPBasicClient(&http.Client{
+            Transport: &http.Transport{
+                MaxIdleConns:        100,
+                MaxIdleConnsPerHost: 10,
+                IdleConnTimeout:     90 * time.Second,
+                TLSClientConfig: &tls.Config{
+                    InsecureSkipVerify: false,
+                },
             },
-        },
-    }
-
-    // Create MCP client with custom HTTP client
-    c := client.NewHTTPClientWithClient("https://api.example.com/mcp", httpClient)
+        }),
+    )
     defer c.Close()
-
-    // Set custom headers
-    c.SetHeader("User-Agent", "MyApp/1.0")
-    c.SetHeader("Accept", "application/json")
 
     ctx := context.Background()
 
@@ -3135,68 +3117,28 @@ func createCustomHTTPClient() {
 }
 ```
 
-#### HTTP Authentication
+#### StreamableHTTP Authentication
 
 ```go
-type AuthenticatedHTTPClient struct {
-    client      *client.HTTPClient
-    tokenSource TokenSource
-    mutex       sync.RWMutex
-}
+func createAuthenticatedStreamableHTTPClient() {
+    // Create StreamableHTTP client with OAuth
+    c := client.NewStreamableHttpClient("http://localhost:8080/mcp",
+        transport.WithHTTPOAuth(transport.OAuthConfig{
+            ClientID:     "your-client-id",
+            ClientSecret: "your-client-secret",
+            TokenURL:     "https://auth.example.com/token",
+            Scopes:       []string{"mcp:read", "mcp:write"},
+        }),
+    )
+    defer c.Close()
 
-type TokenSource interface {
-    Token() (string, error)
-    Refresh() error
-}
+    ctx := context.Background()
 
-func NewAuthenticatedHTTPClient(baseURL string, tokenSource TokenSource) *AuthenticatedHTTPClient {
-    return &AuthenticatedHTTPClient{
-        client:      client.NewHTTPClient(baseURL),
-        tokenSource: tokenSource,
-    }
-}
-
-func (ahc *AuthenticatedHTTPClient) ensureValidToken() error {
-    ahc.mutex.Lock()
-    defer ahc.mutex.Unlock()
-
-    token, err := ahc.tokenSource.Token()
-    if err != nil {
-        // Try to refresh token
-        if refreshErr := ahc.tokenSource.Refresh(); refreshErr != nil {
-            return fmt.Errorf("failed to refresh token: %w", refreshErr)
-        }
-        
-        token, err = ahc.tokenSource.Token()
-        if err != nil {
-            return fmt.Errorf("failed to get token after refresh: %w", err)
-        }
+    if err := c.Initialize(ctx); err != nil {
+        log.Fatal(err)
     }
 
-    ahc.client.SetHeader("Authorization", "Bearer "+token)
-    return nil
-}
-
-func (ahc *AuthenticatedHTTPClient) CallTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    if err := ahc.ensureValidToken(); err != nil {
-        return nil, err
-    }
-
-    result, err := ahc.client.CallTool(ctx, req)
-    if err != nil && isAuthError(err) {
-        // Token might be expired, refresh and retry
-        if refreshErr := ahc.tokenSource.Refresh(); refreshErr != nil {
-            return nil, fmt.Errorf("authentication failed: %w", err)
-        }
-
-        if err := ahc.ensureValidToken(); err != nil {
-            return nil, err
-        }
-
-        return ahc.client.CallTool(ctx, req)
-    }
-
-    return result, err
+    // Use client...
 }
 
 func isAuthError(err error) bool {
@@ -3205,21 +3147,21 @@ func isAuthError(err error) bool {
 }
 ```
 
-#### HTTP Connection Pooling
+#### StreamableHTTP Connection Pooling
 
 ```go
-type HTTPClientPool struct {
-    clients chan *client.HTTPClient
-    factory func() *client.HTTPClient
+type StreamableHTTPClientPool struct {
+    clients chan *client.Client
+    factory func() *client.Client
     maxSize int
 }
 
-func NewHTTPClientPool(baseURL string, maxSize int) *HTTPClientPool {
-    pool := &HTTPClientPool{
-        clients: make(chan *client.HTTPClient, maxSize),
+func NewStreamableHTTPClientPool(baseURL string, maxSize int) *StreamableHTTPClientPool {
+    pool := &StreamableHTTPClientPool{
+        clients: make(chan *client.Client, maxSize),
         maxSize: maxSize,
-        factory: func() *client.HTTPClient {
-            return client.NewHTTPClient(baseURL)
+        factory: func() *client.Client {
+            return client.NewStreamableHttpClient(baseURL)
         },
     }
 
@@ -3231,7 +3173,7 @@ func NewHTTPClientPool(baseURL string, maxSize int) *HTTPClientPool {
     return pool
 }
 
-func (pool *HTTPClientPool) Get() *client.HTTPClient {
+func (pool *StreamableHTTPClientPool) Get() *client.Client {
     select {
     case c := <-pool.clients:
         return c
@@ -3240,7 +3182,7 @@ func (pool *HTTPClientPool) Get() *client.HTTPClient {
     }
 }
 
-func (pool *HTTPClientPool) Put(c *client.HTTPClient) {
+func (pool *StreamableHTTPClientPool) Put(c *client.Client) {
     select {
     case pool.clients <- c:
     default:
@@ -3249,7 +3191,7 @@ func (pool *HTTPClientPool) Put(c *client.HTTPClient) {
     }
 }
 
-func (pool *HTTPClientPool) CallTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (pool *StreamableHTTPClientPool) CallTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
     c := pool.Get()
     defer pool.Put(c)
 
@@ -3681,7 +3623,7 @@ func SelectTransport(req TransportRequirements) string {
         return "sse"
     
     case req.NetworkRequired && req.MultiClient:
-        return "http"
+        return "streamablehttp"
     
     default:
         return "stdio" // Default fallback
@@ -3742,8 +3684,8 @@ func (cf *ClientFactory) SetStdioConfig(command string, args ...string) {
     }
 }
 
-func (cf *ClientFactory) SetHTTPConfig(baseURL string, headers map[string]string) {
-    cf.configs["http"] = struct {
+func (cf *ClientFactory) SetStreamableHTTPConfig(baseURL string, headers map[string]string) {
+    cf.configs["streamablehttp"] = struct {
         BaseURL string
         Headers map[string]string
     }{
@@ -3771,20 +3713,21 @@ func (cf *ClientFactory) CreateClient(transport string) (client.Client, error) {
         }
         return client.NewStdioClientWithOptions(config)
 
-    case "http":
-        config, ok := cf.configs["http"].(struct {
+    case "streamablehttp":
+        config, ok := cf.configs["streamablehttp"].(struct {
             BaseURL string
             Headers map[string]string
         })
         if !ok {
-            return nil, fmt.Errorf("http config not set")
+            return nil, fmt.Errorf("streamablehttp config not set")
         }
         
-        c := client.NewHTTPClient(config.BaseURL)
-        for key, value := range config.Headers {
-            c.SetHeader(key, value)
+        options := []transport.StreamableHTTPCOption{}
+        if len(config.Headers) > 0 {
+            options = append(options, transport.WithHTTPHeaders(config.Headers))
         }
-        return c, nil
+        
+        return client.NewStreamableHttpClient(config.BaseURL, options...), nil
 
     case "sse":
         config, ok := cf.configs["sse"].(struct {
@@ -3795,11 +3738,12 @@ func (cf *ClientFactory) CreateClient(transport string) (client.Client, error) {
             return nil, fmt.Errorf("sse config not set")
         }
         
-        c := client.NewSSEClient(config.BaseURL)
-        for key, value := range config.Headers {
-            c.SetHeader(key, value)
+        options := []transport.ClientOption{}
+        if len(config.Headers) > 0 {
+            options = append(options, transport.WithHeaders(config.Headers))
         }
-        return c, nil
+        
+        return client.NewSSEMCPClient(config.BaseURL, options...)
 
     default:
         return nil, fmt.Errorf("unknown transport: %s", transport)
@@ -3812,7 +3756,7 @@ func demonstrateClientFactory() {
     
     // Configure transports
     factory.SetStdioConfig("go", "run", "server.go")
-    factory.SetHTTPConfig("http://localhost:8080/mcp", map[string]string{
+    factory.SetStreamableHTTPConfig("http://localhost:8080/mcp", map[string]string{
         "Authorization": "Bearer token",
     })
     factory.SetSSEConfig("http://localhost:8080/mcp/sse", map[string]string{
@@ -6903,13 +6847,13 @@ func addConditionalTools(s *server.MCPServer, userRole string) {
 * **[Resources](/servers/resources)** - Learn about exposing data sources
 
 
-## HTTP Transport
+## StreamableHTTP Transport
 
-HTTP transport provides traditional request/response communication for MCP servers, perfect for REST-like interactions, stateless clients, and integration with existing web infrastructure.
+StreamableHTTP transport provides traditional request/response communication for MCP servers, perfect for REST-like interactions, stateless clients, and integration with existing web infrastructure.
 
 ### Use Cases
 
-HTTP transport excels in scenarios requiring:
+StreamableHTTP transport excels in scenarios requiring:
 
 * **Web services**: Traditional REST API patterns
 * **Stateless interactions**: Each request is independent
@@ -6929,7 +6873,7 @@ HTTP transport excels in scenarios requiring:
 
 ### Implementation
 
-#### Basic HTTP Server
+#### Basic StreamableHTTP Server
 
 ```go
 package main
@@ -6947,7 +6891,7 @@ import (
 )
 
 func main() {
-    s := server.NewMCPServer("HTTP API Server", "1.0.0",
+    s := server.NewMCPServer("StreamableHTTP API Server", "1.0.0",
         server.WithToolCapabilities(true),
         server.WithResourceCapabilities(true),
     )
@@ -6992,9 +6936,10 @@ func main() {
         handleUserResource,
     )
 
-    // Start HTTP server
-    log.Println("Starting HTTP server on :8080")
-    if err := server.ServeHTTP(s, ":8080"); err != nil {
+    // Start StreamableHTTP server
+    log.Println("Starting StreamableHTTP server on :8080")
+    httpServer := server.NewStreamableHTTPServer(s)
+    if err := httpServer.Start(":8080"); err != nil {
         log.Fatal(err)
     }
 }
@@ -7144,11 +7089,11 @@ func extractUserIDFromURI(uri string) string {
 }
 ```
 
-#### Advanced HTTP Configuration
+#### Advanced StreamableHTTP Configuration
 
 ```go
 func main() {
-    s := server.NewMCPServer("Advanced HTTP Server", "1.0.0",
+    s := server.NewMCPServer("Advanced StreamableHTTP Server", "1.0.0",
         server.WithAllCapabilities(),
         server.WithRecovery(),
         server.WithHooks(&server.Hooks{
@@ -7157,8 +7102,8 @@ func main() {
         }),
     )
 
-    // Configure HTTP-specific options
-    httpOptions := server.HTTPOptions{
+    // Configure StreamableHTTP-specific options
+    streamableHTTPOptions := server.StreamableHTTPOptions{
         BasePath:         "/api/v1/mcp",
         ReadTimeout:      30 * time.Second,
         WriteTimeout:     30 * time.Second,
@@ -7173,15 +7118,16 @@ func main() {
     }
 
     // Add middleware
-    addHTTPMiddleware(s)
+    addStreamableHTTPMiddleware(s)
     
     // Add comprehensive tools
     addCRUDTools(s)
     addBatchTools(s)
     addAnalyticsTools(s)
 
-    log.Println("Starting advanced HTTP server on :8080")
-    if err := server.ServeHTTPWithOptions(s, ":8080", httpOptions); err != nil {
+    log.Println("Starting advanced StreamableHTTP server on :8080")
+    httpServer := server.NewStreamableHTTPServer(s, streamableHTTPOptions...)
+    if err := httpServer.Start(":8080"); err != nil {
         log.Fatal(err)
     }
 }
@@ -7217,7 +7163,7 @@ func logResourceRead(sessionID, uri string, duration time.Duration, err error) {
     }
 }
 
-func addHTTPMiddleware(s *server.MCPServer) {
+func addStreamableHTTPMiddleware(s *server.MCPServer) {
     // Authentication middleware
     s.AddToolMiddleware(func(next server.ToolHandler) server.ToolHandler {
         return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -7273,7 +7219,7 @@ func addHTTPMiddleware(s *server.MCPServer) {
 
 #### Standard MCP Endpoints
 
-When you start an HTTP MCP server, it automatically creates these endpoints:
+When you start a StreamableHTTP MCP server, it automatically creates these endpoints:
 
 ```
 POST /mcp/initialize     - Initialize MCP session
@@ -7293,7 +7239,7 @@ Add custom HTTP endpoints alongside MCP:
 
 ```go
 func main() {
-    s := server.NewMCPServer("Custom HTTP Server", "1.0.0")
+    s := server.NewMCPServer("Custom StreamableHTTP Server", "1.0.0")
     
     // Create HTTP server with custom routes
     mux := http.NewServeMux()
@@ -7310,7 +7256,7 @@ func main() {
     // Add middleware
     handler := addMiddleware(mux)
     
-    log.Println("Starting custom HTTP server on :8080")
+    log.Println("Starting custom StreamableHTTP server on :8080")
     if err := http.ListenAndServe(":8080", handler); err != nil {
         log.Fatal(err)
     }
@@ -7601,17 +7547,17 @@ Transport layers handle the communication between MCP clients and servers. Each 
 
 * **[STDIO](/transports/stdio)** - Standard input/output for command-line tools
 * **[SSE](/transports/sse)** - Server-Sent Events for web applications
-* **[HTTP](/transports/http)** - Traditional HTTP for REST-like interactions
+* **[StreamableHTTP](/transports/http)** - Traditional HTTP for REST-like interactions
 * **[In-Process](/transports/inprocess)** - Direct integration for embedded scenarios
 
 ### Transport Comparison
 
-| Transport      | Use Case                | Pros                                       | Cons                             |
-| -------------- | ----------------------- | ------------------------------------------ | -------------------------------- |
-| **STDIO**      | CLI tools, desktop apps | Simple, secure, no network                 | Single client, local only        |
-| **SSE**        | Web apps, real-time     | Multi-client, real-time, web-friendly      | HTTP overhead, one-way streaming |
-| **HTTP**       | Web services, APIs      | Standard protocol, caching, load balancing | No real-time, more complex       |
-| **In-Process** | Embedded, testing       | No serialization, fastest                  | Same process only                |
+| Transport          | Use Case                | Pros                                       | Cons                             |
+| ------------------ | ----------------------- | ------------------------------------------ | -------------------------------- |
+| **STDIO**          | CLI tools, desktop apps | Simple, secure, no network                 | Single client, local only        |
+| **SSE**            | Web apps, real-time     | Multi-client, real-time, web-friendly      | HTTP overhead, one-way streaming |
+| **StreamableHTTP** | Web services, APIs      | Standard protocol, caching, load balancing | No real-time, more complex       |
+| **In-Process**     | Embedded, testing       | No serialization, fastest                  | Same process only                |
 
 ### Quick Example
 
@@ -7656,10 +7602,12 @@ func main() {
     switch transport {
     case "sse":
         fmt.Printf("Starting SSE server on port %s\n", port)
-        server.ServeSSE(s, ":"+port)
-    case "http":
-        fmt.Printf("Starting HTTP server on port %s\n", port)
-        server.ServeHTTP(s, ":"+port)
+        sseServer := server.NewSSEServer(s)
+        sseServer.Start(":" + port)
+    case "streamablehttp":
+        fmt.Printf("Starting StreamableHTTP server on port %s\n", port)
+        httpServer := server.NewStreamableHTTPServer(s)
+        httpServer.Start(":" + port)
     default:
         fmt.Println("Starting STDIO server")
         server.ServeStdio(s)
@@ -7709,7 +7657,7 @@ func handleEcho(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResu
 * Collaborative document editing
 * Live system monitoring
 
-#### HTTP Transport
+#### StreamableHTTP Transport
 
 **Best for:**
 
@@ -7749,9 +7697,11 @@ func handleEcho(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResu
 func startServer(s *server.MCPServer) error {
     switch os.Getenv("MCP_TRANSPORT") {
     case "sse":
-        return server.ServeSSE(s, getPort())
-    case "http":
-        return server.ServeHTTP(s, getPort())
+        sseServer := server.NewSSEServer(s)
+        return sseServer.Start(getPort())
+    case "streamablehttp":
+        httpServer := server.NewStreamableHTTPServer(s)
+        return httpServer.Start(getPort())
     case "inprocess":
         // Note: In-process transport doesn't use network ports
         // This would typically be used differently in practice
@@ -7794,16 +7744,18 @@ func main() {
     
     go func() {
         log.Println("Starting SSE server on :8080...")
-        if err := server.ServeSSE(s, ":8080"); err != nil {
+        sseServer := server.NewSSEServer(s)
+        if err := sseServer.Start(":8080"); err != nil {
             log.Printf("SSE server error: %v", err)
             errChan <- fmt.Errorf("SSE server failed: %w", err)
         }
     }()
     
-    log.Println("Starting HTTP server on :8081...")
-    if err := server.ServeHTTP(s, ":8081"); err != nil {
-        log.Printf("HTTP server error: %v", err)
-        errChan <- fmt.Errorf("HTTP server failed: %w", err)
+    log.Println("Starting StreamableHTTP server on :8081...")
+    httpServer := server.NewStreamableHTTPServer(s)
+    if err := httpServer.Start(":8081"); err != nil {
+        log.Printf("StreamableHTTP server error: %v", err)
+        errChan <- fmt.Errorf("StreamableHTTP server failed: %w", err)
     }
     
     // Wait for any server to fail
@@ -7870,7 +7822,7 @@ Explore each transport in detail:
 
 * **[STDIO Transport](/transports/stdio)** - Command-line integration
 * **[SSE Transport](/transports/sse)** - Real-time web applications
-* **[HTTP Transport](/transports/http)** - Traditional web services
+* **[StreamableHTTP Transport](/transports/http)** - Traditional web services
 * **[In-Process Transport](/transports/inprocess)** - Embedded scenarios
 
 
