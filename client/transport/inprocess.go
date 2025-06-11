@@ -63,7 +63,7 @@ func (c *InProcessTransport) SetNotificationHandler(handler func(notification mc
 
 // SetRequestHandler sets the handler for incoming requests from the server.
 // Note: InProcess transport does not currently support bidirectional requests.
-func (c *InProcessTransport) SetRequestHandler(handler RequestHandler) {
+func (c *InProcessTransport) SetRequestHandler(handler func(context.Context, JSONRPCRequest) (any, error)) {
 	// InProcess transport does not support server-to-client requests yet
 	// This is a placeholder for interface compatibility
 }
