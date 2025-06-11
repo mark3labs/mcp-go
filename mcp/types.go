@@ -50,6 +50,10 @@ const (
 	// https://modelcontextprotocol.io/specification/2024-11-05/server/tools/
 	MethodToolsCall MCPMethod = "tools/call"
 
+	// MethodSamplingCreateMessage allows servers to request LLM completions from clients
+	// https://modelcontextprotocol.io/docs/concepts/sampling
+	MethodSamplingCreateMessage MCPMethod = "sampling/createMessage"
+
 	// MethodSetLogLevel configures the minimum log level for client
 	// https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging
 	MethodSetLogLevel MCPMethod = "logging/setLevel"
