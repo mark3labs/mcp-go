@@ -17,15 +17,12 @@ type ClientSession interface {
 	NotificationChannel() chan<- mcp.JSONRPCNotification
 	// SessionID is a unique identifier used to track user session.
 	SessionID() string
-}
-
-// SessionWithLogging is an extension of ClientSession that can receive log message notifications and set log level
-type SessionWithLogging interface {
-	ClientSession
 	// SetLogLevel sets the minimum log level
 	SetLogLevel(level mcp.LoggingLevel)
 	// GetLogLevel retrieves the minimum log level
 	GetLogLevel() mcp.LoggingLevel
+	// GetLoggerName returns the logger name
+	GetLoggerName() *string
 }
 
 // SessionWithTools is an extension of ClientSession that can store session-specific tool data

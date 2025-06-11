@@ -29,16 +29,16 @@ type resourceTemplateEntry struct {
 type ServerOption func(*MCPServer)
 
 // ResourceHandlerFunc is a function that returns resource contents.
-type ResourceHandlerFunc func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error)
+type ResourceHandlerFunc func(ctx context.Context, requestSession RequestSession, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error)
 
 // ResourceTemplateHandlerFunc is a function that returns a resource template.
-type ResourceTemplateHandlerFunc func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error)
+type ResourceTemplateHandlerFunc func(ctx context.Context, requestSession RequestSession, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error)
 
 // PromptHandlerFunc handles prompt requests with given arguments.
-type PromptHandlerFunc func(ctx context.Context, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error)
+type PromptHandlerFunc func(ctx context.Context, requestSession RequestSession, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error)
 
 // ToolHandlerFunc handles tool calls with given arguments.
-type ToolHandlerFunc func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+type ToolHandlerFunc func(ctx context.Context, requestSession RequestSession, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
 
 // ToolHandlerMiddleware is a middleware function that wraps a ToolHandlerFunc.
 type ToolHandlerMiddleware func(ToolHandlerFunc) ToolHandlerFunc
@@ -230,7 +230,7 @@ func WithToolFilter(
 // WithRecovery adds a middleware that recovers from panics in tool handlers.
 func WithRecovery() ServerOption {
 	return WithToolHandlerMiddleware(func(next ToolHandlerFunc) ToolHandlerFunc {
-		return func(ctx context.Context, request mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
+		return func(ctx context.Context, requestSession RequestSession, request mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
 			defer func() {
 				if r := recover(); r != nil {
 					err = fmt.Errorf(
@@ -240,7 +240,7 @@ func WithRecovery() ServerOption {
 					)
 				}
 			}()
-			return next(ctx, request)
+			return next(ctx, requestSession, request)
 		}
 	})
 }
@@ -333,7 +333,7 @@ func (s *MCPServer) AddResources(resources ...ServerResource) {
 	// When the list of available resources changes, servers that declared the listChanged capability SHOULD send a notification
 	if s.capabilities.resources.listChanged {
 		// Send notification to all initialized sessions
-		s.SendNotificationToAllClients(mcp.MethodNotificationResourcesListChanged, nil)
+		s.SendNotificationToAllClients(string(mcp.MethodNotificationResourcesListChanged), nil)
 	}
 }
 
@@ -356,7 +356,7 @@ func (s *MCPServer) RemoveResource(uri string) {
 
 	// Send notification to all initialized sessions if listChanged capability is enabled and we actually remove a resource
 	if exists && s.capabilities.resources != nil && s.capabilities.resources.listChanged {
-		s.SendNotificationToAllClients(mcp.MethodNotificationResourcesListChanged, nil)
+		s.SendNotificationToAllClients(string(mcp.MethodNotificationResourcesListChanged), nil)
 	}
 }
 
@@ -377,7 +377,7 @@ func (s *MCPServer) AddResourceTemplate(
 	// When the list of available resources changes, servers that declared the listChanged capability SHOULD send a notification
 	if s.capabilities.resources.listChanged {
 		// Send notification to all initialized sessions
-		s.SendNotificationToAllClients(mcp.MethodNotificationResourcesListChanged, nil)
+		s.SendNotificationToAllClients(string(mcp.MethodNotificationResourcesListChanged), nil)
 	}
 }
 
@@ -395,7 +395,7 @@ func (s *MCPServer) AddPrompts(prompts ...ServerPrompt) {
 	// When the list of available prompts changes, servers that declared the listChanged capability SHOULD send a notification.
 	if s.capabilities.prompts.listChanged {
 		// Send notification to all initialized sessions
-		s.SendNotificationToAllClients(mcp.MethodNotificationPromptsListChanged, nil)
+		s.SendNotificationToAllClients(string(mcp.MethodNotificationPromptsListChanged), nil)
 	}
 }
 
@@ -420,7 +420,7 @@ func (s *MCPServer) DeletePrompts(names ...string) {
 	// Send notification to all initialized sessions if listChanged capability is enabled, and we actually remove a prompt
 	if exists && s.capabilities.prompts != nil && s.capabilities.prompts.listChanged {
 		// Send notification to all initialized sessions
-		s.SendNotificationToAllClients(mcp.MethodNotificationPromptsListChanged, nil)
+		s.SendNotificationToAllClients(string(mcp.MethodNotificationPromptsListChanged), nil)
 	}
 }
 
@@ -481,7 +481,7 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 	// When the list of available tools changes, servers that declared the listChanged capability SHOULD send a notification.
 	if s.capabilities.tools.listChanged {
 		// Send notification to all initialized sessions
-		s.SendNotificationToAllClients(mcp.MethodNotificationToolsListChanged, nil)
+		s.SendNotificationToAllClients(string(mcp.MethodNotificationToolsListChanged), nil)
 	}
 }
 
@@ -508,7 +508,7 @@ func (s *MCPServer) DeleteTools(names ...string) {
 	// When the list of available tools changes, servers that declared the listChanged capability SHOULD send a notification.
 	if exists && s.capabilities.tools != nil && s.capabilities.tools.listChanged {
 		// Send notification to all initialized sessions
-		s.SendNotificationToAllClients(mcp.MethodNotificationToolsListChanged, nil)
+		s.SendNotificationToAllClients(string(mcp.MethodNotificationToolsListChanged), nil)
 	}
 }
 
@@ -613,15 +613,6 @@ func (s *MCPServer) handleSetLevel(
 		}
 	}
 
-	sessionLogging, ok := clientSession.(SessionWithLogging)
-	if !ok {
-		return nil, &requestError{
-			id:   id,
-			code: mcp.INTERNAL_ERROR,
-			err:  ErrSessionDoesNotSupportLogging,
-		}
-	}
-
 	level := request.Params.Level
 	// Validate logging level
 	switch level {
@@ -637,7 +628,7 @@ func (s *MCPServer) handleSetLevel(
 		}
 	}
 
-	sessionLogging.SetLogLevel(level)
+	clientSession.SetLogLevel(level)
 
 	return &mcp.EmptyResult{}, nil
 }
@@ -757,12 +748,15 @@ func (s *MCPServer) handleReadResource(
 	id any,
 	request mcp.ReadResourceRequest,
 ) (*mcp.ReadResourceResult, *requestError) {
+
+	requestSession := NewRequestSession(request.Params.Meta)
+
 	s.resourcesMu.RLock()
 	// First try direct resource handlers
 	if entry, ok := s.resources[request.Params.URI]; ok {
 		handler := entry.handler
 		s.resourcesMu.RUnlock()
-		contents, err := handler(ctx, request)
+		contents, err := handler(ctx, requestSession, request)
 		if err != nil {
 			return nil, &requestError{
 				id:   id,
@@ -793,7 +787,7 @@ func (s *MCPServer) handleReadResource(
 	s.resourcesMu.RUnlock()
 
 	if matched {
-		contents, err := matchedHandler(ctx, request)
+		contents, err := matchedHandler(ctx, requestSession, request)
 		if err != nil {
 			return nil, &requestError{
 				id:   id,
@@ -875,7 +869,8 @@ func (s *MCPServer) handleGetPrompt(
 		}
 	}
 
-	result, err := handler(ctx, request)
+	requestSession := NewRequestSession(request.Params.Meta)
+	result, err := handler(ctx, requestSession, request)
 	if err != nil {
 		return nil, &requestError{
 			id:   id,
@@ -1025,7 +1020,8 @@ func (s *MCPServer) handleToolCall(
 		finalHandler = mw[i](finalHandler)
 	}
 
-	result, err := finalHandler(ctx, request)
+	requestSession := NewRequestSession(request.Params.Meta)
+	result, err := finalHandler(ctx, requestSession, request)
 	if err != nil {
 		return nil, &requestError{
 			id:   id,
