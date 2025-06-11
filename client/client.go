@@ -72,6 +72,12 @@ func (c *Client) Start(ctx context.Context) error {
 			handler(notification)
 		}
 	})
+
+	// Set up bidirectional request handler for sampling if handler is available
+	if c.samplingHandler != nil {
+		c.transport.SetRequestHandler(c.handleIncomingRequest)
+	}
+
 	return nil
 }
 
