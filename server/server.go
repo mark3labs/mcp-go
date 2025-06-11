@@ -175,6 +175,7 @@ type serverCapabilities struct {
 	resources *resourceCapabilities
 	prompts   *promptCapabilities
 	logging   *bool
+	sampling  *bool
 }
 
 // resourceCapabilities defines the supported resource-related features
