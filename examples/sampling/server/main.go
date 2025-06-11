@@ -24,7 +24,7 @@ func main() {
 			"analyze_text",
 			mcp.WithDescription("Analyzes text using LLM sampling"),
 			mcp.WithString("text", mcp.Required(), mcp.Description("Text to analyze")),
-			mcp.WithString("analysis_type", mcp.Description("Type of analysis: sentiment, summary, or keywords"), mcp.Default("sentiment")),
+			mcp.WithString("analysis_type", mcp.Description("Type of analysis: sentiment, summary, or keywords"), mcp.DefaultString("sentiment")),
 		),
 		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			text := request.GetString("text", "")
@@ -70,7 +70,7 @@ func main() {
 			"chat_completion",
 			mcp.WithDescription("Demonstrates multi-message sampling with conversation context"),
 			mcp.WithString("user_message", mcp.Required(), mcp.Description("User's message")),
-			mcp.WithString("system_context", mcp.Description("System context for the conversation"), mcp.Default("You are a helpful assistant.")),
+			mcp.WithString("system_context", mcp.Description("System context for the conversation"), mcp.DefaultString("You are a helpful assistant.")),
 		),
 		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			userMessage := request.GetString("user_message", "")
@@ -113,13 +113,13 @@ func main() {
 			"advanced_sampling",
 			mcp.WithDescription("Demonstrates advanced sampling options and parameters"),
 			mcp.WithString("prompt", mcp.Required(), mcp.Description("The prompt to send")),
-			mcp.WithNumber("temperature", mcp.Description("Sampling temperature (0.0-2.0)"), mcp.Default(1.0)),
-			mcp.WithInteger("max_tokens", mcp.Description("Maximum tokens to generate"), mcp.Default(150)),
+			mcp.WithNumber("temperature", mcp.Description("Sampling temperature (0.0-2.0)"), mcp.DefaultNumber(1.0)),
+			mcp.WithNumber("max_tokens", mcp.Description("Maximum tokens to generate"), mcp.DefaultNumber(150)),
 		),
 		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			prompt := request.GetString("prompt", "")
-			temperature := request.GetFloat64("temperature", 1.0)
-			maxTokens := request.GetInt("max_tokens", 150)
+			temperature := request.GetFloat("temperature", 1.0)
+			maxTokens := int(request.GetFloat("max_tokens", 150))
 
 			samplingCtx := server.SamplingContextFromContext(ctx)
 			if samplingCtx == nil {
