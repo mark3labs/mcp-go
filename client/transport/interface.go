@@ -12,6 +12,9 @@ import (
 // as HTTP headers in outgoing requests.
 type HTTPHeaderFunc func(context.Context) map[string]string
 
+// RequestHandler handles incoming requests from the server and returns a response
+type RequestHandler func(context.Context, JSONRPCRequest) (any, error)
+
 // Interface for the transport layer.
 type Interface interface {
 	// Start the connection. Start should only be called once.
@@ -26,6 +29,11 @@ type Interface interface {
 	// SetNotificationHandler sets the handler for notifications.
 	// Any notification before the handler is set will be discarded.
 	SetNotificationHandler(handler func(notification mcp.JSONRPCNotification))
+
+	// SetRequestHandler sets the handler for incoming requests from the server.
+	// This enables bidirectional communication for features like sampling.
+	// Any request before the handler is set will be rejected with METHOD_NOT_FOUND.
+	SetRequestHandler(handler RequestHandler)
 
 	// Close the connection.
 	Close() error
