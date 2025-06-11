@@ -1,1 +1,0 @@
-Go development environment for implementing MCP sampling capabilities. The environment has Go 1.23 installed and is ready for development. The implementation will add sampling support to the existing mcp-go SDK following the detailed specification in sampling.md.
