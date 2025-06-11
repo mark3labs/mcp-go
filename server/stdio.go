@@ -362,5 +362,4 @@ func ServeStdio(server *MCPServer, options ...StdioOption) error {
 				os.Exit(1)
 	}
 	return err
-	}
 }
