@@ -288,6 +288,13 @@ func (c *SSE) handleSSEEvent(event, data string) {
 }
 
 func (c *SSE) SetNotificationHandler(handler func(notification mcp.JSONRPCNotification)) {
+
+// SetRequestHandler sets the handler for incoming requests from the server.
+// Note: SSE transport does not currently support bidirectional requests.
+func (c *SSE) SetRequestHandler(handler RequestHandler) {
+	// SSE transport does not support server-to-client requests yet
+	// This is a placeholder for interface compatibility
+}
 	c.notifyMu.Lock()
 	defer c.notifyMu.Unlock()
 	c.onNotification = handler
