@@ -29,11 +29,91 @@ type ClientOption func(*Client)
 
 // WithClientCapabilities sets the client capabilities for the client.
 func WithClientCapabilities(capabilities mcp.ClientCapabilities) ClientOption {
+// Sampling-related client options to be added to client.go after WithClientCapabilities
+
+// WithSamplingHandler sets a sampling handler for the client and enables sampling capability
+func WithSamplingHandler(handler SamplingHandler) ClientOption {
 	return func(c *Client) {
-		c.clientCapabilities = capabilities
+		c.samplingHandler = handler
+		// Enable sampling capability
+		if c.clientCapabilities.Sampling == nil {
+			c.clientCapabilities.Sampling = &struct{}{}
+		}
 	}
 }
 
+// WithSimpleSamplingHandler sets a simple sampling handler for the client
+func WithSimpleSamplingHandler(handler SimpleSamplingHandler) ClientOption {
+	return WithSamplingHandler(handler.ToSamplingHandler())
+}	return func(c *Client) {
+// Sampling-related client options to be added to client.go after WithClientCapabilities
+
+// WithSamplingHandler sets a sampling handler for the client and enables sampling capability
+func WithSamplingHandler(handler SamplingHandler) ClientOption {
+	return func(c *Client) {
+		c.samplingHandler = handler
+		// Enable sampling capability
+		if c.clientCapabilities.Sampling == nil {
+			c.clientCapabilities.Sampling = &struct{}{}
+		}
+	}
+}
+
+// WithSimpleSamplingHandler sets a simple sampling handler for the client
+func WithSimpleSamplingHandler(handler SimpleSamplingHandler) ClientOption {
+	return WithSamplingHandler(handler.ToSamplingHandler())
+}		c.clientCapabilities = capabilities
+// Sampling-related client options to be added to client.go after WithClientCapabilities
+
+// WithSamplingHandler sets a sampling handler for the client and enables sampling capability
+func WithSamplingHandler(handler SamplingHandler) ClientOption {
+	return func(c *Client) {
+		c.samplingHandler = handler
+		// Enable sampling capability
+		if c.clientCapabilities.Sampling == nil {
+			c.clientCapabilities.Sampling = &struct{}{}
+		}
+	}
+}
+
+// WithSimpleSamplingHandler sets a simple sampling handler for the client
+func WithSimpleSamplingHandler(handler SimpleSamplingHandler) ClientOption {
+	return WithSamplingHandler(handler.ToSamplingHandler())
+}	}
+// Sampling-related client options to be added to client.go after WithClientCapabilities
+
+// WithSamplingHandler sets a sampling handler for the client and enables sampling capability
+func WithSamplingHandler(handler SamplingHandler) ClientOption {
+	return func(c *Client) {
+		c.samplingHandler = handler
+		// Enable sampling capability
+		if c.clientCapabilities.Sampling == nil {
+			c.clientCapabilities.Sampling = &struct{}{}
+		}
+	}
+}
+
+// WithSimpleSamplingHandler sets a simple sampling handler for the client
+func WithSimpleSamplingHandler(handler SimpleSamplingHandler) ClientOption {
+	return WithSamplingHandler(handler.ToSamplingHandler())
+}}
+// Sampling-related client options to be added to client.go after WithClientCapabilities
+
+// WithSamplingHandler sets a sampling handler for the client and enables sampling capability
+func WithSamplingHandler(handler SamplingHandler) ClientOption {
+	return func(c *Client) {
+		c.samplingHandler = handler
+		// Enable sampling capability
+		if c.clientCapabilities.Sampling == nil {
+			c.clientCapabilities.Sampling = &struct{}{}
+		}
+	}
+}
+
+// WithSimpleSamplingHandler sets a simple sampling handler for the client
+func WithSimpleSamplingHandler(handler SimpleSamplingHandler) ClientOption {
+	return WithSamplingHandler(handler.ToSamplingHandler())
+}
 // NewClient creates a new MCP client with the given transport.
 // Usage:
 //
