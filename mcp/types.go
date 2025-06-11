@@ -767,6 +767,15 @@ const (
 
 /* Sampling */
 
+// ContextInclusion specifies what context should be included with sampling requests
+type ContextInclusion string
+
+const (
+	ContextNone       ContextInclusion = "none"
+	ContextThisServer ContextInclusion = "thisServer"
+	ContextAllServers ContextInclusion = "allServers"
+)
+
 // CreateMessageRequest is a request from the server to sample an LLM via the
 // client. The client has full discretion over which model to select. The client
 // should also inform the user before beginning sampling, to allow them to inspect
