@@ -301,7 +301,7 @@ MCP-Go is designed to make building MCP servers in Go fast, simple, and complete
 * **Minimal boilerplate**: Get started with just a few lines of code
 * **Full MCP spec support**: Tools, resources, prompts, and all transport methods
 * **Type safety**: Leverage Go's type system for robust MCP servers
-* **Multiple transports**: Stdio, HTTP, and Server-Sent Events support
+* **Multiple transports**: Stdio, HTTP, Server-Sent Events and In-Process support
 
 #### Installation
 
@@ -435,6 +435,7 @@ MCP-Go supports multiple transport methods:
 * **Stdio** (most common): `server.ServeStdio(s)`
 * **HTTP**: `server.ServeHTTP(s, ":8080")`
 * **Server-Sent Events**: `server.ServeSSE(s, ":8080")`
+* **In-Process**: `client.NewInProcessClient(server)`
 
 ### Need Help?
 
@@ -566,7 +567,8 @@ import (
 
 func main() {
     // Create a stdio client that connects to another MCP server
-    c, err := client.NewStdioClient(
+	// NTOE: NewStdioMCPClient will start the connection automatically. Don't call the Start method manually
+    c, err := client.NewStdioMCPClient(
         "go", "run", "path/to/server/main.go",
     )
     if err != nil {
@@ -594,7 +596,7 @@ func main() {
 
     // Call a tool
     result, err := c.CallTool(ctx, mcp.CallToolRequest{
-        Params: mcp.CallToolRequestParams{
+        Params: mcp.CallToolParams{
             Name: "hello_world",
             Arguments: map[string]interface{}{
                 "name": "World",
@@ -632,10 +634,16 @@ import (
 
 func main() {
     // Create an HTTP client
-    c := client.NewHTTPClient("http://localhost:8080/mcp")
+    c, _ := client.NewStreamableHttpClient("http://localhost:8080/mcp")
     defer c.Close()
 
     ctx := context.Background()
+
+	// Start initiates the connection to the server
+	if err := c.Start(ctx); err != nil {
+		log.Fatal(err)
+		return
+	}
 
     // Initialize and use the client
     if err := c.Initialize(ctx); err != nil {
@@ -701,13 +709,13 @@ MCP-Go provides client constructors for each supported transport. The choice of 
 
 ```go
 // STDIO client - for command-line tools
-client, err := client.NewStdioClient("command", "arg1", "arg2")
+client, err := client.NewStdioMCPClient("command", "arg1", "arg2")
 
 // HTTP client - for web services
-client := client.NewHTTPClient("http://localhost:8080/mcp")
+client := client.NewStreamableHTTPClient("http://localhost:8080/mcp")
 
 // SSE client - for real-time web applications
-client := client.NewSSEClient("http://localhost:8080/mcp/sse")
+client := client.NewSSEMCPClient("http://localhost:8080/mcp/sse")
 
 // In-process client - for testing and embedded scenarios
 client := client.NewInProcessClient(server)
@@ -734,8 +742,8 @@ import (
 
 func createStdioClient() (client.Client, error) {
     // Create client that spawns a subprocess
-    c, err := client.NewStdioClient(
-        "go", "run", "/path/to/server/main.go",
+    c, err := client.NewStdioMCPClient(
+        "go", []string{}, "run", "/path/to/server/main.go",
     )
     if err != nil {
         return nil, fmt.Errorf("failed to create STDIO client: %w", err)
@@ -746,16 +754,13 @@ func createStdioClient() (client.Client, error) {
 
 // With custom environment variables
 func createStdioClientWithEnv() (client.Client, error) {
-    c, err := client.NewStdioClientWithOptions(client.StdioOptions{
-        Command: "go",
-        Args:    []string{"run", "/path/to/server/main.go"},
-        Env: []string{
-            "LOG_LEVEL=debug",
-            "DATABASE_URL=sqlite://test.db",
-        },
-        WorkingDir: "/path/to/server",
-        Timeout:    30 * time.Second,
-    })
+    env := []string{
+        "LOG_LEVEL=debug",
+        "DATABASE_URL=sqlite://test.db",
+    }
+    c, err := client.NewStdioMCPClient(
+        "go", env, "run", "/path/to/server/main.go",
+    )
     if err != nil {
         return nil, fmt.Errorf("failed to create STDIO client: %w", err)
     }
@@ -769,30 +774,22 @@ func createStdioClientWithEnv() (client.Client, error) {
 ```go
 func createHTTPClient() client.Client {
     // Basic HTTP client
-    c := client.NewHTTPClient("http://localhost:8080/mcp")
-    
-    // Set custom headers
-    c.SetHeader("Authorization", "Bearer your-token")
-    c.SetHeader("X-API-Version", "v1")
-    
-    // Set timeout
-    c.SetTimeout(30 * time.Second)
-    
-    return c
-}
-
-// With custom HTTP client
-func createCustomHTTPClient() client.Client {
-    httpClient := &http.Client{
-        Timeout: 30 * time.Second,
-        Transport: &http.Transport{
-            MaxIdleConns:        100,
-            MaxIdleConnsPerHost: 10,
-            IdleConnTimeout:     90 * time.Second,
-        },
+	httpTransport, err := NewStreamableHTTP(server.URL,
+		// Set timeout
+		WithHTTPTimeout(30*time.Second),
+		// Set custom headers
+		WithHTTPHeaders(map[string]string{
+			"X-Custom-Header": "custom-value",
+			"Y-Another-Header": "another-value",
+		}),
+		// With custom HTTP client
+		WithHTTPBasicClient(&http.Client{}),
+	)
+    if err != nil {
+        log.Fatalf("Failed to create HTTP transport: %v", err)
     }
-
-    return client.NewHTTPClientWithClient("http://localhost:8080/mcp", httpClient)
+    c := client.NewClient(httpTransport)
+    return c
 }
 ```
 
@@ -801,28 +798,14 @@ func createCustomHTTPClient() client.Client {
 ```go
 func createSSEClient() client.Client {
     // Basic SSE client
-    c := client.NewSSEClient("http://localhost:8080/mcp/sse")
-    
-    // Set authentication
-    c.SetHeader("Authorization", "Bearer your-token")
-    
+	c, err := NewSSEMCPClient(testServer.URL+"/sse",
+		// Set custom headers
+		WithHeaders(map[string]string{
+			"X-Custom-Header": "custom-value",
+			"Y-Another-Header": "another-value",
+		}),
+	)
     return c
-}
-
-// With custom options
-func createSSEClientWithOptions() client.Client {
-    options := client.SSEOptions{
-        URL: "http://localhost:8080/mcp/sse",
-        Headers: map[string]string{
-            "Authorization": "Bearer your-token",
-            "X-Client-ID":   "my-app",
-        },
-        ReconnectInterval: 5 * time.Second,
-        MaxReconnects:     10,
-        BufferSize:        1000,
-    }
-
-    return client.NewSSEClientWithOptions(options)
 }
 ```
 
@@ -842,7 +825,7 @@ Understanding the client lifecycle is crucial for proper resource management and
 ```go
 func demonstrateClientLifecycle() error {
     // 1. Creation
-    c, err := client.NewStdioClient("server-command")
+    c, err := client.NewSSEMCPClient("server-command")
     if err != nil {
         return fmt.Errorf("client creation failed: %w", err)
     }
@@ -955,11 +938,11 @@ func NewManagedClient(clientType, address string) (*ManagedClient, error) {
 
     switch clientType {
     case "stdio":
-        c, err = client.NewStdioClient("server-command")
+        c, err = client.NewSSEMCPClient("server-command")
     case "http":
-        c = client.NewHTTPClient(address)
+        c = client.NewStreamableHttpClient(address)
     case "sse":
-        c = client.NewSSEClient(address)
+        c = client.NewSSEMCPClient(address)
     default:
         return nil, fmt.Errorf("unknown client type: %s", clientType)
     }
@@ -1496,8 +1479,8 @@ import (
 
 func main() {
     // Create STDIO client
-    c, err := client.NewStdioClient(
-        "go", "run", "/path/to/server/main.go",
+    c, err := client.NewStdioMCPClient(
+        "go", []string{} , "run", "/path/to/server/main.go",
     )
     if err != nil {
         log.Fatal(err)
@@ -1507,7 +1490,7 @@ func main() {
     ctx := context.Background()
 
     // Initialize the connection
-    if err := c.Initialize(ctx); err != nil {
+    if err := c.Initialize(ctx, initRequest); err != nil {
         log.Fatal(err)
     }
 
@@ -1595,7 +1578,7 @@ func demonstrateClientOperations(ctx context.Context, c client.Client) error {
 
 ```go
 // Create STDIO client
-client, err := client.NewStdioClient("server-command", "arg1", "arg2")
+client, err := client.NewStdioMCPClient("server-command", "arg1", "arg2")
 ```
 
 #### HTTP Client
@@ -1609,7 +1592,7 @@ client, err := client.NewStdioClient("server-command", "arg1", "arg2")
 
 ```go
 // Create HTTP client
-client := client.NewHTTPClient("http://localhost:8080/mcp")
+client := client.NewStreamableHttpClient("http://localhost:8080/mcp")
 ```
 
 #### SSE Client
@@ -1623,7 +1606,7 @@ client := client.NewHTTPClient("http://localhost:8080/mcp")
 
 ```go
 // Create SSE client
-client := client.NewSSEClient("http://localhost:8080/mcp/sse")
+client := client.NewSSEMCPClient("http://localhost:8080/mcp/sse")
 ```
 
 #### In-Process Client
@@ -1669,11 +1652,11 @@ func NewMCPClientManager(clientType, address string) (*MCPClientManager, error) 
 
     switch clientType {
     case "stdio":
-        c, err = client.NewStdioClient("server-command")
+        c, err = client.NewStdioMCPClient("server-command")
     case "http":
-        c = client.NewHTTPClient(address)
+        c = client.NewStreamableHttpClient(address)
     case "sse":
-        c = client.NewSSEClient(address)
+        c = client.NewSSEMCPClient(address)
     default:
         return nil, fmt.Errorf("unknown client type: %s", clientType)
     }
@@ -1859,9 +1842,9 @@ func (msc *MultiServerClient) AddServer(name, address string, clientType string)
 
     switch clientType {
     case "http":
-        c = client.NewHTTPClient(address)
+        c = client.NewStreamableHttpClient(address)
     case "sse":
-        c = client.NewSSEClient(address)
+        c = client.NewSSEMCPClient(address)
     default:
         return fmt.Errorf("unsupported client type: %s", clientType)
     }
@@ -2873,8 +2856,8 @@ import (
 
 func createStdioClient() {
     // Create client that spawns a subprocess
-    c, err := client.NewStdioClient(
-        "go", "run", "/path/to/server/main.go",
+    c, err := client.NewStdioMCPClient(
+        "go", []string{}, "run", "/path/to/server/main.go",
     )
     if err != nil {
         log.Fatal(err)
@@ -2884,47 +2867,17 @@ func createStdioClient() {
     ctx := context.Background()
 
     // Initialize connection
-    if err := c.Initialize(ctx); err != nil {
+    if err := c.Initialize(ctx, initRequest); err != nil {
         log.Fatal(err)
     }
 
     // Use the client
-    tools, err := c.ListTools(ctx)
+    tools, err := c.ListTools(ctx, listToolsRequest)
     if err != nil {
         log.Fatal(err)
     }
 
     log.Printf("Available tools: %d", len(tools.Tools))
-}
-```
-
-#### Advanced STDIO Configuration
-
-```go
-func createAdvancedStdioClient() {
-    options := client.StdioOptions{
-        Command: "python",
-        Args:    []string{"/path/to/server.py"},
-        Env: []string{
-            "PYTHONPATH=/custom/path",
-            "LOG_LEVEL=debug",
-            "DATABASE_URL=sqlite:///data.db",
-        },
-        WorkingDir:      "/path/to/server",
-        Timeout:         30 * time.Second,
-        BufferSize:      8192,
-        RestartOnError:  true,
-        MaxRestarts:     3,
-        RestartDelay:    1 * time.Second,
-    }
-
-    c, err := client.NewStdioClientWithOptions(options)
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer c.Close()
-
-    // Use client...
 }
 ```
 
@@ -3127,6 +3080,10 @@ func createHTTPClient() {
     c.SetTimeout(30 * time.Second)
 
     ctx := context.Background()
+
+    if err := c.Start(ctx); err != nil {
+        return
+    }
 
     // Initialize
     if err := c.Initialize(ctx); err != nil {

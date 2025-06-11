@@ -1,4 +1,4 @@
-import{u as l,j as s}from"./index-CSrloHnH.js";const a={title:"Getting Started",description:"undefined"};function r(i){const e={a:"a",code:"code",div:"div",h1:"h1",h2:"h2",h3:"h3",header:"header",li:"li",ol:"ol",p:"p",pre:"pre",span:"span",strong:"strong",ul:"ul",...l(),...i.components};return s.jsxs(s.Fragment,{children:[s.jsx(e.header,{children:s.jsxs(e.h1,{id:"getting-started",children:["Getting Started",s.jsx(e.a,{"aria-hidden":"true",tabIndex:"-1",href:"#getting-started",children:s.jsx(e.div,{"data-autolink-icon":!0})})]})}),`
+import{u as l,j as s}from"./index-BoH-nQnZ.js";const a={title:"Getting Started",description:"undefined"};function r(i){const e={a:"a",code:"code",div:"div",h1:"h1",h2:"h2",h3:"h3",header:"header",li:"li",ol:"ol",p:"p",pre:"pre",span:"span",strong:"strong",ul:"ul",...l(),...i.components};return s.jsxs(s.Fragment,{children:[s.jsx(e.header,{children:s.jsxs(e.h1,{id:"getting-started",children:["Getting Started",s.jsx(e.a,{"aria-hidden":"true",tabIndex:"-1",href:"#getting-started",children:s.jsx(e.div,{"data-autolink-icon":!0})})]})}),`
 `,s.jsxs(e.h2,{id:"introduction",children:["Introduction",s.jsx(e.a,{"aria-hidden":"true",tabIndex:"-1",href:"#introduction",children:s.jsx(e.div,{"data-autolink-icon":!0})})]}),`
 `,s.jsxs(e.h3,{id:"what-is-mcp",children:["What is MCP?",s.jsx(e.a,{"aria-hidden":"true",tabIndex:"-1",href:"#what-is-mcp",children:s.jsx(e.div,{"data-autolink-icon":!0})})]}),`
 `,s.jsx(e.p,{children:"The Model Context Protocol (MCP) is an open standard that enables secure, controlled connections between AI applications and external data sources and tools. It provides a standardized way for Large Language Models (LLMs) to access and interact with external systems while maintaining security and user control."}),`
@@ -15,7 +15,7 @@ import{u as l,j as s}from"./index-CSrloHnH.js";const a={title:"Getting Started",
 `,s.jsxs(e.li,{children:[s.jsx(e.strong,{children:"Minimal boilerplate"}),": Get started with just a few lines of code"]}),`
 `,s.jsxs(e.li,{children:[s.jsx(e.strong,{children:"Full MCP spec support"}),": Tools, resources, prompts, and all transport methods"]}),`
 `,s.jsxs(e.li,{children:[s.jsx(e.strong,{children:"Type safety"}),": Leverage Go's type system for robust MCP servers"]}),`
-`,s.jsxs(e.li,{children:[s.jsx(e.strong,{children:"Multiple transports"}),": Stdio, HTTP, and Server-Sent Events support"]}),`
+`,s.jsxs(e.li,{children:[s.jsx(e.strong,{children:"Multiple transports"}),": Stdio, HTTP, Server-Sent Events and In-Process support"]}),`
 `]}),`
 `,s.jsxs(e.h3,{id:"installation",children:["Installation",s.jsx(e.a,{"aria-hidden":"true",tabIndex:"-1",href:"#installation",children:s.jsx(e.div,{"data-autolink-icon":!0})})]}),`
 `,s.jsx(e.p,{children:"Add MCP-Go to your Go project:"}),`
@@ -118,6 +118,7 @@ import{u as l,j as s}from"./index-CSrloHnH.js";const a={title:"Getting Started",
 `,s.jsxs(e.li,{children:[s.jsx(e.strong,{children:"Stdio"})," (most common): ",s.jsx(e.code,{children:"server.ServeStdio(s)"})]}),`
 `,s.jsxs(e.li,{children:[s.jsx(e.strong,{children:"HTTP"}),": ",s.jsx(e.code,{children:'server.ServeHTTP(s, ":8080")'})]}),`
 `,s.jsxs(e.li,{children:[s.jsx(e.strong,{children:"Server-Sent Events"}),": ",s.jsx(e.code,{children:'server.ServeSSE(s, ":8080")'})]}),`
+`,s.jsxs(e.li,{children:[s.jsx(e.strong,{children:"In-Process"}),": ",s.jsx(e.code,{children:"client.NewInProcessClient(server)"})]}),`
 `]}),`
 `,s.jsxs(e.h2,{id:"need-help",children:["Need Help?",s.jsx(e.a,{"aria-hidden":"true",tabIndex:"-1",href:"#need-help",children:s.jsx(e.div,{"data-autolink-icon":!0})})]}),`
 `,s.jsxs(e.ul,{children:[`
