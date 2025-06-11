@@ -346,7 +346,7 @@ func (s *StdioServer) Serve(ctx context.Context, stdin io.Reader, stdout io.Writ
 
 // ServeStdio is a convenience function that creates a stdio server and serves it
 // using os.Stdin and os.Stdout. It blocks until a termination signal is received.
-func ServeStdio(server *MCPServer, options ...StdioOption) {
+func ServeStdio(server *MCPServer, options ...StdioOption) error {
 	stdioServer := NewStdioServer(server)
 	for _, opt := range options {
 		opt(stdioServer)
