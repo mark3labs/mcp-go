@@ -46,7 +46,7 @@ func TestStdioServer(t *testing.T) {
 
 		// Start server in goroutine
 		go func() {
-			err := stdioServer.Listen(ctx, stdinReader, stdoutWriter)
+			err := stdioServer.Serve(ctx, stdinReader, stdoutWriter)
 			if err != nil && err != io.EOF && err != context.Canceled {
 				serverErrCh <- err
 			}
@@ -158,7 +158,7 @@ func TestStdioServer(t *testing.T) {
 
 		// Start server in goroutine
 		go func() {
-			err := stdioServer.Listen(ctx, stdinReader, stdoutWriter)
+			err := stdioServer.Serve(ctx, stdinReader, stdoutWriter)
 			if err != nil && err != io.EOF && err != context.Canceled {
 				serverErrCh <- err
 			}
