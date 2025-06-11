@@ -62,7 +62,7 @@ type stdioSession struct {
 	// Bidirectional communication support
 	stdout        io.Writer
 	requestID     atomic.Int64
-	responses     map[string]chan *mcp.JSONRPCResponse
+	responses     map[string]chan *JSONRPCResponse
 	responsesMu   sync.RWMutex
 }
 
@@ -110,7 +110,7 @@ func (s *stdioSession) GetLogLevel() mcp.LoggingLevel {
 }
 
 // SendRequest implements SessionWithRequests interface for bidirectional communication
-func (s *stdioSession) SendRequest(ctx context.Context, method string, params any) (*mcp.JSONRPCResponse, error) {
+func (s *stdioSession) SendRequest(ctx context.Context, method string, params any) (*JSONRPCResponse, error) {
 	if s.stdout == nil {
 		return nil, fmt.Errorf("stdout not available for sending requests")
 	}
@@ -140,12 +140,12 @@ func (s *stdioSession) SendRequest(ctx context.Context, method string, params an
 	requestBytes = append(requestBytes, '\n')
 
 	// Create response channel
-	responseChan := make(chan *mcp.JSONRPCResponse, 1)
+	responseChan := make(chan *JSONRPCResponse, 1)
 	idKey := requestID.String()
 	
 	s.responsesMu.Lock()
 	if s.responses == nil {
-		s.responses = make(map[string]chan *mcp.JSONRPCResponse)
+		s.responses = make(map[string]chan *JSONRPCResponse)
 	}
 	s.responses[idKey] = responseChan
 	s.responsesMu.Unlock()
@@ -177,7 +177,7 @@ func (s *stdioSession) SendRequest(ctx context.Context, method string, params an
 }
 
 // handleResponse processes incoming responses to server-initiated requests
-func (s *stdioSession) handleResponse(response *mcp.JSONRPCResponse) {
+func (s *stdioSession) handleResponse(response *JSONRPCResponse) {
 	if response.ID.IsNil() {
 		return // Not a response to our request
 	}
