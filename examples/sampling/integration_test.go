@@ -129,6 +129,9 @@ func TestSamplingIntegration(t *testing.T) {
 		t.Logf("Tool result content type: %T", result.Content)
 		t.Fatal("Tool result is not text content")
 	}
+		if len(contents) == 0 {
+		t.Fatal("Tool result content is empty")
+	}
 
 	expectedText := "LLM Response: Echoed: Echo this back: Hello, World!"
 	if textContent.Text != expectedText {
