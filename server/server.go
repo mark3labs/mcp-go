@@ -1123,3 +1123,23 @@ func createErrorResponse(
 func (s *MCPServer) hasSamplingCapability() bool {
 	return s.capabilities.sampling != nil && *s.capabilities.sampling
 }
+
+// WithContext creates a context with the client session and sampling context if enabled
+func (s *MCPServer) WithContext(ctx context.Context, session ClientSession) context.Context {
+	// Add client session to context
+	ctx = context.WithValue(ctx, clientSessionKey{}, session)
+	
+	// Add server to context
+	ctx = context.WithValue(ctx, serverKey{}, s)
+	
+	// Add sampling context if capability is enabled
+	if s.hasSamplingCapability() {
+		samplingCtx := &samplingContext{
+			session: session,
+			server:  s,
+		}
+		ctx = context.WithValue(ctx, samplingContextKey{}, samplingCtx)
+	}
+	
+	return ctx
+}
