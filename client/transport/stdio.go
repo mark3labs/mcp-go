@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -16,7 +17,7 @@ import (
 // Stdio implements the transport layer of the MCP protocol using stdio communication.
 // It launches a subprocess and communicates with it via standard input/output streams
 // using JSON-RPC messages. The client handles message routing between requests and
-// responses, and supports asynchronous notifications.
+// responses, and supports asynchronous notifications and bidirectional requests.
 type Stdio struct {
 	command string
 	args    []string
@@ -30,7 +31,9 @@ type Stdio struct {
 	mu             sync.RWMutex
 	done           chan struct{}
 	onNotification func(mcp.JSONRPCNotification)
+	onRequest      RequestHandler
 	notifyMu       sync.RWMutex
+	requestMu      sync.RWMutex
 }
 
 // NewIO returns a new stdio-based transport using existing input, output, and
@@ -158,8 +161,16 @@ func (c *Stdio) SetNotificationHandler(
 	c.onNotification = handler
 }
 
-// readResponses continuously reads and processes responses from the server's stdout.
-// It handles both responses to requests and notifications, routing them appropriately.
+// SetRequestHandler sets the handler function to be called when a request is received from the server.
+// This enables bidirectional communication for features like sampling.
+func (c *Stdio) SetRequestHandler(handler RequestHandler) {
+	c.requestMu.Lock()
+	defer c.requestMu.Unlock()
+	c.onRequest = handler
+}
+
+// readResponses continuously reads and processes messages from the server's stdout.
+// It handles responses to requests, notifications, and incoming requests from the server.
 // Runs until the done channel is closed or an error occurs reading from stdout.
 func (c *Stdio) readResponses() {
 	for {
@@ -175,40 +186,157 @@ func (c *Stdio) readResponses() {
 				return
 			}
 
-			var baseMessage JSONRPCResponse
-			if err := json.Unmarshal([]byte(line), &baseMessage); err != nil {
-				continue
-			}
-
-			// Handle notification
-			if baseMessage.ID.IsNil() {
-				var notification mcp.JSONRPCNotification
-				if err := json.Unmarshal([]byte(line), &notification); err != nil {
-					continue
-				}
-				c.notifyMu.RLock()
-				if c.onNotification != nil {
-					c.onNotification(notification)
-				}
-				c.notifyMu.RUnlock()
-				continue
-			}
-
-			// Create string key for map lookup
-			idKey := baseMessage.ID.String()
-
-			c.mu.RLock()
-			ch, exists := c.responses[idKey]
-			c.mu.RUnlock()
-
-			if exists {
-				ch <- &baseMessage
-				c.mu.Lock()
-				delete(c.responses, idKey)
-				c.mu.Unlock()
-			}
+			c.handleMessage(line)
 		}
 	}
+}
+
+// handleMessage processes a single JSON-RPC message, determining if it's a response,
+// notification, or incoming request, and routing it appropriately.
+func (c *Stdio) handleMessage(line string) {
+	// Try to parse as a generic JSON-RPC message to determine type
+	var baseMessage struct {
+		JSONRPC string        `json:"jsonrpc"`
+		ID      *mcp.RequestId `json:"id,omitempty"`
+		Method  *string       `json:"method,omitempty"`
+		Result  json.RawMessage `json:"result,omitempty"`
+		Error   json.RawMessage `json:"error,omitempty"`
+	}
+
+	if err := json.Unmarshal([]byte(line), &baseMessage); err != nil {
+		return
+	}
+
+	// Determine message type based on presence of fields
+	if baseMessage.ID == nil {
+		// No ID = notification
+		c.handleNotification(line)
+	} else if baseMessage.Method != nil {
+		// Has ID and method = incoming request from server
+		c.handleIncomingRequest(line)
+	} else {
+		// Has ID but no method = response to our request
+		c.handleResponse(line)
+	}
+}
+
+// handleResponse processes a response to a client request
+func (c *Stdio) handleResponse(line string) {
+	var response JSONRPCResponse
+	if err := json.Unmarshal([]byte(line), &response); err != nil {
+		return
+	}
+
+	// Create string key for map lookup
+	idKey := response.ID.String()
+
+	c.mu.RLock()
+	ch, exists := c.responses[idKey]
+	c.mu.RUnlock()
+
+	if exists {
+		ch <- &response
+		c.mu.Lock()
+		delete(c.responses, idKey)
+		c.mu.Unlock()
+	}
+}
+
+// handleNotification processes a notification from the server
+func (c *Stdio) handleNotification(line string) {
+	var notification mcp.JSONRPCNotification
+	if err := json.Unmarshal([]byte(line), &notification); err != nil {
+		return
+	}
+
+	c.notifyMu.RLock()
+	handler := c.onNotification
+	c.notifyMu.RUnlock()
+
+	if handler != nil {
+		handler(notification)
+	}
+}
+
+// handleIncomingRequest processes a request from the server and sends back a response
+func (c *Stdio) handleIncomingRequest(line string) {
+	var request JSONRPCRequest
+	if err := json.Unmarshal([]byte(line), &request); err != nil {
+		return
+	}
+
+	// Handle the request asynchronously to avoid blocking the read loop
+	go c.processIncomingRequest(request)
+}
+
+// processIncomingRequest processes an incoming request and sends the response
+func (c *Stdio) processIncomingRequest(request JSONRPCRequest) {
+	c.requestMu.RLock()
+	handler := c.onRequest
+	c.requestMu.RUnlock()
+
+	var response struct {
+		JSONRPC string        `json:"jsonrpc"`
+		ID      mcp.RequestId `json:"id"`
+		Result  any           `json:"result,omitempty"`
+		Error   *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+			Data    any    `json:"data,omitempty"`
+		} `json:"error,omitempty"`
+	}
+
+	response.JSONRPC = mcp.JSONRPC_VERSION
+	response.ID = request.ID
+
+	if handler == nil {
+		// No handler set - return METHOD_NOT_FOUND error
+		response.Error = &struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+			Data    any    `json:"data,omitempty"`
+		}{
+			Code:    mcp.METHOD_NOT_FOUND,
+			Message: "No request handler set",
+		}
+	} else {
+		// Process the request with a timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		result, err := handler(ctx, request)
+		if err != nil {
+			// Convert error to JSON-RPC error
+			response.Error = &struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+				Data    any    `json:"data,omitempty"`
+			}{
+				Code:    mcp.INTERNAL_ERROR,
+				Message: err.Error(),
+			}
+		} else {
+			response.Result = result
+		}
+	}
+
+	// Send the response
+	c.sendResponse(response)
+}
+
+// sendResponse sends a JSON-RPC response back to the server
+func (c *Stdio) sendResponse(response any) {
+	if c.stdin == nil {
+		return
+	}
+
+	responseBytes, err := json.Marshal(response)
+	if err != nil {
+		return
+	}
+	responseBytes = append(responseBytes, '\n')
+
+	c.stdin.Write(responseBytes)
 }
 
 // SendRequest sends a JSON-RPC request to the server and waits for a response.
