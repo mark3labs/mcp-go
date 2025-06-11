@@ -75,13 +75,6 @@ func ClientSessionFromContext(ctx context.Context) ClientSession {
 	return nil
 }
 
-// WithContext sets the current client session and returns the provided context
-func (s *MCPServer) WithContext(
-	ctx context.Context,
-	session ClientSession,
-) context.Context {
-	return context.WithValue(ctx, clientSessionKey{}, session)
-}
 
 // RegisterSession saves session that should be notified in case if some server attributes changed.
 func (s *MCPServer) RegisterSession(
