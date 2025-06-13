@@ -90,6 +90,16 @@ func WithLogger(logger util.Logger) StreamableHTTPOption {
 	}
 }
 
+// WithDisableSSEUpgrade disables automatic upgrade to SSE when notifications are sent.
+// When enabled, responses will always be returned as direct JSON responses,
+// making it compatible with HTTP streaming clients like the TypeScript MCP SDK.
+// The default is false (SSE upgrade enabled for backward compatibility).
+func WithDisableSSEUpgrade(disable bool) StreamableHTTPOption {
+	return func(s *StreamableHTTPServer) {
+		s.disableSSEUpgrade = disable
+	}
+}
+
 // StreamableHTTPServer implements a Streamable-http based MCP server.
 // It communicates with clients over HTTP protocol, supporting both direct HTTP responses, and SSE streams.
 // https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http
@@ -127,6 +137,7 @@ type StreamableHTTPServer struct {
 	sessionIdManager        SessionIdManager
 	listenHeartbeatInterval time.Duration
 	logger                  util.Logger
+	disableSSEUpgrade       bool
 }
 
 // NewStreamableHTTPServer creates a new streamable-http server instance
@@ -253,7 +264,7 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	session := newStreamableHttpSession(sessionID, s.sessionTools)
+	session := newStreamableHttpSession(sessionID, s.sessionTools, s)
 
 	// Set the client context before handling the message
 	ctx := s.server.WithContext(r.Context(), session)
@@ -286,19 +297,23 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 						}
 					}()
 
-					// if there's notifications, upgradedHeader to SSE response
-					if !upgradedHeader {
-						w.Header().Set("Content-Type", "text/event-stream")
-						w.Header().Set("Connection", "keep-alive")
-						w.Header().Set("Cache-Control", "no-cache")
-						w.WriteHeader(http.StatusAccepted)
-						upgradedHeader = true
+					// if there's notifications and SSE upgrade is not disabled, upgrade to SSE response
+					if !s.disableSSEUpgrade {
+						if !upgradedHeader {
+							w.Header().Set("Content-Type", "text/event-stream")
+							w.Header().Set("Connection", "keep-alive")
+							w.Header().Set("Cache-Control", "no-cache")
+							w.WriteHeader(http.StatusAccepted)
+							upgradedHeader = true
+						}
+						err := writeSSEEvent(w, nt)
+						if err != nil {
+							s.logger.Errorf("Failed to write SSE event: %v", err)
+							return
+						}
 					}
-					err := writeSSEEvent(w, nt)
-					if err != nil {
-						s.logger.Errorf("Failed to write SSE event: %v", err)
-						return
-					}
+					// If SSE upgrade is disabled, notifications are dropped in POST mode
+					// (they can still be sent via separate GET connection if needed)
 				}()
 			case <-done:
 				return
@@ -325,7 +340,8 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		return
 	}
 	// If client-server communication already upgraded to SSE stream
-	if session.upgradeToSSE.Load() {
+	// Double-check that SSE upgrade is not disabled before performing the upgrade
+	if session.upgradeToSSE.Load() && !s.disableSSEUpgrade {
 		if !upgradedHeader {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Connection", "keep-alive")
@@ -363,7 +379,7 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		sessionID = uuid.New().String()
 	}
 
-	session := newStreamableHttpSession(sessionID, s.sessionTools)
+	session := newStreamableHttpSession(sessionID, s.sessionTools, s)
 	if err := s.server.RegisterSession(r.Context(), session); err != nil {
 		http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusBadRequest)
 		return
@@ -547,13 +563,15 @@ type streamableHttpSession struct {
 	notificationChannel chan mcp.JSONRPCNotification // server -> client notifications
 	tools               *sessionToolsStore
 	upgradeToSSE        atomic.Bool
+	server              *StreamableHTTPServer // reference to server for configuration access
 }
 
-func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore) *streamableHttpSession {
+func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, server *StreamableHTTPServer) *streamableHttpSession {
 	return &streamableHttpSession{
 		sessionID:           sessionID,
 		notificationChannel: make(chan mcp.JSONRPCNotification, 100),
 		tools:               toolStore,
+		server:              server,
 	}
 }
 
@@ -588,6 +606,10 @@ func (s *streamableHttpSession) SetSessionTools(tools map[string]ServerTool) {
 var _ SessionWithTools = (*streamableHttpSession)(nil)
 
 func (s *streamableHttpSession) UpgradeToSSEWhenReceiveNotification() {
+	// Check if SSE upgrade is disabled on the server
+	if s.server != nil && s.server.disableSSEUpgrade {
+		return // Don't upgrade to SSE
+	}
 	s.upgradeToSSE.Store(true)
 }
 
