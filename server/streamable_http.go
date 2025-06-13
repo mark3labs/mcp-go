@@ -297,19 +297,23 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 						}
 					}()
 
-					// if there's notifications, upgradedHeader to SSE response
-					if !upgradedHeader {
-						w.Header().Set("Content-Type", "text/event-stream")
-						w.Header().Set("Connection", "keep-alive")
-						w.Header().Set("Cache-Control", "no-cache")
-						w.WriteHeader(http.StatusAccepted)
-						upgradedHeader = true
+					// if there's notifications and SSE upgrade is not disabled, upgrade to SSE response
+					if !s.disableSSEUpgrade {
+						if !upgradedHeader {
+							w.Header().Set("Content-Type", "text/event-stream")
+							w.Header().Set("Connection", "keep-alive")
+							w.Header().Set("Cache-Control", "no-cache")
+							w.WriteHeader(http.StatusAccepted)
+							upgradedHeader = true
+						}
+						err := writeSSEEvent(w, nt)
+						if err != nil {
+							s.logger.Errorf("Failed to write SSE event: %v", err)
+							return
+						}
 					}
-					err := writeSSEEvent(w, nt)
-					if err != nil {
-						s.logger.Errorf("Failed to write SSE event: %v", err)
-						return
-					}
+					// If SSE upgrade is disabled, notifications are dropped in POST mode
+					// (they can still be sent via separate GET connection if needed)
 				}()
 			case <-done:
 				return
@@ -336,7 +340,8 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		return
 	}
 	// If client-server communication already upgraded to SSE stream
-	if session.upgradeToSSE.Load() {
+	// Double-check that SSE upgrade is not disabled before performing the upgrade
+	if session.upgradeToSSE.Load() && !s.disableSSEUpgrade {
 		if !upgradedHeader {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Connection", "keep-alive")
