@@ -273,7 +273,8 @@ func TestMCPServer_ToolsWithSessionTools(t *testing.T) {
 
 	// List tools with session context
 	sessionCtx := server.WithContext(context.Background(), session)
-	resp := server.HandleMessage(sessionCtx, []byte(`{
+	header := map[string]string{"Authorization": "Bearer test"}
+	resp := server.HandleMessage(sessionCtx, header, []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
 		"method": "tools/list"
@@ -600,8 +601,8 @@ func TestMCPServer_CallSessionTool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to marshal tool request: %v", err)
 	}
-
-	response := server.HandleMessage(sessionCtx, requestBytes)
+	header := map[string]string{"Authorization": "Bearer test"}
+	response := server.HandleMessage(sessionCtx, header, requestBytes)
 	resp, ok := response.(mcp.JSONRPCResponse)
 	assert.True(t, ok)
 
@@ -705,7 +706,8 @@ func TestMCPServer_ToolFiltering(t *testing.T) {
 
 	// List tools with session context
 	sessionCtx := server.WithContext(context.Background(), session)
-	response := server.HandleMessage(sessionCtx, []byte(`{
+	header := map[string]string{"Authorization": "Bearer test"}
+	response := server.HandleMessage(sessionCtx, header, []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
 		"method": "tools/list"
@@ -1024,8 +1026,8 @@ func TestMCPServer_SetLevelNotEnabled(t *testing.T) {
 	}
 	requestBytes, err := json.Marshal(setRequest)
 	require.NoError(t, err)
-
-	response := server.HandleMessage(sessionCtx, requestBytes)
+	header := map[string]string{"Authorization": "Bearer test"}
+	response := server.HandleMessage(sessionCtx, header, requestBytes)
 	errorResponse, ok := response.(mcp.JSONRPCError)
 	assert.True(t, ok)
 
@@ -1068,8 +1070,8 @@ func TestMCPServer_SetLevel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to marshal tool request: %v", err)
 	}
-
-	response := server.HandleMessage(sessionCtx, requestBytes)
+	header := map[string]string{"Authorization": "Bearer test"}
+	response := server.HandleMessage(sessionCtx, header, requestBytes)
 	resp, ok := response.(mcp.JSONRPCResponse)
 	assert.True(t, ok)
 
