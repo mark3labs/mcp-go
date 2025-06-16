@@ -103,7 +103,9 @@ func NewStreamableHTTP(serverURL string, options ...StreamableHTTPCOption) (*Str
 	smc.sessionID.Store("") // set initial value to simplify later usage
 
 	for _, opt := range options {
-		opt(smc)
+		if opt != nil {
+			opt(smc)
+		}
 	}
 
 	// If OAuth is configured, set the base URL for metadata discovery
