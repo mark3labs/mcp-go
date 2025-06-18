@@ -54,6 +54,11 @@ func main() {
 		// Create client with the transport
 		c = client.NewClient(stdioTransport)
 
+		// Start the client
+		if err := c.Start(ctx); err != nil {
+			log.Fatalf("Failed to start client: %v", err)
+		}
+
 		// Set up logging for stderr if available
 		if stderr, ok := client.GetStderr(c); ok {
 			go func() {
@@ -82,11 +87,6 @@ func main() {
 
 		// Create client with the transport
 		c = client.NewClient(httpTransport)
-	}
-
-	// Start the client
-	if err := c.Start(ctx); err != nil {
-		log.Fatalf("Failed to start client: %v", err)
 	}
 
 	// Set up notification handler
