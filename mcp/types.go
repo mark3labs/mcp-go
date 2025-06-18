@@ -865,6 +865,22 @@ type AudioContent struct {
 
 func (AudioContent) isContent() {}
 
+// ResourceLink represents a link to a resource that the client can access.
+type ResourceLink struct {
+	Annotated
+	Type string `json:"type"` // Must be "resource_link"
+	// The URI of the resource.
+	URI string `json:"uri"`
+	// The name of the resource.
+	Name string `json:"name"`
+	// The description of the resource.
+	Description string `json:"description"`
+	// The MIME type of the resource link.
+	MIMEType string `json:"mimeType"`
+}
+
+func (ResourceLink) isContent() {}
+
 // EmbeddedResource represents the contents of a resource, embedded into a prompt or tool call result.
 //
 // It is up to the client how best to render embedded resources for the
