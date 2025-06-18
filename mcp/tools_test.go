@@ -528,3 +528,187 @@ func TestFlexibleArgumentsJSONMarshalUnmarshal(t *testing.T) {
 	assert.Equal(t, "value1", args["key1"])
 	assert.Equal(t, float64(123), args["key2"]) // JSON numbers are unmarshaled as float64
 }
+
+// TestNewItemsAPICompatibility tests that the new Items API functions
+// generate the same schema as the original Items() function with manual schema objects
+func TestNewItemsAPICompatibility(t *testing.T) {
+	tests := []struct {
+		name    string
+		oldTool Tool
+		newTool Tool
+	}{
+		{
+			name: "WithStringItems basic",
+			oldTool: NewTool("old-string-array",
+				WithDescription("Tool with string array using old API"),
+				WithArray("items",
+					Description("List of string items"),
+					Items(map[string]any{
+						"type": "string",
+					}),
+				),
+			),
+			newTool: NewTool("new-string-array",
+				WithDescription("Tool with string array using new API"),
+				WithArray("items",
+					Description("List of string items"),
+					WithStringItems(),
+				),
+			),
+		},
+		{
+			name: "WithStringEnumItems",
+			oldTool: NewTool("old-enum-array",
+				WithDescription("Tool with enum array using old API"),
+				WithArray("status",
+					Description("Filter by status"),
+					Items(map[string]any{
+						"type": "string",
+						"enum": []string{"active", "inactive", "pending"},
+					}),
+				),
+			),
+			newTool: NewTool("new-enum-array",
+				WithDescription("Tool with enum array using new API"),
+				WithArray("status",
+					Description("Filter by status"),
+					WithStringEnumItems([]string{"active", "inactive", "pending"}),
+				),
+			),
+		},
+		{
+			name: "WithStringItems with options",
+			oldTool: NewTool("old-string-with-opts",
+				WithDescription("Tool with string array with options using old API"),
+				WithArray("names",
+					Description("List of names"),
+					Items(map[string]any{
+						"type":      "string",
+						"minLength": 1,
+						"maxLength": 50,
+					}),
+				),
+			),
+			newTool: NewTool("new-string-with-opts",
+				WithDescription("Tool with string array with options using new API"),
+				WithArray("names",
+					Description("List of names"),
+					WithStringItems(MinLength(1), MaxLength(50)),
+				),
+			),
+		},
+		{
+			name: "WithNumberItems basic",
+			oldTool: NewTool("old-number-array",
+				WithDescription("Tool with number array using old API"),
+				WithArray("scores",
+					Description("List of scores"),
+					Items(map[string]any{
+						"type": "number",
+					}),
+				),
+			),
+			newTool: NewTool("new-number-array",
+				WithDescription("Tool with number array using new API"),
+				WithArray("scores",
+					Description("List of scores"),
+					WithNumberItems(),
+				),
+			),
+		},
+		{
+			name: "WithNumberItems with constraints",
+			oldTool: NewTool("old-number-with-constraints",
+				WithDescription("Tool with constrained number array using old API"),
+				WithArray("ratings",
+					Description("List of ratings"),
+					Items(map[string]any{
+						"type":    "number",
+						"minimum": 0.0,
+						"maximum": 10.0,
+					}),
+				),
+			),
+			newTool: NewTool("new-number-with-constraints",
+				WithDescription("Tool with constrained number array using new API"),
+				WithArray("ratings",
+					Description("List of ratings"),
+					WithNumberItems(Min(0), Max(10)),
+				),
+			),
+		},
+		{
+			name: "WithBooleanItems basic",
+			oldTool: NewTool("old-boolean-array",
+				WithDescription("Tool with boolean array using old API"),
+				WithArray("flags",
+					Description("List of feature flags"),
+					Items(map[string]any{
+						"type": "boolean",
+					}),
+				),
+			),
+			newTool: NewTool("new-boolean-array",
+				WithDescription("Tool with boolean array using new API"),
+				WithArray("flags",
+					Description("List of feature flags"),
+					WithBooleanItems(),
+				),
+			),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Marshal both tools to JSON
+			oldData, err := json.Marshal(tt.oldTool)
+			assert.NoError(t, err)
+
+			newData, err := json.Marshal(tt.newTool)
+			assert.NoError(t, err)
+
+			// Unmarshal to maps for comparison
+			var oldResult, newResult map[string]any
+			err = json.Unmarshal(oldData, &oldResult)
+			assert.NoError(t, err)
+
+			err = json.Unmarshal(newData, &newResult)
+			assert.NoError(t, err)
+
+			// Compare the inputSchema properties (ignoring tool names and descriptions)
+			oldSchema := oldResult["inputSchema"].(map[string]any)
+			newSchema := newResult["inputSchema"].(map[string]any)
+
+			oldProperties := oldSchema["properties"].(map[string]any)
+			newProperties := newSchema["properties"].(map[string]any)
+
+			// Get the array property (should be the only one in these tests)
+			var oldArrayProp, newArrayProp map[string]any
+			for _, prop := range oldProperties {
+				if propMap, ok := prop.(map[string]any); ok && propMap["type"] == "array" {
+					oldArrayProp = propMap
+					break
+				}
+			}
+			for _, prop := range newProperties {
+				if propMap, ok := prop.(map[string]any); ok && propMap["type"] == "array" {
+					newArrayProp = propMap
+					break
+				}
+			}
+
+			assert.NotNil(t, oldArrayProp, "Old tool should have array property")
+			assert.NotNil(t, newArrayProp, "New tool should have array property")
+
+			// Compare the items schema - this is the critical part
+			oldItems := oldArrayProp["items"]
+			newItems := newArrayProp["items"]
+
+			assert.Equal(t, oldItems, newItems, "Items schema should be identical between old and new API")
+
+			// Also compare other array properties like description
+			assert.Equal(t, oldArrayProp["description"], newArrayProp["description"], "Array descriptions should match")
+			assert.Equal(t, oldArrayProp["type"], newArrayProp["type"], "Array types should match")
+		})
+	}
+}
