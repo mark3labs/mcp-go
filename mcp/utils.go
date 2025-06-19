@@ -228,8 +228,8 @@ func NewResourceLink(uri, name, description, mimeType string) ResourceLink {
 		Type:        "resource_link",
 		URI:         uri,
 		Name:        name,
-		MIMEType:    mimeType,
 		Description: description,
+		MIMEType:    mimeType,
 	}
 }
 
@@ -492,8 +492,8 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		name := ExtractString(contentMap, "name")
 		description := ExtractString(contentMap, "description")
 		mimeType := ExtractString(contentMap, "mimeType")
-		if uri == "" || name == "" || description == "" || mimeType == "" {
-			return nil, fmt.Errorf("resource_link uri, name, description or mimeType is missing")
+		if uri == "" || name == "" {
+			return nil, fmt.Errorf("resource_link uri or name is missing")
 		}
 		return NewResourceLink(uri, name, description, mimeType), nil
 

@@ -875,7 +875,7 @@ type ResourceLink struct {
 	Name string `json:"name"`
 	// The description of the resource.
 	Description string `json:"description"`
-	// The MIME type of the resource link.
+	// The MIME type of the resource.
 	MIMEType string `json:"mimeType"`
 }
 
