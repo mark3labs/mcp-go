@@ -13,26 +13,8 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// resourceEntry holds both a resource and its handler
-type resourceEntry struct {
-	resource mcp.Resource
-	handler  ResourceHandlerFunc
-}
-
-// resourceTemplateEntry holds both a template and its handler
-type resourceTemplateEntry struct {
-	template mcp.ResourceTemplate
-	handler  ResourceTemplateHandlerFunc
-}
-
 // ServerOption is a function that configures an MCPServer.
 type ServerOption func(*MCPServer)
-
-// ResourceHandlerFunc is a function that returns resource contents.
-type ResourceHandlerFunc func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error)
-
-// ResourceTemplateHandlerFunc is a function that returns a resource template.
-type ResourceTemplateHandlerFunc func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error)
 
 // PromptHandlerFunc handles prompt requests with given arguments.
 type PromptHandlerFunc func(ctx context.Context, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error)
@@ -56,12 +38,6 @@ type ServerTool struct {
 type ServerPrompt struct {
 	Prompt  mcp.Prompt
 	Handler PromptHandlerFunc
-}
-
-// ServerResource combines a Resource with its handler function.
-type ServerResource struct {
-	Resource mcp.Resource
-	Handler  ResourceHandlerFunc
 }
 
 // serverKey is the context key for storing the server instance
@@ -137,7 +113,6 @@ type NotificationHandlerFunc func(ctx context.Context, notification mcp.JSONRPCN
 // including resources, prompts, and tools.
 type MCPServer struct {
 	// Separate mutexes for different resource types
-	resourcesMu            sync.RWMutex
 	promptsMu              sync.RWMutex
 	toolsMu                sync.RWMutex
 	middlewareMu           sync.RWMutex
@@ -148,8 +123,6 @@ type MCPServer struct {
 	name                   string
 	version                string
 	instructions           string
-	resources              map[string]resourceEntry
-	resourceTemplates      map[string]resourceTemplateEntry
 	prompts                map[string]mcp.Prompt
 	promptHandlers         map[string]PromptHandlerFunc
 	tools                  map[string]ServerTool
@@ -160,6 +133,8 @@ type MCPServer struct {
 	paginationLimit        *int
 	sessions               sync.Map
 	hooks                  *Hooks
+	resourceManager        *resourceManager
+
 }
 
 // WithPaginationLimit sets the pagination limit for the server.
@@ -201,6 +176,16 @@ func WithResourceCapabilities(subscribe, listChanged bool) ServerOption {
 			subscribe:   subscribe,
 			listChanged: listChanged,
 		}
+	}
+}
+
+// WithWarnOnDuplicateResources configures the behavior of resourceManager
+// when a resource with the same URI is added more than once:
+//   - If true(Default setting): a warning is logged via internal logger, and the new resource is ignored.
+//   - If false: the previous entry is removed from the list and replaced by the new one.
+func WithWarnOnDuplicateResources(warnOnDuplicateResources bool) ServerOption {
+	return func(s *MCPServer) {
+		s.resourceManager.warnOnDuplicateResources = warnOnDuplicateResources
 	}
 }
 
@@ -294,14 +279,13 @@ func NewMCPServer(
 	opts ...ServerOption,
 ) *MCPServer {
 	s := &MCPServer{
-		resources:            make(map[string]resourceEntry),
-		resourceTemplates:    make(map[string]resourceTemplateEntry),
 		prompts:              make(map[string]mcp.Prompt),
 		promptHandlers:       make(map[string]PromptHandlerFunc),
 		tools:                make(map[string]ServerTool),
 		name:                 name,
 		version:              version,
 		notificationHandlers: make(map[string]NotificationHandlerFunc),
+		resourceManager:      newResourceManager(),
 		capabilities: serverCapabilities{
 			tools:     nil,
 			resources: nil,
@@ -321,17 +305,10 @@ func NewMCPServer(
 func (s *MCPServer) AddResources(resources ...ServerResource) {
 	s.implicitlyRegisterResourceCapabilities()
 
-	s.resourcesMu.Lock()
-	for _, entry := range resources {
-		s.resources[entry.Resource.URI] = resourceEntry{
-			resource: entry.Resource,
-			handler:  entry.Handler,
-		}
-	}
-	s.resourcesMu.Unlock()
+	listChanged := s.resourceManager.addResources(resources...)
 
 	// When the list of available resources changes, servers that declared the listChanged capability SHOULD send a notification
-	if s.capabilities.resources.listChanged {
+	if listChanged && s.capabilities.resources.listChanged {
 		// Send notification to all initialized sessions
 		s.SendNotificationToAllClients(mcp.MethodNotificationResourcesListChanged, nil)
 	}
@@ -347,15 +324,11 @@ func (s *MCPServer) AddResource(
 
 // RemoveResource removes a resource from the server
 func (s *MCPServer) RemoveResource(uri string) {
-	s.resourcesMu.Lock()
-	_, exists := s.resources[uri]
-	if exists {
-		delete(s.resources, uri)
-	}
-	s.resourcesMu.Unlock()
+
+	listChanged := s.resourceManager.removeResource(uri)
 
 	// Send notification to all initialized sessions if listChanged capability is enabled and we actually remove a resource
-	if exists && s.capabilities.resources != nil && s.capabilities.resources.listChanged {
+	if listChanged && s.capabilities.resources != nil && s.capabilities.resources.listChanged {
 		s.SendNotificationToAllClients(mcp.MethodNotificationResourcesListChanged, nil)
 	}
 }
@@ -367,15 +340,10 @@ func (s *MCPServer) AddResourceTemplate(
 ) {
 	s.implicitlyRegisterResourceCapabilities()
 
-	s.resourcesMu.Lock()
-	s.resourceTemplates[template.URITemplate.Raw()] = resourceTemplateEntry{
-		template: template,
-		handler:  handler,
-	}
-	s.resourcesMu.Unlock()
+	listChanged := s.resourceManager.addResourceTemplate(template, handler)
 
 	// When the list of available resources changes, servers that declared the listChanged capability SHOULD send a notification
-	if s.capabilities.resources.listChanged {
+	if listChanged && s.capabilities.resources.listChanged {
 		// Send notification to all initialized sessions
 		s.SendNotificationToAllClients(mcp.MethodNotificationResourcesListChanged, nil)
 	}
@@ -683,23 +651,11 @@ func (s *MCPServer) handleListResources(
 	id any,
 	request mcp.ListResourcesRequest,
 ) (*mcp.ListResourcesResult, *requestError) {
-	s.resourcesMu.RLock()
-	resources := make([]mcp.Resource, 0, len(s.resources))
-	for _, entry := range s.resources {
-		resources = append(resources, entry.resource)
-	}
-	s.resourcesMu.RUnlock()
-
-	// Sort the resources by name
-	sort.Slice(resources, func(i, j int) bool {
-		return resources[i].Name < resources[j].Name
-	})
-	resourcesToReturn, nextCursor, err := listByPagination(
-		ctx,
-		s,
+	resourcesToReturn, nextCursor, err := s.resourceManager.listResources(
 		request.Params.Cursor,
-		resources,
+		s.paginationLimit,
 	)
+
 	if err != nil {
 		return nil, &requestError{
 			id:   id,
@@ -721,21 +677,11 @@ func (s *MCPServer) handleListResourceTemplates(
 	id any,
 	request mcp.ListResourceTemplatesRequest,
 ) (*mcp.ListResourceTemplatesResult, *requestError) {
-	s.resourcesMu.RLock()
-	templates := make([]mcp.ResourceTemplate, 0, len(s.resourceTemplates))
-	for _, entry := range s.resourceTemplates {
-		templates = append(templates, entry.template)
-	}
-	s.resourcesMu.RUnlock()
-	sort.Slice(templates, func(i, j int) bool {
-		return templates[i].Name < templates[j].Name
-	})
-	templatesToReturn, nextCursor, err := listByPagination(
-		ctx,
-		s,
+	templatesToReturn, nextCursor, err := s.resourceManager.listResourceTemplates(
 		request.Params.Cursor,
-		templates,
+		s.paginationLimit,
 	)
+
 	if err != nil {
 		return nil, &requestError{
 			id:   id,
@@ -757,67 +703,8 @@ func (s *MCPServer) handleReadResource(
 	id any,
 	request mcp.ReadResourceRequest,
 ) (*mcp.ReadResourceResult, *requestError) {
-	s.resourcesMu.RLock()
-	// First try direct resource handlers
-	if entry, ok := s.resources[request.Params.URI]; ok {
-		handler := entry.handler
-		s.resourcesMu.RUnlock()
-		contents, err := handler(ctx, request)
-		if err != nil {
-			return nil, &requestError{
-				id:   id,
-				code: mcp.INTERNAL_ERROR,
-				err:  err,
-			}
-		}
-		return &mcp.ReadResourceResult{Contents: contents}, nil
-	}
-
-	// If no direct handler found, try matching against templates
-	var matchedHandler ResourceTemplateHandlerFunc
-	var matched bool
-	for _, entry := range s.resourceTemplates {
-		template := entry.template
-		if matchesTemplate(request.Params.URI, template.URITemplate) {
-			matchedHandler = entry.handler
-			matched = true
-			matchedVars := template.URITemplate.Match(request.Params.URI)
-			// Convert matched variables to a map
-			request.Params.Arguments = make(map[string]any, len(matchedVars))
-			for name, value := range matchedVars {
-				request.Params.Arguments[name] = value.V
-			}
-			break
-		}
-	}
-	s.resourcesMu.RUnlock()
-
-	if matched {
-		contents, err := matchedHandler(ctx, request)
-		if err != nil {
-			return nil, &requestError{
-				id:   id,
-				code: mcp.INTERNAL_ERROR,
-				err:  err,
-			}
-		}
-		return &mcp.ReadResourceResult{Contents: contents}, nil
-	}
-
-	return nil, &requestError{
-		id:   id,
-		code: mcp.RESOURCE_NOT_FOUND,
-		err: fmt.Errorf(
-			"handler not found for resource URI '%s': %w",
-			request.Params.URI,
-			ErrResourceNotFound,
-		),
-	}
-}
-
-// matchesTemplate checks if a URI matches a URI template pattern
-func matchesTemplate(uri string, template *mcp.URITemplate) bool {
-	return template.Regexp().MatchString(uri)
+	// Forward the request to resourceManager
+	return s.resourceManager.readResource(ctx, id, request)
 }
 
 func (s *MCPServer) handleListPrompts(
