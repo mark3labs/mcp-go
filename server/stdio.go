@@ -257,7 +257,7 @@ func (s *StdioServer) processMessage(
 	}
 
 	// Handle the message using the wrapped server
-	response := s.server.HandleMessage(ctx, rawMessage)
+	response := s.server.HandleMessage(ctx, map[string]string{}, rawMessage)
 
 	// Only write response if there is one (not for notifications)
 	if response != nil {

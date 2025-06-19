@@ -13,6 +13,7 @@ import (
 // HandleMessage processes an incoming JSON-RPC message and returns an appropriate response
 func (s *MCPServer) HandleMessage(
 	ctx context.Context,
+	header map[string]string,
 	message json.RawMessage,
 ) mcp.JSONRPCMessage {
 	// Add server to context
@@ -82,6 +83,7 @@ func (s *MCPServer) HandleMessage(
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
+			request.Header = header
 			s.hooks.beforeInitialize(ctx, baseMessage.ID, &request)
 			result, err = s.handleInitialize(ctx, baseMessage.ID, request)
 		}
@@ -101,6 +103,7 @@ func (s *MCPServer) HandleMessage(
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
+			request.Header = header
 			s.hooks.beforePing(ctx, baseMessage.ID, &request)
 			result, err = s.handlePing(ctx, baseMessage.ID, request)
 		}
@@ -126,6 +129,7 @@ func (s *MCPServer) HandleMessage(
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
+			request.Header = header
 			s.hooks.beforeSetLevel(ctx, baseMessage.ID, &request)
 			result, err = s.handleSetLevel(ctx, baseMessage.ID, request)
 		}
@@ -151,6 +155,7 @@ func (s *MCPServer) HandleMessage(
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
+			request.Header = header
 			s.hooks.beforeListResources(ctx, baseMessage.ID, &request)
 			result, err = s.handleListResources(ctx, baseMessage.ID, request)
 		}
@@ -176,6 +181,7 @@ func (s *MCPServer) HandleMessage(
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
+			request.Header = header
 			s.hooks.beforeListResourceTemplates(ctx, baseMessage.ID, &request)
 			result, err = s.handleListResourceTemplates(ctx, baseMessage.ID, request)
 		}
@@ -201,6 +207,7 @@ func (s *MCPServer) HandleMessage(
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
+			request.Header = header
 			s.hooks.beforeReadResource(ctx, baseMessage.ID, &request)
 			result, err = s.handleReadResource(ctx, baseMessage.ID, request)
 		}
@@ -226,6 +233,7 @@ func (s *MCPServer) HandleMessage(
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
+			request.Header = header
 			s.hooks.beforeListPrompts(ctx, baseMessage.ID, &request)
 			result, err = s.handleListPrompts(ctx, baseMessage.ID, request)
 		}
@@ -251,6 +259,7 @@ func (s *MCPServer) HandleMessage(
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
+			request.Header = header
 			s.hooks.beforeGetPrompt(ctx, baseMessage.ID, &request)
 			result, err = s.handleGetPrompt(ctx, baseMessage.ID, request)
 		}
@@ -276,6 +285,7 @@ func (s *MCPServer) HandleMessage(
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
+			request.Header = header
 			s.hooks.beforeListTools(ctx, baseMessage.ID, &request)
 			result, err = s.handleListTools(ctx, baseMessage.ID, request)
 		}
@@ -301,6 +311,7 @@ func (s *MCPServer) HandleMessage(
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
+			request.Header = header
 			s.hooks.beforeCallTool(ctx, baseMessage.ID, &request)
 			result, err = s.handleToolCall(ctx, baseMessage.ID, request)
 		}
