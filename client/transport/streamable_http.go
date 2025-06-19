@@ -513,3 +513,8 @@ func (c *StreamableHTTP) GetOAuthHandler() *OAuthHandler {
 func (c *StreamableHTTP) IsOAuthEnabled() bool {
 	return c.oauthHandler != nil
 }
+
+// SetSessionId sets the session ID for the transport
+func (c *StreamableHTTP) SetSessionId(sessionID string) {
+	c.sessionID.Store(sessionID)
+}

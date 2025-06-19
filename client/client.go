@@ -171,6 +171,61 @@ func (c *Client) Initialize(
 	return &result, nil
 }
 
+// ExportState exports the current client state for later resumption.
+//
+// The exported state includes:
+// - Initialization status
+// - Current request ID counter
+// - Client and server capabilities
+// - Transport session ID (for HTTP transports)
+func (c *Client) ExportState() *mcp.ClientState {
+	return &mcp.ClientState{
+		Initialized:        c.initialized,
+		RequestID:          c.requestID.Load(),
+		ClientCapabilities: c.clientCapabilities,
+		ServerCapabilities: c.serverCapabilities,
+		SessionID:          c.getTransportSessionID(),
+	}
+}
+
+func (c *Client) getTransportSessionID() string {
+	if t, ok := c.transport.(*transport.StreamableHTTP); ok {
+		return t.GetSessionId()
+	}
+	return ""
+}
+
+func (c *Client) setTransportSessionID(sessionID string) {
+	if t, ok := c.transport.(*transport.StreamableHTTP); ok && sessionID != "" {
+		t.SetSessionId(sessionID)
+	}
+}
+
+// ImportState restores the client state from a previously exported state.
+//
+// The client transport must be started before calling this method.
+func (c *Client) ImportState(ctx context.Context, state *mcp.ClientState) error {
+	if state == nil {
+		return fmt.Errorf("state cannot be nil")
+	}
+
+	if c.transport == nil {
+		return fmt.Errorf("transport is not initialized")
+	}
+
+	if state.Initialized && state.RequestID < 0 {
+		return fmt.Errorf("invalid state: initialized client must have non-negative request ID")
+	}
+
+	c.initialized = state.Initialized
+	c.requestID.Store(state.RequestID)
+	c.clientCapabilities = state.ClientCapabilities
+	c.serverCapabilities = state.ServerCapabilities
+	c.setTransportSessionID(state.SessionID)
+
+	return nil
+}
+
 func (c *Client) Ping(ctx context.Context) error {
 	_, err := c.sendRequest(ctx, "ping", nil)
 	return err

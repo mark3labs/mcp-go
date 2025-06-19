@@ -1042,3 +1042,21 @@ type ServerResult any
 type Named interface {
 	GetName() string
 }
+
+// ClientState represents the resumable state of an MCP client
+type ClientState struct {
+	// Initialized indicates whether the client has been initialized
+	Initialized bool `json:"initialized"`
+
+	// RequestID is the last used request ID
+	RequestID int64 `json:"requestId"`
+
+	// ClientCapabilities represents the client's capabilities
+	ClientCapabilities ClientCapabilities `json:"clientCapabilities"`
+
+	// ServerCapabilities represents the server's capabilities
+	ServerCapabilities ServerCapabilities `json:"serverCapabilities"`
+
+	// SessionID is the session ID from the transport (if any)
+	SessionID string `json:"sessionId,omitempty"`
+}
