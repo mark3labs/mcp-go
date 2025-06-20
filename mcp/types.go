@@ -987,16 +987,19 @@ type CompleteParams struct {
 // CompleteResult is the server's response to a completion/complete request
 type CompleteResult struct {
 	Result
-	Completion struct {
-		// An array of completion values. Must not exceed 100 items.
-		Values []string `json:"values"`
-		// The total number of completion options available. This can exceed the
-		// number of values actually sent in the response.
-		Total int `json:"total,omitempty"`
-		// Indicates whether there are additional completion options beyond those
-		// provided in the current response, even if the exact total is unknown.
-		HasMore bool `json:"hasMore,omitempty"`
-	} `json:"completion"`
+	Completion Completion `json:"completion"`
+}
+
+// Completion represents the resulting completion values for a completion/complete request
+type Completion struct {
+	// An array of completion values. Must not exceed 100 items.
+	Values []string `json:"values"`
+	// The total number of completion options available. This can exceed the
+	// number of values actually sent in the response.
+	Total int `json:"total,omitempty"`
+	// Indicates whether there are additional completion options beyond those
+	// provided in the current response, even if the exact total is unknown.
+	HasMore bool `json:"hasMore,omitempty"`
 }
 
 // ResourceReference is a reference to a resource or resource template definition.

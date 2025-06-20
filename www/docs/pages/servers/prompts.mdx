@@ -203,8 +203,11 @@ func handleCompleteFromDictionary(ctx context.Context, req mcp.CompleteRequest) 
 	options := dictionary[req.Params.Argument.Name] // Get options for argument
 
 	// Initialize results container
-	result := &mcp.CompleteResult{}
-	result.Completion.Values = make([]string, 0, len(options))
+	result := &mcp.CompleteResult{
+		Completion: mcp.Completion{
+			Values: make([]string, 0, len(options)),
+		},
+	}
 
 	// Simple match logic
 	for _, option := range options {

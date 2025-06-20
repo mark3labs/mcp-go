@@ -1105,14 +1105,7 @@ func (s *MCPServer) handleCompletion(
 	}
 
 	if handler == nil {
-		return nil, &requestError{
-			id:   id,
-			code: mcp.INVALID_PARAMS,
-			err: fmt.Errorf(
-				"no completion handler for argument '%s' of reference %s",
-				request.Params.Argument.Name, request.Params.Ref,
-			),
-		}
+		return &mcp.CompleteResult{Completion: mcp.Completion{Values: make([]string, 0)}}, nil
 	}
 
 	result, err := (*handler)(ctx, request)
