@@ -3,6 +3,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -50,6 +51,10 @@ const (
 	// https://modelcontextprotocol.io/specification/2024-11-05/server/tools/
 	MethodToolsCall MCPMethod = "tools/call"
 
+	// MethodCompletion provides autocompletion suggestions for URI arguments.
+	// https://modelcontextprotocol.io/specification/draft/server/utilities/completion
+	MethodCompletion MCPMethod = "completion/complete"
+
 	// MethodSetLogLevel configures the minimum log level for client
 	// https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging
 	MethodSetLogLevel MCPMethod = "logging/setLevel"
@@ -69,8 +74,14 @@ const (
 	MethodNotificationToolsListChanged = "notifications/tools/list_changed"
 )
 
+// CompletionHandlerFunc handles completion requests.
+type CompletionHandlerFunc func(ctx context.Context, request CompleteRequest) (*CompleteResult, error)
+
 type URITemplate struct {
 	*uritemplate.Template
+
+	// Optional mapping of URI template arguments to CompletionHandlerFunc for autocompleting each argument's value.
+	ArgumentCompletionHandlers map[string]CompletionHandlerFunc `json:"argumentCompletionHandlers,omitempty"`
 }
 
 func (t *URITemplate) MarshalJSON() ([]byte, error) {
@@ -965,6 +976,10 @@ type CompleteParams struct {
 		// The value of the argument to use for completion matching.
 		Value string `json:"value"`
 	} `json:"argument"`
+	Context struct {
+		// Previously completed arguments for this reference.
+		Arguments map[string]string `json:"arguments,omitempty"`
+	} `json:"context,omitempty"`
 }
 
 // CompleteResult is the server's response to a completion/complete request
@@ -984,17 +999,24 @@ type CompleteResult struct {
 
 // ResourceReference is a reference to a resource or resource template definition.
 type ResourceReference struct {
-	Type string `json:"type"`
+	Type RefType `json:"type"`
 	// The URI or URI template of the resource.
 	URI string `json:"uri"`
 }
 
 // PromptReference identifies a prompt.
 type PromptReference struct {
-	Type string `json:"type"`
+	Type RefType `json:"type"`
 	// The name of the prompt or prompt template
 	Name string `json:"name"`
 }
+
+type RefType string
+
+const (
+	RefTypeResource RefType = "ref/resource"
+	RefTypePrompt   RefType = "ref/prompt"
+)
 
 /* Roots */
 

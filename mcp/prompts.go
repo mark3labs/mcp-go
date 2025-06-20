@@ -68,6 +68,8 @@ type PromptArgument struct {
 	// Whether this argument must be provided.
 	// If true, clients must include this argument when calling prompts/get.
 	Required bool `json:"required,omitempty"`
+	// Optional CompletionHandlerFunc for autocompleting the argument value.
+	CompletionHandler *CompletionHandlerFunc `json:"completionHandler,omitempty"`
 }
 
 // Role represents the sender or recipient of messages and data in a
@@ -166,5 +168,12 @@ func ArgumentDescription(desc string) ArgumentOption {
 func RequiredArgument() ArgumentOption {
 	return func(arg *PromptArgument) {
 		arg.Required = true
+	}
+}
+
+// ArgumentCompletion configures an autocomplete handler for the argument.
+func ArgumentCompletion(handler CompletionHandlerFunc) ArgumentOption {
+	return func(arg *PromptArgument) {
+		arg.CompletionHandler = &handler
 	}
 }

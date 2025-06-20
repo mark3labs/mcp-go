@@ -40,6 +40,9 @@ type PromptHandlerFunc func(ctx context.Context, request mcp.GetPromptRequest) (
 // ToolHandlerFunc handles tool calls with given arguments.
 type ToolHandlerFunc func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
 
+// CompletionHandlerFunc handles completion requests.
+//type CompletionHandlerFunc mcp.CompletionHandlerFunc
+
 // ToolHandlerMiddleware is a middleware function that wraps a ToolHandlerFunc.
 type ToolHandlerMiddleware func(ToolHandlerFunc) ToolHandlerFunc
 
@@ -171,10 +174,11 @@ func WithPaginationLimit(limit int) ServerOption {
 
 // serverCapabilities defines the supported features of the MCP server
 type serverCapabilities struct {
-	tools     *toolCapabilities
-	resources *resourceCapabilities
-	prompts   *promptCapabilities
-	logging   *bool
+	tools       *toolCapabilities
+	resources   *resourceCapabilities
+	prompts     *promptCapabilities
+	completions *bool
+	logging     *bool
 }
 
 // resourceCapabilities defines the supported resource-related features
@@ -374,6 +378,10 @@ func (s *MCPServer) AddResourceTemplate(
 	}
 	s.resourcesMu.Unlock()
 
+	if len(template.URITemplate.ArgumentCompletionHandlers) > 0 {
+		s.implicitlyRegisterCompletionCapabilities()
+	}
+
 	// When the list of available resources changes, servers that declared the listChanged capability SHOULD send a notification
 	if s.capabilities.resources.listChanged {
 		// Send notification to all initialized sessions
@@ -392,6 +400,15 @@ func (s *MCPServer) AddPrompts(prompts ...ServerPrompt) {
 	}
 	s.promptsMu.Unlock()
 
+	for _, entry := range prompts {
+		for _, arg := range entry.Prompt.Arguments {
+			if arg.CompletionHandler != nil {
+				s.implicitlyRegisterCompletionCapabilities()
+				break
+			}
+		}
+	}
+
 	// When the list of available prompts changes, servers that declared the listChanged capability SHOULD send a notification.
 	if s.capabilities.prompts.listChanged {
 		// Send notification to all initialized sessions
@@ -402,6 +419,12 @@ func (s *MCPServer) AddPrompts(prompts ...ServerPrompt) {
 // AddPrompt registers a new prompt handler with the given name
 func (s *MCPServer) AddPrompt(prompt mcp.Prompt, handler PromptHandlerFunc) {
 	s.AddPrompts(ServerPrompt{Prompt: prompt, Handler: handler})
+	for _, arg := range prompt.Arguments {
+		if arg.CompletionHandler != nil {
+			s.implicitlyRegisterCompletionCapabilities()
+			break
+		}
+	}
 }
 
 // DeletePrompts removes prompts from the server
@@ -443,6 +466,13 @@ func (s *MCPServer) implicitlyRegisterResourceCapabilities() {
 	s.implicitlyRegisterCapabilities(
 		func() bool { return s.capabilities.resources != nil },
 		func() { s.capabilities.resources = &resourceCapabilities{} },
+	)
+}
+
+func (s *MCPServer) implicitlyRegisterCompletionCapabilities() {
+	s.implicitlyRegisterCapabilities(
+		func() bool { return s.capabilities.completions != nil },
+		func() { s.capabilities.completions = mcp.ToBoolPtr(true) },
 	)
 }
 
@@ -1034,6 +1064,64 @@ func (s *MCPServer) handleToolCall(
 		}
 	}
 
+	return result, nil
+}
+
+func (s *MCPServer) handleCompletion(
+	ctx context.Context,
+	id any,
+	request mcp.CompleteRequest,
+) (*mcp.CompleteResult, *requestError) {
+
+	promptRef, resourceRef, err := mcp.ParseCompletionReference(request)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  err,
+		}
+	}
+
+	var handler *mcp.CompletionHandlerFunc
+	if promptRef != nil {
+		s.promptsMu.RLock()
+		if prompt, ok := s.prompts[promptRef.Name]; ok {
+			for _, arg := range prompt.Arguments {
+				if arg.Name == request.Params.Argument.Name {
+					handler = arg.CompletionHandler
+				}
+			}
+		}
+		s.promptsMu.RUnlock()
+	} else if resourceRef != nil {
+		s.resourcesMu.RLock()
+		if resourceTemplate, ok := s.resourceTemplates[resourceRef.URI]; ok {
+			if h, ok := resourceTemplate.template.URITemplate.ArgumentCompletionHandlers[request.Params.Argument.Name]; ok {
+				handler = &h
+			}
+		}
+		s.resourcesMu.RUnlock()
+	}
+
+	if handler == nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err: fmt.Errorf(
+				"no completion handler for argument '%s' of reference %s",
+				request.Params.Argument.Name, request.Params.Ref,
+			),
+		}
+	}
+
+	result, err := (*handler)(ctx, request)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INTERNAL_ERROR,
+			err:  err,
+		}
+	}
 	return result, nil
 }
 

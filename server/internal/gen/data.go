@@ -107,5 +107,15 @@ var MCPRequestTypes = []MCPRequestType{
 		HookName:       "CallTool",
 		UnmarshalError: "invalid call tool request",
 		HandlerFunc:    "handleToolCall",
+	}, {
+		MethodName:     "MethodCompletion",
+		ParamType:      "CompleteRequest",
+		ResultType:     "CompleteResult",
+		Group:          "completions",
+		GroupName:      "Completions",
+		GroupHookName:  "Completion",
+		HookName:       "Complete",
+		UnmarshalError: "invalid completion request",
+		HandlerFunc:    "handleCompletion",
 	},
 }

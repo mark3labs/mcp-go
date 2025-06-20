@@ -91,6 +91,9 @@ type OnAfterListToolsFunc func(ctx context.Context, id any, message *mcp.ListToo
 type OnBeforeCallToolFunc func(ctx context.Context, id any, message *mcp.CallToolRequest)
 type OnAfterCallToolFunc func(ctx context.Context, id any, message *mcp.CallToolRequest, result *mcp.CallToolResult)
 
+type OnBeforeCompleteFunc func(ctx context.Context, id any, message *mcp.CompleteRequest)
+type OnAfterCompleteFunc func(ctx context.Context, id any, message *mcp.CompleteRequest, result *mcp.CompleteResult)
+
 type Hooks struct {
 	OnRegisterSession             []OnRegisterSessionHookFunc
 	OnUnregisterSession           []OnUnregisterSessionHookFunc
@@ -118,6 +121,8 @@ type Hooks struct {
 	OnAfterListTools              []OnAfterListToolsFunc
 	OnBeforeCallTool              []OnBeforeCallToolFunc
 	OnAfterCallTool               []OnAfterCallToolFunc
+	OnBeforeComplete              []OnBeforeCompleteFunc
+	OnAfterComplete               []OnAfterCompleteFunc
 }
 
 func (c *Hooks) AddBeforeAny(hook BeforeAnyHookFunc) {
@@ -527,6 +532,33 @@ func (c *Hooks) afterCallTool(ctx context.Context, id any, message *mcp.CallTool
 		return
 	}
 	for _, hook := range c.OnAfterCallTool {
+		hook(ctx, id, message, result)
+	}
+}
+func (c *Hooks) AddBeforeComplete(hook OnBeforeCompleteFunc) {
+	c.OnBeforeComplete = append(c.OnBeforeComplete, hook)
+}
+
+func (c *Hooks) AddAfterComplete(hook OnAfterCompleteFunc) {
+	c.OnAfterComplete = append(c.OnAfterComplete, hook)
+}
+
+func (c *Hooks) beforeComplete(ctx context.Context, id any, message *mcp.CompleteRequest) {
+	c.beforeAny(ctx, id, mcp.MethodCompletion, message)
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnBeforeComplete {
+		hook(ctx, id, message)
+	}
+}
+
+func (c *Hooks) afterComplete(ctx context.Context, id any, message *mcp.CompleteRequest, result *mcp.CompleteResult) {
+	c.onSuccess(ctx, id, mcp.MethodCompletion, message, result)
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnAfterComplete {
 		hook(ctx, id, message, result)
 	}
 }
