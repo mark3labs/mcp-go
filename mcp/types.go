@@ -98,6 +98,10 @@ type JSONRPCMessage any
 // LATEST_PROTOCOL_VERSION is the most recent version of the MCP protocol.
 const LATEST_PROTOCOL_VERSION = "2025-03-26"
 
+// The default negotiated version of the Model Context Protocol when no version is specified
+// Reference: https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#protocol-version-header
+const DEFAULT_NEGOTIATED_VERSION = "2025-03-26"
+
 // ValidProtocolVersions lists all known valid MCP protocol versions.
 var ValidProtocolVersions = []string{
 	"2024-11-05",

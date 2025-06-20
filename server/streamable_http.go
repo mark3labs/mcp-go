@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -205,7 +206,8 @@ func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 // --- internal methods ---
 
 const (
-	headerKeySessionID = "Mcp-Session-Id"
+	headerKeySessionID       = "Mcp-Session-Id"
+	headerKeyProtocolVersion = "MCP-Protocol-Version"
 )
 
 func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {
@@ -240,19 +242,8 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	if isInitializeRequest {
 		// generate a new one for initialize request
 		sessionID = s.sessionIdManager.Generate()
-	} else {
-		// Get session ID from header.
-		// Stateful servers need the client to carry the session ID.
-		sessionID = r.Header.Get(headerKeySessionID)
-		isTerminated, err := s.sessionIdManager.Validate(sessionID)
-		if err != nil {
-			http.Error(w, "Invalid session ID", http.StatusBadRequest)
-			return
-		}
-		if isTerminated {
-			http.Error(w, "Session terminated", http.StatusNotFound)
-			return
-		}
+	} else if !s.validateRequestHeaders(w, r) {
+		return
 	}
 
 	session := newStreamableHttpSession(sessionID, s.sessionTools)
@@ -355,10 +346,11 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request) {
 	// get request is for listening to notifications
 	// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
+	if !s.validateRequestHeaders(w, r) {
+		return
+	}
 
 	sessionID := r.Header.Get(headerKeySessionID)
-	// the specification didn't say we should validate the session id
-
 	if sessionID == "" {
 		// It's a stateless server,
 		// but the MCP server requires a unique ID for registering, so we use a random one
@@ -454,6 +446,10 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *StreamableHTTPServer) handleDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.validateRequestHeaders(w, r) {
+		return
+	}
+
 	// delete request terminate the session
 	sessionID := r.Header.Get(headerKeySessionID)
 	notAllowed, err := s.sessionIdManager.Terminate(sessionID)
@@ -508,6 +504,55 @@ func (s *StreamableHTTPServer) nextRequestID(sessionID string) int64 {
 	actual, _ := s.sessionRequestIDs.LoadOrStore(sessionID, new(atomic.Int64))
 	counter := actual.(*atomic.Int64)
 	return counter.Add(1)
+}
+
+func (s *StreamableHTTPServer) validateRequestHeaders(w http.ResponseWriter, r *http.Request) bool {
+	if !s.validateSession(w, r) {
+		return false
+	}
+	if !s.validateProtocolVersion(w, r) {
+		return false
+	}
+	return true
+}
+
+// validateSession validates the validates the session ID in the request.
+func (s *StreamableHTTPServer) validateSession(w http.ResponseWriter, r *http.Request) bool {
+	// Get session ID from header.
+	// Stateful servers need the client to carry the session ID.
+	sessionID := r.Header.Get(headerKeySessionID)
+	isTerminated, err := s.sessionIdManager.Validate(sessionID)
+	if err != nil {
+		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		return false
+	}
+	if isTerminated {
+		http.Error(w, "Session terminated", http.StatusNotFound)
+		return false
+	}
+	return true
+}
+
+// validateProtocolVersion validates the protocol version header in the request.
+func (s *StreamableHTTPServer) validateProtocolVersion(w http.ResponseWriter, r *http.Request) bool {
+	protocolVersion := r.Header.Get(headerKeyProtocolVersion)
+
+	// If no protocol version provided, assume default version
+	if protocolVersion == "" {
+		protocolVersion = mcp.DEFAULT_NEGOTIATED_VERSION
+	}
+
+	// Check if the protocol version is supported
+	if !slices.Contains(mcp.ValidProtocolVersions, protocolVersion) {
+		supportedVersion := strings.Join(mcp.ValidProtocolVersions, ",")
+		http.Error(
+			w,
+			fmt.Sprintf("Unsupported protocol version: %s. Supported versions: %s", protocolVersion, supportedVersion),
+			http.StatusBadRequest,
+		)
+		return false
+	}
+	return true
 }
 
 // --- session ---
