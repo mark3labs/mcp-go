@@ -839,124 +839,134 @@ func TestStreamableHTTPServer_ProtocolVersionHeader(t *testing.T) {
 		rawNotification, _ := json.Marshal(notification)
 
 		// Request with protocol version to be the one negotiated during initialization.
-		req, _ := http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(rawNotification))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set(headerKeyProtocolVersion, clientInitializedProtocolVersion)
-		resp, err := server.Client().Do(req)
+		req1, _ := http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(rawNotification))
+		req1.Header.Set("Content-Type", "application/json")
+		req1.Header.Set(headerKeyProtocolVersion, clientInitializedProtocolVersion)
+		resp1, err := server.Client().Do(req1)
 		if err != nil {
 			t.Fatalf("Failed to send message: %v", err)
 		}
-		if resp.StatusCode != http.StatusAccepted {
-			t.Errorf("Expected status 202, got %d", resp.StatusCode)
+		defer resp1.Body.Close()
+		if resp1.StatusCode != http.StatusAccepted {
+			t.Errorf("Expected status 202, got %d", resp1.StatusCode)
 		}
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(resp1.Body)
 		if len(bodyBytes) > 0 {
 			t.Errorf("Expected empty body, got %s", string(bodyBytes))
 		}
-		resp.Body.Close()
 
 		// Request with protocol version not to be the one negotiated during initialization but supported by server.
-		req.Header.Set(headerKeyProtocolVersion, "2024-11-05")
-		resp, err = server.Client().Do(req)
+		req2, _ := http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(rawNotification))
+		req2.Header.Set("Content-Type", "application/json")
+		req2.Header.Set(headerKeyProtocolVersion, "2024-11-05")
+		resp2, err := server.Client().Do(req2)
 		if err != nil {
 			t.Fatalf("Failed to send message: %v", err)
 		}
-		if resp.StatusCode != http.StatusAccepted {
-			t.Errorf("Expected status 202, got %d", resp.StatusCode)
+		defer resp2.Body.Close()
+		if resp2.StatusCode != http.StatusAccepted {
+			t.Errorf("Expected status 202, got %d", resp2.StatusCode)
 		}
-		bodyBytes, _ = io.ReadAll(resp.Body)
+		bodyBytes, _ = io.ReadAll(resp2.Body)
 		if len(bodyBytes) > 0 {
 			t.Errorf("Expected empty body, got %s", string(bodyBytes))
 		}
-		resp.Body.Close()
 
 		// Request with protocol version not to be the one negotiated during initialization but also invalid/unsupported by server.
-		req.Header.Set(headerKeyProtocolVersion, "2024-06-18")
-		resp, err = server.Client().Do(req)
+		req3, _ := http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(rawNotification))
+		req3.Header.Set("Content-Type", "application/json")
+		req3.Header.Set(headerKeyProtocolVersion, "2024-06-18")
+		resp3, err := server.Client().Do(req3)
 		if err != nil {
 			t.Fatalf("Failed to send message: %v", err)
 		}
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("Expected status 400, got %d", resp.StatusCode)
+		defer resp3.Body.Close()
+		if resp3.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d", resp3.StatusCode)
 		}
-		resp.Body.Close()
 	})
 
 	t.Run("GET Request", func(t *testing.T) {
 		// Request with protocol version to be the one negotiated during initialization.
-		req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
-		req.Header.Set("Content-Type", "text/event-stream")
-		req.Header.Set(headerKeyProtocolVersion, clientInitializedProtocolVersion)
-		resp, err := http.DefaultClient.Do(req)
+		req1, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+		req1.Header.Set("Content-Type", "text/event-stream")
+		req1.Header.Set(headerKeyProtocolVersion, clientInitializedProtocolVersion)
+		resp1, err := http.DefaultClient.Do(req1)
 		if err != nil {
 			t.Fatalf("Failed to send message: %v\n", err)
 		}
-		if resp.StatusCode != http.StatusOK {
-			bodyBytes, _ := io.ReadAll(resp.Body)
-			t.Fatalf("Expected status 200, got %d, Response:%s", resp.StatusCode, string(bodyBytes))
+		defer resp1.Body.Close()
+		if resp1.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp1.Body)
+			t.Fatalf("Expected status 200, got %d, Response:%s", resp1.StatusCode, string(bodyBytes))
 		}
-		resp.Body.Close()
 
 		// Request with protocol version not to be the one negotiated during initialization but supported by server.
-		req.Header.Set(headerKeyProtocolVersion, "2024-11-05")
-		resp, err = http.DefaultClient.Do(req)
+		req2, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+		req2.Header.Set("Content-Type", "text/event-stream")
+		req2.Header.Set(headerKeyProtocolVersion, "2024-11-05")
+		resp2, err := http.DefaultClient.Do(req2)
 		if err != nil {
 			t.Fatalf("Failed to send message: %v\n", err)
 		}
-		if resp.StatusCode != http.StatusOK {
-			bodyBytes, _ := io.ReadAll(resp.Body)
+		defer resp2.Body.Close()
+		if resp2.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp2.Body)
 			t.Fatalf("Expected status 200, got %d, Response:%s", resp.StatusCode, string(bodyBytes))
 		}
-		resp.Body.Close()
 
 		// Request with protocol version not to be the one negotiated during initialization but also invalid/unsupported by server.
-		req.Header.Set(headerKeyProtocolVersion, "2024-06-18")
-		resp, err = server.Client().Do(req)
+		req3, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+		req3.Header.Set("Content-Type", "text/event-stream")
+		req3.Header.Set(headerKeyProtocolVersion, "2024-06-18")
+		resp3, err := http.DefaultClient.Do(req3)
 		if err != nil {
 			t.Fatalf("Failed to send message: %v", err)
 		}
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("Expected status 400, got %d", resp.StatusCode)
+		defer resp3.Body.Close()
+		if resp3.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d", resp3.StatusCode)
 		}
-		resp.Body.Close()
 	})
 
 	t.Run("DELETE Request", func(t *testing.T) {
 		// Request with protocol version to be the one negotiated during initialization.
-		req, _ := http.NewRequest(http.MethodDelete, server.URL, nil)
-		req.Header.Set(headerKeyProtocolVersion, clientInitializedProtocolVersion)
-		resp, err := http.DefaultClient.Do(req)
+		req1, _ := http.NewRequest(http.MethodDelete, server.URL, nil)
+		req1.Header.Set(headerKeyProtocolVersion, clientInitializedProtocolVersion)
+		resp1, err := http.DefaultClient.Do(req1)
 		if err != nil {
 			t.Fatalf("Failed to send message: %v\n", err)
 		}
-		if resp.StatusCode != http.StatusOK {
-			bodyBytes, _ := io.ReadAll(resp.Body)
-			t.Fatalf("Expected status 200, got %d, Response:%s", resp.StatusCode, string(bodyBytes))
+		defer resp1.Body.Close()
+		if resp1.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp1.Body)
+			t.Fatalf("Expected status 200, got %d, Response:%s", resp1.StatusCode, string(bodyBytes))
 		}
-		resp.Body.Close()
 
 		// Request with protocol version not to be the one negotiated during initialization but supported by server.
-		req.Header.Set(headerKeyProtocolVersion, "2024-11-05")
-		resp, err = http.DefaultClient.Do(req)
+		req2, _ := http.NewRequest(http.MethodDelete, server.URL, nil)
+		req2.Header.Set(headerKeyProtocolVersion, "2024-11-05")
+		resp2, err := http.DefaultClient.Do(req2)
 		if err != nil {
 			t.Fatalf("Failed to send message: %v\n", err)
 		}
-		if resp.StatusCode != http.StatusOK {
-			bodyBytes, _ := io.ReadAll(resp.Body)
-			t.Fatalf("Expected status 200, got %d, Response:%s", resp.StatusCode, string(bodyBytes))
+		defer resp2.Body.Close()
+		if resp2.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp2.Body)
+			t.Fatalf("Expected status 200, got %d, Response:%s", resp2.StatusCode, string(bodyBytes))
 		}
-		resp.Body.Close()
 
 		// Request with protocol version not to be the one negotiated during initialization but also invalid/unsupported by server.
-		req.Header.Set(headerKeyProtocolVersion, "2024-06-18")
-		resp, err = server.Client().Do(req)
+		req3, _ := http.NewRequest(http.MethodDelete, server.URL, nil)
+		req3.Header.Set(headerKeyProtocolVersion, "2024-06-18")
+		resp3, err := http.DefaultClient.Do(req3)
 		if err != nil {
 			t.Fatalf("Failed to send message: %v", err)
 		}
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("Expected status 400, got %d", resp.StatusCode)
+		defer resp3.Body.Close()
+		if resp3.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d", resp3.StatusCode)
 		}
-		resp.Body.Close()
 	})
 }
 
