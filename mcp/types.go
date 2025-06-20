@@ -467,6 +467,8 @@ type ServerCapabilities struct {
 	Experimental map[string]any `json:"experimental,omitempty"`
 	// Present if the server supports sending log messages to the client.
 	Logging *struct{} `json:"logging,omitempty"`
+	// Present if the server supports autocompletion for prompt and resource template arguments.
+	Completion *struct{} `json:"completion,omitempty"`
 	// Present if the server offers any prompt templates.
 	Prompts *struct {
 		// Whether this server supports notifications for changes to the prompt list.

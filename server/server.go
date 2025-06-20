@@ -589,6 +589,10 @@ func (s *MCPServer) handleInitialize(
 		capabilities.Logging = &struct{}{}
 	}
 
+	if s.capabilities.completions != nil && *s.capabilities.completions {
+		capabilities.Completion = &struct{}{}
+	}
+
 	result := mcp.InitializeResult{
 		ProtocolVersion: s.protocolVersion(request.Params.ProtocolVersion),
 		ServerInfo: mcp.Implementation{
