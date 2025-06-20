@@ -166,6 +166,73 @@ Please provide a comprehensive analysis including:
 
 ## Prompt Arguments
 
+### Basic Argument Completion
+
+```go
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
+)
+
+var dictionary = map[string][]string{
+	"adjective": {"funny", "silly", "clever", "witty", "absurd"},
+	"subject":   {"cats", "dogs", "programmers", "aliens", "politicians"},
+}
+
+func main() {
+	s := server.NewMCPServer("Personal Assistant", "1.0.0",
+		server.WithPromptCapabilities(true),
+	)
+
+	// Tell joke prompt
+	tellJokePrompt := mcp.NewPrompt("tell_joke",
+		mcp.WithArgument("adjective", mcp.ArgumentCompletion(handleCompleteFromDictionary)),
+		mcp.WithArgument("subject", mcp.RequiredArgument(), mcp.ArgumentCompletion(handleCompleteFromDictionary)),
+	)
+
+	s.AddPrompt(tellJokePrompt, handleTellJoke)
+	server.ServeStdio(s)
+}
+
+func handleCompleteFromDictionary(ctx context.Context, req mcp.CompleteRequest) (*mcp.CompleteResult, error) {
+	input := strings.ToLower(req.Params.Argument.Value)
+	options := dictionary[req.Params.Argument.Name] // Get options for argument
+
+	// Initialize results container
+	result := &mcp.CompleteResult{}
+	result.Completion.Values = make([]string, 0, len(options))
+
+	// Simple match logic
+	for _, option := range options {
+		if strings.Contains(strings.ToLower(option), input) {
+			result.Completion.Values = append(result.Completion.Values, option)
+		}
+	}
+	return result, nil
+}
+
+func handleTellJoke(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+	adjective := req.Params.Arguments["adjective"]
+	subject, ok := req.Params.Arguments["subject"]
+	if !ok || strings.TrimSpace(subject) == "" {
+		return nil, fmt.Errorf("subject argument is required and cannot be empty")
+	}
+
+	return &mcp.GetPromptResult{
+		Messages: []mcp.PromptMessage{
+			{
+				Role:    "user",
+				Content: mcp.NewTextContent(fmt.Sprintf("Tell a %s joke about %s.", adjective, subject)),
+			},
+		},
+	}, nil
+}
+```
+
 ### Flexible Parameter Handling
 
 ```go
