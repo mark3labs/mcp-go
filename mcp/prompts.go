@@ -69,7 +69,7 @@ type PromptArgument struct {
 	// If true, clients must include this argument when calling prompts/get.
 	Required bool `json:"required,omitempty"`
 	// Optional CompletionHandlerFunc for autocompleting the argument value.
-	CompletionHandler *CompletionHandlerFunc `json:"completionHandler,omitempty"`
+	CompletionHandler *CompletionHandlerFunc `json:"-"`
 }
 
 // Role represents the sender or recipient of messages and data in a

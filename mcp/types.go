@@ -81,7 +81,7 @@ type URITemplate struct {
 	*uritemplate.Template
 
 	// Optional mapping of URI template arguments to CompletionHandlerFunc for autocompleting each argument's value.
-	ArgumentCompletionHandlers map[string]CompletionHandlerFunc `json:"argumentCompletionHandlers,omitempty"`
+	ArgumentCompletionHandlers map[string]CompletionHandlerFunc `json:"-"`
 }
 
 func (t *URITemplate) MarshalJSON() ([]byte, error) {
