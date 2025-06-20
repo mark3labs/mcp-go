@@ -118,7 +118,7 @@ var (
 // SSEServer implements a Server-Sent Events (SSE) based MCP server.
 // It provides real-time communication capabilities over HTTP using the SSE protocol.
 type SSEServer struct {
-	server                       *MCPServer
+	server                       Interface
 	baseURL                      string
 	basePath                     string
 	appendQueryToMessageEndpoint bool
@@ -258,7 +258,7 @@ func WithSSEContextFunc(fn SSEContextFunc) SSEOption {
 }
 
 // NewSSEServer creates a new SSE server instance with the given MCP server and options.
-func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
+func NewSSEServer(server Interface, opts ...SSEOption) *SSEServer {
 	s := &SSEServer{
 		server:                       server,
 		sseEndpoint:                  "/sse",
@@ -277,7 +277,7 @@ func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
 }
 
 // NewTestServer creates a test server for testing purposes
-func NewTestServer(server *MCPServer, opts ...SSEOption) *httptest.Server {
+func NewTestServer(server Interface, opts ...SSEOption) *httptest.Server {
 	sseServer := NewSSEServer(server, opts...)
 
 	testServer := httptest.NewServer(sseServer)
