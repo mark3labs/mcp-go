@@ -16,12 +16,12 @@ import (
 
 // LoggingMCPServer wraps an Interface implementation with structured logging using slog
 type LoggingMCPServer struct {
-	server server.Interface
+	server *server.MCPServer
 	logger *slog.Logger
 }
 
 // NewLoggingMCPServer creates a new logging wrapper around an Interface
-func NewLoggingMCPServer(server server.Interface, logger *slog.Logger) *LoggingMCPServer {
+func NewLoggingMCPServer(server *server.MCPServer, logger *slog.Logger) *LoggingMCPServer {
 	return &LoggingMCPServer{
 		server: server,
 		logger: logger,
@@ -177,6 +177,93 @@ func (l *LoggingMCPServer) DeleteSessionTools(sessionID string, names ...string)
 			slog.String("error", err.Error()))
 	}
 	return err
+}
+
+func (l *LoggingMCPServer) AddTool(tool mcp.Tool, handler server.ToolHandlerFunc) {
+	l.logger.Info("adding global tool",
+		slog.String("tool_name", tool.Name),
+		slog.String("tool_description", tool.Description))
+	l.server.AddTool(tool, handler)
+}
+
+func (l *LoggingMCPServer) AddTools(tools ...server.ServerTool) {
+	toolNames := make([]string, len(tools))
+	for i, tool := range tools {
+		toolNames[i] = tool.Tool.Name
+	}
+
+	l.logger.Info("adding global tools",
+		slog.Int("tool_count", len(tools)),
+		slog.Any("tool_names", toolNames))
+	l.server.AddTools(tools...)
+}
+
+func (l *LoggingMCPServer) DeleteTools(names ...string) {
+	l.logger.Info("deleting global tools",
+		slog.Any("tool_names", names))
+	l.server.DeleteTools(names...)
+}
+
+func (l *LoggingMCPServer) AddPrompt(prompt mcp.Prompt, handler server.PromptHandlerFunc) {
+	l.logger.Info("adding prompt",
+		slog.String("prompt_name", prompt.Name),
+		slog.String("prompt_description", prompt.Description))
+	l.server.AddPrompt(prompt, handler)
+}
+
+func (l *LoggingMCPServer) AddPrompts(prompts ...server.ServerPrompt) {
+	promptNames := make([]string, len(prompts))
+	for i, prompt := range prompts {
+		promptNames[i] = prompt.Prompt.Name
+	}
+
+	l.logger.Info("adding prompts",
+		slog.Int("prompt_count", len(prompts)),
+		slog.Any("prompt_names", promptNames))
+	l.server.AddPrompts(prompts...)
+}
+
+func (l *LoggingMCPServer) DeletePrompts(names ...string) {
+	l.logger.Info("deleting prompts",
+		slog.Any("prompt_names", names))
+	l.server.DeletePrompts(names...)
+}
+
+func (l *LoggingMCPServer) AddResource(resource mcp.Resource, handler server.ResourceHandlerFunc) {
+	l.logger.Info("adding resource",
+		slog.String("resource_uri", resource.URI),
+		slog.String("resource_name", resource.Name),
+		slog.String("resource_description", resource.Description))
+	l.server.AddResource(resource, handler)
+}
+
+func (l *LoggingMCPServer) AddResources(resources ...server.ServerResource) {
+	resourceNames := make([]string, len(resources))
+	resourceURIs := make([]string, len(resources))
+	for i, resource := range resources {
+		resourceNames[i] = resource.Resource.Name
+		resourceURIs[i] = resource.Resource.URI
+	}
+
+	l.logger.Info("adding resources",
+		slog.Int("resource_count", len(resources)),
+		slog.Any("resource_names", resourceNames),
+		slog.Any("resource_uris", resourceURIs))
+	l.server.AddResources(resources...)
+}
+
+func (l *LoggingMCPServer) RemoveResource(uri string) {
+	l.logger.Info("removing resource",
+		slog.String("resource_uri", uri))
+	l.server.RemoveResource(uri)
+}
+
+func (l *LoggingMCPServer) AddResourceTemplate(template mcp.ResourceTemplate, handler server.ResourceTemplateHandlerFunc) {
+	l.logger.Info("adding resource template",
+		slog.String("template_name", template.Name),
+		slog.String("template_uri_pattern", template.URITemplate.Raw()),
+		slog.String("template_description", template.Description))
+	l.server.AddResourceTemplate(template, handler)
 }
 
 func main() {
