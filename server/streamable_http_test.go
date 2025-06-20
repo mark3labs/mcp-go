@@ -23,12 +23,14 @@ type jsonRPCResponse struct {
 	Error  *mcp.JSONRPCError `json:"error"`
 }
 
+const clientInitializedProtocolVersion = "2025-03-26"
+
 var initRequest = map[string]any{
 	"jsonrpc": "2.0",
 	"id":      1,
 	"method":  "initialize",
 	"params": map[string]any{
-		"protocolVersion": "2025-03-26",
+		"protocolVersion": clientInitializedProtocolVersion,
 		"clientInfo": map[string]any{
 			"name":    "test-client",
 			"version": "1.0.0",
@@ -505,7 +507,7 @@ func TestStreamableHTTP_POST_SendAndReceive_stateless(t *testing.T) {
 func TestStreamableHTTP_GET(t *testing.T) {
 	mcpServer := NewMCPServer("test-mcp-server", "1.0")
 	addSSETool(mcpServer)
-	server := NewTestStreamableHTTPServer(mcpServer)
+	server := NewTestStreamableHTTPServer(mcpServer, WithStateLess(true))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
@@ -612,7 +614,7 @@ func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 		})
 
 		mcpServer := NewMCPServer("test", "1.0.0", WithHooks(hooks))
-		testServer := NewTestStreamableHTTPServer(mcpServer)
+		testServer := NewTestStreamableHTTPServer(mcpServer, WithStateLess(true))
 		defer testServer.Close()
 
 		// send initialize request to trigger the session registration
@@ -625,19 +627,36 @@ func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 		// Watch the notification to ensure the session is registered
 		// (Normal http request (post) will not trigger the session registration)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		errChan := make(chan string, 1)
 		defer cancel()
 		go func() {
 			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, testServer.URL, nil)
 			req.Header.Set("Content-Type", "text/event-stream")
 			getResp, err := http.DefaultClient.Do(req)
 			if err != nil {
-				fmt.Printf("Failed to get: %v\n", err)
+				errMsg := fmt.Sprintf("Failed to get: %v\n", err)
+				errChan <- errMsg
 				return
 			}
 			defer getResp.Body.Close()
+			if getResp.StatusCode != http.StatusOK {
+				bodyBytes, _ := io.ReadAll(getResp.Body)
+				errMsg := fmt.Sprintf("Expected status 200, got %d, Response:%s", getResp.StatusCode, string(bodyBytes))
+				errChan <- errMsg
+				return
+			}
+			close(errChan)
 		}()
 
 		// Verify we got a session
+		select {
+		case <-ctx.Done():
+			t.Fatal("Timeout waiting for GET request to complete")
+		case errMsg := <-errChan:
+			if errMsg != "" {
+				t.Fatal(errMsg)
+			}
+		}
 		sessionRegistered.Wait()
 		mu.Lock()
 		if registeredSession == nil {
@@ -771,6 +790,182 @@ func TestStreamableHTTPServer_WithOptions(t *testing.T) {
 			if server.httpServer != customServer {
 				t.Errorf("Expected httpServer to match, got %v", server.httpServer)
 			}
+		}
+	})
+}
+
+func TestStreamableHTTPServer_ProtocolVersionHeader(t *testing.T) {
+	// If using HTTP, the client MUST include the MCP-Protocol-Version: <protocol-version> HTTP header on all subsequent requests to the MCP server
+	// The protocol version sent by the client SHOULD be the one negotiated during initialization.
+	// If the server receives a request with an invalid or unsupported MCP-Protocol-Version, it MUST respond with 400 Bad Request.
+	// Reference: https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#protocol-version-header
+	mcpServer := NewMCPServer("test-mcp-server", "1.0")
+	server := NewTestStreamableHTTPServer(mcpServer, WithStateLess(true))
+
+	// Send initialize request
+	resp, err := postJSON(server.URL, initRequest)
+	if err != nil {
+		t.Fatalf("Failed to send message: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", resp.StatusCode)
+	}
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	var responseMessage jsonRPCResponse
+	if err := json.Unmarshal(bodyBytes, &responseMessage); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+	if responseMessage.Result["protocolVersion"] != clientInitializedProtocolVersion {
+		t.Errorf("Expected protocol version %s, got %s", clientInitializedProtocolVersion, responseMessage.Result["protocolVersion"])
+	}
+	// no session id from header
+	sessionID := resp.Header.Get(headerKeySessionID)
+	if sessionID != "" {
+		t.Fatalf("Expected no session id in header, got %s", sessionID)
+	}
+
+	t.Run("POST Request", func(t *testing.T) {
+		// send notification
+		notification := mcp.JSONRPCNotification{
+			JSONRPC: "2.0",
+			Notification: mcp.Notification{
+				Method: "testNotification",
+				Params: mcp.NotificationParams{
+					AdditionalFields: map[string]interface{}{"param1": "value1"},
+				},
+			},
+		}
+		rawNotification, _ := json.Marshal(notification)
+
+		// Request with protocol version to be the one negotiated during initialization.
+		req1, _ := http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(rawNotification))
+		req1.Header.Set("Content-Type", "application/json")
+		req1.Header.Set(headerKeyProtocolVersion, clientInitializedProtocolVersion)
+		resp1, err := server.Client().Do(req1)
+		if err != nil {
+			t.Fatalf("Failed to send message: %v", err)
+		}
+		defer resp1.Body.Close()
+		if resp1.StatusCode != http.StatusAccepted {
+			t.Errorf("Expected status 202, got %d", resp1.StatusCode)
+		}
+		bodyBytes, _ := io.ReadAll(resp1.Body)
+		if len(bodyBytes) > 0 {
+			t.Errorf("Expected empty body, got %s", string(bodyBytes))
+		}
+
+		// Request with protocol version not to be the one negotiated during initialization but supported by server.
+		req2, _ := http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(rawNotification))
+		req2.Header.Set("Content-Type", "application/json")
+		req2.Header.Set(headerKeyProtocolVersion, "2024-11-05")
+		resp2, err := server.Client().Do(req2)
+		if err != nil {
+			t.Fatalf("Failed to send message: %v", err)
+		}
+		defer resp2.Body.Close()
+		if resp2.StatusCode != http.StatusAccepted {
+			t.Errorf("Expected status 202, got %d", resp2.StatusCode)
+		}
+		bodyBytes, _ = io.ReadAll(resp2.Body)
+		if len(bodyBytes) > 0 {
+			t.Errorf("Expected empty body, got %s", string(bodyBytes))
+		}
+
+		// Request with protocol version not to be the one negotiated during initialization but also invalid/unsupported by server.
+		req3, _ := http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(rawNotification))
+		req3.Header.Set("Content-Type", "application/json")
+		req3.Header.Set(headerKeyProtocolVersion, "2024-06-18")
+		resp3, err := server.Client().Do(req3)
+		if err != nil {
+			t.Fatalf("Failed to send message: %v", err)
+		}
+		defer resp3.Body.Close()
+		if resp3.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d", resp3.StatusCode)
+		}
+	})
+
+	t.Run("GET Request", func(t *testing.T) {
+		// Request with protocol version to be the one negotiated during initialization.
+		req1, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+		req1.Header.Set("Content-Type", "text/event-stream")
+		req1.Header.Set(headerKeyProtocolVersion, clientInitializedProtocolVersion)
+		resp1, err := http.DefaultClient.Do(req1)
+		if err != nil {
+			t.Fatalf("Failed to send message: %v\n", err)
+		}
+		defer resp1.Body.Close()
+		if resp1.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp1.Body)
+			t.Fatalf("Expected status 200, got %d, Response:%s", resp1.StatusCode, string(bodyBytes))
+		}
+
+		// Request with protocol version not to be the one negotiated during initialization but supported by server.
+		req2, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+		req2.Header.Set("Content-Type", "text/event-stream")
+		req2.Header.Set(headerKeyProtocolVersion, "2024-11-05")
+		resp2, err := http.DefaultClient.Do(req2)
+		if err != nil {
+			t.Fatalf("Failed to send message: %v\n", err)
+		}
+		defer resp2.Body.Close()
+		if resp2.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp2.Body)
+			t.Fatalf("Expected status 200, got %d, Response:%s", resp.StatusCode, string(bodyBytes))
+		}
+
+		// Request with protocol version not to be the one negotiated during initialization but also invalid/unsupported by server.
+		req3, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+		req3.Header.Set("Content-Type", "text/event-stream")
+		req3.Header.Set(headerKeyProtocolVersion, "2024-06-18")
+		resp3, err := http.DefaultClient.Do(req3)
+		if err != nil {
+			t.Fatalf("Failed to send message: %v", err)
+		}
+		defer resp3.Body.Close()
+		if resp3.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d", resp3.StatusCode)
+		}
+	})
+
+	t.Run("DELETE Request", func(t *testing.T) {
+		// Request with protocol version to be the one negotiated during initialization.
+		req1, _ := http.NewRequest(http.MethodDelete, server.URL, nil)
+		req1.Header.Set(headerKeyProtocolVersion, clientInitializedProtocolVersion)
+		resp1, err := http.DefaultClient.Do(req1)
+		if err != nil {
+			t.Fatalf("Failed to send message: %v\n", err)
+		}
+		defer resp1.Body.Close()
+		if resp1.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp1.Body)
+			t.Fatalf("Expected status 200, got %d, Response:%s", resp1.StatusCode, string(bodyBytes))
+		}
+
+		// Request with protocol version not to be the one negotiated during initialization but supported by server.
+		req2, _ := http.NewRequest(http.MethodDelete, server.URL, nil)
+		req2.Header.Set(headerKeyProtocolVersion, "2024-11-05")
+		resp2, err := http.DefaultClient.Do(req2)
+		if err != nil {
+			t.Fatalf("Failed to send message: %v\n", err)
+		}
+		defer resp2.Body.Close()
+		if resp2.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp2.Body)
+			t.Fatalf("Expected status 200, got %d, Response:%s", resp2.StatusCode, string(bodyBytes))
+		}
+
+		// Request with protocol version not to be the one negotiated during initialization but also invalid/unsupported by server.
+		req3, _ := http.NewRequest(http.MethodDelete, server.URL, nil)
+		req3.Header.Set(headerKeyProtocolVersion, "2024-06-18")
+		resp3, err := http.DefaultClient.Do(req3)
+		if err != nil {
+			t.Fatalf("Failed to send message: %v", err)
+		}
+		defer resp3.Body.Close()
+		if resp3.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d", resp3.StatusCode)
 		}
 	})
 }
