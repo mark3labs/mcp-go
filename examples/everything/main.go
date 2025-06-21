@@ -74,11 +74,13 @@ func NewMCPServer() *server.MCPServer {
 	mcpServer.AddResource(mcp.NewResource("test://static/resource",
 		"Static Resource",
 		mcp.WithMIMEType("text/plain"),
+		mcp.WithResourceTitle("Static Text Resource"),
 	), handleReadResource)
 	mcpServer.AddResourceTemplate(
 		mcp.NewResourceTemplate(
 			"test://dynamic/resource/{id}",
 			"Dynamic Resource",
+			mcp.WithTemplateTitle("Dynamic Resource Template"),
 		),
 		handleResourceTemplate,
 	)
@@ -90,9 +92,11 @@ func NewMCPServer() *server.MCPServer {
 
 	mcpServer.AddPrompt(mcp.NewPrompt(string(SIMPLE),
 		mcp.WithPromptDescription("A simple prompt"),
+		mcp.WithPromptTitle("Simple Prompt Example"),
 	), handleSimplePrompt)
 	mcpServer.AddPrompt(mcp.NewPrompt(string(COMPLEX),
 		mcp.WithPromptDescription("A complex prompt"),
+		mcp.WithPromptTitle("Complex Prompt with Arguments"),
 		mcp.WithArgument("temperature",
 			mcp.ArgumentDescription("The temperature parameter for generation"),
 			mcp.RequiredArgument(),
@@ -104,6 +108,7 @@ func NewMCPServer() *server.MCPServer {
 	), handleComplexPrompt)
 	mcpServer.AddTool(mcp.NewTool(string(ECHO),
 		mcp.WithDescription("Echoes back the input"),
+		mcp.WithTitle("Echo Tool"),
 		mcp.WithString("message",
 			mcp.Description("Message to echo"),
 			mcp.Required(),
@@ -111,12 +116,15 @@ func NewMCPServer() *server.MCPServer {
 	), handleEchoTool)
 
 	mcpServer.AddTool(
-		mcp.NewTool("notify"),
+		mcp.NewTool("notify",
+			mcp.WithTitle("Send Notification"),
+		),
 		handleSendNotification,
 	)
 
 	mcpServer.AddTool(mcp.NewTool(string(ADD),
 		mcp.WithDescription("Adds two numbers"),
+		mcp.WithTitle("Number Addition Tool"),
 		mcp.WithNumber("a",
 			mcp.Description("First number"),
 			mcp.Required(),
@@ -131,6 +139,7 @@ func NewMCPServer() *server.MCPServer {
 		mcp.WithDescription(
 			"Demonstrates a long running operation with progress updates",
 		),
+		mcp.WithTitle("Long Running Operation Demo"),
 		mcp.WithNumber("duration",
 			mcp.Description("Duration of the operation in seconds"),
 			mcp.DefaultNumber(10),
@@ -161,6 +170,7 @@ func NewMCPServer() *server.MCPServer {
 	// }, s.handleSampleLLMTool)
 	mcpServer.AddTool(mcp.NewTool(string(GET_TINY_IMAGE),
 		mcp.WithDescription("Returns the MCP_TINY_IMAGE"),
+		mcp.WithTitle("Tiny Image Provider"),
 	), handleGetTinyImageTool)
 
 	mcpServer.AddNotificationHandler("notification", handleNotification)
@@ -172,18 +182,23 @@ func generateResources() []mcp.Resource {
 	resources := make([]mcp.Resource, 100)
 	for i := 0; i < 100; i++ {
 		uri := fmt.Sprintf("test://static/resource/%d", i+1)
+		resourceName := fmt.Sprintf("Resource %d", i+1)
+		resourceTitle := fmt.Sprintf("Generated Resource #%d", i+1)
+
 		if i%2 == 0 {
-			resources[i] = mcp.Resource{
-				URI:      uri,
-				Name:     fmt.Sprintf("Resource %d", i+1),
-				MIMEType: "text/plain",
-			}
+			resources[i] = mcp.NewResource(
+				uri,
+				resourceName,
+				mcp.WithMIMEType("text/plain"),
+				mcp.WithResourceTitle(resourceTitle),
+			)
 		} else {
-			resources[i] = mcp.Resource{
-				URI:      uri,
-				Name:     fmt.Sprintf("Resource %d", i+1),
-				MIMEType: "application/octet-stream",
-			}
+			resources[i] = mcp.NewResource(
+				uri,
+				resourceName,
+				mcp.WithMIMEType("application/octet-stream"),
+				mcp.WithResourceTitle(resourceTitle),
+			)
 		}
 	}
 	return resources

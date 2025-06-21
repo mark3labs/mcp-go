@@ -110,6 +110,7 @@ func NewMCPServer() *MCPServer {
 		server.WithToolCapabilities(true),
 	)
 	mcpServer.AddTool(mcp.NewTool("make_authenticated_request",
+		mcp.WithTitle("Authenticated HTTP Request Tool"),
 		mcp.WithDescription("Makes an authenticated request"),
 		mcp.WithString("message",
 			mcp.Description("Message to echo"),

@@ -28,6 +28,7 @@ func NewMCPServer() *server.MCPServer {
 		server.WithToolCapabilities(true),
 	)
 	mcpServer.AddTool(mcp.NewTool("dummy_tool",
+		mcp.WithTitle("Simple Demo Tool"),
 		mcp.WithDescription("A dummy tool that returns foo bar"),
 	), handleDummyTool)
 
