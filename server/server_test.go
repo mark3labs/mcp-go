@@ -59,6 +59,7 @@ func TestMCPServer_Capabilities(t *testing.T) {
 				WithPromptCapabilities(true),
 				WithToolCapabilities(true),
 				WithLogging(),
+				WithCompletions(),
 			},
 			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
 				resp, ok := response.(mcp.JSONRPCResponse)
@@ -87,6 +88,7 @@ func TestMCPServer_Capabilities(t *testing.T) {
 				assert.True(t, initResult.Capabilities.Tools.ListChanged)
 
 				assert.NotNil(t, initResult.Capabilities.Logging)
+				assert.NotNil(t, initResult.Capabilities.Completion)
 			},
 		},
 		{
@@ -1456,6 +1458,119 @@ func TestMCPServer_ResourceTemplates(t *testing.T) {
 		assert.Equal(t, "text/plain", resultContent.MIMEType)
 		assert.Equal(t, "test content: something", resultContent.Text)
 	})
+}
+
+func TestMCPServer_HandleCompletion(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0")
+
+	server.AddPrompt(
+		mcp.NewPrompt("test-prompt",
+			mcp.WithArgument("test-arg", mcp.ArgumentCompletion(func(_ context.Context, req mcp.CompleteRequest) (*mcp.CompleteResult, error) {
+				return &mcp.CompleteResult{
+					Completion: mcp.Completion{
+						Values: []string{fmt.Sprintf("%sbar", req.Params.Argument.Value)},
+					},
+				}, nil
+			})),
+		),
+		func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+			return nil, nil
+		},
+	)
+
+	tests := []struct {
+		name     string
+		message  string
+		validate func(t *testing.T, response mcp.JSONRPCMessage)
+	}{
+		{
+			name: "Prompt argument completion",
+			message: `{
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "completion/complete",
+				"params": {
+					"ref": {
+						"type": "ref/prompt",
+						"name": "test-prompt"
+					},
+					"argument": {
+						"name": "test-arg",
+						"value": "foo"
+					}
+				}
+			}`,
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				assert.True(t, ok)
+
+				result, ok := resp.Result.(mcp.CompleteResult)
+				assert.True(t, ok)
+
+				assert.Len(t, result.Completion.Values, 1)
+				assert.Equal(t, "foobar", result.Completion.Values[0])
+			},
+		},
+		{
+			name: "No completion for prompt argument",
+			message: `{
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "completion/complete",
+				"params": {
+					"ref": {
+						"type": "ref/prompt",
+						"name": "test-prompt"
+					},
+					"argument": {
+						"name": "another-arg",
+						"value": "foo"
+					}
+				}
+			}`,
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				assert.True(t, ok)
+
+				result, ok := resp.Result.(mcp.CompleteResult)
+				assert.True(t, ok)
+
+				assert.NotNil(t, result.Completion.Values)
+				assert.Len(t, result.Completion.Values, 0)
+			},
+		},
+		{
+			name: "Prompt not found",
+			message: `{
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "completion/complete",
+				"params": {
+					"ref": {
+						"type": "ref/prompt",
+						"name": "unknown-prompt"
+					},
+					"argument": {
+						"name": "test-arg",
+						"value": "foo"
+					}
+				}
+			}`,
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCError)
+				assert.True(t, ok)
+				assert.Equal(t, resp.Error.Code, mcp.INVALID_PARAMS)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := server.HandleMessage(context.Background(), []byte(tt.message))
+			assert.NotNil(t, response)
+			tt.validate(t, response)
+		})
+	}
 }
 
 func createTestServer() *MCPServer {

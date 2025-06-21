@@ -282,6 +282,13 @@ func WithLogging() ServerOption {
 	}
 }
 
+// WithCompletions enables autocomplete capabilities for the server
+func WithCompletions() ServerOption {
+	return func(s *MCPServer) {
+		s.capabilities.completions = mcp.ToBoolPtr(true)
+	}
+}
+
 // WithInstructions sets the server instructions for the client returned in the initialize response
 func WithInstructions(instructions string) ServerOption {
 	return func(s *MCPServer) {
