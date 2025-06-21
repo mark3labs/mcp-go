@@ -641,6 +641,9 @@ type Resource struct {
 	//
 	// This can be used by clients to populate UI elements.
 	Name string `json:"name"`
+	// A human-friendly display name for this resource.
+	// This is used for UI display purposes, while Name is used for programmatic identification.
+	Title string `json:"title,omitempty"`
 	// A description of what this resource represents.
 	//
 	// This can be used by clients to improve the LLM's understanding of
@@ -655,6 +658,11 @@ func (r Resource) GetName() string {
 	return r.Name
 }
 
+// GetTitle returns the display title for the resource.
+func (r Resource) GetTitle() string {
+	return r.Title
+}
+
 // ResourceTemplate represents a template description for resources available
 // on the server.
 type ResourceTemplate struct {
@@ -666,6 +674,9 @@ type ResourceTemplate struct {
 	//
 	// This can be used by clients to populate UI elements.
 	Name string `json:"name"`
+	// A human-friendly display name for this resource template.
+	// This is used for UI display purposes, while Name is used for programmatic identification.
+	Title string `json:"title,omitempty"`
 	// A description of what this template is for.
 	//
 	// This can be used by clients to improve the LLM's understanding of
@@ -679,6 +690,11 @@ type ResourceTemplate struct {
 // GetName returns the name of the resourceTemplate.
 func (rt ResourceTemplate) GetName() string {
 	return rt.Name
+}
+
+// GetTitle returns the title of the resourceTemplate.
+func (rt ResourceTemplate) GetTitle() string {
+	return rt.Title
 }
 
 // ResourceContents represents the contents of a specific resource or sub-
@@ -1057,4 +1073,12 @@ type ServerResult any
 
 type Named interface {
 	GetName() string
+}
+
+// BaseMetadata defines the interface for objects that have both programmatic names
+// and human-friendly display titles. This enables consistent display name handling
+// across different MCP object types.
+type BaseMetadata interface {
+	Named
+	GetTitle() string
 }

@@ -30,6 +30,14 @@ func WithResourceDescription(description string) ResourceOption {
 	}
 }
 
+// WithResourceTitle sets the title field of the Resource.
+// This provides a human-readable display name for the resource.
+func WithResourceTitle(title string) ResourceOption {
+	return func(r *Resource) {
+		r.Title = title
+	}
+}
+
 // WithMIMEType sets the MIME type for the Resource.
 // This should indicate the format of the resource's contents.
 func WithMIMEType(mimeType string) ResourceOption {
@@ -75,6 +83,14 @@ func NewResourceTemplate(uriTemplate string, name string, opts ...ResourceTempla
 func WithTemplateDescription(description string) ResourceTemplateOption {
 	return func(t *ResourceTemplate) {
 		t.Description = description
+	}
+}
+
+// WithTemplateTitle sets the title field of the ResourceTemplate.
+// This provides a human-readable display name for the resource template.
+func WithTemplateTitle(title string) ResourceTemplateOption {
+	return func(t *ResourceTemplate) {
+		t.Title = title
 	}
 }
 
