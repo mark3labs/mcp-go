@@ -1092,6 +1092,13 @@ func (s *MCPServer) handleCompletion(
 					handler = arg.CompletionHandler
 				}
 			}
+		} else {
+			s.promptsMu.RUnlock()
+			return nil, &requestError{
+				id:   id,
+				code: mcp.INVALID_PARAMS,
+				err:  fmt.Errorf("prompt '%s' not found: %w", promptRef.Name, ErrPromptNotFound),
+			}
 		}
 		s.promptsMu.RUnlock()
 	} else if resourceRef != nil {
@@ -1099,6 +1106,13 @@ func (s *MCPServer) handleCompletion(
 		if resourceTemplate, ok := s.resourceTemplates[resourceRef.URI]; ok {
 			if h, ok := resourceTemplate.template.URITemplate.ArgumentCompletionHandlers[request.Params.Argument.Name]; ok {
 				handler = &h
+			}
+		} else {
+			s.resourcesMu.RUnlock()
+			return nil, &requestError{
+				id:   id,
+				code: mcp.INVALID_PARAMS,
+				err:  fmt.Errorf("resource template '%s' not found: %w", resourceRef.URI, ErrResourceNotFound),
 			}
 		}
 		s.resourcesMu.RUnlock()
