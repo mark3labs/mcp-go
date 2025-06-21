@@ -57,6 +57,12 @@ var _ ServerResult = &ReadResourceResult{}
 var _ ServerResult = &CallToolResult{}
 var _ ServerResult = &ListToolsResult{}
 
+// BaseMetadata types
+var _ BaseMetadata = &Tool{}
+var _ BaseMetadata = &Prompt{}
+var _ BaseMetadata = &Resource{}
+var _ BaseMetadata = &ResourceTemplate{}
+
 // Helper functions for type assertions
 
 // asType attempts to cast the given interface to the given type
@@ -816,4 +822,15 @@ func ParseStringMap(request CallToolRequest, key string, defaultValue map[string
 // ToBoolPtr returns a pointer to the given boolean value
 func ToBoolPtr(b bool) *bool {
 	return &b
+}
+
+// GetDisplayName returns the best display name for a BaseMetadata object.
+// It follows the precedence: GetTitle() → GetName(), providing a consistent
+// way to get human-friendly names across all MCP object types.
+func GetDisplayName(meta BaseMetadata) string {
+	if title := meta.GetTitle(); title != "" {
+		return title
+	}
+
+	return meta.GetName()
 }
