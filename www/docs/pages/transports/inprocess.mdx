@@ -56,19 +56,34 @@ func main() {
     )
 
     // Create in-process client
-    client := client.NewInProcessClient(s)
-    defer client.Close()
+    mcpClient, err := client.NewInProcessClient(s)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer mcpClient.Close()
 
     ctx := context.Background()
 
     // Initialize
-    if err := client.Initialize(ctx); err != nil {
+    _, err = mcpClient.Initialize(ctx, mcp.InitializeRequest{
+        Params: mcp.InitializeRequestParams{
+            ProtocolVersion: "2024-11-05",
+            Capabilities: mcp.ClientCapabilities{
+                Tools: &mcp.ToolsCapability{},
+            },
+            ClientInfo: mcp.Implementation{
+                Name:    "test-client",
+                Version: "1.0.0",
+            },
+        },
+    })
+    if err != nil {
         log.Fatal(err)
     }
 
     // Use the calculator
-    result, err := client.CallTool(ctx, mcp.CallToolRequest{
-        Params: mcp.CallToolRequestParams{
+    result, err := mcpClient.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolParams{
             Name: "calculate",
             Arguments: map[string]interface{}{
                 "operation": "add",
@@ -81,13 +96,18 @@ func main() {
         log.Fatal(err)
     }
 
-    fmt.Printf("Result: %s\n", result.Content[0].Text)
+    // Extract text from the first content item
+    if len(result.Content) > 0 {
+        if textContent, ok := mcp.AsTextContent(result.Content[0]); ok {
+            fmt.Printf("Result: %s\n", textContent.Text)
+        }
+    }
 }
 
 func handleCalculate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    operation := req.Params.Arguments["operation"].(string)
-    x := req.Params.Arguments["x"].(float64)
-    y := req.Params.Arguments["y"].(float64)
+    operation := req.GetString("operation", "")
+    x := req.GetFloat("x", 0)
+    y := req.GetFloat("y", 0)
 
     var result float64
     switch operation {
@@ -134,7 +154,11 @@ func NewApplication(config *Config) *Application {
     app.addApplicationTools()
 
     // Create in-process client for internal use
-    app.mcpClient = client.NewInProcessClient(app.mcpServer)
+    var err error
+    app.mcpClient, err = client.NewInProcessClient(app.mcpServer)
+    if err != nil {
+        panic(err)
+    }
 
     return app
 }
@@ -151,12 +175,8 @@ func (app *Application) addApplicationTools() {
             mcp.WithDescription("Get current application status"),
         ),
         func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-            status := map[string]interface{}{
-                "app_name": app.config.AppName,
-                "debug":    app.config.Debug,
-                "status":   "running",
-            }
-            return mcp.NewToolResultJSON(status), nil
+            return mcp.NewToolResultText(fmt.Sprintf(`{"app_name":"%s","debug":%t,"status":"running"}`, 
+                app.config.AppName, app.config.Debug)), nil
         },
     )
 
@@ -168,8 +188,8 @@ func (app *Application) addApplicationTools() {
             mcp.WithString("value", mcp.Required()),
         ),
         func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-            key := req.Params.Arguments["key"].(string)
-            value := req.Params.Arguments["value"].(string)
+            key := req.GetString("key", "")
+            value := req.GetString("value", "")
 
             // Update configuration based on key
             switch key {
@@ -189,7 +209,7 @@ func (app *Application) addApplicationTools() {
 func (app *Application) ProcessWithMCP(ctx context.Context, operation string) (interface{}, error) {
     // Use MCP tools internally for processing
     result, err := app.mcpClient.CallTool(ctx, mcp.CallToolRequest{
-        Params: mcp.CallToolRequestParams{
+        Params: mcp.CallToolParams{
             Name: "calculate",
             Arguments: map[string]interface{}{
                 "operation": operation,
@@ -202,7 +222,14 @@ func (app *Application) ProcessWithMCP(ctx context.Context, operation string) (i
         return nil, err
     }
 
-    return result.Content[0].Text, nil
+    // Extract text from the first content item
+    if len(result.Content) > 0 {
+        if textContent, ok := mcp.AsTextContent(result.Content[0]); ok {
+            return textContent.Text, nil
+        }
+    }
+    
+    return "no result", nil
 }
 
 // Usage example
@@ -216,7 +243,19 @@ func main() {
     ctx := context.Background()
 
     // Initialize the embedded MCP client
-    if err := app.mcpClient.Initialize(ctx); err != nil {
+    _, err := app.mcpClient.Initialize(ctx, mcp.InitializeRequest{
+        Params: mcp.InitializeRequestParams{
+            ProtocolVersion: "2024-11-05",
+            Capabilities: mcp.ClientCapabilities{
+                Tools: &mcp.ToolsCapability{},
+            },
+            ClientInfo: mcp.Implementation{
+                Name:    "embedded-client",
+                Version: "1.0.0",
+            },
+        },
+    })
+    if err != nil {
         log.Fatal(err)
     }
 

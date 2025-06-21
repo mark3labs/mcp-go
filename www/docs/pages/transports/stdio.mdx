@@ -40,7 +40,7 @@ import (
 func main() {
     s := server.NewMCPServer("File Tools", "1.0.0",
         server.WithToolCapabilities(true),
-        server.WithResourceCapabilities(true),
+        server.WithResourceCapabilities(true, true),
     )
 
     // Add file listing tool
@@ -52,7 +52,7 @@ func main() {
                 mcp.Description("Directory path to list"),
             ),
             mcp.WithBoolean("recursive",
-                mcp.Default(false),
+                mcp.DefaultBool(false),
                 mcp.Description("List files recursively"),
             ),
         ),
@@ -98,15 +98,11 @@ func handleListFiles(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
         return mcp.NewToolResultError(fmt.Sprintf("failed to list files: %v", err)), nil
     }
 
-    return mcp.NewToolResultJSON(map[string]interface{}{
-        "path":      path,
-        "files":     files,
-        "count":     len(files),
-        "recursive": recursive,
-    }), nil
+    return mcp.NewToolResultText(fmt.Sprintf(`{"path":"%s","files":%v,"count":%d,"recursive":%t}`, 
+        path, files, len(files), recursive)), nil
 }
 
-func handleFileContent(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+func handleFileContent(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
     // Extract path from URI: "file:///path/to/file" -> "/path/to/file"
     path := extractPathFromURI(req.Params.URI)
     
@@ -119,13 +115,11 @@ func handleFileContent(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.R
         return nil, fmt.Errorf("failed to read file: %w", err)
     }
 
-    return &mcp.ReadResourceResult{
-        Contents: []mcp.ResourceContent{
-            {
-                URI:      req.Params.URI,
-                MIMEType: detectMIMEType(path),
-                Text:     string(content),
-            },
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: detectMIMEType(path),
+            Text:     string(content),
         },
     }, nil
 }
@@ -211,16 +205,10 @@ import (
 
 func main() {
     s := server.NewMCPServer("Advanced CLI Tool", "1.0.0",
-        server.WithAllCapabilities(),
-        server.WithRecovery(),
-        server.WithHooks(&server.Hooks{
-            OnSessionStart: func(sessionID string) {
-                logToFile(fmt.Sprintf("Session started: %s", sessionID))
-            },
-            OnSessionEnd: func(sessionID string) {
-                logToFile(fmt.Sprintf("Session ended: %s", sessionID))
-            },
-        }),
+        server.WithResourceCapabilities(true, true),
+        server.WithPromptCapabilities(true),
+        server.WithToolCapabilities(true),
+        server.WithLogging(),
     )
 
     // Add comprehensive tools
@@ -342,12 +330,24 @@ func main() {
     ctx := context.Background()
 
     // Initialize connection
-    if err := c.Initialize(ctx); err != nil {
+    _, err = c.Initialize(ctx, mcp.InitializeRequest{
+        Params: mcp.InitializeRequestParams{
+            ProtocolVersion: "2024-11-05",
+            Capabilities: mcp.ClientCapabilities{
+                Tools: &mcp.ToolsCapability{},
+            },
+            ClientInfo: mcp.Implementation{
+                Name:    "test-client",
+                Version: "1.0.0",
+            },
+        },
+    })
+    if err != nil {
         log.Fatal(err)
     }
 
     // List available tools
-    tools, err := c.ListTools(ctx)
+    tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
         log.Fatal(err)
     }
@@ -359,7 +359,7 @@ func main() {
 
     // Call a tool
     result, err := c.CallTool(ctx, mcp.CallToolRequest{
-        Params: mcp.CallToolRequestParams{
+        Params: mcp.CallToolParams{
             Name: "list_files",
             Arguments: map[string]interface{}{
                 "path":      ".",
@@ -445,18 +445,7 @@ func main() {
 
     s := server.NewMCPServer("Debug Server", "1.0.0",
         server.WithToolCapabilities(true),
-        server.WithHooks(&server.Hooks{
-            OnSessionStart: func(sessionID string) {
-                logger.Printf("Session started: %s", sessionID)
-            },
-            OnToolCall: func(sessionID, toolName string, duration time.Duration, err error) {
-                if err != nil {
-                    logger.Printf("Tool %s failed: %v", toolName, err)
-                } else {
-                    logger.Printf("Tool %s completed in %v", toolName, duration)
-                }
-            },
-        }),
+        server.WithLogging(),
     )
 
     // Add tools with debug logging
@@ -466,7 +455,7 @@ func main() {
             mcp.WithString("message", mcp.Required()),
         ),
         func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-            message := req.Params.Arguments["message"].(string)
+            message := req.GetString("message", "")
             logger.Printf("Echo tool called with message: %s", message)
             return mcp.NewToolResultText(fmt.Sprintf("Echo: %s", message)), nil
         },
@@ -504,8 +493,8 @@ This opens a web interface where you can:
 ```go
 func handleToolWithErrors(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
     // Validate required parameters
-    path, ok := req.Params.Arguments["path"].(string)
-    if !ok {
+    path, err := req.RequireString("path")
+    if err != nil {
         return nil, fmt.Errorf("path parameter is required and must be a string")
     }
 
@@ -543,7 +532,7 @@ func handleToolWithErrors(ctx context.Context, req mcp.CallToolRequest) (*mcp.Ca
         return nil, fmt.Errorf("operation failed: %w", err)
     }
 
-    return mcp.NewToolResultJSON(result), nil
+    return mcp.NewToolResultText(fmt.Sprintf("%v", result)), nil
 }
 ```
 
@@ -638,7 +627,7 @@ func getCachedFile(path string) (string, bool) {
 
 ```go
 func handleLargeFile(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    path := req.Params.Arguments["path"].(string)
+    path := req.GetString("path", "")
     
     // Stream large files instead of loading into memory
     file, err := os.Open(path)

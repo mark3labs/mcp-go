@@ -43,7 +43,7 @@ import (
 func main() {
     s := server.NewMCPServer("StreamableHTTP API Server", "1.0.0",
         server.WithToolCapabilities(true),
-        server.WithResourceCapabilities(true),
+        server.WithResourceCapabilities(true, true),
     )
 
     // Add RESTful tools
@@ -60,7 +60,7 @@ func main() {
             mcp.WithDescription("Create a new user"),
             mcp.WithString("name", mcp.Required()),
             mcp.WithString("email", mcp.Required()),
-            mcp.WithInteger("age", mcp.Minimum(0)),
+            mcp.WithNumber("age", mcp.Min(0)),
         ),
         handleCreateUser,
     )
@@ -69,8 +69,8 @@ func main() {
         mcp.NewTool("search_users",
             mcp.WithDescription("Search users with filters"),
             mcp.WithString("query", mcp.Description("Search query")),
-            mcp.WithInteger("limit", mcp.Default(10), mcp.Maximum(100)),
-            mcp.WithInteger("offset", mcp.Default(0), mcp.Minimum(0)),
+            mcp.WithNumber("limit", mcp.DefaultNumber(10), mcp.Max(100)),
+            mcp.WithNumber("offset", mcp.DefaultNumber(0), mcp.Min(0)),
         ),
         handleSearchUsers,
     )
@@ -95,7 +95,10 @@ func main() {
 }
 
 func handleGetUser(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    userID := req.Params.Arguments["user_id"].(string)
+    userID := req.GetString("user_id", "")
+    if userID == "" {
+        return nil, fmt.Errorf("user_id is required")
+    }
     
     // Simulate database lookup
     user, err := getUserFromDB(userID)
@@ -103,13 +106,18 @@ func handleGetUser(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolR
         return nil, fmt.Errorf("user not found: %s", userID)
     }
 
-    return mcp.NewToolResultJSON(user), nil
+    return mcp.NewToolResultText(fmt.Sprintf(`{"id":"%s","name":"%s","email":"%s","age":%d}`, 
+        user.ID, user.Name, user.Email, user.Age)), nil
 }
 
 func handleCreateUser(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    name := req.Params.Arguments["name"].(string)
-    email := req.Params.Arguments["email"].(string)
-    age := int(req.Params.Arguments["age"].(float64))
+    name := req.GetString("name", "")
+    email := req.GetString("email", "")
+    age := req.GetInt("age", 0)
+
+    if name == "" || email == "" {
+        return nil, fmt.Errorf("name and email are required")
+    }
 
     // Validate input
     if !isValidEmail(email) {
@@ -129,11 +137,8 @@ func handleCreateUser(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallTo
         return nil, fmt.Errorf("failed to create user: %w", err)
     }
 
-    return mcp.NewToolResultJSON(map[string]interface{}{
-        "id":      user.ID,
-        "message": "User created successfully",
-        "user":    user,
-    }), nil
+    return mcp.NewToolResultText(fmt.Sprintf(`{"id":"%s","message":"User created successfully","user":{"id":"%s","name":"%s","email":"%s","age":%d}}`,
+        user.ID, user.ID, user.Name, user.Email, user.Age)), nil
 }
 
 // Helper functions and types for the examples
@@ -156,7 +161,6 @@ func getUserFromDB(userID string) (*User, error) {
 }
 
 func isValidEmail(email string) bool {
-    // Simple email validation
     return strings.Contains(email, "@") && strings.Contains(email, ".")
 }
 
@@ -171,9 +175,9 @@ func saveUserToDB(user *User) error {
 }
 
 func handleSearchUsers(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    query := getStringParam(req.Params.Arguments, "query", "")
-    limit := int(getFloatParam(req.Params.Arguments, "limit", 10))
-    offset := int(getFloatParam(req.Params.Arguments, "offset", 0))
+    query := req.GetString("query", "")
+    limit := req.GetInt("limit", 10)
+    offset := req.GetInt("offset", 0)
 
     // Search users with pagination
     users, total, err := searchUsersInDB(query, limit, offset)
@@ -181,16 +185,11 @@ func handleSearchUsers(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallT
         return nil, fmt.Errorf("search failed: %w", err)
     }
 
-    return mcp.NewToolResultJSON(map[string]interface{}{
-        "users":  users,
-        "total":  total,
-        "limit":  limit,
-        "offset": offset,
-        "query":  query,
-    }), nil
+    return mcp.NewToolResultText(fmt.Sprintf(`{"users":[{"id":"1","name":"John Doe","email":"john@example.com","age":30},{"id":"2","name":"Jane Smith","email":"jane@example.com","age":25}],"total":%d,"limit":%d,"offset":%d,"query":"%s"}`,
+        total, limit, offset, query)), nil
 }
 
-func handleUserResource(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+func handleUserResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
     userID := extractUserIDFromURI(req.Params.URI)
     
     user, err := getUserFromDB(userID)
@@ -198,27 +197,16 @@ func handleUserResource(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.
         return nil, fmt.Errorf("user not found: %s", userID)
     }
 
-    return mcp.NewResourceResultJSON(user), nil
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "application/json",
+            Text:     fmt.Sprintf(`{"id":"%s","name":"%s","email":"%s","age":%d}`, user.ID, user.Name, user.Email, user.Age),
+        },
+    }, nil
 }
 
-// Additional helper functions for parameter handling
-func getStringParam(args map[string]interface{}, key, defaultValue string) string {
-    if val, ok := args[key]; ok && val != nil {
-        if str, ok := val.(string); ok {
-            return str
-        }
-    }
-    return defaultValue
-}
-
-func getFloatParam(args map[string]interface{}, key string, defaultValue float64) float64 {
-    if val, ok := args[key]; ok && val != nil {
-        if f, ok := val.(float64); ok {
-            return f
-        }
-    }
-    return defaultValue
-}
+// Additional helper functions
 
 func searchUsersInDB(query string, limit, offset int) ([]*User, int, error) {
     // Placeholder implementation
@@ -231,9 +219,8 @@ func searchUsersInDB(query string, limit, offset int) ([]*User, int, error) {
 
 func extractUserIDFromURI(uri string) string {
     // Extract user ID from URI like "users://123"
-    parts := strings.Split(uri, "://")
-    if len(parts) > 1 {
-        return parts[1]
+    if len(uri) > 8 && uri[:8] == "users://" {
+        return uri[8:]
     }
     return uri
 }
@@ -244,39 +231,24 @@ func extractUserIDFromURI(uri string) string {
 ```go
 func main() {
     s := server.NewMCPServer("Advanced StreamableHTTP Server", "1.0.0",
-        server.WithAllCapabilities(),
-        server.WithRecovery(),
-        server.WithHooks(&server.Hooks{
-            OnToolCall: logToolCall,
-            OnResourceRead: logResourceRead,
-        }),
+        server.WithResourceCapabilities(true, true),
+        server.WithPromptCapabilities(true),
+        server.WithToolCapabilities(true),
+        server.WithLogging(),
     )
 
-    // Configure StreamableHTTP-specific options
-    streamableHTTPOptions := server.StreamableHTTPOptions{
-        BasePath:         "/api/v1/mcp",
-        ReadTimeout:      30 * time.Second,
-        WriteTimeout:     30 * time.Second,
-        IdleTimeout:      60 * time.Second,
-        MaxBodySize:      10 * 1024 * 1024, // 10MB
-        EnableCORS:       true,
-        AllowedOrigins:   []string{"https://myapp.com", "http://localhost:3000"},
-        AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
-        AllowedHeaders:   []string{"Content-Type", "Authorization"},
-        EnableGzip:       true,
-        TrustedProxies:   []string{"10.0.0.0/8", "172.16.0.0/12"},
-    }
-
-    // Add middleware
-    addStreamableHTTPMiddleware(s)
-    
-    // Add comprehensive tools
+    // Add comprehensive tools and resources
     addCRUDTools(s)
     addBatchTools(s)
     addAnalyticsTools(s)
 
     log.Println("Starting advanced StreamableHTTP server on :8080")
-    httpServer := server.NewStreamableHTTPServer(s, streamableHTTPOptions...)
+    httpServer := server.NewStreamableHTTPServer(s,
+        server.WithEndpointPath("/api/v1/mcp"),
+        server.WithHeartbeatInterval(30*time.Second),
+        server.WithStateLess(false),
+    )
+    
     if err := httpServer.Start(":8080"); err != nil {
         log.Fatal(err)
     }
