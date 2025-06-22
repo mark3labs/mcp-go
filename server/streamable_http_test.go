@@ -912,7 +912,7 @@ func TestStreamableHTTPServer_ProtocolVersionHeader(t *testing.T) {
 		defer resp2.Body.Close()
 		if resp2.StatusCode != http.StatusOK {
 			bodyBytes, _ := io.ReadAll(resp2.Body)
-			t.Fatalf("Expected status 200, got %d, Response:%s", resp.StatusCode, string(bodyBytes))
+			t.Fatalf("Expected status 200, got %d, Response:%s", resp2.StatusCode, string(bodyBytes))
 		}
 
 		// Request with protocol version not to be the one negotiated during initialization but also invalid/unsupported by server.
