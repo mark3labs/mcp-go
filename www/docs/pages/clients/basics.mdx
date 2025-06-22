@@ -297,6 +297,41 @@ func (mc *ManagedClient) Close() error {
 }
 ```
 
+### Persisting & Restoring Client State
+
+MCP-Go lets you snapshot a running client and resume it later — even in a new
+process — with `ExportState()` and `ImportState()`.
+
+```go
+// Save state before shutting down
+state := client.ExportState()
+if err := client.Close(); err != nil {
+    log.Printf("close failed: %v", err)
+}
+
+// Later, or in another process
+restoredClient, _ := client.NewStreamableHttpClient(baseURL)
+_ = restoredClient.Start(ctx)          // transport must be running
+if err := restoredClient.ImportState(ctx, state); err != nil {
+    log.Fatal(err)
+}
+
+// Continue exactly where you left off
+if err := restoredClient.Ping(ctx); err != nil {
+    log.Fatal(err)
+}
+```
+
+`ExportState()` captures:
+
+* initialization status  
+* last JSON-RPC request ID (so IDs continue monotonically)  
+* negotiated client / server capabilities  
+* HTTP session ID (for StreamableHTTP transports)
+
+`ImportState()` re-hydrates those values.  After a successful call the
+restored client can immediately issue normal requests without re-initializing.
+
 ## Error Handling
 
 Proper error handling is essential for robust client applications.
