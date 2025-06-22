@@ -394,6 +394,19 @@ func TestCallToolRequestHelperFunctions(t *testing.T) {
 	_, err = req.RequireBool("missing_val")
 	assert.Error(t, err)
 
+	// Test GetAnySlice
+	assert.Equal(t, []any{"one", "two", "three"}, req.GetAnySlice("string_slice_val", nil))
+	assert.Equal(t, []any{1, 2, 3}, req.GetAnySlice("int_slice_val", nil))
+	assert.Equal(t, []any{1.1, 2.2, 3.3}, req.GetAnySlice("float_slice_val", nil))
+
+	// Test RequireAnySlice
+	as, err := req.RequireAnySlice("string_slice_val")
+	assert.NoError(t, err)
+	assert.Equal(t, []any{"one", "two", "three"}, as)
+	_, err = req.RequireAnySlice("missing_val")
+	assert.Error(t, err)
+	assert.Equal(t, []any{true, false, true}, req.GetAnySlice("bool_slice_val", nil))
+
 	// Test GetStringSlice
 	assert.Equal(t, []string{"one", "two", "three"}, req.GetStringSlice("string_slice_val", nil))
 	assert.Equal(t, []string{"default"}, req.GetStringSlice("missing_val", []string{"default"}))
