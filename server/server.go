@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/util"
 )
 
 // resourceEntry holds both a resource and its handler
@@ -160,6 +161,7 @@ type MCPServer struct {
 	paginationLimit        *int
 	sessions               sync.Map
 	hooks                  *Hooks
+	logger                 util.Logger
 }
 
 // WithPaginationLimit sets the pagination limit for the server.
@@ -281,6 +283,12 @@ func WithLogging() ServerOption {
 	}
 }
 
+func WithMCPLogger(logger util.Logger) ServerOption {
+	return func(s *MCPServer) {
+		s.logger = logger
+	}
+}
+
 // WithInstructions sets the server instructions for the client returned in the initialize response
 func WithInstructions(instructions string) ServerOption {
 	return func(s *MCPServer) {
@@ -308,6 +316,7 @@ func NewMCPServer(
 			prompts:   nil,
 			logging:   nil,
 		},
+		logger: util.DefaultLogger(),
 	}
 
 	for _, opt := range opts {
@@ -474,6 +483,9 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 
 	s.toolsMu.Lock()
 	for _, entry := range tools {
+		if _, exists := s.tools[entry.Tool.Name]; exists {
+			s.logger.Infof("Tool with name %q already exists. Overwriting.", entry.Tool.Name)
+		}
 		s.tools[entry.Tool.Name] = entry
 	}
 	s.toolsMu.Unlock()
