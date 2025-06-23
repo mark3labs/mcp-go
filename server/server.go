@@ -493,6 +493,30 @@ func (s *MCPServer) SetTools(tools ...ServerTool) {
 	s.AddTools(tools...)
 }
 
+// GetTool retrieves the specified tool
+func (s *MCPServer) GetTool(toolName string) *ServerTool {
+	s.toolsMu.RLock()
+	defer s.toolsMu.RUnlock()
+	if tool, ok := s.tools[toolName]; ok {
+		return &tool
+	}
+	return nil
+}
+
+func (s *MCPServer) ListTools() map[string]*ServerTool {
+	s.toolsMu.RLock()
+	defer s.toolsMu.RUnlock()
+	if len(s.tools) == 0 {
+		return nil
+	}
+	// Create a copy to prevent external modification
+	toolsCopy := make(map[string]*ServerTool, len(s.tools))
+	for name, tool := range s.tools {
+		toolsCopy[name] = &tool
+	}
+	return toolsCopy
+}
+
 // DeleteTools removes tools from the server
 func (s *MCPServer) DeleteTools(names ...string) {
 	s.toolsMu.Lock()
