@@ -30,6 +30,7 @@ type sseSession struct {
 	loggingLevel        atomic.Value
 	tools               sync.Map     // stores session-specific tools
 	clientInfo          atomic.Value // stores session-specific client info
+	headers             http.Header  // stores HTTP headers from the initial request
 }
 
 // SSEContextFunc is a function that takes an existing context and the current
@@ -106,6 +107,10 @@ func (s *sseSession) GetClientInfo() mcp.Implementation {
 
 func (s *sseSession) SetClientInfo(clientInfo mcp.Implementation) {
 	s.clientInfo.Store(clientInfo)
+}
+
+func (s *sseSession) GetHeader() http.Header {
+	return s.headers
 }
 
 var (
@@ -353,6 +358,7 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		eventQueue:          make(chan string, 100), // Buffer for events
 		sessionID:           sessionID,
 		notificationChannel: make(chan mcp.JSONRPCNotification, 100),
+		headers:             r.Header.Clone(), // Store HTTP headers from request
 	}
 
 	s.sessions.Store(sessionID, session)

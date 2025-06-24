@@ -365,7 +365,7 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		sessionID = uuid.New().String()
 	}
 
-	session := newStreamableHttpSession(sessionID, s.sessionTools)
+	session := newStreamableHttpSessionWithHeaders(sessionID, s.sessionTools, r.Header)
 	if err := s.server.RegisterSession(r.Context(), session); err != nil {
 		http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusBadRequest)
 		return
@@ -549,6 +549,7 @@ type streamableHttpSession struct {
 	notificationChannel chan mcp.JSONRPCNotification // server -> client notifications
 	tools               *sessionToolsStore
 	upgradeToSSE        atomic.Bool
+	headers             http.Header // stores HTTP headers from the initial request
 }
 
 func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore) *streamableHttpSession {
@@ -556,6 +557,16 @@ func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore) *s
 		sessionID:           sessionID,
 		notificationChannel: make(chan mcp.JSONRPCNotification, 100),
 		tools:               toolStore,
+		headers:             make(http.Header), // Initialize empty headers for ephemeral sessions
+	}
+}
+
+func newStreamableHttpSessionWithHeaders(sessionID string, toolStore *sessionToolsStore, headers http.Header) *streamableHttpSession {
+	return &streamableHttpSession{
+		sessionID:           sessionID,
+		notificationChannel: make(chan mcp.JSONRPCNotification, 100),
+		tools:               toolStore,
+		headers:             headers.Clone(),
 	}
 }
 
@@ -594,6 +605,10 @@ func (s *streamableHttpSession) UpgradeToSSEWhenReceiveNotification() {
 }
 
 var _ SessionWithStreamableHTTPConfig = (*streamableHttpSession)(nil)
+
+func (s *streamableHttpSession) GetHeader() http.Header {
+	return s.headers
+}
 
 // --- session id manager ---
 
