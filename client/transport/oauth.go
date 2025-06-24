@@ -146,16 +146,34 @@ type OAuthHandler struct {
 	expectedState string       // Expected state value for CSRF protection
 }
 
-// NewOAuthHandler creates a new OAuth handler
-func NewOAuthHandler(config OAuthConfig) *OAuthHandler {
+type OAuthHandlerOption func(*OAuthHandler)
+
+// WithOAuthHTTPClient allows setting a custom http.Client for the OAuthHandler.
+func WithOAuthHTTPClient(client *http.Client) OAuthHandlerOption {
+	return func(h *OAuthHandler) {
+		if client != nil {
+			h.httpClient = client
+		}
+	}
+}
+
+// NewOAuthHandler creates a new OAuth handler.
+// Optionally accepts functional options such as WithOAuthHTTPClient.
+func NewOAuthHandler(config OAuthConfig, opts ...OAuthHandlerOption) *OAuthHandler {
 	if config.TokenStore == nil {
 		config.TokenStore = NewMemoryTokenStore()
 	}
 
-	return &OAuthHandler{
+	handler := &OAuthHandler{
 		config:     config,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
+
+	for _, opt := range opts {
+		opt(handler)
+	}
+
+	return handler
 }
 
 // GetAuthorizationHeader returns the Authorization header value for a request
