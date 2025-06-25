@@ -195,9 +195,9 @@ func TestServerWithResourceTemplate(t *testing.T) {
 	defer srv.Close()
 
 	// Create a URI template for files like "file://users/{userId}/documents/{docId}"
-	uriTemplate, err := mcp.NewURITemplate("file://users/{userId}/documents/{docId}")
-	if err != nil {
-		t.Fatal("NewURITemplate:", err)
+	uriTemplate := &mcp.URITemplate{}
+	if err := uriTemplate.UnmarshalText([]byte("file://users/{userId}/documents/{docId}")); err != nil {
+		t.Fatal("URITemplate.UnmarshalText:", err)
 	}
 
 	template := mcp.ResourceTemplate{
