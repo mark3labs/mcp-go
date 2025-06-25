@@ -23,7 +23,7 @@ type Server struct {
 	tools             []server.ServerTool
 	prompts           []server.ServerPrompt
 	resources         []server.ServerResource
-	resourceTemplates []server.ServerResourceTemplate
+	resourceTemplates []ServerResourceTemplate
 
 	cancel func()
 
