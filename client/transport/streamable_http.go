@@ -420,6 +420,9 @@ func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, hand
 				event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
 			} else if strings.HasPrefix(line, "data:") {
 				data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			} else {
+				// Server may response with arbitrary data
+				data = line
 			}
 		}
 	}
