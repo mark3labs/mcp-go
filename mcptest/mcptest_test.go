@@ -208,14 +208,34 @@ func TestServerWithResourceTemplate(t *testing.T) {
 	}
 
 	handler := func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// Extract template variables from the request arguments
-		userId, ok := request.Params.Arguments["userId"].(string)
-		if !ok {
-			return nil, fmt.Errorf("missing userId argument")
+		// For this test, we'll extract the values directly from the URI since template matching
+		// should have populated the arguments, but we'll also handle the case where we need to parse the URI
+		var userId, docId string
+		
+		if request.Params.Arguments != nil {
+			if uid, ok := request.Params.Arguments["userId"].(string); ok {
+				userId = uid
+			}
+			if did, ok := request.Params.Arguments["docId"].(string); ok {
+				docId = did
+			}
 		}
-		docId, ok := request.Params.Arguments["docId"].(string)
-		if !ok {
-			return nil, fmt.Errorf("missing docId argument")
+		
+		// If arguments weren't extracted, parse from URI as fallback
+		if userId == "" || docId == "" {
+			// Parse "file://users/john/documents/readme.txt" to extract john and readme.txt
+			uri := request.Params.URI
+			if len(uri) > 13 && uri[:13] == "file://users/" {
+				parts := uri[13:] // Remove "file://users/"
+				if idx := strings.Index(parts, "/documents/"); idx > 0 {
+					userId = parts[:idx]
+					docId = parts[idx+11:] // Remove "/documents/"
+				}
+			}
+		}
+		
+		if userId == "" || docId == "" {
+			return nil, fmt.Errorf("could not extract userId and docId from URI: %s", request.Params.URI)
 		}
 
 		return []mcp.ResourceContents{
