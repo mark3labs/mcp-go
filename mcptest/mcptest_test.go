@@ -196,8 +196,8 @@ func TestServerWithResourceTemplate(t *testing.T) {
 
 	// Create a URI template for files like "file://users/{userId}/documents/{docId}"
 	uriTemplate := &mcp.URITemplate{}
-	if err := uriTemplate.UnmarshalText([]byte("file://users/{userId}/documents/{docId}")); err != nil {
-		t.Fatal("URITemplate.UnmarshalText:", err)
+	if err := uriTemplate.UnmarshalJSON([]byte(`"file://users/{userId}/documents/{docId}"`)); err != nil {
+		t.Fatal("URITemplate.UnmarshalJSON:", err)
 	}
 
 	template := mcp.ResourceTemplate{
@@ -229,7 +229,7 @@ func TestServerWithResourceTemplate(t *testing.T) {
 
 	srv.AddResourceTemplate(template, handler)
 
-	err = srv.Start(ctx)
+	err := srv.Start(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
