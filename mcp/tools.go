@@ -516,9 +516,10 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 }
 
 type ToolInputSchema struct {
-	Type       string         `json:"type"`
-	Properties map[string]any `json:"properties,omitempty"`
-	Required   []string       `json:"required,omitempty"`
+	Type        string                     `json:"type"`
+	Properties  map[string]any             `json:"properties,omitempty"`
+	Required    []string                   `json:"required,omitempty"`
+	Definitions map[string]ToolInputSchema `json:"$defs,omitempty"`
 }
 
 // MarshalJSON implements the json.Marshaler interface for ToolInputSchema.
@@ -533,6 +534,10 @@ func (tis ToolInputSchema) MarshalJSON() ([]byte, error) {
 
 	if len(tis.Required) > 0 {
 		m["required"] = tis.Required
+	}
+
+	if len(tis.Definitions) > 0 {
+		m["$defs"] = tis.Definitions
 	}
 
 	return json.Marshal(m)
