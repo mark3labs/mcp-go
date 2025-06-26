@@ -194,63 +194,39 @@ func TestServerWithResourceTemplate(t *testing.T) {
 	srv := mcptest.NewUnstartedServer(t)
 	defer srv.Close()
 
-	// Create a URI template for files like "file://users/{userId}/documents/{docId}"
-	uriTemplate := &mcp.URITemplate{}
-	if err := uriTemplate.UnmarshalJSON([]byte(`"file://users/{userId}/documents/{docId}"`)); err != nil {
-		t.Fatal("URITemplate.UnmarshalJSON:", err)
-	}
-
-	template := mcp.ResourceTemplate{
-		URITemplate: uriTemplate,
-		Name:        "User Document",
-		Description: "A user's document",
-		MIMEType:    "text/plain",
-	}
+	template := mcp.NewResourceTemplate(
+		"file://users/{userId}/documents/{docId}",
+		"User Document",
+		mcp.WithTemplateDescription("A user's document"),
+		mcp.WithTemplateMIMEType("text/plain"),
+	)
 
 	handler := func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// First verify the arguments were correctly extracted from the URI template
 		if request.Params.Arguments == nil {
 			return nil, fmt.Errorf("expected arguments to be populated from URI template")
 		}
 
-		userId, ok := request.Params.Arguments["userId"].(string)
+		userIds, ok := request.Params.Arguments["userId"].([]string)
 		if !ok {
 			return nil, fmt.Errorf("expected userId argument to be populated from URI template")
 		}
-		if userId != "john" {
-			return nil, fmt.Errorf("expected userId argument to be 'john', got %q", userId)
+		if len(userIds) != 1 && userIds[0] != "john" {
+			return nil, fmt.Errorf("expected userId argument to be 'john', got %v", userIds)
 		}
 
-		docId, ok := request.Params.Arguments["docId"].(string)
+		docIds, ok := request.Params.Arguments["docId"].([]string)
 		if !ok {
 			return nil, fmt.Errorf("expected docId argument to be populated from URI template")
 		}
-		if docId != "readme.txt" {
-			return nil, fmt.Errorf("expected docId argument to be 'readme.txt', got %q", docId)
-		}
-		
-		// If arguments weren't extracted, parse from URI as fallback
-		if userId == "" || docId == "" {
-			// Parse "file://users/john/documents/readme.txt" to extract john and readme.txt
-			uri := request.Params.URI
-			if len(uri) > 13 && uri[:13] == "file://users/" {
-				parts := uri[13:] // Remove "file://users/"
-				if idx := strings.Index(parts, "/documents/"); idx > 0 {
-					userId = parts[:idx]
-					docId = parts[idx+11:] // Remove "/documents/"
-				}
-			}
-		}
-		
-		if userId == "" || docId == "" {
-			return nil, fmt.Errorf("could not extract userId and docId from URI: %s", request.Params.URI)
+		if len(docIds) != 1 && docIds[0] != "readme.txt" {
+			return nil, fmt.Errorf("expected docId argument to be 'readme.txt', got %v", docIds)
 		}
 
 		return []mcp.ResourceContents{
 			mcp.TextResourceContents{
 				URI:      request.Params.URI,
 				MIMEType: "text/plain",
-				Text:     fmt.Sprintf("Document %s for user %s", docId, userId),
+				Text:     fmt.Sprintf("Document %s for user %s", docIds[0], userIds[0]),
 			},
 		}, nil
 	}
