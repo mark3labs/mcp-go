@@ -383,7 +383,7 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 
 			var message JSONRPCResponse
 			if err := json.Unmarshal([]byte(data), &message); err != nil {
-				fmt.Printf("failed to unmarshal message: %v\n", err)
+				c.logger.Errorf("failed to unmarshal message: %v", err)
 				return
 			}
 
@@ -391,7 +391,7 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 			if message.ID.IsNil() {
 				var notification mcp.JSONRPCNotification
 				if err := json.Unmarshal([]byte(data), &notification); err != nil {
-					fmt.Printf("failed to unmarshal notification: %v\n", err)
+					c.logger.Errorf("failed to unmarshal notification: %v", err)
 					return
 				}
 				c.notifyMu.RLock()
@@ -446,7 +446,7 @@ func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, hand
 				case <-ctx.Done():
 					return
 				default:
-					fmt.Printf("SSE stream error: %v\n", err)
+					c.logger.Errorf("SSE stream error: %v", err)
 					return
 				}
 			}
