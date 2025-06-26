@@ -712,3 +712,469 @@ func TestNewItemsAPICompatibility(t *testing.T) {
 		})
 	}
 }
+
+// Test HasOutputSchema method with empty schema
+func TestHasOutputSchemaEmpty(t *testing.T) {
+	tool := NewTool("test-tool")
+
+	// Empty schema should return false
+	assert.False(t, tool.HasOutputSchema())
+}
+
+// Test HasOutputSchema method with defined schema
+func TestHasOutputSchemaWithSchema(t *testing.T) {
+	schema := json.RawMessage(`{"type": "object", "properties": {"result": {"type": "string"}}}`)
+	tool := NewTool("test-tool", WithOutputSchema(schema))
+
+	// Should return true when schema is defined
+	assert.True(t, tool.HasOutputSchema())
+}
+
+// Test Tool JSON marshaling includes output schema when defined
+func TestToolMarshalWithOutputSchema(t *testing.T) {
+	schema := json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"temperature": {"type": "string", "description": "Temperature value"},
+			"condition": {"type": "string"}
+		},
+		"required": ["temperature"]
+	}`)
+
+	tool := NewTool("weather-tool",
+		WithDescription("Get weather information"),
+		WithString("location", Required()),
+		WithOutputSchema(schema),
+	)
+
+	// Marshal to JSON
+	data, err := json.Marshal(tool)
+	assert.NoError(t, err)
+
+	// Unmarshal to verify structure
+	var result map[string]any
+	err = json.Unmarshal(data, &result)
+	assert.NoError(t, err)
+
+	// Check that outputSchema is present
+	outputSchema, exists := result["outputSchema"]
+	assert.True(t, exists)
+
+	schema2, ok := outputSchema.(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "object", schema2["type"])
+
+	// Check properties
+	properties, ok := schema2["properties"].(map[string]any)
+	assert.True(t, ok)
+	assert.Contains(t, properties, "temperature")
+	assert.Contains(t, properties, "condition")
+
+	// Check required fields
+	required, ok := schema2["required"].([]any)
+	assert.True(t, ok)
+	assert.Contains(t, required, "temperature")
+}
+
+// Test Tool JSON marshaling omits output schema when empty
+func TestToolMarshalWithoutOutputSchema(t *testing.T) {
+	tool := NewTool("simple-tool",
+		WithDescription("Simple tool without output schema"),
+		WithString("input", Required()),
+	)
+
+	// Marshal to JSON
+	data, err := json.Marshal(tool)
+	assert.NoError(t, err)
+
+	// Unmarshal to verify structure
+	var result map[string]any
+	err = json.Unmarshal(data, &result)
+	assert.NoError(t, err)
+
+	// Check that outputSchema is not present
+	_, exists := result["outputSchema"]
+	assert.False(t, exists)
+}
+
+// Test WithOutputSchema function
+func TestWithOutputSchema(t *testing.T) {
+	schema := json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"data": {"type": "string"}
+		},
+		"required": ["data"]
+	}`)
+
+	tool := NewTool("custom-tool", WithOutputSchema(schema))
+
+	assert.True(t, tool.HasOutputSchema())
+	cleaned, _ := ExtractMCPSchema(schema)
+	assert.Equal(t, cleaned, tool.OutputSchema)
+}
+
+// Test NewStructuredToolResult function
+func TestNewStructuredToolResult(t *testing.T) {
+	// This test is removed as NewStructuredToolResult is deprecated
+	// Use NewToolResultStructured[T]() instead
+}
+
+// Test NewStructuredToolError function
+func TestNewStructuredToolError(t *testing.T) {
+	// This test is removed as NewStructuredToolError is deprecated
+	// Use NewToolResultErrorStructured[T]() instead
+}
+
+// Test WithOutputType function with struct-based schema generation
+func TestWithOutputType(t *testing.T) {
+	type WeatherOutput struct {
+		Temperature float64 `json:"temperature" jsonschema:"description=Temperature in Celsius"`
+		Condition   string  `json:"condition" jsonschema:"required"`
+		Humidity    int     `json:"humidity,omitempty" jsonschema:"minimum=0,maximum=100"`
+	}
+
+	tool := NewTool("weather-tool",
+		WithDescription("Get weather information"),
+		WithString("location", Required()),
+		WithOutputType[WeatherOutput](),
+	)
+
+	assert.True(t, tool.HasOutputSchema())
+	assert.NotNil(t, tool.OutputSchema)
+
+	// Marshal and verify JSON structure
+	data, err := json.Marshal(tool)
+	assert.NoError(t, err)
+
+	var result map[string]any
+	err = json.Unmarshal(data, &result)
+	assert.NoError(t, err)
+
+	// Check that outputSchema is present and valid
+	outputSchema, exists := result["outputSchema"]
+	assert.True(t, exists)
+
+	schema, ok := outputSchema.(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "object", schema["type"])
+
+	// Check properties exist
+	properties, ok := schema["properties"].(map[string]any)
+	assert.True(t, ok)
+	assert.Contains(t, properties, "temperature")
+	assert.Contains(t, properties, "condition")
+	assert.Contains(t, properties, "humidity")
+}
+
+// Test new helper functions
+func TestNewToolResultStructured(t *testing.T) {
+	type ResponseData struct {
+		Message string `json:"message"`
+		Status  int    `json:"status"`
+	}
+
+	data := ResponseData{
+		Message: "Operation successful",
+		Status:  200,
+	}
+
+	result := NewToolResultStructured(data)
+
+	assert.False(t, result.IsError)
+	assert.Equal(t, data, result.StructuredContent)
+	assert.Len(t, result.Content, 1)
+
+	textContent, ok := result.Content[0].(TextContent)
+	assert.True(t, ok)
+	assert.Equal(t, "text", textContent.Type)
+
+	// Verify the JSON content matches the structured content
+	var parsedJSON ResponseData
+	err := json.Unmarshal([]byte(textContent.Text), &parsedJSON)
+	assert.NoError(t, err)
+	assert.Equal(t, data.Message, parsedJSON.Message)
+	assert.Equal(t, data.Status, parsedJSON.Status)
+}
+
+func TestNewToolResultWithStructured(t *testing.T) {
+	type ResponseData struct {
+		Value int `json:"value"`
+	}
+
+	data := ResponseData{Value: 42}
+	textContent := NewTextContent("Custom text content")
+	imageContent := NewImageContent("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==", "image/png")
+
+	result := NewToolResultWithStructured([]Content{textContent, imageContent}, data)
+
+	assert.False(t, result.IsError)
+	assert.Equal(t, data, result.StructuredContent)
+	assert.Len(t, result.Content, 2)
+
+	// Verify content is preserved as-is
+	assert.Equal(t, textContent, result.Content[0])
+	assert.Equal(t, imageContent, result.Content[1])
+}
+
+func TestNewToolResultErrorStructured(t *testing.T) {
+	type ErrorData struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+
+	errorData := ErrorData{
+		Code:    "TIMEOUT",
+		Message: "Request timed out",
+	}
+
+	result := NewToolResultErrorStructured(errorData)
+
+	assert.True(t, result.IsError)
+	assert.Equal(t, errorData, result.StructuredContent)
+	assert.Len(t, result.Content, 1)
+
+	textContent, ok := result.Content[0].(TextContent)
+	assert.True(t, ok)
+	assert.Equal(t, "text", textContent.Type)
+
+	// Verify the JSON content matches the structured content
+	var parsedJSON ErrorData
+	err := json.Unmarshal([]byte(textContent.Text), &parsedJSON)
+	assert.NoError(t, err)
+	assert.Equal(t, errorData.Code, parsedJSON.Code)
+	assert.Equal(t, errorData.Message, parsedJSON.Message)
+}
+
+func TestNewToolResultErrorWithStructured(t *testing.T) {
+	type ErrorData struct {
+		Code string `json:"code"`
+	}
+
+	errorData := ErrorData{Code: "ERR_404"}
+	textContent := NewTextContent("Not found error occurred")
+
+	result := NewToolResultErrorWithStructured([]Content{textContent}, errorData)
+
+	assert.True(t, result.IsError)
+	assert.Equal(t, errorData, result.StructuredContent)
+	assert.Len(t, result.Content, 1)
+	assert.Equal(t, textContent, result.Content[0])
+}
+
+// Test validation with new API
+func TestValidateOutputWithSchema(t *testing.T) {
+	type ValidOutput struct {
+		Message string `json:"message" jsonschema:"required"`
+		Count   int    `json:"count" jsonschema:"minimum=0"`
+	}
+
+	tool := NewTool("test-tool",
+		WithString("input", Required()),
+		WithOutputType[ValidOutput](),
+	)
+
+	// Test valid structured content
+	validData := ValidOutput{Message: "Success", Count: 5}
+	validResult := NewToolResultStructured(validData)
+
+	err := tool.ValidateOutput(validResult)
+	assert.NoError(t, err, "Valid structured content should pass validation")
+
+	// Test invalid structured content (missing required field)
+	invalidData := map[string]any{"count": 10} // missing required "message"
+	invalidResult := &CallToolResult{
+		IsError:           false,
+		StructuredContent: invalidData,
+		Content:           []Content{NewTextContent("test")},
+	}
+
+	err = tool.ValidateOutput(invalidResult)
+	assert.Error(t, err, "Invalid structured content should fail validation")
+}
+
+// Test ValidateOutput behavior with different scenarios
+func TestValidateOutput(t *testing.T) {
+	// Test case 1: Tool without output schema should not validate
+	toolNoSchema := NewTool("no-schema-tool", WithString("input", Required()))
+	result := NewToolResultText("Just text content")
+
+	err := toolNoSchema.ValidateOutput(result)
+	assert.NoError(t, err, "Tool without output schema should not validate")
+
+	// Test case 2: Error result should skip validation
+	schema := json.RawMessage(`{"type": "object", "properties": {"message": {"type": "string"}}, "required": ["message"]}`)
+	toolWithSchema := NewTool("schema-tool",
+		WithString("input", Required()),
+		WithOutputSchema(schema),
+	)
+	errorResult := &CallToolResult{IsError: true, StructuredContent: map[string]any{"invalid": "data"}}
+
+	err = toolWithSchema.ValidateOutput(errorResult)
+	assert.NoError(t, err, "Error result should skip validation")
+
+	// Test case 3: Tool with output schema but no structured content should return error
+	resultNoStructured := NewToolResultText("Just text content")
+
+	err = toolWithSchema.ValidateOutput(resultNoStructured)
+	assert.Error(t, err, "Tool with output schema but no structured content should return error")
+	assert.Contains(t, err.Error(), "requires structured output")
+}
+
+func TestEnsureOutputSchemaValidatorThreadSafety(t *testing.T) {
+	// Create a tool with output schema but no pre-compiled validator
+	outputSchema := json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"message": {"type": "string"},
+			"status": {"type": "integer"}
+		},
+		"required": ["message"]
+	}`)
+
+	tool := NewTool("thread-safe-tool",
+		WithDescription("A tool to test thread safety"),
+		WithOutputSchema(outputSchema),
+	)
+
+	// Run multiple goroutines concurrently to call ensureOutputSchemaValidator
+	const numGoroutines = 100
+	errors := make(chan error, numGoroutines)
+
+	for range numGoroutines {
+		go func() {
+			err := tool.ensureOutputSchemaValidator()
+			errors <- err
+		}()
+	}
+
+	// Collect all errors
+	for i := 0; i < numGoroutines; i++ {
+		err := <-errors
+		assert.NoError(t, err, "ensureOutputSchemaValidator should not return error")
+	}
+
+	// Verify the validator was properly initialized
+	assert.NotNil(t, tool.validatorState, "validatorState should be initialized")
+	assert.NotNil(t, tool.validatorState.validator, "validator should be initialized")
+	assert.NoError(t, tool.validatorState.initErr, "initErr should be nil for successful compilation")
+
+	// Test validation with the initialized validator
+	result := &CallToolResult{
+		Content: []Content{NewTextContent("Success")},
+		StructuredContent: map[string]any{
+			"message": "test message",
+			"status":  200,
+		},
+		IsError: false,
+	}
+
+	err := tool.ValidateOutput(result)
+	assert.NoError(t, err, "ValidateOutput should succeed with valid data")
+}
+
+func TestEnsureOutputSchemaValidatorWithOutputType(t *testing.T) {
+	type TestOutput struct {
+		Message string `json:"message" jsonschema:"required"`
+		Status  int    `json:"status" jsonschema:"minimum=100,maximum=599"`
+	}
+
+	// Create a tool with WithOutputType (which pre-compiles the validator)
+	tool := NewTool("pre-compiled-tool",
+		WithDescription("A tool with pre-compiled validator"),
+		WithOutputType[TestOutput](),
+	)
+
+	// Verify the validator is already set
+	assert.NotNil(t, tool.validatorState, "validatorState should be initialized")
+	assert.NotNil(t, tool.validatorState.validator, "validator should be pre-compiled")
+	assert.NoError(t, tool.validatorState.initErr, "initErr should be nil for pre-compiled validator")
+
+	// Call ensureOutputSchemaValidator multiple times concurrently
+	const numGoroutines = 50
+	errors := make(chan error, numGoroutines)
+
+	for range numGoroutines {
+		go func() {
+			err := tool.ensureOutputSchemaValidator()
+			errors <- err
+		}()
+	}
+
+	// Collect all errors
+	for range numGoroutines {
+		err := <-errors
+		assert.NoError(t, err, "ensureOutputSchemaValidator should not return error")
+	}
+
+	// Test validation still works correctly
+	result := &CallToolResult{
+		Content: []Content{NewTextContent("Success")},
+		StructuredContent: TestOutput{
+			Message: "test message",
+			Status:  200,
+		},
+		IsError: false,
+	}
+
+	err := tool.ValidateOutput(result)
+	assert.NoError(t, err, "ValidateOutput should succeed with valid data")
+}
+
+func TestEnsureOutputSchemaValidatorErrorConsistency(t *testing.T) {
+	// Create a tool with invalid output schema to test error handling consistency
+	invalidSchema := json.RawMessage(`{
+		"type": "invalid-type-that-should-cause-error",
+		"$ref": "#/invalid/reference"
+	}`)
+
+	tool := NewTool("error-test-tool",
+		WithDescription("A tool to test error consistency"),
+		WithOutputSchema(invalidSchema),
+	)
+
+	// Run multiple goroutines concurrently
+	const numGoroutines = 50
+	errors := make(chan error, numGoroutines)
+
+	for range numGoroutines {
+		go func() {
+			err := tool.ensureOutputSchemaValidator()
+			errors <- err
+		}()
+	}
+
+	// Collect all errors - they should all be consistent
+	var firstErr error
+	var errorCount, successCount int
+	for i := range numGoroutines {
+		err := <-errors
+		if i == 0 {
+			firstErr = err
+		}
+
+		if err != nil {
+			errorCount++
+		} else {
+			successCount++
+		}
+
+		// All results should be consistent - either all errors or all success
+		if (firstErr == nil) != (err == nil) {
+			t.Errorf("Inconsistent error handling in goroutine %d: first error was %v, but got %v", i, firstErr, err)
+		}
+	}
+
+	// Should either be all errors or all success
+	if errorCount > 0 && successCount > 0 {
+		t.Errorf("Mixed results: %d errors and %d successes - should be consistent", errorCount, successCount)
+	}
+
+	// Verify that subsequent calls return the same result
+	for i := range 5 {
+		finalErr := tool.ensureOutputSchemaValidator()
+		if (firstErr == nil) != (finalErr == nil) {
+			t.Errorf("Error state changed after concurrent access: original was %v, subsequent call %d returned %v", firstErr, i, finalErr)
+		}
+	}
+}

@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"testing"
@@ -10,8 +11,9 @@ import (
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
 
 func TestHTTPClient(t *testing.T) {
 	hooks := &server.Hooks{}
@@ -190,6 +192,67 @@ func TestHTTPClient(t *testing.T) {
 		})
 
 	})
+}
+
+func TestHTTPClient_ListTools_WithOutputSchema(t *testing.T) {
+	// 1. Setup Server
+	srv := server.NewMCPServer("test-server", "1.0.0")
+
+	// Define a tool with a structured output type, including descriptions.
+	type WeatherData struct {
+		Temperature float64 `json:"temperature" jsonschema:"description=The temperature in Celsius."`
+		Conditions  string  `json:"conditions" jsonschema:"description=Weather conditions (e.g. Cloudy)."`
+	}
+	tool := mcp.NewTool("get_weather", mcp.WithOutputType[WeatherData]())
+	srv.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return nil, nil // Handler not needed for this test
+	})
+
+	// Use the dedicated test helper to create the server
+	httpServer := server.NewTestStreamableHTTPServer(srv)
+	defer httpServer.Close()
+
+	// 2. Setup Client
+	// Use the correct client constructor
+	client, err := NewStreamableHttpClient(httpServer.URL)
+	require.NoError(t, err)
+
+	// Initialize the client session before making other requests.
+	_, err = client.Initialize(context.Background(), mcp.InitializeRequest{
+		Params: mcp.InitializeParams{
+			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+			ClientInfo: mcp.Implementation{
+				Name:    "test-client",
+				Version: "1.0.0",
+			},
+			// Client does not need to declare tool capabilities,
+			// it's a server-side declaration.
+			Capabilities: mcp.ClientCapabilities{},
+		},
+	})
+	require.NoError(t, err, "client not initialized")
+
+	// 3. Client calls ListTools
+	result, err := client.ListTools(context.Background(), mcp.ListToolsRequest{})
+	require.NoError(t, err)
+	require.Len(t, result.Tools, 1, "Should retrieve one tool")
+
+	// 4. Assert on the received tool's OutputSchema
+	retrievedTool := result.Tools[0]
+	assert.Equal(t, "get_weather", retrievedTool.Name)
+	require.NotNil(t, retrievedTool.OutputSchema, "OutputSchema should be present")
+
+	// Unmarshal and verify the content of the schema
+	var schemaData map[string]interface{}
+	err = json.Unmarshal(retrievedTool.OutputSchema, &schemaData)
+	require.NoError(t, err)
+
+	properties := schemaData["properties"].(map[string]interface{})
+	tempProp := properties["temperature"].(map[string]interface{})
+	condProp := properties["conditions"].(map[string]interface{})
+
+	assert.Equal(t, "The temperature in Celsius.", tempProp["description"])
+	assert.Equal(t, "Weather conditions (e.g. Cloudy).", condProp["description"])
 }
 
 type SafeMap struct {

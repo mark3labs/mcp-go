@@ -1027,13 +1027,26 @@ func (s *MCPServer) handleToolCall(
 
 	result, err := finalHandler(ctx, request)
 	if err != nil {
-		return nil, &requestError{
-			id:   id,
-			code: mcp.INTERNAL_ERROR,
-			err:  err,
+		return nil, &requestError{id, mcp.INTERNAL_ERROR, err}
+	}
+
+	// Only validate if the result is not an error.
+	// The validation function itself also checks for IsError, but checking it
+	// here first prevents overwriting a legitimate error response from the tool
+	// with a validation error.
+	if !result.IsError {
+		if err := tool.Tool.ValidateOutput(result); err != nil {
+			// If validation fails, return a new error result.
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					mcp.NewTextContent(fmt.Sprintf("tool output schema validation failed: %v", err)),
+				},
+				IsError: true,
+			}, nil
 		}
 	}
 
+	// If validation passes or was skipped, return the original result from the handler.
 	return result, nil
 }
 

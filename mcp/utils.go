@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cast"
 )
@@ -350,6 +351,57 @@ func NewToolResultErrorf(format string, a ...any) *CallToolResult {
 			},
 		},
 		IsError: true,
+	}
+}
+
+// marshalToContent converts structured data to JSON content for backwards compatibility
+func marshalToContent(data any) []Content {
+	jsonBytes, err := json.Marshal(data)
+	var text string
+	if err != nil {
+		text = fmt.Sprintf("Error serializing structured content: %v", err)
+	} else {
+		text = string(jsonBytes)
+	}
+
+	return []Content{NewTextContent(text)}
+}
+
+// NewToolResultStructured creates a CallToolResult with only structured content.
+// The helper automatically generates JSON content for backwards compatibility.
+func NewToolResultStructured[T any](data T) *CallToolResult {
+	return &CallToolResult{
+		Content:           marshalToContent(data),
+		StructuredContent: data,
+		IsError:           false,
+	}
+}
+
+// NewToolResultWithStructured creates a CallToolResult with both explicit content and structured content.
+func NewToolResultWithStructured[T any](content []Content, data T) *CallToolResult {
+	return &CallToolResult{
+		Content:           content,
+		StructuredContent: data,
+		IsError:           false,
+	}
+}
+
+// NewToolResultErrorStructured creates a CallToolResult for an error case with structured content.
+// The helper automatically generates JSON content and sets IsError to true.
+func NewToolResultErrorStructured[T any](data T) *CallToolResult {
+	return &CallToolResult{
+		Content:           marshalToContent(data),
+		StructuredContent: data,
+		IsError:           true,
+	}
+}
+
+// NewToolResultErrorWithStructured creates a CallToolResult for an error case with both explicit content and structured content.
+func NewToolResultErrorWithStructured[T any](content []Content, data T) *CallToolResult {
+	return &CallToolResult{
+		Content:           content,
+		StructuredContent: data,
+		IsError:           true,
 	}
 }
 
@@ -816,4 +868,41 @@ func ParseStringMap(request CallToolRequest, key string, defaultValue map[string
 // ToBoolPtr returns a pointer to the given boolean value
 func ToBoolPtr(b bool) *bool {
 	return &b
+}
+
+// ExtractMCPSchema converts a JSON Schema into the inline object schema format
+// required by MCP. It removes top-level metadata and inlines local definitions.
+// This is not a full JSON-Schema dereferencer.
+func ExtractMCPSchema(raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		return raw, nil
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return raw, fmt.Errorf("failed to unmarshal schema: %w", err)
+	}
+
+	// Inline local $ref into $defs if present.
+	if ref, ok := m["$ref"].(string); ok && strings.HasPrefix(ref, "#/$defs/") {
+		defName := strings.TrimPrefix(ref, "#/$defs/")
+		if defs, ok := m["$defs"].(map[string]any); ok {
+			if defSchema, ok := defs[defName].(map[string]any); ok {
+				m = defSchema
+			}
+		}
+	}
+
+	// Remove metadata
+	delete(m, "$schema")
+	delete(m, "$id")
+	delete(m, "$defs")
+	delete(m, "$ref")
+
+	cleaned, err := json.Marshal(m)
+	if err != nil {
+		return raw, fmt.Errorf("failed to marshal cleaned schema: %w", err)
+	}
+
+	return cleaned, nil
 }
