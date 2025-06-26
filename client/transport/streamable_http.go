@@ -294,7 +294,7 @@ func (c *StreamableHTTP) SendRequest(
 
 	case "text/event-stream":
 		// Server is using SSE for streaming responses
-		return c.handleSSEResponse(ctx, resp.Body)
+		return c.handleSSEResponse(ctx, resp.Body, false)
 
 	default:
 		return nil, fmt.Errorf("unexpected content type: %s", resp.Header.Get("Content-Type"))
@@ -363,7 +363,8 @@ func (c *StreamableHTTP) sendHTTP(
 
 // handleSSEResponse processes an SSE stream for a specific request.
 // It returns the final result for the request once received, or an error.
-func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCloser) (*JSONRPCResponse, error) {
+// If ignoreResponse is true, it won't return when a response messge is received. This is for continuous listening.
+func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCloser, ignoreResponse bool) (*JSONRPCResponse, error) {
 
 	// Create a channel for this specific request
 	responseChan := make(chan *JSONRPCResponse, 1)
@@ -401,7 +402,9 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 				return
 			}
 
-			responseChan <- &message
+			if !ignoreResponse {
+				responseChan <- &message
+			}
 		})
 	}()
 
@@ -580,7 +583,12 @@ func (c *StreamableHTTP) createGETConnectionToServer(ctx context.Context) error 
 		return fmt.Errorf("unexpected content type: %s", contentType)
 	}
 
-	_, err = c.handleSSEResponse(ctx, resp.Body)
+	// When ignoreResponse is true, the function will never return expect context is done.
+	// NOTICE: Due to the ambiguity of the specification, other SDKs may use the GET connection to transfer the response
+	// messages. To be more compatible, we should handle this response, however, as the transport layer is message-based,
+	// currently, there is no convenient way to handle this response.
+	// So we ignore the response here. It's not a bug, but may be not compatible with other SDKs.
+	_, err = c.handleSSEResponse(ctx, resp.Body, true)
 	if err != nil {
 		return fmt.Errorf("failed to handle SSE response: %w", err)
 	}
