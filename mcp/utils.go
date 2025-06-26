@@ -353,6 +353,57 @@ func NewToolResultErrorf(format string, a ...any) *CallToolResult {
 	}
 }
 
+// marshalToContent converts structured data to JSON content for backwards compatibility
+func marshalToContent(data any) []Content {
+	jsonBytes, err := json.Marshal(data)
+	var text string
+	if err != nil {
+		text = fmt.Sprintf("Error serializing structured content: %v", err)
+	} else {
+		text = string(jsonBytes)
+	}
+
+	return []Content{NewTextContent(text)}
+}
+
+// NewToolResultStructured creates a CallToolResult with only structured content.
+// The helper automatically generates JSON content for backwards compatibility.
+func NewToolResultStructured[T any](data T) *CallToolResult {
+	return &CallToolResult{
+		Content:           marshalToContent(data),
+		StructuredContent: data,
+		IsError:           false,
+	}
+}
+
+// NewToolResultWithStructured creates a CallToolResult with both explicit content and structured content.
+func NewToolResultWithStructured[T any](content []Content, data T) *CallToolResult {
+	return &CallToolResult{
+		Content:           content,
+		StructuredContent: data,
+		IsError:           false,
+	}
+}
+
+// NewToolResultErrorStructured creates a CallToolResult for an error case with structured content.
+// The helper automatically generates JSON content and sets IsError to true.
+func NewToolResultErrorStructured[T any](data T) *CallToolResult {
+	return &CallToolResult{
+		Content:           marshalToContent(data),
+		StructuredContent: data,
+		IsError:           true,
+	}
+}
+
+// NewToolResultErrorWithStructured creates a CallToolResult for an error case with both explicit content and structured content.
+func NewToolResultErrorWithStructured[T any](content []Content, data T) *CallToolResult {
+	return &CallToolResult{
+		Content:           content,
+		StructuredContent: data,
+		IsError:           true,
+	}
+}
+
 // NewListResourcesResult creates a new ListResourcesResult
 func NewListResourcesResult(
 	resources []Resource,
