@@ -208,17 +208,25 @@ func TestServerWithResourceTemplate(t *testing.T) {
 	}
 
 	handler := func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-		// For this test, we'll extract the values directly from the URI since template matching
-		// should have populated the arguments, but we'll also handle the case where we need to parse the URI
-		var userId, docId string
-		
-		if request.Params.Arguments != nil {
-			if uid, ok := request.Params.Arguments["userId"].(string); ok {
-				userId = uid
-			}
-			if did, ok := request.Params.Arguments["docId"].(string); ok {
-				docId = did
-			}
+		// First verify the arguments were correctly extracted from the URI template
+		if request.Params.Arguments == nil {
+			return nil, fmt.Errorf("expected arguments to be populated from URI template")
+		}
+
+		userId, ok := request.Params.Arguments["userId"].(string)
+		if !ok {
+			return nil, fmt.Errorf("expected userId argument to be populated from URI template")
+		}
+		if userId != "john" {
+			return nil, fmt.Errorf("expected userId argument to be 'john', got %q", userId)
+		}
+
+		docId, ok := request.Params.Arguments["docId"].(string)
+		if !ok {
+			return nil, fmt.Errorf("expected docId argument to be populated from URI template")
+		}
+		if docId != "readme.txt" {
+			return nil, fmt.Errorf("expected docId argument to be 'readme.txt', got %q", docId)
 		}
 		
 		// If arguments weren't extracted, parse from URI as fallback
