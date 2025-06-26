@@ -8,9 +8,8 @@ import (
 	"reflect"
 	"strconv"
 
-	"github.com/mark3labs/mcp-go/orderedmap"
-
 	"github.com/invopop/jsonschema"
+	"github.com/mark3labs/mcp-go/orderedmap"
 )
 
 var errToolSchemaConflict = errors.New("provide either InputSchema or RawInputSchema, not both")
