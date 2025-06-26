@@ -4,9 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/iancoleman/orderedmap"
 	"reflect"
 	"strconv"
+
+	"github.com/mark3labs/mcp-go/orderedmap"
 )
 
 var errToolSchemaConflict = errors.New("provide either InputSchema or RawInputSchema, not both")

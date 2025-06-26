@@ -6,12 +6,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/iancoleman/orderedmap"
 	"slices"
 	"sort"
 	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/orderedmap"
 )
 
 // resourceEntry holds both a resource and its handler
