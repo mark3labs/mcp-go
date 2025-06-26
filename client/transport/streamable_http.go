@@ -148,7 +148,9 @@ func (c *StreamableHTTP) Start(ctx context.Context) error {
 		go func() {
 			select {
 			case <-c.initialized:
-				c.listenForever()
+				ctx, cancel := c.contextAwareOfClientClose(ctx)
+				defer cancel()
+				c.listenForever(ctx)
 			case <-c.closed:
 				return
 			}
@@ -524,10 +526,10 @@ func (c *StreamableHTTP) IsOAuthEnabled() bool {
 	return c.oauthHandler != nil
 }
 
-func (c *StreamableHTTP) listenForever() {
+func (c *StreamableHTTP) listenForever(ctx context.Context) {
 	c.logger.Infof("listening to server forever")
 	for {
-		err := c.createGETConnectionToServer()
+		err := c.createGETConnectionToServer(ctx)
 		if errors.Is(err, errGetMethodNotAllowed) {
 			// server does not support listening
 			c.logger.Errorf("server does not support listening")
@@ -535,7 +537,7 @@ func (c *StreamableHTTP) listenForever() {
 		}
 
 		select {
-		case <-c.closed:
+		case <-ctx.Done():
 			return
 		default:
 		}
@@ -554,10 +556,7 @@ var (
 	retryInterval = 1 * time.Second // a variable is convenient for testing
 )
 
-func (c *StreamableHTTP) createGETConnectionToServer() error {
-
-	ctx, cancel := c.contextAwareOfClientClose(context.Background())
-	defer cancel()
+func (c *StreamableHTTP) createGETConnectionToServer(ctx context.Context) error {
 
 	resp, err := c.sendHTTP(ctx, http.MethodGet, nil, "text/event-stream")
 	if err != nil {
