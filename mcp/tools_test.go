@@ -104,17 +104,17 @@ func TestUnmarshalToolWithRawSchema(t *testing.T) {
 
 	// Verify schema was properly included
 	assert.Equal(t, "object", toolUnmarshalled.InputSchema.Type)
-	propsAsMap := map[string]any{}
-	for _, k := range toolUnmarshalled.InputSchema.Properties.Keys() {
-		prop, _ := toolUnmarshalled.InputSchema.Properties.Get(k)
-		propsAsMap[k] = prop
-	}
+
+	propsAsJson, _ := json.Marshal(toolUnmarshalled.InputSchema.Properties)
+	var propsAsMap map[string]any
+	_ = json.Unmarshal(propsAsJson, &propsAsMap)
+
 	assert.Contains(t, propsAsMap, "query")
 	assert.Subset(t, propsAsMap["query"], map[string]any{
 		"type":        "string",
 		"description": "Search query",
 	})
-	assert.Contains(t, toolUnmarshalled.InputSchema.Properties, "limit")
+	assert.Contains(t, propsAsMap, "limit")
 	assert.Subset(t, propsAsMap["limit"], map[string]any{
 		"type":    "integer",
 		"minimum": 1.0,
@@ -138,11 +138,9 @@ func TestUnmarshalToolWithoutRawSchema(t *testing.T) {
 	err = json.Unmarshal(data, &toolUnmarshalled)
 	assert.NoError(t, err)
 
-	propsAsMap := map[string]any{}
-	for _, k := range toolUnmarshalled.InputSchema.Properties.Keys() {
-		prop, _ := toolUnmarshalled.InputSchema.Properties.Get(k)
-		propsAsMap[k] = prop
-	}
+	propsAsJson, _ := json.Marshal(toolUnmarshalled.InputSchema.Properties)
+	var propsAsMap map[string]any
+	_ = json.Unmarshal(propsAsJson, &propsAsMap)
 
 	// Verify tool properties
 	assert.Equal(t, tool.Name, toolUnmarshalled.Name)
