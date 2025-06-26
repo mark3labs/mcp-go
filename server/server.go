@@ -986,7 +986,8 @@ func (s *MCPServer) handleToolCall(
 	// If not found in session tools, check global tools
 	if !ok {
 		s.toolsMu.RLock()
-		stool, ok := s.tools.Get(request.Params.Name)
+		var stool any
+		stool, ok = s.tools.Get(request.Params.Name)
 		if ok {
 			tool, ok = stool.(ServerTool)
 		}
