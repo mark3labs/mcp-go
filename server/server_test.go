@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -2022,4 +2023,58 @@ func TestMCPServer_ProtocolNegotiation(t *testing.T) {
 			)
 		})
 	}
+}
+
+// TestPreservingToolOrder tests that the order of tools is preserved
+func TestPreservingToolOrder(t *testing.T) {
+	srv := NewMCPServer("test-server", "1.0.0")
+
+	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return nil, nil
+	}
+
+	// Add tools in a specific order
+	srv.AddTool(mcp.NewTool("z_tool"), handler)
+	srv.AddTool(mcp.NewTool("a_tool"), handler)
+	srv.AddTool(mcp.NewTool("b_tool"), handler)
+
+	// List tools and check order
+	result, err := srv.handleListTools(context.Background(), "123", mcp.ListToolsRequest{})
+	assert.Nil(t, err)
+	assert.NotNil(t, result)
+
+	tools := result.Tools
+	assert.Len(t, tools, 3)
+	assert.Equal(t, "z_tool", tools[0].Name)
+	assert.Equal(t, "a_tool", tools[1].Name)
+	assert.Equal(t, "b_tool", tools[2].Name)
+}
+
+// TestPreservingPropertyOrder tests that the order of properties in a tool's input schema is preserved
+func TestPreservingPropertyOrder(t *testing.T) {
+	srv := NewMCPServer("test-server", "1.0.0")
+
+	// Create a tool with properties in a specific order
+	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return nil, nil
+	}
+	srv.AddTool(mcp.NewTool("test_tool",
+		mcp.WithString("z_property"),
+		mcp.WithString("a_property"),
+		mcp.WithString("b_property"),
+	), handler)
+
+	// List tools and check the input schema properties order
+	result, err := srv.handleListTools(context.Background(), "123", mcp.ListToolsRequest{})
+	assert.Nil(t, err)
+	assert.NotNil(t, result)
+
+	foundTool := result.Tools[0]
+	assert.Equal(t, 3, len(foundTool.InputSchema.Properties.Keys()))
+
+	properties, _ := foundTool.InputSchema.MarshalJSON()
+	idx1 := strings.Index(string(properties), `"z_property"`)
+	idx2 := strings.Index(string(properties), `"a_property"`)
+	idx3 := strings.Index(string(properties), `"b_property"`)
+	assert.True(t, idx1 < idx2 && idx2 < idx3, "Properties should be in the order: z_property, a_property, b_property")
 }
