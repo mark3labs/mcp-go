@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/iancoleman/orderedmap"
 	"reflect"
 	"sort"
 	"testing"
@@ -1112,7 +1113,7 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 		Description: "Test tool",
 		InputSchema: mcp.ToolInputSchema{
 			Type:       "object",
-			Properties: map[string]any{},
+			Properties: orderedmap.New(),
 		},
 		Annotations: mcp.ToolAnnotation{
 			Title:           "test-tool",
