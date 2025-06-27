@@ -23,6 +23,7 @@ type Stdio struct {
 	env     []string
 
 	cmd            *exec.Cmd
+	cmdFunc        CommandFunc
 	stdin          io.WriteCloser
 	stdout         *bufio.Reader
 	stderr         io.ReadCloser
@@ -31,6 +32,24 @@ type Stdio struct {
 	done           chan struct{}
 	onNotification func(mcp.JSONRPCNotification)
 	notifyMu       sync.RWMutex
+}
+
+// StdioOption defines a function that configures a Stdio transport instance.
+// Options can be used to customize the behavior of the transport before it starts,
+// such as setting a custom command function.
+type StdioOption func(*Stdio)
+
+// CommandFunc is a factory function that returns a custom exec.Cmd used to launch the MCP subprocess.
+// It can be used to apply sandboxing, custom environment control, working directories, etc.
+type CommandFunc func(ctx context.Context, command string, env []string, args []string) (*exec.Cmd, error)
+
+// WithCommandFunc sets a custom command factory function for the stdio transport.
+// The CommandFunc is responsible for constructing the exec.Cmd used to launch the subprocess,
+// allowing control over attributes like environment, working directory, and system-level sandboxing.
+func WithCommandFunc(f CommandFunc) StdioOption {
+	return func(s *Stdio) {
+		s.cmdFunc = f
+	}
 }
 
 // NewIO returns a new stdio-based transport using existing input, output, and
@@ -55,8 +74,21 @@ func NewStdio(
 	env []string,
 	args ...string,
 ) *Stdio {
+	return NewStdioWithOptions(command, env, args)
+}
 
-	client := &Stdio{
+// NewStdioWithOptions creates a new stdio transport to communicate with a subprocess.
+// It launches the specified command with given arguments and sets up stdin/stdout pipes for communication.
+// Returns an error if the subprocess cannot be started or the pipes cannot be created.
+// Optional configuration functions can be provided to customize the transport before it starts,
+// such as setting a custom command factory.
+func NewStdioWithOptions(
+	command string,
+	env []string,
+	args []string,
+	opts ...StdioOption,
+) *Stdio {
+	s := &Stdio{
 		command: command,
 		args:    args,
 		env:     env,
@@ -65,7 +97,11 @@ func NewStdio(
 		done:      make(chan struct{}),
 	}
 
-	return client
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	return s
 }
 
 func (c *Stdio) Start(ctx context.Context) error {
@@ -83,18 +119,25 @@ func (c *Stdio) Start(ctx context.Context) error {
 	return nil
 }
 
-// spawnCommand spawns a new process running c.command.
+// spawnCommand spawns a new process running the configured command, args, and env.
+// If an (optional) cmdFunc custom command factory function was configured, it will be used to construct the subprocess;
+// otherwise, the default behavior uses exec.CommandContext with the merged environment.
+// Initializes stdin, stdout, and stderr pipes for JSON-RPC communication.
 func (c *Stdio) spawnCommand(ctx context.Context) error {
 	if c.command == "" {
 		return nil
 	}
 
-	cmd := exec.CommandContext(ctx, c.command, c.args...)
+	var cmd *exec.Cmd
+	var err error
 
-	mergedEnv := os.Environ()
-	mergedEnv = append(mergedEnv, c.env...)
-
-	cmd.Env = mergedEnv
+	// Standard behavior if no command func present.
+	if c.cmdFunc == nil {
+		cmd = exec.CommandContext(ctx, c.command, c.args...)
+		cmd.Env = append(os.Environ(), c.env...)
+	} else if cmd, err = c.cmdFunc(ctx, c.command, c.env, c.args); err != nil {
+		return err
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
