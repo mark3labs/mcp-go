@@ -1014,6 +1014,31 @@ func (s *MCPServer) handleToolCall(
 		}
 	}
 
+	// --- Elicitation example: require user confirmation before tool call ---
+	if tool.Tool.Annotations.Title == "requireElicitation" {
+		elicReq := &mcp.ElicitRequest{
+			ID:     fmt.Sprintf("tool-%s-confirm-%v", tool.Tool.Name, id),
+			Prompt: fmt.Sprintf("Are you sure you want to run tool '%s'?", tool.Tool.Name),
+			Type:   "confirmation",
+		}
+		elicResult, err := s.ElicitFromClient(ctx, elicReq)
+		if err != nil {
+			return nil, &requestError{
+				id:   id,
+				code: mcp.INTERNAL_ERROR,
+				err:  fmt.Errorf("elicitation failed or cancelled: %w", err),
+			}
+		}
+		if elicResult.Cancelled || (elicResult.Values != nil && elicResult.Values["confirmed"] == false) {
+			return nil, &requestError{
+				id:   id,
+				code: mcp.INTERNAL_ERROR,
+				err:  fmt.Errorf("user cancelled or rejected tool execution"),
+			}
+		}
+	}
+	// --- End elicitation example ---
+
 	finalHandler := tool.Handler
 
 	s.middlewareMu.RLock()
@@ -1075,5 +1100,57 @@ func createErrorResponse(
 			Code:    code,
 			Message: message,
 		},
+	}
+}
+
+// ElicitFromClient sends an ElicitRequest to the current client and waits for an ElicitResult response.
+// Only works for bidirectional transports (sessions with NotificationChannel).
+// Returns the ElicitResult or error if cancelled/timed out/transport not supported.
+func (s *MCPServer) ElicitFromClient(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+	session := ClientSessionFromContext(ctx)
+	if session == nil || !session.Initialized() {
+		return nil, fmt.Errorf("no active client session for elicitation")
+	}
+
+	// Explicitly check that the session supports NotificationChannel (bidirectional transport)
+	if session.NotificationChannel() == nil {
+		return nil, fmt.Errorf("elicitation is only supported for bidirectional transports (session does not support notifications)")
+	}
+
+	// Prepare a channel to receive the result
+	resultCh := make(chan *mcp.ElicitResult, 1)
+	responseMethod := "elicit/result"
+
+	// Add a handler for this session (could be improved for multi-session)
+	handler := func(ctx context.Context, notification mcp.JSONRPCNotification) {
+		if notification.Method == responseMethod {
+			var result mcp.ElicitResult
+			if err := json.Unmarshal(notification.Params.AdditionalFields["result"].([]byte), &result); err == nil {
+				if result.ID == req.ID {
+					resultCh <- &result
+				}
+			}
+		}
+	}
+	s.AddNotificationHandler(responseMethod, handler)
+	defer s.AddNotificationHandler(responseMethod, nil) // Remove after use
+
+	params := map[string]any{"request": req}
+	err := s.SendNotificationToClient(ctx, "elicit/request", params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send ElicitRequest: %w", err)
+	}
+
+	select {
+	case result := <-resultCh:
+		if result.Cancelled {
+			return result, fmt.Errorf("elicitation cancelled by user")
+		}
+		if result.Error != "" {
+			return result, fmt.Errorf("elicitation error: %s", result.Error)
+		}
+		return result, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }

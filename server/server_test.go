@@ -2022,3 +2022,161 @@ func TestMCPServer_ProtocolNegotiation(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPServer_ElicitFromClient_Success(t *testing.T) {
+	t.Parallel()
+
+	server := NewMCPServer("test-server", "1.0.0")
+	ctx := context.Background()
+
+	notifCh := make(chan mcp.JSONRPCNotification, 1)
+	sess := fakeSession{
+		sessionID:           "sess-1",
+		notificationChannel: notifCh,
+		initialized:         true,
+	}
+	err := server.RegisterSession(ctx, sess)
+	require.NoError(t, err)
+	ctxWithSess := server.WithContext(ctx, sess)
+
+	elicReq := &mcp.ElicitRequest{
+		ID:     "req-1",
+		Prompt: "Enter value",
+		Type:   "input",
+	}
+
+	go func() {
+		n := <-notifCh
+		assert.Equal(t, "elicit/request", n.Method)
+		result := mcp.ElicitResult{ID: "req-1", Values: map[string]interface{}{"foo": "bar"}}
+		resultBytes, _ := json.Marshal(result)
+		respNotif := mcp.JSONRPCNotification{
+			JSONRPC: "2.0",
+			Notification: mcp.Notification{
+				Method: "elicit/result",
+				Params: mcp.NotificationParams{
+					AdditionalFields: map[string]interface{}{"result": resultBytes},
+				},
+			},
+		}
+		for _, h := range server.notificationHandlers {
+			if h != nil {
+				h(ctxWithSess, respNotif)
+			}
+		}
+	}()
+
+	result, err := server.ElicitFromClient(ctxWithSess, elicReq)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "req-1", result.ID)
+	assert.Equal(t, "bar", result.Values["foo"])
+}
+
+func TestMCPServer_ElicitFromClient_Cancelled(t *testing.T) {
+	t.Parallel()
+
+	server := NewMCPServer("test-server", "1.0.0")
+	ctx := context.Background()
+
+	notifCh := make(chan mcp.JSONRPCNotification, 1)
+	sess := fakeSession{
+		sessionID:           "sess-1",
+		notificationChannel: notifCh,
+		initialized:         true,
+	}
+	err := server.RegisterSession(ctx, sess)
+	require.NoError(t, err)
+	ctxWithSess := server.WithContext(ctx, sess)
+
+	elicReq := &mcp.ElicitRequest{ID: "req-2", Prompt: "Cancel?", Type: "input"}
+	go func() {
+		<-notifCh
+		result := mcp.ElicitResult{ID: "req-2", Cancelled: true}
+		resultBytes, _ := json.Marshal(result)
+		respNotif := mcp.JSONRPCNotification{
+			JSONRPC: "2.0",
+			Notification: mcp.Notification{
+				Method: "elicit/result",
+				Params: mcp.NotificationParams{
+					AdditionalFields: map[string]interface{}{"result": resultBytes},
+				},
+			},
+		}
+		for _, h := range server.notificationHandlers {
+			if h != nil {
+				h(ctxWithSess, respNotif)
+			}
+		}
+	}()
+
+	result, err := server.ElicitFromClient(ctxWithSess, elicReq)
+
+	assert.Error(t, err)
+	assert.True(t, result.Cancelled)
+}
+
+func TestMCPServer_ElicitFromClient_Error(t *testing.T) {
+	t.Parallel()
+	server := NewMCPServer("test-server", "1.0.0")
+	ctx := context.Background()
+
+	notifCh := make(chan mcp.JSONRPCNotification, 1)
+	sess := fakeSession{
+		sessionID:           "sess-1",
+		notificationChannel: notifCh,
+		initialized:         true,
+	}
+	err := server.RegisterSession(ctx, sess)
+	require.NoError(t, err)
+	ctxWithSess := server.WithContext(ctx, sess)
+
+	elicReq := &mcp.ElicitRequest{ID: "req-3", Prompt: "Error?", Type: "input"}
+	go func() {
+		<-notifCh
+		result := mcp.ElicitResult{ID: "req-3", Error: "bad input"}
+		resultBytes, _ := json.Marshal(result)
+		respNotif := mcp.JSONRPCNotification{
+			JSONRPC: "2.0",
+			Notification: mcp.Notification{
+				Method: "elicit/result",
+				Params: mcp.NotificationParams{
+					AdditionalFields: map[string]interface{}{"result": resultBytes},
+				},
+			},
+		}
+		for _, h := range server.notificationHandlers {
+			if h != nil {
+				h(ctxWithSess, respNotif)
+			}
+		}
+	}()
+
+	result, err := server.ElicitFromClient(ctxWithSess, elicReq)
+
+	assert.Error(t, err)
+	assert.Equal(t, "bad input", result.Error)
+}
+
+func TestMCPServer_ElicitFromClient_NotBidirectional(t *testing.T) {
+	t.Parallel()
+
+	server := NewMCPServer("test-server", "1.0.0")
+	ctx := context.Background()
+
+	nonBidirectionalSess := fakeSession{
+		sessionID:           "sess-2",
+		notificationChannel: nil,
+		initialized:         true,
+	}
+	err := server.RegisterSession(ctx, nonBidirectionalSess)
+	require.NoError(t, err)
+	ctxWithSess2 := server.WithContext(ctx, nonBidirectionalSess)
+	elicReq := &mcp.ElicitRequest{ID: "req-4", Prompt: "No channel", Type: "input"}
+
+	result, err := server.ElicitFromClient(ctxWithSess2, elicReq)
+
+	assert.Error(t, err)
+	assert.Nil(t, result)
+}

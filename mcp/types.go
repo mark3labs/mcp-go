@@ -1058,3 +1058,29 @@ type ServerResult any
 type Named interface {
 	GetName() string
 }
+
+// ElicitRequest represents a server's request for additional user input.
+type ElicitRequest struct {
+	// ID is a unique identifier for this elicitation request.
+	ID string `json:"id"`
+	// Prompt is the message or question to present to the user.
+	Prompt string `json:"prompt"`
+	// Type describes the kind of elicitation (e.g., "confirmation", "form", "input").
+	Type string `json:"type"`
+	// Schema describes the expected structure of the response (e.g., JSON Schema). Optional.
+	Schema map[string]interface{} `json:"schema,omitempty"`
+	// Metadata contains additional parameters for the elicitation. Optional.
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// ElicitResult represents the user's response to an ElicitRequest.
+type ElicitResult struct {
+	// ID is the identifier of the ElicitRequest being answered.
+	ID string `json:"id"`
+	// Values contains the user's input(s) in response to the request. Optional.
+	Values map[string]interface{} `json:"values,omitempty"`
+	// Cancelled is true if the user cancelled the elicitation. Optional.
+	Cancelled bool `json:"cancelled,omitempty"`
+	// Error contains an error message if the elicitation failed or was cancelled. Optional.
+	Error string `json:"error,omitempty"`
+}

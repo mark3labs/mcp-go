@@ -65,6 +65,10 @@ func (c *Client) Start(ctx context.Context) error {
 	}
 
 	c.transport.SetNotificationHandler(func(notification mcp.JSONRPCNotification) {
+		if notification.Method == "elicit/request" {
+			c.handleElicitRequestNotification(notification)
+		}
+		// Call user handlers
 		c.notifyMu.RLock()
 		defer c.notifyMu.RUnlock()
 		for _, handler := range c.notifications {
@@ -431,4 +435,38 @@ func (c *Client) GetServerCapabilities() mcp.ServerCapabilities {
 // GetClientCapabilities returns the client capabilities.
 func (c *Client) GetClientCapabilities() mcp.ClientCapabilities {
 	return c.clientCapabilities
+}
+
+// handleElicitRequestNotification processes an elicit/request notification, prompts the user, and sends elicit/result.
+func (c *Client) handleElicitRequestNotification(notification mcp.JSONRPCNotification) {
+	var req mcp.ElicitRequest
+	if raw, ok := notification.Params.AdditionalFields["request"]; ok {
+		data, _ := json.Marshal(raw)
+		if err := json.Unmarshal(data, &req); err == nil {
+			result := handleElicitationCLI(req)
+			// Отправляем elicit/result как request
+			_, _ = c.sendRequest(context.Background(), "elicit/result", map[string]interface{}{"result": result})
+		}
+	}
+}
+
+// handleElicitationCLI prompts the user in CLI and returns an ElicitResult.
+func handleElicitationCLI(req mcp.ElicitRequest) mcp.ElicitResult {
+	result := mcp.ElicitResult{ID: req.ID}
+	switch req.Type {
+	case "confirmation":
+		fmt.Printf("%s [y/N]: ", req.Prompt)
+		var input string
+		fmt.Scanln(&input)
+		confirmed := input == "y" || input == "Y" || input == "yes" || input == "Yes"
+		result.Values = map[string]interface{}{"confirmed": confirmed}
+	case "input":
+		fmt.Printf("%s: ", req.Prompt)
+		var input string
+		fmt.Scanln(&input)
+		result.Values = map[string]interface{}{"value": input}
+	default:
+		result.Error = "Unsupported elicitation type"
+	}
+	return result
 }

@@ -1,0 +1,8 @@
+=== RUN   TestStdioMCPClient
+=== RUN   TestStdioMCPClient/ElicitRequest
+Are you sure? [y/N]:     stdio_test.go:334: ElicitResult was not sent (timeout)
+--- FAIL: TestStdioMCPClient (3.70s)
+    --- FAIL: TestStdioMCPClient/ElicitRequest (2.00s)
+FAIL
+FAIL	github.com/mark3labs/mcp-go/client	3.885s
+FAIL

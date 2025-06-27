@@ -44,6 +44,7 @@ func main() {
 }
 
 func handleRequest(request JSONRPCRequest) JSONRPCResponse {
+	// fmt.Fprintf(os.Stderr, "METHOD: %s PARAMS: %s\n", request.Method, string(request.Params))
 	response := JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      request.ID,
@@ -164,6 +165,38 @@ func handleRequest(request JSONRPCRequest) JSONRPCResponse {
 			Code:    -32601,
 			Message: string(all),
 		}
+	case "elicit/result":
+		// Echo elicit/result as notification back to client
+		response.Result = struct{}{}
+		responseBytes, _ := json.Marshal(map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "elicit/result_echo",
+			"params":  request.Params,
+		})
+		fmt.Fprintf(os.Stdout, "%s\n", responseBytes)
+	case "debug/send_elicit_request":
+		// Parse params for ID, Prompt, Type
+		var params struct {
+			ID     string `json:"id"`
+			Prompt string `json:"prompt"`
+			Type   string `json:"type"`
+		}
+		_ = json.Unmarshal(request.Params, &params)
+		// Send elicit/request notification to client
+		notification := map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "elicit/request",
+			"params": map[string]any{
+				"request": map[string]any{
+					"id":     params.ID,
+					"prompt": params.Prompt,
+					"type":   params.Type,
+				},
+			},
+		}
+		notificationBytes, _ := json.Marshal(notification)
+		fmt.Fprintf(os.Stdout, "%s\n", notificationBytes)
+		response.Result = struct{}{}
 	default:
 		response.Error = &struct {
 			Code    int    `json:"code"`

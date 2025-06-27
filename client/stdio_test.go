@@ -284,6 +284,70 @@ func TestStdioMCPClient(t *testing.T) {
 		}
 	})
 
+	t.Run("ElicitRequest", func(t *testing.T) {
+
+		oldStdin := os.Stdin
+		r, w, _ := os.Pipe()
+		os.Stdin = r
+		defer func() { os.Stdin = oldStdin }()
+
+		resultCh := make(chan *mcp.ElicitResult, 1)
+		client.OnNotification(func(notification mcp.JSONRPCNotification) {
+			if notification.Method == "elicit/result_echo" {
+				if raw, ok := notification.Params.AdditionalFields["result"]; ok {
+					data, _ := json.Marshal(raw)
+					var res mcp.ElicitResult
+					_ = json.Unmarshal(data, &res)
+					resultCh <- &res
+				}
+			}
+		})
+
+		// Инициализация клиента
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		initReq := mcp.InitializeRequest{}
+		initReq.Params.ProtocolVersion = "1.0"
+		initReq.Params.ClientInfo = mcp.Implementation{
+			Name:    "test-client",
+			Version: "1.0.0",
+		}
+		initReq.Params.Capabilities = mcp.ClientCapabilities{}
+		_, err := client.Initialize(ctx, initReq)
+		if err != nil {
+			t.Fatalf("Initialize failed: %v", err)
+		}
+
+		w.WriteString("y\n")
+		w.Close()
+
+		// Отправляем debug/send_elicit_request на сервер
+		params := map[string]interface{}{
+			"id":     "test-elicit-id",
+			"prompt": "Are you sure?",
+			"type":   "confirmation",
+		}
+		_, err = client.sendRequest(context.Background(), "debug/send_elicit_request", params)
+		if err != nil {
+			t.Fatalf("failed to send debug/send_elicit_request: %v", err)
+		}
+
+		select {
+		case sentResult := <-resultCh:
+			if sentResult == nil {
+				t.Fatal("ElicitResult was not sent")
+			}
+			if sentResult.ID != "test-elicit-id" {
+				t.Errorf("Expected ID 'test-elicit-id', got '%s'", sentResult.ID)
+			}
+			if confirmed, ok := sentResult.Values["confirmed"].(bool); !ok || !confirmed {
+				t.Errorf("Expected confirmed=true, got %v", sentResult.Values["confirmed"])
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("Timeout waiting for elicit/result_echo notification")
+		}
+	})
+
 	client.Close()
 	wg.Wait()
 
