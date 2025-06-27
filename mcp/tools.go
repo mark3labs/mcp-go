@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"reflect"
 	"strconv"
 )
@@ -45,6 +46,7 @@ type CallToolResult struct {
 // CallToolRequest is used by the client to invoke a tool provided by the server.
 type CallToolRequest struct {
 	Request
+	Header http.Header
 	Params CallToolParams `json:"params"`
 }
 

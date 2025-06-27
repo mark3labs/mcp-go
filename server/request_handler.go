@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -301,6 +302,13 @@ func (s *MCPServer) HandleMessage(
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
+			headers := ctx.Value(requestHeader)
+			if headers != nil {
+				headers, ok := headers.(http.Header)
+				if ok {
+					request.Header = headers
+				}
+			}
 			s.hooks.beforeCallTool(ctx, baseMessage.ID, &request)
 			result, err = s.handleToolCall(ctx, baseMessage.ID, request)
 		}
