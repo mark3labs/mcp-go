@@ -187,3 +187,79 @@ func TestServerWithResource(t *testing.T) {
 		t.Errorf("Got %q, want %q", textContent.Text, want)
 	}
 }
+
+func TestServerWithResourceTemplate(t *testing.T) {
+	ctx := context.Background()
+
+	srv := mcptest.NewUnstartedServer(t)
+	defer srv.Close()
+
+	template := mcp.NewResourceTemplate(
+		"file://users/{userId}/documents/{docId}",
+		"User Document",
+		mcp.WithTemplateDescription("A user's document"),
+		mcp.WithTemplateMIMEType("text/plain"),
+	)
+
+	handler := func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		if request.Params.Arguments == nil {
+			return nil, fmt.Errorf("expected arguments to be populated from URI template")
+		}
+
+		userIds, ok := request.Params.Arguments["userId"].([]string)
+		if !ok {
+			return nil, fmt.Errorf("expected userId argument to be populated from URI template")
+		}
+		if len(userIds) != 1 {
+			return nil, fmt.Errorf("expected userId to have one value, but got %d", len(userIds))
+		}
+		if userIds[0] != "john" {
+			return nil, fmt.Errorf("expected userId argument to be 'john', got %s", userIds[0])
+		}
+
+		docIds, ok := request.Params.Arguments["docId"].([]string)
+		if !ok {
+			return nil, fmt.Errorf("expected docId argument to be populated from URI template")
+		}
+		if len(docIds) != 1 {
+			return nil, fmt.Errorf("expected docId to have one value, but got %d", len(docIds))
+		}
+		if docIds[0] != "readme.txt" {
+			return nil, fmt.Errorf("expected docId argument to be 'readme.txt', got %v", docIds)
+		}
+
+		return []mcp.ResourceContents{
+			mcp.TextResourceContents{
+				URI:      request.Params.URI,
+				MIMEType: "text/plain",
+				Text:     fmt.Sprintf("Document %s for user %s", docIds[0], userIds[0]),
+			},
+		}, nil
+	}
+
+	srv.AddResourceTemplate(template, handler)
+
+	err := srv.Start(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Test reading a resource that matches the template
+	var readReq mcp.ReadResourceRequest
+	readReq.Params.URI = "file://users/john/documents/readme.txt"
+	readResult, err := srv.Client().ReadResource(ctx, readReq)
+	if err != nil {
+		t.Fatal("ReadResource:", err)
+	}
+	if len(readResult.Contents) != 1 {
+		t.Fatalf("Expected 1 content, got %d", len(readResult.Contents))
+	}
+	textContent, ok := readResult.Contents[0].(mcp.TextResourceContents)
+	if !ok {
+		t.Fatalf("Expected TextResourceContents, got %T", readResult.Contents[0])
+	}
+	want := "Document readme.txt for user john"
+	if textContent.Text != want {
+		t.Errorf("Got %q, want %q", textContent.Text, want)
+	}
+}
