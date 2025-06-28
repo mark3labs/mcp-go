@@ -210,15 +210,21 @@ func TestServerWithResourceTemplate(t *testing.T) {
 		if !ok {
 			return nil, fmt.Errorf("expected userId argument to be populated from URI template")
 		}
-		if len(userIds) != 1 && userIds[0] != "john" {
-			return nil, fmt.Errorf("expected userId argument to be 'john', got %v", userIds)
+		if len(userIds) != 1 {
+			return nil, fmt.Errorf("expected userId to have one value, but got %d", len(userIds))
+		}
+		if userIds[0] != "john" {
+			return nil, fmt.Errorf("expected userId argument to be 'john', got %s", userIds[0])
 		}
 
 		docIds, ok := request.Params.Arguments["docId"].([]string)
 		if !ok {
 			return nil, fmt.Errorf("expected docId argument to be populated from URI template")
 		}
-		if len(docIds) != 1 && docIds[0] != "readme.txt" {
+		if len(docIds) != 1 {
+			return nil, fmt.Errorf("expected docId to have one value, but got %d", len(docIds))
+		}
+		if docIds[0] != "readme.txt" {
 			return nil, fmt.Errorf("expected docId argument to be 'readme.txt', got %v", docIds)
 		}
 
