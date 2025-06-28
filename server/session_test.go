@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -40,6 +41,11 @@ func (f *sessionTestClient) Initialize() {
 // Initialized returns whether the session has been initialized
 func (f sessionTestClient) Initialized() bool {
 	return f.initialized
+}
+
+func (f sessionTestClient) GetHeader() http.Header {
+	// Test session doesn't have HTTP headers, return empty header
+	return make(http.Header)
 }
 
 // sessionTestClientWithTools implements the SessionWithTools interface for testing
@@ -100,6 +106,11 @@ func (f *sessionTestClientWithTools) SetSessionTools(tools map[string]ServerTool
 	f.sessionTools = toolsCopy
 }
 
+func (f *sessionTestClientWithTools) GetHeader() http.Header {
+	// Test session doesn't have HTTP headers, return empty header
+	return make(http.Header)
+}
+
 // sessionTestClientWithClientInfo implements the SessionWithClientInfo interface for testing
 type sessionTestClientWithClientInfo struct {
 	sessionID           string
@@ -137,6 +148,11 @@ func (f *sessionTestClientWithClientInfo) SetClientInfo(clientInfo mcp.Implement
 	f.clientInfo.Store(clientInfo)
 }
 
+func (f *sessionTestClientWithClientInfo) GetHeader() http.Header {
+	// Test session doesn't have HTTP headers, return empty header
+	return make(http.Header)
+}
+
 // sessionTestClientWithTools implements the SessionWithLogging interface for testing
 type sessionTestClientWithLogging struct {
 	sessionID           string
@@ -170,6 +186,11 @@ func (f *sessionTestClientWithLogging) SetLogLevel(level mcp.LoggingLevel) {
 func (f *sessionTestClientWithLogging) GetLogLevel() mcp.LoggingLevel {
 	level := f.loggingLevel.Load()
 	return level.(mcp.LoggingLevel)
+}
+
+func (f *sessionTestClientWithLogging) GetHeader() http.Header {
+	// Test session doesn't have HTTP headers, return empty header
+	return make(http.Header)
 }
 
 // Verify that all implementations satisfy their respective interfaces
