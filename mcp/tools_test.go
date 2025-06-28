@@ -529,6 +529,57 @@ func TestFlexibleArgumentsJSONMarshalUnmarshal(t *testing.T) {
 	assert.Equal(t, float64(123), args["key2"]) // JSON numbers are unmarshaled as float64
 }
 
+// TestToolWithOutputSchema tests that the WithOutputSchema function
+// generates an MCP-compatible JSON output schema for a tool
+func TestToolWithOutputSchema(t *testing.T) {
+	type TestOutput struct {
+		Name  string `json:"name" jsonschema_description:"Person's name"`
+		Age   int    `json:"age" jsonschema_description:"Person's age"`
+		Email string `json:"email,omitempty" jsonschema_description:"Email address"`
+	}
+
+	tool := NewTool("test_tool",
+		WithDescription("Test tool with output schema"),
+		WithOutputSchema[TestOutput](),
+		WithString("input", Required()),
+	)
+
+	// Check that RawOutputSchema was set
+	assert.NotNil(t, tool.RawOutputSchema)
+
+	// Marshal and verify structure
+	data, err := json.Marshal(tool)
+	assert.NoError(t, err)
+
+	var toolData map[string]any
+	err = json.Unmarshal(data, &toolData)
+	assert.NoError(t, err)
+
+	// Verify outputSchema exists
+	outputSchema, exists := toolData["outputSchema"]
+	assert.True(t, exists)
+	assert.NotNil(t, outputSchema)
+}
+
+// TestNewToolResultStructured tests that the NewToolResultStructured function
+// creates a CallToolResult with both structured and text content
+func TestNewToolResultStructured(t *testing.T) {
+	testData := map[string]any{
+		"message": "Success",
+		"count":   42,
+		"active":  true,
+	}
+
+	result := NewToolResultStructured(testData, "Fallback text")
+
+	assert.Len(t, result.Content, 1)
+
+	textContent, ok := result.Content[0].(TextContent)
+	assert.True(t, ok)
+	assert.Equal(t, "Fallback text", textContent.Text)
+	assert.NotNil(t, result.StructuredContent)
+}
+
 // TestNewItemsAPICompatibility tests that the new Items API functions
 // generate the same schema as the original Items() function with manual schema objects
 func TestNewItemsAPICompatibility(t *testing.T) {
