@@ -45,6 +45,9 @@ type GetPromptResult struct {
 type Prompt struct {
 	// The name of the prompt or prompt template.
 	Name string `json:"name"`
+	// A human-friendly display name for the prompt.
+	// This is used for UI display purposes, while Name is used for programmatic identification.
+	Title string `json:"title,omitempty"`
 	// An optional description of what this prompt provides
 	Description string `json:"description,omitempty"`
 	// A list of arguments to use for templating the prompt.
@@ -55,6 +58,11 @@ type Prompt struct {
 // GetName returns the name of the prompt.
 func (p Prompt) GetName() string {
 	return p.Name
+}
+
+// GetTitle returns the display title for the prompt.
+func (p Prompt) GetTitle() string {
+	return p.Title
 }
 
 // PromptArgument describes an argument that a prompt template can accept.
@@ -127,6 +135,14 @@ func NewPrompt(name string, opts ...PromptOption) Prompt {
 func WithPromptDescription(description string) PromptOption {
 	return func(p *Prompt) {
 		p.Description = description
+	}
+}
+
+// WithPromptTitle sets the title field of the Prompt.
+// This provides a human-readable display name for the prompt.
+func WithPromptTitle(title string) PromptOption {
+	return func(p *Prompt) {
+		p.Title = title
 	}
 }
 

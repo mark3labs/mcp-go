@@ -68,3 +68,133 @@ func TestMetaMarshalling(t *testing.T) {
 		})
 	}
 }
+
+// TestGetDisplayName tests the display name logic for all types
+func TestGetDisplayName(t *testing.T) {
+	tests := []struct {
+		name         string
+		meta         BaseMetadata
+		expectedName string
+	}{
+		// Tool tests
+		{
+			name: "tool with direct title",
+			meta: &Tool{
+				Name:        "test-tool",
+				Title:       "Tool Title",
+				Annotations: ToolAnnotation{Title: "Annotation Title"},
+			},
+			expectedName: "Tool Title",
+		},
+		{
+			name: "tool with annotation title only",
+			meta: &Tool{
+				Name:        "test-tool",
+				Annotations: ToolAnnotation{Title: "Annotation Title"},
+			},
+			expectedName: "Annotation Title",
+		},
+		{
+			name:         "tool falls back to name",
+			meta:         &Tool{Name: "test-tool"},
+			expectedName: "test-tool",
+		},
+
+		// Prompt tests
+		{
+			name: "prompt with title",
+			meta: &Prompt{
+				Name:  "test-prompt",
+				Title: "Prompt Title",
+			},
+			expectedName: "Prompt Title",
+		},
+		{
+			name:         "prompt falls back to name",
+			meta:         &Prompt{Name: "test-prompt"},
+			expectedName: "test-prompt",
+		},
+
+		// Resource tests
+		{
+			name: "resource with title",
+			meta: &Resource{
+				Name:  "test-resource",
+				Title: "Resource Title",
+			},
+			expectedName: "Resource Title",
+		},
+		{
+			name:         "resource falls back to name",
+			meta:         &Resource{Name: "test-resource"},
+			expectedName: "test-resource",
+		},
+
+		// ResourceTemplate tests
+		{
+			name: "resource template with title",
+			meta: &ResourceTemplate{
+				Name:  "test-template",
+				Title: "Template Title",
+			},
+			expectedName: "Template Title",
+		},
+		{
+			name:         "resource template falls back to name",
+			meta:         &ResourceTemplate{Name: "test-template"},
+			expectedName: "test-template",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expectedName, GetDisplayName(tt.meta))
+		})
+	}
+}
+
+// TestToolTitleSerialization tests that Tool title field is properly serialized
+func TestToolTitleSerialization(t *testing.T) {
+	tool := Tool{
+		Name:        "test-tool",
+		Title:       "Test Tool Title",
+		Description: "A test tool",
+		InputSchema: ToolInputSchema{
+			Type:       "object",
+			Properties: map[string]any{},
+		},
+		Annotations: ToolAnnotation{
+			Title: "Annotation Title",
+		},
+	}
+
+	// Test serialization
+	data, err := json.Marshal(tool)
+	require.NoError(t, err)
+
+	var result map[string]any
+	err = json.Unmarshal(data, &result)
+	require.NoError(t, err)
+
+	assert.Equal(t, "test-tool", result["name"])
+	assert.Equal(t, "Test Tool Title", result["title"])
+	assert.Equal(t, "A test tool", result["description"])
+
+	annotations, ok := result["annotations"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "Annotation Title", annotations["title"])
+
+	// Test deserialization
+	var deserializedTool Tool
+	err = json.Unmarshal(data, &deserializedTool)
+	require.NoError(t, err)
+
+	assert.Equal(t, "test-tool", deserializedTool.Name)
+	assert.Equal(t, "Test Tool Title", deserializedTool.Title)
+	assert.Equal(t, "A test tool", deserializedTool.Description)
+	assert.Equal(t, "Annotation Title", deserializedTool.Annotations.Title)
+
+	// Test GetTitle method
+	assert.Equal(t, "Test Tool Title", deserializedTool.GetTitle())
+	assert.Equal(t, "Test Tool Title", GetDisplayName(&deserializedTool))
+}
