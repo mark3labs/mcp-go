@@ -547,6 +547,7 @@ MCP-Go provides a robust session management system that allows you to:
 - Register and track client sessions
 - Send notifications to specific clients
 - Provide per-session tool customization
+- Provide per-session prompt customization
 
 <details>
 <summary>Show Session Management Examples</summary>
