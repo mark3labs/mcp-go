@@ -147,6 +147,7 @@ func TestMCPServer_RequestSampling_Success(t *testing.T) {
 
 	if result == nil {
 		t.Error("expected result, got nil")
+		return
 	}
 
 	if result.Model != "test-model" {
