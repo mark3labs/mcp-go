@@ -175,6 +175,7 @@ type serverCapabilities struct {
 	resources *resourceCapabilities
 	prompts   *promptCapabilities
 	logging   *bool
+	sampling  *samplingCapabilities
 }
 
 // resourceCapabilities defines the supported resource-related features
@@ -191,6 +192,11 @@ type promptCapabilities struct {
 // toolCapabilities defines the supported tool-related features
 type toolCapabilities struct {
 	listChanged bool
+}
+
+// samplingCapabilities defines the sampling-related server capabilities
+type samplingCapabilities struct {
+	enabled bool
 }
 
 // WithResourceCapabilities configures resource-related server capabilities

@@ -31,6 +31,8 @@ type Stdio struct {
 	done           chan struct{}
 	onNotification func(mcp.JSONRPCNotification)
 	notifyMu       sync.RWMutex
+	onRequest      RequestHandler
+	requestMu      sync.RWMutex
 }
 
 // NewIO returns a new stdio-based transport using existing input, output, and
@@ -158,6 +160,14 @@ func (c *Stdio) SetNotificationHandler(
 	c.onNotification = handler
 }
 
+// SetRequestHandler sets the handler function to be called when a request is received from the server.
+// This enables bidirectional communication for features like sampling.
+func (c *Stdio) SetRequestHandler(handler RequestHandler) {
+	c.requestMu.Lock()
+	defer c.requestMu.Unlock()
+	c.onRequest = handler
+}
+
 // readResponses continuously reads and processes responses from the server's stdout.
 // It handles both responses to requests and notifications, routing them appropriately.
 // Runs until the done channel is closed or an error occurs reading from stdout.
@@ -173,6 +183,13 @@ func (c *Stdio) readResponses() {
 					fmt.Printf("Error reading response: %v\n", err)
 				}
 				return
+			}
+
+			// Try to parse as a request first (has method field)
+			var request JSONRPCRequest
+			if err := json.Unmarshal([]byte(line), &request); err == nil && request.Method != "" {
+				c.handleIncomingRequest(request)
+				continue
 			}
 
 			var baseMessage JSONRPCResponse
@@ -279,6 +296,73 @@ func (c *Stdio) SendNotification(
 	}
 
 	return nil
+}
+
+// handleIncomingRequest processes incoming requests from the server.
+// It calls the registered request handler and sends the response back to the server.
+func (c *Stdio) handleIncomingRequest(request JSONRPCRequest) {
+	c.requestMu.RLock()
+	handler := c.onRequest
+	c.requestMu.RUnlock()
+
+	if handler == nil {
+		// Send error response if no handler is configured
+		errorResponse := JSONRPCResponse{
+			JSONRPC: mcp.JSONRPC_VERSION,
+			ID:      request.ID,
+			Error: &struct {
+				Code    int             `json:"code"`
+				Message string          `json:"message"`
+				Data    json.RawMessage `json:"data"`
+			}{
+				Code:    mcp.METHOD_NOT_FOUND,
+				Message: "No request handler configured",
+			},
+		}
+		c.sendResponse(errorResponse)
+		return
+	}
+
+	// Handle the request in a goroutine to avoid blocking
+	go func() {
+		ctx := context.Background() // TODO: Consider using a proper context
+		response, err := handler(ctx, request)
+
+		if err != nil {
+			errorResponse := JSONRPCResponse{
+				JSONRPC: mcp.JSONRPC_VERSION,
+				ID:      request.ID,
+				Error: &struct {
+					Code    int             `json:"code"`
+					Message string          `json:"message"`
+					Data    json.RawMessage `json:"data"`
+				}{
+					Code:    mcp.INTERNAL_ERROR,
+					Message: err.Error(),
+				},
+			}
+			c.sendResponse(errorResponse)
+			return
+		}
+
+		if response != nil {
+			c.sendResponse(*response)
+		}
+	}()
+}
+
+// sendResponse sends a response back to the server.
+func (c *Stdio) sendResponse(response JSONRPCResponse) {
+	responseBytes, err := json.Marshal(response)
+	if err != nil {
+		fmt.Printf("Error marshaling response: %v\n", err)
+		return
+	}
+	responseBytes = append(responseBytes, '\n')
+
+	if _, err := c.stdin.Write(responseBytes); err != nil {
+		fmt.Printf("Error writing response: %v\n", err)
+	}
 }
 
 // Stderr returns a reader for the stderr output of the subprocess.
