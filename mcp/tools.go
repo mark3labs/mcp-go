@@ -635,18 +635,25 @@ func WithOutputSchema[T any]() ToolOption {
 		var zero T
 
 		// Generate schema using invopop/jsonschema library
-		reflector := jsonschema.Reflector{}
+		// Configure reflector to generate clean, MCP-compatible schemas
+		reflector := jsonschema.Reflector{
+			DoNotReference:            true, // Removes $defs map, outputs entire structure inline
+			Anonymous:                 true, // Hides auto-generated Schema IDs
+			AllowAdditionalProperties: true, // Removes additionalProperties: false
+		}
 		schema := reflector.Reflect(zero)
 
-		// Extract the MCP-compatible schema (inline object schema)
-		// See how jsonschema library generates the schema: https://github.com/invopop/jsonschema#example
-		mcpSchema, err := ExtractMCPSchema(schema)
+		// Clean up schema for MCP compliance
+		schema.Version = "" // Remove $schema field
+
+		// Convert to raw JSON for MCP
+		mcpSchema, err := json.Marshal(schema)
 		if err != nil {
 			// Skip and maintain backward compatibility
 			return
 		}
 
-		t.RawOutputSchema = mcpSchema
+		t.RawOutputSchema = json.RawMessage(mcpSchema)
 	}
 }
 

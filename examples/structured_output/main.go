@@ -35,6 +35,17 @@ type UserRequest struct {
 	UserID string `json:"userId" jsonschema_description:"User ID"`
 }
 
+type Asset struct {
+	ID       string  `json:"id" jsonschema_description:"Asset identifier"`
+	Name     string  `json:"name" jsonschema_description:"Asset name"`
+	Value    float64 `json:"value" jsonschema_description:"Current value"`
+	Currency string  `json:"currency" jsonschema_description:"Currency code"`
+}
+
+type AssetListRequest struct {
+	Limit int `json:"limit,omitempty" jsonschema_description:"Number of assets to return"`
+}
+
 func main() {
 	s := server.NewMCPServer(
 		"Structured Output Example",
@@ -59,7 +70,15 @@ func main() {
 	)
 	s.AddTool(userTool, mcp.NewStructuredToolHandler(getUserProfileHandler))
 
-	// Example 3: Manual result creation
+	// Example 3: Array output - direct array of objects
+	assetsTool := mcp.NewTool("get_assets",
+		mcp.WithDescription("Get list of assets as array"),
+		mcp.WithOutputSchema[[]Asset](),
+		mcp.WithNumber("limit", mcp.Min(1), mcp.Max(100), mcp.DefaultNumber(10)),
+	)
+	s.AddTool(assetsTool, mcp.NewStructuredToolHandler(getAssetsHandler))
+
+	// Example 4: Manual result creation
 	manualTool := mcp.NewTool("manual_structured",
 		mcp.WithDescription("Manual structured result"),
 		mcp.WithOutputSchema[WeatherResponse](),
@@ -94,6 +113,27 @@ func getUserProfileHandler(ctx context.Context, request mcp.CallToolRequest, arg
 		Email: "john.doe@example.com",
 		Tags:  []string{"developer", "golang"},
 	}, nil
+}
+
+func getAssetsHandler(ctx context.Context, request mcp.CallToolRequest, args AssetListRequest) ([]Asset, error) {
+	limit := args.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+
+	assets := []Asset{
+		{ID: "btc", Name: "Bitcoin", Value: 45000.50, Currency: "USD"},
+		{ID: "eth", Name: "Ethereum", Value: 3200.75, Currency: "USD"},
+		{ID: "ada", Name: "Cardano", Value: 0.85, Currency: "USD"},
+		{ID: "sol", Name: "Solana", Value: 125.30, Currency: "USD"},
+		{ID: "dot", Name: "Pottedot", Value: 18.45, Currency: "USD"},
+	}
+
+	if limit > len(assets) {
+		limit = len(assets)
+	}
+
+	return assets[:limit], nil
 }
 
 func manualWeatherHandler(ctx context.Context, request mcp.CallToolRequest, args WeatherRequest) (*mcp.CallToolResult, error) {

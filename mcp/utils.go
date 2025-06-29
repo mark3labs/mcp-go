@@ -3,9 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
-	"github.com/invopop/jsonschema"
 	"github.com/spf13/cast"
 )
 
@@ -479,60 +477,6 @@ func FormatNumberResult(value float64) *CallToolResult {
 	return NewToolResultText(fmt.Sprintf("%.2f", value))
 }
 
-// ExtractMCPSchema converts a full JSON Schema document to the inline format expected by MCP
-func ExtractMCPSchema(schema *jsonschema.Schema) (json.RawMessage, error) {
-	schemaBytes, err := json.Marshal(schema)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal schema: %w", err)
-	}
-
-	var schemaMap map[string]any
-	if err := json.Unmarshal(schemaBytes, &schemaMap); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal schema: %w", err)
-	}
-
-	// Handle $ref case - extract the referenced definition
-	if ref, hasRef := schemaMap["$ref"].(string); hasRef {
-		if defs, hasDefs := schemaMap["$defs"].(map[string]any); hasDefs {
-			// Extract the reference name
-			refParts := strings.Split(ref, "/")
-			if len(refParts) > 0 {
-				defName := refParts[len(refParts)-1]
-				if defSchema, found := defs[defName].(map[string]any); found {
-					// Clean up the definition - remove $schema, $id, etc.
-					cleanSchema := make(map[string]any)
-
-					// Copy only type, properties, and required fields
-					if schemaType, ok := defSchema["type"]; ok {
-						cleanSchema["type"] = schemaType
-					}
-					if properties, ok := defSchema["properties"]; ok {
-						cleanSchema["properties"] = properties
-					}
-					if required, ok := defSchema["required"]; ok {
-						cleanSchema["required"] = required
-					}
-
-					return json.Marshal(cleanSchema)
-				}
-			}
-		}
-	}
-
-	// If no $ref, clean up the schema directly
-	cleanSchema := make(map[string]any)
-	if schemaType, ok := schemaMap["type"]; ok {
-		cleanSchema["type"] = schemaType
-	}
-	if properties, ok := schemaMap["properties"]; ok {
-		cleanSchema["properties"] = properties
-	}
-	if required, ok := schemaMap["required"]; ok {
-		cleanSchema["required"] = required
-	}
-
-	return json.Marshal(cleanSchema)
-}
 
 func ExtractString(data map[string]any, key string) string {
 	if value, ok := data[key]; ok {
