@@ -95,15 +95,16 @@ Here's a complete mock implementation for testing:
 package main
 
 import (
+import (
     "context"
     "fmt"
     "log"
     "strings"
-    
+    "os"
+
     "github.com/mark3labs/mcp-go/client"
     "github.com/mark3labs/mcp-go/mcp"
 )
-
 type MockSamplingHandler struct{}
 
 func (h *MockSamplingHandler) CreateMessage(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
