@@ -495,7 +495,10 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		s.writeJSONRPCError(w, nil, mcp.PARSE_ERROR, "Parse error")
 		return
 	}
-
+	header := make(map[string]string)
+	for k, v := range r.Header {
+		header[k] = v[0]
+	}
 	// Create a context that preserves all values from parent ctx but won't be canceled when the parent is canceled.
 	// this is required because the http ctx will be canceled when the client disconnects
 	detachedCtx := context.WithoutCancel(ctx)
@@ -510,7 +513,7 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		// Use the context that will be canceled when session is done
 		// Process message through MCPServer
-		response := s.server.HandleMessage(ctx, rawMessage)
+		response := s.server.HandleMessage(ctx, header, rawMessage)
 		// Only send response if there is one (not for notifications)
 		if response != nil {
 			var message string
