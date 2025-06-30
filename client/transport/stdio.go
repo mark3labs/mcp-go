@@ -33,6 +33,8 @@ type Stdio struct {
 	notifyMu       sync.RWMutex
 	onRequest      RequestHandler
 	requestMu      sync.RWMutex
+	ctx            context.Context
+	ctxMu          sync.RWMutex
 }
 
 // NewIO returns a new stdio-based transport using existing input, output, and
@@ -46,6 +48,7 @@ func NewIO(input io.Reader, output io.WriteCloser, logging io.ReadCloser) *Stdio
 
 		responses: make(map[string]chan *JSONRPCResponse),
 		done:      make(chan struct{}),
+		ctx:       context.Background(),
 	}
 }
 
@@ -65,12 +68,18 @@ func NewStdio(
 
 		responses: make(map[string]chan *JSONRPCResponse),
 		done:      make(chan struct{}),
+		ctx:       context.Background(),
 	}
 
 	return client
 }
 
 func (c *Stdio) Start(ctx context.Context) error {
+	// Store the context for use in request handling
+	c.ctxMu.Lock()
+	c.ctx = ctx
+	c.ctxMu.Unlock()
+
 	if err := c.spawnCommand(ctx); err != nil {
 		return err
 	}
@@ -325,7 +334,30 @@ func (c *Stdio) handleIncomingRequest(request JSONRPCRequest) {
 
 	// Handle the request in a goroutine to avoid blocking
 	go func() {
-		ctx := context.Background() // TODO: Consider using a proper context
+		c.ctxMu.RLock()
+		ctx := c.ctx
+		c.ctxMu.RUnlock()
+
+		// Check if context is already cancelled before processing
+		select {
+		case <-ctx.Done():
+			errorResponse := JSONRPCResponse{
+				JSONRPC: mcp.JSONRPC_VERSION,
+				ID:      request.ID,
+				Error: &struct {
+					Code    int             `json:"code"`
+					Message string          `json:"message"`
+					Data    json.RawMessage `json:"data"`
+				}{
+					Code:    mcp.INTERNAL_ERROR,
+					Message: ctx.Err().Error(),
+				},
+			}
+			c.sendResponse(errorResponse)
+			return
+		default:
+		}
+
 		response, err := handler(ctx, request)
 
 		if err != nil {
