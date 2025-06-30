@@ -62,7 +62,7 @@ func main() {
 		}
 
 		// Request sampling from the client
-		samplingCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		samplingCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
 		result, err := mcpServer.RequestSampling(samplingCtx, samplingRequest)
 		if err != nil {
@@ -130,6 +130,12 @@ func getTextFromContent(content interface{}) string {
 	switch c := content.(type) {
 	case mcp.TextContent:
 		return c.Text
+	case map[string]interface{}:
+		// Handle JSON unmarshaled content
+		if text, ok := c["text"].(string); ok {
+			return text
+		}
+		return fmt.Sprintf("%v", content)
 	case string:
 		return c
 	default:
