@@ -33,6 +33,13 @@ func WithClientCapabilities(capabilities mcp.ClientCapabilities) ClientOption {
 	}
 }
 
+// WithSession assumes a MCP Session has already been initialized
+func WithSession(sessionID string) ClientOption { 
+	return func(c *Client) { 
+		c.initialized = true
+	}
+}
+
 // NewClient creates a new MCP client with the given transport.
 // Usage:
 //

@@ -74,6 +74,13 @@ func WithLogger(logger util.Logger) StreamableHTTPCOption {
 	}
 }
 
+// WithSession creates a client with a pre-configured session
+func WithSession(sessionID string) StreamableHTTPCOption {
+	return func(sc *StreamableHTTP) {
+		sc.sessionID.Store(sessionID)
+	}
+}
+
 // StreamableHTTP implements Streamable HTTP transport.
 //
 // It transmits JSON-RPC messages over individual HTTP requests. One message per request.
@@ -236,7 +243,7 @@ func (c *StreamableHTTP) SendRequest(
 
 	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream")
 	if err != nil {
-		if errors.Is(err, errSessionTerminated) && request.Method == string(mcp.MethodInitialize) {
+		if errors.Is(err, ErrSessionTerminated) && request.Method == string(mcp.MethodInitialize) {
 			// If the request is initialize, should not return a SessionTerminated error
 			// It should be a genuine endpoint-routing issue.
 			// ( Fall through to return StatusCode checking. )
@@ -357,7 +364,7 @@ func (c *StreamableHTTP) sendHTTP(
 	// universal handling for session terminated
 	if resp.StatusCode == http.StatusNotFound {
 		c.sessionID.CompareAndSwap(sessionID, "")
-		return nil, errSessionTerminated
+		return nil, ErrSessionTerminated
 	}
 
 	return resp, nil
@@ -543,7 +550,7 @@ func (c *StreamableHTTP) listenForever(ctx context.Context) {
 	c.logger.Infof("listening to server forever")
 	for {
 		err := c.createGETConnectionToServer(ctx)
-		if errors.Is(err, errGetMethodNotAllowed) {
+		if errors.Is(err, ErrGetMethodNotAllowed) {
 			// server does not support listening
 			c.logger.Errorf("server does not support listening")
 			return
@@ -563,8 +570,8 @@ func (c *StreamableHTTP) listenForever(ctx context.Context) {
 }
 
 var (
-	errSessionTerminated   = fmt.Errorf("session terminated (404). need to re-initialize")
-	errGetMethodNotAllowed = fmt.Errorf("GET method not allowed")
+	ErrSessionTerminated   = fmt.Errorf("session terminated (404). need to re-initialize")
+	ErrGetMethodNotAllowed = fmt.Errorf("GET method not allowed")
 
 	retryInterval = 1 * time.Second // a variable is convenient for testing
 )
@@ -579,7 +586,7 @@ func (c *StreamableHTTP) createGETConnectionToServer(ctx context.Context) error 
 
 	// Check if we got an error response
 	if resp.StatusCode == http.StatusMethodNotAllowed {
-		return errGetMethodNotAllowed
+		return ErrGetMethodNotAllowed
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
