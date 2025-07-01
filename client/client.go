@@ -439,3 +439,12 @@ func (c *Client) GetServerCapabilities() mcp.ServerCapabilities {
 func (c *Client) GetClientCapabilities() mcp.ClientCapabilities {
 	return c.clientCapabilities
 }
+
+// GetSessionId returns the session ID of the transport.
+// If the transport does not support sessions, it returns an empty string.
+func (c *Client) GetSessionId() string {
+	if c.transport == nil {
+		return ""
+	}
+	return c.transport.GetSessionId()
+}

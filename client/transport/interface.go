@@ -29,6 +29,9 @@ type Interface interface {
 
 	// Close the connection.
 	Close() error
+
+	// GetSessionId returns the session ID of the transport.
+	GetSessionId() string
 }
 
 type JSONRPCRequest struct {

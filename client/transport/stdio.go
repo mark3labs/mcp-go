@@ -148,6 +148,12 @@ func (c *Stdio) Close() error {
 	return nil
 }
 
+// GetSessionId returns the session ID of the transport.
+// Since stdio does not maintain a session ID, it returns an empty string.
+func (c *Stdio) GetSessionId() string {
+	return ""
+}
+
 // SetNotificationHandler sets the handler function to be called when a notification is received.
 // Only one handler can be set at a time; setting a new one replaces the previous handler.
 func (c *Stdio) SetNotificationHandler(
