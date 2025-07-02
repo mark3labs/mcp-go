@@ -535,20 +535,20 @@ Tools can return resource links that reference other resources in your MCP serve
 
 ```go
 func handleGetResourceLinkTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    resourceID, err := req.RequireString("resource_id")
-    if err != nil {
-        return mcp.NewToolResultError(err.Error()), nil
-    }
-    
-    // Create a resource link pointing to an existing resource
-    resourceLink := mcp.NewResourceLink(fmt.Sprintf("file://documents/%s", resourceID))
-    
-    return &mcp.CallToolResult{
-        Content: []mcp.Content{
-            mcp.NewTextContent("Found the requested document:"),
-            resourceLink,
-        },
-    }, nil
+	resourceID, err := req.RequireString("resource_id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Create a resource link pointing to an existing resource
+	uri := fmt.Sprintf("file://documents/%s", resourceID)
+	resourceLink := mcp.NewResourceLink(uri, "name", "resource name", "file")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.NewTextContent("Found the requested document:"),
+			resourceLink,
+		},
+	}, nil
 }
 ```
 
@@ -558,27 +558,29 @@ You can combine different content types including resource links in a single too
 
 ```go
 func handleSearchDocumentsTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    query, err := req.RequireString("query")
-    if err != nil {
-        return mcp.NewToolResultError(err.Error()), nil
-    }
-    
-    // Simulate document search
-    foundDocs := []string{"doc1.pdf", "doc2.txt", "doc3.md"}
-    
-    content := []mcp.Content{
-        mcp.NewTextContent(fmt.Sprintf("Found %d documents matching '%s':", len(foundDocs), query)),
-    }
-    
-    // Add resource links for each found document
-    for _, doc := range foundDocs {
-        resourceLink := mcp.NewResourceLink(fmt.Sprintf("file://documents/%s", doc))
-        content = append(content, resourceLink)
-    }
-    
-    return &mcp.CallToolResult{
-        Content: content,
-    }, nil
+	query, err := req.RequireString("query")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Simulate document search
+	foundDocs := []string{"doc1.pdf", "doc2.txt", "doc3.md"}
+
+	content := []mcp.Content{
+		mcp.NewTextContent(fmt.Sprintf("Found %d documents matching '%s':", len(foundDocs), query)),
+	}
+
+	// Add resource links for each found document
+	for _, doc := range foundDocs {
+		uri := fmt.Sprintf("file://documents/%s", doc)
+		docType := strings.Split(doc, ".")
+		resourceLink := mcp.NewResourceLink(uri, docType[0], "file", docType[1])
+		content = append(content, resourceLink)
+	}
+
+	return &mcp.CallToolResult{
+		Content: content,
+	}, nil
 }
 ```
 
@@ -588,23 +590,22 @@ Resource links can include additional metadata through annotations:
 
 ```go
 func handleGetAnnotatedResourceTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    docType := req.GetString("type", "general")
-    
-    // Create resource link with annotations
-    resourceLink := &mcp.ResourceLink{
-        URI: "file://documents/important.pdf",
-        Annotations: &mcp.Annotations{
-            Audience: []mcp.Role{mcp.RoleUser},
-            Priority: mcp.PriorityHigh,
-        },
-    }
-    
-    return &mcp.CallToolResult{
-        Content: []mcp.Content{
-            mcp.NewTextContent("Here's the important document you requested:"),
-            resourceLink,
-        },
-    }, nil
+	docType := req.GetString("type", "general")
+	// Create resource link with annotations
+	annotated := mcp.Annotated{
+		Annotations: &mcp.Annotations{
+			Audience: []mcp.Role{mcp.RoleUser},
+		},
+	}
+	url := "file://documents/test.pdf"
+	resourceLink := mcp.NewResourceLink(url, "test", "doc", docType)
+	resourceLink.Annotated = annotated
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.NewTextContent("Here's the important document you requested:"),
+			resourceLink,
+		},
+	}, nil
 }
 ```
 
