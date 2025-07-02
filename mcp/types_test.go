@@ -135,4 +135,6 @@ func TestCallToolResultWithResourceLink(t *testing.T) {
 	assert.Equal(t, "resource_link", resourceLink.Type)
 	assert.Equal(t, "file:///example/test.pdf", resourceLink.URI)
 	assert.Equal(t, "Test Document", resourceLink.Name)
+	assert.Equal(t, "A test document", resourceLink.Description)
+	assert.Equal(t, "application/pdf", resourceLink.MIMEType)
 }
