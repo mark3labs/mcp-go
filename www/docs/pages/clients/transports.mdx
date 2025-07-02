@@ -389,6 +389,30 @@ func (pool *StreamableHTTPClientPool) CallTool(ctx context.Context, req mcp.Call
 }
 ```
 
+### StreamableHTTP With Preconfigured Session
+You can also create a StreamableHTTP client with a preconfigured session, which allows you to reuse the same session across multiple requests
+
+```go
+func createStreamableHTTPClientWithSession() {
+    // Create StreamableHTTP client with options
+    sessionID := // fetch existing session ID 
+    c := client.NewStreamableHttpClient("https://api.example.com/mcp",
+        transport.WithSession(sessionID),
+    )
+    defer c.Close()
+
+    ctx := context.Background()
+    // Use client...
+    _, err := c.ListTools(ctx)
+    // If the session is terminated, you must reinitialize the client
+    if errors.Is(err, transport.ErrSessionTerminated) { 
+        c.Initialize(ctx) // Reinitialize if session is terminated
+        // The session ID should change after reinitialization
+        sessionID = c.GetSessionId() // Update session ID
+    }
+}
+```
+
 ## SSE Client
 
 SSE (Server-Sent Events) clients provide real-time communication with servers.

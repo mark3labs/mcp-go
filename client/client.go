@@ -448,3 +448,8 @@ func (c *Client) GetSessionId() string {
 	}
 	return c.transport.GetSessionId()
 }
+
+// IsInitialized returns true if the client has been initialized.
+func (c *Client) IsInitialized() bool {
+	return c.initialized
+}

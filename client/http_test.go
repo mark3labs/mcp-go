@@ -87,7 +87,7 @@ func TestHTTPClient(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create client failed %v", err)
 		}
-		if client.initialized != true {
+		if client.IsInitialized() != true {
 			t.Fatalf("Client is not initialized")
 		}
 	})
