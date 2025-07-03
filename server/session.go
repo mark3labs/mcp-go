@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -17,6 +18,8 @@ type ClientSession interface {
 	NotificationChannel() chan<- mcp.JSONRPCNotification
 	// SessionID is a unique identifier used to track user session.
 	SessionID() string
+	// GetHeader returns the HTTP headers from the initial request
+	GetHeader() http.Header
 }
 
 // SessionWithLogging is an extension of ClientSession that can receive log message notifications and set log level

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"reflect"
 	"sort"
 	"testing"
@@ -1520,6 +1521,11 @@ func (f fakeSession) Initialize() {
 
 func (f fakeSession) Initialized() bool {
 	return f.initialized
+}
+
+func (f fakeSession) GetHeader() http.Header {
+	// Test session doesn't have HTTP headers, return empty header
+	return make(http.Header)
 }
 
 var _ ClientSession = fakeSession{}
