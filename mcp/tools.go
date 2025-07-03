@@ -233,6 +233,32 @@ func (r CallToolRequest) RequireBool(key string) (bool, error) {
 	return false, fmt.Errorf("required argument %q not found", key)
 }
 
+// GetAnySlice returns a []any slice argument by key, or the default value if not found
+func (r CallToolRequest) GetAnySlice(key string, defaultValue []any) []any {
+	args := r.GetArguments()
+	if val, ok := args[key]; ok {
+		switch v := val.(type) {
+		case []any:
+			return v
+		}
+	}
+	return defaultValue
+}
+
+// RequireAnySlice returns a []any slice argument by key, or an error if not found or not convertible to []any slice
+func (r CallToolRequest) RequireAnySlice(key string) ([]any, error) {
+	args := r.GetArguments()
+	if val, ok := args[key]; ok {
+		switch v := val.(type) {
+		case []any:
+			return v, nil
+		default:
+			return nil, fmt.Errorf("argument %q is not an any slice", key)
+		}
+	}
+	return nil, fmt.Errorf("required argument %q not found", key)
+}
+
 // GetStringSlice returns a string slice argument by key, or the default value if not found
 func (r CallToolRequest) GetStringSlice(key string, defaultValue []string) []string {
 	args := r.GetArguments()
