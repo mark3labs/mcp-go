@@ -34,7 +34,7 @@ func (c *InProcessTransport) SendRequest(ctx context.Context, request JSONRPCReq
 	}
 	requestBytes = append(requestBytes, '\n')
 
-	respMessage := c.server.HandleMessage(ctx, requestBytes)
+	respMessage := c.server.HandleMessage(ctx, map[string]string{}, requestBytes)
 	respByte, err := json.Marshal(respMessage)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal response message: %w", err)
@@ -54,7 +54,7 @@ func (c *InProcessTransport) SendNotification(ctx context.Context, notification 
 		return fmt.Errorf("failed to marshal notification: %w", err)
 	}
 	notificationBytes = append(notificationBytes, '\n')
-	c.server.HandleMessage(ctx, notificationBytes)
+	c.server.HandleMessage(ctx, map[string]string{}, notificationBytes)
 
 	return nil
 }
