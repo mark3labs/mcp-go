@@ -97,3 +97,14 @@ func WithTemplateAnnotations(audience []Role, priority float64) ResourceTemplate
 		t.Annotations.Priority = priority
 	}
 }
+
+// WithTemplateArgumentCompletion adds an autocomplete handler for the specified argument of ResourceTemplate.
+// The argument should be one of the variables referenced by the URI template.
+func WithTemplateArgumentCompletion(argument string, handler CompletionHandlerFunc) ResourceTemplateOption {
+	return func(t *ResourceTemplate) {
+		if t.URITemplate.ArgumentCompletionHandlers == nil {
+			t.URITemplate.ArgumentCompletionHandlers = make(map[string]CompletionHandlerFunc)
+		}
+		t.URITemplate.ArgumentCompletionHandlers[argument] = handler
+	}
+}
