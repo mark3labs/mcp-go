@@ -54,7 +54,9 @@ type stdioSession struct {
 	notifications chan mcp.JSONRPCNotification
 	initialized   atomic.Bool
 	loggingLevel  atomic.Value
-	clientInfo    atomic.Value // stores session-specific client info
+	// FIXME assign logger name in a proper way
+	loggerName *string
+	clientInfo atomic.Value // stores session-specific client info
 }
 
 func (s *stdioSession) SessionID() string {
@@ -100,9 +102,12 @@ func (s *stdioSession) GetLogLevel() mcp.LoggingLevel {
 	return level.(mcp.LoggingLevel)
 }
 
+func (f *stdioSession) GetLoggerName() *string {
+	return f.loggerName
+}
+
 var (
 	_ ClientSession         = (*stdioSession)(nil)
-	_ SessionWithLogging    = (*stdioSession)(nil)
 	_ SessionWithClientInfo = (*stdioSession)(nil)
 )
 
