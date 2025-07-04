@@ -502,7 +502,6 @@ func TestStdio_WithCommandFunc(t *testing.T) {
 		cmd := exec.CommandContext(ctx, command, "bonjour")
 
 		// Simulate some security-related settings for test purposes.
-		cmd.Env = env
 		cmd.Env = []string{"PATH=/usr/bin", "NODE_ENV=production"}
 		cmd.Dir = tmpDir
 
@@ -538,6 +537,8 @@ func TestStdio_WithCommandFunc(t *testing.T) {
 	require.Equal(t, "echo", filepath.Base(cmd.Path))
 	require.Len(t, cmd.Args, 2)
 	require.Contains(t, cmd.Args, "bonjour")
+	require.Len(t, cmd.Env, 2)
+	require.Contains(t, cmd.Env, "PATH=/usr/bin")
 	require.Contains(t, cmd.Env, "NODE_ENV=production")
 }
 
