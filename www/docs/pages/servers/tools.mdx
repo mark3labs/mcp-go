@@ -529,6 +529,99 @@ func handleMultiContentTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 }
 ```
 
+### Resource Links
+
+Tools can return resource links that reference other resources in your MCP server. This is useful when you want to point to existing data without duplicating content:
+
+```go
+func handleGetResourceLinkTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	resourceID, err := req.RequireString("resource_id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Create a resource link pointing to an existing resource
+	uri := fmt.Sprintf("file://documents/%s", resourceID)
+	resourceLink := mcp.NewResourceLink(uri, "Document", "The requested document", "application/pdf")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.NewTextContent("Found the requested document:"),
+			resourceLink,
+		},
+	}, nil
+}
+```
+
+### Mixed Content with Resource Links
+
+You can combine different content types including resource links in a single tool result:
+
+```go
+func handleSearchDocumentsTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	query, err := req.RequireString("query")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Simulate document search
+	foundDocs := []string{"doc1.pdf", "doc2.txt", "doc3.md"}
+
+	content := []mcp.Content{
+		mcp.NewTextContent(fmt.Sprintf("Found %d documents matching '%s':", len(foundDocs), query)),
+	}
+
+	// Add resource links for each found document
+	for _, doc := range foundDocs {
+		uri := fmt.Sprintf("file://documents/%s", doc)
+		parts := strings.SplitN(doc, ".", 2)
+		name := parts[0]
+		mimeType := "application/octet-stream" // default
+		if len(parts) > 1 {
+			// Map extension to MIME type (simplified)
+			switch parts[1] {
+			case "pdf":
+				mimeType = "application/pdf"
+			case "txt":
+				mimeType = "text/plain"
+			case "md":
+				mimeType = "text/markdown"
+			}
+		}
+		resourceLink := mcp.NewResourceLink(uri, name, fmt.Sprintf("Document: %s", doc), mimeType)
+		content = append(content, resourceLink)
+	}
+
+	return &mcp.CallToolResult{
+		Content: content,
+	}, nil
+}
+```
+
+### Resource Link with Annotations
+
+Resource links can include additional metadata through annotations:
+
+```go
+func handleGetAnnotatedResourceTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	docType := req.GetString("type", "general")
+	// Create resource link with annotations
+	annotated := mcp.Annotated{
+		Annotations: &mcp.Annotations{
+			Audience: []mcp.Role{mcp.RoleUser},
+		},
+	}
+	url := "file://documents/test.pdf"
+	resourceLink := mcp.NewResourceLink(url, "Test Document", fmt.Sprintf("A %s document", docType), "application/pdf")
+	resourceLink.Annotated = annotated
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.NewTextContent("Here's the important document you requested:"),
+			resourceLink,
+		},
+	}, nil
+}
+```
+
 ### Error Results
 
 ```go
