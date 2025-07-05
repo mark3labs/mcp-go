@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -342,11 +344,50 @@ func TestMCPServer_Tools(t *testing.T) {
 				assert.Equal(t, "test-tool-2", tools[1].Name)
 			},
 		},
+		{
+			name: "AddTools overwrites tool with same name",
+			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
+				err := server.RegisterSession(context.TODO(), &fakeSession{
+					sessionID:           "test",
+					notificationChannel: notificationChannel,
+					initialized:         true,
+				})
+				require.NoError(t, err)
+				server.AddTool(
+					mcp.NewTool("test-tool-dup"),
+					func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+						return &mcp.CallToolResult{}, nil
+					},
+				)
+				// Add same tool name with different handler or data to test overwrite
+				server.AddTool(
+					mcp.NewTool("test-tool-dup"),
+					func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+						return &mcp.CallToolResult{}, nil
+					},
+				)
+			},
+			expectedNotifications: 2, // one per AddTool with active session
+			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, toolsList mcp.JSONRPCMessage) {
+				// Both adds must have triggered notifications
+				assert.Equal(t, mcp.MethodNotificationToolsListChanged, notifications[0].Method)
+				assert.Equal(t, mcp.MethodNotificationToolsListChanged, notifications[1].Method)
+
+				tools := toolsList.(mcp.JSONRPCResponse).Result.(mcp.ListToolsResult).Tools
+				assert.Len(t, tools, 1, "Expected only one tool after overwrite")
+				assert.Equal(t, "test-tool-dup", tools[0].Name)
+			},
+		},
+
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(true))
+
+			var buf bytes.Buffer
+			logger := &testutil.TestLogger{Buf: &buf}
+
+			server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(true), WithMCPLogger(logger))
 			_ = server.HandleMessage(ctx, []byte(`{
 				"jsonrpc": "2.0",
 				"id": 1,
@@ -373,6 +414,11 @@ func TestMCPServer_Tools(t *testing.T) {
 				"method": "tools/list"
 			}`))
 			tt.validate(t, notifications, toolsList)
+
+			if tt.name == "AddTools overwrites tool with same name" {
+				logOutput := buf.String()
+				assert.Contains(t, logOutput, "already exists")
+		}
 		})
 	}
 }
