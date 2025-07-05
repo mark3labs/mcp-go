@@ -25,7 +25,7 @@ type Stdio struct {
 	cmd            *exec.Cmd
 	cmdFunc        CommandFunc
 	stdin          io.WriteCloser
-	stdout         *bufio.Reader
+	stdout         *bufio.Scanner
 	stderr         io.ReadCloser
 	responses      map[string]chan *JSONRPCResponse
 	mu             sync.RWMutex
@@ -58,7 +58,7 @@ func WithCommandFunc(f CommandFunc) StdioOption {
 func NewIO(input io.Reader, output io.WriteCloser, logging io.ReadCloser) *Stdio {
 	return &Stdio{
 		stdin:  output,
-		stdout: bufio.NewReader(input),
+		stdout: bufio.NewScanner(input),
 		stderr: logging,
 
 		responses: make(map[string]chan *JSONRPCResponse),
@@ -157,7 +157,7 @@ func (c *Stdio) spawnCommand(ctx context.Context) error {
 	c.cmd = cmd
 	c.stdin = stdin
 	c.stderr = stderr
-	c.stdout = bufio.NewReader(stdout)
+	c.stdout = bufio.NewScanner(stdout)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start command: %w", err)
@@ -216,13 +216,17 @@ func (c *Stdio) readResponses() {
 		case <-c.done:
 			return
 		default:
-			line, err := c.stdout.ReadString('\n')
-			if err != nil {
-				if err != io.EOF {
-					fmt.Printf("Error reading response: %v\n", err)
-				}
+			if !c.stdout.Scan() {
 				return
 			}
+
+			err := c.stdout.Err()
+			if err != nil {
+				fmt.Printf("Error reading response: %v\n", err)
+				return
+			}
+
+			line := c.stdout.Text()
 
 			var baseMessage JSONRPCResponse
 			if err := json.Unmarshal([]byte(line), &baseMessage); err != nil {
