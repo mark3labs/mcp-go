@@ -893,6 +893,15 @@ type EmbeddedResource struct {
 
 func (EmbeddedResource) isContent() {}
 
+// CommandContent represents a command to be executed by the client.
+type CommandContent struct {
+	Type    string                 `json:"type"`             // must be "command"
+	Command string                 `json:"command"`          // the command name
+	Params  map[string]interface{} `json:"params,omitempty"` // optional parameters
+}
+
+func (CommandContent) isContent() {}
+
 // ModelPreferences represents the server's preferences for model selection,
 // requested of the client during sampling.
 //
