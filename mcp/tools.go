@@ -472,6 +472,9 @@ type ToolListChangedNotification struct {
 type Tool struct {
 	// The name of the tool.
 	Name string `json:"name"`
+	// A human-friendly display name for the tool.
+	// This is used for UI display purposes, while Name is used for programmatic identification.
+	Title string `json:"title,omitempty"`
 	// A human-readable description of the tool.
 	Description string `json:"description,omitempty"`
 	// A JSON Schema object defining the expected parameters for the tool.
@@ -487,14 +490,26 @@ func (t Tool) GetName() string {
 	return t.Name
 }
 
+// GetTitle returns the display title for the tool.
+// It follows the precedence: direct title field → annotations.title → empty string.
+func (t Tool) GetTitle() string {
+	if title := t.Title; title != "" {
+		return title
+	}
+	return t.Annotations.Title
+}
+
 // MarshalJSON implements the json.Marshaler interface for Tool.
 // It handles marshaling either InputSchema or RawInputSchema based on which is set.
 func (t Tool) MarshalJSON() ([]byte, error) {
 	// Create a map to build the JSON structure
-	m := make(map[string]any, 3)
+	m := make(map[string]any, 4)
 
-	// Add the name and description
+	// Add the name and title
 	m["name"] = t.Name
+	if t.Title != "" {
+		m["title"] = t.Title
+	}
 	if t.Description != "" {
 		m["description"] = t.Description
 	}
@@ -612,6 +627,14 @@ func NewToolWithRawSchema(name, description string, schema json.RawMessage) Tool
 func WithDescription(description string) ToolOption {
 	return func(t *Tool) {
 		t.Description = description
+	}
+}
+
+// WithTitle sets the direct title field of the Tool.
+// This title takes precedence over the annotation title when displaying the tool.
+func WithTitle(title string) ToolOption {
+	return func(t *Tool) {
+		t.Title = title
 	}
 }
 
