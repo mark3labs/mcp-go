@@ -185,11 +185,33 @@ func TestStdio(t *testing.T) {
 			defer wg.Done()
 			select {
 			case nt := <-notificationChan:
-				// We received a notification
-				responseJson, _ := json.Marshal(nt.Params.AdditionalFields)
-				requestJson, _ := json.Marshal(notification)
-				if string(responseJson) != string(requestJson) {
-					t.Errorf("Notification handler did not send the expected notification: \ngot %s\nexpect %s", responseJson, requestJson)
+				// We received a notification from the mock server
+				// The mock server sends a notification with method "debug/test" and the original request as params
+				if nt.Method != "debug/test" {
+					t.Errorf("Expected notification method 'debug/test', got '%s'", nt.Method)
+					return
+				}
+
+				// The mock server sends the original notification request as params
+				// We need to extract the original method from the nested structure
+				paramsJson, _ := json.Marshal(nt.Params)
+				var originalRequest struct {
+					Method string         `json:"method"`
+					Params map[string]any `json:"params"`
+				}
+				if err := json.Unmarshal(paramsJson, &originalRequest); err != nil {
+					t.Errorf("Failed to unmarshal notification params: %v", err)
+					return
+				}
+
+				if originalRequest.Method != "debug/echo_notification" {
+					t.Errorf("Expected original method 'debug/echo_notification', got '%s'", originalRequest.Method)
+					return
+				}
+
+				// Check if the original params contain our test data
+				if testValue, ok := originalRequest.Params["test"]; !ok || testValue != "value" {
+					t.Errorf("Expected test param 'value', got %v", originalRequest.Params["test"])
 				}
 
 			case <-time.After(1 * time.Second):

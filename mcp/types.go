@@ -763,6 +763,11 @@ const (
 
 /* Sampling */
 
+const (
+	// MethodSamplingCreateMessage allows servers to request LLM completions from clients
+	MethodSamplingCreateMessage MCPMethod = "sampling/createMessage"
+)
+
 // CreateMessageRequest is a request from the server to sample an LLM via the
 // client. The client has full discretion over which model to select. The client
 // should also inform the user before beginning sampling, to allow them to inspect

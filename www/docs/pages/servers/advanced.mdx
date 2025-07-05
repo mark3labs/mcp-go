@@ -821,6 +821,91 @@ func startWithGracefulShutdown(s *server.MCPServer) {
 }
 ```
 
+## Sampling (Advanced)
+
+Sampling is an advanced feature that allows servers to request LLM completions from clients. This enables bidirectional communication where servers can leverage client-side LLM capabilities for content generation, reasoning, and question answering.
+
+> **Note**: Sampling is an advanced feature that most servers don't need. Only implement sampling if your server specifically needs to generate content using the client's LLM.
+
+### When to Use Sampling
+
+Consider sampling when your server needs to:
+- Generate content based on user input
+- Answer questions using LLM reasoning
+- Perform text analysis or summarization
+- Create dynamic responses that require LLM capabilities
+
+### Basic Implementation
+
+```go
+// Enable sampling capability
+mcpServer.EnableSampling()
+
+// Add a tool that uses sampling
+mcpServer.AddTool(mcp.Tool{
+    Name:        "ask_llm",
+    Description: "Ask the LLM a question using sampling",
+    InputSchema: mcp.ToolInputSchema{
+        Type: "object",
+        Properties: map[string]any{
+            "question": map[string]any{
+                "type":        "string",
+                "description": "The question to ask the LLM",
+            },
+        },
+        Required: []string{"question"},
+    },
+}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    question, err := request.RequireString("question")
+    if err != nil {
+        return nil, err
+    }
+    
+    // Create sampling request
+    samplingRequest := mcp.CreateMessageRequest{
+        CreateMessageParams: mcp.CreateMessageParams{
+            Messages: []mcp.SamplingMessage{
+                {
+                    Role: mcp.RoleUser,
+                    Content: mcp.TextContent{
+                        Type: "text",
+                        Text: question,
+                    },
+                },
+            },
+            SystemPrompt: "You are a helpful assistant.",
+            MaxTokens:    1000,
+            Temperature:  0.7,
+        },
+    }
+    
+    // Request sampling from client
+    result, err := mcpServer.RequestSampling(ctx, samplingRequest)
+    if err != nil {
+        return &mcp.CallToolResult{
+            Content: []mcp.Content{
+                mcp.TextContent{
+                    Type: "text",
+                    Text: fmt.Sprintf("Error: %v", err),
+                },
+            },
+            IsError: true,
+        }, nil
+    }
+    
+    return &mcp.CallToolResult{
+        Content: []mcp.Content{
+            mcp.TextContent{
+                Type: "text",
+                Text: fmt.Sprintf("LLM Response: %s", result.Content),
+            },
+        },
+    }, nil
+})
+```
+
+For complete sampling documentation, see **[Server Sampling Guide](/servers/advanced-sampling)**.
+
 ## Next Steps
 
 - **[Client Development](/clients)** - Learn to build MCP clients
