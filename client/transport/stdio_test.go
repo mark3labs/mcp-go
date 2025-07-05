@@ -153,8 +153,6 @@ func TestStdio(t *testing.T) {
 	})
 
 	t.Run("SendNotification & NotificationHandler", func(t *testing.T) {
-		t.Skip("TODO: Fix notification parsing issue - unrelated to sampling changes")
-
 		var wg sync.WaitGroup
 		notificationChan := make(chan mcp.JSONRPCNotification, 1)
 
@@ -194,14 +192,26 @@ func TestStdio(t *testing.T) {
 					return
 				}
 
-				// The mock server wraps the original request in a JSONRPCRequest structure
-				// So we need to check if the params contain our original notification data
+				// The mock server sends the original notification request as params
+				// We need to extract the original method from the nested structure
 				paramsJson, _ := json.Marshal(nt.Params)
-				var notificationParams map[string]any
-				_ = json.Unmarshal(paramsJson, &notificationParams)
+				var originalRequest struct {
+					Method string         `json:"method"`
+					Params map[string]any `json:"params"`
+				}
+				if err := json.Unmarshal(paramsJson, &originalRequest); err != nil {
+					t.Errorf("Failed to unmarshal notification params: %v", err)
+					return
+				}
 
-				if notificationParams["method"] != "debug/echo_notification" {
-					t.Errorf("Expected params to contain original notification method, got %v", notificationParams)
+				if originalRequest.Method != "debug/echo_notification" {
+					t.Errorf("Expected original method 'debug/echo_notification', got '%s'", originalRequest.Method)
+					return
+				}
+
+				// Check if the original params contain our test data
+				if testValue, ok := originalRequest.Params["test"]; !ok || testValue != "value" {
+					t.Errorf("Expected test param 'value', got %v", originalRequest.Params["test"])
 				}
 
 			case <-time.After(1 * time.Second):

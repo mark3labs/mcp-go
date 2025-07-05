@@ -243,20 +243,18 @@ func (c *Stdio) readResponses() {
 				return
 			}
 
-			// Try to parse as a request first (has method field)
-			var request JSONRPCRequest
-			if err := json.Unmarshal([]byte(line), &request); err == nil && request.Method != "" {
-				c.handleIncomingRequest(request)
-				continue
+			// First try to parse as a generic message to check for ID field
+			var baseMessage struct {
+				JSONRPC string         `json:"jsonrpc"`
+				ID      *mcp.RequestId `json:"id,omitempty"`
+				Method  string         `json:"method,omitempty"`
 			}
-
-			var baseMessage JSONRPCResponse
 			if err := json.Unmarshal([]byte(line), &baseMessage); err != nil {
 				continue
 			}
 
-			// Handle notification
-			if baseMessage.ID.IsNil() {
+			// If it has a method but no ID, it's a notification
+			if baseMessage.Method != "" && baseMessage.ID == nil {
 				var notification mcp.JSONRPCNotification
 				if err := json.Unmarshal([]byte(line), &notification); err != nil {
 					continue
@@ -269,15 +267,30 @@ func (c *Stdio) readResponses() {
 				continue
 			}
 
+			// If it has a method and an ID, it's an incoming request
+			if baseMessage.Method != "" && baseMessage.ID != nil {
+				var request JSONRPCRequest
+				if err := json.Unmarshal([]byte(line), &request); err == nil {
+					c.handleIncomingRequest(request)
+					continue
+				}
+			}
+
+			// Otherwise, it's a response to our request
+			var response JSONRPCResponse
+			if err := json.Unmarshal([]byte(line), &response); err != nil {
+				continue
+			}
+
 			// Create string key for map lookup
-			idKey := baseMessage.ID.String()
+			idKey := response.ID.String()
 
 			c.mu.RLock()
 			ch, exists := c.responses[idKey]
 			c.mu.RUnlock()
 
 			if exists {
-				ch <- &baseMessage
+				ch <- &response
 				c.mu.Lock()
 				delete(c.responses, idKey)
 				c.mu.Unlock()
