@@ -17,6 +17,7 @@ var (
 	ErrSessionExists                = errors.New("session already exists")
 	ErrSessionNotInitialized        = errors.New("session not properly initialized")
 	ErrSessionDoesNotSupportTools   = errors.New("session does not support per-session tools")
+	ErrSessionDoesNotSupportPrompts = errors.New("session does not support per-session prompts")
 	ErrSessionDoesNotSupportLogging = errors.New("session does not support setting logging level")
 
 	// Notification-related errors
