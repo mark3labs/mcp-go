@@ -139,6 +139,10 @@ func (m *mockTransport) Close() error {
 	return nil
 }
 
+func (m *mockTransport) GetSessionId() string {
+	return "mock-session-id"
+}
+
 func TestClient_Initialize_WithSampling(t *testing.T) {
 	handler := &mockSamplingHandler{
 		result: &mcp.CreateMessageResult{
