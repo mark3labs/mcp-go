@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
-
 
 func TestHTTPClient(t *testing.T) {
 	hooks := &server.Hooks{}
@@ -80,6 +80,17 @@ func TestHTTPClient(t *testing.T) {
 			},
 		},
 	}
+
+	t.Run("Can Configure a server with a pre-existing session", func(t *testing.T) {
+		sessionID := uuid.NewString()
+		client, err := NewStreamableHttpClient(testServer.URL, transport.WithSession(sessionID))
+		if err != nil {
+			t.Fatalf("create client failed %v", err)
+		}
+		if client.IsInitialized() != true {
+			t.Fatalf("Client is not initialized")
+		}
+	})
 
 	t.Run("Can receive notification from server", func(t *testing.T) {
 		client, err := NewStreamableHttpClient(testServer.URL)

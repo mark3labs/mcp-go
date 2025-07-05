@@ -39,6 +39,13 @@ func WithClientCapabilities(capabilities mcp.ClientCapabilities) ClientOption {
 func WithSamplingHandler(handler SamplingHandler) ClientOption {
 	return func(c *Client) {
 		c.samplingHandler = handler
+  }
+}
+
+// WithSession assumes a MCP Session has already been initialized
+func WithSession() ClientOption {
+	return func(c *Client) {
+		c.initialized = true
 	}
 }
 
@@ -510,4 +517,18 @@ func (c *Client) GetServerCapabilities() mcp.ServerCapabilities {
 // GetClientCapabilities returns the client capabilities.
 func (c *Client) GetClientCapabilities() mcp.ClientCapabilities {
 	return c.clientCapabilities
+}
+
+// GetSessionId returns the session ID of the transport.
+// If the transport does not support sessions, it returns an empty string.
+func (c *Client) GetSessionId() string {
+	if c.transport == nil {
+		return ""
+	}
+	return c.transport.GetSessionId()
+}
+
+// IsInitialized returns true if the client has been initialized.
+func (c *Client) IsInitialized() bool {
+	return c.initialized
 }
