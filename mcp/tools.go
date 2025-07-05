@@ -1,11 +1,16 @@
 package mcp
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
+	"sync"
+
+	jsonschemaGenerator "github.com/invopop/jsonschema"
+	"github.com/santhosh-tekuri/jsonschema"
 )
 
 var errToolSchemaConflict = errors.New("provide either InputSchema or RawInputSchema, not both")
@@ -36,6 +41,8 @@ type ListToolsResult struct {
 type CallToolResult struct {
 	Result
 	Content []Content `json:"content"` // Can be TextContent, ImageContent, AudioContent, or EmbeddedResource
+	// Structured content that conforms to the tool's output schema
+	StructuredContent any `json:"structuredContent,omitempty"`
 	// Whether the tool call ended in an error.
 	//
 	// If not set, this is assumed to be false (the call was successful).
@@ -468,6 +475,13 @@ type ToolListChangedNotification struct {
 	Notification
 }
 
+// validatorState holds the thread-safe state for output validation
+type validatorState struct {
+	validator *jsonschema.Schema
+	initErr   error // Store initialization error to be shared across goroutines
+	once      sync.Once
+}
+
 // Tool represents the definition for a tool the client can call.
 type Tool struct {
 	// The name of the tool.
@@ -476,10 +490,17 @@ type Tool struct {
 	Description string `json:"description,omitempty"`
 	// A JSON Schema object defining the expected parameters for the tool.
 	InputSchema ToolInputSchema `json:"inputSchema"`
+	// A JSON Schema object defining the expected output for the tool.
+	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
 	// Alternative to InputSchema - allows arbitrary JSON Schema to be provided
 	RawInputSchema json.RawMessage `json:"-"` // Hide this from JSON marshaling
 	// Optional properties describing tool behavior
 	Annotations ToolAnnotation `json:"annotations"`
+
+	// Internal fields for output validation, not serialized
+	outputType reflect.Type `json:"-"`
+	// Thread-safe validator state (pointer to avoid copy issues)
+	validatorState *validatorState `json:"-"`
 }
 
 // GetName returns the name of the tool.
@@ -487,11 +508,78 @@ func (t Tool) GetName() string {
 	return t.Name
 }
 
+// HasOutputSchema returns true if the tool has an output schema defined.
+// This indicates that the tool can return structured content.
+func (t Tool) HasOutputSchema() bool {
+	return t.OutputSchema != nil
+}
+
+// validateStructuredOutput performs the actual validation using the compiled schema
+func (t Tool) validateStructuredOutput(result *CallToolResult) error {
+	if t.validatorState == nil || t.validatorState.validator == nil {
+		return fmt.Errorf("output validator not initialized for tool %s", t.Name)
+	}
+	return t.validatorState.validator.ValidateInterface(result.StructuredContent)
+}
+
+// ensureOutputSchemaValidator compiles and caches the JSON schema validator if not already done
+// This method is thread-safe and ensures the validator is initialized exactly once
+func (t *Tool) ensureOutputSchemaValidator() error {
+	if t.OutputSchema == nil {
+		return nil
+	}
+
+	// Use sync.Once to ensure initialization happens only once
+	t.validatorState.once.Do(func() {
+		// If validator is already set (e.g., by WithOutputType), return early
+		if t.validatorState.validator != nil {
+			return
+		}
+
+		compiler := jsonschema.NewCompiler()
+
+		if err := compiler.AddResource("output-schema", bytes.NewReader(t.OutputSchema)); err != nil {
+			t.validatorState.initErr = err
+			return
+		}
+
+		compiledSchema, err := compiler.Compile("output-schema")
+		if err != nil {
+			t.validatorState.initErr = err
+			return
+		}
+
+		t.validatorState.validator = compiledSchema
+	})
+
+	// Return the shared initialization error (if any)
+	return t.validatorState.initErr
+}
+
+// ValidateStructuredOutput validates the structured content against the tool's output schema.
+// Returns nil if the tool has no output schema or if validation passes.
+// Returns an error if the tool has an output schema but the structured content is invalid.
+func (t *Tool) ValidateStructuredOutput(result *CallToolResult) error {
+	if !t.HasOutputSchema() {
+		return nil
+	}
+
+	if result.StructuredContent == nil {
+		return fmt.Errorf("tool %s has output schema but structuredContent is nil", t.Name)
+	}
+
+	if err := t.ensureOutputSchemaValidator(); err != nil {
+		return err
+	}
+
+	return t.validateStructuredOutput(result)
+}
+
 // MarshalJSON implements the json.Marshaler interface for Tool.
 // It handles marshaling either InputSchema or RawInputSchema based on which is set.
 func (t Tool) MarshalJSON() ([]byte, error) {
 	// Create a map to build the JSON structure
-	m := make(map[string]any, 3)
+	m := make(map[string]any, 5)
 
 	// Add the name and description
 	m["name"] = t.Name
@@ -510,6 +598,11 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 		m["inputSchema"] = t.InputSchema
 	}
 
+	// Add output schema if defined
+	if t.OutputSchema != nil {
+		m["outputSchema"] = t.OutputSchema
+	}
+
 	m["annotations"] = t.Annotations
 
 	return json.Marshal(m)
@@ -522,17 +615,17 @@ type ToolInputSchema struct {
 }
 
 // MarshalJSON implements the json.Marshaler interface for ToolInputSchema.
-func (tis ToolInputSchema) MarshalJSON() ([]byte, error) {
+func (schema ToolInputSchema) MarshalJSON() ([]byte, error) {
 	m := make(map[string]any)
-	m["type"] = tis.Type
+	m["type"] = schema.Type
 
 	// Marshal Properties to '{}' rather than `nil` when its length equals zero
-	if tis.Properties != nil {
-		m["properties"] = tis.Properties
+	if schema.Properties != nil {
+		m["properties"] = schema.Properties
 	}
 
-	if len(tis.Required) > 0 {
-		m["required"] = tis.Required
+	if len(schema.Required) > 0 {
+		m["required"] = schema.Required
 	}
 
 	return json.Marshal(m)
@@ -574,6 +667,8 @@ func NewTool(name string, opts ...ToolOption) Tool {
 			Properties: make(map[string]any),
 			Required:   nil, // Will be omitted from JSON if empty
 		},
+		OutputSchema:   nil,
+		RawInputSchema: nil,
 		Annotations: ToolAnnotation{
 			Title:           "",
 			ReadOnlyHint:    ToBoolPtr(false),
@@ -581,6 +676,8 @@ func NewTool(name string, opts ...ToolOption) Tool {
 			IdempotentHint:  ToBoolPtr(false),
 			OpenWorldHint:   ToBoolPtr(true),
 		},
+		outputType:     nil,
+		validatorState: &validatorState{}, // Initialize immediately for thread safety
 	}
 
 	for _, opt := range opts {
@@ -602,13 +699,13 @@ func NewToolWithRawSchema(name, description string, schema json.RawMessage) Tool
 		Name:           name,
 		Description:    description,
 		RawInputSchema: schema,
+		validatorState: &validatorState{}, // Initialize for thread safety
 	}
 
 	return tool
 }
 
-// WithDescription adds a description to the Tool.
-// The description should provide a clear, human-readable explanation of what the tool does.
+// WithDescription sets the description field of the Tool.
 func WithDescription(description string) ToolOption {
 	return func(t *Tool) {
 		t.Description = description
@@ -1075,4 +1172,134 @@ func WithBooleanItems(opts ...PropertyOption) PropertyOption {
 
 		schema["items"] = itemSchema
 	}
+}
+
+//
+// Output Schema Configuration Functions
+//
+
+// WithOutputSchema sets the output schema for the Tool.
+// This allows the tool to define the structure of its return data.
+func WithOutputSchema(schema json.RawMessage) ToolOption {
+	return func(t *Tool) {
+		cleaned, err := ExtractMCPSchema(schema)
+		if err != nil {
+			// Fallback to original if cleaning fails
+			t.OutputSchema = schema
+		} else {
+			t.OutputSchema = cleaned
+		}
+	}
+}
+
+//
+// New Output Schema Functions
+//
+
+// WithOutputType sets the output schema for the Tool using Go generics and struct tags.
+// This replaces the builder pattern with a cleaner interface based on struct definitions.
+func WithOutputType[T any]() ToolOption {
+	return func(t *Tool) {
+		var zero T
+		validator, schemaBytes, err := compileOutputSchema(zero)
+		if err != nil {
+			// Skip setting output schema if compilation fails
+			// This allows the tool to work without validation
+			return
+		}
+
+		t.OutputSchema = schemaBytes
+		t.outputType = reflect.TypeOf(zero)
+
+		// Initialize validatorState with pre-compiled validator
+		t.validatorState = &validatorState{
+			validator: validator,
+			initErr:   nil, // No error since compilation succeeded
+		}
+	}
+}
+
+// compileOutputSchema generates JSON schema from a struct and compiles it for validation
+func compileOutputSchema[T any](sample T) (*jsonschema.Schema, json.RawMessage, error) {
+	// Generate JSON Schema from struct
+	reflector := jsonschemaGenerator.Reflector{
+		// Use Draft 7 which is widely supported
+		DoNotReference: true,
+	}
+	schema := reflector.Reflect(&sample)
+
+	// Manually override the schema version to Draft-07.
+	// This is required because our validator, santhosh-tekuri/jsonschema,
+	// only supports up to Draft-07. This workaround ensures compatibility
+	// between the generator and the validator.
+	schema.Version = "http://json-schema.org/draft-07/schema#"
+
+	// Serialize to JSON
+	schemaBytes, err := json.Marshal(schema)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal schema: %w", err)
+	}
+
+	// Clean schema to MCP inline format
+	cleanedBytes, err := ExtractMCPSchema(schemaBytes)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Compile for validation using santhosh-tekuri/jsonschema
+	compiler := jsonschema.NewCompiler()
+	if err := compiler.AddResource("schema", bytes.NewReader(cleanedBytes)); err != nil {
+		return nil, nil, fmt.Errorf("failed to add schema resource: %w", err)
+	}
+
+	validator, err := compiler.Compile("schema")
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to compile schema: %w", err)
+	}
+
+	return validator, cleanedBytes, nil
+}
+
+// ValidateOutput validates the structured content against the tool's output schema.
+// Skips validation when IsError is true or the tool has no output schema defined.
+func (t *Tool) ValidateOutput(result *CallToolResult) error {
+	// Skip validation if IsError is true or no output schema defined
+	if result.IsError || !t.HasOutputSchema() {
+		return nil
+	}
+
+	if result.StructuredContent == nil {
+		return fmt.Errorf("tool %s requires structured output but got nil", t.Name)
+	}
+
+	// Ensure the validator is compiled
+	if err := t.ensureOutputSchemaValidator(); err != nil {
+		return fmt.Errorf("failed to compile output schema for tool %s: %w", t.Name, err)
+	}
+
+	// Convert structured content to JSON-compatible format for validation
+	var validationData any
+
+	// If it's already a map, slice, or primitive, use it as-is
+	// If it's a struct, convert it to JSON-compatible format
+	switch result.StructuredContent.(type) {
+	case map[string]any, []any, string, int, int64, float64, bool, nil:
+		validationData = result.StructuredContent
+	default:
+		// Convert struct to JSON-compatible format via JSON marshaling/unmarshaling
+		jsonBytes, err := json.Marshal(result.StructuredContent)
+		if err != nil {
+			return fmt.Errorf("failed to marshal structured content for validation: %w", err)
+		}
+
+		if err := json.Unmarshal(jsonBytes, &validationData); err != nil {
+			return fmt.Errorf("failed to unmarshal structured content for validation: %w", err)
+		}
+	}
+
+	if t.validatorState == nil || t.validatorState.validator == nil {
+		return fmt.Errorf("output validator not initialized for tool %s", t.Name)
+	}
+
+	return t.validatorState.validator.ValidateInterface(validationData)
 }
