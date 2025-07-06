@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync/atomic"
@@ -98,6 +99,11 @@ func (s *stdioSession) GetLogLevel() mcp.LoggingLevel {
 		return mcp.LoggingLevelError
 	}
 	return level.(mcp.LoggingLevel)
+}
+
+func (s *stdioSession) GetHeader() http.Header {
+	// stdio transport doesn't have HTTP headers, return empty header
+	return make(http.Header)
 }
 
 var (
