@@ -123,6 +123,8 @@ func (c *Stdio) Start(ctx context.Context) error {
 // If an (optional) cmdFunc custom command factory function was configured, it will be used to construct the subprocess;
 // otherwise, the default behavior uses exec.CommandContext with the merged environment.
 // Initializes stdin, stdout, and stderr pipes for JSON-RPC communication.
+// A background goroutine is also started to wait for the subprocess to exit,
+// ensuring that the done channel is closed automatically if the process terminates unexpectedly.
 func (c *Stdio) spawnCommand(ctx context.Context) error {
 	if c.command == "" {
 		return nil
@@ -163,6 +165,16 @@ func (c *Stdio) spawnCommand(ctx context.Context) error {
 		return fmt.Errorf("failed to start command: %w", err)
 	}
 
+	go func() {
+		_ = cmd.Wait()
+		select {
+		case <-c.done:
+			// Already closed explicitly (via Close), do nothing
+		default:
+			close(c.done) // Automatically signal subprocess exit
+		}
+	}()
+
 	return nil
 }
 
@@ -189,6 +201,16 @@ func (c *Stdio) Close() error {
 	}
 
 	return nil
+}
+
+// IsClosed reports whether the subprocess has exited and the transport is no longer usable.
+func (c *Stdio) IsClosed() bool {
+	select {
+	case <-c.done:
+		return true
+	default:
+		return false
+	}
 }
 
 // GetSessionId returns the session ID of the transport.
@@ -293,6 +315,11 @@ func (c *Stdio) SendRequest(
 		c.mu.Unlock()
 	}
 
+	if c.IsClosed() {
+		deleteResponseChan()
+		return nil, fmt.Errorf("cannot send request: subprocess is closed")
+	}
+
 	// Send request
 	if _, err := c.stdin.Write(requestBytes); err != nil {
 		deleteResponseChan()
@@ -303,6 +330,9 @@ func (c *Stdio) SendRequest(
 	case <-ctx.Done():
 		deleteResponseChan()
 		return nil, ctx.Err()
+	case <-c.done:
+		deleteResponseChan()
+		return nil, fmt.Errorf("subprocess exited while waiting for response")
 	case response := <-responseChan:
 		return response, nil
 	}

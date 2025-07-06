@@ -384,6 +384,31 @@ func TestStdio(t *testing.T) {
 			t.Errorf("Expected array with 3 items, got %v", result.Params["array"])
 		}
 	})
+
+	t.Run("SendRequestFailsIfSubprocessExited", func(t *testing.T) {
+		// Start a subprocess that exits immediately
+		ctx := context.Background()
+		stdio := NewStdio("sh", nil, "-c", "exit 0")
+
+		err := stdio.Start(ctx)
+		require.NoError(t, err)
+
+		// Wait for subprocess to exit
+		require.Eventually(t, func() bool {
+			return stdio.IsClosed()
+		}, time.Second, 10*time.Millisecond)
+
+		// Try to send a request
+		_, err = stdio.SendRequest(ctx, JSONRPCRequest{
+			JSONRPC: "2.0",
+			ID:      mcp.NewRequestId("dead"),
+			Method:  "noop",
+		})
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "subprocess")
+	})
+
 }
 
 func TestStdioErrors(t *testing.T) {
@@ -609,6 +634,32 @@ func TestStdio_SpawnCommand_UsesCommandFunc_Error(t *testing.T) {
 	require.EqualError(t, err, "test error")
 }
 
+func TestStdio_DoneClosedWhenSubcommandExits(t *testing.T) {
+	ctx := context.Background()
+
+	stdio := NewStdioWithOptions(
+		"sh",
+		nil,
+		[]string{"-c", "exit 0"},
+	)
+
+	require.NotNil(t, stdio)
+
+	err := stdio.spawnCommand(ctx)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		if stdio.cmd.Process != nil {
+			_ = stdio.cmd.Process.Kill()
+		}
+	})
+
+	// Wait up to 200ms for the done channel to close
+	require.Eventually(t, func() bool {
+		return stdio.IsClosed()
+	}, 200*time.Millisecond, 10*time.Millisecond, "expected done to be closed after subprocess exited")
+}
+
 func TestStdio_NewStdioWithOptions_AppliesOptions(t *testing.T) {
 	configured := false
 
@@ -619,4 +670,29 @@ func TestStdio_NewStdioWithOptions_AppliesOptions(t *testing.T) {
 	stdio := NewStdioWithOptions("echo", nil, []string{"test"}, opt)
 	require.NotNil(t, stdio)
 	require.True(t, configured, "option was not applied")
+}
+
+func TestStdio_IsClosed(t *testing.T) {
+	t.Run("returns false before Start", func(t *testing.T) {
+		stdio := NewStdio("sh", nil, "-c", "sleep 1")
+		require.False(t, stdio.IsClosed(), "expected IsClosed to be false before Start")
+	})
+
+	t.Run("returns false after Start", func(t *testing.T) {
+		stdio := NewStdio("sh", nil, "-c", "sleep 1")
+		err := stdio.Start(context.Background())
+		require.NoError(t, err)
+		defer stdio.Close()
+		require.False(t, stdio.IsClosed(), "expected IsClosed to be false right after Start")
+	})
+
+	t.Run("returns true after subprocess exits", func(t *testing.T) {
+		stdio := NewStdio("sh", nil, "-c", "exit 0")
+		err := stdio.Start(context.Background())
+		require.NoError(t, err)
+
+		require.Eventually(t, func() bool {
+			return stdio.IsClosed()
+		}, 200*time.Millisecond, 10*time.Millisecond, "expected IsClosed to return true after subprocess exits")
+	})
 }
