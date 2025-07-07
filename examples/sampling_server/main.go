@@ -64,7 +64,8 @@ func main() {
 		// Request sampling from the client
 		samplingCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
-		result, err := mcpServer.RequestSampling(samplingCtx, samplingRequest)
+		serverFromCtx := server.ServerFromContext(ctx)
+		result, err := serverFromCtx.RequestSampling(samplingCtx, samplingRequest)
 		if err != nil {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{

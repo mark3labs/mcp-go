@@ -11,7 +11,7 @@ func TestMCPServer_EnableSampling(t *testing.T) {
 	server := NewMCPServer("test", "1.0.0")
 
 	// Initially sampling should not be enabled
-	if server.capabilities.sampling != nil && server.capabilities.sampling.enabled {
+	if server.sampling != nil && server.sampling.enabled {
 		t.Error("sampling should not be enabled initially")
 	}
 
@@ -19,7 +19,7 @@ func TestMCPServer_EnableSampling(t *testing.T) {
 	server.EnableSampling()
 
 	// Now sampling should be enabled
-	if server.capabilities.sampling == nil || !server.capabilities.sampling.enabled {
+	if server.sampling == nil || !server.sampling.enabled {
 		t.Error("sampling should be enabled after calling EnableSampling")
 	}
 }

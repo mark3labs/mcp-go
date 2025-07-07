@@ -7,29 +7,23 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// SamplingClient defines the interface for servers to request sampling from clients.
-type SamplingClient interface {
-	// RequestSampling sends a sampling request to the client and returns the result.
-	RequestSampling(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error)
-}
-
 // EnableSampling enables sampling capabilities for the server.
 // This allows the server to send sampling requests to clients that support it.
 func (s *MCPServer) EnableSampling() {
 	s.capabilitiesMu.Lock()
 	defer s.capabilitiesMu.Unlock()
 
-	if s.capabilities.sampling == nil {
-		s.capabilities.sampling = &samplingCapabilities{}
+	if s.sampling == nil {
+		s.sampling = &samplingCapabilities{}
 	}
-	s.capabilities.sampling.enabled = true
+	s.sampling.enabled = true
 }
 
 // RequestSampling sends a sampling request to the client.
 // The client must have declared sampling capability during initialization.
 func (s *MCPServer) RequestSampling(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
 	s.capabilitiesMu.RLock()
-	enabled := s.capabilities.sampling != nil && s.capabilities.sampling.enabled
+	enabled := s.sampling != nil && s.sampling.enabled
 	s.capabilitiesMu.RUnlock()
 
 	if !enabled {

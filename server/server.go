@@ -157,6 +157,7 @@ type MCPServer struct {
 	toolFilters            []ToolFilterFunc
 	notificationHandlers   map[string]NotificationHandlerFunc
 	capabilities           serverCapabilities
+	sampling               *samplingCapabilities
 	paginationLimit        *int
 	sessions               sync.Map
 	hooks                  *Hooks
@@ -175,7 +176,6 @@ type serverCapabilities struct {
 	resources *resourceCapabilities
 	prompts   *promptCapabilities
 	logging   *bool
-	sampling  *samplingCapabilities
 }
 
 // resourceCapabilities defines the supported resource-related features
