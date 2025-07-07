@@ -56,17 +56,40 @@ const (
 
 	// MethodNotificationResourcesListChanged notifies when the list of available resources changes.
 	// https://modelcontextprotocol.io/specification/2025-03-26/server/resources#list-changed-notification
-	MethodNotificationResourcesListChanged = "notifications/resources/list_changed"
+	MethodNotificationResourcesListChanged MCPMethod = "notifications/resources/list_changed"
 
-	MethodNotificationResourceUpdated = "notifications/resources/updated"
+	MethodNotificationResourceUpdated MCPMethod = "notifications/resources/updated"
 
 	// MethodNotificationPromptsListChanged notifies when the list of available prompt templates changes.
 	// https://modelcontextprotocol.io/specification/2025-03-26/server/prompts#list-changed-notification
-	MethodNotificationPromptsListChanged = "notifications/prompts/list_changed"
+	MethodNotificationPromptsListChanged MCPMethod = "notifications/prompts/list_changed"
 
 	// MethodNotificationToolsListChanged notifies when the list of available tools changes.
 	// https://spec.modelcontextprotocol.io/specification/2024-11-05/server/tools/list_changed/
-	MethodNotificationToolsListChanged = "notifications/tools/list_changed"
+	MethodNotificationToolsListChanged MCPMethod = "notifications/tools/list_changed"
+
+	// MethodNotificationMessage notifies when severs send log messages.
+	// https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#log-message-notifications
+	MethodNotificationMessage MCPMethod = "notifications/message"
+
+	// MethodNotificationProgress notifies progress updates for long-running operations
+	// https://modelcontextprotocol.io/specification/2025-03-26/basic/utilities/progress
+	MethodNotificationProgress MCPMethod = "notifications/progress"
+
+	// MethodNotificationCancellation can be sent by either side to indicate that it is
+	// cancelling a previously-issued request.
+	//
+	// The request SHOULD still be in-flight, but due to communication latency, it
+	// is always possible that this notification MAY arrive after the request has
+	// already finished.
+	//
+	// This notification indicates that the result will be unused, so any
+	// associated processing SHOULD cease.
+	//
+	// A client MUST NOT attempt to cancel its `initialize` request.
+	//
+	// https://modelcontextprotocol.io/specification/2025-03-26/basic/utilities/cancellation
+	MethodNotificationCancellation MCPMethod = "notifications/cancelled"
 )
 
 type URITemplate struct {
@@ -576,6 +599,9 @@ type ReadResourceParams struct {
 	URI string `json:"uri"`
 	// Arguments to pass to the resource handler
 	Arguments map[string]any `json:"arguments,omitempty"`
+	// Meta is metadata attached to a request's parameters. This can include fields
+	// formally defined by the protocol or other arbitrary data.
+	Meta *Meta `json:"_meta,omitempty"`
 }
 
 // ReadResourceResult is the server's response to a resources/read request
@@ -760,6 +786,29 @@ const (
 	LoggingLevelAlert     LoggingLevel = "alert"
 	LoggingLevelEmergency LoggingLevel = "emergency"
 )
+
+var (
+	levelToSeverity = func() map[LoggingLevel]int {
+		return map[LoggingLevel]int{
+			LoggingLevelEmergency: 0,
+			LoggingLevelAlert:     1,
+			LoggingLevelCritical:  2,
+			LoggingLevelError:     3,
+			LoggingLevelWarning:   4,
+			LoggingLevelNotice:    5,
+			LoggingLevelInfo:      6,
+			LoggingLevelDebug:     7,
+		}
+	}()
+)
+
+// Allows is a helper function that decides a message could be sent to client or not according to the logging level
+func (subscribedLevel LoggingLevel) Allows(currentLevel LoggingLevel) (bool, error) {
+	if _, ok := levelToSeverity[currentLevel]; !ok {
+		return false, fmt.Errorf("illegal message logging level:%s", currentLevel)
+	}
+	return levelToSeverity[subscribedLevel] >= levelToSeverity[currentLevel], nil
+}
 
 /* Sampling */
 
