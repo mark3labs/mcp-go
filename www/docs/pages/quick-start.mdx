@@ -140,15 +140,10 @@ func main() {
     ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
     defer cancel()
 
-    // Create stdio transport
-    stdioTransport := transport.NewStdio("go", nil, "run", "path/to/server/main.go")
-
-    // Create client with the transport
-    c := client.NewClient(stdioTransport)
-
-    // Start the client
-    if err := c.Start(ctx); err != nil {
-        log.Fatalf("Failed to start client: %v", err)
+    // Create and start stdio client
+    c, err := client.NewStdioMCPClient("go", nil, "run", "path/to/server/main.go")
+    if err != nil {
+        log.Fatalf("Failed to create client: %v", err)
     }
     defer c.Close()
 
@@ -227,14 +222,11 @@ func main() {
     ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
     defer cancel()
 
-    // Create HTTP transport
-    httpTransport, err := transport.NewStreamableHTTP("http://localhost:8080/mcp")
+    // Create HTTP client
+    c, err := client.NewStreamableHttpClient("http://localhost:8080/mcp")
     if err != nil {
-        log.Fatalf("Failed to create HTTP transport: %v", err)
+        log.Fatalf("Failed to create HTTP client: %v", err)
     }
-
-    // Create client with the transport
-    c := client.NewClient(httpTransport)
     defer c.Close()
 
     // Initialize the client

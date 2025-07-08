@@ -50,12 +50,22 @@ func createStdioClient() {
 
     ctx := context.Background()
 
-    // Initialize connection
-    if err := c.Initialize(ctx, initRequest); err != nil {
+    // Initialize connection with proper request
+    initRequest := mcp.InitializeRequest{}
+    initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+    initRequest.Params.ClientInfo = mcp.Implementation{
+        Name:    "Stdio Client",
+        Version: "1.0.0",
+    }
+    initRequest.Params.Capabilities = mcp.ClientCapabilities{}
+
+    serverInfo, err := c.Initialize(ctx, initRequest)
+    if err != nil {
         log.Fatal(err)
     }
 
     // Use the client
+    listToolsRequest := mcp.ListToolsRequest{}
     tools, err := c.ListTools(ctx, listToolsRequest)
     if err != nil {
         log.Fatal(err)
@@ -122,15 +132,15 @@ func handleStdioErrors(c *client.StdioClient) {
 
 ```go
 type ManagedStdioClient struct {
-    client      *client.StdioClient
-    options     client.StdioOptions
+    client      *client.Client
+    options     transport.StdioOptions
     restartChan chan struct{}
     ctx         context.Context
     cancel      context.CancelFunc
     wg          sync.WaitGroup
 }
 
-func NewManagedStdioClient(options client.StdioOptions) (*ManagedStdioClient, error) {
+func NewManagedStdioClient(options transport.StdioOptions) (*ManagedStdioClient, error) {
     ctx, cancel := context.WithCancel(context.Background())
 
     msc := &ManagedStdioClient{
@@ -152,12 +162,28 @@ func NewManagedStdioClient(options client.StdioOptions) (*ManagedStdioClient, er
 }
 
 func (msc *ManagedStdioClient) start() error {
-    client, err := client.NewStdioClientWithOptions(msc.options)
-    if err != nil {
+    stdioTransport := transport.NewStdioWithOptions(
+        msc.options.Command, 
+        msc.options.Env, 
+        msc.options.Args,
+    )
+    
+    if err := stdioTransport.Start(msc.ctx); err != nil {
         return err
     }
-
-    if err := client.Initialize(msc.ctx); err != nil {
+    
+    client := client.NewClient(stdioTransport)
+    
+    // Initialize with proper request
+    initRequest := mcp.InitializeRequest{}
+    initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+    initRequest.Params.ClientInfo = mcp.Implementation{
+        Name:    "Managed Stdio Client",
+        Version: "1.0.0",
+    }
+    initRequest.Params.Capabilities = mcp.ClientCapabilities{}
+    
+    if _, err := client.Initialize(msc.ctx, initRequest); err != nil {
         client.Close()
         return err
     }
@@ -253,18 +279,31 @@ StreamableHTTP clients communicate with servers using traditional HTTP requests.
 ```go
 func createStreamableHTTPClient() {
     // Create StreamableHTTP client
-    c := client.NewStreamableHttpClient("http://localhost:8080/mcp")
+    c, err := client.NewStreamableHttpClient("http://localhost:8080/mcp")
+    if err != nil {
+        log.Fatal(err)
+    }
     defer c.Close()
 
     ctx := context.Background()
 
     // Initialize
-    if err := c.Initialize(ctx); err != nil {
+    initRequest := mcp.InitializeRequest{}
+    initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+    initRequest.Params.ClientInfo = mcp.Implementation{
+        Name:    "Example Client",
+        Version: "1.0.0",
+    }
+    initRequest.Params.Capabilities = mcp.ClientCapabilities{}
+
+    serverInfo, err := c.Initialize(ctx, initRequest)
+    if err != nil {
         log.Fatal(err)
     }
 
     // Use client
-    tools, err := c.ListTools(ctx)
+    toolsRequest := mcp.ListToolsRequest{}
+    tools, err := c.ListTools(ctx, toolsRequest)
     if err != nil {
         log.Fatal(err)
     }
@@ -278,7 +317,7 @@ func createStreamableHTTPClient() {
 ```go
 func createCustomStreamableHTTPClient() {
     // Create StreamableHTTP client with options
-    c := client.NewStreamableHttpClient("https://api.example.com/mcp",
+    c, err := client.NewStreamableHttpClient("https://api.example.com/mcp",
         transport.WithHTTPTimeout(30*time.Second),
         transport.WithHTTPHeaders(map[string]string{
             "User-Agent": "MyApp/1.0",
@@ -295,11 +334,24 @@ func createCustomStreamableHTTPClient() {
             },
         }),
     )
+    if err != nil {
+        log.Fatal(err)
+    }
     defer c.Close()
 
     ctx := context.Background()
 
-    if err := c.Initialize(ctx); err != nil {
+    // Initialize with proper request
+    initRequest := mcp.InitializeRequest{}
+    initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+    initRequest.Params.ClientInfo = mcp.Implementation{
+        Name:    "Example Client",
+        Version: "1.0.0",
+    }
+    initRequest.Params.Capabilities = mcp.ClientCapabilities{}
+
+    serverInfo, err := c.Initialize(ctx, initRequest)
+    if err != nil {
         log.Fatal(err)
     }
 
@@ -312,7 +364,7 @@ func createCustomStreamableHTTPClient() {
 ```go
 func createAuthenticatedStreamableHTTPClient() {
     // Create StreamableHTTP client with OAuth
-    c := client.NewStreamableHttpClient("http://localhost:8080/mcp",
+    c, err := client.NewStreamableHttpClient("http://localhost:8080/mcp",
         transport.WithHTTPOAuth(transport.OAuthConfig{
             ClientID:     "your-client-id",
             ClientSecret: "your-client-secret",
@@ -320,11 +372,24 @@ func createAuthenticatedStreamableHTTPClient() {
             Scopes:       []string{"mcp:read", "mcp:write"},
         }),
     )
+    if err != nil {
+        log.Fatal(err)
+    }
     defer c.Close()
 
     ctx := context.Background()
 
-    if err := c.Initialize(ctx); err != nil {
+    // Initialize with proper request
+    initRequest := mcp.InitializeRequest{}
+    initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+    initRequest.Params.ClientInfo = mcp.Implementation{
+        Name:    "Example Client",
+        Version: "1.0.0",
+    }
+    initRequest.Params.Capabilities = mcp.ClientCapabilities{}
+
+    serverInfo, err := c.Initialize(ctx, initRequest)
+    if err != nil {
         log.Fatal(err)
     }
 
@@ -395,20 +460,40 @@ You can also create a StreamableHTTP client with a preconfigured session, which 
 ```go
 func createStreamableHTTPClientWithSession() {
     // Create StreamableHTTP client with options
-    sessionID := // fetch existing session ID 
-    c := client.NewStreamableHttpClient("https://api.example.com/mcp",
+    sessionID := "existing-session-id" // fetch existing session ID 
+    c, err := client.NewStreamableHttpClient("https://api.example.com/mcp",
         transport.WithSession(sessionID),
     )
+    if err != nil {
+        log.Fatal(err)
+    }
     defer c.Close()
 
     ctx := context.Background()
     // Use client...
-    _, err := c.ListTools(ctx)
+    toolsRequest := mcp.ListToolsRequest{}
+    _, err = c.ListTools(ctx, toolsRequest)
     // If the session is terminated, you must reinitialize the client
     if errors.Is(err, transport.ErrSessionTerminated) { 
-        c.Initialize(ctx) // Reinitialize if session is terminated
-        // The session ID should change after reinitialization
-        sessionID = c.GetSessionId() // Update session ID
+        initRequest := mcp.InitializeRequest{}
+        initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+        initRequest.Params.ClientInfo = mcp.Implementation{
+            Name:    "Example Client",
+            Version: "1.0.0",
+        }
+        initRequest.Params.Capabilities = mcp.ClientCapabilities{}
+
+        serverInfo, err := c.Initialize(ctx, initRequest) // Reinitialize if session is terminated
+        if err != nil {
+            log.Fatal(err)
+        }
+        
+        // Get the transport to access session ID
+        trans := c.GetTransport()
+        stdioTrans, ok := trans.(*transport.StreamableHTTP)
+        if ok {
+            sessionID = stdioTrans.GetSessionId() // Update session ID
+        }
     }
 }
 ```
@@ -422,34 +507,49 @@ SSE (Server-Sent Events) clients provide real-time communication with servers.
 ```go
 func createSSEClient() {
     // Create SSE client
-    c := client.NewSSEClient("http://localhost:8080/mcp/sse")
+    c, err := client.NewSSEMCPClient(
+        "http://localhost:8080/mcp/sse",
+        client.WithHeaders(map[string]string{
+            "Authorization": "Bearer your-token",
+        }),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
     defer c.Close()
-
-    // Set authentication
-    c.SetHeader("Authorization", "Bearer your-token")
 
     ctx := context.Background()
 
     // Initialize
-    if err := c.Initialize(ctx); err != nil {
-        log.Fatal(err)
+    initRequest := mcp.InitializeRequest{}
+    initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+    initRequest.Params.ClientInfo = mcp.Implementation{
+        Name:    "SSE Client",
+        Version: "1.0.0",
     }
+    initRequest.Params.Capabilities = mcp.ClientCapabilities{}
 
-    // Subscribe to notifications
-    notifications, err := c.Subscribe(ctx)
+    serverInfo, err := c.Initialize(ctx, initRequest)
     if err != nil {
         log.Fatal(err)
     }
 
+    // Subscribe to notifications
+    notificationChan := make(chan mcp.JSONRPCNotification)
+    c.OnNotification(func(n mcp.JSONRPCNotification) {
+        notificationChan <- n
+    })
+
     // Handle notifications in background
     go func() {
-        for notification := range notifications {
+        for notification := range notificationChan {
             log.Printf("Notification: %+v", notification)
         }
     }()
 
     // Use client for regular operations
-    tools, err := c.ListTools(ctx)
+    toolsRequest := mcp.ListToolsRequest{}
+    tools, err := c.ListTools(ctx, toolsRequest)
     if err != nil {
         log.Fatal(err)
     }
