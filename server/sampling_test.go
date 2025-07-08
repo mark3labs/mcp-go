@@ -7,47 +7,6 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-func TestMCPServer_EnableSampling(t *testing.T) {
-	server := NewMCPServer("test", "1.0.0")
-
-	// Initially sampling should not be enabled
-	if server.sampling != nil && server.sampling.enabled {
-		t.Error("sampling should not be enabled initially")
-	}
-
-	// Enable sampling
-	server.EnableSampling()
-
-	// Now sampling should be enabled
-	if server.sampling == nil || !server.sampling.enabled {
-		t.Error("sampling should be enabled after calling EnableSampling")
-	}
-}
-
-func TestMCPServer_RequestSampling_NotEnabled(t *testing.T) {
-	server := NewMCPServer("test", "1.0.0")
-
-	request := mcp.CreateMessageRequest{
-		CreateMessageParams: mcp.CreateMessageParams{
-			Messages: []mcp.SamplingMessage{
-				{Role: mcp.RoleUser, Content: mcp.TextContent{Type: "text", Text: "Test"}},
-			},
-			MaxTokens: 100,
-		},
-	}
-
-	_, err := server.RequestSampling(context.Background(), request)
-
-	if err == nil {
-		t.Error("expected error when sampling not enabled")
-	}
-
-	expectedError := "sampling not enabled on server"
-	if err.Error() != expectedError {
-		t.Errorf("expected error %q, got %q", expectedError, err.Error())
-	}
-}
-
 func TestMCPServer_RequestSampling_NoSession(t *testing.T) {
 	server := NewMCPServer("test", "1.0.0")
 	server.EnableSampling()

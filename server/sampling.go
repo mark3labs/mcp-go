@@ -12,24 +12,11 @@ import (
 func (s *MCPServer) EnableSampling() {
 	s.capabilitiesMu.Lock()
 	defer s.capabilitiesMu.Unlock()
-
-	if s.sampling == nil {
-		s.sampling = &samplingCapabilities{}
-	}
-	s.sampling.enabled = true
 }
 
 // RequestSampling sends a sampling request to the client.
 // The client must have declared sampling capability during initialization.
 func (s *MCPServer) RequestSampling(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
-	s.capabilitiesMu.RLock()
-	enabled := s.sampling != nil && s.sampling.enabled
-	s.capabilitiesMu.RUnlock()
-
-	if !enabled {
-		return nil, fmt.Errorf("sampling not enabled on server")
-	}
-
 	session := ClientSessionFromContext(ctx)
 	if session == nil {
 		return nil, fmt.Errorf("no active session")

@@ -157,7 +157,6 @@ type MCPServer struct {
 	toolFilters            []ToolFilterFunc
 	notificationHandlers   map[string]NotificationHandlerFunc
 	capabilities           serverCapabilities
-	sampling               *samplingCapabilities
 	paginationLimit        *int
 	sessions               sync.Map
 	hooks                  *Hooks
@@ -192,11 +191,6 @@ type promptCapabilities struct {
 // toolCapabilities defines the supported tool-related features
 type toolCapabilities struct {
 	listChanged bool
-}
-
-// samplingCapabilities defines the sampling-related server capabilities
-type samplingCapabilities struct {
-	enabled bool
 }
 
 // WithResourceCapabilities configures resource-related server capabilities
