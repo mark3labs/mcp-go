@@ -133,18 +133,30 @@ func handleStdioErrors(c *client.StdioClient) {
 ```go
 type ManagedStdioClient struct {
     client      *client.Client
-    options     transport.StdioOptions
+    options     struct{
+        Command string
+        Env    []string
+        Args   []string
+    }
     restartChan chan struct{}
     ctx         context.Context
     cancel      context.CancelFunc
     wg          sync.WaitGroup
 }
 
-func NewManagedStdioClient(options transport.StdioOptions) (*ManagedStdioClient, error) {
+func NewManagedStdioClient(command string, env []string, args []string) (*ManagedStdioClient, error) {
     ctx, cancel := context.WithCancel(context.Background())
 
     msc := &ManagedStdioClient{
-        options:     options,
+        options: struct{
+            Command string
+            Env    []string
+            Args   []string
+        }{
+            Command: command,
+            Env:    env,
+            Args:   args,
+        },
         restartChan: make(chan struct{}, 1),
         ctx:         ctx,
         cancel:      cancel,
@@ -162,10 +174,11 @@ func NewManagedStdioClient(options transport.StdioOptions) (*ManagedStdioClient,
 }
 
 func (msc *ManagedStdioClient) start() error {
-    stdioTransport := transport.NewStdioWithOptions(
+    // Create stdio transport with options
+    stdioTransport := transport.NewStdio(
         msc.options.Command, 
         msc.options.Env, 
-        msc.options.Args,
+        msc.options.Args...,
     )
     
     if err := stdioTransport.Start(msc.ctx); err != nil {
