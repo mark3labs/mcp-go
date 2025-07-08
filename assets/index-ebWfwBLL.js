@@ -1,4 +1,4 @@
-import{u as e,j as s}from"./index-BlQM8D4h.js";const a={title:"Building MCP Servers",description:"undefined"};function r(i){const l={a:"a",code:"code",div:"div",h1:"h1",h2:"h2",header:"header",li:"li",p:"p",pre:"pre",span:"span",strong:"strong",ul:"ul",...e(),...i.components};return s.jsxs(s.Fragment,{children:[s.jsx(l.header,{children:s.jsxs(l.h1,{id:"building-mcp-servers",children:["Building MCP Servers",s.jsx(l.a,{"aria-hidden":"true",tabIndex:"-1",href:"#building-mcp-servers",children:s.jsx(l.div,{"data-autolink-icon":!0})})]})}),`
+import{u as e,j as s}from"./index-CY07P05j.js";const a={title:"Building MCP Servers",description:"undefined"};function r(i){const l={a:"a",code:"code",div:"div",h1:"h1",h2:"h2",header:"header",li:"li",p:"p",pre:"pre",span:"span",strong:"strong",ul:"ul",...e(),...i.components};return s.jsxs(s.Fragment,{children:[s.jsx(l.header,{children:s.jsxs(l.h1,{id:"building-mcp-servers",children:["Building MCP Servers",s.jsx(l.a,{"aria-hidden":"true",tabIndex:"-1",href:"#building-mcp-servers",children:s.jsx(l.div,{"data-autolink-icon":!0})})]})}),`
 `,s.jsx(l.p,{children:"Learn how to build powerful MCP servers with MCP-Go. This section covers everything from basic server setup to advanced features like typed tools and session management."}),`
 `,s.jsxs(l.h2,{id:"overview",children:["Overview",s.jsx(l.a,{"aria-hidden":"true",tabIndex:"-1",href:"#overview",children:s.jsx(l.div,{"data-autolink-icon":!0})})]}),`
 `,s.jsx(l.p,{children:"MCP servers expose tools, resources, and prompts to LLM clients. MCP-Go makes it easy to build robust servers with minimal boilerplate while providing full control over advanced features."}),`
@@ -8,7 +8,7 @@ import{u as e,j as s}from"./index-BlQM8D4h.js";const a={title:"Building MCP Serv
 `,s.jsxs(l.li,{children:[s.jsx(l.strong,{children:s.jsx(l.a,{href:"/servers/resources",children:"Resources"})})," - Exposing data to LLMs"]}),`
 `,s.jsxs(l.li,{children:[s.jsx(l.strong,{children:s.jsx(l.a,{href:"/servers/tools",children:"Tools"})})," - Providing functionality to LLMs"]}),`
 `,s.jsxs(l.li,{children:[s.jsx(l.strong,{children:s.jsx(l.a,{href:"/servers/prompts",children:"Prompts"})})," - Creating reusable interaction templates"]}),`
-`,s.jsxs(l.li,{children:[s.jsx(l.strong,{children:s.jsx(l.a,{href:"/servers/advanced",children:"Advanced Features"})})," - Typed tools, middleware, hooks, and more"]}),`
+`,s.jsxs(l.li,{children:[s.jsx(l.strong,{children:s.jsx(l.a,{href:"/servers/advanced",children:"Advanced Features"})})," - Typed tools, middleware, hooks, sampling, and more"]}),`
 `]}),`
 `,s.jsxs(l.h2,{id:"quick-example",children:["Quick Example",s.jsx(l.a,{"aria-hidden":"true",tabIndex:"-1",href:"#quick-example",children:s.jsx(l.div,{"data-autolink-icon":!0})})]}),`
 `,s.jsx(l.p,{children:"Here's a complete MCP server that demonstrates the key concepts:"}),`

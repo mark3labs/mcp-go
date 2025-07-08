@@ -7,10 +7,12 @@
 - [Core Concepts](/core-concepts): Understanding the fundamental concepts of MCP and how MCP-Go implements them is essential for building effective MCP servers and clients.
 - [Getting Started](/getting-started): The Model Context Protocol (MCP) is an open standard that enables secure, controlled connections between AI applications and external data sources and tools. It provides a standardized way for Large Language Models (LLMs) to access and interact with external systems while maintaining security and user control.
 - [Quick Start](/quick-start): Get up and running with MCP-Go in minutes. This guide walks you through creating your first MCP server and client.
+- [Sampling](/clients/advanced-sampling): Learn how to implement MCP clients that can handle sampling requests from servers, enabling bidirectional communication where clients provide LLM capabilities to servers.
 - [Client Basics](/clients/basics): Learn the fundamentals of creating and managing MCP clients, including lifecycle management, initialization, and error handling.
 - [Building MCP Clients](/clients): Learn how to build MCP clients that connect to and interact with MCP servers. This section covers client creation, operations, and transport-specific implementations.
 - [Client Operations](/clients/operations): Learn how to use MCP clients to interact with servers through tools, resources, prompts, and subscriptions.
 - [Client Transports](/clients/transports): Learn about transport-specific client implementations and how to choose the right transport for your use case.
+- [Sampling](/servers/advanced-sampling): Learn how to implement MCP servers that can request LLM completions from clients using the sampling capability.
 - [Advanced Server Features](/servers/advanced): Explore powerful features that make MCP-Go servers production-ready: typed tools, session management, middleware, hooks, and more.
 - [Server Basics](/servers/basics): Learn how to create, configure, and start MCP servers with different transport options.
 - [Building MCP Servers](/servers): Learn how to build powerful MCP servers with MCP-Go. This section covers everything from basic server setup to advanced features like typed tools and session management.
