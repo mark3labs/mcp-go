@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -2021,4 +2022,398 @@ func TestMCPServer_ProtocolNegotiation(t *testing.T) {
 			)
 		})
 	}
+}
+
+// TestMCPServer_StructuredOutputValidation_Success tests that tools with valid structured output
+// pass validation successfully. The tool returns structured content that matches the defined
+// output schema, and the server should accept it without errors.
+func TestMCPServer_StructuredOutputValidation_Success(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0")
+
+	// Define output schema for weather data
+	outputSchema := json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"temperature": {"type": "number", "description": "Temperature in celsius"},
+			"conditions": {"type": "string", "description": "Weather conditions description"},
+			"humidity": {"type": "number", "description": "Humidity percentage"}
+		},
+		"required": ["temperature", "conditions", "humidity"]
+	}`)
+
+	// Create a weather tool with output schema that requires specific structure
+	tool := mcp.NewTool("get_weather_data",
+		mcp.WithDescription("Get current weather data for a location"),
+		mcp.WithString("location", mcp.Description("City name or zip code"), mcp.Required()),
+		mcp.WithOutputSchema(outputSchema),
+	)
+
+	// Add tool handler that returns valid structured content
+	server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: `{"temperature": 22.5, "conditions": "Partly cloudy", "humidity": 65}`,
+				},
+			},
+			StructuredContent: map[string]any{
+				"temperature": 22.5,
+				"conditions":  "Partly cloudy",
+				"humidity":    65,
+			},
+		}, nil
+	})
+
+	message := `{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "tools/call",
+		"params": {
+			"name": "get_weather_data",
+			"arguments": {
+				"location": "Tokyo"
+			}
+		}
+	}`
+
+	response := server.HandleMessage(context.Background(), []byte(message))
+	assert.NotNil(t, response)
+
+	// Verify we get a successful JSON-RPC response
+	resp, ok := response.(mcp.JSONRPCResponse)
+	assert.True(t, ok, "Expected JSONRPCResponse, got %T", response)
+
+	// Verify the result is a CallToolResult with no error
+	result, ok := resp.Result.(mcp.CallToolResult)
+	assert.True(t, ok, "Expected CallToolResult, got %T", resp.Result)
+
+	// Verify that IsError is false (validation passed)
+	assert.False(t, result.IsError, "Expected IsError to be false for valid structured output")
+
+	// Verify structured content is present and correct
+	assert.NotNil(t, result.StructuredContent, "StructuredContent should be present")
+	structuredMap, ok := result.StructuredContent.(map[string]any)
+	assert.True(t, ok, "StructuredContent should be a map")
+	assert.Equal(t, 22.5, structuredMap["temperature"])
+	assert.Equal(t, "Partly cloudy", structuredMap["conditions"])
+	assert.Equal(t, 65, structuredMap["humidity"])
+}
+
+// TestMCPServer_StructuredOutputValidation_Failure tests that tools with invalid structured output
+// fail validation properly. The tool returns structured content that doesn't match the defined
+// output schema, and the server should return an error result with IsError set to true.
+func TestMCPServer_StructuredOutputValidation_Failure(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0")
+
+	// Define output schema for weather data
+	outputSchema := json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"temperature": {"type": "number", "description": "Temperature in celsius"},
+			"conditions": {"type": "string", "description": "Weather conditions description"},
+			"humidity": {"type": "number", "description": "Humidity percentage"}
+		},
+		"required": ["temperature", "conditions", "humidity"]
+	}`)
+
+	// Create a weather tool with output schema that requires specific structure
+	tool := mcp.NewTool("get_weather_data",
+		mcp.WithDescription("Get current weather data for a location"),
+		mcp.WithString("location", mcp.Description("City name or zip code"), mcp.Required()),
+		mcp.WithOutputSchema(outputSchema),
+	)
+
+	// Add tool handler that returns invalid structured content
+	server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		// Return structured content that doesn't match the schema
+		// Schema expects: {temperature: number, conditions: string, humidity: number}
+		// But we return: {location: string, status: string} - missing required fields
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "Weather data retrieved",
+				},
+			},
+			StructuredContent: map[string]any{
+				"location": "Tokyo",
+				"status":   "success", // This doesn't match the required output schema
+			},
+		}, nil
+	})
+
+	message := `{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "tools/call",
+		"params": {
+			"name": "get_weather_data",
+			"arguments": {
+				"location": "Tokyo"
+			}
+		}
+	}`
+
+	response := server.HandleMessage(context.Background(), []byte(message))
+	assert.NotNil(t, response)
+
+	// Verify we get a successful JSON-RPC response (not a protocol error)
+	resp, ok := response.(mcp.JSONRPCResponse)
+	assert.True(t, ok, "Expected JSONRPCResponse, got %T", response)
+
+	// Verify the result is a CallToolResult with error flag set
+	result, ok := resp.Result.(mcp.CallToolResult)
+	assert.True(t, ok, "Expected CallToolResult, got %T", resp.Result)
+
+	// Verify that IsError is true due to validation failure
+	assert.True(t, result.IsError, "Expected IsError to be true due to validation failure")
+
+	// Verify error message contains validation failure information
+	assert.Len(t, result.Content, 1, "Expected exactly one content item with error message")
+	textContent, ok := result.Content[0].(mcp.TextContent)
+	assert.True(t, ok, "Expected TextContent, got %T", result.Content[0])
+	assert.Contains(t, textContent.Text, "tool output schema validation failed",
+		"Error message should indicate schema validation failure")
+}
+
+// TestMCPServer_WithOutputType_Validation_Success tests that tools defined with WithOutputType
+// and returning valid structured output pass validation.
+func TestMCPServer_WithOutputType_Validation_Success(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0")
+
+	// NOTE: The `jsonschema` tag parser used by invopop/jsonschema has a limitation:
+	// it uses commas as delimiters and does not support escaping them.
+	// Therefore, descriptions should not contain commas.
+	type WeatherData struct {
+		Temperature float64 `json:"temperature" jsonschema:"description=The current temperature in Celsius."`
+		Conditions  string  `json:"conditions"  jsonschema:"description=A brief description of weather conditions (e.g. Cloudy or Sunny)."`
+		Humidity    int     `json:"humidity"    jsonschema:"description=The relative humidity percentage."`
+	}
+
+	tool := mcp.NewTool("get_weather_data",
+		mcp.WithOutputType[WeatherData]())
+
+	// Print the generated schema for verification.
+	var prettyJSON bytes.Buffer
+	err := json.Indent(&prettyJSON, tool.OutputSchema, "", "  ")
+	require.NoError(t, err)
+	t.Logf("Generated Output Schema:\n%s", prettyJSON.String())
+
+	// Basic sanity check: generated schema should not contain $schema keyword (it is already cleaned).
+	assert.NotContains(t, string(tool.OutputSchema), "$schema", "schema should not contain $schema keyword")
+
+	// Verify that the generated schema contains the descriptions.
+	var schema map[string]any
+	err = json.Unmarshal(tool.OutputSchema, &schema)
+	require.NoError(t, err)
+
+	properties := schema["properties"].(map[string]any)
+	tempProp := properties["temperature"].(map[string]any)
+	assert.Equal(t, "The current temperature in Celsius.", tempProp["description"])
+	condProp := properties["conditions"].(map[string]any)
+	assert.Equal(t, "A brief description of weather conditions (e.g. Cloudy or Sunny).", condProp["description"])
+	humProp := properties["humidity"].(map[string]any)
+	assert.Equal(t, "The relative humidity percentage.", humProp["description"])
+
+	// Add tool handler that returns valid structured content using the new helper.
+	server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		weatherData := WeatherData{
+			Temperature: 22.5,
+			Conditions:  "Partly cloudy",
+			Humidity:    65,
+		}
+		return mcp.NewToolResultStructured(weatherData), nil
+	})
+
+	message := `{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "tools/call",
+		"params": {
+			"name": "get_weather_data",
+			"arguments": {
+				"location": "Tokyo"
+			}
+		}
+	}`
+
+	response := server.HandleMessage(context.Background(), []byte(message))
+	require.NotNil(t, response)
+
+	resp, ok := response.(mcp.JSONRPCResponse)
+	require.True(t, ok, "Expected JSONRPCResponse, got %T", response)
+
+	result, ok := resp.Result.(mcp.CallToolResult)
+	require.True(t, ok, "Expected CallToolResult, got %T", resp.Result)
+
+	// Verify that IsError is false (validation passed).
+	assert.False(t, result.IsError, "Expected IsError to be false for valid structured output")
+
+	// Verify structured content is present and correct.
+	require.NotNil(t, result.StructuredContent, "StructuredContent should be present")
+	weatherData, ok := result.StructuredContent.(WeatherData)
+	require.True(t, ok, "StructuredContent should be of type WeatherData, but was %T", result.StructuredContent)
+
+	assert.Equal(t, 22.5, weatherData.Temperature)
+	assert.Equal(t, "Partly cloudy", weatherData.Conditions)
+	assert.Equal(t, 65, weatherData.Humidity)
+}
+
+// TestMCPServer_WithOutputType_Validation_Failure tests that tools defined with WithOutputType
+// fail validation when returning invalid structured output.
+func TestMCPServer_WithOutputType_Validation_Failure(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0")
+
+	// This struct is the "correct" schema.
+	type WeatherData struct {
+		Temperature float64 `json:"temperature"`
+		Conditions  string  `json:"conditions"`
+	}
+
+	// This struct is what the handler will return. It's missing 'Conditions'.
+	type InvalidWeatherData struct {
+		Temperature float64 `json:"temperature"`
+	}
+
+	// Create a tool with an output type that requires 'temperature' and 'conditions'.
+	tool := mcp.NewTool("get_weather_data",
+		mcp.WithOutputType[WeatherData]())
+
+	// Add a handler that returns invalid content (missing 'conditions').
+	server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		invalidData := InvalidWeatherData{
+			Temperature: 25.0,
+		}
+		return mcp.NewToolResultStructured(invalidData), nil
+	})
+
+	message := `{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "tools/call",
+		"params": {
+			"name": "get_weather_data",
+			"arguments": {}
+		}
+	}`
+
+	response := server.HandleMessage(context.Background(), []byte(message))
+	require.NotNil(t, response)
+
+	resp, ok := response.(mcp.JSONRPCResponse)
+	require.True(t, ok, "Expected JSONRPCResponse, got %T", response)
+
+	result, ok := resp.Result.(mcp.CallToolResult)
+	require.True(t, ok, "Expected CallToolResult, got %T", resp.Result)
+
+	// Verify that IsError is true and the error message indicates a validation failure.
+	assert.True(t, result.IsError, "Expected IsError to be true for invalid structured output")
+	textContent, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+	assert.Contains(t, textContent.Text, "tool output schema validation failed")
+	// The specific error message from the validator can be complex,
+	// so we'll just check for the key part.
+	assert.Contains(t, textContent.Text, "missing properties: \"conditions\"")
+}
+
+// TestMCPServer_WithOutputType_ErrorResponseSkipsValidation tests that if a tool handler
+// returns a result with IsError=true, schema validation is skipped.
+func TestMCPServer_WithOutputType_ErrorResponseSkipsValidation(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0")
+
+	type WeatherData struct {
+		Temperature float64 `json:"temperature"`
+		Conditions  string  `json:"conditions"`
+	}
+
+	tool := mcp.NewTool("get_weather_data",
+		mcp.WithOutputType[WeatherData]())
+
+	// This data is invalid, but it shouldn't be validated because IsError is true.
+	invalidData := map[string]any{
+		"temperature": "this-is-not-a-float",
+	}
+
+	// Add a handler that returns an error response with invalid structured content.
+	server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultErrorStructured(invalidData), nil
+	})
+
+	message := `{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "tools/call",
+		"params": {
+			"name": "get_weather_data",
+			"arguments": {}
+		}
+	}`
+
+	response := server.HandleMessage(context.Background(), []byte(message))
+	require.NotNil(t, response)
+
+	resp, ok := response.(mcp.JSONRPCResponse)
+	require.True(t, ok, "Expected JSONRPCResponse, got %T", response)
+
+	result, ok := resp.Result.(mcp.CallToolResult)
+	require.True(t, ok, "Expected CallToolResult, got %T", resp.Result)
+
+	// IsError should be true because the handler returned an error response.
+	// The content should not have been replaced by a validation error message.
+	assert.True(t, result.IsError, "Expected IsError to be true")
+	assert.Equal(t, invalidData, result.StructuredContent)
+
+	// Check that the content is the marshaled version of invalidData, not a validation error.
+	textContent, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+	assert.NotContains(t, textContent.Text, "tool output schema validation failed")
+
+	expectedJSON, _ := json.Marshal(invalidData)
+	assert.Equal(t, string(expectedJSON), textContent.Text)
+}
+
+// TestMCPServer_ToolDefinition_IncludesOutputSchema verifies that when a tool is defined
+// using WithOutputType, its OutputSchema is correctly generated with descriptions
+// and stored within the server's tool registry.
+func TestMCPServer_ToolDefinition_IncludesOutputSchema(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0")
+
+	// NOTE: The `jsonschema` tag parser used by invopop/jsonschema has a limitation:
+	// it uses commas as delimiters and does not support escaping them.
+	// Therefore, descriptions should not contain commas.
+	type WeatherData struct {
+		Temperature float64 `json:"temperature" jsonschema:"description=The current temperature in Celsius."`
+		Conditions  string  `json:"conditions"  jsonschema:"description=A brief description of weather conditions (e.g. Cloudy or Sunny)."`
+	}
+
+	tool := mcp.NewTool("get_weather_data",
+		mcp.WithOutputType[WeatherData]())
+
+	// Add the tool to the server. The handler is nil because we are not testing execution.
+	server.AddTool(tool, nil)
+
+	// Retrieve the tool from the server's internal registry to inspect its state.
+	registeredTool, ok := server.tools[tool.Name]
+	require.True(t, ok, "Tool should be registered on the server")
+	require.NotNil(t, registeredTool.Tool.OutputSchema, "OutputSchema should not be nil")
+
+	// Print the schema for verification during test runs.
+	var prettySchema bytes.Buffer
+	err := json.Indent(&prettySchema, registeredTool.Tool.OutputSchema, "", "  ")
+	require.NoError(t, err)
+	t.Logf("Generated Output Schema:\n%s", prettySchema.String())
+
+	// Unmarshal the schema to verify its contents.
+	var schemaData map[string]interface{}
+	err = json.Unmarshal(registeredTool.Tool.OutputSchema, &schemaData)
+	require.NoError(t, err, "Failed to unmarshal output schema")
+
+	// Verify that the descriptions from the struct tags are present.
+	properties := schemaData["properties"].(map[string]interface{})
+	tempProp := properties["temperature"].(map[string]interface{})
+	condProp := properties["conditions"].(map[string]interface{})
+
+	assert.Equal(t, "The current temperature in Celsius.", tempProp["description"])
+	assert.Equal(t, "A brief description of weather conditions (e.g. Cloudy or Sunny).", condProp["description"])
 }
