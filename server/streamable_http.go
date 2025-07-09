@@ -213,7 +213,7 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 
 	// Check content type
 	contentType := r.Header.Get("Content-Type")
-	if contentType != "application/json" {
+	if !strings.Contains(contentType, "application/json") {
 		http.Error(w, "Invalid content type: must be 'application/json'", http.StatusBadRequest)
 		return
 	}
