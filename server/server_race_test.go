@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"sync"
 	"testing"
 	"time"
@@ -56,7 +57,7 @@ func TestRaceConditions(t *testing.T) {
 	})
 
 	runConcurrentOperation(&wg, testDuration, "add-tools", func() {
-		name := fmt.Sprintf("tool-%d", time.Now().UnixNano())
+		name := fmt.Sprintf("tool-%d-%d", time.Now().UnixNano(), rand.Int())
 		srv.AddTool(mcp.Tool{
 			Name:        name,
 			Description: "Test tool",
