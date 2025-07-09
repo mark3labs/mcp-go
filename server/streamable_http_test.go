@@ -775,6 +775,59 @@ func TestStreamableHTTPServer_WithOptions(t *testing.T) {
 	})
 }
 
+func TestStreamableHTTP_HeaderPassthrough(t *testing.T) {
+    mcpServer := NewMCPServer("test-mcp-server", "1.0")
+    
+    var receivedHeaders struct {
+        contentType string
+        customHeader string
+    }
+    mcpServer.AddTool(
+        mcp.NewTool("check-headers"),
+        func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            receivedHeaders.contentType = request.Header.Get("Content-Type")
+            receivedHeaders.customHeader = request.Header.Get("X-Custom-Header")
+            return mcp.NewToolResultText("ok"), nil
+        },
+    )
+
+    server := NewTestStreamableHTTPServer(mcpServer)
+    defer server.Close()
+
+    // Initialize to get session
+    resp, _ := postJSON(server.URL, initRequest)
+    sessionID := resp.Header.Get(headerKeySessionID)
+    resp.Body.Close()
+
+    // Test header passthrough
+    toolRequest := map[string]any{
+        "jsonrpc": "2.0",
+        "id":      2,
+        "method":  "tools/call",
+        "params": map[string]any{
+            "name": "check-headers",
+        },
+    }
+    toolBody, _ := json.Marshal(toolRequest)
+    req, _ := http.NewRequest("POST", server.URL, bytes.NewReader(toolBody))
+
+    const expectedContentType = "application/json"
+    const expectedCustomHeader = "test-value"
+    req.Header.Set("Content-Type", expectedContentType)
+    req.Header.Set("X-Custom-Header", expectedCustomHeader)
+    req.Header.Set(headerKeySessionID, sessionID)
+
+    resp, _ = server.Client().Do(req)
+    resp.Body.Close()
+
+    if receivedHeaders.contentType != expectedContentType {
+        t.Errorf("Expected Content-Type header '%s', got '%s'", expectedContentType, receivedHeaders.contentType)
+    }
+    if receivedHeaders.customHeader != expectedCustomHeader {
+        t.Errorf("Expected X-Custom-Header '%s', got '%s'", expectedCustomHeader, receivedHeaders.customHeader)
+    }
+}
+
 func postJSON(url string, bodyObject any) (*http.Response, error) {
 	jsonBody, _ := json.Marshal(bodyObject)
 	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(jsonBody))

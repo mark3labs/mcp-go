@@ -1,11 +1,14 @@
 package mcp
 
+import "net/http"
+
 /* Prompts */
 
 // ListPromptsRequest is sent from the client to request a list of prompts and
 // prompt templates the server has.
 type ListPromptsRequest struct {
 	PaginatedRequest
+	Header http.Header `json:"-"`
 }
 
 // ListPromptsResult is the server's response to a prompts/list request from
@@ -20,6 +23,7 @@ type ListPromptsResult struct {
 type GetPromptRequest struct {
 	Request
 	Params GetPromptParams `json:"params"`
+	Header http.Header     `json:"-"`
 }
 
 type GetPromptParams struct {

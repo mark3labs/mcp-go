@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"reflect"
 	"strconv"
 )
@@ -14,6 +15,7 @@ var errToolSchemaConflict = errors.New("provide either InputSchema or RawInputSc
 // server has.
 type ListToolsRequest struct {
 	PaginatedRequest
+	Header http.Header `json:"-"`
 }
 
 // ListToolsResult is the server's response to a tools/list request from the
@@ -45,6 +47,7 @@ type CallToolResult struct {
 // CallToolRequest is used by the client to invoke a tool provided by the server.
 type CallToolRequest struct {
 	Request
+	Header http.Header    `json:"-"` // HTTP headers from the original request
 	Params CallToolParams `json:"params"`
 }
 

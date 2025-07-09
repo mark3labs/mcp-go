@@ -310,6 +310,8 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		}
 	}()
 
+	ctx = context.WithValue(ctx, requestHeader, r.Header)
+
 	// Process message through MCPServer
 	response := s.server.HandleMessage(ctx, rawData)
 	if response == nil {

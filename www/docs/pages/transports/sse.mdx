@@ -80,6 +80,19 @@ func main() {
 }
 
 func handleStreamData(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Access request headers
+    headers := req.Header
+
+    // Use headers for authentication, tracing, etc.
+    authToken := headers.Get("Authorization")
+    if authToken == "" {
+        return nil, fmt.Errorf("authentication required")
+    }
+    
+    // Access other headers
+    requestID := headers.Get("X-Request-ID")
+    userAgent := headers.Get("User-Agent")
+    
     source := req.GetString("source", "")
     count := req.GetInt("count", 10)
 
@@ -318,6 +331,47 @@ mcpServer.SendNotificationToClient(ctx, "progress_update", progressData)
 // Send notification to all connected clients (if supported)
 // Note: Check the server implementation for broadcast capabilities
 ```
+
+### Request Headers
+
+Like the StreamableHTTP transport, the SSE transport passes HTTP request headers to MCP handlers. This allows you to access the original HTTP headers that were sent with the SSE connection in your tool and resource handlers.
+
+#### Accessing Headers in Handlers
+
+Headers from the SSE connection are available in all MCP request objects:
+
+```go
+func handleStreamData(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Access request headers
+    headers := req.Header
+
+    // Use headers for authentication, tracing, etc.
+    authToken := headers.Get("Authorization")
+    if authToken == "" {
+        return nil, fmt.Errorf("authentication required")
+    }
+    
+    // Access other headers
+    requestID := headers.Get("X-Request-ID")
+    userAgent := headers.Get("User-Agent")
+    
+    // Rest of your handler code...
+    mcpServer := server.ServerFromContext(ctx)
+    // ...
+}
+```
+
+This works for all MCP request types including:
+- `CallToolRequest`
+- `ReadResourceRequest`
+- `ListToolsRequest`
+- `ListResourcesRequest`
+- `InitializeRequest`
+- And other MCP request types
+
+The headers are automatically populated by the SSE transport layer from the initial SSE connection and are available in your handlers without any additional configuration.
+
+Note: Since SSE maintains a persistent connection, the headers are captured when the connection is established and remain the same for all requests during that connection's lifetime.
 
 ## Next Steps
 
