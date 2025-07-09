@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -213,7 +214,8 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 
 	// Check content type
 	contentType := r.Header.Get("Content-Type")
-	if contentType != "application/json" {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil || mediaType != "application/json" {
 		http.Error(w, "Invalid content type: must be 'application/json'", http.StatusBadRequest)
 		return
 	}
