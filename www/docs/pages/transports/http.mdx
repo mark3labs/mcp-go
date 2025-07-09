@@ -652,7 +652,42 @@ type Claims struct {
 }
 ```
 
+### Request Headers
 
+The StreamableHTTP transport now passes HTTP request headers to MCP handlers. This allows you to access the original HTTP headers that were sent with the request in your tool and resource handlers.
+
+#### Accessing Headers in Handlers
+
+Headers are available in all MCP request objects:
+
+```go
+func handleGetUser(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Access request headers
+    headers := req.Header
+
+    // Use headers for authentication, tracing, etc.
+    authToken := headers.Get("Authorization")
+    if authToken == "" {
+        return nil, fmt.Errorf("authentication required")
+    }
+    
+    // Access other headers
+    requestID := headers.Get("X-Request-ID")
+    userAgent := headers.Get("User-Agent")
+    
+    // Rest of your handler code...
+}
+```
+
+This works for all MCP request types including:
+- `CallToolRequest`
+- `ReadResourceRequest`
+- `ListToolsRequest`
+- `ListResourcesRequest`
+- `InitializeRequest`
+- And other MCP request types
+
+The headers are automatically populated by the transport layer and are available in your handlers without any additional configuration.
 
 ## Next Steps
 
