@@ -47,9 +47,7 @@ type CallToolResult struct {
 // CallToolRequest is used by the client to invoke a tool provided by the server.
 type CallToolRequest struct {
 	Request
-	// Header must be read from request
-	// Prevent Header being passed as request payload
-	Header http.Header    `json:"-"`
+	Header http.Header    `json:"-"` // HTTP headers from the original request
 	Params CallToolParams `json:"params"`
 }
 
