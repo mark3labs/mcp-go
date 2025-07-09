@@ -136,10 +136,7 @@ func (s *Server) Start(ctx context.Context) error {
 		mcpServer.AddTools(s.tools...)
 		mcpServer.AddPrompts(s.prompts...)
 		mcpServer.AddResources(s.resources...)
-
-		for _, template := range s.resourceTemplates {
-			mcpServer.AddResourceTemplate(template.Template, template.Handler)
-		}
+		mcpServer.AddResourceTemplates(s.resourceTemplates...)
 
 		logger := log.New(&s.logBuffer, "", 0)
 
