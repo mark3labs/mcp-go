@@ -514,6 +514,35 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 	return nil, fmt.Errorf("unsupported content type: %s", contentType)
 }
 
+func ParseCompletionReference(req CompleteRequest) (*PromptReference, *ResourceReference, error) {
+	ref, ok := req.Params.Ref.(map[string]interface{})
+	if !ok {
+		return nil, nil, fmt.Errorf("params.ref must be a mapping")
+	}
+
+	refType, ok := ref["type"].(string)
+	if !ok {
+		return nil, nil, fmt.Errorf("params.ref.type must be a string")
+	}
+
+	switch RefType(refType) {
+	case RefTypeResource:
+		if uri, ok := ref["uri"].(string); !ok {
+			return nil, nil, fmt.Errorf("params.ref.uri must be a string")
+		} else {
+			return nil, &ResourceReference{Type: RefType(refType), URI: uri}, nil
+		}
+	case RefTypePrompt:
+		if name, ok := ref["name"].(string); !ok {
+			return nil, nil, fmt.Errorf("params.ref.name must be a string")
+		} else {
+			return &PromptReference{Type: RefType(refType), Name: name}, nil, nil
+		}
+	default:
+		return nil, nil, fmt.Errorf("unexpected value for params.ref.type: %s", refType)
+	}
+}
+
 func ParseGetPromptResult(rawMessage *json.RawMessage) (*GetPromptResult, error) {
 	if rawMessage == nil {
 		return nil, fmt.Errorf("response is nil")
