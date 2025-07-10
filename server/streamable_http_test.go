@@ -725,6 +725,74 @@ func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 	})
 }
 
+func TestStreamableHTTP_SessionWithLogging(t *testing.T) {
+	t.Run("SessionWithLogging implementation", func(t *testing.T) {
+		hooks := &Hooks{}
+		var logSession *streamableHttpSession
+		var mu sync.Mutex
+
+		hooks.AddAfterSetLevel(func(ctx context.Context, id any, message *mcp.SetLevelRequest, result *mcp.EmptyResult) {
+			if s, ok := ClientSessionFromContext(ctx).(*streamableHttpSession); ok {
+				mu.Lock()
+				logSession = s
+				mu.Unlock()
+			}
+		})
+
+		mcpServer := NewMCPServer("test", "1.0.0", WithHooks(hooks), WithLogging())
+		testServer := NewTestStreamableHTTPServer(mcpServer)
+		defer testServer.Close()
+
+		// obtain a valid session ID first
+		initResp, err := postJSON(testServer.URL, initRequest)
+		if err != nil {
+			t.Fatalf("Failed to send init request: %v", err)
+		}
+		defer initResp.Body.Close()
+		sessionID := initResp.Header.Get(headerKeySessionID)
+		if sessionID == "" {
+			t.Fatal("Expected session id in header")
+		}
+
+		setLevelRequest := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "logging/setLevel",
+			"params": map[string]any{
+				"level": mcp.LoggingLevelCritical,
+			},
+		}
+
+		reqBody, _ := json.Marshal(setLevelRequest)
+		req, err := http.NewRequest(http.MethodPost, testServer.URL, bytes.NewBuffer(reqBody))
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(headerKeySessionID, sessionID)
+
+		resp, err := testServer.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to send message: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", resp.StatusCode)
+		}
+
+		mu.Lock()
+		if logSession == nil {
+			mu.Unlock()
+			t.Fatal("Session was not captured")
+		}
+		if logSession.GetLogLevel() != mcp.LoggingLevelCritical {
+			t.Errorf("Expected critical level, got %v", logSession.GetLogLevel())
+		}
+		mu.Unlock()
+	})
+}
+
 func TestStreamableHTTPServer_WithOptions(t *testing.T) {
 	t.Run("WithStreamableHTTPServer sets httpServer field", func(t *testing.T) {
 		mcpServer := NewMCPServer("test", "1.0.0")
