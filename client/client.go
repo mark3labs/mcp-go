@@ -39,7 +39,7 @@ func WithClientCapabilities(capabilities mcp.ClientCapabilities) ClientOption {
 func WithSamplingHandler(handler SamplingHandler) ClientOption {
 	return func(c *Client) {
 		c.samplingHandler = handler
-  }
+	}
 }
 
 // WithSession assumes a MCP Session has already been initialized
@@ -133,7 +133,7 @@ func (c *Client) sendRequest(
 
 	response, err := c.transport.SendRequest(ctx, request)
 	if err != nil {
-		return nil, fmt.Errorf("transport error: %w", err)
+		return nil, transport.NewError(err)
 	}
 
 	if response.Error != nil {
