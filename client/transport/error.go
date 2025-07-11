@@ -8,7 +8,7 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
-	return fmt.Sprintf("transport error %v", e.Err)
+	return fmt.Sprintf("transport error: %v", e.Err)
 }
 
 func (e *Error) Unwrap() error {
