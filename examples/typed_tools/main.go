@@ -30,6 +30,7 @@ func main() {
 
 	// Add tool with complex schema
 	tool := mcp.NewTool("greeting",
+		mcp.WithTitle("Personalized Greeting Generator"),
 		mcp.WithDescription("Generate a personalized greeting"),
 		mcp.WithString("name",
 			mcp.Required(),
