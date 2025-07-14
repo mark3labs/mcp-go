@@ -313,29 +313,30 @@ package main
 import (
     "context"
     "log"
+    "time"
+
 
     "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/mcp"
 )
 
 func main() {
     // Create STDIO client
     c, err := client.NewStdioClient(
-        "go", "run", "/path/to/server/main.go",
+        "go", nil /* inherit env */, "run", "/path/to/server/main.go",
     )
     if err != nil {
         log.Fatal(err)
     }
     defer c.Close()
 
-    ctx := context.Background()
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
 
     // Initialize connection
     _, err = c.Initialize(ctx, mcp.InitializeRequest{
         Params: mcp.InitializeRequestParams{
-            ProtocolVersion: "2024-11-05",
-            Capabilities: mcp.ClientCapabilities{
-                Tools: &mcp.ToolsCapability{},
-            },
+            ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
             ClientInfo: mcp.Implementation{
                 Name:    "test-client",
                 Version: "1.0.0",
@@ -373,6 +374,58 @@ func main() {
 
     log.Printf("Tool result: %+v", result)
 }
+```
+
+#### Customizing Subprocess Execution
+
+If you need more control over how a sub-process is spawned when creating a new STDIO client, you can use
+`NewStdioMCPClientWithOptions` instead of `NewStdioMCPClient`.
+
+By passing the `WithCommandFunc` option, you can supply a custom factory function to create the `exec.Cmd` that launches
+the server. This allows configuration of environment variables, working directories, and system-level process attributes.
+
+Referring to the previous example, we can replace the line that creates the client:
+
+```go
+c, err := client.NewStdioClient(
+    "go", nil, "run", "/path/to/server/main.go",
+)
+```
+
+With the options-aware version:
+
+```go
+c, err := client.NewStdioMCPClientWithOptions(
+	"go",
+	nil,
+	[]string {"run", "/path/to/server/main.go"},
+	transport.WithCommandFunc(func(ctx context.Context, command string, args []string, env []string) (*exec.Cmd, error) {
+        cmd := exec.CommandContext(ctx, command, args...)
+        cmd.Env = env // Explicit environment for the subprocess.
+        cmd.Dir = "/var/sandbox/mcp-server" // Working directory (not isolated unless paired with chroot or namespace).
+
+        // Apply low-level process isolation and privilege dropping.
+        cmd.SysProcAttr = &syscall.SysProcAttr{
+            // Drop to non-root user (e.g., user/group ID 1001)
+            Credential: &syscall.Credential{
+                Uid: 1001,
+                Gid: 1001,
+            },
+            // File system isolation: only works if running as root.
+            Chroot: "/var/sandbox/mcp-server",
+
+            // Linux namespace isolation (Linux only):
+            // Prevents access to other processes, mounts, IPC, networks, etc.
+            Cloneflags: syscall.CLONE_NEWIPC | // Isolate inter-process comms
+                syscall.CLONE_NEWNS  | // Isolate filesystem mounts
+                syscall.CLONE_NEWPID | // Isolate PID namespace (child sees itself as PID 1)
+                syscall.CLONE_NEWUTS | // Isolate hostname
+                syscall.CLONE_NEWNET,  // Isolate networking (optional)
+        }
+
+		return cmd, nil
+	}),
+)
 ```
 
 ## Debugging

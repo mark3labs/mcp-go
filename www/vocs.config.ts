@@ -100,6 +100,20 @@ export default defineConfig({
         },
       ],
     },
+    {
+      text: 'Advanced',
+      collapsed: true,
+      items: [
+        {
+          text: 'Server Sampling',
+          link: '/servers/advanced-sampling',
+        },
+        {
+          text: 'Client Sampling',
+          link: '/clients/advanced-sampling',
+        },
+      ],
+    },
   ],
   socials: [
     {

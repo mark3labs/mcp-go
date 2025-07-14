@@ -293,7 +293,7 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 						w.Header().Set("Content-Type", "text/event-stream")
 						w.Header().Set("Connection", "keep-alive")
 						w.Header().Set("Cache-Control", "no-cache")
-						w.WriteHeader(http.StatusAccepted)
+						w.WriteHeader(http.StatusOK)
 						upgradedHeader = true
 					}
 					err := writeSSEEvent(w, nt)
@@ -332,7 +332,7 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Connection", "keep-alive")
 			w.Header().Set("Cache-Control", "no-cache")
-			w.WriteHeader(http.StatusAccepted)
+			w.WriteHeader(http.StatusOK)
 			upgradedHeader = true
 		}
 		if err := writeSSEEvent(w, response); err != nil {

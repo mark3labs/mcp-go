@@ -3,13 +3,18 @@ package transport
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -148,7 +153,6 @@ func TestStdio(t *testing.T) {
 	})
 
 	t.Run("SendNotification & NotificationHandler", func(t *testing.T) {
-
 		var wg sync.WaitGroup
 		notificationChan := make(chan mcp.JSONRPCNotification, 1)
 
@@ -181,11 +185,33 @@ func TestStdio(t *testing.T) {
 			defer wg.Done()
 			select {
 			case nt := <-notificationChan:
-				// We received a notification
-				responseJson, _ := json.Marshal(nt.Params.AdditionalFields)
-				requestJson, _ := json.Marshal(notification)
-				if string(responseJson) != string(requestJson) {
-					t.Errorf("Notification handler did not send the expected notification: \ngot %s\nexpect %s", responseJson, requestJson)
+				// We received a notification from the mock server
+				// The mock server sends a notification with method "debug/test" and the original request as params
+				if nt.Method != "debug/test" {
+					t.Errorf("Expected notification method 'debug/test', got '%s'", nt.Method)
+					return
+				}
+
+				// The mock server sends the original notification request as params
+				// We need to extract the original method from the nested structure
+				paramsJson, _ := json.Marshal(nt.Params)
+				var originalRequest struct {
+					Method string         `json:"method"`
+					Params map[string]any `json:"params"`
+				}
+				if err := json.Unmarshal(paramsJson, &originalRequest); err != nil {
+					t.Errorf("Failed to unmarshal notification params: %v", err)
+					return
+				}
+
+				if originalRequest.Method != "debug/echo_notification" {
+					t.Errorf("Expected original method 'debug/echo_notification', got '%s'", originalRequest.Method)
+					return
+				}
+
+				// Check if the original params contain our test data
+				if testValue, ok := originalRequest.Params["test"]; !ok || testValue != "value" {
+					t.Errorf("Expected test param 'value', got %v", originalRequest.Params["test"])
 				}
 
 			case <-time.After(1 * time.Second):
@@ -380,7 +406,6 @@ func TestStdio(t *testing.T) {
 			t.Errorf("Expected array with 3 items, got %v", result.Params["array"])
 		}
 	})
-
 }
 
 func TestStdioErrors(t *testing.T) {
@@ -483,5 +508,137 @@ func TestStdioErrors(t *testing.T) {
 			t.Errorf("Expected error when sending request after close, got nil")
 		}
 	})
+}
 
+func TestStdio_WithCommandFunc(t *testing.T) {
+	called := false
+	tmpDir := t.TempDir()
+	chrootDir := filepath.Join(tmpDir, "sandbox-root")
+	err := os.MkdirAll(chrootDir, 0o755)
+	require.NoError(t, err, "failed to create chroot dir")
+
+	fakeCmdFunc := func(ctx context.Context, command string, args []string, env []string) (*exec.Cmd, error) {
+		called = true
+
+		// Override the args inside our command func.
+		cmd := exec.CommandContext(ctx, command, "bonjour")
+
+		// Simulate some security-related settings for test purposes.
+		cmd.Env = []string{"PATH=/usr/bin", "NODE_ENV=production"}
+		cmd.Dir = tmpDir
+
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Credential: &syscall.Credential{
+				Uid: 1001,
+				Gid: 1001,
+			},
+			Chroot: chrootDir,
+		}
+
+		return cmd, nil
+	}
+
+	stdio := NewStdioWithOptions(
+		"echo",
+		[]string{"foo=bar"},
+		[]string{"hello"},
+		WithCommandFunc(fakeCmdFunc),
+	)
+	require.NotNil(t, stdio)
+	require.NotNil(t, stdio.cmdFunc)
+
+	// Manually call the cmdFunc passing the same values as in spawnCommand.
+	cmd, err := stdio.cmdFunc(context.Background(), "echo", nil, []string{"hello"})
+	require.NoError(t, err)
+	require.True(t, called)
+	require.NotNil(t, cmd)
+	require.NotNil(t, cmd.SysProcAttr)
+	require.Equal(t, chrootDir, cmd.SysProcAttr.Chroot)
+	require.Equal(t, tmpDir, cmd.Dir)
+	require.Equal(t, uint32(1001), cmd.SysProcAttr.Credential.Uid)
+	require.Equal(t, "echo", filepath.Base(cmd.Path))
+	require.Len(t, cmd.Args, 2)
+	require.Contains(t, cmd.Args, "bonjour")
+	require.Len(t, cmd.Env, 2)
+	require.Contains(t, cmd.Env, "PATH=/usr/bin")
+	require.Contains(t, cmd.Env, "NODE_ENV=production")
+}
+
+func TestStdio_SpawnCommand(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("TEST_ENVIRON_VAR", "true")
+
+	// Explicitly not passing any environment, so we can see if it
+	// is picked up by spawn command merging the os.Environ.
+	stdio := NewStdio("echo", nil, "hello")
+	require.NotNil(t, stdio)
+
+	err := stdio.spawnCommand(ctx)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_ = stdio.cmd.Process.Kill()
+	})
+
+	require.Equal(t, "echo", filepath.Base(stdio.cmd.Path))
+	require.Contains(t, stdio.cmd.Args, "hello")
+	require.Contains(t, stdio.cmd.Env, "TEST_ENVIRON_VAR=true")
+}
+
+func TestStdio_SpawnCommand_UsesCommandFunc(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("TEST_ENVIRON_VAR", "true")
+
+	stdio := NewStdioWithOptions(
+		"echo",
+		nil,
+		[]string{"test"},
+		WithCommandFunc(func(ctx context.Context, cmd string, args []string, env []string) (*exec.Cmd, error) {
+			c := exec.CommandContext(ctx, cmd, "hola")
+			c.Env = env
+			return c, nil
+		}),
+	)
+	require.NotNil(t, stdio)
+	err := stdio.spawnCommand(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = stdio.cmd.Process.Kill()
+	})
+
+	require.Equal(t, "echo", filepath.Base(stdio.cmd.Path))
+	require.Contains(t, stdio.cmd.Args, "hola")
+	require.NotContains(t, stdio.cmd.Env, "TEST_ENVIRON_VAR=true")
+	require.NotNil(t, stdio.stdin)
+	require.NotNil(t, stdio.stdout)
+	require.NotNil(t, stdio.stderr)
+}
+
+func TestStdio_SpawnCommand_UsesCommandFunc_Error(t *testing.T) {
+	ctx := context.Background()
+
+	stdio := NewStdioWithOptions(
+		"echo",
+		nil,
+		[]string{"test"},
+		WithCommandFunc(func(ctx context.Context, cmd string, args []string, env []string) (*exec.Cmd, error) {
+			return nil, errors.New("test error")
+		}),
+	)
+	require.NotNil(t, stdio)
+	err := stdio.spawnCommand(ctx)
+	require.Error(t, err)
+	require.EqualError(t, err, "test error")
+}
+
+func TestStdio_NewStdioWithOptions_AppliesOptions(t *testing.T) {
+	configured := false
+
+	opt := func(s *Stdio) {
+		configured = true
+	}
+
+	stdio := NewStdioWithOptions("echo", nil, []string{"test"}, opt)
+	require.NotNil(t, stdio)
+	require.True(t, configured, "option was not applied")
 }

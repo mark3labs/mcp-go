@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -523,4 +524,260 @@ func TestStreamableHTTPErrors(t *testing.T) {
 		}
 	})
 
+}
+
+// ---- continuous listening tests ----
+
+// startMockStreamableWithGETSupport starts a test HTTP server that implements
+// a minimal Streamable HTTP server for testing purposes with support for GET requests
+// to test the continuous listening feature.
+func startMockStreamableWithGETSupport(getSupport bool) (string, func(), chan bool, int) {
+	var sessionID string
+	var mu sync.Mutex
+	disconnectCh := make(chan bool, 1)
+	notificationCount := 0
+	var notificationMu sync.Mutex
+
+	sendNotification := func() {
+		notificationMu.Lock()
+		notificationCount++
+		notificationMu.Unlock()
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Handle POST requests for initialization
+		if r.Method == http.MethodPost {
+			// Parse incoming JSON-RPC request
+			var request map[string]any
+			decoder := json.NewDecoder(r.Body)
+			if err := decoder.Decode(&request); err != nil {
+				http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+				return
+			}
+
+			method := request["method"]
+			if method == "initialize" {
+				// Generate a new session ID
+				mu.Lock()
+				sessionID = fmt.Sprintf("test-session-%d", time.Now().UnixNano())
+				mu.Unlock()
+				w.Header().Set("Mcp-Session-Id", sessionID)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusAccepted)
+				if err := json.NewEncoder(w).Encode(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      request["id"],
+					"result":  "initialized",
+				}); err != nil {
+					http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+					return
+				}
+			}
+			return
+		}
+
+		// Handle GET requests for continuous listening
+		if r.Method == http.MethodGet {
+			if !getSupport {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
+			// Check session ID
+			if recvSessionID := r.Header.Get("Mcp-Session-Id"); recvSessionID != sessionID {
+				http.Error(w, "Invalid session ID", http.StatusNotFound)
+				return
+			}
+
+			// Setup SSE connection
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+				return
+			}
+
+			// Send a notification
+			notification := map[string]any{
+				"jsonrpc": "2.0",
+				"method":  "test/notification",
+				"params":  map[string]any{"message": "Hello from server"},
+			}
+			notificationData, _ := json.Marshal(notification)
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", notificationData)
+			flusher.Flush()
+			sendNotification()
+
+			// Keep the connection open or disconnect as requested
+			select {
+			case <-disconnectCh:
+				// Force disconnect
+				return
+			case <-r.Context().Done():
+				// Client disconnected
+				return
+			case <-time.After(50 * time.Millisecond):
+				// Send another notification
+				notification = map[string]any{
+					"jsonrpc": "2.0",
+					"method":  "test/notification",
+					"params":  map[string]any{"message": "Second notification"},
+				}
+				notificationData, _ = json.Marshal(notification)
+				fmt.Fprintf(w, "event: message\ndata: %s\n\n", notificationData)
+				flusher.Flush()
+				sendNotification()
+				return
+			}
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+	})
+
+	// Start test server
+	testServer := httptest.NewServer(handler)
+
+	notificationMu.Lock()
+	defer notificationMu.Unlock()
+
+	return testServer.URL, testServer.Close, disconnectCh, notificationCount
+}
+
+func TestContinuousListening(t *testing.T) {
+	retryInterval = 10 * time.Millisecond
+	// Start mock server with GET support
+	url, closeServer, disconnectCh, _ := startMockStreamableWithGETSupport(true)
+
+	// Create transport with continuous listening enabled
+	trans, err := NewStreamableHTTP(url, WithContinuousListening())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Ensure transport is closed before server to avoid connection refused errors
+	defer func() {
+		trans.Close()
+		closeServer()
+	}()
+
+	// Setup notification handler
+	notificationReceived := make(chan struct{}, 10)
+	trans.SetNotificationHandler(func(notification mcp.JSONRPCNotification) {
+		notificationReceived <- struct{}{}
+	})
+
+	// Start the transport - this will launch listenForever in a goroutine
+	if err := trans.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initialize the transport first
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	initRequest := JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(int64(0)),
+		Method:  "initialize",
+	}
+
+	_, err = trans.SendRequest(ctx, initRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for notifications to be received
+	notificationCount := 0
+	for notificationCount < 2 {
+		select {
+		case <-notificationReceived:
+			notificationCount++
+		case <-time.After(3 * time.Second):
+			t.Fatalf("Timed out waiting for notifications, received %d", notificationCount)
+			return
+		}
+	}
+
+	// Test server disconnect and reconnect
+	disconnectCh <- true
+	time.Sleep(50 * time.Millisecond) // Allow time for reconnection
+
+	// Verify reconnect occurred by receiving more notifications
+	reconnectNotificationCount := 0
+	for reconnectNotificationCount < 2 {
+		select {
+		case <-notificationReceived:
+			reconnectNotificationCount++
+		case <-time.After(3 * time.Second):
+			t.Fatalf("Timed out waiting for notifications after reconnect")
+			return
+		}
+	}
+}
+
+func TestContinuousListeningMethodNotAllowed(t *testing.T) {
+
+	// Start a server that doesn't support GET
+	url, closeServer, _, _ := startMockStreamableWithGETSupport(false)
+
+	// Setup logger to capture log messages
+	logChan := make(chan string, 10)
+	testLogger := &testLogger{logChan: logChan}
+
+	// Create transport with continuous listening enabled and custom logger
+	trans, err := NewStreamableHTTP(url, WithContinuousListening(), WithLogger(testLogger))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Ensure transport is closed before server to avoid connection refused errors
+	defer func() {
+		trans.Close()
+		closeServer()
+	}()
+
+	// Initialize the transport first
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Start the transport
+	if err := trans.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	initRequest := JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(int64(0)),
+		Method:  "initialize",
+	}
+
+	_, err = trans.SendRequest(ctx, initRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for the error log message that server doesn't support listening
+	select {
+	case logMsg := <-logChan:
+		if !strings.Contains(logMsg, "server does not support listening") {
+			t.Errorf("Expected error log about server not supporting listening, got: %s", logMsg)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Timeout waiting for log message")
+	}
+}
+
+// testLogger is a simple logger for testing
+type testLogger struct {
+	logChan chan string
+}
+
+func (l *testLogger) Infof(format string, args ...any) {
+	// Intentionally left empty
+}
+
+func (l *testLogger) Errorf(format string, args ...any) {
+	l.logChan <- fmt.Sprintf(format, args...)
 }
