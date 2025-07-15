@@ -18,6 +18,7 @@ import (
     "fmt"
     
     "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/client/transport"
     "github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -66,18 +67,18 @@ func main() {
     // Create sampling handler
     samplingHandler := &MySamplingHandler{}
     
+    // Create stdio transport
+    stdioTransport := transport.NewStdio("/path/to/mcp/server", nil)
+    
     // Create client with sampling support
-    mcpClient, err := client.NewStdioClient(
-        "/path/to/mcp/server",
-        client.WithSamplingHandler(samplingHandler),
-    )
-    if err != nil {
-        log.Fatalf("Failed to create client: %v", err)
+    mcpClient := client.NewClient(stdioTransport, client.WithSamplingHandler(samplingHandler))
+    
+    // Start the client
+    ctx := context.Background()
+    if err := mcpClient.Start(ctx); err != nil {
+        log.Fatalf("Failed to start client: %v", err)
     }
     defer mcpClient.Close()
-    
-    // Connect to server
-    ctx := context.Background()
     if err := mcpClient.Connect(ctx); err != nil {
         log.Fatalf("Failed to connect: %v", err)
     }
@@ -150,18 +151,18 @@ func main() {
     
     serverPath := os.Args[1]
     
+    // Create stdio transport
+    stdioTransport := transport.NewStdio(serverPath, nil)
+    
     // Create client with mock sampling handler
-    mcpClient, err := client.NewStdioClient(
-        serverPath,
-        client.WithSamplingHandler(&MockSamplingHandler{}),
-    )
-    if err != nil {
-        log.Fatalf("Failed to create client: %v", err)
+    mcpClient := client.NewClient(stdioTransport, client.WithSamplingHandler(&MockSamplingHandler{}))
+    
+    // Start the client
+    ctx := context.Background()
+    if err := mcpClient.Start(ctx); err != nil {
+        log.Fatalf("Failed to start client: %v", err)
     }
     defer mcpClient.Close()
-    
-    // Connect and test
-    ctx := context.Background()
     if err := mcpClient.Connect(ctx); err != nil {
         log.Fatalf("Failed to connect: %v", err)
     }
@@ -375,10 +376,8 @@ When you provide a sampling handler, the client automatically declares the sampl
 
 ```go
 // This automatically adds sampling capability
-mcpClient, err := client.NewStdioClient(
-    serverPath,
-    client.WithSamplingHandler(handler), // Enables sampling capability
-)
+stdioTransport := transport.NewStdio(serverPath, nil)
+mcpClient := client.NewClient(stdioTransport, client.WithSamplingHandler(handler))
 ```
 
 The client will include this in the initialization request:
@@ -460,8 +459,39 @@ go build -o my_client
 ./my_client ./sampling_server
 ```
 
+## Transport Support
+
+Sampling is available on the following transports:
+
+### STDIO Transport
+
+For STDIO clients, create the transport and client separately:
+
+```go
+stdioTransport := transport.NewStdio("/path/to/server", nil)
+mcpClient := client.NewClient(stdioTransport, client.WithSamplingHandler(&MySamplingHandler{}))
+```
+
+### In-Process Transport
+
+For in-process clients, use the dedicated constructor:
+
+```go
+mcpClient, err := client.NewInProcessClientWithSamplingHandler(
+    mcpServer, 
+    &MySamplingHandler{},
+)
+```
+
+In-process sampling uses direct method calls instead of JSON-RPC serialization.
+
+### Unsupported Transports
+
+SSE and StreamableHTTP transports do not support sampling due to their one-way or stateless nature.
+
 ## Next Steps
 
 - Learn about [server-side sampling implementation](/servers/advanced-sampling)
 - Explore [client operations](/clients/operations)
 - Check out the [sampling examples](https://github.com/mark3labs/mcp-go/tree/main/examples/sampling_client)
+- See [in-process transport documentation](/transports/inprocess) for embedded scenarios

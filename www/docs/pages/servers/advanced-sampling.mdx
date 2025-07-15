@@ -352,8 +352,48 @@ func getTextFromContent(content interface{}) string {
 }
 ```
 
+## Transport Support
+
+Sampling is supported on the following transports:
+
+### STDIO Transport
+
+STDIO transport provides full sampling support with JSON-RPC message passing:
+
+```go
+// Start STDIO server with sampling
+server.ServeStdio(mcpServer)
+```
+
+The client must implement a `SamplingHandler` and declare sampling capability during initialization.
+
+### In-Process Transport
+
+In-process transport offers the most efficient sampling implementation with direct method calls:
+
+```go
+// Create in-process client with sampling handler
+mcpClient, err := client.NewInProcessClientWithSamplingHandler(mcpServer, samplingHandler)
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+**Benefits of in-process sampling:**
+- **Direct Method Calls**: No JSON-RPC serialization overhead
+- **Type Safety**: Compile-time type checking
+
+### Unsupported Transports
+
+The following transports do not currently support sampling:
+- **SSE Transport**: One-way streaming nature prevents bidirectional sampling
+- **StreamableHTTP Transport**: Stateless HTTP requests don't support sampling callbacks
+
+For these transports, consider implementing LLM integration directly in your tool handlers rather than using sampling.
+
 ## Next Steps
 
 - Learn about [client-side sampling implementation](/clients/advanced-sampling)
 - Explore [advanced server features](/servers/advanced)
 - Check out the [sampling examples](https://github.com/mark3labs/mcp-go/tree/main/examples/sampling_server)
+- See [in-process sampling documentation](/transports/inprocess#sampling-support) for embedded scenarios

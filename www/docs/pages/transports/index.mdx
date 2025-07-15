@@ -13,12 +13,12 @@ Transport layers handle the communication between MCP clients and servers. Each 
 
 ## Transport Comparison
 
-| Transport | Use Case | Pros | Cons |
-|-----------|----------|------|------|
-| **STDIO** | CLI tools, desktop apps | Simple, secure, no network | Single client, local only |
-| **SSE** | Web apps, real-time | Multi-client, real-time, web-friendly | HTTP overhead, one-way streaming |
-| **StreamableHTTP** | Web services, APIs | Standard protocol, caching, load balancing | No real-time, more complex |
-| **In-Process** | Embedded, testing | No serialization, fastest | Same process only |
+| Transport | Use Case | Pros | Cons | Sampling Support |
+|-----------|----------|------|------|------------------|
+| **STDIO** | CLI tools, desktop apps | Simple, secure, no network | Single client, local only | ✅ Full support |
+| **SSE** | Web apps, real-time | Multi-client, real-time, web-friendly | HTTP overhead, one-way streaming | ❌ Not supported |
+| **StreamableHTTP** | Web services, APIs | Standard protocol, caching, load balancing | No real-time, more complex | ❌ Not supported |
+| **In-Process** | Embedded, testing | No serialization, fastest | Same process only | ✅ Full support |
 
 ## Quick Example
 
@@ -131,12 +131,14 @@ func handleEcho(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResu
 - Testing and development
 - High-performance scenarios
 - Library integrations
+- Sampling-enabled applications
 
 **Example use cases:**
 - Testing MCP implementations
 - Embedded analytics engines
 - High-frequency trading systems
 - Real-time game servers
+- LLM-powered applications with bidirectional communication
 
 ## Transport Configuration
 
