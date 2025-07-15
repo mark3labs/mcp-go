@@ -504,9 +504,8 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 
 	// Create a new context for handling the message that will be canceled when the message handling is done
-	messageCtx, cancel := context.WithCancel(detachedCtx)
-
-	messageCtx = context.WithValue(messageCtx, requestHeader, r.Header)
+	messageCtx := context.WithValue(detachedCtx, requestHeader, r.Header)
+	messageCtx, cancel := context.WithCancel(messageCtx)
 
 	go func(ctx context.Context) {
 		defer cancel()
