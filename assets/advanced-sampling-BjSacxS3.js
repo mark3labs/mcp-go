@@ -1,4 +1,4 @@
-import{u as r,j as s}from"./index-BJ6Le06P.js";const a={title:"Sampling",description:"undefined"};function e(i){const l={a:"a",code:"code",div:"div",h1:"h1",h2:"h2",h3:"h3",h4:"h4",header:"header",li:"li",ol:"ol",p:"p",pre:"pre",span:"span",strong:"strong",ul:"ul",...r(),...i.components};return s.jsxs(s.Fragment,{children:[s.jsx(l.header,{children:s.jsxs(l.h1,{id:"sampling",children:["Sampling",s.jsx(l.a,{"aria-hidden":"true",tabIndex:"-1",href:"#sampling",children:s.jsx(l.div,{"data-autolink-icon":!0})})]})}),`
+import{u as r,j as s}from"./index-egJj03js.js";const a={title:"Sampling",description:"undefined"};function e(i){const l={a:"a",code:"code",div:"div",h1:"h1",h2:"h2",h3:"h3",h4:"h4",header:"header",li:"li",ol:"ol",p:"p",pre:"pre",span:"span",strong:"strong",ul:"ul",...r(),...i.components};return s.jsxs(s.Fragment,{children:[s.jsx(l.header,{children:s.jsxs(l.h1,{id:"sampling",children:["Sampling",s.jsx(l.a,{"aria-hidden":"true",tabIndex:"-1",href:"#sampling",children:s.jsx(l.div,{"data-autolink-icon":!0})})]})}),`
 `,s.jsx(l.p,{children:"Learn how to implement MCP servers that can request LLM completions from clients using the sampling capability."}),`
 `,s.jsxs(l.h2,{id:"overview",children:["Overview",s.jsx(l.a,{"aria-hidden":"true",tabIndex:"-1",href:"#overview",children:s.jsx(l.div,{"data-autolink-icon":!0})})]}),`
 `,s.jsx(l.p,{children:"Sampling allows MCP servers to request LLM completions from clients, enabling bidirectional communication where servers can leverage client-side LLM capabilities. This is particularly useful for tools that need to generate content, answer questions, or perform reasoning tasks."}),`
@@ -303,9 +303,36 @@ import{u as r,j as s}from"./index-BJ6Le06P.js";const a={title:"Sampling",descrip
 `,s.jsxs(l.span,{className:"line",children:[s.jsx(l.span,{style:{color:"#D73A49","--shiki-dark":"#F47067"},children:"        return"}),s.jsx(l.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:" fmt."}),s.jsx(l.span,{style:{color:"#6F42C1","--shiki-dark":"#DCBDFB"},children:"Sprintf"}),s.jsx(l.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"("}),s.jsx(l.span,{style:{color:"#032F62","--shiki-dark":"#96D0FF"},children:'"'}),s.jsx(l.span,{style:{color:"#005CC5","--shiki-dark":"#F47067"},children:"%v"}),s.jsx(l.span,{style:{color:"#032F62","--shiki-dark":"#96D0FF"},children:'"'}),s.jsx(l.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:", content)"})]}),`
 `,s.jsx(l.span,{className:"line",children:s.jsx(l.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"    }"})}),`
 `,s.jsx(l.span,{className:"line",children:s.jsx(l.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"}"})})]})})}),`
+`,s.jsxs(l.h2,{id:"transport-support",children:["Transport Support",s.jsx(l.a,{"aria-hidden":"true",tabIndex:"-1",href:"#transport-support",children:s.jsx(l.div,{"data-autolink-icon":!0})})]}),`
+`,s.jsx(l.p,{children:"Sampling is supported on the following transports:"}),`
+`,s.jsxs(l.h3,{id:"stdio-transport",children:["STDIO Transport",s.jsx(l.a,{"aria-hidden":"true",tabIndex:"-1",href:"#stdio-transport",children:s.jsx(l.div,{"data-autolink-icon":!0})})]}),`
+`,s.jsx(l.p,{children:"STDIO transport provides full sampling support with JSON-RPC message passing:"}),`
+`,s.jsx(s.Fragment,{children:s.jsx(l.pre,{className:"shiki shiki-themes github-light github-dark-dimmed",style:{backgroundColor:"#fff","--shiki-dark-bg":"#22272e",color:"#24292e","--shiki-dark":"#adbac7"},tabIndex:"0",children:s.jsxs(l.code,{children:[s.jsx(l.span,{className:"line",children:s.jsx(l.span,{style:{color:"#6A737D","--shiki-dark":"#768390"},children:"// Start STDIO server with sampling"})}),`
+`,s.jsxs(l.span,{className:"line",children:[s.jsx(l.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"server."}),s.jsx(l.span,{style:{color:"#6F42C1","--shiki-dark":"#DCBDFB"},children:"ServeStdio"}),s.jsx(l.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"(mcpServer)"})]})]})})}),`
+`,s.jsxs(l.p,{children:["The client must implement a ",s.jsx(l.code,{children:"SamplingHandler"})," and declare sampling capability during initialization."]}),`
+`,s.jsxs(l.h3,{id:"in-process-transport",children:["In-Process Transport",s.jsx(l.a,{"aria-hidden":"true",tabIndex:"-1",href:"#in-process-transport",children:s.jsx(l.div,{"data-autolink-icon":!0})})]}),`
+`,s.jsx(l.p,{children:"In-process transport offers the most efficient sampling implementation with direct method calls:"}),`
+`,s.jsx(s.Fragment,{children:s.jsx(l.pre,{className:"shiki shiki-themes github-light github-dark-dimmed",style:{backgroundColor:"#fff","--shiki-dark-bg":"#22272e",color:"#24292e","--shiki-dark":"#adbac7"},tabIndex:"0",children:s.jsxs(l.code,{children:[s.jsx(l.span,{className:"line",children:s.jsx(l.span,{style:{color:"#6A737D","--shiki-dark":"#768390"},children:"// Create in-process client with sampling handler"})}),`
+`,s.jsxs(l.span,{className:"line",children:[s.jsx(l.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"mcpClient, err "}),s.jsx(l.span,{style:{color:"#D73A49","--shiki-dark":"#F47067"},children:":="}),s.jsx(l.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:" client."}),s.jsx(l.span,{style:{color:"#6F42C1","--shiki-dark":"#DCBDFB"},children:"NewInProcessClientWithSamplingHandler"}),s.jsx(l.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"(mcpServer, samplingHandler)"})]}),`
+`,s.jsxs(l.span,{className:"line",children:[s.jsx(l.span,{style:{color:"#D73A49","--shiki-dark":"#F47067"},children:"if"}),s.jsx(l.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:" err "}),s.jsx(l.span,{style:{color:"#D73A49","--shiki-dark":"#F47067"},children:"!="}),s.jsx(l.span,{style:{color:"#005CC5","--shiki-dark":"#6CB6FF"},children:" nil"}),s.jsx(l.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:" {"})]}),`
+`,s.jsxs(l.span,{className:"line",children:[s.jsx(l.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"    log."}),s.jsx(l.span,{style:{color:"#6F42C1","--shiki-dark":"#DCBDFB"},children:"Fatal"}),s.jsx(l.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"(err)"})]}),`
+`,s.jsx(l.span,{className:"line",children:s.jsx(l.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"}"})})]})})}),`
+`,s.jsx(l.strong,{children:"Benefits of in-process sampling:"}),`
+`,s.jsxs(l.ul,{children:[`
+`,s.jsxs(l.li,{children:[s.jsx(l.strong,{children:"Direct Method Calls"}),": No JSON-RPC serialization overhead"]}),`
+`,s.jsxs(l.li,{children:[s.jsx(l.strong,{children:"Type Safety"}),": Compile-time type checking"]}),`
+`]}),`
+`,s.jsxs(l.h3,{id:"unsupported-transports",children:["Unsupported Transports",s.jsx(l.a,{"aria-hidden":"true",tabIndex:"-1",href:"#unsupported-transports",children:s.jsx(l.div,{"data-autolink-icon":!0})})]}),`
+`,s.jsx(l.p,{children:"The following transports do not currently support sampling:"}),`
+`,s.jsxs(l.ul,{children:[`
+`,s.jsxs(l.li,{children:[s.jsx(l.strong,{children:"SSE Transport"}),": One-way streaming nature prevents bidirectional sampling"]}),`
+`,s.jsxs(l.li,{children:[s.jsx(l.strong,{children:"StreamableHTTP Transport"}),": Stateless HTTP requests don't support sampling callbacks"]}),`
+`]}),`
+`,s.jsx(l.p,{children:"For these transports, consider implementing LLM integration directly in your tool handlers rather than using sampling."}),`
 `,s.jsxs(l.h2,{id:"next-steps",children:["Next Steps",s.jsx(l.a,{"aria-hidden":"true",tabIndex:"-1",href:"#next-steps",children:s.jsx(l.div,{"data-autolink-icon":!0})})]}),`
 `,s.jsxs(l.ul,{children:[`
 `,s.jsxs(l.li,{children:["Learn about ",s.jsx(l.a,{href:"/clients/advanced-sampling",children:"client-side sampling implementation"})]}),`
 `,s.jsxs(l.li,{children:["Explore ",s.jsx(l.a,{href:"/servers/advanced",children:"advanced server features"})]}),`
 `,s.jsxs(l.li,{children:["Check out the ",s.jsx(l.a,{href:"https://github.com/mark3labs/mcp-go/tree/main/examples/sampling_server",children:"sampling examples"})]}),`
+`,s.jsxs(l.li,{children:["See ",s.jsx(l.a,{href:"/transports/inprocess#sampling-support",children:"in-process sampling documentation"})," for embedded scenarios"]}),`
 `]})]})}function c(i={}){const{wrapper:l}={...r(),...i.components};return l?s.jsx(l,{...i,children:s.jsx(e,{...i})}):e(i)}export{c as default,a as frontmatter};
