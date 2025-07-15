@@ -9,7 +9,6 @@ import (
 	"slices"
 	"sort"
 	"sync"
-	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -320,7 +319,7 @@ func NewMCPServer(
 
 // GenerateInProcessSessionID generates a unique session ID for inprocess clients
 func (s *MCPServer) GenerateInProcessSessionID() string {
-	return fmt.Sprintf("inprocess-%d", time.Now().UnixNano())
+	return GenerateInProcessSessionID()
 }
 
 // AddResources registers multiple resources at once
