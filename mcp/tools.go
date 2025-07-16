@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"reflect"
 	"strconv"
+
+	"github.com/mark3labs/mcp-go/orderedmap"
 )
 
 var errToolSchemaConflict = errors.New("provide either InputSchema or RawInputSchema, not both")
@@ -585,9 +587,9 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 }
 
 type ToolInputSchema struct {
-	Type       string         `json:"type"`
-	Properties map[string]any `json:"properties,omitempty"`
-	Required   []string       `json:"required,omitempty"`
+	Type       string                 `json:"type"`
+	Properties *orderedmap.OrderedMap `json:"properties,omitempty"`
+	Required   []string               `json:"required,omitempty"`
 }
 
 // MarshalJSON implements the json.Marshaler interface for ToolInputSchema.
@@ -640,7 +642,7 @@ func NewTool(name string, opts ...ToolOption) Tool {
 		Name: name,
 		InputSchema: ToolInputSchema{
 			Type:       "object",
-			Properties: make(map[string]any),
+			Properties: orderedmap.New(),
 			Required:   nil, // Will be omitted from JSON if empty
 		},
 		Annotations: ToolAnnotation{
@@ -885,7 +887,7 @@ func WithBoolean(name string, opts ...PropertyOption) ToolOption {
 			t.InputSchema.Required = append(t.InputSchema.Required, name)
 		}
 
-		t.InputSchema.Properties[name] = schema
+		t.InputSchema.Properties.Set(name, schema)
 	}
 }
 
@@ -907,7 +909,7 @@ func WithNumber(name string, opts ...PropertyOption) ToolOption {
 			t.InputSchema.Required = append(t.InputSchema.Required, name)
 		}
 
-		t.InputSchema.Properties[name] = schema
+		t.InputSchema.Properties.Set(name, schema)
 	}
 }
 
@@ -929,7 +931,7 @@ func WithString(name string, opts ...PropertyOption) ToolOption {
 			t.InputSchema.Required = append(t.InputSchema.Required, name)
 		}
 
-		t.InputSchema.Properties[name] = schema
+		t.InputSchema.Properties.Set(name, schema)
 	}
 }
 
@@ -952,7 +954,7 @@ func WithObject(name string, opts ...PropertyOption) ToolOption {
 			t.InputSchema.Required = append(t.InputSchema.Required, name)
 		}
 
-		t.InputSchema.Properties[name] = schema
+		t.InputSchema.Properties.Set(name, schema)
 	}
 }
 
@@ -974,7 +976,7 @@ func WithArray(name string, opts ...PropertyOption) ToolOption {
 			t.InputSchema.Required = append(t.InputSchema.Required, name)
 		}
 
-		t.InputSchema.Properties[name] = schema
+		t.InputSchema.Properties.Set(name, schema)
 	}
 }
 
