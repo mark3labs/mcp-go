@@ -103,8 +103,8 @@ func (s *stdioSession) SetClientInfo(clientInfo mcp.Implementation) {
 
 func (s *stdioSession) GetClientCapabilities() mcp.ClientCapabilities {
 	if value := s.clientCapabilities.Load(); value != nil {
-		if clientInfo, ok := value.(mcp.ClientCapabilities); ok {
-			return clientInfo
+		if clientCapabilities, ok := value.(mcp.ClientCapabilities); ok {
+			return clientCapabilities
 		}
 	}
 	return mcp.ClientCapabilities{}

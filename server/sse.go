@@ -30,7 +30,7 @@ type sseSession struct {
 	loggingLevel        atomic.Value
 	tools               sync.Map     // stores session-specific tools
 	clientInfo          atomic.Value // stores session-specific client info
-	clientCapabilities  atomic.Value // stores session-specific client capaabilities
+	clientCapabilities  atomic.Value // stores session-specific client capabilities
 }
 
 // SSEContextFunc is a function that takes an existing context and the current
