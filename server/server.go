@@ -583,8 +583,10 @@ func (s *MCPServer) handleInitialize(
 		// Store client info if the session supports it
 		if sessionWithClientInfo, ok := session.(SessionWithClientInfo); ok {
 			sessionWithClientInfo.SetClientInfo(request.Params.ClientInfo)
+			sessionWithClientInfo.SetClientCapabilities(request.Params.Capabilities)
 		}
 	}
+
 	return &result, nil
 }
 

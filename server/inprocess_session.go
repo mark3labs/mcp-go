@@ -16,13 +16,14 @@ type SamplingHandler interface {
 }
 
 type InProcessSession struct {
-	sessionID       string
-	notifications   chan mcp.JSONRPCNotification
-	initialized     atomic.Bool
-	loggingLevel    atomic.Value
-	clientInfo      atomic.Value
-	samplingHandler SamplingHandler
-	mu              sync.RWMutex
+	sessionID          string
+	notifications      chan mcp.JSONRPCNotification
+	initialized        atomic.Bool
+	loggingLevel       atomic.Value
+	clientInfo         atomic.Value
+	clientCapabilities atomic.Value
+	samplingHandler    SamplingHandler
+	mu                 sync.RWMutex
 }
 
 func NewInProcessSession(sessionID string, samplingHandler SamplingHandler) *InProcessSession {
@@ -61,6 +62,19 @@ func (s *InProcessSession) GetClientInfo() mcp.Implementation {
 
 func (s *InProcessSession) SetClientInfo(clientInfo mcp.Implementation) {
 	s.clientInfo.Store(clientInfo)
+}
+
+func (s *InProcessSession) GetClientCapabilities() mcp.ClientCapabilities {
+	if value := s.clientCapabilities.Load(); value != nil {
+		if clientCapabilities, ok := value.(mcp.ClientCapabilities); ok {
+			return clientCapabilities
+		}
+	}
+	return mcp.ClientCapabilities{}
+}
+
+func (s *InProcessSession) SetClientCapabilities(clientCapabilities mcp.ClientCapabilities) {
+	s.clientCapabilities.Store(clientCapabilities)
 }
 
 func (s *InProcessSession) SetLogLevel(level mcp.LoggingLevel) {
