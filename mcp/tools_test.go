@@ -144,6 +144,54 @@ func TestUnmarshalToolWithoutRawSchema(t *testing.T) {
 	assert.Empty(t, toolUnmarshalled.RawInputSchema)
 }
 
+func TestToolWithStringInteger(t *testing.T) {
+	tool := NewTool("buy-item",
+		WithDescription("A tool for buying items"),
+		WithString("itemName",
+			Description("Name of the item to purchase"),
+			Required(),
+		),
+		WithInteger("itemCount",
+			Description("Number of copies of the item to purchase"),
+			Required(),
+		),
+	)
+
+	// Marshal to JSON
+	data, err := json.Marshal(tool)
+	assert.NoError(t, err)
+
+	// Unmarshal to verify the structure
+	var result map[string]any
+	err = json.Unmarshal(data, &result)
+	assert.NoError(t, err)
+
+	// Verify tool properties
+	assert.Equal(t, "buy-item", result["name"])
+	assert.Equal(t, "A tool for buying items", result["description"])
+
+	// Verify schema was properly included
+	schema, ok := result["inputSchema"].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "object", schema["type"])
+
+	// Verify properties
+	properties, ok := schema["properties"].(map[string]any)
+	assert.True(t, ok)
+
+	// Verify itemName object
+	itemName, ok := properties["itemName"].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "string", itemName["type"])
+	assert.Equal(t, "Name of the item to purchase", itemName["description"])
+
+	// Verify itemName object
+	itemCount, ok := properties["itemCount"].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "integer", itemCount["type"])
+	assert.Equal(t, "Number of copies of the item to purchase", itemCount["description"])
+}
+
 func TestToolWithObjectAndArray(t *testing.T) {
 	// Create a tool with both object and array properties
 	tool := NewTool("reading-list",
@@ -653,6 +701,46 @@ func TestNewItemsAPICompatibility(t *testing.T) {
 				WithArray("flags",
 					Description("List of feature flags"),
 					WithBooleanItems(),
+				),
+			),
+		},
+		{
+			name: "WithIntegerItems basic",
+			oldTool: NewTool("old-integer-basic",
+				WithDescription("tool with integer array using old API"),
+				WithArray("scores",
+					Description("List of scores"),
+					Items(map[string]any{
+						"type": "integer",
+					}),
+				),
+			),
+			newTool: NewTool("new-integer-basic",
+				WithDescription("tool with integer array using new API"),
+				WithArray("scores",
+					Description("List of scores"),
+					WithIntegerItems(),
+				),
+			),
+		},
+		{
+			name: "WithIntegerItems with constraints",
+			oldTool: NewTool("old-integer-with-constraints",
+				WithDescription("Tool with constrained integer array using old API"),
+				WithArray("ratings",
+					Description("List of ratings"),
+					Items(map[string]any{
+						"type":    "integer",
+						"minimum": 0,
+						"maximum": 10,
+					}),
+				),
+			),
+			newTool: NewTool("new-number-with-constraints",
+				WithDescription("Tool with constrained number array using new API"),
+				WithArray("ratings",
+					Description("List of ratings"),
+					WithIntegerItems(Min(0), Max(10)),
 				),
 			),
 		},
