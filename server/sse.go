@@ -29,6 +29,7 @@ type sseSession struct {
 	initialized         atomic.Bool
 	loggingLevel        atomic.Value
 	tools               sync.Map     // stores session-specific tools
+	prompts             sync.Map     // stores session-specific prompts
 	clientInfo          atomic.Value // stores session-specific client info
 }
 
@@ -74,6 +75,17 @@ func (s *sseSession) GetLogLevel() mcp.LoggingLevel {
 	return level.(mcp.LoggingLevel)
 }
 
+func (s *sseSession) GetSessionPrompts() map[string]ServerPrompt {
+	prompts := make(map[string]ServerPrompt)
+	s.prompts.Range(func(key, value any) bool {
+		if prompt, ok := value.(ServerPrompt); ok {
+			prompts[key.(string)] = prompt
+		}
+		return true
+	})
+	return prompts
+}
+
 func (s *sseSession) GetSessionTools() map[string]ServerTool {
 	tools := make(map[string]ServerTool)
 	s.tools.Range(func(key, value any) bool {
@@ -83,6 +95,16 @@ func (s *sseSession) GetSessionTools() map[string]ServerTool {
 		return true
 	})
 	return tools
+}
+
+func (s *sseSession) SetSessionPrompts(prompts map[string]ServerPrompt) {
+	// Clear existing prompts
+	s.prompts.Clear()
+
+	// Set new prompts
+	for name, prompt := range prompts {
+		s.prompts.Store(name, prompt)
+	}
 }
 
 func (s *sseSession) SetSessionTools(tools map[string]ServerTool) {

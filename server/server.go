@@ -837,6 +837,34 @@ func (s *MCPServer) handleListPrompts(
 	}
 	s.promptsMu.RUnlock()
 
+	// Check if there are session-specific prompts
+	session := ClientSessionFromContext(ctx)
+	if session != nil {
+		if sessionWithPrompts, ok := session.(SessionWithPrompts); ok {
+			if sessionPrompts := sessionWithPrompts.GetSessionPrompts(); sessionPrompts != nil {
+				// Override or add session-specific prompts
+				// We need to create a map first to merge the prompts properly
+				promptMap := make(map[string]mcp.Prompt)
+
+				// Add global prompts first
+				for _, prompt := range prompts {
+					promptMap[prompt.Name] = prompt
+				}
+
+				// Then override with session-specific tools
+				for name, serverPrompt := range sessionPrompts {
+					promptMap[name] = serverPrompt.Prompt
+				}
+
+				// Convert back to slice
+				prompts = make([]mcp.Prompt, 0, len(promptMap))
+				for _, prompt := range promptMap {
+					prompts = append(prompts, prompt)
+				}
+			}
+		}
+	}
+
 	// sort prompts by name
 	sort.Slice(prompts, func(i, j int) bool {
 		return prompts[i].Name < prompts[j].Name
@@ -868,9 +896,28 @@ func (s *MCPServer) handleGetPrompt(
 	id any,
 	request mcp.GetPromptRequest,
 ) (*mcp.GetPromptResult, *requestError) {
-	s.promptsMu.RLock()
-	handler, ok := s.promptHandlers[request.Params.Name]
-	s.promptsMu.RUnlock()
+	// First check session-specific prompts
+	var handler PromptHandlerFunc
+	var ok bool
+
+	session := ClientSessionFromContext(ctx)
+	if session != nil {
+		if sessionWithPrompts, typeAssertOk := session.(SessionWithPrompts); typeAssertOk {
+			if sessionPrompts := sessionWithPrompts.GetSessionPrompts(); sessionPrompts != nil {
+				if serverPrompt, sessionOk := sessionPrompts[request.Params.Name]; sessionOk {
+					handler = serverPrompt.Handler
+					ok = true
+				}
+			}
+		}
+	}
+
+	// If not found in session prompts, check global prompts
+	if !ok {
+		s.promptsMu.RLock()
+		handler, ok = s.promptHandlers[request.Params.Name]
+		s.promptsMu.RUnlock()
+	}
 
 	if !ok {
 		return nil, &requestError{
