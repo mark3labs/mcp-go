@@ -106,6 +106,7 @@ type sessionTestClientWithClientInfo struct {
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         bool
 	clientInfo          atomic.Value
+	clientCapabilities  atomic.Value
 }
 
 func (f *sessionTestClientWithClientInfo) SessionID() string {
@@ -135,6 +136,19 @@ func (f *sessionTestClientWithClientInfo) GetClientInfo() mcp.Implementation {
 
 func (f *sessionTestClientWithClientInfo) SetClientInfo(clientInfo mcp.Implementation) {
 	f.clientInfo.Store(clientInfo)
+}
+
+func (f *sessionTestClientWithClientInfo) GetClientCapabilities() mcp.ClientCapabilities {
+	if value := f.clientCapabilities.Load(); value != nil {
+		if clientCapabilities, ok := value.(mcp.ClientCapabilities); ok {
+			return clientCapabilities
+		}
+	}
+	return mcp.ClientCapabilities{}
+}
+
+func (f *sessionTestClientWithClientInfo) SetClientCapabilities(clientCapabilities mcp.ClientCapabilities) {
+	f.clientCapabilities.Store(clientCapabilities)
 }
 
 // sessionTestClientWithTools implements the SessionWithLogging interface for testing
@@ -888,7 +902,7 @@ func TestMCPServer_SessionToolCapabilitiesBehavior(t *testing.T) {
 		validateServer func(t *testing.T, s *MCPServer, session *sessionTestClientWithTools)
 	}{
 		{
-			name:          "no tool capabilities provided",
+			name: "no tool capabilities provided",
 			serverOptions: []ServerOption{
 				// No WithToolCapabilities
 			},
@@ -1099,10 +1113,14 @@ func TestSessionWithClientInfo_Integration(t *testing.T) {
 		Version: "1.0.0",
 	}
 
+	clientCapability := mcp.ClientCapabilities{
+		Sampling: &struct{}{},
+	}
+
 	initRequest := mcp.InitializeRequest{}
 	initRequest.Params.ClientInfo = clientInfo
 	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
-	initRequest.Params.Capabilities = mcp.ClientCapabilities{}
+	initRequest.Params.Capabilities = clientCapability
 
 	sessionCtx := server.WithContext(context.Background(), session)
 
@@ -1125,6 +1143,10 @@ func TestSessionWithClientInfo_Integration(t *testing.T) {
 
 	assert.Equal(t, clientInfo.Name, storedClientInfo.Name, "Client name should match")
 	assert.Equal(t, clientInfo.Version, storedClientInfo.Version, "Client version should match")
+
+	storedClientCapabilities := sessionWithClientInfo.GetClientCapabilities()
+
+	assert.Equal(t, clientCapability, storedClientCapabilities, "Client capability should match")
 }
 
 // New test function to cover log notification functionality
