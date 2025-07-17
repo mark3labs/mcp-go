@@ -252,6 +252,13 @@ func (c *StreamableHTTP) SendRequest(
 			return nil, fmt.Errorf("failed to send request: %w", err)
 		}
 	}
+
+	// Only proceed if we have a valid response.
+	// When sendHTTP fails and resp is nil but method is mcp.MethodInitialize
+	// defer resp.Body.Close() fails with nil pointer dereference.
+	if resp == nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
 	defer resp.Body.Close()
 
 	// Check if we got an error response

@@ -1446,10 +1446,14 @@ func TestSSEServer(t *testing.T) {
 
 	t.Run("Headers are passed through to tool requests", func(t *testing.T) {
 		hooks := &Hooks{}
-		var headerVerified bool
+		headerVerified := make(chan struct{})
 		hooks.AddAfterCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest, result *mcp.CallToolResult) {
 			if message.Params.Name == "verify-headers" {
-				headerVerified = true
+				select {
+				case <-headerVerified:
+				default:
+					close(headerVerified)
+				}
 			}
 		})
 
@@ -1506,20 +1510,24 @@ func TestSSEServer(t *testing.T) {
 			t.Errorf("Expected status 202, got %d", resp.StatusCode)
 		}
 
-		// Wait briefly for hook to be called
-		time.Sleep(100 * time.Millisecond)
-
-		if !headerVerified {
-			t.Error("Header verification hook was not called")
+		// Wait for hook to be called
+		select {
+		case <-headerVerified:
+		case <-time.After(1 * time.Second):
+			t.Error("Header verification hook was not called within timeout")
 		}
 	})
 
 	t.Run("Headers are not nil when no headers are set", func(t *testing.T) {
 		hooks := &Hooks{}
-		var headersChecked bool
+		headersChecked := make(chan struct{})
 		hooks.AddAfterCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest, result *mcp.CallToolResult) {
 			if message.Params.Name == "check-headers-not-nil" {
-				headersChecked = true
+				select {
+				case <-headersChecked:
+				default:
+					close(headersChecked)
+				}
 			}
 		})
 
@@ -1591,11 +1599,11 @@ func TestSSEServer(t *testing.T) {
 			t.Errorf("Expected status 202, got %d", resp.StatusCode)
 		}
 
-		// Wait briefly for hook to be called
-		time.Sleep(100 * time.Millisecond)
-
-		if !headersChecked {
-			t.Error("Headers check hook was not called")
+		// Wait for hook to be called
+		select {
+		case <-headersChecked:
+		case <-time.After(1 * time.Second):
+			t.Error("Headers check hook was not called within timeout")
 		}
 	})
 }
