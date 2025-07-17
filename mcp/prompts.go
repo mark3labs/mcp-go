@@ -47,6 +47,8 @@ type GetPromptResult struct {
 // that requires argument values to be provided when calling prompts/get.
 // If Arguments is nil or empty, this is a static prompt that takes no arguments.
 type Prompt struct {
+	// Meta is a metadata object that is reserved by MCP for storing additional information.
+	Meta *Meta `json:"_meta,omitempty"`
 	// The name of the prompt or prompt template.
 	Name string `json:"name"`
 	// An optional description of what this prompt provides
