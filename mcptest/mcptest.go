@@ -23,7 +23,7 @@ type Server struct {
 	tools             []server.ServerTool
 	prompts           []server.ServerPrompt
 	resources         []server.ServerResource
-	resourceTemplates []ServerResourceTemplate
+	resourceTemplates []server.ServerResourceTemplate
 
 	cancel func()
 
@@ -107,22 +107,16 @@ func (s *Server) AddResources(resources ...server.ServerResource) {
 	s.resources = append(s.resources, resources...)
 }
 
-// ServerResourceTemplate combines a ResourceTemplate with its handler function.
-type ServerResourceTemplate struct {
-	Template mcp.ResourceTemplate
-	Handler  server.ResourceTemplateHandlerFunc
-}
-
 // AddResourceTemplate adds a resource template to an unstarted server.
 func (s *Server) AddResourceTemplate(template mcp.ResourceTemplate, handler server.ResourceTemplateHandlerFunc) {
-	s.resourceTemplates = append(s.resourceTemplates, ServerResourceTemplate{
+	s.resourceTemplates = append(s.resourceTemplates, server.ServerResourceTemplate{
 		Template: template,
 		Handler:  handler,
 	})
 }
 
 // AddResourceTemplates adds multiple resource templates to an unstarted server.
-func (s *Server) AddResourceTemplates(templates ...ServerResourceTemplate) {
+func (s *Server) AddResourceTemplates(templates ...server.ServerResourceTemplate) {
 	s.resourceTemplates = append(s.resourceTemplates, templates...)
 }
 
@@ -142,10 +136,7 @@ func (s *Server) Start(ctx context.Context) error {
 		mcpServer.AddTools(s.tools...)
 		mcpServer.AddPrompts(s.prompts...)
 		mcpServer.AddResources(s.resources...)
-		
-		for _, template := range s.resourceTemplates {
-			mcpServer.AddResourceTemplate(template.Template, template.Handler)
-		}
+		mcpServer.AddResourceTemplates(s.resourceTemplates...)
 
 		logger := log.New(&s.logBuffer, "", 0)
 

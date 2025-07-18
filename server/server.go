@@ -64,6 +64,12 @@ type ServerResource struct {
 	Handler  ResourceHandlerFunc
 }
 
+// ServerResourceTemplate combines a ResourceTemplate with its handler function.
+type ServerResourceTemplate struct {
+	Template mcp.ResourceTemplate
+	Handler  ResourceTemplateHandlerFunc
+}
+
 // serverKey is the context key for storing the server instance
 type serverKey struct{}
 
@@ -365,17 +371,16 @@ func (s *MCPServer) RemoveResource(uri string) {
 	}
 }
 
-// AddResourceTemplate registers a new resource template and its handler
-func (s *MCPServer) AddResourceTemplate(
-	template mcp.ResourceTemplate,
-	handler ResourceTemplateHandlerFunc,
-) {
+// AddResourceTemplates registers multiple resource templates at once
+func (s *MCPServer) AddResourceTemplates(resourceTemplates ...ServerResourceTemplate) {
 	s.implicitlyRegisterResourceCapabilities()
 
 	s.resourcesMu.Lock()
-	s.resourceTemplates[template.URITemplate.Raw()] = resourceTemplateEntry{
-		template: template,
-		handler:  handler,
+	for _, entry := range resourceTemplates {
+		s.resourceTemplates[entry.Template.URITemplate.Raw()] = resourceTemplateEntry{
+			template: entry.Template,
+			handler:  entry.Handler,
+		}
 	}
 	s.resourcesMu.Unlock()
 
@@ -384,6 +389,14 @@ func (s *MCPServer) AddResourceTemplate(
 		// Send notification to all initialized sessions
 		s.SendNotificationToAllClients(mcp.MethodNotificationResourcesListChanged, nil)
 	}
+}
+
+// AddResourceTemplate registers a new resource template and its handler
+func (s *MCPServer) AddResourceTemplate(
+	template mcp.ResourceTemplate,
+	handler ResourceTemplateHandlerFunc,
+) {
+	s.AddResourceTemplates(ServerResourceTemplate{Template: template, Handler: handler})
 }
 
 // AddPrompts registers multiple prompts at once
