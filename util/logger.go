@@ -8,6 +8,7 @@ import (
 type Logger interface {
 	Infof(format string, v ...any)
 	Errorf(format string, v ...any)
+	Warnf(format string, v ...any)
 }
 
 // --- Standard Library Logger Wrapper ---
@@ -30,4 +31,8 @@ func (l *stdLogger) Infof(format string, v ...any) {
 
 func (l *stdLogger) Errorf(format string, v ...any) {
 	l.logger.Printf("ERROR: "+format, v...)
+}
+
+func (l *stdLogger) Warnf(format string, v ...any) {
+	l.logger.Printf("WARN: "+format, v...)
 }
