@@ -15,6 +15,11 @@ type SamplingHandler interface {
 	CreateMessage(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error)
 }
 
+// ElicitationHandler defines the interface for handling elicitation requests from servers.
+type ElicitationHandler interface {
+	Elicit(ctx context.Context, request mcp.ElicitationRequest) (*mcp.ElicitationResult, error)
+}
+
 type InProcessSession struct {
 	sessionID          string
 	notifications      chan mcp.JSONRPCNotification
@@ -23,6 +28,7 @@ type InProcessSession struct {
 	clientInfo         atomic.Value
 	clientCapabilities atomic.Value
 	samplingHandler    SamplingHandler
+	elicitationHandler ElicitationHandler
 	mu                 sync.RWMutex
 }
 
@@ -31,6 +37,15 @@ func NewInProcessSession(sessionID string, samplingHandler SamplingHandler) *InP
 		sessionID:       sessionID,
 		notifications:   make(chan mcp.JSONRPCNotification, 100),
 		samplingHandler: samplingHandler,
+	}
+}
+
+func NewInProcessSessionWithHandlers(sessionID string, samplingHandler SamplingHandler, elicitationHandler ElicitationHandler) *InProcessSession {
+	return &InProcessSession{
+		sessionID:          sessionID,
+		notifications:      make(chan mcp.JSONRPCNotification, 100),
+		samplingHandler:    samplingHandler,
+		elicitationHandler: elicitationHandler,
 	}
 }
 
@@ -101,6 +116,18 @@ func (s *InProcessSession) RequestSampling(ctx context.Context, request mcp.Crea
 	return handler.CreateMessage(ctx, request)
 }
 
+func (s *InProcessSession) RequestElicitation(ctx context.Context, request mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
+	s.mu.RLock()
+	handler := s.elicitationHandler
+	s.mu.RUnlock()
+
+	if handler == nil {
+		return nil, fmt.Errorf("no elicitation handler available")
+	}
+
+	return handler.Elicit(ctx, request)
+}
+
 // GenerateInProcessSessionID generates a unique session ID for inprocess clients
 func GenerateInProcessSessionID() string {
 	return fmt.Sprintf("inprocess-%d", time.Now().UnixNano())
@@ -108,8 +135,9 @@ func GenerateInProcessSessionID() string {
 
 // Ensure interface compliance
 var (
-	_ ClientSession         = (*InProcessSession)(nil)
-	_ SessionWithLogging    = (*InProcessSession)(nil)
-	_ SessionWithClientInfo = (*InProcessSession)(nil)
-	_ SessionWithSampling   = (*InProcessSession)(nil)
+	_ ClientSession          = (*InProcessSession)(nil)
+	_ SessionWithLogging     = (*InProcessSession)(nil)
+	_ SessionWithClientInfo  = (*InProcessSession)(nil)
+	_ SessionWithSampling    = (*InProcessSession)(nil)
+	_ SessionWithElicitation = (*InProcessSession)(nil)
 )

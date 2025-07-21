@@ -11,10 +11,11 @@ import (
 )
 
 type InProcessTransport struct {
-	server          *server.MCPServer
-	samplingHandler server.SamplingHandler
-	session         *server.InProcessSession
-	sessionID       string
+	server             *server.MCPServer
+	samplingHandler    server.SamplingHandler
+	elicitationHandler server.ElicitationHandler
+	session            *server.InProcessSession
+	sessionID          string
 
 	onNotification func(mcp.JSONRPCNotification)
 	notifyMu       sync.RWMutex
@@ -25,6 +26,12 @@ type InProcessOption func(*InProcessTransport)
 func WithSamplingHandler(handler server.SamplingHandler) InProcessOption {
 	return func(t *InProcessTransport) {
 		t.samplingHandler = handler
+	}
+}
+
+func WithElicitationHandler(handler server.ElicitationHandler) InProcessOption {
+	return func(t *InProcessTransport) {
+		t.elicitationHandler = handler
 	}
 }
 
@@ -48,9 +55,9 @@ func NewInProcessTransportWithOptions(server *server.MCPServer, opts ...InProces
 }
 
 func (c *InProcessTransport) Start(ctx context.Context) error {
-	// Create and register session if we have a sampling handler
-	if c.samplingHandler != nil {
-		c.session = server.NewInProcessSession(c.sessionID, c.samplingHandler)
+	// Create and register session if we have handlers
+	if c.samplingHandler != nil || c.elicitationHandler != nil {
+		c.session = server.NewInProcessSessionWithHandlers(c.sessionID, c.samplingHandler, c.elicitationHandler)
 		if err := c.server.RegisterSession(ctx, c.session); err != nil {
 			return fmt.Errorf("failed to register session: %w", err)
 		}
