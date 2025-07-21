@@ -1141,6 +1141,112 @@ func TestSSEServer(t *testing.T) {
 		}
 	})
 
+	t.Run("TestSessionWithPrompts", func(t *testing.T) {
+		// Create hooks to track sessions
+		hooks := &Hooks{}
+		var registeredSession *sseSession
+		hooks.AddOnRegisterSession(func(ctx context.Context, session ClientSession) {
+			if s, ok := session.(*sseSession); ok {
+				registeredSession = s
+			}
+		})
+
+		mcpServer := NewMCPServer("test", "1.0.0", WithHooks(hooks))
+		testServer := NewTestServer(mcpServer)
+		defer testServer.Close()
+
+		// Connect to SSE endpoint
+		sseResp, err := http.Get(fmt.Sprintf("%s/sse", testServer.URL))
+		if err != nil {
+			t.Fatalf("Failed to connect to SSE endpoint: %v", err)
+		}
+		defer sseResp.Body.Close()
+
+		// Read the endpoint event to ensure session is established
+		_, err = readSSEEvent(sseResp)
+		if err != nil {
+			t.Fatalf("Failed to read SSE response: %v", err)
+		}
+
+		// Verify we got a session
+		if registeredSession == nil {
+			t.Fatal("Session was not registered via hook")
+		}
+
+		// Test setting and getting prompts
+		prompts := map[string]ServerPrompt{
+			"test_prompt": {
+				Prompt: mcp.Prompt{
+					Name:        "test_prompt",
+					Description: "A test prompt",
+				},
+				Handler: func(ctx context.Context, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+					return mcp.NewGetPromptResult("test", []mcp.PromptMessage{
+						{
+							Role:    mcp.RoleUser,
+							Content: mcp.TextContent{Text: "test"},
+						},
+					}), nil
+				},
+			},
+		}
+
+		// Test SetSessionPrompts
+		registeredSession.SetSessionPrompts(prompts)
+
+		// Test GetSessionPrompts
+		retrievedPrompts := registeredSession.GetSessionPrompts()
+		if len(retrievedPrompts) != 1 {
+			t.Errorf("Expected 1 prompt, got %d", len(retrievedPrompts))
+		}
+		if prompt, exists := retrievedPrompts["test_prompt"]; !exists {
+			t.Error("Expected test_prompt to exist")
+		} else if prompt.Prompt.Name != "test_prompt" {
+			t.Errorf("Expected prompt name test_prompt, got %s", prompt.Prompt.Name)
+		}
+
+		// Test concurrent access
+		var wg sync.WaitGroup
+		for i := 0; i < 10; i++ {
+			wg.Add(2)
+			go func(i int) {
+				defer wg.Done()
+				prompts := map[string]ServerPrompt{
+					fmt.Sprintf("prompt_%d", i): {
+						Prompt: mcp.Prompt{
+							Name:        fmt.Sprintf("prompt_%d", i),
+							Description: fmt.Sprintf("Prompt %d", i),
+						},
+					},
+				}
+				registeredSession.SetSessionPrompts(prompts)
+			}(i)
+			go func() {
+				defer wg.Done()
+				_ = registeredSession.GetSessionPrompts()
+			}()
+		}
+		wg.Wait()
+
+		// Verify we can still get and set tools after concurrent access
+		finalPrompts := map[string]ServerPrompt{
+			"final_prompt": {
+				Prompt: mcp.Prompt{
+					Name:        "final_prompt",
+					Description: "Final Prompt",
+				},
+			},
+		}
+		registeredSession.SetSessionPrompts(finalPrompts)
+		retrievedPrompts = registeredSession.GetSessionPrompts()
+		if len(retrievedPrompts) != 1 {
+			t.Errorf("Expected 1 prompt, got %d", len(retrievedPrompts))
+		}
+		if _, exists := retrievedPrompts["final_prompt"]; !exists {
+			t.Error("Expected final_prompt to exist")
+		}
+	})
+
 	t.Run("SessionWithTools implementation", func(t *testing.T) {
 		// Create hooks to track sessions
 		hooks := &Hooks{}
