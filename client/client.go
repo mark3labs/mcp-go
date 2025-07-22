@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -22,6 +23,7 @@ type Client struct {
 	requestID          atomic.Int64
 	clientCapabilities mcp.ClientCapabilities
 	serverCapabilities mcp.ServerCapabilities
+	protocolVersion    string
 	samplingHandler    SamplingHandler
 }
 
@@ -176,8 +178,19 @@ func (c *Client) Initialize(
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
-	// Store serverCapabilities
+	// Validate protocol version
+	if !slices.Contains(mcp.ValidProtocolVersions, result.ProtocolVersion) {
+		return nil, mcp.UnsupportedProtocolVersionError{Version: result.ProtocolVersion}
+	}
+
+	// Store serverCapabilities and protocol version
 	c.serverCapabilities = result.Capabilities
+	c.protocolVersion = result.ProtocolVersion
+
+	// Set protocol version on HTTP transports
+	if httpConn, ok := c.transport.(transport.HTTPConnection); ok {
+		httpConn.SetProtocolVersion(result.ProtocolVersion)
+	}
 
 	// Send initialized notification
 	notification := mcp.JSONRPCNotification{

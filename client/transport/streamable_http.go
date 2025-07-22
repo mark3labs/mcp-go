@@ -102,7 +102,8 @@ type StreamableHTTP struct {
 	logger              util.Logger
 	getListeningEnabled bool
 
-	sessionID atomic.Value // string
+	sessionID       atomic.Value // string
+	protocolVersion atomic.Value // string
 
 	initialized     chan struct{}
 	initializedOnce sync.Once
@@ -207,8 +208,14 @@ func (c *StreamableHTTP) Close() error {
 	return nil
 }
 
+// SetProtocolVersion sets the negotiated protocol version for this connection.
+func (c *StreamableHTTP) SetProtocolVersion(version string) {
+	c.protocolVersion.Store(version)
+}
+
 const (
-	headerKeySessionID = "Mcp-Session-Id"
+	headerKeySessionID       = "Mcp-Session-Id"
+	headerKeyProtocolVersion = "Mcp-Protocol-Version"
 )
 
 // ErrOAuthAuthorizationRequired is a sentinel error for OAuth authorization required
@@ -336,6 +343,12 @@ func (c *StreamableHTTP) sendHTTP(
 	sessionID := c.sessionID.Load().(string)
 	if sessionID != "" {
 		req.Header.Set(headerKeySessionID, sessionID)
+	}
+	// Set protocol version header if negotiated
+	if v := c.protocolVersion.Load(); v != nil {
+		if version, ok := v.(string); ok && version != "" {
+			req.Header.Set(headerKeyProtocolVersion, version)
+		}
 	}
 	for k, v := range c.headers {
 		req.Header.Set(k, v)

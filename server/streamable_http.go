@@ -208,7 +208,8 @@ func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 // --- internal methods ---
 
 const (
-	headerKeySessionID = "Mcp-Session-Id"
+	headerKeySessionID       = "Mcp-Session-Id"
+	headerKeyProtocolVersion = "Mcp-Protocol-Version"
 )
 
 func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {

@@ -28,8 +28,7 @@ var initRequest = map[string]any{
 	"id":      1,
 	"method":  "initialize",
 	"params": map[string]any{
-		"protocolVersion": "2025-03-26",
-		"clientInfo": map[string]any{
+		"protocolVersion": mcp.LATEST_PROTOCOL_VERSION, "clientInfo": map[string]any{
 			"name":    "test-client",
 			"version": "1.0.0",
 		},
@@ -146,8 +145,8 @@ func TestStreamableHTTP_POST_SendAndReceive(t *testing.T) {
 		if err := json.Unmarshal(bodyBytes, &responseMessage); err != nil {
 			t.Fatalf("Failed to unmarshal response: %v", err)
 		}
-		if responseMessage.Result["protocolVersion"] != "2025-03-26" {
-			t.Errorf("Expected protocol version 2025-03-26, got %s", responseMessage.Result["protocolVersion"])
+		if responseMessage.Result["protocolVersion"] != mcp.LATEST_PROTOCOL_VERSION {
+			t.Errorf("Expected protocol version %s, got %s", mcp.LATEST_PROTOCOL_VERSION, responseMessage.Result["protocolVersion"])
 		}
 
 		// get session id from header
@@ -339,8 +338,8 @@ func TestStreamableHTTP_POST_SendAndReceive_stateless(t *testing.T) {
 		if err := json.Unmarshal(bodyBytes, &responseMessage); err != nil {
 			t.Fatalf("Failed to unmarshal response: %v", err)
 		}
-		if responseMessage.Result["protocolVersion"] != "2025-03-26" {
-			t.Errorf("Expected protocol version 2025-03-26, got %s", responseMessage.Result["protocolVersion"])
+		if responseMessage.Result["protocolVersion"] != mcp.LATEST_PROTOCOL_VERSION {
+			t.Errorf("Expected protocol version %s, got %s", mcp.LATEST_PROTOCOL_VERSION, responseMessage.Result["protocolVersion"])
 		}
 
 		// no session id from header
@@ -565,8 +564,7 @@ func TestStreamableHTTP_HttpHandler(t *testing.T) {
 			"id":      1,
 			"method":  "initialize",
 			"params": map[string]any{
-				"protocolVersion": "2025-03-26",
-				"clientInfo": map[string]any{
+				"protocolVersion": mcp.LATEST_PROTOCOL_VERSION, "clientInfo": map[string]any{
 					"name":    "test-client",
 					"version": "1.0.0",
 				},
@@ -586,8 +584,8 @@ func TestStreamableHTTP_HttpHandler(t *testing.T) {
 		if err := json.Unmarshal(bodyBytes, &responseMessage); err != nil {
 			t.Fatalf("Failed to unmarshal response: %v", err)
 		}
-		if responseMessage.Result["protocolVersion"] != "2025-03-26" {
-			t.Errorf("Expected protocol version 2025-03-26, got %s", responseMessage.Result["protocolVersion"])
+		if responseMessage.Result["protocolVersion"] != mcp.LATEST_PROTOCOL_VERSION {
+			t.Errorf("Expected protocol version %s, got %s", mcp.LATEST_PROTOCOL_VERSION, responseMessage.Result["protocolVersion"])
 		}
 	})
 }
@@ -844,56 +842,56 @@ func TestStreamableHTTPServer_WithOptions(t *testing.T) {
 }
 
 func TestStreamableHTTP_HeaderPassthrough(t *testing.T) {
-    mcpServer := NewMCPServer("test-mcp-server", "1.0")
-    
-    var receivedHeaders struct {
-        contentType string
-        customHeader string
-    }
-    mcpServer.AddTool(
-        mcp.NewTool("check-headers"),
-        func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-            receivedHeaders.contentType = request.Header.Get("Content-Type")
-            receivedHeaders.customHeader = request.Header.Get("X-Custom-Header")
-            return mcp.NewToolResultText("ok"), nil
-        },
-    )
+	mcpServer := NewMCPServer("test-mcp-server", "1.0")
 
-    server := NewTestStreamableHTTPServer(mcpServer)
-    defer server.Close()
+	var receivedHeaders struct {
+		contentType  string
+		customHeader string
+	}
+	mcpServer.AddTool(
+		mcp.NewTool("check-headers"),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			receivedHeaders.contentType = request.Header.Get("Content-Type")
+			receivedHeaders.customHeader = request.Header.Get("X-Custom-Header")
+			return mcp.NewToolResultText("ok"), nil
+		},
+	)
 
-    // Initialize to get session
-    resp, _ := postJSON(server.URL, initRequest)
-    sessionID := resp.Header.Get(headerKeySessionID)
-    resp.Body.Close()
+	server := NewTestStreamableHTTPServer(mcpServer)
+	defer server.Close()
 
-    // Test header passthrough
-    toolRequest := map[string]any{
-        "jsonrpc": "2.0",
-        "id":      2,
-        "method":  "tools/call",
-        "params": map[string]any{
-            "name": "check-headers",
-        },
-    }
-    toolBody, _ := json.Marshal(toolRequest)
-    req, _ := http.NewRequest("POST", server.URL, bytes.NewReader(toolBody))
+	// Initialize to get session
+	resp, _ := postJSON(server.URL, initRequest)
+	sessionID := resp.Header.Get(headerKeySessionID)
+	resp.Body.Close()
 
-    const expectedContentType = "application/json"
-    const expectedCustomHeader = "test-value"
-    req.Header.Set("Content-Type", expectedContentType)
-    req.Header.Set("X-Custom-Header", expectedCustomHeader)
-    req.Header.Set(headerKeySessionID, sessionID)
+	// Test header passthrough
+	toolRequest := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "check-headers",
+		},
+	}
+	toolBody, _ := json.Marshal(toolRequest)
+	req, _ := http.NewRequest("POST", server.URL, bytes.NewReader(toolBody))
 
-    resp, _ = server.Client().Do(req)
-    resp.Body.Close()
+	const expectedContentType = "application/json"
+	const expectedCustomHeader = "test-value"
+	req.Header.Set("Content-Type", expectedContentType)
+	req.Header.Set("X-Custom-Header", expectedCustomHeader)
+	req.Header.Set(headerKeySessionID, sessionID)
 
-    if receivedHeaders.contentType != expectedContentType {
-        t.Errorf("Expected Content-Type header '%s', got '%s'", expectedContentType, receivedHeaders.contentType)
-    }
-    if receivedHeaders.customHeader != expectedCustomHeader {
-        t.Errorf("Expected X-Custom-Header '%s', got '%s'", expectedCustomHeader, receivedHeaders.customHeader)
-    }
+	resp, _ = server.Client().Do(req)
+	resp.Body.Close()
+
+	if receivedHeaders.contentType != expectedContentType {
+		t.Errorf("Expected Content-Type header '%s', got '%s'", expectedContentType, receivedHeaders.contentType)
+	}
+	if receivedHeaders.customHeader != expectedCustomHeader {
+		t.Errorf("Expected X-Custom-Header '%s', got '%s'", expectedCustomHeader, receivedHeaders.customHeader)
+	}
 }
 
 func postJSON(url string, bodyObject any) (*http.Response, error) {
