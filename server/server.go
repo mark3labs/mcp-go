@@ -171,10 +171,11 @@ func WithPaginationLimit(limit int) ServerOption {
 
 // serverCapabilities defines the supported features of the MCP server
 type serverCapabilities struct {
-	tools     *toolCapabilities
-	resources *resourceCapabilities
-	prompts   *promptCapabilities
-	logging   *bool
+	tools       *toolCapabilities
+	resources   *resourceCapabilities
+	prompts     *promptCapabilities
+	logging     *bool
+	elicitation *bool
 }
 
 // resourceCapabilities defines the supported resource-related features
@@ -278,6 +279,13 @@ func WithToolCapabilities(listChanged bool) ServerOption {
 func WithLogging() ServerOption {
 	return func(s *MCPServer) {
 		s.capabilities.logging = mcp.ToBoolPtr(true)
+	}
+}
+
+// WithElicitation enables elicitation capabilities for the server
+func WithElicitation() ServerOption {
+	return func(s *MCPServer) {
+		s.capabilities.elicitation = mcp.ToBoolPtr(true)
 	}
 }
 
@@ -565,6 +573,10 @@ func (s *MCPServer) handleInitialize(
 
 	if s.capabilities.logging != nil && *s.capabilities.logging {
 		capabilities.Logging = &struct{}{}
+	}
+
+	if s.capabilities.elicitation != nil && *s.capabilities.elicitation {
+		capabilities.Elicitation = &struct{}{}
 	}
 
 	result := mcp.InitializeResult{

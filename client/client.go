@@ -23,6 +23,7 @@ type Client struct {
 	clientCapabilities mcp.ClientCapabilities
 	serverCapabilities mcp.ServerCapabilities
 	samplingHandler    SamplingHandler
+	elicitationHandler ElicitationHandler
 }
 
 type ClientOption func(*Client)
@@ -39,6 +40,14 @@ func WithClientCapabilities(capabilities mcp.ClientCapabilities) ClientOption {
 func WithSamplingHandler(handler SamplingHandler) ClientOption {
 	return func(c *Client) {
 		c.samplingHandler = handler
+	}
+}
+
+// WithElicitationHandler sets the elicitation handler for the client.
+// When set, the client will declare elicitation capability during initialization.
+func WithElicitationHandler(handler ElicitationHandler) ClientOption {
+	return func(c *Client) {
+		c.elicitationHandler = handler
 	}
 }
 
@@ -153,6 +162,10 @@ func (c *Client) Initialize(
 	capabilities := request.Params.Capabilities
 	if c.samplingHandler != nil {
 		capabilities.Sampling = &struct{}{}
+	}
+	// Add elicitation capability if handler is configured
+	if c.elicitationHandler != nil {
+		capabilities.Elicitation = &struct{}{}
 	}
 
 	// Ensure we send a params object with all required fields
@@ -427,11 +440,13 @@ func (c *Client) Complete(
 }
 
 // handleIncomingRequest processes incoming requests from the server.
-// This is the main entry point for server-to-client requests like sampling.
+// This is the main entry point for server-to-client requests like sampling and elicitation.
 func (c *Client) handleIncomingRequest(ctx context.Context, request transport.JSONRPCRequest) (*transport.JSONRPCResponse, error) {
 	switch request.Method {
 	case string(mcp.MethodSamplingCreateMessage):
 		return c.handleSamplingRequestTransport(ctx, request)
+	case string(mcp.MethodElicitationCreate):
+		return c.handleElicitationRequestTransport(ctx, request)
 	default:
 		return nil, fmt.Errorf("unsupported request method: %s", request.Method)
 	}
@@ -484,6 +499,55 @@ func (c *Client) handleSamplingRequestTransport(ctx context.Context, request tra
 
 	return response, nil
 }
+
+// handleElicitationRequestTransport handles elicitation requests at the transport level.
+func (c *Client) handleElicitationRequestTransport(ctx context.Context, request transport.JSONRPCRequest) (*transport.JSONRPCResponse, error) {
+	if c.elicitationHandler == nil {
+		return nil, fmt.Errorf("no elicitation handler configured")
+	}
+
+	// Parse the request parameters
+	var params mcp.ElicitationParams
+	if request.Params != nil {
+		paramsBytes, err := json.Marshal(request.Params)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal params: %w", err)
+		}
+		if err := json.Unmarshal(paramsBytes, &params); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal params: %w", err)
+		}
+	}
+
+	// Create the MCP request
+	mcpRequest := mcp.ElicitationRequest{
+		Request: mcp.Request{
+			Method: string(mcp.MethodElicitationCreate),
+		},
+		Params: params,
+	}
+
+	// Call the elicitation handler
+	result, err := c.elicitationHandler.Elicit(ctx, mcpRequest)
+	if err != nil {
+		return nil, err
+	}
+
+	// Marshal the result
+	resultBytes, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal result: %w", err)
+	}
+
+	// Create the transport response
+	response := &transport.JSONRPCResponse{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		ID:      request.ID,
+		Result:  json.RawMessage(resultBytes),
+	}
+
+	return response, nil
+}
+
 func listByPage[T any](
 	ctx context.Context,
 	client *Client,
