@@ -307,6 +307,13 @@ func (c *Stdio) SendRequest(
 	ctx context.Context,
 	request JSONRPCRequest,
 ) (*JSONRPCResponse, error) {
+	// Check if context is already canceled before doing any work
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	if c.stdin == nil {
 		return nil, fmt.Errorf("stdio client not started")
 	}
