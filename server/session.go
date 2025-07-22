@@ -48,6 +48,13 @@ type SessionWithClientInfo interface {
 	SetClientInfo(clientInfo mcp.Implementation)
 }
 
+// SessionWithParams is an extension of ClientSession that can store session parameters
+type SessionWithParams interface {
+	ClientSession
+	// Params returns the parameters associated with the session.
+	Params() map[string]string
+}
+
 // SessionWithStreamableHTTPConfig extends ClientSession to support streamable HTTP transport configurations
 type SessionWithStreamableHTTPConfig interface {
 	ClientSession

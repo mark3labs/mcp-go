@@ -1606,6 +1606,182 @@ func TestSSEServer(t *testing.T) {
 			t.Error("Headers check hook was not called within timeout")
 		}
 	})
+
+	t.Run("Parameters parsing from URL query", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
+		
+		// Add a tool that can access session params to verify they're passed correctly
+		var capturedParams map[string]string
+		mcpServer.AddTool(
+			mcp.NewTool("get-params"),
+			func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				session := ClientSessionFromContext(ctx)
+				if session == nil {
+					return nil, fmt.Errorf("no session in context")
+				}
+				
+				sessionWithParams, ok := session.(SessionWithParams)
+				if !ok {
+					return nil, fmt.Errorf("session does not implement SessionWithParams")
+				}
+				
+				capturedParams = sessionWithParams.Params()
+				return mcp.NewToolResultText("params captured"), nil
+			},
+		)
+		
+		testServer := NewTestServer(mcpServer)
+		defer testServer.Close()
+
+		// Test with various query parameters
+		testCases := []struct {
+			name           string
+			queryString    string
+			expectedParams map[string]string
+		}{
+			{
+				name:        "single parameter",
+				queryString: "?tenant_id=test-tenant-123",
+				expectedParams: map[string]string{
+					"tenant_id": "test-tenant-123",
+				},
+			},
+			{
+				name:        "multiple parameters",
+				queryString: "?tenant_id=test-tenant-123&user_id=user-456&environment=development",
+				expectedParams: map[string]string{
+					"tenant_id":   "test-tenant-123",
+					"user_id":     "user-456",
+					"environment": "development",
+				},
+			},
+			{
+				name:           "no parameters",
+				queryString:    "",
+				expectedParams: map[string]string{},
+			},
+			{
+				name:        "parameters with special characters",
+				queryString: "?key1=value%20with%20spaces&key2=value%2Bwith%2Bplus",
+				expectedParams: map[string]string{
+					"key1": "value with spaces",
+					"key2": "value+with+plus",
+				},
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				capturedParams = nil // Reset captured params
+				
+				// Connect to SSE endpoint with query parameters
+				sseURL := fmt.Sprintf("%s/sse%s", testServer.URL, tc.queryString)
+				sseResp, err := http.Get(sseURL)
+				if err != nil {
+					t.Fatalf("Failed to connect to SSE endpoint: %v", err)
+				}
+				defer sseResp.Body.Close()
+
+				// Read the endpoint event
+				endpointEvent, err := readSSEEvent(sseResp)
+				if err != nil {
+					t.Fatalf("Failed to read SSE response: %v", err)
+				}
+				if !strings.Contains(endpointEvent, "event: endpoint") {
+					t.Fatalf("Expected endpoint event, got: %s", endpointEvent)
+				}
+
+				// Extract message endpoint URL
+				messageURL := strings.TrimSpace(
+					strings.Split(strings.Split(endpointEvent, "data: ")[1], "\n")[0],
+				)
+
+				// Send initialize request
+				initRequest := map[string]any{
+					"jsonrpc": "2.0",
+					"id":      1,
+					"method":  "initialize",
+					"params": map[string]any{
+						"protocolVersion": "2024-11-05",
+						"clientInfo": map[string]any{
+							"name":    "test-client",
+							"version": "1.0.0",
+						},
+					},
+				}
+
+				requestBody, err := json.Marshal(initRequest)
+				if err != nil {
+					t.Fatalf("Failed to marshal init request: %v", err)
+				}
+
+				initResp, err := http.Post(messageURL, "application/json", bytes.NewReader(requestBody))
+				if err != nil {
+					t.Fatalf("Failed to send init request: %v", err)
+				}
+				defer initResp.Body.Close()
+
+				if initResp.StatusCode != http.StatusAccepted {
+					t.Fatalf("Expected status 202, got %d", initResp.StatusCode)
+				}
+
+				// Send a request to get params
+				paramsRequest := map[string]any{
+					"jsonrpc": "2.0",
+					"id":      2,
+					"method":  "tools/call",
+					"params": map[string]any{
+						"name":      "get-params",
+						"arguments": map[string]any{},
+					},
+				}
+
+				requestBody, err = json.Marshal(paramsRequest)
+				if err != nil {
+					t.Fatalf("Failed to marshal params request: %v", err)
+				}
+
+				paramsResp, err := http.Post(messageURL, "application/json", bytes.NewReader(requestBody))
+				if err != nil {
+					t.Fatalf("Failed to send params request: %v", err)
+				}
+				defer paramsResp.Body.Close()
+
+				if paramsResp.StatusCode != http.StatusAccepted {
+					t.Fatalf("Expected status 202, got %d", paramsResp.StatusCode)
+				}
+
+				// Verify captured params match expected
+				if capturedParams == nil {
+					t.Fatal("No params were captured")
+				}
+
+				// Check length
+				if len(capturedParams) != len(tc.expectedParams) {
+					t.Errorf("Expected %d params, got %d: %v", len(tc.expectedParams), len(capturedParams), capturedParams)
+				}
+
+				// Check each expected param
+				for expectedKey, expectedValue := range tc.expectedParams {
+					actualValue, exists := capturedParams[expectedKey]
+					if !exists {
+						t.Errorf("Expected param %s not found in captured params: %v", expectedKey, capturedParams)
+						continue
+					}
+					if actualValue != expectedValue {
+						t.Errorf("Expected param %s to be %q, got %q", expectedKey, expectedValue, actualValue)
+					}
+				}
+
+				// Check no unexpected params
+				for actualKey := range capturedParams {
+					if _, expected := tc.expectedParams[actualKey]; !expected {
+						t.Errorf("Unexpected param %s=%s found in captured params", actualKey, capturedParams[actualKey])
+					}
+				}
+			})
+		}
+	})
 }
 
 func readSSEEvent(sseResp *http.Response) (string, error) {

@@ -896,6 +896,171 @@ func TestStreamableHTTP_HeaderPassthrough(t *testing.T) {
     }
 }
 
+func TestStreamableHTTP_ParameterParsing(t *testing.T) {
+	mcpServer := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
+	
+	// Add a tool that can access session params to verify they're passed correctly
+	var capturedParams map[string]string
+	mcpServer.AddTool(
+		mcp.NewTool("get-params"),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			session := ClientSessionFromContext(ctx)
+			if session == nil {
+				return nil, fmt.Errorf("no session in context")
+			}
+			
+			sessionWithParams, ok := session.(SessionWithParams)
+			if !ok {
+				return nil, fmt.Errorf("session does not implement SessionWithParams")
+			}
+			
+			capturedParams = sessionWithParams.Params()
+			return mcp.NewToolResultText("params captured"), nil
+		},
+	)
+	
+	server := NewStreamableHTTPServer(mcpServer)
+	httpServer := httptest.NewServer(server)
+	defer httpServer.Close()
+
+	// Test cases with different query parameters
+	testCases := []struct {
+		name           string
+		queryString    string
+		expectedParams map[string]string
+	}{
+		{
+			name:        "single parameter",
+			queryString: "?tenant_id=tenant-123",
+			expectedParams: map[string]string{
+				"tenant_id": "tenant-123",
+			},
+		},
+		{
+			name:        "multiple parameters",
+			queryString: "?tenant_id=tenant-123&user_id=user-456&environment=prod",
+			expectedParams: map[string]string{
+				"tenant_id":   "tenant-123",
+				"user_id":     "user-456",
+				"environment": "prod",
+			},
+		},
+		{
+			name:           "no parameters",
+			queryString:    "",
+			expectedParams: map[string]string{},
+		},
+		{
+			name:        "parameters with special characters",
+			queryString: "?key1=value%20with%20spaces&key2=value%2Bwith%2Bplus&key3=hello%26world",
+			expectedParams: map[string]string{
+				"key1": "value with spaces",
+				"key2": "value+with+plus", 
+				"key3": "hello&world",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Test POST endpoint (simpler and more reliable)
+			t.Run("POST endpoint", func(t *testing.T) {
+				capturedParams = nil
+
+				testURL := httpServer.URL + tc.queryString
+				
+				// First initialize to get session ID  
+				initRequest := map[string]any{
+					"jsonrpc": "2.0",
+					"id":      1,
+					"method":  "initialize",
+					"params": map[string]any{
+						"protocolVersion": "2025-03-26",
+						"clientInfo": map[string]any{
+							"name":    "test-client",
+							"version": "1.0.0",
+						},
+					},
+				}
+
+				initResp, err := postJSON(testURL, initRequest)
+				if err != nil {
+					t.Fatalf("Failed to send init request: %v", err)
+				}
+				defer initResp.Body.Close()
+
+				if initResp.StatusCode != http.StatusOK {
+					t.Fatalf("Expected status 200 for init, got %d", initResp.StatusCode)
+				}
+
+				// Get session ID from header
+				sessionID := initResp.Header.Get("Mcp-Session-Id")
+				if sessionID == "" {
+					t.Fatal("Expected session id in header")
+				}
+
+				// Now call the tool with session ID
+				toolRequest := map[string]any{
+					"jsonrpc": "2.0",
+					"id":      2,
+					"method":  "tools/call",
+					"params": map[string]any{
+						"name":      "get-params",
+						"arguments": map[string]any{},
+					},
+				}
+
+				jsonBody, _ := json.Marshal(toolRequest)
+				req, _ := http.NewRequest("POST", testURL, bytes.NewReader(jsonBody))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Mcp-Session-Id", sessionID)
+
+				toolResp, err := httpServer.Client().Do(req)
+				if err != nil {
+					t.Fatalf("Failed to send tool request: %v", err)
+				}
+				defer toolResp.Body.Close()
+
+				if toolResp.StatusCode != http.StatusOK {
+					t.Fatalf("Expected status 200, got %d", toolResp.StatusCode)
+				}
+
+				// Small delay to ensure async operations complete
+				time.Sleep(10 * time.Millisecond)
+
+				// Verify captured params match expected
+				if capturedParams == nil {
+					t.Fatal("No params were captured")
+				}
+
+				// Check length
+				if len(capturedParams) != len(tc.expectedParams) {
+					t.Errorf("Expected %d params, got %d: %v", len(tc.expectedParams), len(capturedParams), capturedParams)
+				}
+
+				// Check each expected param
+				for expectedKey, expectedValue := range tc.expectedParams {
+					actualValue, exists := capturedParams[expectedKey]
+					if !exists {
+						t.Errorf("Expected param %s not found in captured params: %v", expectedKey, capturedParams)
+						continue
+					}
+					if actualValue != expectedValue {
+						t.Errorf("Expected param %s to be %q, got %q", expectedKey, expectedValue, actualValue)
+					}
+				}
+
+				// Check no unexpected params
+				for actualKey := range capturedParams {
+					if _, expected := tc.expectedParams[actualKey]; !expected {
+						t.Errorf("Unexpected param %s=%s found in captured params", actualKey, capturedParams[actualKey])
+					}
+				}
+			})
+		})
+	}
+}
+
 func postJSON(url string, bodyObject any) (*http.Response, error) {
 	jsonBody, _ := json.Marshal(bodyObject)
 	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(jsonBody))
