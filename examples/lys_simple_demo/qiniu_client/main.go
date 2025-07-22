@@ -22,7 +22,7 @@ func main() {
 
 	// Create a new SSE transport
 	headers := map[string]string{
-		"Authorization": "Bearer sk-8dcfdc26e7303a2561a2a852cb1c0ae2ca46eeea51f0458b40d580a913d4b4d3",
+		"Authorization": "Bearer ",
 	}
 	trans, err := transport.NewSSE(sseURL, transport.WithHeaders(headers))
 	if err != nil {

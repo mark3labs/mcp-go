@@ -57,6 +57,20 @@ func main() {
 		log.Fatalf("Failed to initialize client: %v", err)
 	}
 
+	// 列出所有可用的工具
+	log.Println("Listing available tools")
+	toolsResult, err := mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		log.Fatalf("Failed to list tools: %v", err)
+	}
+
+	fmt.Println("Available tools:")
+	for _, tool := range toolsResult.Tools {
+		fmt.Printf("  - %s: %s\n", tool.Name, tool.Description)
+	}
+	fmt.Println()
+
+	// 调用say_hi工具
 	log.Println("Calling say_hi tool")
 	result, err := mcpClient.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
