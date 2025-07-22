@@ -422,6 +422,15 @@ func (s *MCPServer) AddPrompt(prompt mcp.Prompt, handler PromptHandlerFunc) {
 	s.AddPrompts(ServerPrompt{Prompt: prompt, Handler: handler})
 }
 
+// SetPrompts replaces all existing prompts with the provided list
+func (s *MCPServer) SetPrompts(prompts ...ServerPrompt) {
+	s.promptsMu.Lock()
+	s.prompts = make(map[string]mcp.Prompt, len(prompts))
+	s.promptHandlers = make(map[string]PromptHandlerFunc, len(prompts))
+	s.promptsMu.Unlock()
+	s.AddPrompts(prompts...)
+}
+
 // DeletePrompts removes prompts from the server
 func (s *MCPServer) DeletePrompts(names ...string) {
 	s.promptsMu.Lock()
