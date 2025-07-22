@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -172,12 +173,72 @@ func (f *sessionTestClientWithLogging) GetLogLevel() mcp.LoggingLevel {
 	return level.(mcp.LoggingLevel)
 }
 
+// sessionTestClientWithParams implements the SessionWithParams interface for testing
+type sessionTestClientWithParams struct {
+	sessionID           string
+	notificationChannel chan mcp.JSONRPCNotification
+	initialized         bool
+	params              map[string]string
+	mu                  sync.RWMutex // Mutex to protect concurrent access to params
+}
+
+func (f *sessionTestClientWithParams) SessionID() string {
+	return f.sessionID
+}
+
+func (f *sessionTestClientWithParams) NotificationChannel() chan<- mcp.JSONRPCNotification {
+	return f.notificationChannel
+}
+
+func (f *sessionTestClientWithParams) Initialize() {
+	f.initialized = true
+}
+
+func (f *sessionTestClientWithParams) Initialized() bool {
+	return f.initialized
+}
+
+func (f *sessionTestClientWithParams) Params() map[string]string {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	// Return a copy of the map to prevent concurrent modification
+	if f.params == nil {
+		return nil
+	}
+
+	paramsCopy := make(map[string]string, len(f.params))
+	for k, v := range f.params {
+		paramsCopy[k] = v
+	}
+	return paramsCopy
+}
+
+// SetParams sets the params (for testing purposes)
+func (f *sessionTestClientWithParams) SetParams(params map[string]string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// Create a copy of the map to prevent concurrent modification
+	if params == nil {
+		f.params = nil
+		return
+	}
+
+	paramsCopy := make(map[string]string, len(params))
+	for k, v := range params {
+		paramsCopy[k] = v
+	}
+	f.params = paramsCopy
+}
+
 // Verify that all implementations satisfy their respective interfaces
 var (
 	_ ClientSession         = (*sessionTestClient)(nil)
 	_ SessionWithTools      = (*sessionTestClientWithTools)(nil)
 	_ SessionWithLogging    = (*sessionTestClientWithLogging)(nil)
 	_ SessionWithClientInfo = (*sessionTestClientWithClientInfo)(nil)
+	_ SessionWithParams     = (*sessionTestClientWithParams)(nil)
 )
 
 func TestSessionWithTools_Integration(t *testing.T) {
@@ -1506,4 +1567,113 @@ func TestMCPServer_LoggingNotificationFormat(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSessionWithParams_Integration(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0")
+
+	// Create a session with params
+	testParams := map[string]string{
+		"tenant_id":   "test-tenant-123",
+		"user_id":     "user-456",
+		"environment": "development",
+	}
+
+	session := &sessionTestClientWithParams{
+		sessionID:           "session-1",
+		notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+		initialized:         true,
+		params:              testParams,
+	}
+
+	// Register the session
+	err := server.RegisterSession(context.Background(), session)
+	require.NoError(t, err)
+
+	// Test that we can access the session from context
+	sessionCtx := server.WithContext(context.Background(), session)
+
+	// Check if the session was stored in the context correctly
+	s := ClientSessionFromContext(sessionCtx)
+	require.NotNil(t, s, "Session should be available from context")
+	assert.Equal(t, session.SessionID(), s.SessionID(), "Session ID should match")
+
+	// Check if the session can be cast to SessionWithParams
+	swp, ok := s.(SessionWithParams)
+	require.True(t, ok, "Session should implement SessionWithParams")
+
+	// Test accessing params
+	params := swp.Params()
+	require.NotNil(t, params, "Session params should be available")
+	require.Len(t, params, 3, "Should have 3 params")
+	assert.Equal(t, "test-tenant-123", params["tenant_id"], "tenant_id should match")
+	assert.Equal(t, "user-456", params["user_id"], "user_id should match")
+	assert.Equal(t, "development", params["environment"], "environment should match")
+
+	// Test that params are returned as a copy (not the original map)
+	params["tenant_id"] = "modified-tenant"
+	originalParams := swp.Params()
+	assert.Equal(t, "test-tenant-123", originalParams["tenant_id"], "Original params should not be modified")
+
+	t.Run("test concurrent access", func(t *testing.T) {
+		// Test concurrent access to params
+		var wg sync.WaitGroup
+		errors := make(chan error, 10)
+
+		// Start multiple goroutines reading params
+		for i := 0; i < 5; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for j := 0; j < 10; j++ {
+					params := swp.Params()
+					if params == nil {
+						errors <- fmt.Errorf("params should not be nil")
+						return
+					}
+					if len(params) != 3 {
+						errors <- fmt.Errorf("expected 3 params, got %d", len(params))
+						return
+					}
+				}
+			}()
+		}
+
+		// Start goroutines modifying params
+		for i := 0; i < 3; i++ {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				newParams := map[string]string{
+					"tenant_id":   fmt.Sprintf("tenant-%d", idx),
+					"user_id":     fmt.Sprintf("user-%d", idx),
+					"environment": "test",
+				}
+				session.SetParams(newParams)
+			}(i)
+		}
+
+		wg.Wait()
+		close(errors)
+
+		// Check for any errors during concurrent access
+		for err := range errors {
+			t.Error(err)
+		}
+	})
+
+	t.Run("test nil params", func(t *testing.T) {
+		// Test with nil params
+		session.SetParams(nil)
+		params := swp.Params()
+		assert.Nil(t, params, "Params should be nil when set to nil")
+	})
+
+	t.Run("test empty params", func(t *testing.T) {
+		// Test with empty params
+		session.SetParams(map[string]string{})
+		params := swp.Params()
+		require.NotNil(t, params, "Params should not be nil for empty map")
+		assert.Len(t, params, 0, "Params should be empty")
+	})
 }

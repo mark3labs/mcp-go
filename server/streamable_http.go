@@ -237,6 +237,11 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	}
 	isInitializeRequest := baseMessage.Method == mcp.MethodInitialize
 
+	params := make(map[string]string)
+	for k, v := range r.URL.Query() {
+		params[k] = v[0]
+	}
+
 	// Prepare the session for the mcp server
 	// The session is ephemeral. Its life is the same as the request. It's only created
 	// for interaction with the mcp server.
@@ -259,7 +264,7 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	session := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
+	session := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels, params)
 
 	// Set the client context before handling the message
 	ctx := s.server.WithContext(r.Context(), session)
@@ -370,7 +375,12 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		sessionID = uuid.New().String()
 	}
 
-	session := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
+	params := make(map[string]string)
+	for k, v := range r.URL.Query() {
+		params[k] = v[0]
+	}
+
+	session := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels, params)
 	if err := s.server.RegisterSession(r.Context(), session); err != nil {
 		http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusBadRequest)
 		return
@@ -587,20 +597,26 @@ type streamableHttpSession struct {
 	tools               *sessionToolsStore
 	upgradeToSSE        atomic.Bool
 	logLevels           *sessionLogLevelsStore
+	params              map[string]string
 }
 
-func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, levels *sessionLogLevelsStore) *streamableHttpSession {
+func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, levels *sessionLogLevelsStore, params map[string]string) *streamableHttpSession {
 	s := &streamableHttpSession{
 		sessionID:           sessionID,
 		notificationChannel: make(chan mcp.JSONRPCNotification, 100),
 		tools:               toolStore,
 		logLevels:           levels,
+		params:              params,
 	}
 	return s
 }
 
 func (s *streamableHttpSession) SessionID() string {
 	return s.sessionID
+}
+
+func (s *streamableHttpSession) Params() map[string]string {
+	return s.params
 }
 
 func (s *streamableHttpSession) NotificationChannel() chan<- mcp.JSONRPCNotification {

@@ -30,6 +30,7 @@ type sseSession struct {
 	loggingLevel        atomic.Value
 	tools               sync.Map     // stores session-specific tools
 	clientInfo          atomic.Value // stores session-specific client info
+	params              map[string]string
 }
 
 // SSEContextFunc is a function that takes an existing context and the current
@@ -46,6 +47,10 @@ type DynamicBasePathFunc func(r *http.Request, sessionID string) string
 
 func (s *sseSession) SessionID() string {
 	return s.sessionID
+}
+
+func (s *sseSession) Params() map[string]string {
+	return s.params
 }
 
 func (s *sseSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
@@ -347,12 +352,18 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	params := make(map[string]string)
+	for k, v := range r.URL.Query() {
+		params[k] = v[0]
+	}
+
 	sessionID := uuid.New().String()
 	session := &sseSession{
 		done:                make(chan struct{}),
 		eventQueue:          make(chan string, 100), // Buffer for events
 		sessionID:           sessionID,
 		notificationChannel: make(chan mcp.JSONRPCNotification, 100),
+		params:              params,
 	}
 
 	s.sessions.Store(sessionID, session)
