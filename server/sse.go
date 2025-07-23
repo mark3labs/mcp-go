@@ -30,6 +30,7 @@ type sseSession struct {
 	loggingLevel        atomic.Value
 	tools               sync.Map     // stores session-specific tools
 	clientInfo          atomic.Value // stores session-specific client info
+	clientCapabilities  atomic.Value // stores session-specific client capabilities
 }
 
 // SSEContextFunc is a function that takes an existing context and the current
@@ -106,6 +107,19 @@ func (s *sseSession) GetClientInfo() mcp.Implementation {
 
 func (s *sseSession) SetClientInfo(clientInfo mcp.Implementation) {
 	s.clientInfo.Store(clientInfo)
+}
+
+func (s *sseSession) SetClientCapabilities(clientCapabilities mcp.ClientCapabilities) {
+	s.clientCapabilities.Store(clientCapabilities)
+}
+
+func (s *sseSession) GetClientCapabilities() mcp.ClientCapabilities {
+	if value := s.clientCapabilities.Load(); value != nil {
+		if clientCapabilities, ok := value.(mcp.ClientCapabilities); ok {
+			return clientCapabilities
+		}
+	}
+	return mcp.ClientCapabilities{}
 }
 
 var (

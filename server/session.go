@@ -46,6 +46,10 @@ type SessionWithClientInfo interface {
 	GetClientInfo() mcp.Implementation
 	// SetClientInfo sets the client information for this session
 	SetClientInfo(clientInfo mcp.Implementation)
+	// GetClientCapabilities returns the client capabilities for this session
+	GetClientCapabilities() mcp.ClientCapabilities
+	// SetClientCapabilities sets the client capabilities for this session
+	SetClientCapabilities(clientCapabilities mcp.ClientCapabilities)
 }
 
 // SessionWithStreamableHTTPConfig extends ClientSession to support streamable HTTP transport configurations
