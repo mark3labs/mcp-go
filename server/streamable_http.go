@@ -207,11 +207,6 @@ func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 
 // --- internal methods ---
 
-const (
-	headerKeySessionID       = "Mcp-Session-Id"
-	headerKeyProtocolVersion = "Mcp-Protocol-Version"
-)
-
 func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {
 	// post request carry request/notification message
 
@@ -248,7 +243,7 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	} else {
 		// Get session ID from header.
 		// Stateful servers need the client to carry the session ID.
-		sessionID = r.Header.Get(headerKeySessionID)
+		sessionID = r.Header.Get(HeaderKeySessionID)
 		isTerminated, err := s.sessionIdManager.Validate(sessionID)
 		if err != nil {
 			http.Error(w, "Invalid session ID", http.StatusBadRequest)
@@ -348,7 +343,7 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		w.Header().Set("Content-Type", "application/json")
 		if isInitializeRequest && sessionID != "" {
 			// send the session ID back to the client
-			w.Header().Set(headerKeySessionID, sessionID)
+			w.Header().Set(HeaderKeySessionID, sessionID)
 		}
 		w.WriteHeader(http.StatusOK)
 		err := json.NewEncoder(w).Encode(response)
@@ -362,7 +357,7 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 	// get request is for listening to notifications
 	// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
 
-	sessionID := r.Header.Get(headerKeySessionID)
+	sessionID := r.Header.Get(HeaderKeySessionID)
 	// the specification didn't say we should validate the session id
 
 	if sessionID == "" {
@@ -461,7 +456,7 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 
 func (s *StreamableHTTPServer) handleDelete(w http.ResponseWriter, r *http.Request) {
 	// delete request terminate the session
-	sessionID := r.Header.Get(headerKeySessionID)
+	sessionID := r.Header.Get(HeaderKeySessionID)
 	notAllowed, err := s.sessionIdManager.Terminate(sessionID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Session termination failed: %v", err), http.StatusInternalServerError)

@@ -150,7 +150,7 @@ func TestStreamableHTTP_POST_SendAndReceive(t *testing.T) {
 		}
 
 		// get session id from header
-		sessionID = resp.Header.Get(headerKeySessionID)
+		sessionID = resp.Header.Get(HeaderKeySessionID)
 		if sessionID == "" {
 			t.Fatalf("Expected session id in header, got %s", sessionID)
 		}
@@ -170,7 +170,7 @@ func TestStreamableHTTP_POST_SendAndReceive(t *testing.T) {
 			t.Fatalf("Failed to create request: %v", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set(headerKeySessionID, sessionID)
+		req.Header.Set(HeaderKeySessionID, sessionID)
 
 		resp, err := server.Client().Do(req)
 		if err != nil {
@@ -215,7 +215,7 @@ func TestStreamableHTTP_POST_SendAndReceive(t *testing.T) {
 
 		req, _ := http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(rawNotification))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set(headerKeySessionID, sessionID)
+		req.Header.Set(HeaderKeySessionID, sessionID)
 		resp, err := server.Client().Do(req)
 		if err != nil {
 			t.Fatalf("Failed to send message: %v", err)
@@ -245,7 +245,7 @@ func TestStreamableHTTP_POST_SendAndReceive(t *testing.T) {
 			t.Fatalf("Failed to create request: %v", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set(headerKeySessionID, "dummy-session-id")
+		req.Header.Set(HeaderKeySessionID, "dummy-session-id")
 
 		resp, err := server.Client().Do(req)
 		if err != nil {
@@ -274,7 +274,7 @@ func TestStreamableHTTP_POST_SendAndReceive(t *testing.T) {
 			t.Fatalf("Failed to create request: %v", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set(headerKeySessionID, sessionID)
+		req.Header.Set(HeaderKeySessionID, sessionID)
 
 		resp, err := server.Client().Do(req)
 		if err != nil {
@@ -343,7 +343,7 @@ func TestStreamableHTTP_POST_SendAndReceive_stateless(t *testing.T) {
 		}
 
 		// no session id from header
-		sessionID := resp.Header.Get(headerKeySessionID)
+		sessionID := resp.Header.Get(HeaderKeySessionID)
 		if sessionID != "" {
 			t.Fatalf("Expected no session id in header, got %s", sessionID)
 		}
@@ -432,7 +432,7 @@ func TestStreamableHTTP_POST_SendAndReceive_stateless(t *testing.T) {
 			t.Fatalf("Failed to create request: %v", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set(headerKeySessionID, "dummy-session-id")
+		req.Header.Set(HeaderKeySessionID, "dummy-session-id")
 
 		resp, err := server.Client().Do(req)
 		if err != nil {
@@ -472,7 +472,7 @@ func TestStreamableHTTP_POST_SendAndReceive_stateless(t *testing.T) {
 			t.Fatalf("Failed to create request: %v", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set(headerKeySessionID, "mcp-session-2c44d701-fd50-44ce-92b8-dec46185a741")
+		req.Header.Set(HeaderKeySessionID, "mcp-session-2c44d701-fd50-44ce-92b8-dec46185a741")
 
 		resp, err := server.Client().Do(req)
 		if err != nil {
@@ -747,7 +747,7 @@ func TestStreamableHTTP_SessionWithLogging(t *testing.T) {
 			t.Fatalf("Failed to send init request: %v", err)
 		}
 		defer initResp.Body.Close()
-		sessionID := initResp.Header.Get(headerKeySessionID)
+		sessionID := initResp.Header.Get(HeaderKeySessionID)
 		if sessionID == "" {
 			t.Fatal("Expected session id in header")
 		}
@@ -767,7 +767,7 @@ func TestStreamableHTTP_SessionWithLogging(t *testing.T) {
 			t.Fatalf("Failed to create request: %v", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set(headerKeySessionID, sessionID)
+		req.Header.Set(HeaderKeySessionID, sessionID)
 
 		resp, err := testServer.Client().Do(req)
 		if err != nil {
@@ -862,7 +862,7 @@ func TestStreamableHTTP_HeaderPassthrough(t *testing.T) {
 
 	// Initialize to get session
 	resp, _ := postJSON(server.URL, initRequest)
-	sessionID := resp.Header.Get(headerKeySessionID)
+	sessionID := resp.Header.Get(HeaderKeySessionID)
 	resp.Body.Close()
 
 	// Test header passthrough
@@ -881,7 +881,7 @@ func TestStreamableHTTP_HeaderPassthrough(t *testing.T) {
 	const expectedCustomHeader = "test-value"
 	req.Header.Set("Content-Type", expectedContentType)
 	req.Header.Set("X-Custom-Header", expectedCustomHeader)
-	req.Header.Set(headerKeySessionID, sessionID)
+	req.Header.Set(HeaderKeySessionID, sessionID)
 
 	resp, _ = server.Client().Do(req)
 	resp.Body.Close()

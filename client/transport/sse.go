@@ -328,7 +328,7 @@ func (c *SSE) SendRequest(
 	// Set protocol version header if negotiated
 	if v := c.protocolVersion.Load(); v != nil {
 		if version, ok := v.(string); ok && version != "" {
-			req.Header.Set(headerKeyProtocolVersion, version)
+			req.Header.Set(HeaderKeyProtocolVersion, version)
 		}
 	}
 	for k, v := range c.headers {
@@ -471,7 +471,7 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 	// Set protocol version header if negotiated
 	if v := c.protocolVersion.Load(); v != nil {
 		if version, ok := v.(string); ok && version != "" {
-			req.Header.Set(headerKeyProtocolVersion, version)
+			req.Header.Set(HeaderKeyProtocolVersion, version)
 		}
 	}
 	// Set custom HTTP headers

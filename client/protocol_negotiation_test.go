@@ -88,6 +88,30 @@ func TestProtocolVersionNegotiation(t *testing.T) {
 			expectError:   true,
 			errorContains: "unsupported protocol version",
 		},
+		{
+			name:          "empty protocol version",
+			serverVersion: "",
+			expectError:   true,
+			errorContains: "unsupported protocol version",
+		},
+		{
+			name:          "malformed protocol version - invalid format",
+			serverVersion: "not-a-date",
+			expectError:   true,
+			errorContains: "unsupported protocol version",
+		},
+		{
+			name:          "malformed protocol version - partial date",
+			serverVersion: "2025-06",
+			expectError:   true,
+			errorContains: "unsupported protocol version",
+		},
+		{
+			name:          "malformed protocol version - just numbers",
+			serverVersion: "20250618",
+			expectError:   true,
+			errorContains: "unsupported protocol version",
+		},
 	}
 
 	for _, tt := range tests {
@@ -178,5 +202,30 @@ func TestProtocolVersionHeaderSetting(t *testing.T) {
 	if mockTransport.protocolVersion != mcp.LATEST_PROTOCOL_VERSION {
 		t.Errorf("expected SetProtocolVersion to be called with %q, got %q",
 			mcp.LATEST_PROTOCOL_VERSION, mockTransport.protocolVersion)
+	}
+}
+
+func TestUnsupportedProtocolVersionError_Is(t *testing.T) {
+	// Test that errors.Is works correctly with UnsupportedProtocolVersionError
+	err1 := mcp.UnsupportedProtocolVersionError{Version: "2023-01-01"}
+	err2 := mcp.UnsupportedProtocolVersionError{Version: "2024-01-01"}
+
+	// Test Is method
+	if !err1.Is(err2) {
+		t.Error("expected UnsupportedProtocolVersionError.Is to return true for same error type")
+	}
+
+	// Test with different error type
+	otherErr := fmt.Errorf("some other error")
+	if err1.Is(otherErr) {
+		t.Error("expected UnsupportedProtocolVersionError.Is to return false for different error type")
+	}
+
+	// Test IsUnsupportedProtocolVersion helper
+	if !mcp.IsUnsupportedProtocolVersion(err1) {
+		t.Error("expected IsUnsupportedProtocolVersion to return true")
+	}
+	if mcp.IsUnsupportedProtocolVersion(otherErr) {
+		t.Error("expected IsUnsupportedProtocolVersion to return false for different error type")
 	}
 }
