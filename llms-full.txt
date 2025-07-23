@@ -5640,6 +5640,59 @@ func startWithGracefulShutdown(s *server.MCPServer) {
 }
 ```
 
+### Client Capability Based Filtering
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func main() {
+    s := server.NewMCPServer("Typed Server", "1.0.0",
+        server.WithToolCapabilities(true),
+    )
+
+     s.AddTool(
+        mcp.NewTool("calculate",
+            mcp.WithDescription("Perform basic mathematical calculations"),
+            mcp.WithString("operation",
+                mcp.Required(),
+                mcp.Enum("add", "subtract", "multiply", "divide"),
+                mcp.Description("The operation to perform"),
+            ),
+            mcp.WithNumber("x", mcp.Required(), mcp.Description("First number")),
+            mcp.WithNumber("y", mcp.Required(), mcp.Description("Second number")),
+        ),
+        handleCalculate,
+    )
+
+    server.ServeStdio(s)
+}
+
+func handleCalculate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    session := server.ClientSessionFromContext(ctx)
+	if session == nil {
+		return nil, fmt.Errorf("no active session")
+	}
+
+	if clientSession, ok := session.(server.SessionWithClientInfo); ok {
+             clientCapabilities := clientSession.GetClientCapabilities()
+			 if clientCapabilities.Sampling == nil {
+				 fmt.Println("sampling is not enabled in client")
+			 }
+	}
+
+    // TODO: implement calculation logic
+    return mcp.NewToolResultError("not implemented"), nil
+}
+```
+
 ### Sampling (Advanced)
 
 Sampling is an advanced feature that allows servers to request LLM completions from clients. This enables bidirectional communication where servers can leverage client-side LLM capabilities for content generation, reasoning, and question answering.
