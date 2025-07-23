@@ -868,6 +868,9 @@ func handleCalculate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 				 fmt.Println("sampling is not enabled in client")
 			 }
 	}
+
+    // TODO: implement calculation logic
+    return mcp.NewToolResultError("not implemented"), nil
 }
 ```
 
