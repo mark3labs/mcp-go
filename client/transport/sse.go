@@ -34,9 +34,11 @@ type SSE struct {
 	headers        map[string]string
 	headerFunc     HTTPHeaderFunc
 
-	started         atomic.Bool
-	closed          atomic.Bool
-	cancelSSEStream context.CancelFunc
+	started           atomic.Bool
+	closed            atomic.Bool
+	cancelSSEStream   context.CancelFunc
+	onConnectionLost  func(error)
+	connectionLostMu  sync.RWMutex
 
 	// OAuth support
 	oauthHandler *OAuthHandler
@@ -203,6 +205,17 @@ func (c *SSE) readSSE(reader io.ReadCloser) {
 				}
 				break
 			}
+			// Checking whether the connection was terminated due to NO_ERROR in HTTP2 based on RFC9113
+			if strings.Contains(err.Error(), "NO_ERROR") {
+				// This is not actually an error - HTTP2 idle timeout disconnection
+				c.connectionLostMu.RLock()
+				handler := c.onConnectionLost
+				c.connectionLostMu.RUnlock()
+				if handler != nil {
+					handler(err)
+				}
+				return
+			}
 			if !c.closed.Load() {
 				fmt.Printf("SSE stream error: %v\n", err)
 			}
@@ -291,6 +304,12 @@ func (c *SSE) SetNotificationHandler(handler func(notification mcp.JSONRPCNotifi
 	c.notifyMu.Lock()
 	defer c.notifyMu.Unlock()
 	c.onNotification = handler
+}
+
+func (c *SSE) SetConnectionLostHandler(handler func(error)) {
+	c.connectionLostMu.Lock()
+	defer c.connectionLostMu.Unlock()
+	c.onConnectionLost = handler
 }
 
 // SendRequest sends a JSON-RPC request to the server and waits for a response.
