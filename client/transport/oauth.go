@@ -115,7 +115,9 @@ type OAuthHandler struct {
 	metadataFetchErr error
 	metadataOnce     sync.Once
 	baseURL          string
-	expectedState    string // Expected state value for CSRF protection
+
+	mu            sync.RWMutex // Protects expectedState
+	expectedState string       // Expected state value for CSRF protection
 }
 
 // NewOAuthHandler creates a new OAuth handler
@@ -263,7 +265,25 @@ func (h *OAuthHandler) SetBaseURL(baseURL string) {
 
 // GetExpectedState returns the expected state value (for testing purposes)
 func (h *OAuthHandler) GetExpectedState() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	return h.expectedState
+}
+
+// SetExpectedState sets the expected state value.
+//
+// This can be useful if you cannot maintain an OAuthHandler
+// instance throughout the authentication flow; for example, if
+// the initialization and callback steps are handled in different
+// requests.
+//
+// In such cases, this should be called with the state value generated
+// during the initial authentication request (e.g. by GenerateState)
+// and included in the authorization URL.
+func (h *OAuthHandler) SetExpectedState(expectedState string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.expectedState = expectedState
 }
 
 // OAuthError represents a standard OAuth 2.0 error response
@@ -547,18 +567,21 @@ var ErrInvalidState = errors.New("invalid state parameter, possible CSRF attack"
 // ProcessAuthorizationResponse processes the authorization response and exchanges the code for a token
 func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, state, codeVerifier string) error {
 	// Validate the state parameter to prevent CSRF attacks
-	if h.expectedState == "" {
+	h.mu.Lock()
+	expectedState := h.expectedState
+	if expectedState == "" {
+		h.mu.Unlock()
 		return errors.New("no expected state found, authorization flow may not have been initiated properly")
 	}
 
-	if state != h.expectedState {
+	if state != expectedState {
+		h.mu.Unlock()
 		return ErrInvalidState
 	}
 
 	// Clear the expected state after validation
-	defer func() {
-		h.expectedState = ""
-	}()
+	h.expectedState = ""
+	h.mu.Unlock()
 
 	metadata, err := h.getServerMetadata(ctx)
 	if err != nil {
@@ -629,7 +652,7 @@ func (h *OAuthHandler) GetAuthorizationURL(ctx context.Context, state, codeChall
 	}
 
 	// Store the state for later validation
-	h.expectedState = state
+	h.SetExpectedState(state)
 
 	params := url.Values{}
 	params.Set("response_type", "code")
