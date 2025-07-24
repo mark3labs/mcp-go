@@ -196,6 +196,12 @@ func (c *StreamableHTTP) Close() error {
 				return
 			}
 			req.Header.Set(HeaderKeySessionID, sessionId)
+			// Set protocol version header if negotiated
+			if v := c.protocolVersion.Load(); v != nil {
+				if version, ok := v.(string); ok && version != "" {
+					req.Header.Set(HeaderKeyProtocolVersion, version)
+				}
+			}
 			res, err := c.httpClient.Do(req)
 			if err != nil {
 				c.logger.Errorf("failed to send close request: %v", err)
