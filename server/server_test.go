@@ -42,7 +42,7 @@ func TestMCPServer_Capabilities(t *testing.T) {
 
 				assert.Equal(
 					t,
-					mcp.LATEST_PROTOCOL_VERSION,
+					"2025-03-26", // Backward compatibility: no protocol version provided,
 					initResult.ProtocolVersion,
 				)
 				assert.Equal(t, "test-server", initResult.ServerInfo.Name)
@@ -70,7 +70,7 @@ func TestMCPServer_Capabilities(t *testing.T) {
 
 				assert.Equal(
 					t,
-					mcp.LATEST_PROTOCOL_VERSION,
+					"2025-03-26", // Backward compatibility: no protocol version provided,
 					initResult.ProtocolVersion,
 				)
 				assert.Equal(t, "test-server", initResult.ServerInfo.Name)
@@ -107,7 +107,7 @@ func TestMCPServer_Capabilities(t *testing.T) {
 
 				assert.Equal(
 					t,
-					mcp.LATEST_PROTOCOL_VERSION,
+					"2025-03-26", // Backward compatibility: no protocol version provided,
 					initResult.ProtocolVersion,
 				)
 				assert.Equal(t, "test-server", initResult.ServerInfo.Name)
@@ -407,7 +407,7 @@ func TestMCPServer_HandleValidMessages(t *testing.T) {
 
 				assert.Equal(
 					t,
-					mcp.LATEST_PROTOCOL_VERSION,
+					"2025-03-26", // Backward compatibility: no protocol version provided,
 					initResult.ProtocolVersion,
 				)
 				assert.Equal(t, "test-server", initResult.ServerInfo.Name)
