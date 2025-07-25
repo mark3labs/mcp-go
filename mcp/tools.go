@@ -585,6 +585,7 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 }
 
 type ToolInputSchema struct {
+	Defs       map[string]any `json:"$defs,omitempty"`
 	Type       string         `json:"type"`
 	Properties map[string]any `json:"properties,omitempty"`
 	Required   []string       `json:"required,omitempty"`
@@ -594,6 +595,10 @@ type ToolInputSchema struct {
 func (tis ToolInputSchema) MarshalJSON() ([]byte, error) {
 	m := make(map[string]any)
 	m["type"] = tis.Type
+
+	if tis.Defs != nil {
+		m["$defs"] = tis.Defs
+	}
 
 	// Marshal Properties to '{}' rather than `nil` when its length equals zero
 	if tis.Properties != nil {
