@@ -206,15 +206,17 @@ func (c *SSE) readSSE(reader io.ReadCloser) {
 				break
 			}
 			// Checking whether the connection was terminated due to NO_ERROR in HTTP2 based on RFC9113
+			// Only handle NO_ERROR specially if onConnectionLost handler is set to maintain backward compatibility
 			if strings.Contains(err.Error(), "NO_ERROR") {
-				// This is not actually an error - HTTP2 idle timeout disconnection
 				c.connectionLostMu.RLock()
 				handler := c.onConnectionLost
 				c.connectionLostMu.RUnlock()
+				
 				if handler != nil {
+					// This is not actually an error - HTTP2 idle timeout disconnection
 					handler(err)
+					return
 				}
-				return
 			}
 			if !c.closed.Load() {
 				fmt.Printf("SSE stream error: %v\n", err)
