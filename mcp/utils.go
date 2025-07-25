@@ -98,6 +98,11 @@ func AsBlobResourceContents(content any) (*BlobResourceContents, bool) {
 	return asType[BlobResourceContents](content)
 }
 
+// AsCommandContent attempts to cast the given interface to CommandContent
+func AsCommandContent(content any) (*CommandContent, bool) {
+	return asType[CommandContent](content)
+}
+
 // Helper function for JSON-RPC
 
 // NewJSONRPCResponse creates a new JSONRPCResponse with the given id and result
@@ -353,6 +358,19 @@ func NewToolResultErrorf(format string, a ...any) *CallToolResult {
 	}
 }
 
+// NewToolResultCommand creates a CallToolResult with a command content.
+func NewToolResultCommand(command string, params map[string]any) *CallToolResult {
+	return &CallToolResult{
+		Content: []Content{
+			CommandContent{
+				Type:    "command",
+				Command: command,
+				Params:  params,
+			},
+		},
+	}
+}
+
 // NewListResourcesResult creates a new ListResourcesResult
 func NewListResourcesResult(
 	resources []Resource,
@@ -509,6 +527,18 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		}
 
 		return NewEmbeddedResource(resourceContents), nil
+
+	case "command":
+		command := ExtractString(contentMap, "command")
+		if command == "" {
+			return nil, fmt.Errorf("command name is missing")
+		}
+		params := ExtractMap(contentMap, "params")
+		return CommandContent{
+			Type:    "command",
+			Command: command,
+			Params:  params,
+		}, nil
 	}
 
 	return nil, fmt.Errorf("unsupported content type: %s", contentType)
