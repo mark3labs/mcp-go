@@ -588,7 +588,11 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w http.ResponseWriter, r *
 
 	// Find the corresponding session and deliver the response
 	// The response is delivered to the specific session identified by sessionID
-	s.deliverSamplingResponse(sessionID, response)
+	if err := s.deliverSamplingResponse(sessionID, response); err != nil {
+		s.logger.Errorf("Failed to deliver sampling response: %v", err)
+		http.Error(w, "Failed to deliver response", http.StatusInternalServerError)
+		return err
+	}
 
 	// Acknowledge receipt
 	w.WriteHeader(http.StatusOK)
@@ -596,30 +600,36 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w http.ResponseWriter, r *
 }
 
 // deliverSamplingResponse delivers a sampling response to the appropriate session
-func (s *StreamableHTTPServer) deliverSamplingResponse(sessionID string, response samplingResponseItem) {
+func (s *StreamableHTTPServer) deliverSamplingResponse(sessionID string, response samplingResponseItem) error {
 	// Look up the active session
-	if sessionInterface, ok := s.activeSessions.Load(sessionID); ok {
-		if session, ok := sessionInterface.(*streamableHttpSession); ok {
-			// Look up the dedicated response channel for this specific request
-			if responseChannelInterface, exists := session.samplingRequests.Load(response.requestID); exists {
-				if responseChan, ok := responseChannelInterface.(chan samplingResponseItem); ok {
-					select {
-					case responseChan <- response:
-						s.logger.Infof("Delivered sampling response for session %s, request %d", sessionID, response.requestID)
-					default:
-						s.logger.Errorf("Failed to deliver sampling response for session %s, request %d: channel full", sessionID, response.requestID)
-					}
-				} else {
-					s.logger.Errorf("Invalid response channel type for session %s, request %d", sessionID, response.requestID)
-				}
-			} else {
-				s.logger.Errorf("No pending request found for session %s, request %d", sessionID, response.requestID)
-			}
-		} else {
-			s.logger.Errorf("Invalid session type for session %s", sessionID)
-		}
-	} else {
-		s.logger.Errorf("No active session found for session %s", sessionID)
+	sessionInterface, ok := s.activeSessions.Load(sessionID)
+	if !ok {
+		return fmt.Errorf("no active session found for session %s", sessionID)
+	}
+
+	session, ok := sessionInterface.(*streamableHttpSession)
+	if !ok {
+		return fmt.Errorf("invalid session type for session %s", sessionID)
+	}
+
+	// Look up the dedicated response channel for this specific request
+	responseChannelInterface, exists := session.samplingRequests.Load(response.requestID)
+	if !exists {
+		return fmt.Errorf("no pending request found for session %s, request %d", sessionID, response.requestID)
+	}
+
+	responseChan, ok := responseChannelInterface.(chan samplingResponseItem)
+	if !ok {
+		return fmt.Errorf("invalid response channel type for session %s, request %d", sessionID, response.requestID)
+	}
+
+	// Attempt to deliver the response with timeout to prevent indefinite blocking
+	select {
+	case responseChan <- response:
+		s.logger.Infof("Delivered sampling response for session %s, request %d", sessionID, response.requestID)
+		return nil
+	default:
+		return fmt.Errorf("failed to deliver sampling response for session %s, request %d: channel full or blocked", sessionID, response.requestID)
 	}
 }
 

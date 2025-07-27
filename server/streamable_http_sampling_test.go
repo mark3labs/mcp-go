@@ -101,7 +101,7 @@ func TestStreamableHTTPServer_SamplingErrorHandling(t *testing.T) {
 				"id":      1,
 				"result":  "invalid-result",
 			},
-			expectedStatus: http.StatusOK, // Still returns OK but logs error internally
+			expectedStatus: http.StatusInternalServerError, // Now correctly returns 500 due to no active session
 		},
 	}
 
