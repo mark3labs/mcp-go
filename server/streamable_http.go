@@ -600,12 +600,20 @@ func (s *StreamableHTTPServer) deliverSamplingResponse(sessionID string, respons
 	// Look up the active session
 	if sessionInterface, ok := s.activeSessions.Load(sessionID); ok {
 		if session, ok := sessionInterface.(*streamableHttpSession); ok {
-			// Deliver the response via the session's response channel
-			select {
-			case session.samplingResponseChan <- response:
-				s.logger.Infof("Delivered sampling response for session %s, request %d", sessionID, response.requestID)
-			default:
-				s.logger.Errorf("Failed to deliver sampling response for session %s, request %d: channel full", sessionID, response.requestID)
+			// Look up the dedicated response channel for this specific request
+			if responseChannelInterface, exists := session.samplingRequests.Load(response.requestID); exists {
+				if responseChan, ok := responseChannelInterface.(chan samplingResponseItem); ok {
+					select {
+					case responseChan <- response:
+						s.logger.Infof("Delivered sampling response for session %s, request %d", sessionID, response.requestID)
+					default:
+						s.logger.Errorf("Failed to deliver sampling response for session %s, request %d: channel full", sessionID, response.requestID)
+					}
+				} else {
+					s.logger.Errorf("Invalid response channel type for session %s, request %d", sessionID, response.requestID)
+				}
+			} else {
+				s.logger.Errorf("No pending request found for session %s, request %d", sessionID, response.requestID)
 			}
 		} else {
 			s.logger.Errorf("Invalid session type for session %s", sessionID)
@@ -827,23 +835,6 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 			return nil, response.err
 		}
 		return response.result, nil
-	case response := <-s.samplingResponseChan:
-		// Check if this response matches our request
-		if response.requestID == requestID {
-			if response.err != nil {
-				return nil, response.err
-			}
-			return response.result, nil
-		}
-		// If it's not our response, put it back and continue waiting
-		// This is a simplified approach; in production you'd want better routing
-		select {
-		case s.samplingResponseChan <- response:
-		default:
-			// Channel full, log and continue
-		}
-		// Continue waiting for our response
-		return s.RequestSampling(ctx, request)
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
