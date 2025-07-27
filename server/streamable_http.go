@@ -587,9 +587,7 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w http.ResponseWriter, r *
 	}
 
 	// Find the corresponding session and deliver the response
-	// Note: In a real implementation, we would need to maintain a mapping of sessionID to session instances
-	// For now, we'll use a simplified approach by broadcasting to all active sessions
-	// This is a limitation of the current architecture that would need to be addressed in production
+	// The response is delivered to the specific session identified by sessionID
 	s.deliverSamplingResponse(sessionID, response)
 
 	// Acknowledge receipt
