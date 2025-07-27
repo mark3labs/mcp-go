@@ -92,7 +92,6 @@ func WithSession(sessionID string) StreamableHTTPCOption {
 // The current implementation does not support the following features:
 //   - resuming stream
 //     (https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#resumability-and-redelivery)
-//   - server -> client request
 type StreamableHTTP struct {
 	serverURL           *url.URL
 	httpClient          *http.Client
@@ -109,6 +108,10 @@ type StreamableHTTP struct {
 
 	notificationHandler func(mcp.JSONRPCNotification)
 	notifyMu            sync.RWMutex
+
+	// Request handler for incoming server-to-client requests (like sampling)
+	requestHandler RequestHandler
+	requestMu      sync.RWMutex
 
 	closed chan struct{}
 
@@ -406,6 +409,7 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 		defer close(responseChan)
 
 		c.readSSE(ctx, reader, func(event, data string) {
+			// Try to unmarshal as a response first
 			var message JSONRPCResponse
 			if err := json.Unmarshal([]byte(data), &message); err != nil {
 				c.logger.Errorf("failed to unmarshal message: %v", err)
@@ -425,6 +429,17 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 				}
 				c.notifyMu.RUnlock()
 				return
+			}
+
+			// Check if this is actually a request from the server
+			// If Result and Error are nil, it might be a request
+			if message.Result == nil && message.Error == nil {
+				var request JSONRPCRequest
+				if err := json.Unmarshal([]byte(data), &request); err == nil {
+					// This is a request from the server
+					c.handleIncomingRequest(ctx, request)
+					return
+				}
 			}
 
 			if !ignoreResponse {
@@ -547,6 +562,13 @@ func (c *StreamableHTTP) SetNotificationHandler(handler func(mcp.JSONRPCNotifica
 	c.notificationHandler = handler
 }
 
+// SetRequestHandler sets the handler for incoming requests from the server.
+func (c *StreamableHTTP) SetRequestHandler(handler RequestHandler) {
+	c.requestMu.Lock()
+	defer c.requestMu.Unlock()
+	c.requestHandler = handler
+}
+
 func (c *StreamableHTTP) GetSessionId() string {
 	return c.sessionID.Load().(string)
 }
@@ -625,6 +647,107 @@ func (c *StreamableHTTP) createGETConnectionToServer(ctx context.Context) error 
 	}
 
 	return nil
+}
+
+// handleIncomingRequest processes requests from the server (like sampling requests)
+func (c *StreamableHTTP) handleIncomingRequest(ctx context.Context, request JSONRPCRequest) {
+	c.requestMu.RLock()
+	handler := c.requestHandler
+	c.requestMu.RUnlock()
+
+	if handler == nil {
+		c.logger.Errorf("received request from server but no handler set: %s", request.Method)
+		// Send method not found error
+		errorResponse := &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      request.ID,
+			Error: &struct {
+				Code    int             `json:"code"`
+				Message string          `json:"message"`
+				Data    json.RawMessage `json:"data"`
+			}{
+				Code:    -32601, // Method not found
+				Message: fmt.Sprintf("no handler configured for method: %s", request.Method),
+			},
+		}
+		c.sendResponseToServer(ctx, errorResponse)
+		return
+	}
+
+	// Handle the request in a goroutine to avoid blocking the SSE reader
+	go func() {
+		response, err := handler(ctx, request)
+		if err != nil {
+			c.logger.Errorf("error handling request %s: %v", request.Method, err)
+			
+			// Determine appropriate JSON-RPC error code based on error type
+			var errorCode int
+			var errorMessage string
+			
+			// Check for specific sampling-related errors
+			if errors.Is(err, context.Canceled) {
+				errorCode = -32800 // Request cancelled
+				errorMessage = "request was cancelled"
+			} else if errors.Is(err, context.DeadlineExceeded) {
+				errorCode = -32800 // Request timeout
+				errorMessage = "request timed out"
+			} else {
+				// Generic error cases
+				switch request.Method {
+				case string(mcp.MethodSamplingCreateMessage):
+					errorCode = -32603 // Internal error
+					errorMessage = fmt.Sprintf("sampling request failed: %v", err)
+				default:
+					errorCode = -32603 // Internal error
+					errorMessage = err.Error()
+				}
+			}
+			
+			// Send error response
+			errorResponse := &JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      request.ID,
+				Error: &struct {
+					Code    int             `json:"code"`
+					Message string          `json:"message"`
+					Data    json.RawMessage `json:"data"`
+				}{
+					Code:    errorCode,
+					Message: errorMessage,
+				},
+			}
+			c.sendResponseToServer(ctx, errorResponse)
+			return
+		}
+
+		if response != nil {
+			c.sendResponseToServer(ctx, response)
+		}
+	}()
+}
+
+// sendResponseToServer sends a response back to the server via HTTP POST
+func (c *StreamableHTTP) sendResponseToServer(ctx context.Context, response *JSONRPCResponse) {
+	responseBody, err := json.Marshal(response)
+	if err != nil {
+		c.logger.Errorf("failed to marshal response: %v", err)
+		return
+	}
+
+	ctx, cancel := c.contextAwareOfClientClose(ctx)
+	defer cancel()
+
+	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(responseBody), "application/json")
+	if err != nil {
+		c.logger.Errorf("failed to send response to server: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(resp.Body)
+		c.logger.Errorf("server rejected response with status %d: %s", resp.StatusCode, body)
+	}
 }
 
 func (c *StreamableHTTP) contextAwareOfClientClose(ctx context.Context) (context.Context, context.CancelFunc) {
