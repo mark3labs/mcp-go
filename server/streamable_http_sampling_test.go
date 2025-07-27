@@ -55,28 +55,80 @@ func TestStreamableHTTPServer_SamplingErrorHandling(t *testing.T) {
 	client := &http.Client{}
 	baseURL := testServer.URL
 
-	// Test sending sampling response without session ID
-	samplingResponse := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"result": map[string]interface{}{
-			"role": "assistant",
-			"content": map[string]interface{}{
-				"type": "text",
-				"text": "Test response",
+	tests := []struct {
+		name           string
+		sessionID      string
+		body           map[string]interface{}
+		expectedStatus int
+	}{
+		{
+			name:      "missing session ID",
+			sessionID: "",
+			body: map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"result": map[string]interface{}{
+					"role": "assistant",
+					"content": map[string]interface{}{
+						"type": "text",
+						"text": "Test response",
+					},
+				},
 			},
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:      "invalid request ID",
+			sessionID: "mcp-session-550e8400-e29b-41d4-a716-446655440000",
+			body: map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      "invalid-id",
+				"result": map[string]interface{}{
+					"role": "assistant",
+					"content": map[string]interface{}{
+						"type": "text",
+						"text": "Test response",
+					},
+				},
+			},
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:      "malformed result",
+			sessionID: "mcp-session-550e8400-e29b-41d4-a716-446655440000",
+			body: map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"result":  "invalid-result",
+			},
+			expectedStatus: http.StatusOK, // Still returns OK but logs error internally
 		},
 	}
 
-	responseBody, _ := json.Marshal(samplingResponse)
-	resp, err := client.Post(baseURL, "application/json", bytes.NewReader(responseBody))
-	if err != nil {
-		t.Fatalf("Failed to send request: %v", err)
-	}
-	defer resp.Body.Close()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			payload, _ := json.Marshal(tt.body)
+			req, err := http.NewRequest("POST", baseURL, bytes.NewReader(payload))
+			if err != nil {
+				t.Errorf("Failed to create request: %v", err)
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			if tt.sessionID != "" {
+				req.Header.Set("Mcp-Session-Id", tt.sessionID)
+			}
 
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected 400 Bad Request for missing session ID, got %d", resp.StatusCode)
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Errorf("Failed to send request: %v", err)
+				return
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tt.expectedStatus {
+				t.Errorf("Expected status %d, got %d", tt.expectedStatus, resp.StatusCode)
+			}
+		})
 	}
 }
 
