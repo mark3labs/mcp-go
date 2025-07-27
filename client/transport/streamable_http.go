@@ -431,14 +431,16 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 				return
 			}
 
-			// Check if this is actually a request from the server
-			// If Result and Error are nil, it might be a request
-			if message.Result == nil && message.Error == nil {
-				var request JSONRPCRequest
-				if err := json.Unmarshal([]byte(data), &request); err == nil {
-					// This is a request from the server
-					c.handleIncomingRequest(ctx, request)
-					return
+			// Check if this is actually a request from the server by looking for method field
+			var rawMessage map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(data), &rawMessage); err == nil {
+				if _, hasMethod := rawMessage["method"]; hasMethod && !message.ID.IsNil() {
+					var request JSONRPCRequest
+					if err := json.Unmarshal([]byte(data), &request); err == nil {
+						// This is a request from the server
+						c.handleIncomingRequest(ctx, request)
+						return
+					}
 				}
 			}
 
@@ -728,6 +730,11 @@ func (c *StreamableHTTP) handleIncomingRequest(ctx context.Context, request JSON
 
 // sendResponseToServer sends a response back to the server via HTTP POST
 func (c *StreamableHTTP) sendResponseToServer(ctx context.Context, response *JSONRPCResponse) {
+	if response == nil {
+		c.logger.Errorf("cannot send nil response to server")
+		return
+	}
+
 	responseBody, err := json.Marshal(response)
 	if err != nil {
 		c.logger.Errorf("failed to marshal response: %v", err)
