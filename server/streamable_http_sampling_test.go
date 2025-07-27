@@ -83,6 +83,7 @@ func TestStreamableHTTPServer_SamplingErrorHandling(t *testing.T) {
 // TestStreamableHTTPServer_SamplingInterface verifies interface implementation
 func TestStreamableHTTPServer_SamplingInterface(t *testing.T) {
 	mcpServer := NewMCPServer("test-server", "1.0.0")
+	mcpServer.EnableSampling()
 	httpServer := NewStreamableHTTPServer(mcpServer)
 	testServer := httptest.NewServer(httpServer)
 	defer testServer.Close()
