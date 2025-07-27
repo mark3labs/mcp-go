@@ -115,7 +115,6 @@ func WithLogger(logger util.Logger) StreamableHTTPOption {
 // or `hooks.onRegisterSession` will not be triggered for POST messages.
 //
 // The current implementation does not support the following features from the specification:
-//   - Batching of requests/notifications/responses in arrays.
 //   - Stream Resumability
 type StreamableHTTPServer struct {
 	server            *MCPServer

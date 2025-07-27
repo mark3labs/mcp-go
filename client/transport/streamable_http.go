@@ -90,7 +90,6 @@ func WithSession(sessionID string) StreamableHTTPCOption {
 // https://modelcontextprotocol.io/specification/2025-03-26/basic/transports
 //
 // The current implementation does not support the following features:
-//   - batching
 //   - resuming stream
 //     (https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#resumability-and-redelivery)
 //   - server -> client request
@@ -407,8 +406,6 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 		defer close(responseChan)
 
 		c.readSSE(ctx, reader, func(event, data string) {
-			// (unsupported: batching)
-
 			var message JSONRPCResponse
 			if err := json.Unmarshal([]byte(data), &message); err != nil {
 				c.logger.Errorf("failed to unmarshal message: %v", err)
