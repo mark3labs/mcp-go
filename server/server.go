@@ -181,6 +181,7 @@ type serverCapabilities struct {
 	resources *resourceCapabilities
 	prompts   *promptCapabilities
 	logging   *bool
+	sampling  *bool
 }
 
 // resourceCapabilities defines the supported resource-related features
@@ -578,6 +579,10 @@ func (s *MCPServer) handleInitialize(
 
 	if s.capabilities.logging != nil && *s.capabilities.logging {
 		capabilities.Logging = &struct{}{}
+	}
+
+	if s.capabilities.sampling != nil && *s.capabilities.sampling {
+		capabilities.Sampling = &struct{}{}
 	}
 
 	result := mcp.InitializeResult{
