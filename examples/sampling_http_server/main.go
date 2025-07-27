@@ -80,12 +80,20 @@ func main() {
 			}, nil
 		}
 
+		// Extract response text safely
+		var responseText string
+		if textContent, ok := result.Content.(mcp.TextContent); ok {
+			responseText = textContent.Text
+		} else {
+			responseText = fmt.Sprintf("%v", result.Content)
+		}
+
 		// Return the LLM response
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				mcp.TextContent{
 					Type: "text",
-					Text: fmt.Sprintf("LLM Response (model: %s): %s", result.Model, result.Content.(mcp.TextContent).Text),
+					Text: fmt.Sprintf("LLM Response (model: %s): %s", result.Model, responseText),
 				},
 			},
 		}, nil
