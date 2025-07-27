@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,8 +32,10 @@ func TestStreamableHTTP_SamplingFlow(t *testing.T) {
 	
 	// Set up sampling request handler
 	var handledRequest *JSONRPCRequest
+	handlerCalled := make(chan struct{})
 	client.SetRequestHandler(func(ctx context.Context, request JSONRPCRequest) (*JSONRPCResponse, error) {
 		handledRequest = &request
+		close(handlerCalled)
 		
 		// Simulate sampling handler response
 		result := map[string]interface{}{
@@ -84,8 +87,13 @@ func TestStreamableHTTP_SamplingFlow(t *testing.T) {
 	// Directly test request handling
 	client.handleIncomingRequest(ctx, samplingRequest)
 	
-	// Allow time for async processing
-	time.Sleep(100 * time.Millisecond)
+	// Wait for handler to be called
+	select {
+	case <-handlerCalled:
+		// Handler was called
+	case <-time.After(1 * time.Second):
+		t.Fatal("Handler was not called within timeout")
+	}
 	
 	// Verify the request was handled
 	if handledRequest == nil {
@@ -99,15 +107,23 @@ func TestStreamableHTTP_SamplingFlow(t *testing.T) {
 
 // TestStreamableHTTP_SamplingErrorHandling tests error handling in sampling requests
 func TestStreamableHTTP_SamplingErrorHandling(t *testing.T) {
+	var errorHandled sync.WaitGroup
+	errorHandled.Add(1)
+	
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			var body map[string]interface{}
-			json.NewDecoder(r.Body).Decode(&body)
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Logf("Failed to decode body: %v", err)
+				w.WriteHeader(http.StatusOK)
+				return
+			}
 			
 			// Check if this is an error response
 			if errorField, ok := body["error"]; ok {
 				errorMap := errorField.(map[string]interface{})
 				if code, ok := errorMap["code"].(float64); ok && code == -32603 {
+					errorHandled.Done()
 					w.WriteHeader(http.StatusOK)
 					return
 				}
@@ -146,18 +162,23 @@ func TestStreamableHTTP_SamplingErrorHandling(t *testing.T) {
 	// This should trigger error handling
 	client.handleIncomingRequest(ctx, samplingRequest)
 	
-	// Allow some time for async error handling
-	time.Sleep(100 * time.Millisecond)
+	// Wait for error to be handled
+	errorHandled.Wait()
 }
 
 // TestStreamableHTTP_NoSamplingHandler tests behavior when no sampling handler is set
 func TestStreamableHTTP_NoSamplingHandler(t *testing.T) {
 	var errorReceived bool
+	errorReceivedChan := make(chan struct{})
 	
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			var body map[string]interface{}
-			json.NewDecoder(r.Body).Decode(&body)
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Logf("Failed to decode body: %v", err)
+				w.WriteHeader(http.StatusOK)
+				return
+			}
 			
 			// Check if this is an error response with method not found
 			if errorField, ok := body["error"]; ok {
@@ -166,6 +187,7 @@ func TestStreamableHTTP_NoSamplingHandler(t *testing.T) {
 					if message, ok := errorMap["message"].(string); ok && 
 						strings.Contains(message, "no handler configured") {
 						errorReceived = true
+						close(errorReceivedChan)
 					}
 				}
 			}
@@ -199,8 +221,13 @@ func TestStreamableHTTP_NoSamplingHandler(t *testing.T) {
 	// This should trigger "method not found" error
 	client.handleIncomingRequest(ctx, samplingRequest)
 	
-	// Allow some time for async error handling
-	time.Sleep(100 * time.Millisecond)
+	// Wait for error to be received
+	select {
+	case <-errorReceivedChan:
+		// Error was received
+	case <-time.After(1 * time.Second):
+		t.Fatal("Method not found error was not received within timeout")
+	}
 	
 	if !errorReceived {
 		t.Error("Expected method not found error, but didn't receive it")
@@ -223,8 +250,10 @@ func TestStreamableHTTP_BidirectionalInterface(t *testing.T) {
 	
 	// Test SetRequestHandler
 	handlerSet := false
+	handlerSetChan := make(chan struct{})
 	client.SetRequestHandler(func(ctx context.Context, request JSONRPCRequest) (*JSONRPCResponse, error) {
 		handlerSet = true
+		close(handlerSetChan)
 		return nil, nil
 	})
 	
@@ -236,8 +265,13 @@ func TestStreamableHTTP_BidirectionalInterface(t *testing.T) {
 		Method:  "test",
 	})
 	
-	// Allow async execution
-	time.Sleep(50 * time.Millisecond)
+	// Wait for handler to be called
+	select {
+	case <-handlerSetChan:
+		// Handler was called
+	case <-time.After(1 * time.Second):
+		t.Fatal("Handler was not called within timeout")
+	}
 	
 	if !handlerSet {
 		t.Error("Request handler was not properly set or called")
