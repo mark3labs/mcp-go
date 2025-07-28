@@ -695,8 +695,8 @@ func (c *StreamableHTTP) handleIncomingRequest(ctx context.Context, request JSON
 
 	// Handle the request in a goroutine to avoid blocking the SSE reader
 	go func() {
-		// Create a new context with timeout for request handling
-		requestCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		// Create a new context with timeout for request handling, respecting parent context
+		requestCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		
 		response, err := handler(requestCtx, request)
