@@ -400,12 +400,19 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 	// Create a channel for this specific request
 	responseChan := make(chan *JSONRPCResponse, 1)
 
+	// Add timeout context for request processing if not already set
+	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 30*time.Second {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	// Start a goroutine to process the SSE stream
 	go func() {
-		// only close responseChan after readingSSE()
+		// Ensure this goroutine respects the context
 		defer close(responseChan)
 
 		c.readSSE(ctx, reader, func(event, data string) {
@@ -588,7 +595,11 @@ func (c *StreamableHTTP) IsOAuthEnabled() bool {
 func (c *StreamableHTTP) listenForever(ctx context.Context) {
 	c.logger.Infof("listening to server forever")
 	for {
-		err := c.createGETConnectionToServer(ctx)
+		// Add timeout for individual connection attempts
+		connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err := c.createGETConnectionToServer(connectCtx)
+		cancel()
+		
 		if errors.Is(err, ErrGetMethodNotAllowed) {
 			// server does not support listening
 			c.logger.Errorf("server does not support listening")
@@ -604,7 +615,13 @@ func (c *StreamableHTTP) listenForever(ctx context.Context) {
 		if err != nil {
 			c.logger.Errorf("failed to listen to server. retry in 1 second: %v", err)
 		}
-		time.Sleep(retryInterval)
+		
+		// Use context-aware sleep
+		select {
+		case <-time.After(retryInterval):
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
