@@ -744,7 +744,6 @@ type streamableHttpSession struct {
 
 	// Sampling support for bidirectional communication
 	samplingRequestChan  chan samplingRequestItem      // server -> client sampling requests
-	samplingResponseChan chan samplingResponseItem    // client -> server sampling responses
 	samplingRequests     sync.Map                      // requestID -> pending sampling request context
 	requestIDCounter     atomic.Int64                  // for generating unique request IDs
 	mu                   sync.RWMutex                  // protects sampling channels and requests
@@ -757,7 +756,6 @@ func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, le
 		tools:                toolStore,
 		logLevels:            levels,
 		samplingRequestChan:  make(chan samplingRequestItem, 10),
-		samplingResponseChan: make(chan samplingResponseItem, 10),
 	}
 	return s
 }

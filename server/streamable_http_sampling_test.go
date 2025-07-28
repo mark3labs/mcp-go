@@ -38,9 +38,6 @@ func TestStreamableHTTPServer_SamplingBasic(t *testing.T) {
 	if session.samplingRequestChan == nil {
 		t.Error("samplingRequestChan should be initialized")
 	}
-	if session.samplingResponseChan == nil {
-		t.Error("samplingResponseChan should be initialized")
-	}
 }
 
 // TestStreamableHTTPServer_SamplingErrorHandling tests error scenarios
