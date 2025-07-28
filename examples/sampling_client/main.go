@@ -30,7 +30,7 @@ func (h *MockSamplingHandler) CreateMessage(ctx context.Context, request mcp.Cre
 	switch content := userMessage.Content.(type) {
 	case mcp.TextContent:
 		userText = content.Text
-	case map[string]interface{}:
+	case map[string]any:
 		// Handle case where content is unmarshaled as a map
 		if text, ok := content["text"].(string); ok {
 			userText = text

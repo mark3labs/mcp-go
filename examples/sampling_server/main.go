@@ -127,11 +127,11 @@ func main() {
 }
 
 // Helper function to extract text from content
-func getTextFromContent(content interface{}) string {
+func getTextFromContent(content any) string {
 	switch c := content.(type) {
 	case mcp.TextContent:
 		return c.Text
-	case map[string]interface{}:
+	case map[string]any:
 		// Handle JSON unmarshaled content
 		if text, ok := c["text"].(string); ok {
 			return text

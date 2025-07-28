@@ -29,7 +29,7 @@ func TestStreamableHTTPServer_SamplingBasic(t *testing.T) {
 	session := newStreamableHttpSession(sessionID, httpServer.sessionTools, httpServer.sessionLogLevels)
 
 	// Verify it implements SessionWithSampling
-	_, ok := interface{}(session).(SessionWithSampling)
+	_, ok := any(session).(SessionWithSampling)
 	if !ok {
 		t.Error("streamableHttpSession should implement SessionWithSampling")
 	}
@@ -58,18 +58,18 @@ func TestStreamableHTTPServer_SamplingErrorHandling(t *testing.T) {
 	tests := []struct {
 		name           string
 		sessionID      string
-		body           map[string]interface{}
+		body           map[string]any
 		expectedStatus int
 	}{
 		{
 			name:      "missing session ID",
 			sessionID: "",
-			body: map[string]interface{}{
+			body: map[string]any{
 				"jsonrpc": "2.0",
 				"id":      1,
-				"result": map[string]interface{}{
+				"result": map[string]any{
 					"role": "assistant",
-					"content": map[string]interface{}{
+					"content": map[string]any{
 						"type": "text",
 						"text": "Test response",
 					},
@@ -80,12 +80,12 @@ func TestStreamableHTTPServer_SamplingErrorHandling(t *testing.T) {
 		{
 			name:      "invalid request ID",
 			sessionID: "mcp-session-550e8400-e29b-41d4-a716-446655440000",
-			body: map[string]interface{}{
+			body: map[string]any{
 				"jsonrpc": "2.0",
 				"id":      "invalid-id",
-				"result": map[string]interface{}{
+				"result": map[string]any{
 					"role": "assistant",
-					"content": map[string]interface{}{
+					"content": map[string]any{
 						"type": "text",
 						"text": "Test response",
 					},
@@ -96,7 +96,7 @@ func TestStreamableHTTPServer_SamplingErrorHandling(t *testing.T) {
 		{
 			name:      "malformed result",
 			sessionID: "mcp-session-550e8400-e29b-41d4-a716-446655440000",
-			body: map[string]interface{}{
+			body: map[string]any{
 				"jsonrpc": "2.0",
 				"id":      1,
 				"result":  "invalid-result",
@@ -145,7 +145,7 @@ func TestStreamableHTTPServer_SamplingInterface(t *testing.T) {
 	session := newStreamableHttpSession(sessionID, httpServer.sessionTools, httpServer.sessionLogLevels)
 
 	// Verify it implements SessionWithSampling
-	_, ok := interface{}(session).(SessionWithSampling)
+	_, ok := any(session).(SessionWithSampling)
 	if !ok {
 		t.Error("streamableHttpSession should implement SessionWithSampling")
 	}

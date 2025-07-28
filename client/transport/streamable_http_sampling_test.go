@@ -38,9 +38,9 @@ func TestStreamableHTTP_SamplingFlow(t *testing.T) {
 		close(handlerCalled)
 		
 		// Simulate sampling handler response
-		result := map[string]interface{}{
+		result := map[string]any{
 			"role": "assistant",
-			"content": map[string]interface{}{
+			"content": map[string]any{
 				"type": "text",
 				"text": "Hello! How can I help you today?",
 			},
@@ -71,11 +71,11 @@ func TestStreamableHTTP_SamplingFlow(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      mcp.NewRequestId(1),
 		Method:  string(mcp.MethodSamplingCreateMessage),
-		Params: map[string]interface{}{
-			"messages": []map[string]interface{}{
+		Params: map[string]any{
+			"messages": []map[string]any{
 				{
 					"role": "user",
-					"content": map[string]interface{}{
+					"content": map[string]any{
 						"type": "text",
 						"text": "Hello, world!",
 					},
@@ -112,7 +112,7 @@ func TestStreamableHTTP_SamplingErrorHandling(t *testing.T) {
 	
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
-			var body map[string]interface{}
+			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Logf("Failed to decode body: %v", err)
 				w.WriteHeader(http.StatusOK)
@@ -121,7 +121,7 @@ func TestStreamableHTTP_SamplingErrorHandling(t *testing.T) {
 			
 			// Check if this is an error response
 			if errorField, ok := body["error"]; ok {
-				errorMap := errorField.(map[string]interface{})
+				errorMap := errorField.(map[string]any)
 				if code, ok := errorMap["code"].(float64); ok && code == -32603 {
 					errorHandled.Done()
 					w.WriteHeader(http.StatusOK)
@@ -156,7 +156,7 @@ func TestStreamableHTTP_SamplingErrorHandling(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      mcp.NewRequestId(1),
 		Method:  string(mcp.MethodSamplingCreateMessage),
-		Params:  map[string]interface{}{},
+		Params:  map[string]any{},
 	}
 	
 	// This should trigger error handling
@@ -173,7 +173,7 @@ func TestStreamableHTTP_NoSamplingHandler(t *testing.T) {
 	
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
-			var body map[string]interface{}
+			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Logf("Failed to decode body: %v", err)
 				w.WriteHeader(http.StatusOK)
@@ -182,7 +182,7 @@ func TestStreamableHTTP_NoSamplingHandler(t *testing.T) {
 			
 			// Check if this is an error response with method not found
 			if errorField, ok := body["error"]; ok {
-				errorMap := errorField.(map[string]interface{})
+				errorMap := errorField.(map[string]any)
 				if code, ok := errorMap["code"].(float64); ok && code == -32601 {
 					if message, ok := errorMap["message"].(string); ok && 
 						strings.Contains(message, "no handler configured") {
@@ -215,7 +215,7 @@ func TestStreamableHTTP_NoSamplingHandler(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      mcp.NewRequestId(1),
 		Method:  string(mcp.MethodSamplingCreateMessage),
-		Params:  map[string]interface{}{},
+		Params:  map[string]any{},
 	}
 	
 	// This should trigger "method not found" error
@@ -243,7 +243,7 @@ func TestStreamableHTTP_BidirectionalInterface(t *testing.T) {
 	defer client.Close()
 	
 	// Verify it implements BidirectionalInterface
-	_, ok := interface{}(client).(BidirectionalInterface)
+	_, ok := any(client).(BidirectionalInterface)
 	if !ok {
 		t.Error("StreamableHTTP should implement BidirectionalInterface")
 	}
@@ -281,13 +281,13 @@ func TestStreamableHTTP_BidirectionalInterface(t *testing.T) {
 // TestStreamableHTTP_ConcurrentSamplingRequests tests concurrent sampling requests
 // where the second request completes faster than the first request
 func TestStreamableHTTP_ConcurrentSamplingRequests(t *testing.T) {
-	var receivedResponses []map[string]interface{}
+	var receivedResponses []map[string]any
 	var responseMutex sync.Mutex
 	responseComplete := make(chan struct{}, 2)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
-			var body map[string]interface{}
+			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Logf("Failed to decode body: %v", err)
 				w.WriteHeader(http.StatusBadRequest)
@@ -348,9 +348,9 @@ func TestStreamableHTTP_ConcurrentSamplingRequests(t *testing.T) {
 		orderMutex.Unlock()
 
 		// Return response with correct request ID
-		result := map[string]interface{}{
+		result := map[string]any{
 			"role": "assistant",
-			"content": map[string]interface{}{
+			"content": map[string]any{
 				"type": "text",
 				"text": responseText,
 			},
@@ -381,11 +381,11 @@ func TestStreamableHTTP_ConcurrentSamplingRequests(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      mcp.NewRequestId(int64(1)),
 		Method:  string(mcp.MethodSamplingCreateMessage),
-		Params: map[string]interface{}{
-			"messages": []map[string]interface{}{
+		Params: map[string]any{
+			"messages": []map[string]any{
 				{
 					"role": "user",
-					"content": map[string]interface{}{
+					"content": map[string]any{
 						"type": "text",
 						"text": "Slow request 1",
 					},
@@ -398,11 +398,11 @@ func TestStreamableHTTP_ConcurrentSamplingRequests(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      mcp.NewRequestId(int64(2)),
 		Method:  string(mcp.MethodSamplingCreateMessage),
-		Params: map[string]interface{}{
-			"messages": []map[string]interface{}{
+		Params: map[string]any{
+			"messages": []map[string]any{
 				{
 					"role": "user",
-					"content": map[string]interface{}{
+					"content": map[string]any{
 						"type": "text",
 						"text": "Fast request 2",
 					},
@@ -450,7 +450,7 @@ func TestStreamableHTTP_ConcurrentSamplingRequests(t *testing.T) {
 	}
 
 	// Find responses by ID
-	var response1, response2 map[string]interface{}
+	var response1, response2 map[string]any
 	for _, resp := range receivedResponses {
 		if id, ok := resp["id"]; ok {
 			switch id {
@@ -471,8 +471,8 @@ func TestStreamableHTTP_ConcurrentSamplingRequests(t *testing.T) {
 
 	// Verify each response contains the correct content
 	if response1 != nil {
-		if result, ok := response1["result"].(map[string]interface{}); ok {
-			if content, ok := result["content"].(map[string]interface{}); ok {
+		if result, ok := response1["result"].(map[string]any); ok {
+			if content, ok := result["content"].(map[string]any); ok {
 				if text, ok := content["text"].(string); ok {
 					if !strings.Contains(text, "slow request 1") {
 						t.Errorf("Response 1 should contain 'slow request 1', got: %s", text)
@@ -483,8 +483,8 @@ func TestStreamableHTTP_ConcurrentSamplingRequests(t *testing.T) {
 	}
 
 	if response2 != nil {
-		if result, ok := response2["result"].(map[string]interface{}); ok {
-			if content, ok := result["content"].(map[string]interface{}); ok {
+		if result, ok := response2["result"].(map[string]any); ok {
+			if content, ok := result["content"].(map[string]any); ok {
 				if text, ok := content["text"].(string); ok {
 					if !strings.Contains(text, "fast request 2") {
 						t.Errorf("Response 2 should contain 'fast request 2', got: %s", text)

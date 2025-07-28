@@ -207,7 +207,7 @@ func TestStreamableHTTP_POST_SendAndReceive(t *testing.T) {
 			Notification: mcp.Notification{
 				Method: "testNotification",
 				Params: mcp.NotificationParams{
-					AdditionalFields: map[string]interface{}{"param1": "value1"},
+					AdditionalFields: map[string]any{"param1": "value1"},
 				},
 			},
 		}
@@ -395,7 +395,7 @@ func TestStreamableHTTP_POST_SendAndReceive_stateless(t *testing.T) {
 			Notification: mcp.Notification{
 				Method: "testNotification",
 				Params: mcp.NotificationParams{
-					AdditionalFields: map[string]interface{}{"param1": "value1"},
+					AdditionalFields: map[string]any{"param1": "value1"},
 				},
 			},
 		}
