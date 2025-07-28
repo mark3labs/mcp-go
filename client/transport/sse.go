@@ -37,6 +37,7 @@ type SSE struct {
 	started           atomic.Bool
 	closed            atomic.Bool
 	cancelSSEStream   context.CancelFunc
+	protocolVersion   atomic.Value // string
 	onConnectionLost  func(error)
 	connectionLostMu  sync.RWMutex
 
@@ -345,6 +346,12 @@ func (c *SSE) SendRequest(
 
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
+	// Set protocol version header if negotiated
+	if v := c.protocolVersion.Load(); v != nil {
+		if version, ok := v.(string); ok && version != "" {
+			req.Header.Set(HeaderKeyProtocolVersion, version)
+		}
+	}
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
 	}
@@ -455,6 +462,11 @@ func (c *SSE) GetSessionId() string {
 	return ""
 }
 
+// SetProtocolVersion sets the negotiated protocol version for this connection.
+func (c *SSE) SetProtocolVersion(version string) {
+	c.protocolVersion.Store(version)
+}
+
 // SendNotification sends a JSON-RPC notification to the server without expecting a response.
 func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNotification) error {
 	if c.endpoint == nil {
@@ -477,6 +489,12 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	// Set protocol version header if negotiated
+	if v := c.protocolVersion.Load(); v != nil {
+		if version, ok := v.(string); ok && version != "" {
+			req.Header.Set(HeaderKeyProtocolVersion, version)
+		}
+	}
 	// Set custom HTTP headers
 	for k, v := range c.headers {
 		req.Header.Set(k, v)

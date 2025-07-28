@@ -418,7 +418,7 @@ func TestStreamableHTTP(t *testing.T) {
 	t.Run("SSEEventWithoutEventField", func(t *testing.T) {
 		// Test that SSE events with only data field (no event field) are processed correctly
 		// This tests the fix for issue #369
-		
+
 		// Create a custom mock server that sends SSE events without event field
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost {
@@ -438,7 +438,7 @@ func TestStreamableHTTP(t *testing.T) {
 			// This should be processed as a "message" event according to SSE spec
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(http.StatusOK)
-			
+
 			response := map[string]any{
 				"jsonrpc": "2.0",
 				"id":      request["id"],

@@ -467,24 +467,24 @@ func (r CallToolRequest) RequireBoolSlice(key string) ([]bool, error) {
 // MarshalJSON implements custom JSON marshaling for CallToolResult
 func (r CallToolResult) MarshalJSON() ([]byte, error) {
 	m := make(map[string]any)
-	
+
 	// Marshal Meta if present
 	if r.Meta != nil {
 		m["_meta"] = r.Meta
 	}
-	
+
 	// Marshal Content array
 	content := make([]any, len(r.Content))
 	for i, c := range r.Content {
 		content[i] = c
 	}
 	m["content"] = content
-	
+
 	// Marshal IsError if true
 	if r.IsError {
 		m["isError"] = r.IsError
 	}
-	
+
 	return json.Marshal(m)
 }
 
@@ -494,14 +494,14 @@ func (r *CallToolResult) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	
+
 	// Unmarshal Meta
 	if meta, ok := raw["_meta"]; ok {
 		if metaMap, ok := meta.(map[string]any); ok {
 			r.Meta = metaMap
 		}
 	}
-	
+
 	// Unmarshal Content array
 	if contentRaw, ok := raw["content"]; ok {
 		if contentArray, ok := contentRaw.([]any); ok {
@@ -519,14 +519,14 @@ func (r *CallToolResult) UnmarshalJSON(data []byte) error {
 			}
 		}
 	}
-	
+
 	// Unmarshal IsError
 	if isError, ok := raw["isError"]; ok {
 		if isErrorBool, ok := isError.(bool); ok {
 			r.IsError = isErrorBool
 		}
 	}
-	
+
 	return nil
 }
 
@@ -585,6 +585,7 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 }
 
 type ToolInputSchema struct {
+	Defs       map[string]any `json:"$defs,omitempty"`
 	Type       string         `json:"type"`
 	Properties map[string]any `json:"properties,omitempty"`
 	Required   []string       `json:"required,omitempty"`
@@ -594,6 +595,10 @@ type ToolInputSchema struct {
 func (tis ToolInputSchema) MarshalJSON() ([]byte, error) {
 	m := make(map[string]any)
 	m["type"] = tis.Type
+
+	if tis.Defs != nil {
+		m["$defs"] = tis.Defs
+	}
 
 	// Marshal Properties to '{}' rather than `nil` when its length equals zero
 	if tis.Properties != nil {

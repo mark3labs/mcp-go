@@ -93,7 +93,7 @@ func TestStdioMCPClient(t *testing.T) {
 		defer cancel()
 
 		request := mcp.InitializeRequest{}
-		request.Params.ProtocolVersion = "1.0"
+		request.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
 		request.Params.ClientInfo = mcp.Implementation{
 			Name:    "test-client",
 			Version: "1.0.0",

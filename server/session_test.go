@@ -902,7 +902,7 @@ func TestMCPServer_SessionToolCapabilitiesBehavior(t *testing.T) {
 		validateServer func(t *testing.T, s *MCPServer, session *sessionTestClientWithTools)
 	}{
 		{
-			name: "no tool capabilities provided",
+			name:          "no tool capabilities provided",
 			serverOptions: []ServerOption{
 				// No WithToolCapabilities
 			},

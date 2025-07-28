@@ -47,6 +47,13 @@ type BidirectionalInterface interface {
 	SetRequestHandler(handler RequestHandler)
 }
 
+// HTTPConnection is a Transport that runs over HTTP and supports
+// protocol version headers.
+type HTTPConnection interface {
+	Interface
+	SetProtocolVersion(version string)
+}
+
 type JSONRPCRequest struct {
 	JSONRPC string        `json:"jsonrpc"`
 	ID      mcp.RequestId `json:"id"`

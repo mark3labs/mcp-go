@@ -604,6 +604,14 @@ func (s *MCPServer) handleInitialize(
 }
 
 func (s *MCPServer) protocolVersion(clientVersion string) string {
+	// For backwards compatibility, if the server does not receive an MCP-Protocol-Version header,
+	// and has no other way to identify the version - for example, by relying on the protocol version negotiated
+	// during initialization - the server SHOULD assume protocol version 2025-03-26
+	// https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#protocol-version-header
+	if len(clientVersion) == 0 {
+		clientVersion = "2025-03-26"
+	}
+
 	if slices.Contains(mcp.ValidProtocolVersions, clientVersion) {
 		return clientVersion
 	}

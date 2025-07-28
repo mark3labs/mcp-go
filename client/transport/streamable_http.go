@@ -90,7 +90,6 @@ func WithSession(sessionID string) StreamableHTTPCOption {
 // https://modelcontextprotocol.io/specification/2025-03-26/basic/transports
 //
 // The current implementation does not support the following features:
-//   - batching
 //   - resuming stream
 //     (https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#resumability-and-redelivery)
 //   - server -> client request
@@ -102,7 +101,8 @@ type StreamableHTTP struct {
 	logger              util.Logger
 	getListeningEnabled bool
 
-	sessionID atomic.Value // string
+	sessionID       atomic.Value // string
+	protocolVersion atomic.Value // string
 
 	initialized     chan struct{}
 	initializedOnce sync.Once
@@ -194,7 +194,13 @@ func (c *StreamableHTTP) Close() error {
 				c.logger.Errorf("failed to create close request: %v", err)
 				return
 			}
-			req.Header.Set(headerKeySessionID, sessionId)
+			req.Header.Set(HeaderKeySessionID, sessionId)
+			// Set protocol version header if negotiated
+			if v := c.protocolVersion.Load(); v != nil {
+				if version, ok := v.(string); ok && version != "" {
+					req.Header.Set(HeaderKeyProtocolVersion, version)
+				}
+			}
 			res, err := c.httpClient.Do(req)
 			if err != nil {
 				c.logger.Errorf("failed to send close request: %v", err)
@@ -207,9 +213,10 @@ func (c *StreamableHTTP) Close() error {
 	return nil
 }
 
-const (
-	headerKeySessionID = "Mcp-Session-Id"
-)
+// SetProtocolVersion sets the negotiated protocol version for this connection.
+func (c *StreamableHTTP) SetProtocolVersion(version string) {
+	c.protocolVersion.Store(version)
+}
 
 // ErrOAuthAuthorizationRequired is a sentinel error for OAuth authorization required
 var ErrOAuthAuthorizationRequired = errors.New("no valid token available, authorization required")
@@ -283,7 +290,7 @@ func (c *StreamableHTTP) SendRequest(
 	if request.Method == string(mcp.MethodInitialize) {
 		// saved the received session ID in the response
 		// empty session ID is allowed
-		if sessionID := resp.Header.Get(headerKeySessionID); sessionID != "" {
+		if sessionID := resp.Header.Get(HeaderKeySessionID); sessionID != "" {
 			c.sessionID.Store(sessionID)
 		}
 
@@ -335,7 +342,13 @@ func (c *StreamableHTTP) sendHTTP(
 	req.Header.Set("Accept", acceptType)
 	sessionID := c.sessionID.Load().(string)
 	if sessionID != "" {
-		req.Header.Set(headerKeySessionID, sessionID)
+		req.Header.Set(HeaderKeySessionID, sessionID)
+	}
+	// Set protocol version header if negotiated
+	if v := c.protocolVersion.Load(); v != nil {
+		if version, ok := v.(string); ok && version != "" {
+			req.Header.Set(HeaderKeyProtocolVersion, version)
+		}
 	}
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
@@ -393,8 +406,6 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 		defer close(responseChan)
 
 		c.readSSE(ctx, reader, func(event, data string) {
-			// (unsupported: batching)
-
 			var message JSONRPCResponse
 			if err := json.Unmarshal([]byte(data), &message); err != nil {
 				c.logger.Errorf("failed to unmarshal message: %v", err)
