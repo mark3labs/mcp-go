@@ -225,26 +225,26 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		return
 	}
 	// First, try to parse as a response (sampling responses don't have a method field)
-	var responseMessage struct {
+	var jsonMessage struct {
 		ID     json.RawMessage `json:"id"`
 		Result json.RawMessage `json:"result,omitempty"`
 		Error  json.RawMessage `json:"error,omitempty"`
 		Method mcp.MCPMethod   `json:"method,omitempty"`
 	}
-	if err := json.Unmarshal(rawData, &responseMessage); err != nil {
+	if err := json.Unmarshal(rawData, &jsonMessage); err != nil {
 		s.writeJSONRPCError(w, nil, mcp.PARSE_ERROR, "request body is not valid json")
 		return
 	}
 
 	// Check if this is a sampling response (has result/error but no method)
-	isSamplingResponse := responseMessage.Method == "" && responseMessage.ID != nil && 
-		(responseMessage.Result != nil || responseMessage.Error != nil)
+	isSamplingResponse := jsonMessage.Method == "" && jsonMessage.ID != nil && 
+		(jsonMessage.Result != nil || jsonMessage.Error != nil)
 	
-	isInitializeRequest := responseMessage.Method == mcp.MethodInitialize
+	isInitializeRequest := jsonMessage.Method == mcp.MethodInitialize
 
 	// Handle sampling responses separately
 	if isSamplingResponse {
-		if err := s.handleSamplingResponse(w, r, responseMessage); err != nil {
+		if err := s.handleSamplingResponse(w, r, jsonMessage); err != nil {
 			s.logger.Errorf("Failed to handle sampling response: %v", err)
 			http.Error(w, "Failed to handle sampling response", http.StatusInternalServerError)
 		}
