@@ -399,6 +399,14 @@ func (s *MCPServer) AddResourceTemplates(resourceTemplates ...ServerResourceTemp
 	}
 }
 
+// SetResourceTemplates replaces all existing resource templates with the provided list
+func (s *MCPServer) SetResourceTemplates(templates ...ServerResourceTemplate) {
+	s.resourcesMu.Lock()
+	s.resourceTemplates = make(map[string]resourceTemplateEntry, len(templates))
+	s.resourcesMu.Unlock()
+	s.AddResourceTemplates(templates...)
+}
+
 // AddResourceTemplate registers a new resource template and its handler
 func (s *MCPServer) AddResourceTemplate(
 	template mcp.ResourceTemplate,
