@@ -746,7 +746,6 @@ type streamableHttpSession struct {
 	samplingRequestChan  chan samplingRequestItem      // server -> client sampling requests
 	samplingRequests     sync.Map                      // requestID -> pending sampling request context
 	requestIDCounter     atomic.Int64                  // for generating unique request IDs
-	mu                   sync.RWMutex                  // protects sampling channels and requests
 }
 
 func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, levels *sessionLogLevelsStore) *streamableHttpSession {
