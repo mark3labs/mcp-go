@@ -198,7 +198,7 @@ func NewPromptMessage(role Role, content Content) PromptMessage {
 // Helper function to create a new TextContent
 func NewTextContent(text string) TextContent {
 	return TextContent{
-		Type: "text",
+		Type: ContentTypeText,
 		Text: text,
 	}
 }
@@ -207,7 +207,7 @@ func NewTextContent(text string) TextContent {
 // Helper function to create a new ImageContent
 func NewImageContent(data, mimeType string) ImageContent {
 	return ImageContent{
-		Type:     "image",
+		Type:     ContentTypeImage,
 		Data:     data,
 		MIMEType: mimeType,
 	}
@@ -216,7 +216,7 @@ func NewImageContent(data, mimeType string) ImageContent {
 // Helper function to create a new AudioContent
 func NewAudioContent(data, mimeType string) AudioContent {
 	return AudioContent{
-		Type:     "audio",
+		Type:     ContentTypeAudio,
 		Data:     data,
 		MIMEType: mimeType,
 	}
@@ -225,7 +225,7 @@ func NewAudioContent(data, mimeType string) AudioContent {
 // Helper function to create a new ResourceLink
 func NewResourceLink(uri, name, description, mimeType string) ResourceLink {
 	return ResourceLink{
-		Type:        "resource_link",
+		Type:        ContentTypeLink,
 		URI:         uri,
 		Name:        name,
 		Description: description,
@@ -236,7 +236,7 @@ func NewResourceLink(uri, name, description, mimeType string) ResourceLink {
 // Helper function to create a new EmbeddedResource
 func NewEmbeddedResource(resource ResourceContents) EmbeddedResource {
 	return EmbeddedResource{
-		Type:     "resource",
+		Type:     ContentTypeResource,
 		Resource: resource,
 	}
 }
@@ -246,7 +246,7 @@ func NewToolResultText(text string) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: text,
 			},
 		},
@@ -296,11 +296,11 @@ func NewToolResultImage(text, imageData, mimeType string) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: text,
 			},
 			ImageContent{
-				Type:     "image",
+				Type:     ContentTypeImage,
 				Data:     imageData,
 				MIMEType: mimeType,
 			},
@@ -313,11 +313,11 @@ func NewToolResultAudio(text, imageData, mimeType string) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: text,
 			},
 			AudioContent{
-				Type:     "audio",
+				Type:     ContentTypeAudio,
 				Data:     imageData,
 				MIMEType: mimeType,
 			},
@@ -333,11 +333,11 @@ func NewToolResultResource(
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: text,
 			},
 			EmbeddedResource{
-				Type:     "resource",
+				Type:     ContentTypeResource,
 				Resource: resource,
 			},
 		},
@@ -350,7 +350,7 @@ func NewToolResultError(text string) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: text,
 			},
 		},
@@ -368,7 +368,7 @@ func NewToolResultErrorFromErr(text string, err error) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: text,
 			},
 		},
@@ -383,7 +383,7 @@ func NewToolResultErrorf(format string, a ...any) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: fmt.Sprintf(format, a...),
 			},
 		},
@@ -505,11 +505,11 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 	contentType := ExtractString(contentMap, "type")
 
 	switch contentType {
-	case "text":
+	case ContentTypeText:
 		text := ExtractString(contentMap, "text")
 		return NewTextContent(text), nil
 
-	case "image":
+	case ContentTypeImage:
 		data := ExtractString(contentMap, "data")
 		mimeType := ExtractString(contentMap, "mimeType")
 		if data == "" || mimeType == "" {
@@ -517,7 +517,7 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		}
 		return NewImageContent(data, mimeType), nil
 
-	case "audio":
+	case ContentTypeAudio:
 		data := ExtractString(contentMap, "data")
 		mimeType := ExtractString(contentMap, "mimeType")
 		if data == "" || mimeType == "" {
@@ -525,7 +525,7 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		}
 		return NewAudioContent(data, mimeType), nil
 
-	case "resource_link":
+	case ContentTypeLink:
 		uri := ExtractString(contentMap, "uri")
 		name := ExtractString(contentMap, "name")
 		description := ExtractString(contentMap, "description")
@@ -535,7 +535,7 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		}
 		return NewResourceLink(uri, name, description, mimeType), nil
 
-	case "resource":
+	case ContentTypeResource:
 		resourceMap := ExtractMap(contentMap, "resource")
 		if resourceMap == nil {
 			return nil, fmt.Errorf("resource is missing")
