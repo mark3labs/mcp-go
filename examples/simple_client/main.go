@@ -81,6 +81,12 @@ func main() {
 		fmt.Println("Initializing HTTP client...")
 		// Create HTTP transport
 		httpTransport, err := transport.NewStreamableHTTP(*httpURL)
+		// NOTE: the default streamableHTTP transport is not 100% identical to the stdio client.
+		// By default, it could not receive global notifications (e.g. toolListChanged).
+		// You need to enable the `WithContinuousListening()` option to establish a long-live connection,
+		// and receive the notifications any time the server sends them.
+		//
+		//   httpTransport, err := transport.NewStreamableHTTP(*httpURL, transport.WithContinuousListening())
 		if err != nil {
 			log.Fatalf("Failed to create HTTP transport: %v", err)
 		}

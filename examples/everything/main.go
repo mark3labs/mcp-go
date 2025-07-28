@@ -165,7 +165,39 @@ func NewMCPServer() *server.MCPServer {
 
 	mcpServer.AddNotificationHandler("notification", handleNotification)
 
+	mcpServer.AddTool(mcp.NewTool("get_resource_link",
+		mcp.WithDescription("Returns a resource link example"),
+		mcp.WithString("resource_type",
+			mcp.Description("Type of resource to link to"),
+			mcp.DefaultString("document")),
+	), handleGetResourceLinkTool)
+
 	return mcpServer
+}
+
+func handleGetResourceLinkTool(
+	ctx context.Context,
+	request mcp.CallToolRequest,
+) (*mcp.CallToolResult, error) {
+	resourceType := request.GetString("resource_type", "document")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: fmt.Sprintf("Here's a link to a %s resource:", resourceType),
+			},
+			mcp.NewResourceLink(
+				fmt.Sprintf("file:///example/%s.pdf", resourceType),
+				fmt.Sprintf("Sample %s", resourceType),
+				fmt.Sprintf("A sample %s for demonstration", resourceType),
+				"application/pdf",
+			),
+			mcp.TextContent{
+				Type: "text",
+				Text: "You can access this resource using the provided URI.",
+			},
+		},
+	}, nil
 }
 
 func generateResources() []mcp.Resource {

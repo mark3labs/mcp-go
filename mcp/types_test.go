@@ -68,3 +68,73 @@ func TestMetaMarshalling(t *testing.T) {
 		})
 	}
 }
+
+func TestResourceLinkSerialization(t *testing.T) {
+	resourceLink := NewResourceLink(
+		"file:///example/document.pdf",
+		"Sample Document",
+		"A sample document for testing",
+		"application/pdf",
+	)
+
+	// Test marshaling
+	data, err := json.Marshal(resourceLink)
+	require.NoError(t, err)
+
+	// Test unmarshaling
+	var unmarshaled ResourceLink
+	err = json.Unmarshal(data, &unmarshaled)
+	require.NoError(t, err)
+
+	// Verify fields
+	assert.Equal(t, "resource_link", unmarshaled.Type)
+	assert.Equal(t, "file:///example/document.pdf", unmarshaled.URI)
+	assert.Equal(t, "Sample Document", unmarshaled.Name)
+	assert.Equal(t, "A sample document for testing", unmarshaled.Description)
+	assert.Equal(t, "application/pdf", unmarshaled.MIMEType)
+}
+
+func TestCallToolResultWithResourceLink(t *testing.T) {
+	result := &CallToolResult{
+		Content: []Content{
+			TextContent{
+				Type: "text",
+				Text: "Here's a resource link:",
+			},
+			NewResourceLink(
+				"file:///example/test.pdf",
+				"Test Document",
+				"A test document",
+				"application/pdf",
+			),
+		},
+		IsError: false,
+	}
+
+	// Test marshaling
+	data, err := json.Marshal(result)
+	require.NoError(t, err)
+
+	// Test unmarshalling
+	var unmarshalled CallToolResult
+	err = json.Unmarshal(data, &unmarshalled)
+	require.NoError(t, err)
+
+	// Verify content
+	require.Len(t, unmarshalled.Content, 2)
+
+	// Check first content (TextContent)
+	textContent, ok := unmarshalled.Content[0].(TextContent)
+	require.True(t, ok)
+	assert.Equal(t, "text", textContent.Type)
+	assert.Equal(t, "Here's a resource link:", textContent.Text)
+
+	// Check second content (ResourceLink)
+	resourceLink, ok := unmarshalled.Content[1].(ResourceLink)
+	require.True(t, ok)
+	assert.Equal(t, "resource_link", resourceLink.Type)
+	assert.Equal(t, "file:///example/test.pdf", resourceLink.URI)
+	assert.Equal(t, "Test Document", resourceLink.Name)
+	assert.Equal(t, "A test document", resourceLink.Description)
+	assert.Equal(t, "application/pdf", resourceLink.MIMEType)
+}

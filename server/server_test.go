@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -41,7 +42,7 @@ func TestMCPServer_Capabilities(t *testing.T) {
 
 				assert.Equal(
 					t,
-					mcp.LATEST_PROTOCOL_VERSION,
+					"2025-03-26", // Backward compatibility: no protocol version provided,
 					initResult.ProtocolVersion,
 				)
 				assert.Equal(t, "test-server", initResult.ServerInfo.Name)
@@ -69,7 +70,7 @@ func TestMCPServer_Capabilities(t *testing.T) {
 
 				assert.Equal(
 					t,
-					mcp.LATEST_PROTOCOL_VERSION,
+					"2025-03-26", // Backward compatibility: no protocol version provided,
 					initResult.ProtocolVersion,
 				)
 				assert.Equal(t, "test-server", initResult.ServerInfo.Name)
@@ -106,7 +107,7 @@ func TestMCPServer_Capabilities(t *testing.T) {
 
 				assert.Equal(
 					t,
-					mcp.LATEST_PROTOCOL_VERSION,
+					"2025-03-26", // Backward compatibility: no protocol version provided,
 					initResult.ProtocolVersion,
 				)
 				assert.Equal(t, "test-server", initResult.ServerInfo.Name)
@@ -406,7 +407,7 @@ func TestMCPServer_HandleValidMessages(t *testing.T) {
 
 				assert.Equal(
 					t,
-					mcp.LATEST_PROTOCOL_VERSION,
+					"2025-03-26", // Backward compatibility: no protocol version provided,
 					initResult.ProtocolVersion,
 				)
 				assert.Equal(t, "test-server", initResult.ServerInfo.Name)
@@ -1455,6 +1456,54 @@ func TestMCPServer_ResourceTemplates(t *testing.T) {
 		assert.Equal(t, "test://something/test-resource/a/b/c", resultContent.URI)
 		assert.Equal(t, "text/plain", resultContent.MIMEType)
 		assert.Equal(t, "test content: something", resultContent.Text)
+	})
+
+	server.AddResourceTemplates(
+		ServerResourceTemplate{
+			Template: mcp.NewResourceTemplate(
+				"test://test-another-resource-1",
+				"Another Resource 1",
+			),
+			Handler: func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+				return []mcp.ResourceContents{}, nil
+			},
+		},
+		ServerResourceTemplate{
+			Template: mcp.NewResourceTemplate(
+				"test://test-another-resource-2",
+				"Another Resource 2",
+			),
+			Handler: func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+				return []mcp.ResourceContents{}, nil
+			},
+		},
+	)
+
+	t.Run("Check bulk add resource templates", func(t *testing.T) {
+		assert.Equal(t, 3, len(server.resourceTemplates))
+	})
+
+	t.Run("Get resource template again", func(t *testing.T) {
+		response := server.HandleMessage(
+			context.Background(),
+			[]byte(listMessage),
+		)
+		assert.NotNil(t, response)
+
+		resp, ok := response.(mcp.JSONRPCResponse)
+		assert.True(t, ok)
+		listResult, ok := resp.Result.(mcp.ListResourceTemplatesResult)
+		assert.True(t, ok)
+		assert.Len(t, listResult.ResourceTemplates, 3)
+
+		// resource templates are stored in a map, so the order is not guaranteed
+		for _, rt := range listResult.ResourceTemplates {
+			assert.True(t, slices.Contains([]string{
+				"My Resource",
+				"Another Resource 1",
+				"Another Resource 2",
+			}, rt.Name))
+		}
 	})
 }
 

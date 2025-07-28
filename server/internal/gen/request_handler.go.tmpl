@@ -72,6 +72,14 @@ func (s *MCPServer) HandleMessage(
     	)
     }
 
+    // Get request header from ctx
+    h := ctx.Value(requestHeader)
+	headers, ok := h.(http.Header)
+
+	if headers == nil || !ok {
+		headers = make(http.Header)
+	}
+
 	switch baseMessage.Method {
 	{{- range .}}
 	case mcp.{{.MethodName}}:
@@ -90,6 +98,7 @@ func (s *MCPServer) HandleMessage(
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
+            request.Header = headers
 			s.hooks.before{{.HookName}}(ctx, baseMessage.ID, &request)
 			result, err = s.{{.HandlerFunc}}(ctx, baseMessage.ID, request)
 		}

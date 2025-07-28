@@ -30,6 +30,7 @@ type sseSession struct {
 	loggingLevel        atomic.Value
 	tools               sync.Map     // stores session-specific tools
 	clientInfo          atomic.Value // stores session-specific client info
+	clientCapabilities  atomic.Value // stores session-specific client capabilities
 }
 
 // SSEContextFunc is a function that takes an existing context and the current
@@ -106,6 +107,19 @@ func (s *sseSession) GetClientInfo() mcp.Implementation {
 
 func (s *sseSession) SetClientInfo(clientInfo mcp.Implementation) {
 	s.clientInfo.Store(clientInfo)
+}
+
+func (s *sseSession) SetClientCapabilities(clientCapabilities mcp.ClientCapabilities) {
+	s.clientCapabilities.Store(clientCapabilities)
+}
+
+func (s *sseSession) GetClientCapabilities() mcp.ClientCapabilities {
+	if value := s.clientCapabilities.Load(); value != nil {
+		if clientCapabilities, ok := value.(mcp.ClientCapabilities); ok {
+			return clientCapabilities
+		}
+	}
+	return mcp.ClientCapabilities{}
 }
 
 var (
@@ -504,7 +518,8 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 
 	// Create a new context for handling the message that will be canceled when the message handling is done
-	messageCtx, cancel := context.WithCancel(detachedCtx)
+	messageCtx := context.WithValue(detachedCtx, requestHeader, r.Header)
+	messageCtx, cancel := context.WithCancel(messageCtx)
 
 	go func(ctx context.Context) {
 		defer cancel()

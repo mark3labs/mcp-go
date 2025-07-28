@@ -11,7 +11,6 @@ package main
 
 import (
     "context"
-    "errors"
     "fmt"
 
     "github.com/mark3labs/mcp-go/mcp"
@@ -23,7 +22,7 @@ func main() {
     s := server.NewMCPServer(
         "Hello World Server",
         "1.0.0",
-        server.WithToolCapabilities(false),
+        server.WithToolCapabilities(true),
     )
 
     // Define a simple tool
@@ -45,12 +44,28 @@ func main() {
 }
 
 func helloHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    name, err := request.RequireString("name")
-    if err != nil {
-        return mcp.NewToolResultError(err.Error()), nil
+    arguments := request.GetArguments()
+    name, ok := arguments["name"].(string)
+    if !ok {
+        return &mcp.CallToolResult{
+            Content: []mcp.Content{
+                mcp.TextContent{
+                    Type: "text",
+                    Text: "Error: name parameter is required and must be a string",
+                },
+            },
+            IsError: true,
+        }, nil
     }
 
-    return mcp.NewToolResultText(fmt.Sprintf("Hello, %s! 👋", name)), nil
+    return &mcp.CallToolResult{
+        Content: []mcp.Content{
+            mcp.TextContent{
+                Type: "text",
+                Text: fmt.Sprintf("Hello, %s! 👋", name),
+            },
+        },
+    }, nil
 }
 ```
 
@@ -114,57 +129,77 @@ import (
     "context"
     "fmt"
     "log"
+    "time"
 
     "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/client/transport"
     "github.com/mark3labs/mcp-go/mcp"
 )
 
 func main() {
-    // Create a stdio client that connects to another MCP server
-	// NTOE: NewStdioMCPClient will start the connection automatically. Don't call the Start method manually
-    c, err := client.NewStdioMCPClient(
-        "go", "run", "path/to/server/main.go",
-    )
-    if err != nil {
-        log.Fatal(err)
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+
+    // Create stdio transport
+    stdioTransport := transport.NewStdio("go", nil, "run", "path/to/server/main.go")
+
+    // Create client with the transport
+    c := client.NewClient(stdioTransport)
+
+    // Start the client
+    if err := c.Start(ctx); err != nil {
+        log.Fatalf("Failed to start client: %v", err)
     }
     defer c.Close()
 
-    ctx := context.Background()
-
-    // Initialize the connection
-    if err := c.Initialize(ctx); err != nil {
-        log.Fatal(err)
+    // Initialize the client
+    initRequest := mcp.InitializeRequest{}
+    initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+    initRequest.Params.ClientInfo = mcp.Implementation{
+        Name:    "Hello World Client",
+        Version: "1.0.0",
     }
+    initRequest.Params.Capabilities = mcp.ClientCapabilities{}
+
+    serverInfo, err := c.Initialize(ctx, initRequest)
+    if err != nil {
+        log.Fatalf("Failed to initialize: %v", err)
+    }
+
+    fmt.Printf("Connected to server: %s (version %s)\n",
+        serverInfo.ServerInfo.Name,
+        serverInfo.ServerInfo.Version)
 
     // List available tools
-    tools, err := c.ListTools(ctx)
-    if err != nil {
-        log.Fatal(err)
-    }
+    if serverInfo.Capabilities.Tools != nil {
+        toolsRequest := mcp.ListToolsRequest{}
+        toolsResult, err := c.ListTools(ctx, toolsRequest)
+        if err != nil {
+            log.Fatalf("Failed to list tools: %v", err)
+        }
 
-    fmt.Printf("Available tools: %d\n", len(tools.Tools))
-    for _, tool := range tools.Tools {
-        fmt.Printf("- %s: %s\n", tool.Name, tool.Description)
-    }
+        fmt.Printf("Available tools: %d\n", len(toolsResult.Tools))
+        for _, tool := range toolsResult.Tools {
+            fmt.Printf("- %s: %s\n", tool.Name, tool.Description)
+        }
 
-    // Call a tool
-    result, err := c.CallTool(ctx, mcp.CallToolRequest{
-        Params: mcp.CallToolParams{
-            Name: "hello_world",
-            Arguments: map[string]interface{}{
-                "name": "World",
-            },
-        },
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
+        // Call a tool
+        callRequest := mcp.CallToolRequest{}
+        callRequest.Params.Name = "hello_world"
+        callRequest.Params.Arguments = map[string]interface{}{
+            "name": "World",
+        }
 
-    // Print the result
-    for _, content := range result.Content {
-        if content.Type == "text" {
-            fmt.Printf("Result: %s\n", content.Text)
+        result, err := c.CallTool(ctx, callRequest)
+        if err != nil {
+            log.Fatalf("Failed to call tool: %v", err)
+        }
+
+        // Print the result
+        for _, content := range result.Content {
+            if textContent, ok := content.(mcp.TextContent); ok {
+                fmt.Printf("Result: %s\n", textContent.Text)
+            }
         }
     }
 }
@@ -181,37 +216,60 @@ import (
     "context"
     "fmt"
     "log"
+    "time"
 
     "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/client/transport"
     "github.com/mark3labs/mcp-go/mcp"
 )
 
 func main() {
-    // Create a StreamableHTTP client
-    c := client.NewStreamableHttpClient("http://localhost:8080/mcp")
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+
+    // Create HTTP transport
+    httpTransport, err := transport.NewStreamableHTTP("http://localhost:8080/mcp")
+    if err != nil {
+        log.Fatalf("Failed to create HTTP transport: %v", err)
+    }
+
+    // Create client with the transport
+    c := client.NewClient(httpTransport)
     defer c.Close()
 
-    ctx := context.Background()
-
-    // Initialize and use the client
-    if err := c.Initialize(ctx); err != nil {
-        log.Fatal(err)
+    // Initialize the client
+    initRequest := mcp.InitializeRequest{}
+    initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+    initRequest.Params.ClientInfo = mcp.Implementation{
+        Name:    "StreamableHTTP Client",
+        Version: "1.0.0",
     }
+    initRequest.Params.Capabilities = mcp.ClientCapabilities{}
+
+    serverInfo, err := c.Initialize(ctx, initRequest)
+    if err != nil {
+        log.Fatalf("Failed to initialize: %v", err)
+    }
+
+    fmt.Printf("Connected to server: %s (version %s)\n",
+        serverInfo.ServerInfo.Name,
+        serverInfo.ServerInfo.Version)
 
     // Call a tool
-    result, err := c.CallTool(ctx, mcp.CallToolRequest{
-        Params: mcp.CallToolRequestParams{
-            Name: "hello_world",
-            Arguments: map[string]interface{}{
-                "name": "StreamableHTTP World",
-            },
-        },
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
+    if serverInfo.Capabilities.Tools != nil {
+        callRequest := mcp.CallToolRequest{}
+        callRequest.Params.Name = "hello_world"
+        callRequest.Params.Arguments = map[string]interface{}{
+            "name": "StreamableHTTP World",
+        }
 
-    fmt.Printf("Tool result: %+v\n", result)
+        result, err := c.CallTool(ctx, callRequest)
+        if err != nil {
+            log.Fatalf("Failed to call tool: %v", err)
+        }
+
+        fmt.Printf("Tool result: %+v\n", result)
+    }
 }
 ```
 

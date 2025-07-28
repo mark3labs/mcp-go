@@ -20,9 +20,10 @@ import (
 type Server struct {
 	name string
 
-	tools     []server.ServerTool
-	prompts   []server.ServerPrompt
-	resources []server.ServerResource
+	tools             []server.ServerTool
+	prompts           []server.ServerPrompt
+	resources         []server.ServerResource
+	resourceTemplates []server.ServerResourceTemplate
 
 	cancel func()
 
@@ -106,6 +107,19 @@ func (s *Server) AddResources(resources ...server.ServerResource) {
 	s.resources = append(s.resources, resources...)
 }
 
+// AddResourceTemplate adds a resource template to an unstarted server.
+func (s *Server) AddResourceTemplate(template mcp.ResourceTemplate, handler server.ResourceTemplateHandlerFunc) {
+	s.resourceTemplates = append(s.resourceTemplates, server.ServerResourceTemplate{
+		Template: template,
+		Handler:  handler,
+	})
+}
+
+// AddResourceTemplates adds multiple resource templates to an unstarted server.
+func (s *Server) AddResourceTemplates(templates ...server.ServerResourceTemplate) {
+	s.resourceTemplates = append(s.resourceTemplates, templates...)
+}
+
 // Start starts the server in a goroutine. Make sure to defer Close() after Start().
 // When using NewServer(), the returned server is already started.
 func (s *Server) Start(ctx context.Context) error {
@@ -122,6 +136,7 @@ func (s *Server) Start(ctx context.Context) error {
 		mcpServer.AddTools(s.tools...)
 		mcpServer.AddPrompts(s.prompts...)
 		mcpServer.AddResources(s.resources...)
+		mcpServer.AddResourceTemplates(s.resourceTemplates...)
 
 		logger := log.New(&s.logBuffer, "", 0)
 

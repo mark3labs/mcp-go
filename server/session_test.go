@@ -106,6 +106,7 @@ type sessionTestClientWithClientInfo struct {
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         bool
 	clientInfo          atomic.Value
+	clientCapabilities  atomic.Value
 }
 
 func (f *sessionTestClientWithClientInfo) SessionID() string {
@@ -135,6 +136,19 @@ func (f *sessionTestClientWithClientInfo) GetClientInfo() mcp.Implementation {
 
 func (f *sessionTestClientWithClientInfo) SetClientInfo(clientInfo mcp.Implementation) {
 	f.clientInfo.Store(clientInfo)
+}
+
+func (f *sessionTestClientWithClientInfo) GetClientCapabilities() mcp.ClientCapabilities {
+	if value := f.clientCapabilities.Load(); value != nil {
+		if clientCapabilities, ok := value.(mcp.ClientCapabilities); ok {
+			return clientCapabilities
+		}
+	}
+	return mcp.ClientCapabilities{}
+}
+
+func (f *sessionTestClientWithClientInfo) SetClientCapabilities(clientCapabilities mcp.ClientCapabilities) {
+	f.clientCapabilities.Store(clientCapabilities)
 }
 
 // sessionTestClientWithTools implements the SessionWithLogging interface for testing
@@ -1099,10 +1113,14 @@ func TestSessionWithClientInfo_Integration(t *testing.T) {
 		Version: "1.0.0",
 	}
 
+	clientCapability := mcp.ClientCapabilities{
+		Sampling: &struct{}{},
+	}
+
 	initRequest := mcp.InitializeRequest{}
 	initRequest.Params.ClientInfo = clientInfo
 	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
-	initRequest.Params.Capabilities = mcp.ClientCapabilities{}
+	initRequest.Params.Capabilities = clientCapability
 
 	sessionCtx := server.WithContext(context.Background(), session)
 
@@ -1125,4 +1143,389 @@ func TestSessionWithClientInfo_Integration(t *testing.T) {
 
 	assert.Equal(t, clientInfo.Name, storedClientInfo.Name, "Client name should match")
 	assert.Equal(t, clientInfo.Version, storedClientInfo.Version, "Client version should match")
+
+	storedClientCapabilities := sessionWithClientInfo.GetClientCapabilities()
+
+	assert.Equal(t, clientCapability, storedClientCapabilities, "Client capability should match")
+}
+
+// New test function to cover log notification functionality
+func TestMCPServer_SendLogMessageToClient(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0", WithLogging())
+	ctx := context.Background()
+
+	// Create a session that supports logging
+	sessionChan := make(chan mcp.JSONRPCNotification, 10)
+	session := &sessionTestClientWithLogging{
+		sessionID:           "session-1",
+		notificationChannel: sessionChan,
+	}
+	session.Initialize()
+
+	// Set log level to Info
+	session.SetLogLevel(mcp.LoggingLevelInfo)
+
+	// Register session
+	err := server.RegisterSession(ctx, session)
+	require.NoError(t, err)
+
+	// Create session context
+	sessionCtx := server.WithContext(ctx, session)
+
+	// Test cases
+	tests := []struct {
+		name        string
+		level       mcp.LoggingLevel
+		expectSent  bool
+		expectError bool
+	}{
+		{
+			name:       "higher level log should be sent",
+			level:      mcp.LoggingLevelWarning, // Higher than Info
+			expectSent: true,
+		},
+		{
+			name:       "same level log should be sent",
+			level:      mcp.LoggingLevelInfo,
+			expectSent: true,
+		},
+		{
+			name:       "lower level log should not be sent",
+			level:      mcp.LoggingLevelDebug, // Lower than Info
+			expectSent: false,
+		},
+		{
+			name:        "uninitialized session should return error",
+			level:       mcp.LoggingLevelError,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.expectError {
+				// Create uninitialized session
+				uninitSession := &sessionTestClientWithLogging{
+					sessionID:           "uninit-session",
+					notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+					initialized:         false,
+				}
+				uninitCtx := server.WithContext(ctx, uninitSession)
+				notification := mcp.NewLoggingMessageNotification(tt.level, "test-logger", "test message")
+				err := server.SendLogMessageToClient(uninitCtx, notification)
+				require.Error(t, err)
+				assert.Equal(t, ErrNotificationNotInitialized, err)
+				return
+			}
+			notification := mcp.NewLoggingMessageNotification(tt.level, "test-logger", "test message")
+			err := server.SendLogMessageToClient(sessionCtx, notification)
+			require.NoError(t, err)
+
+			if tt.expectSent {
+				select {
+				case notif := <-sessionChan:
+					assert.Equal(t, "notifications/message", notif.Method)
+					assert.Equal(t, tt.level, notif.Params.AdditionalFields["level"])
+					assert.Equal(t, "test-logger", notif.Params.AdditionalFields["logger"])
+					assert.Equal(t, "test message", notif.Params.AdditionalFields["data"])
+				case <-time.After(500 * time.Millisecond):
+					t.Error("Expected log notification not received")
+				}
+			} else {
+				select {
+				case <-sessionChan:
+					t.Error("Unexpected log notification received")
+				case <-time.After(50 * time.Millisecond):
+					// No notification expected
+				}
+			}
+		})
+	}
+}
+
+func TestMCPServer_SendLogMessageToSpecificClient(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0", WithLogging())
+	ctx := context.Background()
+
+	// Create two sessions
+	session1Chan := make(chan mcp.JSONRPCNotification, 10)
+	session1 := &sessionTestClientWithLogging{
+		sessionID:           "session-1",
+		notificationChannel: session1Chan,
+	}
+	session1.Initialize()
+	session1.SetLogLevel(mcp.LoggingLevelInfo)
+
+	session2Chan := make(chan mcp.JSONRPCNotification, 10)
+	session2 := &sessionTestClientWithLogging{
+		sessionID:           "session-2",
+		notificationChannel: session2Chan,
+	}
+	session2.Initialize()
+	session2.SetLogLevel(mcp.LoggingLevelWarning) // Higher log level
+
+	// Register sessions
+	require.NoError(t, server.RegisterSession(ctx, session1))
+	require.NoError(t, server.RegisterSession(ctx, session2))
+
+	// Test cases
+	tests := []struct {
+		name        string
+		sessionID   string
+		level       mcp.LoggingLevel
+		expectSent  bool
+		expectError bool
+		errorType   error
+	}{
+		{
+			name:       "valid session and level should be sent",
+			sessionID:  session1.SessionID(),
+			level:      mcp.LoggingLevelInfo,
+			expectSent: true,
+		},
+		{
+			name:       "log below session level should not be sent",
+			sessionID:  session1.SessionID(),
+			level:      mcp.LoggingLevelDebug,
+			expectSent: false,
+		},
+		{
+			name:       "valid session with higher level should be sent",
+			sessionID:  session2.SessionID(),
+			level:      mcp.LoggingLevelError,
+			expectSent: true,
+		},
+		{
+			name:        "non-existent session should return error",
+			sessionID:   "non-existent",
+			level:       mcp.LoggingLevelError,
+			expectError: true,
+			errorType:   ErrSessionNotFound,
+		},
+		{
+			name:        "uninitialized session should return error",
+			sessionID:   "uninitialized-session",
+			level:       mcp.LoggingLevelError,
+			expectError: true,
+			errorType:   ErrSessionNotInitialized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.sessionID == "uninitialized-session" {
+				uninitSession := &sessionTestClientWithLogging{
+					sessionID:           "uninitialized-session",
+					notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+					initialized:         false,
+				}
+				require.NoError(t, server.RegisterSession(ctx, uninitSession))
+			}
+
+			notification := mcp.NewLoggingMessageNotification(tt.level, "test-logger", "test message")
+
+			err := server.SendLogMessageToSpecificClient(tt.sessionID, notification)
+
+			if tt.expectError {
+				require.Error(t, err)
+				if tt.errorType != nil {
+					assert.ErrorIs(t, err, tt.errorType)
+				}
+				return
+			}
+
+			require.NoError(t, err)
+
+			var targetChan chan mcp.JSONRPCNotification
+			if tt.sessionID == session1.SessionID() {
+				targetChan = session1Chan
+			} else if tt.sessionID == session2.SessionID() {
+				targetChan = session2Chan
+			}
+
+			if tt.expectSent && targetChan != nil {
+				select {
+				case notif := <-targetChan:
+					assert.Equal(t, "notifications/message", notif.Method)
+					assert.Equal(t, tt.level, notif.Params.AdditionalFields["level"])
+					assert.Equal(t, "test-logger", notif.Params.AdditionalFields["logger"])
+					assert.Equal(t, "test message", notif.Params.AdditionalFields["data"])
+				case <-time.After(100 * time.Millisecond):
+					t.Error("Expected log notification not received")
+				}
+			} else if targetChan != nil {
+				select {
+				case <-targetChan:
+					t.Error("Unexpected log notification received")
+				case <-time.After(50 * time.Millisecond):
+					// No notification expected
+				}
+			}
+		})
+	}
+}
+
+func TestMCPServer_LoggingWithUnsupportedSessions(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0", WithLogging())
+	ctx := context.Background()
+
+	// Create three types of sessions:
+	// 1. Logging-supported session
+	// 2. Logging-unsupported session
+	// 3. Uninitialized session
+
+	// Logging-supported session
+	loggingSessionChan := make(chan mcp.JSONRPCNotification, 10)
+	loggingSession := &sessionTestClientWithLogging{
+		sessionID:           "logging-session",
+		notificationChannel: loggingSessionChan,
+	}
+	loggingSession.Initialize()
+	loggingSession.SetLogLevel(mcp.LoggingLevelInfo)
+
+	// Logging-unsupported session
+	nonLoggingSessionChan := make(chan mcp.JSONRPCNotification, 10)
+	nonLoggingSession := &sessionTestClient{
+		sessionID:           "non-logging-session",
+		notificationChannel: nonLoggingSessionChan,
+	}
+	nonLoggingSession.Initialize()
+
+	// Uninitialized session
+	uninitializedSessionChan := make(chan mcp.JSONRPCNotification, 10)
+	uninitializedSession := &sessionTestClientWithLogging{
+		sessionID:           "uninitialized-session",
+		notificationChannel: uninitializedSessionChan,
+		initialized:         false,
+	}
+
+	// Register all sessions
+	require.NoError(t, server.RegisterSession(ctx, loggingSession))
+	require.NoError(t, server.RegisterSession(ctx, nonLoggingSession))
+	require.NoError(t, server.RegisterSession(ctx, uninitializedSession))
+
+	// Info-level log notification
+	notification := mcp.NewLoggingMessageNotification(mcp.LoggingLevelInfo, "test-logger", "test message for ")
+
+	t.Run("SendLogMessageToClient", func(t *testing.T) {
+		// Logging-supported session
+		loggingCtx := server.WithContext(ctx, loggingSession)
+		err := server.SendLogMessageToClient(loggingCtx, notification)
+		require.NoError(t, err)
+		select {
+		case notif := <-loggingSessionChan:
+			assert.Equal(t, "notifications/message", notif.Method)
+		case <-time.After(100 * time.Millisecond):
+			t.Error("Expected log notification not received")
+		}
+
+		// Logging-unsupported session
+		nonLoggingCtx := server.WithContext(ctx, nonLoggingSession)
+		err = server.SendLogMessageToClient(nonLoggingCtx, notification)
+		require.Error(t, err)
+		assert.Equal(t, ErrSessionDoesNotSupportLogging, err)
+
+		// Uninitialized session
+		uninitCtx := server.WithContext(ctx, uninitializedSession)
+		err = server.SendLogMessageToClient(uninitCtx, notification)
+		require.Error(t, err)
+		assert.Equal(t, ErrNotificationNotInitialized, err)
+	})
+
+	t.Run("SendLogMessageToSpecificClient", func(t *testing.T) {
+		err := server.SendLogMessageToSpecificClient(loggingSession.SessionID(), notification)
+		require.NoError(t, err)
+		select {
+		case notif := <-loggingSessionChan:
+			assert.Equal(t, "notifications/message", notif.Method)
+		case <-time.After(100 * time.Millisecond):
+			t.Error("Expected log notification not received")
+		}
+
+		err = server.SendLogMessageToSpecificClient(nonLoggingSession.SessionID(), notification)
+		require.Error(t, err)
+		assert.Equal(t, ErrSessionDoesNotSupportLogging, err)
+
+		err = server.SendLogMessageToSpecificClient(uninitializedSession.SessionID(), notification)
+		require.Error(t, err)
+		assert.Equal(t, ErrSessionNotInitialized, err)
+	})
+}
+
+func TestMCPServer_LoggingNotificationFormat(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0", WithLogging())
+	ctx := context.Background()
+
+	// Create a session
+	sessionChan := make(chan mcp.JSONRPCNotification, 10)
+	session := &sessionTestClientWithLogging{
+		sessionID:           "session-1",
+		notificationChannel: sessionChan,
+	}
+	session.Initialize()
+	session.SetLogLevel(mcp.LoggingLevelDebug)
+
+	// Register session
+	require.NoError(t, server.RegisterSession(ctx, session))
+
+	// Send log messages with different formats
+	testCases := []struct {
+		name     string
+		data     interface{}
+		expected interface{}
+	}{
+		{
+			name:     "string data",
+			data:     "simple log message",
+			expected: "simple log message",
+		},
+		{
+			name:     "structured data",
+			data:     map[string]interface{}{"key": "value", "num": 42},
+			expected: map[string]interface{}{"key": "value", "num": 42},
+		},
+		{
+			name:     "error data",
+			data:     errors.New("error message"),
+			expected: errors.New("error message"),
+		},
+		{
+			name:     "nil data",
+			data:     nil,
+			expected: nil,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			notification := mcp.NewLoggingMessageNotification(mcp.LoggingLevelInfo, "test-logger", tc.data)
+
+			err := server.SendLogMessageToSpecificClient(session.SessionID(), notification)
+			require.NoError(t, err)
+
+			select {
+			case notif := <-sessionChan:
+				assert.Equal(t, "notifications/message", notif.Method)
+				assert.Equal(t, mcp.LoggingLevelInfo, notif.Params.AdditionalFields["level"])
+				assert.Equal(t, "test-logger", notif.Params.AdditionalFields["logger"])
+
+				// Validate log data format
+				dataField := notif.Params.AdditionalFields["data"]
+				switch expected := tc.expected.(type) {
+				case string:
+					assert.Equal(t, expected, dataField)
+				case map[string]interface{}:
+					assert.IsType(t, map[string]interface{}{}, dataField)
+					dataMap := dataField.(map[string]interface{})
+					for k, v := range expected {
+						assert.Equal(t, v, dataMap[k])
+					}
+				case nil:
+					assert.Nil(t, dataField)
+				}
+			case <-time.After(100 * time.Millisecond):
+				t.Error("Expected log notification not received")
+			}
+		})
+	}
 }

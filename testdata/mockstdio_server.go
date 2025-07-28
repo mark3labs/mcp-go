@@ -52,7 +52,7 @@ func handleRequest(request JSONRPCRequest) JSONRPCResponse {
 	switch request.Method {
 	case "initialize":
 		response.Result = map[string]any{
-			"protocolVersion": "1.0",
+			"protocolVersion": mcp.LATEST_PROTOCOL_VERSION,
 			"serverInfo": map[string]any{
 				"name":    "mock-server",
 				"version": "1.0.0",

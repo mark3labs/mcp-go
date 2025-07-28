@@ -1,0 +1,399 @@
+# Sampling
+
+Learn how to implement MCP servers that can request LLM completions from clients using the sampling capability.
+
+## Overview
+
+Sampling allows MCP servers to request LLM completions from clients, enabling bidirectional communication where servers can leverage client-side LLM capabilities. This is particularly useful for tools that need to generate content, answer questions, or perform reasoning tasks.
+
+## Enabling Sampling
+
+To enable sampling in your server, call `EnableSampling()` during server setup:
+
+```go
+package main
+
+import (
+    "context"
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func main() {
+    // Create server
+    mcpServer := server.NewMCPServer("my-server", "1.0.0")
+    
+    // Enable sampling capability
+    mcpServer.EnableSampling()
+    
+    // Add tools that use sampling...
+    
+    // Start server
+    server.ServeStdio(mcpServer)
+}
+```
+
+## Requesting Sampling
+
+Use `RequestSampling()` within tool handlers to request LLM completions:
+
+```go
+mcpServer.AddTool(mcp.Tool{
+    Name:        "ask_llm",
+    Description: "Ask the LLM a question using sampling",
+    InputSchema: mcp.ToolInputSchema{
+        Type: "object",
+        Properties: map[string]any{
+            "question": map[string]any{
+                "type":        "string",
+                "description": "The question to ask the LLM",
+            },
+            "system_prompt": map[string]any{
+                "type":        "string", 
+                "description": "Optional system prompt",
+            },
+        },
+        Required: []string{"question"},
+    },
+}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Extract parameters
+    question, err := request.RequireString("question")
+    if err != nil {
+        return nil, err
+    }
+    
+    systemPrompt := request.GetString("system_prompt", "You are a helpful assistant.")
+    
+    // Create sampling request
+    samplingRequest := mcp.CreateMessageRequest{
+        CreateMessageParams: mcp.CreateMessageParams{
+            Messages: []mcp.SamplingMessage{
+                {
+                    Role: mcp.RoleUser,
+                    Content: mcp.TextContent{
+                        Type: "text",
+                        Text: question,
+                    },
+                },
+            },
+            SystemPrompt: systemPrompt,
+            MaxTokens:    1000,
+            Temperature:  0.7,
+        },
+    }
+    
+    // Request sampling from client
+    result, err := mcpServer.RequestSampling(ctx, samplingRequest)
+    if err != nil {
+        return &mcp.CallToolResult{
+            Content: []mcp.Content{
+                mcp.TextContent{
+                    Type: "text",
+                    Text: fmt.Sprintf("Error requesting sampling: %v", err),
+                },
+            },
+            IsError: true,
+        }, nil
+    }
+    
+    // Return the LLM response
+    return &mcp.CallToolResult{
+        Content: []mcp.Content{
+            mcp.TextContent{
+                Type: "text",
+                Text: fmt.Sprintf("LLM Response: %s", getTextFromContent(result.Content)),
+            },
+        },
+    }, nil
+})
+```
+
+## Sampling Request Parameters
+
+The `CreateMessageRequest` supports various parameters to control LLM behavior:
+
+```go
+samplingRequest := mcp.CreateMessageRequest{
+    CreateMessageParams: mcp.CreateMessageParams{
+        // Required: Messages to send to the LLM
+        Messages: []mcp.SamplingMessage{
+            {
+                Role: mcp.RoleUser,        // or mcp.RoleAssistant
+                Content: mcp.TextContent{   // or mcp.ImageContent
+                    Type: "text",
+                    Text: "Your message here",
+                },
+            },
+        },
+        
+        // Optional: System prompt for context
+        SystemPrompt: "You are a helpful assistant.",
+        
+        // Optional: Maximum tokens to generate
+        MaxTokens: 1000,
+        
+        // Optional: Temperature for randomness (0.0 to 1.0)
+        Temperature: 0.7,
+        
+        // Optional: Top-p sampling parameter
+        TopP: 0.9,
+        
+        // Optional: Stop sequences
+        StopSequences: []string{"\\n\\n"},
+    },
+}
+```
+
+## Message Types
+
+Sampling supports different message roles and content types:
+
+### Message Roles
+
+```go
+// User message
+{
+    Role: mcp.RoleUser,
+    Content: mcp.TextContent{
+        Type: "text",
+        Text: "What is the capital of France?",
+    },
+}
+
+// Assistant message (for conversation context)
+{
+    Role: mcp.RoleAssistant,
+    Content: mcp.TextContent{
+        Type: "text", 
+        Text: "The capital of France is Paris.",
+    },
+}
+```
+
+### Content Types
+
+#### Text Content
+
+```go
+mcp.TextContent{
+    Type: "text",
+    Text: "Your text content here",
+}
+```
+
+#### Image Content
+
+```go
+mcp.ImageContent{
+    Type: "image",
+    Data: "base64-encoded-image-data",
+    MimeType: "image/jpeg",
+}
+```
+
+## Error Handling
+
+Always handle sampling errors gracefully:
+
+```go
+result, err := mcpServer.RequestSampling(ctx, samplingRequest)
+if err != nil {
+    // Log the error
+    log.Printf("Sampling request failed: %v", err)
+    
+    // Return appropriate error response
+    return &mcp.CallToolResult{
+        Content: []mcp.Content{
+            mcp.TextContent{
+                Type: "text",
+                Text: "Sorry, I couldn't process your request at this time.",
+            },
+        },
+        IsError: true,
+    }, nil
+}
+```
+
+## Context and Timeouts
+
+Use context for timeout control:
+
+```go
+// Set a timeout for the sampling request
+ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+defer cancel()
+
+result, err := mcpServer.RequestSampling(ctx, samplingRequest)
+```
+
+## Best Practices
+
+1. **Enable Sampling Early**: Call `EnableSampling()` during server initialization
+2. **Handle Timeouts**: Set appropriate timeouts for sampling requests
+3. **Graceful Errors**: Always provide meaningful error messages to users
+4. **Content Extraction**: Use helper functions to extract text from responses
+5. **System Prompts**: Use clear system prompts to guide LLM behavior
+6. **Parameter Validation**: Validate tool parameters before making sampling requests
+
+## Complete Example
+
+Here's a complete example server with sampling:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "time"
+    
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func main() {
+    // Create server
+    mcpServer := server.NewMCPServer("sampling-example-server", "1.0.0")
+    
+    // Enable sampling capability
+    mcpServer.EnableSampling()
+    
+    // Add sampling tool
+    mcpServer.AddTool(mcp.Tool{
+        Name:        "ask_llm",
+        Description: "Ask the LLM a question using sampling",
+        InputSchema: mcp.ToolInputSchema{
+            Type: "object",
+            Properties: map[string]any{
+                "question": map[string]any{
+                    "type":        "string",
+                    "description": "The question to ask the LLM",
+                },
+                "system_prompt": map[string]any{
+                    "type":        "string",
+                    "description": "Optional system prompt",
+                },
+            },
+            Required: []string{"question"},
+        },
+    }, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        question, err := request.RequireString("question")
+        if err != nil {
+            return nil, err
+        }
+        
+        systemPrompt := request.GetString("system_prompt", "You are a helpful assistant.")
+        
+        // Create sampling request
+        samplingRequest := mcp.CreateMessageRequest{
+            CreateMessageParams: mcp.CreateMessageParams{
+                Messages: []mcp.SamplingMessage{
+                    {
+                        Role: mcp.RoleUser,
+                        Content: mcp.TextContent{
+                            Type: "text",
+                            Text: question,
+                        },
+                    },
+                },
+                SystemPrompt: systemPrompt,
+                MaxTokens:    1000,
+                Temperature:  0.7,
+            },
+        }
+        
+        // Request sampling with timeout
+        samplingCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+        defer cancel()
+        
+        result, err := mcpServer.RequestSampling(samplingCtx, samplingRequest)
+        if err != nil {
+            return &mcp.CallToolResult{
+                Content: []mcp.Content{
+                    mcp.TextContent{
+                        Type: "text",
+                        Text: fmt.Sprintf("Error requesting sampling: %v", err),
+                    },
+                },
+                IsError: true,
+            }, nil
+        }
+        
+        // Return the LLM response
+        return &mcp.CallToolResult{
+            Content: []mcp.Content{
+                mcp.TextContent{
+                    Type: "text",
+                    Text: fmt.Sprintf("LLM Response (model: %s): %s", 
+                        result.Model, getTextFromContent(result.Content)),
+                },
+            },
+        }, nil
+    })
+    
+    // Start server
+    log.Println("Starting sampling example server...")
+    if err := server.ServeStdio(mcpServer); err != nil {
+        log.Fatalf("Server error: %v", err)
+    }
+}
+
+// Helper function to extract text from content
+func getTextFromContent(content interface{}) string {
+    switch c := content.(type) {
+    case mcp.TextContent:
+        return c.Text
+    case string:
+        return c
+    default:
+        return fmt.Sprintf("%v", content)
+    }
+}
+```
+
+## Transport Support
+
+Sampling is supported on the following transports:
+
+### STDIO Transport
+
+STDIO transport provides full sampling support with JSON-RPC message passing:
+
+```go
+// Start STDIO server with sampling
+server.ServeStdio(mcpServer)
+```
+
+The client must implement a `SamplingHandler` and declare sampling capability during initialization.
+
+### In-Process Transport
+
+In-process transport offers the most efficient sampling implementation with direct method calls:
+
+```go
+// Create in-process client with sampling handler
+mcpClient, err := client.NewInProcessClientWithSamplingHandler(mcpServer, samplingHandler)
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+**Benefits of in-process sampling:**
+- **Direct Method Calls**: No JSON-RPC serialization overhead
+- **Type Safety**: Compile-time type checking
+
+### Unsupported Transports
+
+The following transports do not currently support sampling:
+- **SSE Transport**: One-way streaming nature prevents bidirectional sampling
+- **StreamableHTTP Transport**: Stateless HTTP requests don't support sampling callbacks
+
+For these transports, consider implementing LLM integration directly in your tool handlers rather than using sampling.
+
+## Next Steps
+
+- Learn about [client-side sampling implementation](/clients/advanced-sampling)
+- Explore [advanced server features](/servers/advanced)
+- Check out the [sampling examples](https://github.com/mark3labs/mcp-go/tree/main/examples/sampling_server)
+- See [in-process sampling documentation](/transports/inprocess#sampling-support) for embedded scenarios

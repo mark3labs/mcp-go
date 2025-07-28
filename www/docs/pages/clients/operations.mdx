@@ -909,6 +909,52 @@ func demonstrateSubscriptionManager(c client.Client) {
 }
 ```
 
+## Advanced: Sampling Support
+
+Sampling is an advanced feature that allows clients to respond to LLM completion requests from servers. This enables servers to leverage client-side LLM capabilities for content generation and reasoning.
+
+> **Note**: Sampling is an advanced feature that most clients don't need. Only implement sampling if you're building a client that provides LLM capabilities to servers.
+
+### When to Implement Sampling
+
+Consider implementing sampling when your client:
+- Has access to LLM APIs (OpenAI, Anthropic, etc.)
+- Wants to provide LLM capabilities to servers
+- Needs to support servers that generate dynamic content
+
+### Basic Implementation
+
+```go
+import "github.com/mark3labs/mcp-go/client"
+
+// Implement the SamplingHandler interface
+type MySamplingHandler struct {
+    // Add your LLM client here
+}
+
+func (h *MySamplingHandler) CreateMessage(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
+    // Process the request with your LLM
+    // Return the result in MCP format
+    return &mcp.CreateMessageResult{
+        Model: "your-model",
+        Role:  mcp.RoleAssistant,
+        Content: mcp.TextContent{
+            Type: "text",
+            Text: "Your LLM response here",
+        },
+        StopReason: "endTurn",
+    }, nil
+}
+
+// Create client with sampling support
+mcpClient, err := client.NewStdioClient(
+    "/path/to/server",
+    client.WithSamplingHandler(&MySamplingHandler{}),
+)
+```
+
+For complete sampling documentation, see **[Client Sampling Guide](/clients/advanced-sampling)**.
+
 ## Next Steps
 
 - **[Client Transports](/clients/transports)** - Learn transport-specific client features
