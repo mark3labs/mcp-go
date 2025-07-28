@@ -267,12 +267,18 @@ func NewToolResultStructured(structured any, fallbackText string) *CallToolResul
 	}
 }
 
-// NewToolResultStructuredOnly creates a new CallToolResult with only structured content.
-// This is useful when you want to provide structured data without a text fallback.
+// NewToolResultStructuredOnly creates a new CallToolResult with structured
+// content and creates a JSON string fallback for backwards compatibility.
+// This is useful when you want to provide structured data without any specific text fallback.
 func NewToolResultStructuredOnly(structured any) *CallToolResult {
+	var fallbackText string
 	// Convert to JSON string for backward compatibility
-	jsonBytes, _ := json.Marshal(structured)
-	fallbackText := string(jsonBytes)
+	jsonBytes, err := json.Marshal(structured)
+	if err != nil {
+		fallbackText = fmt.Sprintf("Error serializing structured content: %v", err)
+	} else {
+		fallbackText = string(jsonBytes)
+	}
 
 	return &CallToolResult{
 		Content: []Content{
@@ -476,7 +482,6 @@ func NewInitializeResult(
 func FormatNumberResult(value float64) *CallToolResult {
 	return NewToolResultText(fmt.Sprintf("%.2f", value))
 }
-
 
 func ExtractString(data map[string]any, key string) string {
 	if value, ok := data[key]; ok {
