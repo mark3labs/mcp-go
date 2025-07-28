@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
@@ -101,8 +104,13 @@ func main() {
 	// For this example, we'll just demonstrate that it's working
 	
 	// Keep the client running (in a real app, you'd have your main application logic here)
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
 	select {
 	case <-ctx.Done():
 		log.Println("Client context cancelled")
+	case <-sigChan:
+		log.Println("Received shutdown signal")
 	}
 }
