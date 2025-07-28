@@ -511,6 +511,21 @@ func (s *MCPServer) SetTools(tools ...ServerTool) {
 	s.AddTools(tools...)
 }
 
+// GetTools retrieves the currently registered tools
+func (s *MCPServer) GetTools() (map[string]ServerTool, error) {
+	s.toolsMu.RLock()
+	defer s.toolsMu.RUnlock()
+	// Create a copy to prevent external modification
+	if len(s.tools) == 0 {
+		return nil, fmt.Errorf("no tools registered")
+	}
+	toolsCopy := make(map[string]ServerTool, len(s.tools))
+	for name, tool := range s.tools {
+		toolsCopy[name] = tool
+	}
+	return toolsCopy, nil
+}
+
 // DeleteTools removes tools from the server
 func (s *MCPServer) DeleteTools(names ...string) {
 	s.toolsMu.Lock()

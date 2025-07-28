@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -2070,4 +2071,398 @@ func TestMCPServer_ProtocolNegotiation(t *testing.T) {
 			)
 		})
 	}
+}
+
+func TestMCPServer_GetTools(t *testing.T) {
+	t.Run("EmptyServer", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		tools, err := server.GetTools()
+
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "no tools registered")
+		assert.Nil(t, tools)
+	})
+
+	t.Run("SingleTool", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		expectedTool := mcp.Tool{
+			Name:        "test-tool",
+			Description: "A test tool",
+			InputSchema: mcp.ToolInputSchema{
+				Type: "object",
+				Properties: map[string]any{
+					"input": map[string]any{
+						"type":        "string",
+						"description": "Test input",
+					},
+				},
+			},
+		}
+
+		expectedHandler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					mcp.TextContent{
+						Type: "text",
+						Text: "test result",
+					},
+				},
+			}, nil
+		}
+
+		server.AddTool(expectedTool, expectedHandler)
+
+		tools, err := server.GetTools()
+
+		assert.NoError(t, err)
+		assert.NotNil(t, tools)
+		assert.Len(t, tools, 1)
+
+		serverTool, exists := tools["test-tool"]
+		assert.True(t, exists)
+		assert.Equal(t, expectedTool, serverTool.Tool)
+		assert.NotNil(t, serverTool.Handler)
+	})
+
+	t.Run("MultipleTools", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		tools := []struct {
+			tool    mcp.Tool
+			handler ToolHandlerFunc
+		}{
+			{
+				tool: mcp.Tool{
+					Name:        "tool1",
+					Description: "First tool",
+					InputSchema: mcp.ToolInputSchema{Type: "object"},
+				},
+				handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return &mcp.CallToolResult{}, nil
+				},
+			},
+			{
+				tool: mcp.Tool{
+					Name:        "tool2",
+					Description: "Second tool",
+					InputSchema: mcp.ToolInputSchema{Type: "object"},
+				},
+				handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return &mcp.CallToolResult{}, nil
+				},
+			},
+			{
+				tool: mcp.Tool{
+					Name:        "tool3",
+					Description: "Third tool",
+					InputSchema: mcp.ToolInputSchema{Type: "object"},
+				},
+				handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return &mcp.CallToolResult{}, nil
+				},
+			},
+		}
+
+		// Add tools one by one
+		for _, tool := range tools {
+			server.AddTool(tool.tool, tool.handler)
+		}
+
+		retrievedTools, err := server.GetTools()
+
+		assert.NoError(t, err)
+		assert.NotNil(t, retrievedTools)
+		assert.Len(t, retrievedTools, 3)
+
+		// Verify each tool exists with correct data
+		for _, expectedTool := range tools {
+			serverTool, exists := retrievedTools[expectedTool.tool.Name]
+			assert.True(t, exists, "Tool %s should exist", expectedTool.tool.Name)
+			assert.Equal(t, expectedTool.tool, serverTool.Tool)
+			assert.NotNil(t, serverTool.Handler)
+		}
+	})
+
+	t.Run("AfterToolDeletion", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add multiple tools
+		server.AddTool(mcp.Tool{Name: "tool1", Description: "Tool 1"}, nil)
+		server.AddTool(mcp.Tool{Name: "tool2", Description: "Tool 2"}, nil)
+		server.AddTool(mcp.Tool{Name: "tool3", Description: "Tool 3"}, nil)
+
+		// Verify all tools exist
+		tools, err := server.GetTools()
+		assert.NoError(t, err)
+		assert.Len(t, tools, 3)
+
+		// Delete one tool
+		server.DeleteTools("tool2")
+
+		// Verify tool is removed
+		tools, err = server.GetTools()
+		assert.NoError(t, err)
+		assert.Len(t, tools, 2)
+
+		_, exists := tools["tool1"]
+		assert.True(t, exists)
+		_, exists = tools["tool2"]
+		assert.False(t, exists)
+		_, exists = tools["tool3"]
+		assert.True(t, exists)
+	})
+
+	t.Run("SetToolsReplacesExisting", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add initial tools
+		server.AddTool(mcp.Tool{Name: "old-tool1", Description: "Old Tool 1"}, nil)
+		server.AddTool(mcp.Tool{Name: "old-tool2", Description: "Old Tool 2"}, nil)
+
+		// Verify initial tools
+		tools, err := server.GetTools()
+		assert.NoError(t, err)
+		assert.Len(t, tools, 2)
+
+		// Set new tools (should replace existing)
+		newTools := []ServerTool{
+			{
+				Tool: mcp.Tool{Name: "new-tool1", Description: "New Tool 1"},
+				Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return &mcp.CallToolResult{}, nil
+				},
+			},
+			{
+				Tool: mcp.Tool{Name: "new-tool2", Description: "New Tool 2"},
+				Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return &mcp.CallToolResult{}, nil
+				},
+			},
+		}
+		server.SetTools(newTools...)
+
+		// Verify only new tools exist
+		tools, err = server.GetTools()
+		assert.NoError(t, err)
+		assert.Len(t, tools, 2)
+
+		_, exists := tools["old-tool1"]
+		assert.False(t, exists)
+		_, exists = tools["old-tool2"]
+		assert.False(t, exists)
+		_, exists = tools["new-tool1"]
+		assert.True(t, exists)
+		_, exists = tools["new-tool2"]
+		assert.True(t, exists)
+	})
+	t.Run("ConcurrentAccess", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Pre-add some tools to test concurrent reads
+		for i := 0; i < 50; i++ {
+			server.AddTool(mcp.Tool{
+				Name:        fmt.Sprintf("pre-tool-%d", i),
+				Description: fmt.Sprintf("Pre-added tool %d", i),
+			}, nil)
+		}
+
+		numGoroutines := 100
+		results := make(chan map[string]ServerTool, numGoroutines)
+		errors := make(chan error, numGoroutines)
+		var wg sync.WaitGroup
+
+		// Test concurrent reads (no race conditions in test logic)
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				tools, err := server.GetTools()
+				results <- tools
+				errors <- err
+			}(i)
+		}
+
+		wg.Wait()
+		close(results)
+		close(errors)
+
+		// Collect all results
+		var allResults []map[string]ServerTool
+		var allErrors []error
+		for result := range results {
+			allResults = append(allResults, result)
+		}
+		for err := range errors {
+			allErrors = append(allErrors, err)
+		}
+
+		// Verify that no data races occurred and all results are valid
+		for i, result := range allResults {
+			assert.NoError(t, allErrors[i])
+			assert.NotNil(t, result)
+			assert.Equal(t, 50, len(result), "All concurrent reads should return same number of tools")
+		}
+	})
+	t.Run("ConsistentResults", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add a tool
+		server.AddTool(mcp.Tool{
+			Name:        "test-tool",
+			Description: "Test tool",
+		}, nil)
+
+		// Get tools multiple times
+		tools1, err1 := server.GetTools()
+		tools2, err2 := server.GetTools()
+		tools3, err3 := server.GetTools()
+
+		assert.NoError(t, err1)
+		assert.NoError(t, err2)
+		assert.NoError(t, err3)
+		assert.NotNil(t, tools1)
+		assert.NotNil(t, tools2)
+		assert.NotNil(t, tools3)
+
+		// Verify all calls return consistent results
+		assert.Equal(t, tools1, tools2)
+		assert.Equal(t, tools2, tools3)
+		assert.Equal(t, tools1, tools3)
+
+		// All should have the same tool
+		assert.Len(t, tools1, 1)
+		assert.Len(t, tools2, 1)
+		assert.Len(t, tools3, 1)
+
+		assert.Contains(t, tools1, "test-tool")
+		assert.Contains(t, tools2, "test-tool")
+		assert.Contains(t, tools3, "test-tool")
+	})
+
+	t.Run("ReturnsCopiesNotReferences", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add a tool
+		server.AddTool(mcp.Tool{
+			Name:        "test-tool",
+			Description: "Test tool",
+		}, nil)
+
+		// Get tools twice
+		tools1, err1 := server.GetTools()
+		tools2, err2 := server.GetTools()
+
+		assert.NoError(t, err1)
+		assert.NoError(t, err2)
+		assert.NotNil(t, tools1)
+		assert.NotNil(t, tools2)
+
+		// Verify both contain the same data
+		assert.Equal(t, tools1, tools2)
+
+		// They should NOT be the same reference (different memory addresses)
+		// This verifies that GetTools returns copies, not shared references
+		if len(tools1) > 0 && len(tools2) > 0 {
+			assert.NotSame(t, tools1, tools2, "GetTools should return copies, not shared references")
+		}
+
+		// Modifying one should not affect the other
+		delete(tools1, "test-tool")
+		assert.Len(t, tools1, 0, "Modified copy should be empty")
+		assert.Len(t, tools2, 1, "Original copy should be unchanged")
+		assert.Contains(t, tools2, "test-tool", "Original copy should still contain the tool")
+
+		// Server should still have the tool
+		tools3, err3 := server.GetTools()
+		assert.NoError(t, err3)
+		assert.Len(t, tools3, 1)
+		assert.Contains(t, tools3, "test-tool")
+	})
+
+	t.Run("WithComplexToolSchema", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		complexTool := mcp.Tool{
+			Name:        "complex-tool",
+			Description: "A complex tool with detailed schema",
+			InputSchema: mcp.ToolInputSchema{
+				Type: "object",
+				Properties: map[string]any{
+					"stringParam": map[string]any{
+						"type":        "string",
+						"description": "A string parameter",
+						"enum":        []string{"option1", "option2", "option3"},
+					},
+					"numberParam": map[string]any{
+						"type":        "number",
+						"description": "A number parameter",
+						"minimum":     0,
+						"maximum":     100,
+					},
+					"objectParam": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"nestedString": map[string]any{
+								"type": "string",
+							},
+							"nestedArray": map[string]any{
+								"type": "array",
+								"items": map[string]any{
+									"type": "integer",
+								},
+							},
+						},
+						"required": []string{"nestedString"},
+					},
+				},
+				Required: []string{"stringParam", "numberParam"},
+			},
+			Annotations: mcp.ToolAnnotation{
+				Title:           "Complex Tool",
+				ReadOnlyHint:    mcp.ToBoolPtr(false),
+				DestructiveHint: mcp.ToBoolPtr(true),
+				IdempotentHint:  mcp.ToBoolPtr(false),
+				OpenWorldHint:   mcp.ToBoolPtr(true),
+			},
+		}
+
+		handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					mcp.TextContent{
+						Type: "text",
+						Text: "Complex tool executed",
+					},
+				},
+				IsError: false,
+			}, nil
+		}
+
+		server.AddTool(complexTool, handler)
+
+		tools, err := server.GetTools()
+
+		assert.NoError(t, err)
+		assert.NotNil(t, tools)
+		assert.Len(t, tools, 1)
+
+		retrievedTool, exists := tools["complex-tool"]
+		assert.True(t, exists)
+		assert.Equal(t, complexTool, retrievedTool.Tool)
+		assert.NotNil(t, retrievedTool.Handler)
+
+		// Verify the complex schema is preserved
+		assert.Equal(t, "object", retrievedTool.Tool.InputSchema.Type)
+		assert.Contains(t, retrievedTool.Tool.InputSchema.Properties, "stringParam")
+		assert.Contains(t, retrievedTool.Tool.InputSchema.Properties, "numberParam")
+		assert.Contains(t, retrievedTool.Tool.InputSchema.Properties, "objectParam")
+		assert.Equal(t, []string{"stringParam", "numberParam"}, retrievedTool.Tool.InputSchema.Required)
+
+		// Verify annotations
+		assert.Equal(t, "Complex Tool", retrievedTool.Tool.Annotations.Title)
+		assert.NotNil(t, retrievedTool.Tool.Annotations.DestructiveHint)
+		assert.True(t, *retrievedTool.Tool.Annotations.DestructiveHint)
+	})
 }
