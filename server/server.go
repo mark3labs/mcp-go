@@ -1071,12 +1071,12 @@ func (s *MCPServer) handleToolCall(
 
 	s.middlewareMu.RLock()
 	mw := s.toolHandlerMiddlewares
-	s.middlewareMu.RUnlock()
 
 	// Apply middlewares in reverse order
 	for i := len(mw) - 1; i >= 0; i-- {
 		finalHandler = mw[i](finalHandler)
 	}
+	s.middlewareMu.RUnlock()
 
 	result, err := finalHandler(ctx, request)
 	if err != nil {
