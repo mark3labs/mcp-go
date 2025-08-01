@@ -408,7 +408,7 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 		c.readSSE(ctx, reader, func(event, data string) {
 			var message JSONRPCResponse
 			if err := json.Unmarshal([]byte(data), &message); err != nil {
-				c.logger.Errorf("failed to unmarshal message: %v", err)
+				c.logger.Infof("failed to unmarshal message (non-fatal): %v", err, "message", data)
 				return
 			}
 
