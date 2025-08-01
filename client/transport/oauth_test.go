@@ -300,3 +300,96 @@ func TestOAuthHandler_ProcessAuthorizationResponse_StateValidation(t *testing.T)
 		t.Errorf("Got ErrInvalidState when expected a different error for empty expected state")
 	}
 }
+
+func TestOAuthHandler_SetExpectedState_CrossRequestScenario(t *testing.T) {
+	// Simulate the scenario where different OAuthHandler instances are used
+	// for initialization and callback steps (different HTTP request handlers)
+
+	config := OAuthConfig{
+		ClientID:              "test-client",
+		RedirectURI:           "http://localhost:8085/callback",
+		Scopes:                []string{"mcp.read", "mcp.write"},
+		TokenStore:            NewMemoryTokenStore(),
+		AuthServerMetadataURL: "http://example.com/.well-known/oauth-authorization-server",
+		PKCEEnabled:           true,
+	}
+
+	// Step 1: First handler instance (initialization request)
+	// This simulates the handler that generates the authorization URL
+	handler1 := NewOAuthHandler(config)
+
+	// Mock the server metadata for the first handler
+	handler1.serverMetadata = &AuthServerMetadata{
+		Issuer:                "http://example.com",
+		AuthorizationEndpoint: "http://example.com/authorize",
+		TokenEndpoint:         "http://example.com/token",
+	}
+
+	// Generate state and get authorization URL (this would typically be done in the init handler)
+	testState := "generated-state-value-123"
+	_, err := handler1.GetAuthorizationURL(context.Background(), testState, "test-code-challenge")
+	if err != nil {
+		// We expect this to fail since we're not actually connecting to a server,
+		// but it should still store the expected state
+		if !strings.Contains(err.Error(), "connection") && !strings.Contains(err.Error(), "dial") {
+			t.Errorf("Expected connection error, got: %v", err)
+		}
+	}
+
+	// Verify the state was stored in the first handler
+	if handler1.GetExpectedState() != testState {
+		t.Errorf("Expected state %s to be stored in first handler, got %s", testState, handler1.GetExpectedState())
+	}
+
+	// Step 2: Second handler instance (callback request)
+	// This simulates a completely separate handler instance that would be created
+	// in a different HTTP request handler for processing the OAuth callback
+	handler2 := NewOAuthHandler(config)
+
+	// Mock the server metadata for the second handler
+	handler2.serverMetadata = &AuthServerMetadata{
+		Issuer:                "http://example.com",
+		AuthorizationEndpoint: "http://example.com/authorize",
+		TokenEndpoint:         "http://example.com/token",
+	}
+
+	// Initially, the second handler has no expected state
+	if handler2.GetExpectedState() != "" {
+		t.Errorf("Expected second handler to have empty state initially, got %s", handler2.GetExpectedState())
+	}
+
+	// Step 3: Transfer the state from the first handler to the second
+	// This is the key functionality being tested - setting the expected state
+	// in a different handler instance
+	handler2.SetExpectedState(testState)
+
+	// Verify the state was transferred correctly
+	if handler2.GetExpectedState() != testState {
+		t.Errorf("Expected state %s to be set in second handler, got %s", testState, handler2.GetExpectedState())
+	}
+
+	// Step 4: Test that state validation works correctly in the second handler
+
+	// Test with correct state - should pass validation but fail at token exchange
+	// (since we're not actually running a real OAuth server)
+	err = handler2.ProcessAuthorizationResponse(context.Background(), "test-code", testState, "test-code-verifier")
+	if err == nil {
+		t.Errorf("Expected error due to token exchange failure, got nil")
+	}
+	// Should NOT be ErrInvalidState since the state matches
+	if errors.Is(err, ErrInvalidState) {
+		t.Errorf("Got ErrInvalidState with matching state, should have failed at token exchange instead")
+	}
+
+	// Verify state was cleared after processing (even though token exchange failed)
+	if handler2.GetExpectedState() != "" {
+		t.Errorf("Expected state to be cleared after processing, got %s", handler2.GetExpectedState())
+	}
+
+	// Step 5: Test with wrong state after resetting
+	handler2.SetExpectedState("different-state-value")
+	err = handler2.ProcessAuthorizationResponse(context.Background(), "test-code", testState, "test-code-verifier")
+	if !errors.Is(err, ErrInvalidState) {
+		t.Errorf("Expected ErrInvalidState with wrong state, got %v", err)
+	}
+}
