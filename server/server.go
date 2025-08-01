@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/orderedmap"
 )
 
 // resourceEntry holds both a resource and its handler
@@ -158,7 +159,7 @@ type MCPServer struct {
 	resourceTemplates      map[string]resourceTemplateEntry
 	prompts                map[string]mcp.Prompt
 	promptHandlers         map[string]PromptHandlerFunc
-	tools                  map[string]ServerTool
+	tools                  *orderedmap.OrderedMap
 	toolHandlerMiddlewares []ToolHandlerMiddleware
 	toolFilters            []ToolFilterFunc
 	notificationHandlers   map[string]NotificationHandlerFunc
@@ -304,7 +305,7 @@ func NewMCPServer(
 		resourceTemplates:    make(map[string]resourceTemplateEntry),
 		prompts:              make(map[string]mcp.Prompt),
 		promptHandlers:       make(map[string]PromptHandlerFunc),
-		tools:                make(map[string]ServerTool),
+		tools:                orderedmap.New(),
 		name:                 name,
 		version:              version,
 		notificationHandlers: make(map[string]NotificationHandlerFunc),
@@ -517,7 +518,7 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 
 	s.toolsMu.Lock()
 	for _, entry := range tools {
-		s.tools[entry.Tool.Name] = entry
+		s.tools.Set(entry.Tool.Name, entry)
 	}
 	s.toolsMu.Unlock()
 
@@ -531,7 +532,7 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 // SetTools replaces all existing tools with the provided list
 func (s *MCPServer) SetTools(tools ...ServerTool) {
 	s.toolsMu.Lock()
-	s.tools = make(map[string]ServerTool, len(tools))
+	s.tools = orderedmap.New()
 	s.toolsMu.Unlock()
 	s.AddTools(tools...)
 }
@@ -541,8 +542,8 @@ func (s *MCPServer) DeleteTools(names ...string) {
 	s.toolsMu.Lock()
 	var exists bool
 	for _, name := range names {
-		if _, ok := s.tools[name]; ok {
-			delete(s.tools, name)
+		if _, ok := s.tools.Get(name); ok {
+			s.tools.Delete(name)
 			exists = true
 		}
 	}
@@ -947,21 +948,14 @@ func (s *MCPServer) handleListTools(
 ) (*mcp.ListToolsResult, *requestError) {
 	// Get the base tools from the server
 	s.toolsMu.RLock()
-	tools := make([]mcp.Tool, 0, len(s.tools))
 
-	// Get all tool names for consistent ordering
-	toolNames := make([]string, 0, len(s.tools))
-	for name := range s.tools {
-		toolNames = append(toolNames, name)
+	// Create a copy of the tools map to avoid concurrent map access issues
+	toolsCopy := orderedmap.New()
+	for _, name := range s.tools.Keys() {
+		entry, _ := s.tools.Get(name)
+		toolsCopy.Set(name, entry)
 	}
 
-	// Sort the tool names for consistent ordering
-	sort.Strings(toolNames)
-
-	// Add tools in sorted order
-	for _, name := range toolNames {
-		tools = append(tools, s.tools[name].Tool)
-	}
 	s.toolsMu.RUnlock()
 
 	// Check if there are session-specific tools
@@ -970,30 +964,20 @@ func (s *MCPServer) handleListTools(
 		if sessionWithTools, ok := session.(SessionWithTools); ok {
 			if sessionTools := sessionWithTools.GetSessionTools(); sessionTools != nil {
 				// Override or add session-specific tools
-				// We need to create a map first to merge the tools properly
-				toolMap := make(map[string]mcp.Tool)
-
-				// Add global tools first
-				for _, tool := range tools {
-					toolMap[tool.Name] = tool
-				}
-
-				// Then override with session-specific tools
 				for name, serverTool := range sessionTools {
-					toolMap[name] = serverTool.Tool
+					toolsCopy.Set(name, serverTool)
 				}
-
-				// Convert back to slice
-				tools = make([]mcp.Tool, 0, len(toolMap))
-				for _, tool := range toolMap {
-					tools = append(tools, tool)
-				}
-
-				// Sort again to maintain consistent ordering
-				sort.Slice(tools, func(i, j int) bool {
-					return tools[i].Name < tools[j].Name
-				})
 			}
+		}
+	}
+
+	// Convert the ordered map to a slice of tools
+	tools := make([]mcp.Tool, 0, len(toolsCopy.Keys()))
+
+	for _, name := range toolsCopy.Keys() {
+		entry, _ := toolsCopy.Get(name)
+		if serverTool, ok := entry.(ServerTool); ok {
+			tools = append(tools, serverTool.Tool)
 		}
 	}
 
@@ -1055,7 +1039,11 @@ func (s *MCPServer) handleToolCall(
 	// If not found in session tools, check global tools
 	if !ok {
 		s.toolsMu.RLock()
-		tool, ok = s.tools[request.Params.Name]
+		var stool any
+		stool, ok = s.tools.Get(request.Params.Name)
+		if ok {
+			tool, ok = stool.(ServerTool)
+		}
 		s.toolsMu.RUnlock()
 	}
 

@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"github.com/mark3labs/mcp-go/orderedmap"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -36,12 +37,12 @@ func TestInProcessSampling(t *testing.T) {
 		Description: "Test sampling functionality",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
-			Properties: map[string]any{
+			Properties: orderedmap.NewFromMap(map[string]any{
 				"message": map[string]any{
 					"type":        "string",
 					"description": "Message to send to LLM",
 				},
-			},
+			}),
 			Required: []string{"message"},
 		},
 	}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mark3labs/mcp-go/orderedmap"
 	"log"
 
 	"github.com/mark3labs/mcp-go/client"
@@ -52,7 +53,7 @@ func main() {
 		Description: "Ask the LLM a question using sampling",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
-			Properties: map[string]any{
+			Properties: orderedmap.NewFromMap(map[string]any{
 				"question": map[string]any{
 					"type":        "string",
 					"description": "The question to ask the LLM",
@@ -61,7 +62,7 @@ func main() {
 					"type":        "string",
 					"description": "Optional system prompt",
 				},
-			},
+			}),
 			Required: []string{"question"},
 		},
 	}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
