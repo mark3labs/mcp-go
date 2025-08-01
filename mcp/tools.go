@@ -486,6 +486,11 @@ func (r CallToolResult) MarshalJSON() ([]byte, error) {
 	}
 	m["content"] = content
 
+	// Marshal StructuredContent if present
+	if r.StructuredContent != nil {
+		m["structuredContent"] = r.StructuredContent
+	}
+
 	// Marshal IsError if true
 	if r.IsError {
 		m["isError"] = r.IsError
@@ -524,6 +529,11 @@ func (r *CallToolResult) UnmarshalJSON(data []byte) error {
 				r.Content[i] = content
 			}
 		}
+	}
+
+	// Unmarshal StructuredContent if present
+	if structured, ok := raw["structuredContent"]; ok {
+		r.StructuredContent = structured
 	}
 
 	// Unmarshal IsError
