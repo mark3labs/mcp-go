@@ -21,7 +21,7 @@ var (
 
 	// Notification-related errors
 	ErrNotificationNotInitialized = errors.New("notification channel not initialized")
-	ErrNotificationChannelBlocked = errors.New("notification channel full or blocked")
+	ErrNotificationChannelBlocked = errors.New("notification channel queue is full - client may not be processing notifications fast enough")
 )
 
 // ErrDynamicPathConfig is returned when attempting to use static path methods with dynamic path configuration

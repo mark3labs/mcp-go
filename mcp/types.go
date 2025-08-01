@@ -472,6 +472,8 @@ type ServerCapabilities struct {
 		// list.
 		ListChanged bool `json:"listChanged,omitempty"`
 	} `json:"resources,omitempty"`
+	// Present if the server supports sending sampling requests to clients.
+	Sampling *struct{} `json:"sampling,omitempty"`
 	// Present if the server offers any tools to call.
 	Tools *struct {
 		// Whether this server supports notifications for changes to the tool list.

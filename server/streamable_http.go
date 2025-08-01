@@ -120,6 +120,7 @@ type StreamableHTTPServer struct {
 	server            *MCPServer
 	sessionTools      *sessionToolsStore
 	sessionRequestIDs sync.Map // sessionId --> last requestID(*atomic.Int64)
+	activeSessions    sync.Map // sessionId --> *streamableHttpSession (for sampling responses)
 
 	httpServer *http.Server
 	mu         sync.RWMutex
@@ -223,14 +224,32 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		s.writeJSONRPCError(w, nil, mcp.PARSE_ERROR, fmt.Sprintf("read request body error: %v", err))
 		return
 	}
-	var baseMessage struct {
-		Method mcp.MCPMethod `json:"method"`
+	// First, try to parse as a response (sampling responses don't have a method field)
+	var jsonMessage struct {
+		ID     json.RawMessage `json:"id"`
+		Result json.RawMessage `json:"result,omitempty"`
+		Error  json.RawMessage `json:"error,omitempty"`
+		Method mcp.MCPMethod   `json:"method,omitempty"`
 	}
-	if err := json.Unmarshal(rawData, &baseMessage); err != nil {
+	if err := json.Unmarshal(rawData, &jsonMessage); err != nil {
 		s.writeJSONRPCError(w, nil, mcp.PARSE_ERROR, "request body is not valid json")
 		return
 	}
-	isInitializeRequest := baseMessage.Method == mcp.MethodInitialize
+
+	// Check if this is a sampling response (has result/error but no method)
+	isSamplingResponse := jsonMessage.Method == "" && jsonMessage.ID != nil && 
+		(jsonMessage.Result != nil || jsonMessage.Error != nil)
+	
+	isInitializeRequest := jsonMessage.Method == mcp.MethodInitialize
+
+	// Handle sampling responses separately
+	if isSamplingResponse {
+		if err := s.handleSamplingResponse(w, r, jsonMessage); err != nil {
+			s.logger.Errorf("Failed to handle sampling response: %v", err)
+			http.Error(w, "Failed to handle sampling response", http.StatusInternalServerError)
+		}
+		return
+	}
 
 	// Prepare the session for the mcp server
 	// The session is ephemeral. Its life is the same as the request. It's only created
@@ -371,6 +390,10 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer s.server.UnregisterSession(r.Context(), sessionID)
+	
+	// Register session for sampling response delivery
+	s.activeSessions.Store(sessionID, session)
+	defer s.activeSessions.Delete(sessionID)
 
 	// Set the client context before handling the message
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -396,6 +419,21 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 			case nt := <-session.notificationChannel:
 				select {
 				case writeChan <- &nt:
+				case <-done:
+					return
+				}
+			case samplingReq := <-session.samplingRequestChan:
+				// Send sampling request to client via SSE
+				jsonrpcRequest := mcp.JSONRPCRequest{
+					JSONRPC: "2.0",
+					ID:      mcp.NewRequestId(samplingReq.requestID),
+					Request: mcp.Request{
+						Method: string(mcp.MethodSamplingCreateMessage),
+					},
+					Params: samplingReq.request.CreateMessageParams,
+				}
+				select {
+				case writeChan <- jsonrpcRequest:
 				case <-done:
 					return
 				}
@@ -487,6 +525,114 @@ func writeSSEEvent(w io.Writer, data any) error {
 	return nil
 }
 
+// handleSamplingResponse processes incoming sampling responses from clients
+func (s *StreamableHTTPServer) handleSamplingResponse(w http.ResponseWriter, r *http.Request, responseMessage struct {
+	ID     json.RawMessage `json:"id"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  json.RawMessage `json:"error,omitempty"`
+	Method mcp.MCPMethod   `json:"method,omitempty"`
+}) error {
+	// Get session ID from header
+	sessionID := r.Header.Get(HeaderKeySessionID)
+	if sessionID == "" {
+		http.Error(w, "Missing session ID for sampling response", http.StatusBadRequest)
+		return fmt.Errorf("missing session ID")
+	}
+
+	// Validate session
+	isTerminated, err := s.sessionIdManager.Validate(sessionID)
+	if err != nil {
+		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		return err
+	}
+	if isTerminated {
+		http.Error(w, "Session terminated", http.StatusNotFound)
+		return fmt.Errorf("session terminated")
+	}
+
+	// Parse the request ID
+	var requestID int64
+	if err := json.Unmarshal(responseMessage.ID, &requestID); err != nil {
+		http.Error(w, "Invalid request ID in sampling response", http.StatusBadRequest)
+		return err
+	}
+
+	// Create the sampling response item
+	response := samplingResponseItem{
+		requestID: requestID,
+	}
+
+	// Parse result or error
+	if responseMessage.Error != nil {
+		// Parse error
+		var jsonrpcError struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(responseMessage.Error, &jsonrpcError); err != nil {
+			response.err = fmt.Errorf("failed to parse error: %v", err)
+		} else {
+			response.err = fmt.Errorf("sampling error %d: %s", jsonrpcError.Code, jsonrpcError.Message)
+		}
+	} else if responseMessage.Result != nil {
+		// Parse result
+		var result mcp.CreateMessageResult
+		if err := json.Unmarshal(responseMessage.Result, &result); err != nil {
+			response.err = fmt.Errorf("failed to parse sampling result: %v", err)
+		} else {
+			response.result = &result
+		}
+	} else {
+		response.err = fmt.Errorf("sampling response has neither result nor error")
+	}
+
+	// Find the corresponding session and deliver the response
+	// The response is delivered to the specific session identified by sessionID
+	if err := s.deliverSamplingResponse(sessionID, response); err != nil {
+		s.logger.Errorf("Failed to deliver sampling response: %v", err)
+		http.Error(w, "Failed to deliver response", http.StatusInternalServerError)
+		return err
+	}
+
+	// Acknowledge receipt
+	w.WriteHeader(http.StatusOK)
+	return nil
+}
+
+// deliverSamplingResponse delivers a sampling response to the appropriate session
+func (s *StreamableHTTPServer) deliverSamplingResponse(sessionID string, response samplingResponseItem) error {
+	// Look up the active session
+	sessionInterface, ok := s.activeSessions.Load(sessionID)
+	if !ok {
+		return fmt.Errorf("no active session found for session %s", sessionID)
+	}
+
+	session, ok := sessionInterface.(*streamableHttpSession)
+	if !ok {
+		return fmt.Errorf("invalid session type for session %s", sessionID)
+	}
+
+	// Look up the dedicated response channel for this specific request
+	responseChannelInterface, exists := session.samplingRequests.Load(response.requestID)
+	if !exists {
+		return fmt.Errorf("no pending request found for session %s, request %d", sessionID, response.requestID)
+	}
+
+	responseChan, ok := responseChannelInterface.(chan samplingResponseItem)
+	if !ok {
+		return fmt.Errorf("invalid response channel type for session %s, request %d", sessionID, response.requestID)
+	}
+
+	// Attempt to deliver the response with timeout to prevent indefinite blocking
+	select {
+	case responseChan <- response:
+		s.logger.Infof("Delivered sampling response for session %s, request %d", sessionID, response.requestID)
+		return nil
+	default:
+		return fmt.Errorf("failed to deliver sampling response for session %s, request %d: channel full or blocked", sessionID, response.requestID)
+	}
+}
+
 // writeJSONRPCError writes a JSON-RPC error response with the given error details.
 func (s *StreamableHTTPServer) writeJSONRPCError(
 	w http.ResponseWriter,
@@ -573,6 +719,19 @@ func (s *sessionToolsStore) delete(sessionID string) {
 	delete(s.tools, sessionID)
 }
 
+// Sampling support types for HTTP transport
+type samplingRequestItem struct {
+	requestID int64
+	request   mcp.CreateMessageRequest
+	response  chan samplingResponseItem
+}
+
+type samplingResponseItem struct {
+	requestID int64
+	result    *mcp.CreateMessageResult
+	err       error
+}
+
 // streamableHttpSession is a session for streamable-http transport
 // When in POST handlers(request/notification), it's ephemeral, and only exists in the life of the request handler.
 // When in GET handlers(listening), it's a real session, and will be registered in the MCP server.
@@ -582,14 +741,20 @@ type streamableHttpSession struct {
 	tools               *sessionToolsStore
 	upgradeToSSE        atomic.Bool
 	logLevels           *sessionLogLevelsStore
+
+	// Sampling support for bidirectional communication
+	samplingRequestChan  chan samplingRequestItem      // server -> client sampling requests
+	samplingRequests     sync.Map                      // requestID -> pending sampling request context
+	requestIDCounter     atomic.Int64                  // for generating unique request IDs
 }
 
 func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, levels *sessionLogLevelsStore) *streamableHttpSession {
 	s := &streamableHttpSession{
-		sessionID:           sessionID,
-		notificationChannel: make(chan mcp.JSONRPCNotification, 100),
-		tools:               toolStore,
-		logLevels:           levels,
+		sessionID:            sessionID,
+		notificationChannel:  make(chan mcp.JSONRPCNotification, 100),
+		tools:                toolStore,
+		logLevels:            levels,
+		samplingRequestChan:  make(chan samplingRequestItem, 10),
 	}
 	return s
 }
@@ -640,6 +805,49 @@ func (s *streamableHttpSession) UpgradeToSSEWhenReceiveNotification() {
 }
 
 var _ SessionWithStreamableHTTPConfig = (*streamableHttpSession)(nil)
+
+// RequestSampling implements SessionWithSampling interface for HTTP transport
+func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
+	// Generate unique request ID
+	requestID := s.requestIDCounter.Add(1)
+	
+	// Create response channel for this specific request
+	responseChan := make(chan samplingResponseItem, 1)
+	
+	// Create the sampling request item
+	samplingRequest := samplingRequestItem{
+		requestID: requestID,
+		request:   request,
+		response:  responseChan,
+	}
+	
+	// Store the pending request
+	s.samplingRequests.Store(requestID, responseChan)
+	defer s.samplingRequests.Delete(requestID)
+	
+	// Send the sampling request via the channel (non-blocking)
+	select {
+	case s.samplingRequestChan <- samplingRequest:
+		// Request queued successfully
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+		return nil, fmt.Errorf("sampling request queue is full - server overloaded")
+	}
+	
+	// Wait for response or context cancellation
+	select {
+	case response := <-responseChan:
+		if response.err != nil {
+			return nil, response.err
+		}
+		return response.result, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+var _ SessionWithSampling = (*streamableHttpSession)(nil)
 
 // --- session id manager ---
 

@@ -1471,8 +1471,8 @@ func TestMCPServer_LoggingNotificationFormat(t *testing.T) {
 	// Send log messages with different formats
 	testCases := []struct {
 		name     string
-		data     interface{}
-		expected interface{}
+		data     any
+		expected any
 	}{
 		{
 			name:     "string data",
@@ -1481,8 +1481,8 @@ func TestMCPServer_LoggingNotificationFormat(t *testing.T) {
 		},
 		{
 			name:     "structured data",
-			data:     map[string]interface{}{"key": "value", "num": 42},
-			expected: map[string]interface{}{"key": "value", "num": 42},
+			data:     map[string]any{"key": "value", "num": 42},
+			expected: map[string]any{"key": "value", "num": 42},
 		},
 		{
 			name:     "error data",
@@ -1514,9 +1514,9 @@ func TestMCPServer_LoggingNotificationFormat(t *testing.T) {
 				switch expected := tc.expected.(type) {
 				case string:
 					assert.Equal(t, expected, dataField)
-				case map[string]interface{}:
-					assert.IsType(t, map[string]interface{}{}, dataField)
-					dataMap := dataField.(map[string]interface{})
+				case map[string]any:
+					assert.IsType(t, map[string]any{}, dataField)
+					dataMap := dataField.(map[string]any)
 					for k, v := range expected {
 						assert.Equal(t, v, dataMap[k])
 					}
