@@ -68,10 +68,16 @@ func WithHTTPOAuth(config OAuthConfig) StreamableHTTPCOption {
 	}
 }
 
-func WithLogger(logger util.Logger) StreamableHTTPCOption {
+// WithHTTPLogger sets a custom logger for the StreamableHTTP transport.
+func WithHTTPLogger(logger util.Logger) StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
 		sc.logger = logger
 	}
+}
+
+// Deprecated: Use [WithHTTPLogger] instead.
+func WithLogger(logger util.Logger) StreamableHTTPCOption {
+	return WithHTTPLogger(logger)
 }
 
 // WithSession creates a client with a pre-configured session
