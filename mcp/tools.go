@@ -504,7 +504,9 @@ func (r *CallToolResult) UnmarshalJSON(data []byte) error {
 	// Unmarshal Meta
 	if meta, ok := raw["_meta"]; ok {
 		if metaMap, ok := meta.(map[string]any); ok {
-			r.Meta = metaMap
+			r.Meta = &Meta{
+				AdditionalFields: metaMap,
+			}
 		}
 	}
 

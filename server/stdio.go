@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -457,11 +458,18 @@ func (s *StdioServer) writeResponse(
 	response mcp.JSONRPCMessage,
 	writer io.Writer,
 ) error {
-	responseBytes, err := json.Marshal(response)
-	if err != nil {
+	// Create a buffer to write JSON with custom encoding settings
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false) // Disable HTML escaping, which also prevents Unicode escaping
+	
+	if err := encoder.Encode(response); err != nil {
 		return err
 	}
 
+	// Remove the trailing newline added by Encode() and add our own
+	responseBytes := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
+	
 	// Write response followed by newline
 	if _, err := fmt.Fprintf(writer, "%s\n", responseBytes); err != nil {
 		return err
