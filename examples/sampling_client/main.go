@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
@@ -28,7 +30,7 @@ func (h *MockSamplingHandler) CreateMessage(ctx context.Context, request mcp.Cre
 	switch content := userMessage.Content.(type) {
 	case mcp.TextContent:
 		userText = content.Text
-	case map[string]interface{}:
+	case map[string]any:
 		// Handle case where content is unmarshaled as a map
 		if text, ok := content["text"].(string); ok {
 			userText = text
@@ -89,7 +91,25 @@ func main() {
 	if err := mcpClient.Start(ctx); err != nil {
 		log.Fatalf("Failed to start client: %v", err)
 	}
-	defer mcpClient.Close()
+
+	// Setup graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	
+	// Create a context that cancels on signal
+	ctx, cancel := context.WithCancel(ctx)
+	go func() {
+		<-sigChan
+		log.Println("Received shutdown signal, closing client...")
+		cancel()
+	}()
+	
+	// Move defer after error checking
+	defer func() {
+		if err := mcpClient.Close(); err != nil {
+			log.Printf("Error closing client: %v", err)
+		}
+	}()
 
 	// Initialize the connection
 	initResult, err := mcpClient.Initialize(ctx, mcp.InitializeRequest{

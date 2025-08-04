@@ -504,7 +504,7 @@ func (r *CallToolResult) UnmarshalJSON(data []byte) error {
 	// Unmarshal Meta
 	if meta, ok := raw["_meta"]; ok {
 		if metaMap, ok := meta.(map[string]any); ok {
-			r.Meta = metaMap
+			r.Meta = NewMetaFromMap(metaMap)
 		}
 	}
 
@@ -545,6 +545,8 @@ type ToolListChangedNotification struct {
 
 // Tool represents the definition for a tool the client can call.
 type Tool struct {
+	// Meta is a metadata object that is reserved by MCP for storing additional information.
+	Meta *Meta `json:"_meta,omitempty"`
 	// The name of the tool.
 	Name string `json:"name"`
 	// A human-readable description of the tool.

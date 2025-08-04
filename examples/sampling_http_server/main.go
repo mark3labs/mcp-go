@@ -11,16 +11,16 @@ import (
 )
 
 func main() {
-	// Create a new MCP server
-	mcpServer := server.NewMCPServer("sampling-example-server", "1.0.0")
+	// Create MCP server with sampling capability
+	mcpServer := server.NewMCPServer("sampling-http-server", "1.0.0")
 
 	// Enable sampling capability
 	mcpServer.EnableSampling()
 
-	// Add a tool that uses sampling
+	// Add a tool that uses sampling to get LLM responses
 	mcpServer.AddTool(mcp.Tool{
 		Name:        "ask_llm",
-		Description: "Ask the LLM a question using sampling",
+		Description: "Ask the LLM a question using sampling over HTTP",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]any{
@@ -36,13 +36,14 @@ func main() {
 			Required: []string{"question"},
 		},
 	}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Extract parameters using helper methods
+		// Extract parameters
 		question, err := request.RequireString("question")
 		if err != nil {
 			return nil, err
 		}
 
 		systemPrompt := request.GetString("system_prompt", "You are a helpful assistant.")
+
 		// Create sampling request
 		samplingRequest := mcp.CreateMessageRequest{
 			CreateMessageParams: mcp.CreateMessageParams{
@@ -61,9 +62,10 @@ func main() {
 			},
 		}
 
-		// Request sampling from the client
-		samplingCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		// Request sampling from the client with timeout
+		samplingCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
+
 		serverFromCtx := server.ServerFromContext(ctx)
 		result, err := serverFromCtx.RequestSampling(samplingCtx, samplingRequest)
 		if err != nil {
@@ -78,68 +80,71 @@ func main() {
 			}, nil
 		}
 
-		// Return the LLM's response
+		// Extract response text safely
+		var responseText string
+		if textContent, ok := result.Content.(mcp.TextContent); ok {
+			responseText = textContent.Text
+		} else {
+			responseText = fmt.Sprintf("%v", result.Content)
+		}
+
+		// Return the LLM response
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				mcp.TextContent{
 					Type: "text",
-					Text: fmt.Sprintf("LLM Response (model: %s): %s", result.Model, getTextFromContent(result.Content)),
+					Text: fmt.Sprintf("LLM Response (model: %s): %s", result.Model, responseText),
 				},
 			},
 		}, nil
 	})
 
-	// Add a simple greeting tool
+	// Add a simple echo tool for testing
 	mcpServer.AddTool(mcp.Tool{
-		Name:        "greet",
-		Description: "Greet the user",
+		Name:        "echo",
+		Description: "Echo back the input message",
 		InputSchema: mcp.ToolInputSchema{
 			Type: "object",
 			Properties: map[string]any{
-				"name": map[string]any{
+				"message": map[string]any{
 					"type":        "string",
-					"description": "Name of the person to greet",
+					"description": "The message to echo back",
 				},
 			},
-			Required: []string{"name"},
+			Required: []string{"message"},
 		},
 	}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		name, err := request.RequireString("name")
-		if err != nil {
-			return nil, err
-		}
+		message := request.GetString("message", "")
 
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				mcp.TextContent{
 					Type: "text",
-					Text: fmt.Sprintf("Hello, %s! This server supports sampling - try using the ask_llm tool!", name),
+					Text: fmt.Sprintf("Echo: %s", message),
 				},
 			},
 		}, nil
 	})
 
-	// Start the stdio server
-	log.Println("Starting sampling example server...")
-	if err := server.ServeStdio(mcpServer); err != nil {
-		log.Fatalf("Server error: %v", err)
-	}
-}
+	// Create HTTP server
+	httpServer := server.NewStreamableHTTPServer(mcpServer)
 
-// Helper function to extract text from content
-func getTextFromContent(content any) string {
-	switch c := content.(type) {
-	case mcp.TextContent:
-		return c.Text
-	case map[string]any:
-		// Handle JSON unmarshaled content
-		if text, ok := c["text"].(string); ok {
-			return text
-		}
-		return fmt.Sprintf("%v", content)
-	case string:
-		return c
-	default:
-		return fmt.Sprintf("%v", content)
+	log.Println("Starting HTTP MCP server with sampling support on :8080")
+	log.Println("Endpoint: http://localhost:8080/mcp")
+	log.Println("")
+	log.Println("This server supports sampling over HTTP transport.")
+	log.Println("Clients must:")
+	log.Println("1. Initialize with sampling capability")
+	log.Println("2. Establish SSE connection for bidirectional communication")
+	log.Println("3. Handle incoming sampling requests from the server")
+	log.Println("4. Send responses back via HTTP POST")
+	log.Println("")
+	log.Println("Available tools:")
+	log.Println("- ask_llm: Ask the LLM a question (requires sampling)")
+	log.Println("- echo: Simple echo tool (no sampling required)")
+
+	// Start the server
+	if err := httpServer.Start(":8080"); err != nil {
+		log.Fatalf("Server failed to start: %v", err)
 	}
 }

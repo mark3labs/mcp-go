@@ -1257,7 +1257,7 @@ func TestSSEServer(t *testing.T) {
 			WithHooks(&Hooks{
 				OnAfterInitialize: []OnAfterInitializeFunc{
 					func(ctx context.Context, id any, message *mcp.InitializeRequest, result *mcp.InitializeResult) {
-						result.Meta = map[string]any{"invalid": func() {}} // marshal will fail
+						result.Meta = mcp.NewMetaFromMap(map[string]any{"invalid": func() {}}) // marshal will fail
 					},
 				},
 			}),
