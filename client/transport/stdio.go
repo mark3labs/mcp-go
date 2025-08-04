@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/util"
 )
 
 // Stdio implements the transport layer of the MCP protocol using stdio communication.
@@ -37,6 +38,7 @@ type Stdio struct {
 	requestMu      sync.RWMutex
 	ctx            context.Context
 	ctxMu          sync.RWMutex
+	logger         util.Logger
 }
 
 // StdioOption defines a function that configures a Stdio transport instance.
@@ -57,6 +59,13 @@ func WithCommandFunc(f CommandFunc) StdioOption {
 	}
 }
 
+// WithCommandLogger sets a custom logger for the stdio transport.
+func WithCommandLogger(logger util.Logger) StdioOption {
+	return func(s *Stdio) {
+		s.logger = logger
+	}
+}
+
 // NewIO returns a new stdio-based transport using existing input, output, and
 // logging streams instead of spawning a subprocess.
 // This is useful for testing and simulating client behavior.
@@ -69,6 +78,7 @@ func NewIO(input io.Reader, output io.WriteCloser, logging io.ReadCloser) *Stdio
 		responses: make(map[string]chan *JSONRPCResponse),
 		done:      make(chan struct{}),
 		ctx:       context.Background(),
+		logger:    util.DefaultLogger(),
 	}
 }
 
@@ -102,6 +112,7 @@ func NewStdioWithOptions(
 		responses: make(map[string]chan *JSONRPCResponse),
 		done:      make(chan struct{}),
 		ctx:       context.Background(),
+		logger:    util.DefaultLogger(),
 	}
 
 	for _, opt := range opts {
@@ -239,7 +250,7 @@ func (c *Stdio) readResponses() {
 			line, err := c.stdout.ReadString('\n')
 			if err != nil {
 				if err != io.EOF && !errors.Is(err, context.Canceled) {
-					fmt.Printf("Error reading response: %v\n", err)
+					c.logger.Errorf("Error reading from stdout: %v", err)
 				}
 				return
 			}
@@ -429,7 +440,6 @@ func (c *Stdio) handleIncomingRequest(request JSONRPCRequest) {
 		}
 
 		response, err := handler(ctx, request)
-
 		if err != nil {
 			errorResponse := JSONRPCResponse{
 				JSONRPC: mcp.JSONRPC_VERSION,
@@ -457,13 +467,13 @@ func (c *Stdio) handleIncomingRequest(request JSONRPCRequest) {
 func (c *Stdio) sendResponse(response JSONRPCResponse) {
 	responseBytes, err := json.Marshal(response)
 	if err != nil {
-		fmt.Printf("Error marshaling response: %v\n", err)
+		c.logger.Errorf("Error marshaling response: %v", err)
 		return
 	}
 	responseBytes = append(responseBytes, '\n')
 
 	if _, err := c.stdin.Write(responseBytes); err != nil {
-		fmt.Printf("Error writing response: %v\n", err)
+		c.logger.Errorf("Error writing response: %v", err)
 	}
 }
 

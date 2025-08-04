@@ -4,15 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"fmt"
-	"net/http"
-	"net/http/httptest"
-
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/stretchr/testify/require"
 )
 
 // startMockSSEEchoServer starts a test HTTP server that implements
@@ -115,7 +116,6 @@ func startMockSSEEchoServer() (string, func()) {
 				flush()
 			}
 		}()
-
 	})
 
 	// Create a router to handle different endpoints
@@ -228,7 +228,6 @@ func TestSSE(t *testing.T) {
 	})
 
 	t.Run("SendNotification & NotificationHandler", func(t *testing.T) {
-
 		var wg sync.WaitGroup
 		notificationChan := make(chan mcp.JSONRPCNotification, 1)
 
@@ -368,7 +367,6 @@ func TestSSE(t *testing.T) {
 	})
 
 	t.Run("ResponseError", func(t *testing.T) {
-
 		// Prepare a request
 		request := JSONRPCRequest{
 			JSONRPC: "2.0",
@@ -507,7 +505,6 @@ func TestSSE(t *testing.T) {
 			t.Errorf("Expected 'test response without event field', got '%s'", result)
 		}
 	})
-
 }
 
 func TestSSEErrors(t *testing.T) {
@@ -624,4 +621,49 @@ func TestSSEErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("SSEStreamErrorLogging", func(t *testing.T) {
+		logChan := make(chan string, 10)
+		testLogger := &testLogger{logChan: logChan}
+
+		sseHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+				return
+			}
+
+			fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", "/message")
+			flusher.Flush()
+
+			fmt.Fprintf(w, "event: message\ndata: {invalid json}\n\n")
+			flusher.Flush()
+
+			time.Sleep(50 * time.Millisecond)
+		})
+
+		testServer := httptest.NewServer(sseHandler)
+		t.Cleanup(testServer.Close)
+
+		trans, err := NewSSE(testServer.URL, WithSSELogger(testLogger))
+		require.NoError(t, err)
+
+		// Start the transport
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		t.Cleanup(cancel)
+
+		err = trans.Start(ctx)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = trans.Close() })
+
+		// Wait for the error log message about unmarshaling
+		select {
+		case logMsg := <-logChan:
+			if !strings.Contains(logMsg, "Error unmarshaling message") {
+				t.Errorf("Expected error log about unmarshaling message, got: %s", logMsg)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("Timeout waiting for error log message")
+		}
+	})
 }
