@@ -553,7 +553,7 @@ func TestStdioErrors(t *testing.T) {
 			}
 			requestBytes, _ := json.Marshal(request)
 			requestBytes = append(requestBytes, '\n')
-			stdoutWriter.Write(requestBytes)
+			_, _ = stdoutWriter.Write(requestBytes)
 
 			// Close stdin to trigger a write error when the response is sent
 			time.Sleep(50 * time.Millisecond) // Give time for the request to be processed
