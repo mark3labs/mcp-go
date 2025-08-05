@@ -29,6 +29,20 @@ type StdioServer struct {
 	server      *MCPServer
 	errLogger   *log.Logger
 	contextFunc StdioContextFunc
+
+	// Thread-safe tool call processing
+	toolCallQueue  chan *toolCallWork
+	workerWg       sync.WaitGroup
+	workerPoolSize int
+	queueSize      int
+	writeMu        sync.Mutex // Protects concurrent writes
+}
+
+// toolCallWork represents a queued tool call request
+type toolCallWork struct {
+	ctx     context.Context
+	message json.RawMessage
+	writer  io.Writer
 }
 
 // StdioOption defines a function type for configuring StdioServer
@@ -47,6 +61,24 @@ func WithErrorLogger(logger *log.Logger) StdioOption {
 func WithStdioContextFunc(fn StdioContextFunc) StdioOption {
 	return func(s *StdioServer) {
 		s.contextFunc = fn
+	}
+}
+
+// WithWorkerPoolSize sets the number of workers for processing tool calls
+func WithWorkerPoolSize(size int) StdioOption {
+	return func(s *StdioServer) {
+		if size > 0 {
+			s.workerPoolSize = size
+		}
+	}
+}
+
+// WithQueueSize sets the size of the tool call queue
+func WithQueueSize(size int) StdioOption {
+	return func(s *StdioServer) {
+		if size > 0 {
+			s.queueSize = size
+		}
 	}
 }
 
@@ -218,6 +250,8 @@ func NewStdioServer(server *MCPServer) *StdioServer {
 			"",
 			log.LstdFlags,
 		), // Default to discarding logs
+		workerPoolSize: 5,   // Default worker pool size
+		queueSize:      100, // Default queue size
 	}
 }
 
@@ -281,6 +315,30 @@ func (s *StdioServer) processInputStream(ctx context.Context, reader *bufio.Read
 	}
 }
 
+// toolCallWorker processes tool calls from the queue
+func (s *StdioServer) toolCallWorker(ctx context.Context) {
+	defer s.workerWg.Done()
+
+	for {
+		select {
+		case work, ok := <-s.toolCallQueue:
+			if !ok {
+				// Channel closed, exit worker
+				return
+			}
+			// Process the tool call
+			response := s.server.HandleMessage(work.ctx, work.message)
+			if response != nil {
+				if err := s.writeResponse(response, work.writer); err != nil {
+					s.errLogger.Printf("Error writing tool response: %v", err)
+				}
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
 // readNextLine reads a single line from the input reader in a context-aware manner.
 // It uses channels to make the read operation cancellable via context.
 // Returns the read line and any error encountered. If the context is cancelled,
@@ -315,6 +373,9 @@ func (s *StdioServer) Listen(
 	stdin io.Reader,
 	stdout io.Writer,
 ) error {
+	// Initialize the tool call queue
+	s.toolCallQueue = make(chan *toolCallWork, s.queueSize)
+
 	// Set a static client context since stdio only has one client
 	if err := s.server.RegisterSession(ctx, &stdioSessionInstance); err != nil {
 		return fmt.Errorf("register session: %w", err)
@@ -332,9 +393,23 @@ func (s *StdioServer) Listen(
 
 	reader := bufio.NewReader(stdin)
 
+	// Start worker pool for tool calls
+	for i := 0; i < s.workerPoolSize; i++ {
+		s.workerWg.Add(1)
+		go s.toolCallWorker(ctx)
+	}
+
 	// Start notification handler
 	go s.handleNotifications(ctx, stdout)
-	return s.processInputStream(ctx, reader, stdout)
+
+	// Process input stream
+	err := s.processInputStream(ctx, reader, stdout)
+
+	// Shutdown workers gracefully
+	close(s.toolCallQueue)
+	s.workerWg.Wait()
+
+	return err
 }
 
 // processMessage handles a single JSON-RPC message and writes the response.
@@ -367,16 +442,25 @@ func (s *StdioServer) processMessage(
 		Method string `json:"method"`
 	}
 	if json.Unmarshal(rawMessage, &baseMessage) == nil && baseMessage.Method == "tools/call" {
-		// Process tool calls concurrently to avoid blocking on sampling requests
-		go func() {
+		// Queue tool calls for processing by workers
+		select {
+		case s.toolCallQueue <- &toolCallWork{
+			ctx:     ctx,
+			message: rawMessage,
+			writer:  writer,
+		}:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			// Queue is full, process synchronously as fallback
+			s.errLogger.Printf("Tool call queue full, processing synchronously")
 			response := s.server.HandleMessage(ctx, rawMessage)
 			if response != nil {
-				if err := s.writeResponse(response, writer); err != nil {
-					s.errLogger.Printf("Error writing tool response: %v", err)
-				}
+				return s.writeResponse(response, writer)
 			}
-		}()
-		return nil
+			return nil
+		}
 	}
 
 	// Handle other messages synchronously
@@ -461,6 +545,10 @@ func (s *StdioServer) writeResponse(
 	if err != nil {
 		return err
 	}
+
+	// Protect concurrent writes
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 
 	// Write response followed by newline
 	if _, err := fmt.Fprintf(writer, "%s\n", responseBytes); err != nil {
