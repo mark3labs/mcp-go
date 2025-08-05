@@ -384,24 +384,20 @@ func TestStdioServer(t *testing.T) {
 
 		// Collect responses
 		responses := make([]string, 0, 10)
-		timeout := time.After(5 * time.Second)
+		timeout := time.After(2 * time.Second)
 
-		for {
+	collectLoop:
+		for len(responses) < 10 {
 			select {
 			case resp, ok := <-responseChan:
 				if !ok {
-					goto done
+					break collectLoop
 				}
 				responses = append(responses, resp)
-				if len(responses) == 10 {
-					goto done
-				}
 			case <-timeout:
 				t.Fatal("Timeout waiting for responses")
 			}
 		}
-
-	done:
 		// Verify we got all responses
 		if len(responses) != 10 {
 			t.Errorf("Expected 10 responses, got %d", len(responses))
@@ -442,6 +438,49 @@ func TestStdioServer(t *testing.T) {
 		// Check for server errors
 		if err := <-serverErrCh; err != nil {
 			t.Errorf("Server error: %v", err)
+		}
+	})
+
+	t.Run("Configuration options respect bounds", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0.0")
+
+		// Test worker pool size bounds
+		stdioServer := NewStdioServer(mcpServer)
+		WithWorkerPoolSize(150)(stdioServer)
+		if stdioServer.workerPoolSize != 5 { // Should use default
+			t.Errorf("Expected default worker pool size 5, got %d", stdioServer.workerPoolSize)
+		}
+
+		// Test valid worker pool size
+		stdioServer = NewStdioServer(mcpServer)
+		WithWorkerPoolSize(50)(stdioServer)
+		if stdioServer.workerPoolSize != 50 {
+			t.Errorf("Expected worker pool size 50, got %d", stdioServer.workerPoolSize)
+		}
+
+		// Test queue size bounds
+		stdioServer = NewStdioServer(mcpServer)
+		WithQueueSize(20000)(stdioServer)
+		if stdioServer.queueSize != 100 { // Should use default
+			t.Errorf("Expected default queue size 100, got %d", stdioServer.queueSize)
+		}
+
+		// Test valid queue size
+		stdioServer = NewStdioServer(mcpServer)
+		WithQueueSize(500)(stdioServer)
+		if stdioServer.queueSize != 500 {
+			t.Errorf("Expected queue size 500, got %d", stdioServer.queueSize)
+		}
+
+		// Test zero and negative values
+		stdioServer = NewStdioServer(mcpServer)
+		WithWorkerPoolSize(0)(stdioServer)
+		WithQueueSize(-10)(stdioServer)
+		if stdioServer.workerPoolSize != 5 {
+			t.Errorf("Expected default worker pool size 5 for zero input, got %d", stdioServer.workerPoolSize)
+		}
+		if stdioServer.queueSize != 100 {
+			t.Errorf("Expected default queue size 100 for negative input, got %d", stdioServer.queueSize)
 		}
 	})
 }
