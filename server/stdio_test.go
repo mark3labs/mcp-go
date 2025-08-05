@@ -338,7 +338,9 @@ func TestStdioServer(t *testing.T) {
 		}
 
 		requestBytes, _ := json.Marshal(initRequest)
-		stdinWriter.Write(append(requestBytes, '\n'))
+		if _, err := stdinWriter.Write(append(requestBytes, '\n')); err != nil {
+			t.Fatalf("Failed to write init request: %v", err)
+		}
 
 		// Read init response
 		scanner := bufio.NewScanner(stdoutReader)
@@ -364,7 +366,9 @@ func TestStdioServer(t *testing.T) {
 				}
 
 				requestBytes, _ := json.Marshal(toolRequest)
-				stdinWriter.Write(append(requestBytes, '\n'))
+				if _, err := stdinWriter.Write(append(requestBytes, '\n')); err != nil {
+					t.Errorf("Failed to write tool request %d: %v", id, err)
+				}
 			}(i)
 		}
 
