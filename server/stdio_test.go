@@ -276,9 +276,8 @@ func TestStdioServer(t *testing.T) {
 		stdinReader, stdinWriter := io.Pipe()
 		stdoutReader, stdoutWriter := io.Pipe()
 
-		// Track tool call executions
+		// Track tool call executions (sync.Map is already thread-safe)
 		var callCount sync.Map
-		var mu sync.Mutex
 
 		// Create server with test tools
 		mcpServer := NewMCPServer("test", "1.0.0")
@@ -291,10 +290,8 @@ func TestStdioServer(t *testing.T) {
 				func(name string) func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 					return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 						// Track concurrent executions
-						mu.Lock()
 						count, _ := callCount.LoadOrStore(name, 0)
 						callCount.Store(name, count.(int)+1)
-						mu.Unlock()
 
 						// Simulate some work
 						time.Sleep(10 * time.Millisecond)
