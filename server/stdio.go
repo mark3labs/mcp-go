@@ -67,10 +67,12 @@ func WithStdioContextFunc(fn StdioContextFunc) StdioOption {
 // WithWorkerPoolSize sets the number of workers for processing tool calls
 func WithWorkerPoolSize(size int) StdioOption {
 	return func(s *StdioServer) {
-		if size > 0 && size <= 100 {
+		const maxWorkerPoolSize = 100
+		if size > 0 && size <= maxWorkerPoolSize {
 			s.workerPoolSize = size
-		} else if size > 100 {
-			s.errLogger.Printf("Worker pool size %d exceeds maximum (100), using default: %d", size, s.workerPoolSize)
+		} else if size > maxWorkerPoolSize {
+			s.errLogger.Printf("Worker pool size %d exceeds maximum (%d), using maximum", size, maxWorkerPoolSize)
+			s.workerPoolSize = maxWorkerPoolSize
 		}
 	}
 }
@@ -78,10 +80,12 @@ func WithWorkerPoolSize(size int) StdioOption {
 // WithQueueSize sets the size of the tool call queue
 func WithQueueSize(size int) StdioOption {
 	return func(s *StdioServer) {
-		if size > 0 && size <= 10000 {
+		const maxQueueSize = 10000
+		if size > 0 && size <= maxQueueSize {
 			s.queueSize = size
-		} else if size > 10000 {
-			s.errLogger.Printf("Queue size %d exceeds maximum (10000), using default: %d", size, s.queueSize)
+		} else if size > maxQueueSize {
+			s.errLogger.Printf("Queue size %d exceeds maximum (%d), using maximum", size, maxQueueSize)
+			s.queueSize = maxQueueSize
 		}
 	}
 }
