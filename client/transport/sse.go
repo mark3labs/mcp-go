@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/util"
 )
 
 // SSE implements the transport layer of the MCP protocol using Server-Sent Events (SSE).
@@ -33,17 +34,27 @@ type SSE struct {
 	endpointChan   chan struct{}
 	headers        map[string]string
 	headerFunc     HTTPHeaderFunc
+	logger         util.Logger
 
-	started         atomic.Bool
-	closed          atomic.Bool
-	cancelSSEStream context.CancelFunc
-	protocolVersion atomic.Value // string
+	started           atomic.Bool
+	closed            atomic.Bool
+	cancelSSEStream   context.CancelFunc
+	protocolVersion   atomic.Value // string
+	onConnectionLost  func(error)
+	connectionLostMu  sync.RWMutex
 
 	// OAuth support
 	oauthHandler *OAuthHandler
 }
 
 type ClientOption func(*SSE)
+
+// WithSSELogger sets a custom logger for the SSE client.
+func WithSSELogger(logger util.Logger) ClientOption {
+	return func(sc *SSE) {
+		sc.logger = logger
+	}
+}
 
 func WithHeaders(headers map[string]string) ClientOption {
 	return func(sc *SSE) {
@@ -83,6 +94,7 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 		responses:    make(map[string]chan *JSONRPCResponse),
 		endpointChan: make(chan struct{}),
 		headers:      make(map[string]string),
+		logger:       util.DefaultLogger(),
 	}
 
 	for _, opt := range options {
@@ -102,7 +114,6 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 // Start initiates the SSE connection to the server and waits for the endpoint information.
 // Returns an error if the connection fails or times out waiting for the endpoint.
 func (c *SSE) Start(ctx context.Context) error {
-
 	if c.started.Load() {
 		return fmt.Errorf("has already started")
 	}
@@ -111,7 +122,6 @@ func (c *SSE) Start(ctx context.Context) error {
 	c.cancelSSEStream = cancel
 
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL.String(), nil)
-
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -204,8 +214,21 @@ func (c *SSE) readSSE(reader io.ReadCloser) {
 				}
 				break
 			}
+			// Checking whether the connection was terminated due to NO_ERROR in HTTP2 based on RFC9113
+			// Only handle NO_ERROR specially if onConnectionLost handler is set to maintain backward compatibility
+			if strings.Contains(err.Error(), "NO_ERROR") {
+				c.connectionLostMu.RLock()
+				handler := c.onConnectionLost
+				c.connectionLostMu.RUnlock()
+				
+				if handler != nil {
+					// This is not actually an error - HTTP2 idle timeout disconnection
+					handler(err)
+					return
+				}
+			}
 			if !c.closed.Load() {
-				fmt.Printf("SSE stream error: %v\n", err)
+				c.logger.Errorf("SSE stream error: %v", err)
 			}
 			return
 		}
@@ -241,11 +264,11 @@ func (c *SSE) handleSSEEvent(event, data string) {
 	case "endpoint":
 		endpoint, err := c.baseURL.Parse(data)
 		if err != nil {
-			fmt.Printf("Error parsing endpoint URL: %v\n", err)
+			c.logger.Errorf("Error parsing endpoint URL: %v", err)
 			return
 		}
 		if endpoint.Host != c.baseURL.Host {
-			fmt.Printf("Endpoint origin does not match connection origin\n")
+			c.logger.Errorf("Endpoint origin does not match connection origin")
 			return
 		}
 		c.endpoint = endpoint
@@ -254,7 +277,7 @@ func (c *SSE) handleSSEEvent(event, data string) {
 	case "message":
 		var baseMessage JSONRPCResponse
 		if err := json.Unmarshal([]byte(data), &baseMessage); err != nil {
-			fmt.Printf("Error unmarshaling message: %v\n", err)
+			c.logger.Errorf("Error unmarshaling message: %v", err)
 			return
 		}
 
@@ -294,13 +317,18 @@ func (c *SSE) SetNotificationHandler(handler func(notification mcp.JSONRPCNotifi
 	c.onNotification = handler
 }
 
+func (c *SSE) SetConnectionLostHandler(handler func(error)) {
+	c.connectionLostMu.Lock()
+	defer c.connectionLostMu.Unlock()
+	c.onConnectionLost = handler
+}
+
 // SendRequest sends a JSON-RPC request to the server and waits for a response.
 // Returns the raw JSON response message or an error if the request fails.
 func (c *SSE) SendRequest(
 	ctx context.Context,
 	request JSONRPCRequest,
 ) (*JSONRPCResponse, error) {
-
 	if !c.started.Load() {
 		return nil, fmt.Errorf("transport not started yet")
 	}

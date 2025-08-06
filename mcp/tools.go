@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"reflect"
 	"strconv"
+
+	"github.com/invopop/jsonschema"
 )
 
 var errToolSchemaConflict = errors.New("provide either InputSchema or RawInputSchema, not both")
@@ -38,6 +40,10 @@ type ListToolsResult struct {
 type CallToolResult struct {
 	Result
 	Content []Content `json:"content"` // Can be TextContent, ImageContent, AudioContent, or EmbeddedResource
+	// Structured content returned as a JSON object in the structuredContent field of a result.
+	// For backwards compatibility, a tool that returns structured content SHOULD also return
+	// functionally equivalent unstructured content.
+	StructuredContent any `json:"structuredContent,omitempty"`
 	// Whether the tool call ended in an error.
 	//
 	// If not set, this is assumed to be false (the call was successful).
@@ -498,7 +504,7 @@ func (r *CallToolResult) UnmarshalJSON(data []byte) error {
 	// Unmarshal Meta
 	if meta, ok := raw["_meta"]; ok {
 		if metaMap, ok := meta.(map[string]any); ok {
-			r.Meta = metaMap
+			r.Meta = NewMetaFromMap(metaMap)
 		}
 	}
 
@@ -539,6 +545,8 @@ type ToolListChangedNotification struct {
 
 // Tool represents the definition for a tool the client can call.
 type Tool struct {
+	// Meta is a metadata object that is reserved by MCP for storing additional information.
+	Meta *Meta `json:"_meta,omitempty"`
 	// The name of the tool.
 	Name string `json:"name"`
 	// A human-readable description of the tool.
@@ -547,6 +555,8 @@ type Tool struct {
 	InputSchema ToolInputSchema `json:"inputSchema"`
 	// Alternative to InputSchema - allows arbitrary JSON Schema to be provided
 	RawInputSchema json.RawMessage `json:"-"` // Hide this from JSON marshaling
+	// Optional JSON Schema defining expected output structure
+	RawOutputSchema json.RawMessage `json:"-"` // Hide this from JSON marshaling
 	// Optional properties describing tool behavior
 	Annotations ToolAnnotation `json:"annotations"`
 }
@@ -560,7 +570,7 @@ func (t Tool) GetName() string {
 // It handles marshaling either InputSchema or RawInputSchema based on which is set.
 func (t Tool) MarshalJSON() ([]byte, error) {
 	// Create a map to build the JSON structure
-	m := make(map[string]any, 3)
+	m := make(map[string]any, 5)
 
 	// Add the name and description
 	m["name"] = t.Name
@@ -568,7 +578,7 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 		m["description"] = t.Description
 	}
 
-	// Determine which schema to use
+	// Determine which input schema to use
 	if t.RawInputSchema != nil {
 		if t.InputSchema.Type != "" {
 			return nil, fmt.Errorf("tool %s has both InputSchema and RawInputSchema set: %w", t.Name, errToolSchemaConflict)
@@ -577,6 +587,11 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 	} else {
 		// Use the structured InputSchema
 		m["inputSchema"] = t.InputSchema
+	}
+
+	// Add output schema if present
+	if t.RawOutputSchema != nil {
+		m["outputSchema"] = t.RawOutputSchema
 	}
 
 	m["annotations"] = t.Annotations
@@ -686,6 +701,46 @@ func NewToolWithRawSchema(name, description string, schema json.RawMessage) Tool
 func WithDescription(description string) ToolOption {
 	return func(t *Tool) {
 		t.Description = description
+	}
+}
+
+// WithOutputSchema creates a ToolOption that sets the output schema for a tool.
+// It accepts any Go type, usually a struct, and automatically generates a JSON schema from it.
+func WithOutputSchema[T any]() ToolOption {
+	return func(t *Tool) {
+		var zero T
+
+		// Generate schema using invopop/jsonschema library
+		// Configure reflector to generate clean, MCP-compatible schemas
+		reflector := jsonschema.Reflector{
+			DoNotReference:            true, // Removes $defs map, outputs entire structure inline
+			Anonymous:                 true, // Hides auto-generated Schema IDs
+			AllowAdditionalProperties: true, // Removes additionalProperties: false
+		}
+		schema := reflector.Reflect(zero)
+
+		// Clean up schema for MCP compliance
+		schema.Version = "" // Remove $schema field
+
+		// Convert to raw JSON for MCP
+		mcpSchema, err := json.Marshal(schema)
+		if err != nil {
+			// Skip and maintain backward compatibility
+			return
+		}
+
+		t.RawOutputSchema = json.RawMessage(mcpSchema)
+	}
+}
+
+// WithRawOutputSchema sets a raw JSON schema for the tool's output.
+// Use this when you need full control over the schema or when working with
+// complex schemas that can't be generated from Go types. The jsonschema library
+// can handle complex schemas and provides nice extension points, so be sure to
+// check that out before using this.
+func WithRawOutputSchema(schema json.RawMessage) ToolOption {
+	return func(t *Tool) {
+		t.RawOutputSchema = schema
 	}
 }
 

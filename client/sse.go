@@ -23,12 +23,10 @@ func WithHTTPClient(httpClient *http.Client) transport.ClientOption {
 // NewSSEMCPClient creates a new SSE-based MCP client with the given base URL.
 // Returns an error if the URL is invalid.
 func NewSSEMCPClient(baseURL string, options ...transport.ClientOption) (*Client, error) {
-
 	sseTransport, err := transport.NewSSE(baseURL, options...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SSE transport: %w", err)
 	}
-
 	return NewClient(sseTransport), nil
 }
 

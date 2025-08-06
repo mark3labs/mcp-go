@@ -6,12 +6,12 @@ Learn about transport-specific client implementations and how to choose the righ
 
 MCP-Go provides client implementations for all supported transports. Each transport has different characteristics and is optimized for specific scenarios.
 
-| Transport | Best For | Connection | Real-time | Multi-client |
-|-----------|----------|------------|-----------|--------------|
-| **STDIO** | CLI tools, desktop apps | Process pipes | No | No |
-| **StreamableHTTP** | Web services, APIs | HTTP requests | No | Yes |
-| **SSE** | Web apps, real-time | HTTP + EventSource | Yes | Yes |
-| **In-Process** | Testing, embedded | Direct calls | Yes | No |
+| Transport          | Best For                | Connection         | Real-time | Multi-client |
+| ------------------ | ----------------------- | ------------------ | --------- | ------------ |
+| **STDIO**          | CLI tools, desktop apps | Process pipes      | No        | No           |
+| **StreamableHTTP** | Web services, APIs      | HTTP requests      | No        | Yes          |
+| **SSE**            | Web apps, real-time     | HTTP + EventSource | Yes       | Yes          |
+| **In-Process**     | Testing, embedded       | Direct calls       | Yes       | No           |
 
 ## STDIO Client
 
@@ -62,6 +62,42 @@ func createStdioClient() {
     }
 
     log.Printf("Available tools: %d", len(tools.Tools))
+}
+```
+
+### STDIO Client with Custom Configuration
+
+```go
+func createCustomStdioClient() {
+    // Create custom logger for debugging
+    logger := myCustomLogger{}
+
+    // Create STDIO client with custom options
+    c, err := client.NewStdioMCPClientWithOptions(
+        "go",
+        []string{"GOCACHE=/tmp/gocache"}, // Custom environment
+        []string{"run", "/path/to/server/main.go"},
+        transport.WithCommandLogger(logger),
+        transport.WithCommandFunc(func(ctx context.Context, command string, args []string, env []string) (*exec.Cmd, error) {
+            cmd := exec.CommandContext(ctx, command, args...)
+            cmd.Env = append(os.Environ(), env...)
+            cmd.Dir = "/path/to/working/directory"
+            return cmd, nil
+        }),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer c.Close()
+
+    ctx := context.Background()
+
+    // Initialize connection
+    if err := c.Initialize(ctx); err != nil {
+        log.Fatal(err)
+    }
+
+    // Use the client...
 }
 ```
 
@@ -175,7 +211,7 @@ func (msc *ManagedStdioClient) monitorProcess() {
             return
         case <-msc.restartChan:
             log.Println("Restarting STDIO client...")
-            
+
             if msc.client != nil {
                 msc.client.Close()
             }
@@ -219,11 +255,11 @@ func (msc *ManagedStdioClient) CallTool(ctx context.Context, req mcp.CallToolReq
 func (msc *ManagedStdioClient) Close() error {
     msc.cancel()
     msc.wg.Wait()
-    
+
     if msc.client != nil {
         return msc.client.Close()
     }
-    
+
     return nil
 }
 
@@ -277,8 +313,12 @@ func createStreamableHTTPClient() {
 
 ```go
 func createCustomStreamableHTTPClient() {
+    // Create custom logger for debugging
+    logger := myCustomLogger{}
+
     // Create StreamableHTTP client with options
     c := client.NewStreamableHttpClient("https://api.example.com/mcp",
+        transport.WithLogger(logger),
         transport.WithHTTPTimeout(30*time.Second),
         transport.WithHTTPHeaders(map[string]string{
             "User-Agent": "MyApp/1.0",
@@ -390,12 +430,13 @@ func (pool *StreamableHTTPClientPool) CallTool(ctx context.Context, req mcp.Call
 ```
 
 ### StreamableHTTP With Preconfigured Session
+
 You can also create a StreamableHTTP client with a preconfigured session, which allows you to reuse the same session across multiple requests
 
 ```go
 func createStreamableHTTPClientWithSession() {
     // Create StreamableHTTP client with options
-    sessionID := // fetch existing session ID 
+    sessionID := // fetch existing session ID
     c := client.NewStreamableHttpClient("https://api.example.com/mcp",
         transport.WithSession(sessionID),
     )
@@ -405,7 +446,7 @@ func createStreamableHTTPClientWithSession() {
     // Use client...
     _, err := c.ListTools(ctx)
     // If the session is terminated, you must reinitialize the client
-    if errors.Is(err, transport.ErrSessionTerminated) { 
+    if errors.Is(err, transport.ErrSessionTerminated) {
         c.Initialize(ctx) // Reinitialize if session is terminated
         // The session ID should change after reinitialization
         sessionID = c.GetSessionId() // Update session ID
@@ -458,6 +499,40 @@ func createSSEClient() {
 }
 ```
 
+### SSE Client with Custom Configuration
+
+```go
+func createCustomSSEClient() {
+    // Create custom logger for debugging
+    logger := myCustomLogger{}
+
+    // Create SSE client with custom options
+    c, err := client.NewSSEMCPClient("http://localhost:8080/mcp/sse",
+        transport.WithSSELogger(logger),
+        transport.WithHeaders(map[string]string{
+            "Authorization": "Bearer your-token",
+            "User-Agent":    "MyApp/1.0",
+        }),
+        transport.WithHTTPClient(&http.Client{
+            Timeout: 30 * time.Second,
+        }),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer c.Close()
+
+    ctx := context.Background()
+
+    // Initialize
+    if err := c.Initialize(ctx); err != nil {
+        log.Fatal(err)
+    }
+
+    // Use client...
+}
+```
+
 ### SSE Client with Reconnection
 
 ```go
@@ -501,7 +576,7 @@ func (rsc *ResilientSSEClient) connect() error {
     }
 
     client := client.NewSSEClient(rsc.baseURL)
-    
+
     // Set headers
     for key, value := range rsc.headers {
         client.SetHeader(key, value)
@@ -522,11 +597,11 @@ func (rsc *ResilientSSEClient) reconnectLoop() {
             return
         case <-rsc.reconnectCh:
             log.Println("Reconnecting SSE client...")
-            
+
             for attempt := 1; attempt <= 5; attempt++ {
                 if err := rsc.connect(); err != nil {
                     log.Printf("Reconnection attempt %d failed: %v", attempt, err)
-                    
+
                     backoff := time.Duration(attempt) * time.Second
                     select {
                     case <-time.After(backoff):
@@ -578,14 +653,14 @@ func (rsc *ResilientSSEClient) Subscribe(ctx context.Context) (<-chan mcp.Notifi
 
 func (rsc *ResilientSSEClient) Close() error {
     rsc.cancel()
-    
+
     rsc.mutex.Lock()
     defer rsc.mutex.Unlock()
-    
+
     if rsc.client != nil {
         return rsc.client.Close()
     }
-    
+
     return nil
 }
 
@@ -628,7 +703,7 @@ func (seh *SSEEventHandler) Start() error {
     seh.wg.Add(1)
     go func() {
         defer seh.wg.Done()
-        
+
         for {
             select {
             case notification := <-notifications:
@@ -666,7 +741,7 @@ func (seh *SSEEventHandler) OnToolUpdate(handler func(mcp.Notification)) {
 func (seh *SSEEventHandler) addHandler(method string, handler func(mcp.Notification)) {
     seh.mutex.Lock()
     defer seh.mutex.Unlock()
-    
+
     seh.handlers[method] = append(seh.handlers[method], handler)
 }
 
@@ -691,7 +766,7 @@ In-process clients provide direct communication with servers in the same process
 func createInProcessClient() {
     // Create server
     s := server.NewMCPServer("Test Server", "1.0.0")
-    
+
     // Add tools to server
     s.AddTool(
         mcp.NewTool("test_tool",
@@ -829,16 +904,16 @@ func SelectTransport(req TransportRequirements) string {
     switch {
     case !req.NetworkRequired && req.Performance == "high":
         return "inprocess"
-    
+
     case !req.NetworkRequired && !req.MultiClient:
         return "stdio"
-    
+
     case req.RealTime && req.MultiClient:
         return "sse"
-    
+
     case req.NetworkRequired && req.MultiClient:
         return "streamablehttp"
-    
+
     default:
         return "stdio" // Default fallback
     }
@@ -935,12 +1010,12 @@ func (cf *ClientFactory) CreateClient(transport string) (client.Client, error) {
         if !ok {
             return nil, fmt.Errorf("streamablehttp config not set")
         }
-        
+
         options := []transport.StreamableHTTPCOption{}
         if len(config.Headers) > 0 {
             options = append(options, transport.WithHTTPHeaders(config.Headers))
         }
-        
+
         return client.NewStreamableHttpClient(config.BaseURL, options...), nil
 
     case "sse":
@@ -951,12 +1026,12 @@ func (cf *ClientFactory) CreateClient(transport string) (client.Client, error) {
         if !ok {
             return nil, fmt.Errorf("sse config not set")
         }
-        
+
         options := []transport.ClientOption{}
         if len(config.Headers) > 0 {
             options = append(options, transport.WithHeaders(config.Headers))
         }
-        
+
         return client.NewSSEMCPClient(config.BaseURL, options...)
 
     default:
@@ -967,7 +1042,7 @@ func (cf *ClientFactory) CreateClient(transport string) (client.Client, error) {
 // Usage
 func demonstrateClientFactory() {
     factory := NewClientFactory()
-    
+
     // Configure transports
     factory.SetStdioConfig("go", "run", "server.go")
     factory.SetStreamableHTTPConfig("http://localhost:8080/mcp", map[string]string{
@@ -993,3 +1068,19 @@ func demonstrateClientFactory() {
 }
 ```
 
+## Logging Configuration
+
+All client transports support custom logging.
+Each transport provides a logger option that accepts any implementation of the `util.Logger` interface.
+
+```go
+type myCustomLogger struct {}
+
+func (myCustomLogger) Infof(format string, args ...any) {
+    // TODO
+}
+
+func (myCustomLogger) Errorf(format string, args ...any) {
+    // TODO
+}
+```

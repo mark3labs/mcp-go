@@ -5,18 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/stretchr/testify/require"
 )
 
 func compileTestServer(outputPath string) error {
@@ -506,6 +507,70 @@ func TestStdioErrors(t *testing.T) {
 		_, sendErr := stdio.SendRequest(ctx, request)
 		if sendErr == nil {
 			t.Errorf("Expected error when sending request after close, got nil")
+		}
+	})
+
+	t.Run("StdioResponseWritingErrorLogging", func(t *testing.T) {
+		logChan := make(chan string, 10)
+		testLogger := &testLogger{logChan: logChan}
+
+		_, stdinWriter := io.Pipe()
+		stdoutReader, stdoutWriter := io.Pipe()
+		stderrReader, stderrWriter := io.Pipe()
+		t.Cleanup(func() {
+			_ = stdinWriter.Close()
+			_ = stdoutWriter.Close()
+			_ = stderrWriter.Close()
+		})
+
+		stdio := NewIO(stdoutReader, stdinWriter, stderrReader)
+		stdio.logger = testLogger
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		t.Cleanup(cancel)
+
+		err := stdio.Start(ctx)
+		if err != nil {
+			t.Fatalf("Failed to start stdio transport: %v", err)
+		}
+		t.Cleanup(func() { _ = stdio.Close() })
+
+		stdio.SetRequestHandler(func(ctx context.Context, request JSONRPCRequest) (*JSONRPCResponse, error) {
+			return &JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      request.ID,
+				Result:  json.RawMessage(`"test response"`),
+			}, nil
+		})
+
+		doneChan := make(chan struct{})
+		go func() {
+			// Simulate a request coming from the server
+			request := JSONRPCRequest{
+				JSONRPC: "2.0",
+				ID:      mcp.NewRequestId(int64(1)),
+				Method:  "test/method",
+			}
+			requestBytes, _ := json.Marshal(request)
+			requestBytes = append(requestBytes, '\n')
+			_, _ = stdoutWriter.Write(requestBytes)
+
+			// Close stdin to trigger a write error when the response is sent
+			time.Sleep(50 * time.Millisecond) // Give time for the request to be processed
+			_ = stdinWriter.Close()
+			doneChan <- struct{}{}
+		}()
+
+		<-doneChan
+
+		// Wait for the error log message
+		select {
+		case logMsg := <-logChan:
+			if !strings.Contains(logMsg, "Error writing response") {
+				t.Errorf("Expected error log about writing response, got: %s", logMsg)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("Timeout waiting for error log message")
 		}
 	})
 }
