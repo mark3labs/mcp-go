@@ -478,6 +478,22 @@ func (c *Client) handleSamplingRequestTransport(ctx context.Context, request tra
 			return nil, fmt.Errorf("failed to unmarshal params: %w", err)
 		}
 	}
+	
+	// Fix content parsing - HTTP transport unmarshals TextContent as map[string]any
+	for i := range params.Messages {
+		if contentMap, ok := params.Messages[i].Content.(map[string]any); ok {
+			if textType, exists := contentMap["type"]; exists && textType == "text" {
+				if text, exists := contentMap["text"]; exists {
+					if textStr, ok := text.(string); ok {
+						params.Messages[i].Content = mcp.TextContent{
+							Type: "text",
+							Text: textStr,
+						}
+					}
+				}
+			}
+		}
+	}
 
 	// Create the MCP request
 	mcpRequest := mcp.CreateMessageRequest{
