@@ -447,8 +447,8 @@ func TestStdioServer(t *testing.T) {
 		// Test worker pool size bounds
 		stdioServer := NewStdioServer(mcpServer)
 		WithWorkerPoolSize(150)(stdioServer)
-		if stdioServer.workerPoolSize != 5 { // Should use default
-			t.Errorf("Expected default worker pool size 5, got %d", stdioServer.workerPoolSize)
+		if stdioServer.workerPoolSize != 100 { // Should use maximum
+			t.Errorf("Expected maximum worker pool size 100, got %d", stdioServer.workerPoolSize)
 		}
 
 		// Test valid worker pool size
@@ -461,8 +461,8 @@ func TestStdioServer(t *testing.T) {
 		// Test queue size bounds
 		stdioServer = NewStdioServer(mcpServer)
 		WithQueueSize(20000)(stdioServer)
-		if stdioServer.queueSize != 100 { // Should use default
-			t.Errorf("Expected default queue size 100, got %d", stdioServer.queueSize)
+		if stdioServer.queueSize != 10000 { // Should use maximum
+			t.Errorf("Expected maximum queue size 10000, got %d", stdioServer.queueSize)
 		}
 
 		// Test valid queue size
