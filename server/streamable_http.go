@@ -273,7 +273,18 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	session := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
+	// Check if a persistent session exists (for sampling support), otherwise create ephemeral session
+	var session *streamableHttpSession
+	if sessionInterface, exists := s.activeSessions.Load(sessionID); exists {
+		if persistentSession, ok := sessionInterface.(*streamableHttpSession); ok {
+			session = persistentSession
+		}
+	}
+	
+	// Create ephemeral session if no persistent session exists
+	if session == nil {
+		session = newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
+	}
 
 	// Set the client context before handling the message
 	ctx := s.server.WithContext(r.Context(), session)
@@ -384,16 +395,27 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		sessionID = uuid.New().String()
 	}
 
-	session := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
-	if err := s.server.RegisterSession(r.Context(), session); err != nil {
-		http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusBadRequest)
-		return
+	// Check if session already exists, if so reuse it for sampling
+	var session *streamableHttpSession
+	if sessionInterface, exists := s.activeSessions.Load(sessionID); exists {
+		if existingSession, ok := sessionInterface.(*streamableHttpSession); ok {
+			session = existingSession
+		}
 	}
-	defer s.server.UnregisterSession(r.Context(), sessionID)
 	
-	// Register session for sampling response delivery
-	s.activeSessions.Store(sessionID, session)
-	defer s.activeSessions.Delete(sessionID)
+	// Create new session if none exists
+	if session == nil {
+		session = newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
+		if err := s.server.RegisterSession(r.Context(), session); err != nil {
+			http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusBadRequest)
+			return
+		}
+		defer s.server.UnregisterSession(r.Context(), sessionID)
+		
+		// Register session for sampling response delivery
+		s.activeSessions.Store(sessionID, session)
+		defer s.activeSessions.Delete(sessionID)
+	}
 
 	// Set the client context before handling the message
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -829,6 +851,7 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 	select {
 	case s.samplingRequestChan <- samplingRequest:
 		// Request queued successfully
+		// Request queued successfully (no logger on session)
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
