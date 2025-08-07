@@ -1003,8 +1003,8 @@ func TestCallToolResultRoundTrip(t *testing.T) {
 		},
 		StructuredContent: map[string]any{
 			"status":          "success",
-			"processed_count": 150,
-			"error_count":     0,
+			"processed_count": float64(150.0),
+			"error_count":     float64(0.0),
 			"warnings":        []any{"Minor issue detected"},
 			"metadata": map[string]any{
 				"version": "1.0.0",
