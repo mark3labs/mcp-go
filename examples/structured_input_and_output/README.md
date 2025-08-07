@@ -6,6 +6,15 @@ Defined in the MCP spec here: https://modelcontextprotocol.io/specification/2025
 
 ## Usage
 
+Define a struct for your input:
+
+```go
+type WeatherRequest struct {
+    Location string `json:"location,required" jsonschema_description:"City or location"`
+    Units    string `json:"units,omitempty" jsonschema_description:"celsius or fahrenheit" jsonschema:"enum=celsius,enum=fahrenheit"`
+}
+```
+
 Define a struct for your output:
 
 ```go
@@ -21,8 +30,8 @@ Add it to your tool:
 ```go
 tool := mcp.NewTool("get_weather",
     mcp.WithDescription("Get weather information"),
+    mcp.WithInputSchema[WeatherRequest](),
     mcp.WithOutputSchema[WeatherResponse](),
-    mcp.WithString("location", mcp.Required()),
 )
 ```
 

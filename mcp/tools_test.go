@@ -529,6 +529,55 @@ func TestFlexibleArgumentsJSONMarshalUnmarshal(t *testing.T) {
 	assert.Equal(t, float64(123), args["key2"]) // JSON numbers are unmarshaled as float64
 }
 
+// TestToolWithInputSchema tests that the WithInputSchema function
+// generates an MCP-compatible JSON output schema for a tool
+func TestToolWithInputSchema(t *testing.T) {
+	type TestInput struct {
+		Name  string `json:"name" jsonschema_description:"Person's name" jsonschema:"required"`
+		Age   int    `json:"age" jsonschema_description:"Person's age"`
+		Email string `json:"email,omitempty" jsonschema_description:"Email address" jsonschema:"required"`
+	}
+
+	tool := NewTool("test_tool",
+		WithDescription("Test tool with output schema"),
+		WithInputSchema[TestInput](),
+	)
+
+	// Check that RawOutputSchema was set
+	assert.NotNil(t, tool.RawInputSchema)
+
+	// Marshal and verify structure
+	data, err := json.Marshal(tool)
+	assert.NoError(t, err)
+
+	var toolData map[string]any
+	err = json.Unmarshal(data, &toolData)
+	assert.NoError(t, err)
+
+	// Verify inputSchema exists
+	inputSchema, exists := toolData["inputSchema"]
+	assert.True(t, exists)
+	assert.NotNil(t, inputSchema)
+
+	// Verify required list exists
+	schemaMap, ok := inputSchema.(map[string]interface{})
+	assert.True(t, ok)
+	requiredList, exists := schemaMap["required"]
+	assert.True(t, exists)
+	assert.NotNil(t, requiredList)
+
+	// Verify properties exist
+	properties, exists := schemaMap["properties"]
+	assert.True(t, exists)
+	propertiesMap, ok := properties.(map[string]interface{})
+	assert.True(t, ok)
+
+	// Verify specific properties
+	assert.Contains(t, propertiesMap, "name")
+	assert.Contains(t, propertiesMap, "age")
+	assert.Contains(t, propertiesMap, "email")
+}
+
 // TestToolWithOutputSchema tests that the WithOutputSchema function
 // generates an MCP-compatible JSON output schema for a tool
 func TestToolWithOutputSchema(t *testing.T) {
