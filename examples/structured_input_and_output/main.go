@@ -12,8 +12,8 @@ import (
 // Note: The jsonschema_description tag is added to the JSON schema as description
 // Ideally use better descriptions, this is just an example
 type WeatherRequest struct {
-	Location string `json:"location" jsonschema_description:"City or location"`
-	Units    string `json:"units,omitempty" jsonschema_description:"celsius or fahrenheit"`
+	Location string `json:"location" jsonschema_description:"City or location" jsonschema:"required"`
+	Units    string `json:"units,omitempty" jsonschema_description:"celsius or fahrenheit" jsonschema:"enum=celsius,enum=fahrenheit"`
 }
 
 type WeatherResponse struct {
@@ -32,7 +32,7 @@ type UserProfile struct {
 }
 
 type UserRequest struct {
-	UserID string `json:"userId" jsonschema_description:"User ID"`
+	UserID string `json:"userId" jsonschema_description:"User ID" jsonschema:"required"`
 }
 
 type Asset struct {
@@ -43,12 +43,12 @@ type Asset struct {
 }
 
 type AssetListRequest struct {
-	Limit int `json:"limit,omitempty" jsonschema_description:"Number of assets to return"`
+	Limit int `json:"limit,omitempty" jsonschema_description:"Number of assets to return" jsonschema:"minimum=1,maximum=100,default=10"`
 }
 
 func main() {
 	s := server.NewMCPServer(
-		"Structured Output Example",
+		"Structured Input/Output Example",
 		"1.0.0",
 		server.WithToolCapabilities(false),
 	)
@@ -56,33 +56,32 @@ func main() {
 	// Example 1: Auto-generated schema from struct
 	weatherTool := mcp.NewTool("get_weather",
 		mcp.WithDescription("Get weather with structured output"),
+		mcp.WithInputSchema[WeatherRequest](),
 		mcp.WithOutputSchema[WeatherResponse](),
-		mcp.WithString("location", mcp.Required()),
-		mcp.WithString("units", mcp.Enum("celsius", "fahrenheit"), mcp.DefaultString("celsius")),
 	)
 	s.AddTool(weatherTool, mcp.NewStructuredToolHandler(getWeatherHandler))
 
 	// Example 2: Nested struct schema
 	userTool := mcp.NewTool("get_user_profile",
 		mcp.WithDescription("Get user profile"),
+		mcp.WithInputSchema[UserRequest](),
 		mcp.WithOutputSchema[UserProfile](),
-		mcp.WithString("userId", mcp.Required()),
 	)
 	s.AddTool(userTool, mcp.NewStructuredToolHandler(getUserProfileHandler))
 
 	// Example 3: Array output - direct array of objects
 	assetsTool := mcp.NewTool("get_assets",
 		mcp.WithDescription("Get list of assets as array"),
+		mcp.WithInputSchema[AssetListRequest](),
 		mcp.WithOutputSchema[[]Asset](),
-		mcp.WithNumber("limit", mcp.Min(1), mcp.Max(100), mcp.DefaultNumber(10)),
 	)
 	s.AddTool(assetsTool, mcp.NewStructuredToolHandler(getAssetsHandler))
 
 	// Example 4: Manual result creation
 	manualTool := mcp.NewTool("manual_structured",
 		mcp.WithDescription("Manual structured result"),
+		mcp.WithInputSchema[WeatherRequest](),
 		mcp.WithOutputSchema[WeatherResponse](),
-		mcp.WithString("location", mcp.Required()),
 	)
 	s.AddTool(manualTool, mcp.NewTypedToolHandler(manualWeatherHandler))
 
