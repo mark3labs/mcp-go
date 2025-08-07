@@ -8,8 +8,9 @@ import (
 	"maps"
 	"strconv"
 
-	"github.com/yosida95/uritemplate/v3"
 	"net/http"
+
+	"github.com/yosida95/uritemplate/v3"
 )
 
 type MCPMethod string
@@ -882,7 +883,7 @@ type Annotated struct {
 }
 
 type Content interface {
-	isContent()
+	IsContent()
 }
 
 // TextContent represents text provided to or from an LLM.
@@ -896,7 +897,7 @@ type TextContent struct {
 	Text string `json:"text"`
 }
 
-func (TextContent) isContent() {}
+func (TextContent) IsContent() {}
 
 // ImageContent represents an image provided to or from an LLM.
 // It must have Type set to "image".
@@ -911,7 +912,7 @@ type ImageContent struct {
 	MIMEType string `json:"mimeType"`
 }
 
-func (ImageContent) isContent() {}
+func (ImageContent) IsContent() {}
 
 // AudioContent represents the contents of audio, embedded into a prompt or tool call result.
 // It must have Type set to "audio".
@@ -926,7 +927,7 @@ type AudioContent struct {
 	MIMEType string `json:"mimeType"`
 }
 
-func (AudioContent) isContent() {}
+func (AudioContent) IsContent() {}
 
 // ResourceLink represents a link to a resource that the client can access.
 type ResourceLink struct {
@@ -942,7 +943,7 @@ type ResourceLink struct {
 	MIMEType string `json:"mimeType"`
 }
 
-func (ResourceLink) isContent() {}
+func (ResourceLink) IsContent() {}
 
 // EmbeddedResource represents the contents of a resource, embedded into a prompt or tool call result.
 //
@@ -956,7 +957,7 @@ type EmbeddedResource struct {
 	Resource ResourceContents `json:"resource"`
 }
 
-func (EmbeddedResource) isContent() {}
+func (EmbeddedResource) IsContent() {}
 
 // ModelPreferences represents the server's preferences for model selection,
 // requested of the client during sampling.
