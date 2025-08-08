@@ -567,7 +567,7 @@ func ParseGetPromptResult(rawMessage *json.RawMessage) (*GetPromptResult, error)
 	meta, ok := jsonContent["_meta"]
 	if ok {
 		if metaMap, ok := meta.(map[string]any); ok {
-			result.Meta = metaMap
+			result.Meta = NewMetaFromMap(metaMap)
 		}
 	}
 
@@ -633,7 +633,7 @@ func ParseCallToolResult(rawMessage *json.RawMessage) (*CallToolResult, error) {
 	meta, ok := jsonContent["_meta"]
 	if ok {
 		if metaMap, ok := meta.(map[string]any); ok {
-			result.Meta = metaMap
+			result.Meta = NewMetaFromMap(metaMap)
 		}
 	}
 
@@ -715,7 +715,7 @@ func ParseReadResourceResult(rawMessage *json.RawMessage) (*ReadResourceResult, 
 	meta, ok := jsonContent["_meta"]
 	if ok {
 		if metaMap, ok := meta.(map[string]any); ok {
-			result.Meta = metaMap
+			result.Meta = NewMetaFromMap(metaMap)
 		}
 	}
 

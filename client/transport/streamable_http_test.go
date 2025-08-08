@@ -523,7 +523,6 @@ func TestStreamableHTTPErrors(t *testing.T) {
 			t.Errorf("Expected error when sending request to non-existent URL, got nil")
 		}
 	})
-
 }
 
 // ---- continuous listening tests ----
@@ -718,7 +717,6 @@ func TestContinuousListening(t *testing.T) {
 }
 
 func TestContinuousListeningMethodNotAllowed(t *testing.T) {
-
 	// Start a server that doesn't support GET
 	url, closeServer, _, _ := startMockStreamableWithGETSupport(false)
 

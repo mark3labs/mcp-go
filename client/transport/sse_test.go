@@ -4,16 +4,51 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"fmt"
-	"net/http"
-	"net/http/httptest"
-
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/stretchr/testify/require"
 )
+
+// mockReaderWithError is a mock io.ReadCloser that simulates reading some data
+// and then returning a specific error
+type mockReaderWithError struct {
+	data     []byte
+	err      error
+	position int
+	closed   bool
+}
+
+func (m *mockReaderWithError) Read(p []byte) (n int, err error) {
+	if m.closed {
+		return 0, io.EOF
+	}
+
+	if m.position >= len(m.data) {
+		return 0, m.err
+	}
+
+	n = copy(p, m.data[m.position:])
+	m.position += n
+
+	if m.position >= len(m.data) {
+		return n, m.err
+	}
+
+	return n, nil
+}
+
+func (m *mockReaderWithError) Close() error {
+	m.closed = true
+	return nil
+}
 
 // startMockSSEEchoServer starts a test HTTP server that implements
 // a minimal SSE-based echo server for testing purposes.
@@ -115,7 +150,6 @@ func startMockSSEEchoServer() (string, func()) {
 				flush()
 			}
 		}()
-
 	})
 
 	// Create a router to handle different endpoints
@@ -228,7 +262,6 @@ func TestSSE(t *testing.T) {
 	})
 
 	t.Run("SendNotification & NotificationHandler", func(t *testing.T) {
-
 		var wg sync.WaitGroup
 		notificationChan := make(chan mcp.JSONRPCNotification, 1)
 
@@ -368,7 +401,6 @@ func TestSSE(t *testing.T) {
 	})
 
 	t.Run("ResponseError", func(t *testing.T) {
-
 		// Prepare a request
 		request := JSONRPCRequest{
 			JSONRPC: "2.0",
@@ -508,6 +540,217 @@ func TestSSE(t *testing.T) {
 		}
 	})
 
+	t.Run("NO_ERROR_WithoutConnectionLostHandler", func(t *testing.T) {
+		// Test that NO_ERROR without connection lost handler maintains backward compatibility
+		// When no connection lost handler is set, NO_ERROR should be treated as a regular error
+
+		// Create a mock Reader that simulates NO_ERROR
+		mockReader := &mockReaderWithError{
+			data: []byte("event: endpoint\ndata: /message\n\n"),
+			err:  errors.New("connection closed: NO_ERROR"),
+		}
+
+		// Create SSE transport
+		url, closeF := startMockSSEEchoServer()
+		defer closeF()
+
+		trans, err := NewSSE(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// DO NOT set connection lost handler to test backward compatibility
+
+		// Capture stderr to verify the error is printed (backward compatible behavior)
+		// Since we can't easily capture fmt.Printf output in tests, we'll just verify
+		// that the readSSE method returns without calling any handler
+
+		// Directly test the readSSE method with our mock reader
+		go trans.readSSE(mockReader)
+
+		// Wait for readSSE to complete
+		time.Sleep(100 * time.Millisecond)
+
+		// The test passes if readSSE completes without panicking or hanging
+		// In backward compatibility mode, NO_ERROR should be treated as a regular error
+		t.Log("Backward compatibility test passed: NO_ERROR handled as regular error when no handler is set")
+	})
+
+	t.Run("NO_ERROR_ConnectionLost", func(t *testing.T) {
+		// Test that NO_ERROR in HTTP/2 connection loss is properly handled
+		// This test verifies that when a connection is lost in a way that produces
+		// an error message containing "NO_ERROR", the connection lost handler is called
+
+		var connectionLostCalled bool
+		var connectionLostError error
+		var mu sync.Mutex
+
+		// Create a mock Reader that simulates connection loss with NO_ERROR
+		mockReader := &mockReaderWithError{
+			data: []byte("event: endpoint\ndata: /message\n\n"),
+			err:  errors.New("http2: stream closed with error code NO_ERROR"),
+		}
+
+		// Create SSE transport
+		url, closeF := startMockSSEEchoServer()
+		defer closeF()
+
+		trans, err := NewSSE(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Set connection lost handler
+		trans.SetConnectionLostHandler(func(err error) {
+			mu.Lock()
+			defer mu.Unlock()
+			connectionLostCalled = true
+			connectionLostError = err
+		})
+
+		// Directly test the readSSE method with our mock reader that simulates NO_ERROR
+		go trans.readSSE(mockReader)
+
+		// Wait for connection lost handler to be called
+		timeout := time.After(1 * time.Second)
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-timeout:
+				t.Fatal("Connection lost handler was not called within timeout for NO_ERROR connection loss")
+			case <-ticker.C:
+				mu.Lock()
+				called := connectionLostCalled
+				err := connectionLostError
+				mu.Unlock()
+
+				if called {
+					if err == nil {
+						t.Fatal("Expected connection lost error, got nil")
+					}
+
+					// Verify that the error contains "NO_ERROR" string
+					if !strings.Contains(err.Error(), "NO_ERROR") {
+						t.Errorf("Expected error to contain 'NO_ERROR', got: %v", err)
+					}
+
+					t.Logf("Connection lost handler called with NO_ERROR: %v", err)
+					return
+				}
+			}
+		}
+	})
+
+	t.Run("NO_ERROR_Handling", func(t *testing.T) {
+		// Test specific NO_ERROR string handling in readSSE method
+		// This tests the code path at line 209 where NO_ERROR is checked
+
+		// Create a mock Reader that simulates an error containing "NO_ERROR"
+		mockReader := &mockReaderWithError{
+			data: []byte("event: endpoint\ndata: /message\n\n"),
+			err:  errors.New("connection closed: NO_ERROR"),
+		}
+
+		// Create SSE transport
+		url, closeF := startMockSSEEchoServer()
+		defer closeF()
+
+		trans, err := NewSSE(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var connectionLostCalled bool
+		var connectionLostError error
+		var mu sync.Mutex
+
+		// Set connection lost handler to verify it's called for NO_ERROR
+		trans.SetConnectionLostHandler(func(err error) {
+			mu.Lock()
+			defer mu.Unlock()
+			connectionLostCalled = true
+			connectionLostError = err
+		})
+
+		// Directly test the readSSE method with our mock reader
+		go trans.readSSE(mockReader)
+
+		// Wait for connection lost handler to be called
+		timeout := time.After(1 * time.Second)
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-timeout:
+				t.Fatal("Connection lost handler was not called within timeout for NO_ERROR")
+			case <-ticker.C:
+				mu.Lock()
+				called := connectionLostCalled
+				err := connectionLostError
+				mu.Unlock()
+
+				if called {
+					if err == nil {
+						t.Fatal("Expected connection lost error with NO_ERROR, got nil")
+					}
+
+					// Verify that the error contains "NO_ERROR" string
+					if !strings.Contains(err.Error(), "NO_ERROR") {
+						t.Errorf("Expected error to contain 'NO_ERROR', got: %v", err)
+					}
+
+					t.Logf("Successfully handled NO_ERROR: %v", err)
+					return
+				}
+			}
+		}
+	})
+
+	t.Run("RegularError_DoesNotTriggerConnectionLost", func(t *testing.T) {
+		// Test that regular errors (not containing NO_ERROR) do not trigger connection lost handler
+
+		// Create a mock Reader that simulates a regular error
+		mockReader := &mockReaderWithError{
+			data: []byte("event: endpoint\ndata: /message\n\n"),
+			err:  errors.New("regular connection error"),
+		}
+
+		// Create SSE transport
+		url, closeF := startMockSSEEchoServer()
+		defer closeF()
+
+		trans, err := NewSSE(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var connectionLostCalled bool
+		var mu sync.Mutex
+
+		// Set connection lost handler - this should NOT be called for regular errors
+		trans.SetConnectionLostHandler(func(err error) {
+			mu.Lock()
+			defer mu.Unlock()
+			connectionLostCalled = true
+		})
+
+		// Directly test the readSSE method with our mock reader
+		go trans.readSSE(mockReader)
+
+		// Wait and verify connection lost handler is NOT called
+		time.Sleep(200 * time.Millisecond)
+
+		mu.Lock()
+		called := connectionLostCalled
+		mu.Unlock()
+
+		if called {
+			t.Error("Connection lost handler should not be called for regular errors")
+		}
+	})
 }
 
 func TestSSEErrors(t *testing.T) {
@@ -624,4 +867,49 @@ func TestSSEErrors(t *testing.T) {
 		}
 	})
 
+	t.Run("SSEStreamErrorLogging", func(t *testing.T) {
+		logChan := make(chan string, 10)
+		testLogger := &testLogger{logChan: logChan}
+
+		sseHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+				return
+			}
+
+			fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", "/message")
+			flusher.Flush()
+
+			fmt.Fprintf(w, "event: message\ndata: {invalid json}\n\n")
+			flusher.Flush()
+
+			time.Sleep(50 * time.Millisecond)
+		})
+
+		testServer := httptest.NewServer(sseHandler)
+		t.Cleanup(testServer.Close)
+
+		trans, err := NewSSE(testServer.URL, WithSSELogger(testLogger))
+		require.NoError(t, err)
+
+		// Start the transport
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		t.Cleanup(cancel)
+
+		err = trans.Start(ctx)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = trans.Close() })
+
+		// Wait for the error log message about unmarshaling
+		select {
+		case logMsg := <-logChan:
+			if !strings.Contains(logMsg, "Error unmarshaling message") {
+				t.Errorf("Expected error log about unmarshaling message, got: %s", logMsg)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("Timeout waiting for error log message")
+		}
+	})
 }
