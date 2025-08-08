@@ -670,6 +670,12 @@ func ParseCallToolResult(rawMessage *json.RawMessage) (*CallToolResult, error) {
 		result.Content = append(result.Content, content)
 	}
 
+	// Handle structured content
+	structuredContent, ok := jsonContent["structuredContent"]
+	if ok {
+		result.StructuredContent = structuredContent
+	}
+
 	return &result, nil
 }
 
