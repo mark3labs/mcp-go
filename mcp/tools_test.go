@@ -590,7 +590,7 @@ func TestCallToolResultMarshalJSON(t *testing.T) {
 			name: "basic result with text content",
 			result: CallToolResult{
 				Result: Result{
-					Meta: map[string]any{"key": "value"},
+					Meta: NewMetaFromMap(map[string]any{"key": "value"}),
 				},
 				Content: []Content{
 					TextContent{Type: "text", Text: "Hello, world!"},
@@ -611,7 +611,7 @@ func TestCallToolResultMarshalJSON(t *testing.T) {
 			name: "result with structured content",
 			result: CallToolResult{
 				Result: Result{
-					Meta: map[string]any{"key": "value"},
+					Meta: NewMetaFromMap(map[string]any{"key": "value"}),
 				},
 				Content: []Content{
 					TextContent{Type: "text", Text: "Operation completed"},
@@ -642,7 +642,7 @@ func TestCallToolResultMarshalJSON(t *testing.T) {
 			name: "error result",
 			result: CallToolResult{
 				Result: Result{
-					Meta: map[string]any{"error_code": "E001"},
+					Meta: NewMetaFromMap(map[string]any{"error_code": "E001"}),
 				},
 				Content: []Content{
 					TextContent{Type: "text", Text: "An error occurred"},
@@ -664,7 +664,7 @@ func TestCallToolResultMarshalJSON(t *testing.T) {
 			name: "result with multiple content types",
 			result: CallToolResult{
 				Result: Result{
-					Meta: map[string]any{"session_id": "12345"},
+					Meta: NewMetaFromMap(map[string]any{"session_id": "12345"}),
 				},
 				Content: []Content{
 					TextContent{Type: "text", Text: "Processing complete"},
@@ -699,7 +699,7 @@ func TestCallToolResultMarshalJSON(t *testing.T) {
 			name: "result with nil structured content",
 			result: CallToolResult{
 				Result: Result{
-					Meta: map[string]any{"key": "value"},
+					Meta: NewMetaFromMap(map[string]any{"key": "value"}),
 				},
 				Content: []Content{
 					TextContent{Type: "text", Text: "Simple result"},
@@ -721,7 +721,7 @@ func TestCallToolResultMarshalJSON(t *testing.T) {
 			name: "result with empty content array",
 			result: CallToolResult{
 				Result: Result{
-					Meta: map[string]any{"key": "value"},
+					Meta: NewMetaFromMap(map[string]any{"key": "value"}),
 				},
 				Content: []Content{},
 				StructuredContent: map[string]any{
@@ -784,7 +784,7 @@ func TestCallToolResultUnmarshalJSON(t *testing.T) {
 			}`,
 			expected: CallToolResult{
 				Result: Result{
-					Meta: map[string]any{"key": "value"},
+					Meta: NewMetaFromMap(map[string]any{"key": "value"}),
 				},
 				Content: []Content{
 					TextContent{Type: "text", Text: "Hello, world!"},
@@ -808,7 +808,7 @@ func TestCallToolResultUnmarshalJSON(t *testing.T) {
 			}`,
 			expected: CallToolResult{
 				Result: Result{
-					Meta: map[string]any{"key": "value"},
+					Meta: NewMetaFromMap(map[string]any{"key": "value"}),
 				},
 				Content: []Content{
 					TextContent{Type: "text", Text: "Operation completed"},
@@ -833,7 +833,7 @@ func TestCallToolResultUnmarshalJSON(t *testing.T) {
 			}`,
 			expected: CallToolResult{
 				Result: Result{
-					Meta: map[string]any{"error_code": "E001"},
+					Meta: NewMetaFromMap(map[string]any{"error_code": "E001"}),
 				},
 				Content: []Content{
 					TextContent{Type: "text", Text: "An error occurred"},
@@ -857,7 +857,7 @@ func TestCallToolResultUnmarshalJSON(t *testing.T) {
 			}`,
 			expected: CallToolResult{
 				Result: Result{
-					Meta: map[string]any{"session_id": "12345"},
+					Meta: NewMetaFromMap(map[string]any{"session_id": "12345"}),
 				},
 				Content: []Content{
 					TextContent{Type: "text", Text: "Processing complete"},
@@ -881,7 +881,7 @@ func TestCallToolResultUnmarshalJSON(t *testing.T) {
 			}`,
 			expected: CallToolResult{
 				Result: Result{
-					Meta: map[string]any{"key": "value"},
+					Meta: NewMetaFromMap(map[string]any{"key": "value"}),
 				},
 				Content: []Content{
 					TextContent{Type: "text", Text: "Simple result"},
@@ -902,7 +902,7 @@ func TestCallToolResultUnmarshalJSON(t *testing.T) {
 			}`,
 			expected: CallToolResult{
 				Result: Result{
-					Meta: map[string]any{"key": "value"},
+					Meta: NewMetaFromMap(map[string]any{"key": "value"}),
 				},
 				Content: []Content{},
 				StructuredContent: map[string]any{
@@ -925,7 +925,7 @@ func TestCallToolResultUnmarshalJSON(t *testing.T) {
 			}`,
 			expected: CallToolResult{
 				Result: Result{
-					Meta: map[string]any{"key": "value"},
+					Meta: NewMetaFromMap(map[string]any{"key": "value"}),
 				},
 				Content: nil,
 				StructuredContent: map[string]any{
@@ -990,11 +990,11 @@ func TestCallToolResultUnmarshalJSON(t *testing.T) {
 func TestCallToolResultRoundTrip(t *testing.T) {
 	original := CallToolResult{
 		Result: Result{
-			Meta: map[string]any{
+			Meta: NewMetaFromMap(map[string]any{
 				"session_id": "12345",
 				"user_id":    "user123",
 				"timestamp":  "2024-01-01T00:00:00Z",
-			},
+			}),
 		},
 		Content: []Content{
 			TextContent{Type: "text", Text: "Operation started"},
