@@ -306,7 +306,6 @@ func TestParseToolCallToolRequest(t *testing.T) {
 	param15 := ParseInt64(request, "string_value", 1)
 	assert.Equal(t, fmt.Sprintf("%T", param15), "int64")
 	t.Logf("param15 type: %T,value:%v", param15, param15)
-
 }
 
 func TestCallToolRequestBindArguments(t *testing.T) {
@@ -578,6 +577,567 @@ func TestNewToolResultStructured(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "Fallback text", textContent.Text)
 	assert.NotNil(t, result.StructuredContent)
+}
+
+// TestCallToolResultMarshalJSON tests the custom JSON marshaling of CallToolResult
+func TestCallToolResultMarshalJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		result   CallToolResult
+		expected map[string]any
+	}{
+		{
+			name: "basic result with text content",
+			result: CallToolResult{
+				Result: Result{
+					Meta: NewMetaFromMap(map[string]any{"key": "value"}),
+				},
+				Content: []Content{
+					TextContent{Type: "text", Text: "Hello, world!"},
+				},
+				IsError: false,
+			},
+			expected: map[string]any{
+				"_meta": map[string]any{"key": "value"},
+				"content": []any{
+					map[string]any{
+						"type": "text",
+						"text": "Hello, world!",
+					},
+				},
+			},
+		},
+		{
+			name: "result with structured content",
+			result: CallToolResult{
+				Result: Result{
+					Meta: NewMetaFromMap(map[string]any{"key": "value"}),
+				},
+				Content: []Content{
+					TextContent{Type: "text", Text: "Operation completed"},
+				},
+				StructuredContent: map[string]any{
+					"status":  "success",
+					"count":   42,
+					"message": "Data processed successfully",
+				},
+				IsError: false,
+			},
+			expected: map[string]any{
+				"_meta": map[string]any{"key": "value"},
+				"content": []any{
+					map[string]any{
+						"type": "text",
+						"text": "Operation completed",
+					},
+				},
+				"structuredContent": map[string]any{
+					"status":  "success",
+					"count":   float64(42), // JSON numbers are unmarshaled as float64
+					"message": "Data processed successfully",
+				},
+			},
+		},
+		{
+			name: "error result",
+			result: CallToolResult{
+				Result: Result{
+					Meta: NewMetaFromMap(map[string]any{"error_code": "E001"}),
+				},
+				Content: []Content{
+					TextContent{Type: "text", Text: "An error occurred"},
+				},
+				IsError: true,
+			},
+			expected: map[string]any{
+				"_meta": map[string]any{"error_code": "E001"},
+				"content": []any{
+					map[string]any{
+						"type": "text",
+						"text": "An error occurred",
+					},
+				},
+				"isError": true,
+			},
+		},
+		{
+			name: "result with multiple content types",
+			result: CallToolResult{
+				Result: Result{
+					Meta: NewMetaFromMap(map[string]any{"session_id": "12345"}),
+				},
+				Content: []Content{
+					TextContent{Type: "text", Text: "Processing complete"},
+					ImageContent{Type: "image", Data: "base64-encoded-image-data", MIMEType: "image/jpeg"},
+				},
+				StructuredContent: map[string]any{
+					"processed_items": 100,
+					"errors":          0,
+				},
+				IsError: false,
+			},
+			expected: map[string]any{
+				"_meta": map[string]any{"session_id": "12345"},
+				"content": []any{
+					map[string]any{
+						"type": "text",
+						"text": "Processing complete",
+					},
+					map[string]any{
+						"type":     "image",
+						"data":     "base64-encoded-image-data",
+						"mimeType": "image/jpeg",
+					},
+				},
+				"structuredContent": map[string]any{
+					"processed_items": float64(100),
+					"errors":          float64(0),
+				},
+			},
+		},
+		{
+			name: "result with nil structured content",
+			result: CallToolResult{
+				Result: Result{
+					Meta: NewMetaFromMap(map[string]any{"key": "value"}),
+				},
+				Content: []Content{
+					TextContent{Type: "text", Text: "Simple result"},
+				},
+				StructuredContent: nil,
+				IsError:           false,
+			},
+			expected: map[string]any{
+				"_meta": map[string]any{"key": "value"},
+				"content": []any{
+					map[string]any{
+						"type": "text",
+						"text": "Simple result",
+					},
+				},
+			},
+		},
+		{
+			name: "result with empty content array",
+			result: CallToolResult{
+				Result: Result{
+					Meta: NewMetaFromMap(map[string]any{"key": "value"}),
+				},
+				Content: []Content{},
+				StructuredContent: map[string]any{
+					"data": "structured only",
+				},
+				IsError: false,
+			},
+			expected: map[string]any{
+				"_meta":   map[string]any{"key": "value"},
+				"content": []any{},
+				"structuredContent": map[string]any{
+					"data": "structured only",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Marshal the result
+			data, err := json.Marshal(tt.result)
+			assert.NoError(t, err)
+
+			// Unmarshal to map for comparison
+			var result map[string]any
+			err = json.Unmarshal(data, &result)
+			assert.NoError(t, err)
+
+			// Compare expected fields
+			for key, expectedValue := range tt.expected {
+				assert.Contains(t, result, key, "Result should contain key: %s", key)
+				assert.Equal(t, expectedValue, result[key], "Value for key %s should match", key)
+			}
+
+			// Verify that unexpected fields are not present
+			for key := range result {
+				if key != "_meta" && key != "content" && key != "structuredContent" && key != "isError" {
+					t.Errorf("Unexpected field in result: %s", key)
+				}
+			}
+		})
+	}
+}
+
+// TestCallToolResultUnmarshalJSON tests the custom JSON unmarshaling of CallToolResult
+func TestCallToolResultUnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		jsonData string
+		expected CallToolResult
+		wantErr  bool
+	}{
+		{
+			name: "basic result with text content",
+			jsonData: `{
+				"_meta": {"key": "value"},
+				"content": [
+					{"type": "text", "text": "Hello, world!"}
+				]
+			}`,
+			expected: CallToolResult{
+				Result: Result{
+					Meta: NewMetaFromMap(map[string]any{"key": "value"}),
+				},
+				Content: []Content{
+					TextContent{Type: "text", Text: "Hello, world!"},
+				},
+				IsError: false,
+			},
+			wantErr: false,
+		},
+		{
+			name: "result with structured content",
+			jsonData: `{
+				"_meta": {"key": "value"},
+				"content": [
+					{"type": "text", "text": "Operation completed"}
+				],
+				"structuredContent": {
+					"status": "success",
+					"count": 42,
+					"message": "Data processed successfully"
+				}
+			}`,
+			expected: CallToolResult{
+				Result: Result{
+					Meta: NewMetaFromMap(map[string]any{"key": "value"}),
+				},
+				Content: []Content{
+					TextContent{Type: "text", Text: "Operation completed"},
+				},
+				StructuredContent: map[string]any{
+					"status":  "success",
+					"count":   float64(42),
+					"message": "Data processed successfully",
+				},
+				IsError: false,
+			},
+			wantErr: false,
+		},
+		{
+			name: "error result",
+			jsonData: `{
+				"_meta": {"error_code": "E001"},
+				"content": [
+					{"type": "text", "text": "An error occurred"}
+				],
+				"isError": true
+			}`,
+			expected: CallToolResult{
+				Result: Result{
+					Meta: NewMetaFromMap(map[string]any{"error_code": "E001"}),
+				},
+				Content: []Content{
+					TextContent{Type: "text", Text: "An error occurred"},
+				},
+				IsError: true,
+			},
+			wantErr: false,
+		},
+		{
+			name: "result with multiple content types",
+			jsonData: `{
+				"_meta": {"session_id": "12345"},
+				"content": [
+					{"type": "text", "text": "Processing complete"},
+					{"type": "image", "data": "base64-encoded-image-data", "mimeType": "image/jpeg"}
+				],
+				"structuredContent": {
+					"processed_items": 100,
+					"errors": 0
+				}
+			}`,
+			expected: CallToolResult{
+				Result: Result{
+					Meta: NewMetaFromMap(map[string]any{"session_id": "12345"}),
+				},
+				Content: []Content{
+					TextContent{Type: "text", Text: "Processing complete"},
+					ImageContent{Type: "image", Data: "base64-encoded-image-data", MIMEType: "image/jpeg"},
+				},
+				StructuredContent: map[string]any{
+					"processed_items": float64(100),
+					"errors":          float64(0),
+				},
+				IsError: false,
+			},
+			wantErr: false,
+		},
+		{
+			name: "result with nil structured content",
+			jsonData: `{
+				"_meta": {"key": "value"},
+				"content": [
+					{"type": "text", "text": "Simple result"}
+				]
+			}`,
+			expected: CallToolResult{
+				Result: Result{
+					Meta: NewMetaFromMap(map[string]any{"key": "value"}),
+				},
+				Content: []Content{
+					TextContent{Type: "text", Text: "Simple result"},
+				},
+				StructuredContent: nil,
+				IsError:           false,
+			},
+			wantErr: false,
+		},
+		{
+			name: "result with empty content array",
+			jsonData: `{
+				"_meta": {"key": "value"},
+				"content": [],
+				"structuredContent": {
+					"data": "structured only"
+				}
+			}`,
+			expected: CallToolResult{
+				Result: Result{
+					Meta: NewMetaFromMap(map[string]any{"key": "value"}),
+				},
+				Content: []Content{},
+				StructuredContent: map[string]any{
+					"data": "structured only",
+				},
+				IsError: false,
+			},
+			wantErr: false,
+		},
+		{
+			name:     "invalid JSON",
+			jsonData: `{invalid json}`,
+			wantErr:  true,
+		},
+		{
+			name: "result with missing content field",
+			jsonData: `{
+				"_meta": {"key": "value"},
+				"structuredContent": {"data": "no content"}
+			}`,
+			expected: CallToolResult{
+				Result: Result{
+					Meta: NewMetaFromMap(map[string]any{"key": "value"}),
+				},
+				Content: nil,
+				StructuredContent: map[string]any{
+					"data": "no content",
+				},
+				IsError: false,
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result CallToolResult
+			err := json.Unmarshal([]byte(tt.jsonData), &result)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+
+			// Compare Meta
+			if tt.expected.Meta != nil {
+				assert.Equal(t, tt.expected.Meta, result.Meta)
+			}
+
+			// Compare Content
+			assert.Len(t, result.Content, len(tt.expected.Content))
+			for i, expectedContent := range tt.expected.Content {
+				if i < len(result.Content) {
+					// Compare content types and values
+					switch expected := expectedContent.(type) {
+					case TextContent:
+						if actual, ok := result.Content[i].(TextContent); ok {
+							assert.Equal(t, expected.Text, actual.Text)
+						} else {
+							t.Errorf("Expected TextContent at index %d, got %T", i, result.Content[i])
+						}
+					case ImageContent:
+						if actual, ok := result.Content[i].(ImageContent); ok {
+							assert.Equal(t, expected.Data, actual.Data)
+							assert.Equal(t, expected.MIMEType, actual.MIMEType)
+						} else {
+							t.Errorf("Expected ImageContent at index %d, got %T", i, result.Content[i])
+						}
+					}
+				}
+			}
+
+			// Compare StructuredContent
+			assert.Equal(t, tt.expected.StructuredContent, result.StructuredContent)
+
+			// Compare IsError
+			assert.Equal(t, tt.expected.IsError, result.IsError)
+		})
+	}
+}
+
+// TestCallToolResultRoundTrip tests that marshaling and unmarshaling preserves all data
+func TestCallToolResultRoundTrip(t *testing.T) {
+	original := CallToolResult{
+		Result: Result{
+			Meta: NewMetaFromMap(map[string]any{
+				"session_id": "12345",
+				"user_id":    "user123",
+				"timestamp":  "2024-01-01T00:00:00Z",
+			}),
+		},
+		Content: []Content{
+			TextContent{Type: "text", Text: "Operation started"},
+			ImageContent{Type: "image", Data: "base64-encoded-chart-data", MIMEType: "image/png"},
+			TextContent{Type: "text", Text: "Operation completed successfully"},
+		},
+		StructuredContent: map[string]any{
+			"status":          "success",
+			"processed_count": float64(150.0),
+			"error_count":     float64(0.0),
+			"warnings":        []any{"Minor issue detected"},
+			"metadata": map[string]any{
+				"version": "1.0.0",
+				"build":   "2024-01-01",
+			},
+		},
+		IsError: false,
+	}
+
+	// Marshal to JSON
+	data, err := json.Marshal(original)
+	assert.NoError(t, err)
+
+	// Unmarshal back
+	var unmarshaled CallToolResult
+	err = json.Unmarshal(data, &unmarshaled)
+	assert.NoError(t, err)
+
+	// Verify all fields are preserved
+	assert.Equal(t, original.Meta, unmarshaled.Meta)
+	assert.Equal(t, original.IsError, unmarshaled.IsError)
+	assert.Equal(t, original.StructuredContent, unmarshaled.StructuredContent)
+
+	// Verify content array
+	assert.Len(t, unmarshaled.Content, len(original.Content))
+	for i, expectedContent := range original.Content {
+		if i < len(unmarshaled.Content) {
+			switch expected := expectedContent.(type) {
+			case TextContent:
+				if actual, ok := unmarshaled.Content[i].(TextContent); ok {
+					assert.Equal(t, expected.Text, actual.Text)
+				} else {
+					t.Errorf("Expected TextContent at index %d, got %T", i, unmarshaled.Content[i])
+				}
+			case ImageContent:
+				if actual, ok := unmarshaled.Content[i].(ImageContent); ok {
+					assert.Equal(t, expected.Data, actual.Data)
+					assert.Equal(t, expected.MIMEType, actual.MIMEType)
+				} else {
+					t.Errorf("Expected ImageContent at index %d, got %T", i, unmarshaled.Content[i])
+				}
+			}
+		}
+	}
+}
+
+// TestCallToolResultEdgeCases tests edge cases for CallToolResult marshaling/unmarshaling
+func TestCallToolResultEdgeCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		result   CallToolResult
+		jsonData string
+	}{
+		{
+			name: "result with complex structured content",
+			result: CallToolResult{
+				Content: []Content{
+					TextContent{Type: "text", Text: "Complex data returned"},
+				},
+				StructuredContent: map[string]any{
+					"nested": map[string]any{
+						"array": []any{1, 2, 3, "string", true, nil},
+						"object": map[string]any{
+							"deep": map[string]any{
+								"value": "very deep",
+							},
+						},
+					},
+					"mixed_types": []any{
+						map[string]any{"type": "object"},
+						"string",
+						42.5,
+						true,
+						nil,
+					},
+				},
+			},
+		},
+		{
+			name: "result with empty structured content object",
+			result: CallToolResult{
+				Content: []Content{
+					TextContent{Type: "text", Text: "Empty structured content"},
+				},
+				StructuredContent: map[string]any{},
+			},
+		},
+		{
+			name: "result with null structured content in JSON",
+			jsonData: `{
+				"content": [{"type": "text", "text": "Null structured content"}],
+				"structuredContent": null
+			}`,
+		},
+		{
+			name: "result with missing isError field",
+			jsonData: `{
+				"content": [{"type": "text", "text": "No error field"}]
+			}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var data []byte
+			var err error
+
+			if tt.jsonData != "" {
+				// Test unmarshaling from JSON
+				var result CallToolResult
+				err = json.Unmarshal([]byte(tt.jsonData), &result)
+				assert.NoError(t, err)
+
+				// Verify the result can be marshaled back
+				data, err = json.Marshal(result)
+				assert.NoError(t, err)
+			} else {
+				// Test marshaling the result
+				data, err = json.Marshal(tt.result)
+				assert.NoError(t, err)
+
+				// Verify it can be unmarshaled back
+				var result CallToolResult
+				err = json.Unmarshal(data, &result)
+				assert.NoError(t, err)
+			}
+
+			// Verify the JSON is valid
+			var jsonMap map[string]any
+			err = json.Unmarshal(data, &jsonMap)
+			assert.NoError(t, err)
+		})
+	}
 }
 
 // TestNewItemsAPICompatibility tests that the new Items API functions
