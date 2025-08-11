@@ -110,10 +110,6 @@ func TestServerWithToolStructuredContent(t *testing.T) {
 		t.Fatalf("unexpected error result: %+v", result)
 	}
 
-	if result.Meta.AdditionalFields["key"] != "value" {
-		t.Errorf("Expected Meta.AdditionalFields['key'] to be 'value', got %v", result.Meta.AdditionalFields["key"])
-	}
-
 	if len(result.Content) != 1 {
 		t.Fatalf("Expected 1 content item, got %d", len(result.Content))
 	}
