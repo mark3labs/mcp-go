@@ -236,10 +236,19 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// detect empty ping response, skip session ID validation
+	isPingResponse := jsonMessage.Method == "" && jsonMessage.ID != nil &&
+		((jsonMessage.Result == nil || strings.TrimSpace(string(jsonMessage.Result)) == "{}") &&
+			(jsonMessage.Error == nil || strings.TrimSpace(string(jsonMessage.Error)) == "{}"))
+
+	if isPingResponse {
+		return
+	}
+
 	// Check if this is a sampling response (has result/error but no method)
-	isSamplingResponse := jsonMessage.Method == "" && jsonMessage.ID != nil && 
+	isSamplingResponse := jsonMessage.Method == "" && jsonMessage.ID != nil &&
 		(jsonMessage.Result != nil || jsonMessage.Error != nil)
-	
+
 	isInitializeRequest := jsonMessage.Method == mcp.MethodInitialize
 
 	// Handle sampling responses separately
