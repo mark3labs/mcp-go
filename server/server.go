@@ -383,14 +383,6 @@ func (s *MCPServer) DeleteResources(uris ...string) {
 	}
 }
 
-// SetResources replaces all existing resources with the provided list
-func (s *MCPServer) SetResources(resources ...ServerResource) {
-	s.resourcesMu.Lock()
-	s.resources = make(map[string]resourceEntry, len(resources))
-	s.resourcesMu.Unlock()
-	s.AddResources(resources...)
-}
-
 // RemoveResource removes a resource from the server
 func (s *MCPServer) RemoveResource(uri string) {
 	s.resourcesMu.Lock()
@@ -492,15 +484,6 @@ func (s *MCPServer) DeletePrompts(names ...string) {
 		// Send notification to all initialized sessions
 		s.SendNotificationToAllClients(mcp.MethodNotificationPromptsListChanged, nil)
 	}
-}
-
-// SetPrompts replaces all existing prompts with the provided list
-func (s *MCPServer) SetPrompts(prompts ...ServerPrompt) {
-	s.promptsMu.Lock()
-	s.prompts = make(map[string]mcp.Prompt, len(prompts))
-	s.promptHandlers = make(map[string]PromptHandlerFunc, len(prompts))
-	s.promptsMu.Unlock()
-	s.AddPrompts(prompts...)
 }
 
 // AddTool registers a new tool and its handler
