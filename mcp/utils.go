@@ -8,54 +8,54 @@ import (
 )
 
 // ClientRequest types
-var _ ClientRequest = &PingRequest{}
-var _ ClientRequest = &InitializeRequest{}
-var _ ClientRequest = &CompleteRequest{}
-var _ ClientRequest = &SetLevelRequest{}
-var _ ClientRequest = &GetPromptRequest{}
-var _ ClientRequest = &ListPromptsRequest{}
-var _ ClientRequest = &ListResourcesRequest{}
-var _ ClientRequest = &ReadResourceRequest{}
-var _ ClientRequest = &SubscribeRequest{}
-var _ ClientRequest = &UnsubscribeRequest{}
-var _ ClientRequest = &CallToolRequest{}
-var _ ClientRequest = &ListToolsRequest{}
+var _ ClientRequest = (*PingRequest)(nil)
+var _ ClientRequest = (*InitializeRequest)(nil)
+var _ ClientRequest = (*CompleteRequest)(nil)
+var _ ClientRequest = (*SetLevelRequest)(nil)
+var _ ClientRequest = (*GetPromptRequest)(nil)
+var _ ClientRequest = (*ListPromptsRequest)(nil)
+var _ ClientRequest = (*ListResourcesRequest)(nil)
+var _ ClientRequest = (*ReadResourceRequest)(nil)
+var _ ClientRequest = (*SubscribeRequest)(nil)
+var _ ClientRequest = (*UnsubscribeRequest)(nil)
+var _ ClientRequest = (*CallToolRequest)(nil)
+var _ ClientRequest = (*ListToolsRequest)(nil)
 
 // ClientNotification types
-var _ ClientNotification = &CancelledNotification{}
-var _ ClientNotification = &ProgressNotification{}
-var _ ClientNotification = &InitializedNotification{}
-var _ ClientNotification = &RootsListChangedNotification{}
+var _ ClientNotification = (*CancelledNotification)(nil)
+var _ ClientNotification = (*ProgressNotification)(nil)
+var _ ClientNotification = (*InitializedNotification)(nil)
+var _ ClientNotification = (*RootsListChangedNotification)(nil)
 
 // ClientResult types
-var _ ClientResult = &EmptyResult{}
-var _ ClientResult = &CreateMessageResult{}
-var _ ClientResult = &ListRootsResult{}
+var _ ClientResult = (*EmptyResult)(nil)
+var _ ClientResult = (*CreateMessageResult)(nil)
+var _ ClientResult = (*ListRootsResult)(nil)
 
 // ServerRequest types
-var _ ServerRequest = &PingRequest{}
-var _ ServerRequest = &CreateMessageRequest{}
-var _ ServerRequest = &ListRootsRequest{}
+var _ ServerRequest = (*PingRequest)(nil)
+var _ ServerRequest = (*CreateMessageRequest)(nil)
+var _ ServerRequest = (*ListRootsRequest)(nil)
 
 // ServerNotification types
-var _ ServerNotification = &CancelledNotification{}
-var _ ServerNotification = &ProgressNotification{}
-var _ ServerNotification = &LoggingMessageNotification{}
-var _ ServerNotification = &ResourceUpdatedNotification{}
-var _ ServerNotification = &ResourceListChangedNotification{}
-var _ ServerNotification = &ToolListChangedNotification{}
-var _ ServerNotification = &PromptListChangedNotification{}
+var _ ServerNotification = (*CancelledNotification)(nil)
+var _ ServerNotification = (*ProgressNotification)(nil)
+var _ ServerNotification = (*LoggingMessageNotification)(nil)
+var _ ServerNotification = (*ResourceUpdatedNotification)(nil)
+var _ ServerNotification = (*ResourceListChangedNotification)(nil)
+var _ ServerNotification = (*ToolListChangedNotification)(nil)
+var _ ServerNotification = (*PromptListChangedNotification)(nil)
 
 // ServerResult types
-var _ ServerResult = &EmptyResult{}
-var _ ServerResult = &InitializeResult{}
-var _ ServerResult = &CompleteResult{}
-var _ ServerResult = &GetPromptResult{}
-var _ ServerResult = &ListPromptsResult{}
-var _ ServerResult = &ListResourcesResult{}
-var _ ServerResult = &ReadResourceResult{}
-var _ ServerResult = &CallToolResult{}
-var _ ServerResult = &ListToolsResult{}
+var _ ServerResult = (*EmptyResult)(nil)
+var _ ServerResult = (*InitializeResult)(nil)
+var _ ServerResult = (*CompleteResult)(nil)
+var _ ServerResult = (*GetPromptResult)(nil)
+var _ ServerResult = (*ListPromptsResult)(nil)
+var _ ServerResult = (*ListResourcesResult)(nil)
+var _ ServerResult = (*ReadResourceResult)(nil)
+var _ ServerResult = (*CallToolResult)(nil)
+var _ ServerResult = (*ListToolsResult)(nil)
 
 // Helper functions for type assertions
 
