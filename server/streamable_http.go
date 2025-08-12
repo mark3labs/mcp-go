@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -238,8 +240,7 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 
 	// detect empty ping response, skip session ID validation
 	isPingResponse := jsonMessage.Method == "" && jsonMessage.ID != nil &&
-		((jsonMessage.Result == nil || strings.TrimSpace(string(jsonMessage.Result)) == "{}") &&
-			(jsonMessage.Error == nil || strings.TrimSpace(string(jsonMessage.Error)) == "{}"))
+		(isJSONEmpty(jsonMessage.Result) && isJSONEmpty(jsonMessage.Error))
 
 	if isPingResponse {
 		return
@@ -919,4 +920,52 @@ func NewTestStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption
 	sseServer := NewStreamableHTTPServer(server, opts...)
 	testServer := httptest.NewServer(sseServer)
 	return testServer
+}
+
+// isJSONEmpty reports whether the provided JSON value is "empty":
+//   - null
+//   - empty object: {}
+//   - empty array: []
+// It also treats nil/whitespace-only input as empty.
+// It does NOT treat 0, false, "" or non-empty composites as empty.
+func isJSONEmpty(data json.RawMessage) bool {
+	if len(data) == 0 {
+		return true
+	}
+
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return true
+	}
+
+	switch trimmed[0] {
+	case '{':
+		if len(trimmed) == 2 && trimmed[1] == '}' {
+			return true
+		}
+		for i := 1; i < len(trimmed); i++ {
+			if !unicode.IsSpace(rune(trimmed[i])) {
+				return trimmed[i] == '}'
+			}
+		}
+	case '[':
+		if len(trimmed) == 2 && trimmed[1] == ']' {
+			return true
+		}
+		for i := 1; i < len(trimmed); i++ {
+			if !unicode.IsSpace(rune(trimmed[i])) {
+				return trimmed[i] == ']'
+			}
+		}
+
+	case '"': // treat "" as not empty
+		return false
+
+	case 'n': // null
+		return len(trimmed) == 4 &&
+			trimmed[1] == 'u' &&
+			trimmed[2] == 'l' &&
+			trimmed[3] == 'l'
+	}
+	return false
 }
