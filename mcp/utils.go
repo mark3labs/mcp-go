@@ -492,6 +492,28 @@ func ExtractString(data map[string]any, key string) string {
 	return ""
 }
 
+func ParseAnnotaions(data map[string]any) *Annotations {
+	if data == nil {
+		return nil
+	}
+	annotations := &Annotations{}
+	if value, ok := data["priority"]; ok {
+		if priority, ok := value.(float64); ok {
+			annotations.Priority = priority
+		}
+	}
+
+	if value, ok := data["audience"]; ok {
+		if audience, ok := value.([]string); ok {
+			for _, a := range audience {
+				annotations.Audience = append(annotations.Audience, Role(a))
+			}
+		}
+	}
+	return annotations
+
+}
+
 func ExtractMap(data map[string]any, key string) map[string]any {
 	if value, ok := data[key]; ok {
 		if m, ok := value.(map[string]any); ok {
@@ -504,10 +526,17 @@ func ExtractMap(data map[string]any, key string) map[string]any {
 func ParseContent(contentMap map[string]any) (Content, error) {
 	contentType := ExtractString(contentMap, "type")
 
+	var annotations *Annotations
+	if annotationsMap := ExtractMap(contentMap, "annotations"); annotationsMap != nil {
+		annotations = ParseAnnotaions(annotationsMap)
+	}
+
 	switch contentType {
 	case ContentTypeText:
 		text := ExtractString(contentMap, "text")
-		return NewTextContent(text), nil
+		c := NewTextContent(text)
+		c.Annotations = annotations
+		return c, nil
 
 	case ContentTypeImage:
 		data := ExtractString(contentMap, "data")
@@ -515,7 +544,9 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		if data == "" || mimeType == "" {
 			return nil, fmt.Errorf("image data or mimeType is missing")
 		}
-		return NewImageContent(data, mimeType), nil
+		c := NewImageContent(data, mimeType)
+		c.Annotations = annotations
+		return c, nil
 
 	case ContentTypeAudio:
 		data := ExtractString(contentMap, "data")
@@ -523,7 +554,9 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		if data == "" || mimeType == "" {
 			return nil, fmt.Errorf("audio data or mimeType is missing")
 		}
-		return NewAudioContent(data, mimeType), nil
+		c := NewAudioContent(data, mimeType)
+		c.Annotations = annotations
+		return c, nil
 
 	case ContentTypeLink:
 		uri := ExtractString(contentMap, "uri")
@@ -533,7 +566,9 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		if uri == "" || name == "" {
 			return nil, fmt.Errorf("resource_link uri or name is missing")
 		}
-		return NewResourceLink(uri, name, description, mimeType), nil
+		c := NewResourceLink(uri, name, description, mimeType)
+		c.Annotations = annotations
+		return c, nil
 
 	case ContentTypeResource:
 		resourceMap := ExtractMap(contentMap, "resource")
@@ -546,7 +581,9 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 			return nil, err
 		}
 
-		return NewEmbeddedResource(resourceContents), nil
+		c := NewEmbeddedResource(resourceContents)
+		c.Annotations = annotations
+		return c, nil
 	}
 
 	return nil, fmt.Errorf("unsupported content type: %s", contentType)
