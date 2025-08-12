@@ -504,9 +504,11 @@ func ParseAnnotaions(data map[string]any) *Annotations {
 	}
 
 	if value, ok := data["audience"]; ok {
-		if audience, ok := value.([]string); ok {
+		if audience, ok := value.([]any); ok {
 			for _, a := range audience {
-				annotations.Audience = append(annotations.Audience, Role(a))
+				if roleStr, ok := a.(string); ok {
+					annotations.Audience = append(annotations.Audience, Role(roleStr))
+				}
 			}
 		}
 	}
