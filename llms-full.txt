@@ -7557,6 +7557,310 @@ mcp.WithNumber("price",
 )
 ```
 
+### Struct-Based Schema Definition
+
+MCP-Go supports defining input and output schemas using Go structs with automatic JSON schema generation. This provides a type-safe alternative to manual parameter definition, especially useful for complex tools with structured inputs and outputs.
+
+#### Input Schema with Go Structs
+
+Define your input parameters as a Go struct and use `WithInputSchema`:
+
+```go
+// Define input struct with JSON schema tags
+type SearchRequest struct {
+    Query      string   `json:"query" jsonschema_description:"Search query" jsonschema:"required"`
+    Limit      int      `json:"limit,omitempty" jsonschema_description:"Maximum results" jsonschema:"minimum=1,maximum=100,default=10"`
+    Categories []string `json:"categories,omitempty" jsonschema_description:"Filter by categories"`
+    SortBy     string   `json:"sortBy,omitempty" jsonschema_description:"Sort field" jsonschema:"enum=relevance,enum=date,enum=popularity"`
+}
+
+// Create tool with struct-based input schema
+searchTool := mcp.NewTool("search_products",
+    mcp.WithDescription("Search product catalog"),
+    mcp.WithInputSchema[SearchRequest](),
+)
+```
+
+#### Output Schema with Go Structs
+
+Define structured output for predictable tool responses:
+
+```go
+// Define output struct
+type SearchResponse struct {
+    Query       string    `json:"query" jsonschema_description:"Original search query"`
+    TotalCount  int       `json:"totalCount" jsonschema_description:"Total matching products"`
+    Products    []Product `json:"products" jsonschema_description:"Search results"`
+    ProcessedAt time.Time `json:"processedAt" jsonschema_description:"When search was performed"`
+}
+
+type Product struct {
+    ID          string  `json:"id" jsonschema_description:"Product ID"`
+    Name        string  `json:"name" jsonschema_description:"Product name"`
+    Price       float64 `json:"price" jsonschema_description:"Price in USD"`
+    InStock     bool    `json:"inStock" jsonschema_description:"Availability"`
+}
+
+// Create tool with both input and output schemas
+searchTool := mcp.NewTool("search_products",
+    mcp.WithDescription("Search product catalog with structured output"),
+    mcp.WithInputSchema[SearchRequest](),
+    mcp.WithOutputSchema[SearchResponse](),
+)
+```
+
+#### Structured Tool Handlers
+
+Use `NewStructuredToolHandler` for type-safe handler implementation:
+
+```go
+func main() {
+    s := server.NewMCPServer("Product Search", "1.0.0",
+        server.WithToolCapabilities(false),
+    )
+
+    // Define tool with input and output schemas
+    searchTool := mcp.NewTool("search_products",
+        mcp.WithDescription("Search product catalog"),
+        mcp.WithInputSchema[SearchRequest](),
+        mcp.WithOutputSchema[SearchResponse](),
+    )
+
+    // Add tool with structured handler
+    s.AddTool(searchTool, mcp.NewStructuredToolHandler(searchProductsHandler))
+    
+    server.ServeStdio(s)
+}
+
+// Handler receives typed input and returns typed output
+func searchProductsHandler(ctx context.Context, req mcp.CallToolRequest, args SearchRequest) (SearchResponse, error) {
+    // Input is already validated and bound to SearchRequest struct
+    limit := args.Limit
+    if limit <= 0 {
+        limit = 10
+    }
+
+    // Perform search logic
+    products := searchDatabase(args.Query, args.Categories, limit)
+
+    // Return structured response
+    return SearchResponse{
+        Query:       args.Query,
+        TotalCount:  len(products),
+        Products:    products,
+        ProcessedAt: time.Now(),
+    }, nil
+}
+```
+
+#### Array Output Schema
+
+Tools can return arrays of structured data:
+
+```go
+// Define asset struct
+type Asset struct {
+    ID       string  `json:"id" jsonschema_description:"Asset identifier"`
+    Name     string  `json:"name" jsonschema_description:"Asset name"`
+    Value    float64 `json:"value" jsonschema_description:"Current value"`
+    Currency string  `json:"currency" jsonschema_description:"Currency code"`
+}
+
+// Tool that returns array of assets
+assetsTool := mcp.NewTool("list_assets",
+    mcp.WithDescription("List portfolio assets"),
+    mcp.WithInputSchema[struct {
+        Portfolio string `json:"portfolio" jsonschema_description:"Portfolio ID" jsonschema:"required"`
+    }](),
+    mcp.WithOutputSchema[[]Asset](), // Array output schema
+)
+
+func listAssetsHandler(ctx context.Context, req mcp.CallToolRequest, args struct{ Portfolio string }) ([]Asset, error) {
+    // Return array of assets
+    return []Asset{
+        {ID: "btc", Name: "Bitcoin", Value: 45000.50, Currency: "USD"},
+        {ID: "eth", Name: "Ethereum", Value: 3200.75, Currency: "USD"},
+    }, nil
+}
+```
+
+#### Schema Tags Reference
+
+MCP-Go uses the `jsonschema` struct tags for schema generation:
+
+```go
+type ExampleStruct struct {
+    // Required field
+    Name string `json:"name" jsonschema:"required"`
+    
+    // Field with description
+    Age int `json:"age" jsonschema_description:"User age in years"`
+    
+    // Field with constraints
+    Score float64 `json:"score" jsonschema:"minimum=0,maximum=100"`
+    
+    // Enum field
+    Status string `json:"status" jsonschema:"enum=active,enum=inactive,enum=pending"`
+    
+    // Optional field with default
+    PageSize int `json:"pageSize,omitempty" jsonschema:"default=20"`
+    
+    // Array with constraints
+    Tags []string `json:"tags" jsonschema:"minItems=1,maxItems=10"`
+}
+```
+
+#### Manual Structured Results
+
+For more control over the response, use `NewTypedToolHandler` with manual result creation:
+
+```go
+manualTool := mcp.NewTool("process_data",
+    mcp.WithDescription("Process data with custom result"),
+    mcp.WithInputSchema[ProcessRequest](),
+    mcp.WithOutputSchema[ProcessResponse](),
+)
+
+s.AddTool(manualTool, mcp.NewTypedToolHandler(manualProcessHandler))
+
+func manualProcessHandler(ctx context.Context, req mcp.CallToolRequest, args ProcessRequest) (*mcp.CallToolResult, error) {
+    // Process the data
+    response := ProcessResponse{
+        Status:      "completed",
+        ProcessedAt: time.Now(),
+        ItemCount:   42,
+    }
+    
+    // Create custom fallback text for backward compatibility
+    fallbackText := fmt.Sprintf("Processed %d items successfully", response.ItemCount)
+    
+    // Return structured result with custom text
+    return mcp.NewToolResultStructured(response, fallbackText), nil
+}
+```
+
+#### Complete Example: File Operations with Structured I/O
+
+Here's a complete example using the file operations pattern from earlier, enhanced with structured schemas:
+
+```go
+// Define structured input for file operations
+type FileOperationRequest struct {
+    Path     string `json:"path" jsonschema_description:"File path" jsonschema:"required"`
+    Content  string `json:"content,omitempty" jsonschema_description:"File content (for write operations)"`
+    Encoding string `json:"encoding,omitempty" jsonschema_description:"File encoding" jsonschema:"enum=utf-8,enum=ascii,enum=base64,default=utf-8"`
+}
+
+// Define structured output
+type FileOperationResponse struct {
+    Success   bool      `json:"success" jsonschema_description:"Operation success status"`
+    Path      string    `json:"path" jsonschema_description:"File path"`
+    Message   string    `json:"message" jsonschema_description:"Result message"`
+    Content   string    `json:"content,omitempty" jsonschema_description:"File content (for read operations)"`
+    Size      int64     `json:"size,omitempty" jsonschema_description:"File size in bytes"`
+    Modified  time.Time `json:"modified,omitempty" jsonschema_description:"Last modified time"`
+}
+
+func main() {
+    s := server.NewMCPServer("File Manager", "1.0.0",
+        server.WithToolCapabilities(true),
+    )
+
+    // Create file tool with structured I/O
+    createFileTool := mcp.NewTool("create_file",
+        mcp.WithDescription("Create a new file with content"),
+        mcp.WithInputSchema[FileOperationRequest](),
+        mcp.WithOutputSchema[FileOperationResponse](),
+    )
+
+    // Read file tool
+    readFileTool := mcp.NewTool("read_file",
+        mcp.WithDescription("Read file contents"),
+        mcp.WithInputSchema[struct {
+            Path string `json:"path" jsonschema_description:"File path to read" jsonschema:"required"`
+        }](),
+        mcp.WithOutputSchema[FileOperationResponse](),
+    )
+
+    s.AddTool(createFileTool, mcp.NewStructuredToolHandler(handleCreateFile))
+    s.AddTool(readFileTool, mcp.NewStructuredToolHandler(handleReadFile))
+    
+    server.ServeStdio(s)
+}
+
+func handleCreateFile(ctx context.Context, req mcp.CallToolRequest, args FileOperationRequest) (FileOperationResponse, error) {
+    // Validate path for security
+    if strings.Contains(args.Path, "..") {
+        return FileOperationResponse{
+            Success: false,
+            Path:    args.Path,
+            Message: "Invalid path: directory traversal not allowed",
+        }, nil
+    }
+
+    // Handle different encodings
+    var data []byte
+    switch args.Encoding {
+    case "base64":
+        var err error
+        data, err = base64.StdEncoding.DecodeString(args.Content)
+        if err != nil {
+            return FileOperationResponse{
+                Success: false,
+                Path:    args.Path,
+                Message: fmt.Sprintf("Invalid base64 content: %v", err),
+            }, nil
+        }
+    default:
+        data = []byte(args.Content)
+    }
+
+    // Create file
+    if err := os.WriteFile(args.Path, data, 0644); err != nil {
+        return FileOperationResponse{
+            Success: false,
+            Path:    args.Path,
+            Message: fmt.Sprintf("Failed to create file: %v", err),
+        }, nil
+    }
+
+    // Get file info
+    info, _ := os.Stat(args.Path)
+
+    return FileOperationResponse{
+        Success:  true,
+        Path:     args.Path,
+        Message:  "File created successfully",
+        Size:     info.Size(),
+        Modified: info.ModTime(),
+    }, nil
+}
+
+func handleReadFile(ctx context.Context, req mcp.CallToolRequest, args struct{ Path string }) (FileOperationResponse, error) {
+    // Read file
+    data, err := os.ReadFile(args.Path)
+    if err != nil {
+        return FileOperationResponse{
+            Success: false,
+            Path:    args.Path,
+            Message: fmt.Sprintf("Failed to read file: %v", err),
+        }, nil
+    }
+
+    // Get file info
+    info, _ := os.Stat(args.Path)
+
+    return FileOperationResponse{
+        Success:  true,
+        Path:     args.Path,
+        Message:  "File read successfully",
+        Content:  string(data),
+        Size:     info.Size(),
+        Modified: info.ModTime(),
+    }, nil
+}
+```
+
 ### Tool Handlers
 
 Tool handlers process the actual function calls from LLMs. MCP-Go provides convenient helper methods for safe parameter extraction.
