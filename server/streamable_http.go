@@ -237,9 +237,9 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	}
 
 	// Check if this is a sampling response (has result/error but no method)
-	isSamplingResponse := jsonMessage.Method == "" && jsonMessage.ID != nil && 
+	isSamplingResponse := jsonMessage.Method == "" && jsonMessage.ID != nil &&
 		(jsonMessage.Result != nil || jsonMessage.Error != nil)
-	
+
 	isInitializeRequest := jsonMessage.Method == mcp.MethodInitialize
 
 	// Handle sampling responses separately
@@ -273,7 +273,18 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	session := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
+	// Check if a persistent session exists (for sampling support), otherwise create ephemeral session
+	var session *streamableHttpSession
+	if sessionInterface, exists := s.activeSessions.Load(sessionID); exists {
+		if persistentSession, ok := sessionInterface.(*streamableHttpSession); ok {
+			session = persistentSession
+		}
+	}
+
+	// Create ephemeral session if no persistent session exists
+	if session == nil {
+		session = newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
+	}
 
 	// Set the client context before handling the message
 	ctx := s.server.WithContext(r.Context(), session)
@@ -384,16 +395,27 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		sessionID = uuid.New().String()
 	}
 
-	session := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
-	if err := s.server.RegisterSession(r.Context(), session); err != nil {
-		http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusBadRequest)
-		return
+	// Check if session already exists, if so reuse it for sampling
+	var session *streamableHttpSession
+	if sessionInterface, exists := s.activeSessions.Load(sessionID); exists {
+		if existingSession, ok := sessionInterface.(*streamableHttpSession); ok {
+			session = existingSession
+		}
 	}
-	defer s.server.UnregisterSession(r.Context(), sessionID)
-	
-	// Register session for sampling response delivery
-	s.activeSessions.Store(sessionID, session)
-	defer s.activeSessions.Delete(sessionID)
+
+	// Create new session if none exists
+	if session == nil {
+		session = newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
+		if err := s.server.RegisterSession(r.Context(), session); err != nil {
+			http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusBadRequest)
+			return
+		}
+		defer s.server.UnregisterSession(r.Context(), sessionID)
+
+		// Register session for sampling response delivery
+		s.activeSessions.Store(sessionID, session)
+		defer s.activeSessions.Delete(sessionID)
+	}
 
 	// Set the client context before handling the message
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -743,18 +765,18 @@ type streamableHttpSession struct {
 	logLevels           *sessionLogLevelsStore
 
 	// Sampling support for bidirectional communication
-	samplingRequestChan  chan samplingRequestItem      // server -> client sampling requests
-	samplingRequests     sync.Map                      // requestID -> pending sampling request context
-	requestIDCounter     atomic.Int64                  // for generating unique request IDs
+	samplingRequestChan chan samplingRequestItem // server -> client sampling requests
+	samplingRequests    sync.Map                 // requestID -> pending sampling request context
+	requestIDCounter    atomic.Int64             // for generating unique request IDs
 }
 
 func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, levels *sessionLogLevelsStore) *streamableHttpSession {
 	s := &streamableHttpSession{
-		sessionID:            sessionID,
-		notificationChannel:  make(chan mcp.JSONRPCNotification, 100),
-		tools:                toolStore,
-		logLevels:            levels,
-		samplingRequestChan:  make(chan samplingRequestItem, 10),
+		sessionID:           sessionID,
+		notificationChannel: make(chan mcp.JSONRPCNotification, 100),
+		tools:               toolStore,
+		logLevels:           levels,
+		samplingRequestChan: make(chan samplingRequestItem, 10),
 	}
 	return s
 }
@@ -810,21 +832,21 @@ var _ SessionWithStreamableHTTPConfig = (*streamableHttpSession)(nil)
 func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
 	// Generate unique request ID
 	requestID := s.requestIDCounter.Add(1)
-	
+
 	// Create response channel for this specific request
 	responseChan := make(chan samplingResponseItem, 1)
-	
+
 	// Create the sampling request item
 	samplingRequest := samplingRequestItem{
 		requestID: requestID,
 		request:   request,
 		response:  responseChan,
 	}
-	
+
 	// Store the pending request
 	s.samplingRequests.Store(requestID, responseChan)
 	defer s.samplingRequests.Delete(requestID)
-	
+
 	// Send the sampling request via the channel (non-blocking)
 	select {
 	case s.samplingRequestChan <- samplingRequest:
@@ -834,7 +856,7 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 	default:
 		return nil, fmt.Errorf("sampling request queue is full - server overloaded")
 	}
-	
+
 	// Wait for response or context cancellation
 	select {
 	case response := <-responseChan:
