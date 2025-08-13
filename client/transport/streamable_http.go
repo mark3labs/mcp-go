@@ -258,7 +258,7 @@ func (c *StreamableHTTP) SendRequest(
 	ctx, cancel := c.contextAwareOfClientClose(ctx)
 	defer cancel()
 
-	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream")
+	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream", request.Header)
 	if err != nil {
 		if errors.Is(err, ErrSessionTerminated) && request.Method == string(mcp.MethodInitialize) {
 			// If the request is initialize, should not return a SessionTerminated error
@@ -339,11 +339,17 @@ func (c *StreamableHTTP) sendHTTP(
 	method string,
 	body io.Reader,
 	acceptType string,
+	header http.Header,
 ) (resp *http.Response, err error) {
 	// Create HTTP request
 	req, err := http.NewRequestWithContext(ctx, method, c.serverURL.String(), body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// request headers
+	if header != nil {
+		req.Header = header
 	}
 
 	// Set headers
@@ -546,7 +552,7 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	ctx, cancel := c.contextAwareOfClientClose(ctx)
 	defer cancel()
 
-	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream")
+	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream", nil)
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
@@ -605,7 +611,7 @@ func (c *StreamableHTTP) listenForever(ctx context.Context) {
 		connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		err := c.createGETConnectionToServer(connectCtx)
 		cancel()
-		
+
 		if errors.Is(err, ErrGetMethodNotAllowed) {
 			// server does not support listening
 			c.logger.Errorf("server does not support listening")
@@ -621,7 +627,7 @@ func (c *StreamableHTTP) listenForever(ctx context.Context) {
 		if err != nil {
 			c.logger.Errorf("failed to listen to server. retry in 1 second: %v", err)
 		}
-		
+
 		// Use context-aware sleep
 		select {
 		case <-time.After(retryInterval):
@@ -639,7 +645,7 @@ var (
 )
 
 func (c *StreamableHTTP) createGETConnectionToServer(ctx context.Context) error {
-	resp, err := c.sendHTTP(ctx, http.MethodGet, nil, "text/event-stream")
+	resp, err := c.sendHTTP(ctx, http.MethodGet, nil, "text/event-stream", nil)
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
@@ -704,15 +710,15 @@ func (c *StreamableHTTP) handleIncomingRequest(ctx context.Context, request JSON
 		// Create a new context with timeout for request handling, respecting parent context
 		requestCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		
+
 		response, err := handler(requestCtx, request)
 		if err != nil {
 			c.logger.Errorf("error handling request %s: %v", request.Method, err)
-			
+
 			// Determine appropriate JSON-RPC error code based on error type
 			var errorCode int
 			var errorMessage string
-			
+
 			// Check for specific sampling-related errors
 			if errors.Is(err, context.Canceled) {
 				errorCode = -32800 // Request cancelled
@@ -731,7 +737,7 @@ func (c *StreamableHTTP) handleIncomingRequest(ctx context.Context, request JSON
 					errorMessage = err.Error()
 				}
 			}
-			
+
 			// Send error response
 			errorResponse := &JSONRPCResponse{
 				JSONRPC: "2.0",
@@ -771,7 +777,7 @@ func (c *StreamableHTTP) sendResponseToServer(ctx context.Context, response *JSO
 	ctx, cancel := c.contextAwareOfClientClose(ctx)
 	defer cancel()
 
-	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(responseBody), "application/json")
+	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(responseBody), "application/json", nil)
 	if err != nil {
 		c.logger.Errorf("failed to send response to server: %v", err)
 		return
