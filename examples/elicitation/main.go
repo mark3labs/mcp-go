@@ -58,7 +58,11 @@ func demoElicitationHandler(s *server.MCPServer) server.ToolHandlerFunc {
 				return nil, fmt.Errorf("unexpected response format")
 			}
 
-			projectName := data["projectName"].(string)
+			projectName, ok := data["projectName"].(string)
+			if !ok || projectName == "" {
+				return nil, fmt.Errorf("invalid or missing 'projectName' in elicitation response")
+			}
+			
 			framework := "none"
 			if fw, ok := data["framework"].(string); ok {
 				framework = fw
@@ -123,8 +127,7 @@ func main() {
 			mcp.WithString("data", mcp.Required(), mcp.Description("Data to process")),
 		),
 		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			data := request.GetArguments()["data"].(string)
-
+			data := request.GetString("data", "")
 			// Only request elicitation if data seems sensitive
 			if len(data) > 100 {
 				elicitationRequest := mcp.ElicitationRequest{
@@ -160,7 +163,11 @@ func main() {
 					}, nil
 				}
 
-				responseData := result.Response.Value.(map[string]interface{})
+				responseData, ok := result.Response.Value.(map[string]interface{})
+				if !ok {
+					responseData = make(map[string]interface{})
+				}
+
 				if proceed, ok := responseData["proceed"].(bool); !ok || !proceed {
 					reason := "No reason provided"
 					if r, ok := responseData["reason"].(string); ok && r != "" {

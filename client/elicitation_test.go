@@ -144,6 +144,23 @@ func TestClient_Initialize_WithElicitationHandler(t *testing.T) {
 				t.Fatalf("expected initialize method, got %s", request.Method)
 			}
 
+			// Verify that elicitation capability is included in the request
+			paramsBytes, err := json.Marshal(request.Params)
+			if err != nil {
+				t.Fatalf("failed to marshal params: %v", err)
+			}
+
+			var initParams struct {
+				Capabilities mcp.ClientCapabilities `json:"capabilities"`
+			}
+			if err := json.Unmarshal(paramsBytes, &initParams); err != nil {
+				t.Fatalf("failed to unmarshal params: %v", err)
+			}
+
+			if initParams.Capabilities.Elicitation == nil {
+				t.Error("expected elicitation capability to be declared")
+			}
+
 			// Return successful initialization response
 			result := mcp.InitializeResult{
 				ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,

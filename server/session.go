@@ -59,13 +59,6 @@ type SessionWithElicitation interface {
 	RequestElicitation(ctx context.Context, request mcp.ElicitationRequest) (*mcp.ElicitationResult, error)
 }
 
-// SessionWithElicitation is an extension of ClientSession that can send elicitation requests
-type SessionWithElicitation interface {
-	ClientSession
-	// RequestElicitation sends an elicitation request to the client and waits for response
-	RequestElicitation(ctx context.Context, request mcp.ElicitationRequest) (*mcp.ElicitationResult, error)
-}
-
 // SessionWithStreamableHTTPConfig extends ClientSession to support streamable HTTP transport configurations
 type SessionWithStreamableHTTPConfig interface {
 	ClientSession
