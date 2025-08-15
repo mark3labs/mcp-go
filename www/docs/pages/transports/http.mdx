@@ -494,7 +494,7 @@ func handleStatelessTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
         return nil, err
     }
     
-    return mcp.NewToolResultJSON(result), nil
+    return mcp.NewToolResultJSON(result)
 }
 
 // Use external storage for persistence

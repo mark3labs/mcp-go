@@ -253,6 +253,24 @@ func NewToolResultText(text string) *CallToolResult {
 	}
 }
 
+// NewToolResultJSON creates a new CallToolResult with a JSON content.
+func NewToolResultJSON[T any](data T) (*CallToolResult, error) {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("unable to marshal JSON: %w", err)
+	}
+
+	return &CallToolResult{
+		Content: []Content{
+			TextContent{
+				Type: ContentTypeText,
+				Text: string(b),
+			},
+		},
+		StructuredContent: data,
+	}, nil
+}
+
 // NewToolResultStructured creates a new CallToolResult with structured content.
 // It includes both the structured content and a text representation for backward compatibility.
 func NewToolResultStructured(structured any, fallbackText string) *CallToolResult {
