@@ -13,13 +13,13 @@ func TestParseAnnotations(t *testing.T) {
 		expected *Annotations
 	}{
 		{
-			name: "nil data",
-			data: nil,
+			name:     "nil data",
+			data:     nil,
 			expected: nil,
 		},
 		{
-			name: "empty data",
-			data: map[string]any{},
+			name:     "empty data",
+			data:     map[string]any{},
 			expected: &Annotations{},
 		},
 		{
@@ -48,7 +48,7 @@ func TestParseAnnotations(t *testing.T) {
 			},
 			expected: &Annotations{
 				Priority: 2.0,
-				Audience: []Role{"user", "assistant", "system"},
+				Audience: []Role{"user", "assistant"},
 			},
 		},
 		{
@@ -74,11 +74,20 @@ func TestParseAnnotations(t *testing.T) {
 				Audience: []Role{"user", "assistant"},
 			},
 		},
+		{
+			name: "audience as []string",
+			data: map[string]any{
+				"audience": []string{"assistant", "user"},
+			},
+			expected: &Annotations{
+				Audience: []Role{"assistant", "user"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ParseAnnotaions(tt.data)
+			result := ParseAnnotations(tt.data)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -268,7 +277,7 @@ func TestParseContent(t *testing.T) {
 		{
 			name: "resource link missing uri",
 			contentMap: map[string]any{
-				"type": "resource",
+				"type": "resource_link",
 				"name": "Test File",
 			},
 			expected:    nil,
@@ -277,7 +286,7 @@ func TestParseContent(t *testing.T) {
 		{
 			name: "resource link missing name",
 			contentMap: map[string]any{
-				"type": "resource",
+				"type": "resource_link",
 				"uri":  "file:///test.txt",
 			},
 			expected:    nil,
@@ -296,13 +305,13 @@ func TestParseContent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := ParseContent(tt.contentMap)
-			
+
 			if tt.expectError {
 				assert.Error(t, err)
 				assert.Nil(t, result)
 			} else {
 				assert.NoError(t, err)
-				
+
 				// Compare the actual content values
 				switch exp := tt.expected.(type) {
 				case TextContent:
@@ -347,3 +356,4 @@ func TestParseContent(t *testing.T) {
 		})
 	}
 }
+

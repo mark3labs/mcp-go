@@ -492,23 +492,20 @@ func ExtractString(data map[string]any, key string) string {
 	return ""
 }
 
-func ParseAnnotaions(data map[string]any) *Annotations {
+func ParseAnnotations(data map[string]any) *Annotations {
 	if data == nil {
 		return nil
 	}
 	annotations := &Annotations{}
 	if value, ok := data["priority"]; ok {
-		if priority, ok := value.(float64); ok {
-			annotations.Priority = priority
-		}
+		annotations.Priority = cast.ToFloat64(value)
 	}
 
 	if value, ok := data["audience"]; ok {
-		if audience, ok := value.([]any); ok {
-			for _, a := range audience {
-				if roleStr, ok := a.(string); ok {
-					annotations.Audience = append(annotations.Audience, Role(roleStr))
-				}
+		for _, a := range cast.ToStringSlice(value) {
+			a := Role(a)
+			if a == RoleUser || a == RoleAssistant {
+				annotations.Audience = append(annotations.Audience, a)
 			}
 		}
 	}
@@ -530,7 +527,7 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 
 	var annotations *Annotations
 	if annotationsMap := ExtractMap(contentMap, "annotations"); annotationsMap != nil {
-		annotations = ParseAnnotaions(annotationsMap)
+		annotations = ParseAnnotations(annotationsMap)
 	}
 
 	switch contentType {
