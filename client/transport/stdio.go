@@ -200,11 +200,15 @@ func (c *Stdio) Close() error {
 	// cancel all in-flight request
 	close(c.done)
 
-	if err := c.stdin.Close(); err != nil {
-		return fmt.Errorf("failed to close stdin: %w", err)
+	if c.stdin != nil {
+		if err := c.stdin.Close(); err != nil {
+			return fmt.Errorf("failed to close stdin: %w", err)
+		}
 	}
-	if err := c.stderr.Close(); err != nil {
-		return fmt.Errorf("failed to close stderr: %w", err)
+	if c.stderr != nil {
+		if err := c.stderr.Close(); err != nil {
+			return fmt.Errorf("failed to close stderr: %w", err)
+		}
 	}
 
 	if c.cmd != nil {
