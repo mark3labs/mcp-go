@@ -54,9 +54,10 @@ func TestToken_IsExpired(t *testing.T) {
 func TestMemoryTokenStore(t *testing.T) {
 	// Create a token store
 	store := NewMemoryTokenStore()
+	ctx := context.Background()
 
 	// Test getting token from empty store
-	_, err := store.GetToken()
+	_, err := store.GetToken(ctx)
 	if err == nil {
 		t.Errorf("Expected error when getting token from empty store")
 	}
@@ -71,13 +72,13 @@ func TestMemoryTokenStore(t *testing.T) {
 	}
 
 	// Save the token
-	err = store.SaveToken(token)
+	err = store.SaveToken(ctx, token)
 	if err != nil {
 		t.Fatalf("Failed to save token: %v", err)
 	}
 
 	// Get the token
-	retrievedToken, err := store.GetToken()
+	retrievedToken, err := store.GetToken(ctx)
 	if err != nil {
 		t.Fatalf("Failed to get token: %v", err)
 	}
@@ -158,6 +159,7 @@ func TestValidateRedirectURI(t *testing.T) {
 
 func TestOAuthHandler_GetAuthorizationHeader_EmptyAccessToken(t *testing.T) {
 	// Create a token store with a token that has an empty access token
+	ctx := context.Background()
 	tokenStore := NewMemoryTokenStore()
 	invalidToken := &Token{
 		AccessToken:  "", // Empty access token
@@ -166,7 +168,7 @@ func TestOAuthHandler_GetAuthorizationHeader_EmptyAccessToken(t *testing.T) {
 		ExpiresIn:    3600,
 		ExpiresAt:    time.Now().Add(1 * time.Hour), // Valid for 1 hour
 	}
-	if err := tokenStore.SaveToken(invalidToken); err != nil {
+	if err := tokenStore.SaveToken(ctx, invalidToken); err != nil {
 		t.Fatalf("Failed to save token: %v", err)
 	}
 
