@@ -13,6 +13,7 @@ import (
 )
 
 func TestNewOAuthStreamableHttpClient(t *testing.T) {
+	ctx := context.Background()
 	// Create a test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check for Authorization header
@@ -51,7 +52,7 @@ func TestNewOAuthStreamableHttpClient(t *testing.T) {
 		ExpiresIn:    3600,
 		ExpiresAt:    time.Now().Add(1 * time.Hour), // Valid for 1 hour
 	}
-	if err := tokenStore.SaveToken(validToken); err != nil {
+	if err := tokenStore.SaveToken(ctx, validToken); err != nil {
 		t.Fatalf("Failed to save token: %v", err)
 	}
 
