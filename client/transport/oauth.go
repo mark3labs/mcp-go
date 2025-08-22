@@ -78,6 +78,9 @@ func NewMemoryTokenStore() *MemoryTokenStore {
 
 // GetToken returns the current token
 func (s *MemoryTokenStore) GetToken(ctx context.Context) (*Token, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.token == nil {
@@ -88,6 +91,9 @@ func (s *MemoryTokenStore) GetToken(ctx context.Context) (*Token, error) {
 
 // SaveToken saves a token
 func (s *MemoryTokenStore) SaveToken(ctx context.Context, token *Token) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.token = token
@@ -151,6 +157,11 @@ func (h *OAuthHandler) GetAuthorizationHeader(ctx context.Context) (string, erro
 // getValidToken returns a valid token, refreshing if necessary
 func (h *OAuthHandler) getValidToken(ctx context.Context) (*Token, error) {
 	token, err := h.config.TokenStore.GetToken(ctx)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+	}
 	if err == nil && !token.IsExpired() && token.AccessToken != "" {
 		return token, nil
 	}
@@ -218,7 +229,10 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken string) (*
 	}
 
 	// If no new refresh token is provided, keep the old one
-	oldToken, _ := h.config.TokenStore.GetToken(ctx)
+	oldToken, oldErr := h.config.TokenStore.GetToken(ctx)
+	if oldErr != nil && (errors.Is(oldErr, context.Canceled) || errors.Is(oldErr, context.DeadlineExceeded)) {
+		return nil, oldErr
+	}
 	if tokenResp.RefreshToken == "" && oldToken != nil {
 		tokenResp.RefreshToken = oldToken.RefreshToken
 	}
