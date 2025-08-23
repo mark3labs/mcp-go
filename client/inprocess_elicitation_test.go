@@ -37,20 +37,11 @@ func TestInProcessElicitation(t *testing.T) {
 	mcpServer := server.NewMCPServer("test-server", "1.0.0", server.WithElicitation())
 
 	// Add a tool that uses elicitation
-	mcpServer.AddTool(mcp.Tool{
-		Name:        "test_elicitation",
-		Description: "Test elicitation functionality",
-		InputSchema: mcp.ToolInputSchema{
-			Type: "object",
-			Properties: map[string]any{
-				"action": map[string]any{
-					"type":        "string",
-					"description": "Action to perform",
-				},
-			},
-			Required: []string{"action"},
-		},
-	}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	mcpServer.AddTool(mcp.NewTool(
+		"test_elicitation",
+		mcp.WithDescription("Test elicitation functionality"),
+		mcp.WithString("action", mcp.Description("Action to perform"), mcp.Required()),
+	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		action, err := request.RequireString("action")
 		if err != nil {
 			return nil, err
