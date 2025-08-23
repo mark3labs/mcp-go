@@ -55,17 +55,40 @@ func demoElicitationHandler(s *server.MCPServer) server.ToolHandlerFunc {
 			// User provided the information
 			data, ok := result.Response.Value.(map[string]interface{})
 			if !ok {
-				return nil, fmt.Errorf("unexpected response format")
+				return nil, fmt.Errorf("unexpected response format: expected map[string]interface{}, got %T", result.Response.Value)
 			}
 
-			projectName := data["projectName"].(string)
-			framework := "none"
-			if fw, ok := data["framework"].(string); ok {
-				framework = fw
+			// Safely extract projectName (required field)
+			projectNameRaw, exists := data["projectName"]
+			if !exists {
+				return nil, fmt.Errorf("required field 'projectName' is missing from response")
 			}
+			projectName, ok := projectNameRaw.(string)
+			if !ok {
+				return nil, fmt.Errorf("field 'projectName' must be a string, got %T", projectNameRaw)
+			}
+			if projectName == "" {
+				return nil, fmt.Errorf("field 'projectName' cannot be empty")
+			}
+
+			// Safely extract framework (optional field)
+			framework := "none"
+			if frameworkRaw, exists := data["framework"]; exists {
+				if fw, ok := frameworkRaw.(string); ok {
+					framework = fw
+				} else {
+					return nil, fmt.Errorf("field 'framework' must be a string, got %T", frameworkRaw)
+				}
+			}
+
+			// Safely extract includeTests (optional field)
 			includeTests := true
-			if tests, ok := data["includeTests"].(bool); ok {
-				includeTests = tests
+			if testsRaw, exists := data["includeTests"]; exists {
+				if tests, ok := testsRaw.(bool); ok {
+					includeTests = tests
+				} else {
+					return nil, fmt.Errorf("field 'includeTests' must be a boolean, got %T", testsRaw)
+				}
 			}
 
 			// Create project based on user input
@@ -123,7 +146,15 @@ func main() {
 			mcp.WithString("data", mcp.Required(), mcp.Description("Data to process")),
 		),
 		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			data := request.GetArguments()["data"].(string)
+			// Safely extract data argument
+			dataRaw, exists := request.GetArguments()["data"]
+			if !exists {
+				return nil, fmt.Errorf("required parameter 'data' is missing")
+			}
+			data, ok := dataRaw.(string)
+			if !ok {
+				return nil, fmt.Errorf("parameter 'data' must be a string, got %T", dataRaw)
+			}
 
 			// Only request elicitation if data seems sensitive
 			if len(data) > 100 {
@@ -160,11 +191,30 @@ func main() {
 					}, nil
 				}
 
-				responseData := result.Response.Value.(map[string]interface{})
-				if proceed, ok := responseData["proceed"].(bool); !ok || !proceed {
+				// Safely extract response data
+				responseData, ok := result.Response.Value.(map[string]interface{})
+				if !ok {
+					return nil, fmt.Errorf("unexpected response format: expected map[string]interface{}, got %T", result.Response.Value)
+				}
+
+				// Safely extract proceed field
+				proceedRaw, exists := responseData["proceed"]
+				if !exists {
+					return nil, fmt.Errorf("required field 'proceed' is missing from response")
+				}
+				proceed, ok := proceedRaw.(bool)
+				if !ok {
+					return nil, fmt.Errorf("field 'proceed' must be a boolean, got %T", proceedRaw)
+				}
+
+				if !proceed {
 					reason := "No reason provided"
-					if r, ok := responseData["reason"].(string); ok && r != "" {
-						reason = r
+					if reasonRaw, exists := responseData["reason"]; exists {
+						if r, ok := reasonRaw.(string); ok && r != "" {
+							reason = r
+						} else if reasonRaw != nil {
+							return nil, fmt.Errorf("field 'reason' must be a string, got %T", reasonRaw)
+						}
 					}
 					return &mcp.CallToolResult{
 						Content: []mcp.Content{

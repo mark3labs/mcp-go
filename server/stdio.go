@@ -644,7 +644,7 @@ func (s *stdioSession) handleElicitationResponse(rawMessage json.RawMessage) boo
 	}
 	// Parse the ID as int64
 	id, err := response.ID.Int64()
-	if err != nil {
+	if err != nil || (response.Result == nil && response.Error == nil) {
 		return false
 	}
 
