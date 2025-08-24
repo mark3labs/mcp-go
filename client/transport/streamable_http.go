@@ -605,7 +605,7 @@ func (c *StreamableHTTP) listenForever(ctx context.Context) {
 		connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		err := c.createGETConnectionToServer(connectCtx)
 		cancel()
-		
+
 		if errors.Is(err, ErrGetMethodNotAllowed) {
 			// server does not support listening
 			c.logger.Errorf("server does not support listening")
@@ -621,7 +621,7 @@ func (c *StreamableHTTP) listenForever(ctx context.Context) {
 		if err != nil {
 			c.logger.Errorf("failed to listen to server. retry in 1 second: %v", err)
 		}
-		
+
 		// Use context-aware sleep
 		select {
 		case <-time.After(retryInterval):
@@ -704,15 +704,15 @@ func (c *StreamableHTTP) handleIncomingRequest(ctx context.Context, request JSON
 		// Create a new context with timeout for request handling, respecting parent context
 		requestCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		
+
 		response, err := handler(requestCtx, request)
 		if err != nil {
 			c.logger.Errorf("error handling request %s: %v", request.Method, err)
-			
+
 			// Determine appropriate JSON-RPC error code based on error type
 			var errorCode int
 			var errorMessage string
-			
+
 			// Check for specific sampling-related errors
 			if errors.Is(err, context.Canceled) {
 				errorCode = -32800 // Request cancelled
@@ -731,7 +731,7 @@ func (c *StreamableHTTP) handleIncomingRequest(ctx context.Context, request JSON
 					errorMessage = err.Error()
 				}
 			}
-			
+
 			// Send error response
 			errorResponse := &JSONRPCResponse{
 				JSONRPC: "2.0",

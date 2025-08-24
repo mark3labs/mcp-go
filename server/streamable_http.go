@@ -237,14 +237,13 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	}
 
 	// Check if this is a sampling response (has result/error but no method)
-	isSamplingResponse := jsonMessage.Method == "" && jsonMessage.ID != nil && 
+	isResponse := jsonMessage.Method == "" && jsonMessage.ID != nil &&
 		(jsonMessage.Result != nil || jsonMessage.Error != nil)
-	
 	isInitializeRequest := jsonMessage.Method == mcp.MethodInitialize
 
 	// Handle sampling responses separately
-	if isSamplingResponse {
-		if err := s.handleSamplingResponse(w, r, jsonMessage); err != nil {
+	if isResponse {
+		if err := s.handleResponse(w, r, jsonMessage); err != nil {
 			s.logger.Errorf("Failed to handle sampling response: %v", err)
 			http.Error(w, "Failed to handle sampling response", http.StatusInternalServerError)
 		}
@@ -390,7 +389,7 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer s.server.UnregisterSession(r.Context(), sessionID)
-	
+
 	// Register session for sampling response delivery
 	s.activeSessions.Store(sessionID, session)
 	defer s.activeSessions.Delete(sessionID)
@@ -431,6 +430,21 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 						Method: string(mcp.MethodSamplingCreateMessage),
 					},
 					Params: samplingReq.request.CreateMessageParams,
+				}
+				select {
+				case writeChan <- jsonrpcRequest:
+				case <-done:
+					return
+				}
+			case elicitationReq := <-session.elicitationRequestChan:
+				// Send elicitation request to client via SSE
+				jsonrpcRequest := mcp.JSONRPCRequest{
+					JSONRPC: "2.0",
+					ID:      mcp.NewRequestId(elicitationReq.requestID),
+					Request: mcp.Request{
+						Method: string(mcp.MethodElicitationCreate),
+					},
+					Params: elicitationReq.request.Params,
 				}
 				select {
 				case writeChan <- jsonrpcRequest:
@@ -525,8 +539,8 @@ func writeSSEEvent(w io.Writer, data any) error {
 	return nil
 }
 
-// handleSamplingResponse processes incoming sampling responses from clients
-func (s *StreamableHTTPServer) handleSamplingResponse(w http.ResponseWriter, r *http.Request, responseMessage struct {
+// handleResponse processes incoming responses from clients
+func (s *StreamableHTTPServer) handleResponse(w http.ResponseWriter, r *http.Request, responseMessage struct {
 	ID     json.RawMessage `json:"id"`
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  json.RawMessage `json:"error,omitempty"`
@@ -558,7 +572,7 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w http.ResponseWriter, r *
 	}
 
 	// Create the sampling response item
-	response := samplingResponseItem{
+	response := responseItem{
 		requestID: requestID,
 	}
 
@@ -575,20 +589,14 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w http.ResponseWriter, r *
 			response.err = fmt.Errorf("sampling error %d: %s", jsonrpcError.Code, jsonrpcError.Message)
 		}
 	} else if responseMessage.Result != nil {
-		// Parse result
-		var result mcp.CreateMessageResult
-		if err := json.Unmarshal(responseMessage.Result, &result); err != nil {
-			response.err = fmt.Errorf("failed to parse sampling result: %v", err)
-		} else {
-			response.result = &result
-		}
+		response.result = responseMessage.Result
 	} else {
 		response.err = fmt.Errorf("sampling response has neither result nor error")
 	}
 
 	// Find the corresponding session and deliver the response
 	// The response is delivered to the specific session identified by sessionID
-	if err := s.deliverSamplingResponse(sessionID, response); err != nil {
+	if err := s.deliverResponse(sessionID, response); err != nil {
 		s.logger.Errorf("Failed to deliver sampling response: %v", err)
 		http.Error(w, "Failed to deliver response", http.StatusInternalServerError)
 		return err
@@ -600,7 +608,7 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w http.ResponseWriter, r *
 }
 
 // deliverSamplingResponse delivers a sampling response to the appropriate session
-func (s *StreamableHTTPServer) deliverSamplingResponse(sessionID string, response samplingResponseItem) error {
+func (s *StreamableHTTPServer) deliverResponse(sessionID string, response responseItem) error {
 	// Look up the active session
 	sessionInterface, ok := s.activeSessions.Load(sessionID)
 	if !ok {
@@ -613,12 +621,12 @@ func (s *StreamableHTTPServer) deliverSamplingResponse(sessionID string, respons
 	}
 
 	// Look up the dedicated response channel for this specific request
-	responseChannelInterface, exists := session.samplingRequests.Load(response.requestID)
+	responseChannelInterface, exists := session.requests.Load(response.requestID)
 	if !exists {
 		return fmt.Errorf("no pending request found for session %s, request %d", sessionID, response.requestID)
 	}
 
-	responseChan, ok := responseChannelInterface.(chan samplingResponseItem)
+	responseChan, ok := responseChannelInterface.(chan responseItem)
 	if !ok {
 		return fmt.Errorf("invalid response channel type for session %s, request %d", sessionID, response.requestID)
 	}
@@ -723,13 +731,20 @@ func (s *sessionToolsStore) delete(sessionID string) {
 type samplingRequestItem struct {
 	requestID int64
 	request   mcp.CreateMessageRequest
-	response  chan samplingResponseItem
+	response  chan responseItem
 }
 
-type samplingResponseItem struct {
+type responseItem struct {
 	requestID int64
-	result    *mcp.CreateMessageResult
+	result    json.RawMessage
 	err       error
+}
+
+// Elicitation support types for HTTP transport
+type elicitationRequestItem struct {
+	requestID int64
+	request   mcp.ElicitationRequest
+	response  chan responseItem
 }
 
 // streamableHttpSession is a session for streamable-http transport
@@ -743,18 +758,21 @@ type streamableHttpSession struct {
 	logLevels           *sessionLogLevelsStore
 
 	// Sampling support for bidirectional communication
-	samplingRequestChan  chan samplingRequestItem      // server -> client sampling requests
-	samplingRequests     sync.Map                      // requestID -> pending sampling request context
-	requestIDCounter     atomic.Int64                  // for generating unique request IDs
+	samplingRequestChan    chan samplingRequestItem    // server -> client sampling requests
+	elicitationRequestChan chan elicitationRequestItem // server -> client elicitation requests
+
+	requests         sync.Map     // requestID -> pending request context
+	requestIDCounter atomic.Int64 // for generating unique request IDs
 }
 
 func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, levels *sessionLogLevelsStore) *streamableHttpSession {
 	s := &streamableHttpSession{
-		sessionID:            sessionID,
-		notificationChannel:  make(chan mcp.JSONRPCNotification, 100),
-		tools:                toolStore,
-		logLevels:            levels,
-		samplingRequestChan:  make(chan samplingRequestItem, 10),
+		sessionID:              sessionID,
+		notificationChannel:    make(chan mcp.JSONRPCNotification, 100),
+		tools:                  toolStore,
+		logLevels:              levels,
+		samplingRequestChan:    make(chan samplingRequestItem, 10),
+		elicitationRequestChan: make(chan elicitationRequestItem, 10),
 	}
 	return s
 }
@@ -810,21 +828,21 @@ var _ SessionWithStreamableHTTPConfig = (*streamableHttpSession)(nil)
 func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
 	// Generate unique request ID
 	requestID := s.requestIDCounter.Add(1)
-	
+
 	// Create response channel for this specific request
-	responseChan := make(chan samplingResponseItem, 1)
-	
+	responseChan := make(chan responseItem, 1)
+
 	// Create the sampling request item
 	samplingRequest := samplingRequestItem{
 		requestID: requestID,
 		request:   request,
 		response:  responseChan,
 	}
-	
+
 	// Store the pending request
-	s.samplingRequests.Store(requestID, responseChan)
-	defer s.samplingRequests.Delete(requestID)
-	
+	s.requests.Store(requestID, responseChan)
+	defer s.requests.Delete(requestID)
+
 	// Send the sampling request via the channel (non-blocking)
 	select {
 	case s.samplingRequestChan <- samplingRequest:
@@ -834,20 +852,70 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 	default:
 		return nil, fmt.Errorf("sampling request queue is full - server overloaded")
 	}
-	
+
 	// Wait for response or context cancellation
 	select {
 	case response := <-responseChan:
 		if response.err != nil {
 			return nil, response.err
 		}
-		return response.result, nil
+		var result mcp.CreateMessageResult
+		if err := json.Unmarshal(response.result, &result); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal sampling response: %v", err)
+		}
+		return &result, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// RequestElicitation implements SessionWithElicitation interface for HTTP transport
+func (s *streamableHttpSession) RequestElicitation(ctx context.Context, request mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
+	// Generate unique request ID
+	requestID := s.requestIDCounter.Add(1)
+
+	// Create response channel for this specific request
+	responseChan := make(chan responseItem, 1)
+
+	// Create the sampling request item
+	elicitationRequest := elicitationRequestItem{
+		requestID: requestID,
+		request:   request,
+		response:  responseChan,
+	}
+
+	// Store the pending request
+	s.requests.Store(requestID, responseChan)
+	defer s.requests.Delete(requestID)
+
+	// Send the sampling request via the channel (non-blocking)
+	select {
+	case s.elicitationRequestChan <- elicitationRequest:
+		// Request queued successfully
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+		return nil, fmt.Errorf("elicitation request queue is full - server overloaded")
+	}
+
+	// Wait for response or context cancellation
+	select {
+	case response := <-responseChan:
+		if response.err != nil {
+			return nil, response.err
+		}
+		var result mcp.ElicitationResult
+		if err := json.Unmarshal(response.result, &result); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal elicitation response: %v", err)
+		}
+		return &result, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 }
 
 var _ SessionWithSampling = (*streamableHttpSession)(nil)
+var _ SessionWithElicitation = (*streamableHttpSession)(nil)
 
 // --- session id manager ---
 
