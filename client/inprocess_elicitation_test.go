@@ -24,9 +24,9 @@ func (h *MockElicitationHandler) Elicit(ctx context.Context, request mcp.Elicita
 	return &mcp.ElicitationResult{
 		Response: mcp.ElicitationResponse{
 			Type: mcp.ElicitationResponseTypeAccept,
-			Value: map[string]interface{}{
-				"response": "User provided data",
-				"accepted": true,
+			Value: map[string]any{
+				"confirm": true,
+				"details": "User provided additional details",
 			},
 		},
 	}, nil
@@ -51,14 +51,14 @@ func TestInProcessElicitation(t *testing.T) {
 		elicitationRequest := mcp.ElicitationRequest{
 			Params: mcp.ElicitationParams{
 				Message: "Need additional information for " + action,
-				RequestedSchema: map[string]interface{}{
+				RequestedSchema: map[string]any{
 					"type": "object",
-					"properties": map[string]interface{}{
-						"confirm": map[string]interface{}{
+					"properties": map[string]any{
+						"confirm": map[string]any{
 							"type":        "boolean",
 							"description": "Confirm the action",
 						},
-						"details": map[string]interface{}{
+						"details": map[string]any{
 							"type":        "string",
 							"description": "Additional details",
 						},
@@ -107,10 +107,7 @@ func TestInProcessElicitation(t *testing.T) {
 	mockHandler := &MockElicitationHandler{}
 
 	// Create in-process client with elicitation handler
-	client, err := NewInProcessClientWithElicitationHandler(mcpServer, mockHandler)
-	if err != nil {
-		t.Fatalf("Failed to create client: %v", err)
-	}
+	client := NewInProcessClientWithElicitationHandler(mcpServer, mockHandler)
 	defer client.Close()
 
 	// Start the client
@@ -119,7 +116,7 @@ func TestInProcessElicitation(t *testing.T) {
 	}
 
 	// Initialize the client
-	_, err = client.Initialize(context.Background(), mcp.InitializeRequest{
+	_, err := client.Initialize(context.Background(), mcp.InitializeRequest{
 		Params: mcp.InitializeParams{
 			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
 			ClientInfo: mcp.Implementation{
@@ -154,6 +151,11 @@ func TestInProcessElicitation(t *testing.T) {
 		t.Fatal("Expected content in result")
 	}
 
+	// Assert that the result is not flagged as an error for the accept path
+	if result.IsError {
+		t.Error("Expected result to not be flagged as error for accept response")
+	}
+
 	textContent, ok := result.Content[0].(mcp.TextContent)
 	if !ok {
 		t.Fatal("Expected text content")
@@ -174,7 +176,7 @@ func TestInProcessElicitation(t *testing.T) {
 }
 
 // NewInProcessClientWithElicitationHandler creates an in-process client with elicitation support
-func NewInProcessClientWithElicitationHandler(server *server.MCPServer, handler ElicitationHandler) (*Client, error) {
+func NewInProcessClientWithElicitationHandler(server *server.MCPServer, handler ElicitationHandler) *Client {
 	// Create a wrapper that implements server.ElicitationHandler
 	serverHandler := &inProcessElicitationHandlerWrapper{handler: handler}
 
@@ -182,9 +184,8 @@ func NewInProcessClientWithElicitationHandler(server *server.MCPServer, handler 
 		transport.WithElicitationHandler(serverHandler))
 
 	client := NewClient(inProcessTransport)
-	client.elicitationHandler = handler
 
-	return client, nil
+	return client
 }
 
 // inProcessElicitationHandlerWrapper wraps client.ElicitationHandler to implement server.ElicitationHandler

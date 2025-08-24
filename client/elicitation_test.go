@@ -40,7 +40,7 @@ func TestClient_HandleElicitationRequest(t *testing.T) {
 				result: &mcp.ElicitationResult{
 					Response: mcp.ElicitationResponse{
 						Type: mcp.ElicitationResponseTypeAccept,
-						Value: map[string]interface{}{
+						Value: map[string]any{
 							"name":      "test-project",
 							"framework": "react",
 						},
@@ -84,13 +84,13 @@ func TestClient_HandleElicitationRequest(t *testing.T) {
 			request := transport.JSONRPCRequest{
 				ID:     mcp.NewRequestId(1),
 				Method: string(mcp.MethodElicitationCreate),
-				Params: map[string]interface{}{
+				Params: map[string]any{
 					"message": "Please provide project details",
-					"requestedSchema": map[string]interface{}{
+					"requestedSchema": map[string]any{
 						"type": "object",
-						"properties": map[string]interface{}{
-							"name":      map[string]interface{}{"type": "string"},
-							"framework": map[string]interface{}{"type": "string"},
+						"properties": map[string]any{
+							"name":      map[string]any{"type": "string"},
+							"framework": map[string]any{"type": "string"},
 						},
 					},
 				},
