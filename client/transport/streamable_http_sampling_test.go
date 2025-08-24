@@ -16,27 +16,27 @@ import (
 
 // TestStreamableHTTP_SamplingFlow tests the complete sampling flow with HTTP transport
 func TestStreamableHTTP_SamplingFlow(t *testing.T) {
-	// Create simple test server
+	// Create simple test server 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Just respond OK to any requests
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
-
+	
 	// Create HTTP client transport
 	client, err := NewStreamableHTTP(server.URL)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
 	defer client.Close()
-
+	
 	// Set up sampling request handler
 	var handledRequest *JSONRPCRequest
 	handlerCalled := make(chan struct{})
 	client.SetRequestHandler(func(ctx context.Context, request JSONRPCRequest) (*JSONRPCResponse, error) {
 		handledRequest = &request
 		close(handlerCalled)
-
+		
 		// Simulate sampling handler response
 		result := map[string]any{
 			"role": "assistant",
@@ -47,25 +47,25 @@ func TestStreamableHTTP_SamplingFlow(t *testing.T) {
 			"model":      "test-model",
 			"stopReason": "stop_sequence",
 		}
-
+		
 		resultBytes, _ := json.Marshal(result)
-
+		
 		return &JSONRPCResponse{
 			JSONRPC: "2.0",
 			ID:      request.ID,
 			Result:  resultBytes,
 		}, nil
 	})
-
+	
 	// Start the client
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
+	
 	err = client.Start(ctx)
 	if err != nil {
 		t.Fatalf("Failed to start client: %v", err)
 	}
-
+	
 	// Test direct request handling (simulating a sampling request)
 	samplingRequest := JSONRPCRequest{
 		JSONRPC: "2.0",
@@ -83,10 +83,10 @@ func TestStreamableHTTP_SamplingFlow(t *testing.T) {
 			},
 		},
 	}
-
+	
 	// Directly test request handling
 	client.handleIncomingRequest(ctx, samplingRequest)
-
+	
 	// Wait for handler to be called
 	select {
 	case <-handlerCalled:
@@ -94,12 +94,12 @@ func TestStreamableHTTP_SamplingFlow(t *testing.T) {
 	case <-time.After(1 * time.Second):
 		t.Fatal("Handler was not called within timeout")
 	}
-
+	
 	// Verify the request was handled
 	if handledRequest == nil {
 		t.Fatal("Sampling request was not handled")
 	}
-
+	
 	if handledRequest.Method != string(mcp.MethodSamplingCreateMessage) {
 		t.Errorf("Expected method %s, got %s", mcp.MethodSamplingCreateMessage, handledRequest.Method)
 	}
@@ -109,7 +109,7 @@ func TestStreamableHTTP_SamplingFlow(t *testing.T) {
 func TestStreamableHTTP_SamplingErrorHandling(t *testing.T) {
 	var errorHandled sync.WaitGroup
 	errorHandled.Add(1)
-
+	
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			var body map[string]any
@@ -118,7 +118,7 @@ func TestStreamableHTTP_SamplingErrorHandling(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 				return
 			}
-
+			
 			// Check if this is an error response
 			if errorField, ok := body["error"]; ok {
 				errorMap := errorField.(map[string]any)
@@ -132,25 +132,25 @@ func TestStreamableHTTP_SamplingErrorHandling(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
-
+	
 	client, err := NewStreamableHTTP(server.URL)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
 	defer client.Close()
-
+	
 	// Set up request handler that returns an error
 	client.SetRequestHandler(func(ctx context.Context, request JSONRPCRequest) (*JSONRPCResponse, error) {
 		return nil, fmt.Errorf("sampling failed")
 	})
-
+	
 	// Start the client
 	ctx := context.Background()
 	err = client.Start(ctx)
 	if err != nil {
 		t.Fatalf("Failed to start client: %v", err)
 	}
-
+	
 	// Simulate incoming sampling request
 	samplingRequest := JSONRPCRequest{
 		JSONRPC: "2.0",
@@ -158,10 +158,10 @@ func TestStreamableHTTP_SamplingErrorHandling(t *testing.T) {
 		Method:  string(mcp.MethodSamplingCreateMessage),
 		Params:  map[string]any{},
 	}
-
+	
 	// This should trigger error handling
 	client.handleIncomingRequest(ctx, samplingRequest)
-
+	
 	// Wait for error to be handled
 	errorHandled.Wait()
 }
@@ -170,7 +170,7 @@ func TestStreamableHTTP_SamplingErrorHandling(t *testing.T) {
 func TestStreamableHTTP_NoSamplingHandler(t *testing.T) {
 	var errorReceived bool
 	errorReceivedChan := make(chan struct{})
-
+	
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			var body map[string]any
@@ -179,12 +179,12 @@ func TestStreamableHTTP_NoSamplingHandler(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 				return
 			}
-
+			
 			// Check if this is an error response with method not found
 			if errorField, ok := body["error"]; ok {
 				errorMap := errorField.(map[string]any)
 				if code, ok := errorMap["code"].(float64); ok && code == -32601 {
-					if message, ok := errorMap["message"].(string); ok &&
+					if message, ok := errorMap["message"].(string); ok && 
 						strings.Contains(message, "no handler configured") {
 						errorReceived = true
 						close(errorReceivedChan)
@@ -195,21 +195,21 @@ func TestStreamableHTTP_NoSamplingHandler(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
-
+	
 	client, err := NewStreamableHTTP(server.URL)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
 	defer client.Close()
-
+	
 	// Don't set any request handler
-
+	
 	ctx := context.Background()
 	err = client.Start(ctx)
 	if err != nil {
 		t.Fatalf("Failed to start client: %v", err)
 	}
-
+	
 	// Simulate incoming sampling request
 	samplingRequest := JSONRPCRequest{
 		JSONRPC: "2.0",
@@ -217,10 +217,10 @@ func TestStreamableHTTP_NoSamplingHandler(t *testing.T) {
 		Method:  string(mcp.MethodSamplingCreateMessage),
 		Params:  map[string]any{},
 	}
-
+	
 	// This should trigger "method not found" error
 	client.handleIncomingRequest(ctx, samplingRequest)
-
+	
 	// Wait for error to be received
 	select {
 	case <-errorReceivedChan:
@@ -228,7 +228,7 @@ func TestStreamableHTTP_NoSamplingHandler(t *testing.T) {
 	case <-time.After(1 * time.Second):
 		t.Fatal("Method not found error was not received within timeout")
 	}
-
+	
 	if !errorReceived {
 		t.Error("Expected method not found error, but didn't receive it")
 	}
@@ -241,13 +241,13 @@ func TestStreamableHTTP_BidirectionalInterface(t *testing.T) {
 		t.Fatalf("Failed to create client: %v", err)
 	}
 	defer client.Close()
-
+	
 	// Verify it implements BidirectionalInterface
 	_, ok := any(client).(BidirectionalInterface)
 	if !ok {
 		t.Error("StreamableHTTP should implement BidirectionalInterface")
 	}
-
+	
 	// Test SetRequestHandler
 	handlerSet := false
 	handlerSetChan := make(chan struct{})
@@ -256,7 +256,7 @@ func TestStreamableHTTP_BidirectionalInterface(t *testing.T) {
 		close(handlerSetChan)
 		return nil, nil
 	})
-
+	
 	// Verify handler was set by triggering it
 	ctx := context.Background()
 	client.handleIncomingRequest(ctx, JSONRPCRequest{
@@ -264,7 +264,7 @@ func TestStreamableHTTP_BidirectionalInterface(t *testing.T) {
 		ID:      mcp.NewRequestId(1),
 		Method:  "test",
 	})
-
+	
 	// Wait for handler to be called
 	select {
 	case <-handlerSetChan:
@@ -272,7 +272,7 @@ func TestStreamableHTTP_BidirectionalInterface(t *testing.T) {
 	case <-time.After(1 * time.Second):
 		t.Fatal("Handler was not called within timeout")
 	}
-
+	
 	if !handlerSet {
 		t.Error("Request handler was not properly set or called")
 	}
@@ -315,16 +315,16 @@ func TestStreamableHTTP_ConcurrentSamplingRequests(t *testing.T) {
 	// Track which requests have been received and their completion order
 	var requestOrder []int
 	var orderMutex sync.Mutex
-
+	
 	// Set up request handler that simulates different processing times
 	client.SetRequestHandler(func(ctx context.Context, request JSONRPCRequest) (*JSONRPCResponse, error) {
 		// Extract request ID to determine processing time
 		requestIDValue := request.ID.Value()
-
+		
 		var delay time.Duration
 		var responseText string
 		var requestNum int
-
+		
 		// First request (ID 1) takes longer, second request (ID 2) completes faster
 		if requestIDValue == int64(1) {
 			delay = 100 * time.Millisecond
@@ -341,7 +341,7 @@ func TestStreamableHTTP_ConcurrentSamplingRequests(t *testing.T) {
 
 		// Simulate processing time
 		time.Sleep(delay)
-
+		
 		// Record completion order
 		orderMutex.Lock()
 		requestOrder = append(requestOrder, requestNum)
@@ -428,7 +428,7 @@ func TestStreamableHTTP_ConcurrentSamplingRequests(t *testing.T) {
 	// Verify completion order: request 2 should complete first
 	orderMutex.Lock()
 	defer orderMutex.Unlock()
-
+	
 	if len(requestOrder) != 2 {
 		t.Fatalf("Expected 2 completed requests, got %d", len(requestOrder))
 	}
