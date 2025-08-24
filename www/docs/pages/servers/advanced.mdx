@@ -130,7 +130,7 @@ func handleCreateUser(ctx context.Context, req mcp.CallToolRequest, input UserCr
         Status:    "created",
     }
 
-    return mcp.NewToolResultJSON(output), nil
+    return mcp.NewToolResultJSON(output)
 }
 ```
 
