@@ -12,7 +12,7 @@ import (
 func (s *MCPServer) EnableSampling() {
 	s.capabilitiesMu.Lock()
 	defer s.capabilitiesMu.Unlock()
-
+	
 	enabled := true
 	s.capabilities.sampling = &enabled
 }
