@@ -2,9 +2,16 @@ package server
 
 import (
 	"context"
-	"fmt"
+	"errors"
 
 	"github.com/mark3labs/mcp-go/mcp"
+)
+
+var (
+	// ErrNoActiveSession is returned when there is no active session in the context
+	ErrNoActiveSession = errors.New("no active session")
+	// ErrElicitationNotSupported is returned when the session does not support elicitation
+	ErrElicitationNotSupported = errors.New("session does not support elicitation")
 )
 
 // RequestElicitation sends an elicitation request to the client.
@@ -13,7 +20,7 @@ import (
 func (s *MCPServer) RequestElicitation(ctx context.Context, request mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
 	session := ClientSessionFromContext(ctx)
 	if session == nil {
-		return nil, fmt.Errorf("no active session")
+		return nil, ErrNoActiveSession
 	}
 
 	// Check if the session supports elicitation requests
@@ -21,5 +28,5 @@ func (s *MCPServer) RequestElicitation(ctx context.Context, request mcp.Elicitat
 		return elicitationSession.RequestElicitation(ctx, request)
 	}
 
-	return nil, fmt.Errorf("session does not support elicitation")
+	return nil, ErrElicitationNotSupported
 }
