@@ -63,7 +63,7 @@ func TestMCPServer_RequestElicitation_NoSession(t *testing.T) {
 	request := mcp.ElicitationRequest{
 		Params: mcp.ElicitationParams{
 			Message: "Need some information",
-			RequestedSchema: map[string]interface{}{
+			RequestedSchema: map[string]any{
 				"type": "object",
 			},
 		},
@@ -93,7 +93,7 @@ func TestMCPServer_RequestElicitation_SessionDoesNotSupportElicitation(t *testin
 	request := mcp.ElicitationRequest{
 		Params: mcp.ElicitationParams{
 			Message: "Need some information",
-			RequestedSchema: map[string]interface{}{
+			RequestedSchema: map[string]any{
 				"type": "object",
 			},
 		},
@@ -120,7 +120,7 @@ func TestMCPServer_RequestElicitation_Success(t *testing.T) {
 		result: &mcp.ElicitationResult{
 			Response: mcp.ElicitationResponse{
 				Type: mcp.ElicitationResponseTypeAccept,
-				Value: map[string]interface{}{
+				Value: map[string]any{
 					"projectName": "my-project",
 					"framework":   "react",
 				},
@@ -135,11 +135,11 @@ func TestMCPServer_RequestElicitation_Success(t *testing.T) {
 	request := mcp.ElicitationRequest{
 		Params: mcp.ElicitationParams{
 			Message: "Please provide project details",
-			RequestedSchema: map[string]interface{}{
+			RequestedSchema: map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"projectName": map[string]interface{}{"type": "string"},
-					"framework":   map[string]interface{}{"type": "string"},
+				"properties": map[string]any{
+					"projectName": map[string]any{"type": "string"},
+					"framework":   map[string]any{"type": "string"},
 				},
 			},
 		},
@@ -160,7 +160,7 @@ func TestMCPServer_RequestElicitation_Success(t *testing.T) {
 		t.Errorf("expected response type %q, got %q", mcp.ElicitationResponseTypeAccept, result.Response.Type)
 	}
 
-	value, ok := result.Response.Value.(map[string]interface{})
+	value, ok := result.Response.Value.(map[string]any)
 	if !ok {
 		t.Error("expected value to be a map")
 		return
@@ -186,7 +186,7 @@ func TestRequestElicitation(t *testing.T) {
 				result: &mcp.ElicitationResult{
 					Response: mcp.ElicitationResponse{
 						Type: mcp.ElicitationResponseTypeAccept,
-						Value: map[string]interface{}{
+						Value: map[string]any{
 							"name":      "test-project",
 							"framework": "react",
 						},
@@ -196,11 +196,11 @@ func TestRequestElicitation(t *testing.T) {
 			request: mcp.ElicitationRequest{
 				Params: mcp.ElicitationParams{
 					Message: "Please provide project details",
-					RequestedSchema: map[string]interface{}{
+					RequestedSchema: map[string]any{
 						"type": "object",
-						"properties": map[string]interface{}{
-							"name":      map[string]interface{}{"type": "string"},
-							"framework": map[string]interface{}{"type": "string"},
+						"properties": map[string]any{
+							"name":      map[string]any{"type": "string"},
+							"framework": map[string]any{"type": "string"},
 						},
 					},
 				},
@@ -220,7 +220,7 @@ func TestRequestElicitation(t *testing.T) {
 			request: mcp.ElicitationRequest{
 				Params: mcp.ElicitationParams{
 					Message:         "Need some info",
-					RequestedSchema: map[string]interface{}{"type": "object"},
+					RequestedSchema: map[string]any{"type": "object"},
 				},
 			},
 			expectedType: mcp.ElicitationResponseTypeDecline,
@@ -231,7 +231,7 @@ func TestRequestElicitation(t *testing.T) {
 			request: mcp.ElicitationRequest{
 				Params: mcp.ElicitationParams{
 					Message:         "Need info",
-					RequestedSchema: map[string]interface{}{"type": "object"},
+					RequestedSchema: map[string]any{"type": "object"},
 				},
 			},
 			expectedError: "session does not support elicitation",

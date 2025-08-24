@@ -19,20 +19,20 @@ func demoElicitationHandler(s *server.MCPServer) server.ToolHandlerFunc {
 		elicitationRequest := mcp.ElicitationRequest{
 			Params: mcp.ElicitationParams{
 				Message: "I need some information to set up your project. Please provide the project details.",
-				RequestedSchema: map[string]interface{}{
+				RequestedSchema: map[string]any{
 					"type": "object",
-					"properties": map[string]interface{}{
-						"projectName": map[string]interface{}{
+					"properties": map[string]any{
+						"projectName": map[string]any{
 							"type":        "string",
 							"description": "Name of the project",
 							"minLength":   1,
 						},
-						"framework": map[string]interface{}{
+						"framework": map[string]any{
 							"type":        "string",
 							"description": "Frontend framework to use",
 							"enum":        []string{"react", "vue", "angular", "none"},
 						},
-						"includeTests": map[string]interface{}{
+						"includeTests": map[string]any{
 							"type":        "boolean",
 							"description": "Include test setup",
 							"default":     true,
@@ -53,9 +53,9 @@ func demoElicitationHandler(s *server.MCPServer) server.ToolHandlerFunc {
 		switch result.Response.Type {
 		case mcp.ElicitationResponseTypeAccept:
 			// User provided the information
-			data, ok := result.Response.Value.(map[string]interface{})
+			data, ok := result.Response.Value.(map[string]any)
 			if !ok {
-				return nil, fmt.Errorf("unexpected response format: expected map[string]interface{}, got %T", result.Response.Value)
+				return nil, fmt.Errorf("unexpected response format: expected map[string]any, got %T", result.Response.Value)
 			}
 
 			// Safely extract projectName (required field)
@@ -161,14 +161,14 @@ func main() {
 				elicitationRequest := mcp.ElicitationRequest{
 					Params: mcp.ElicitationParams{
 						Message: fmt.Sprintf("The data is %d characters long. Do you want to proceed with processing?", len(data)),
-						RequestedSchema: map[string]interface{}{
+						RequestedSchema: map[string]any{
 							"type": "object",
-							"properties": map[string]interface{}{
-								"proceed": map[string]interface{}{
+							"properties": map[string]any{
+								"proceed": map[string]any{
 									"type":        "boolean",
 									"description": "Whether to proceed with processing",
 								},
-								"reason": map[string]interface{}{
+								"reason": map[string]any{
 									"type":        "string",
 									"description": "Optional reason for your decision",
 								},
@@ -192,9 +192,9 @@ func main() {
 				}
 
 				// Safely extract response data
-				responseData, ok := result.Response.Value.(map[string]interface{})
+				responseData, ok := result.Response.Value.(map[string]any)
 				if !ok {
-					return nil, fmt.Errorf("unexpected response format: expected map[string]interface{}, got %T", result.Response.Value)
+					return nil, fmt.Errorf("unexpected response format: expected map[string]any, got %T", result.Response.Value)
 				}
 
 				// Safely extract proceed field
