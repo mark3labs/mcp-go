@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -75,9 +76,8 @@ func TestMCPServer_RequestElicitation_NoSession(t *testing.T) {
 		t.Error("expected error when no session available")
 	}
 
-	expectedError := "no active session"
-	if err.Error() != expectedError {
-		t.Errorf("expected error %q, got %q", expectedError, err.Error())
+	if !errors.Is(err, ErrNoActiveSession) {
+		t.Errorf("expected ErrNoActiveSession, got %v", err)
 	}
 }
 
@@ -105,9 +105,8 @@ func TestMCPServer_RequestElicitation_SessionDoesNotSupportElicitation(t *testin
 		t.Error("expected error when session doesn't support elicitation")
 	}
 
-	expectedError := "session does not support elicitation"
-	if err.Error() != expectedError {
-		t.Errorf("expected error %q, got %q", expectedError, err.Error())
+	if !errors.Is(err, ErrElicitationNotSupported) {
+		t.Errorf("expected ErrElicitationNotSupported, got %v", err)
 	}
 }
 
@@ -176,7 +175,7 @@ func TestRequestElicitation(t *testing.T) {
 		name          string
 		session       ClientSession
 		request       mcp.ElicitationRequest
-		expectedError string
+		expectedError error
 		expectedType  mcp.ElicitationResponseType
 	}{
 		{
@@ -234,7 +233,7 @@ func TestRequestElicitation(t *testing.T) {
 					RequestedSchema: map[string]any{"type": "object"},
 				},
 			},
-			expectedError: "session does not support elicitation",
+			expectedError: ErrElicitationNotSupported,
 		},
 	}
 
@@ -245,9 +244,9 @@ func TestRequestElicitation(t *testing.T) {
 
 			result, err := server.RequestElicitation(ctx, tt.request)
 
-			if tt.expectedError != "" {
+			if tt.expectedError != nil {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.expectedError)
+				assert.True(t, errors.Is(err, tt.expectedError), "expected %v, got %v", tt.expectedError, err)
 				return
 			}
 
