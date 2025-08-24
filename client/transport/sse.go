@@ -36,12 +36,12 @@ type SSE struct {
 	headerFunc     HTTPHeaderFunc
 	logger         util.Logger
 
-	started           atomic.Bool
-	closed            atomic.Bool
-	cancelSSEStream   context.CancelFunc
-	protocolVersion   atomic.Value // string
-	onConnectionLost  func(error)
-	connectionLostMu  sync.RWMutex
+	started          atomic.Bool
+	closed           atomic.Bool
+	cancelSSEStream  context.CancelFunc
+	protocolVersion  atomic.Value // string
+	onConnectionLost func(error)
+	connectionLostMu sync.RWMutex
 
 	// OAuth support
 	oauthHandler *OAuthHandler
@@ -220,7 +220,7 @@ func (c *SSE) readSSE(reader io.ReadCloser) {
 				c.connectionLostMu.RLock()
 				handler := c.onConnectionLost
 				c.connectionLostMu.RUnlock()
-				
+
 				if handler != nil {
 					// This is not actually an error - HTTP2 idle timeout disconnection
 					handler(err)
