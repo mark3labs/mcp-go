@@ -601,10 +601,8 @@ func (c *StreamableHTTP) IsOAuthEnabled() bool {
 func (c *StreamableHTTP) listenForever(ctx context.Context) {
 	c.logger.Infof("listening to server forever")
 	for {
-		// Add timeout for individual connection attempts
-		connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		err := c.createGETConnectionToServer(connectCtx)
-		cancel()
+		// Use the original context for continuous listening - no timeout
+		err := c.createGETConnectionToServer(ctx)
 		
 		if errors.Is(err, ErrGetMethodNotAllowed) {
 			// server does not support listening
