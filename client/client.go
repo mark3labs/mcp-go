@@ -77,9 +77,16 @@ func (c *Client) Start(ctx context.Context) error {
 	if c.transport == nil {
 		return fmt.Errorf("transport is nil")
 	}
-	err := c.transport.Start(ctx)
-	if err != nil {
-		return err
+
+	if _, ok := c.transport.(*transport.Stdio); !ok {
+		// the stdio transport from NewStdioMCPClientWithOptions
+		// is already started, dont start again.
+		//
+		// Start the transport for other transport types
+		err := c.transport.Start(ctx)
+		if err != nil {
+			return err
+		}
 	}
 
 	c.transport.SetNotificationHandler(func(notification mcp.JSONRPCNotification) {

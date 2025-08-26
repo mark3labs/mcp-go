@@ -28,7 +28,6 @@ func NewStdioMCPClient(
 // such as setting a custom command function.
 //
 // NOTICE: NewStdioMCPClientWithOptions automatically starts the underlying transport.
-// Don't call the Start method manually.
 // This is for backward compatibility.
 func NewStdioMCPClientWithOptions(
 	command string,
