@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/rickey17/mcp-go/mcp"
+	"github.com/rickey17/mcp-go/server"
 )
 
 // MockSamplingHandler implements SamplingHandler for testing

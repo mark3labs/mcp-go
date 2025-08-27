@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/rickey17/mcp-go/mcp"
 )
 
 func TestStreamableHTTP_WithOAuth(t *testing.T) {

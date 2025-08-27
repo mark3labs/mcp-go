@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/rickey17/mcp-go/mcp"
 )
 
 type JSONRPCRequest struct {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/rickey17/mcp-go/mcp"
 )
 
 // HTTPHeaderFunc is a function that extracts header entries from the given context

@@ -21,8 +21,8 @@ import (
     "sync"
     "time"
 
-    "github.com/mark3labs/mcp-go/client"
-    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/rickey17/mcp-go/client"
+    "github.com/rickey17/mcp-go/mcp"
 )
 
 func listResources(ctx context.Context, c client.Client) error {
@@ -925,7 +925,7 @@ Consider implementing sampling when your client:
 ### Basic Implementation
 
 ```go
-import "github.com/mark3labs/mcp-go/client"
+import "github.com/rickey17/mcp-go/client"
 
 // Implement the SamplingHandler interface
 type MySamplingHandler struct {

@@ -8,9 +8,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/client/transport"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/rickey17/mcp-go/client"
+	"github.com/rickey17/mcp-go/client/transport"
+	"github.com/rickey17/mcp-go/mcp"
 )
 
 // MockSamplingHandler implements the SamplingHandler interface for demonstration.
@@ -95,7 +95,7 @@ func main() {
 	// Setup graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	
+
 	// Create a context that cancels on signal
 	ctx, cancel := context.WithCancel(ctx)
 	go func() {
@@ -103,7 +103,7 @@ func main() {
 		log.Println("Received shutdown signal, closing client...")
 		cancel()
 	}()
-	
+
 	// Move defer after error checking
 	defer func() {
 		if err := mcpClient.Close(); err != nil {

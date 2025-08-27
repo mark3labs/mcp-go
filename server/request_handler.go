@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/rickey17/mcp-go/mcp"
 )
 
 // HandleMessage processes an incoming JSON-RPC message and returns an appropriate response

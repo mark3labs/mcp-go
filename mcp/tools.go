@@ -492,9 +492,7 @@ func (r CallToolResult) MarshalJSON() ([]byte, error) {
 	}
 
 	// Marshal IsError if true
-	if r.IsError {
-		m["isError"] = r.IsError
-	}
+	m["isError"] = r.IsError
 
 	return json.Marshal(m)
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/rickey17/mcp-go/mcp"
 )
 
 // ClientSession represents an active session that can be used by MCPServer to interact with client.

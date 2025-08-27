@@ -39,4 +39,4 @@ go version
     ```
 5. Submit a pull request to the main branch.
 
-Feel free to reach out if you have any questions or need help either by [opening an issue](https://github.com/mark3labs/mcp-go/issues) or by reaching out in the [Discord channel](https://discord.gg/RqSS2NQVsY).
+Feel free to reach out if you have any questions or need help either by [opening an issue](https://github.com/rickey17/mcp-go/issues) or by reaching out in the [Discord channel](https://discord.gg/RqSS2NQVsY).

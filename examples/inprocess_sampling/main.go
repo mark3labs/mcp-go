@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/mark3labs/mcp-go/client"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/rickey17/mcp-go/client"
+	"github.com/rickey17/mcp-go/mcp"
+	"github.com/rickey17/mcp-go/server"
 )
 
 // MockSamplingHandler implements client.SamplingHandler for demonstration

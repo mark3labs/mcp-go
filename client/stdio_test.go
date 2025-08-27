@@ -14,8 +14,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mark3labs/mcp-go/client/transport"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/rickey17/mcp-go/client/transport"
+	"github.com/rickey17/mcp-go/mcp"
 )
 
 func compileTestServer(outputPath string) error {

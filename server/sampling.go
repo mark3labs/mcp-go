@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/rickey17/mcp-go/mcp"
 )
 
 // EnableSampling enables sampling capabilities for the server.
@@ -12,7 +12,7 @@ import (
 func (s *MCPServer) EnableSampling() {
 	s.capabilitiesMu.Lock()
 	defer s.capabilitiesMu.Unlock()
-	
+
 	enabled := true
 	s.capabilities.sampling = &enabled
 }

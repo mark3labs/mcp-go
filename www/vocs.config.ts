@@ -118,7 +118,7 @@ export default defineConfig({
   socials: [
     {
       icon: 'github',
-      link: 'https://github.com/mark3labs/mcp-go',
+      link: 'https://github.com/rickey17/mcp-go',
     },
   ],
 })

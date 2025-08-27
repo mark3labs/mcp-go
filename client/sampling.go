@@ -3,7 +3,7 @@ package client
 import (
 	"context"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/rickey17/mcp-go/mcp"
 )
 
 // SamplingHandler defines the interface for handling sampling requests from servers.

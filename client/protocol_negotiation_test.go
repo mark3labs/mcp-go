@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/client/transport"
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/rickey17/mcp-go/client/transport"
+	"github.com/rickey17/mcp-go/mcp"
 )
 
 // mockProtocolTransport implements transport.Interface for testing protocol negotiation
