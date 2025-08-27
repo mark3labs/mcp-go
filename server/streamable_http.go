@@ -682,13 +682,13 @@ func (s *StreamableHTTPServer) canUseTLS() bool {
 
 	// Check certificate file
 	if _, err := os.Stat(s.tlsCertFile); err != nil {
-		s.logger.Errorf("TLS certificate file error: %v", err)
+		s.logger.Errorf("Failed to stat TLS certificate file: %v", err)
 		return false
 	}
 
 	// Check key file
 	if _, err := os.Stat(s.tlsKeyFile); err != nil {
-		s.logger.Errorf("TLS key file error: %v", err)
+		s.logger.Errorf("Failed to stat TLS key file: %v", err)
 		return false
 	}
 
