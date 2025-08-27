@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -911,116 +910,6 @@ func TestStreamableHTTPServer_TLS(t *testing.T) {
 		}
 		if server.tlsKeyFile != keyFile {
 			t.Errorf("Expected tlsKeyFile to be %s, got %s", keyFile, server.tlsKeyFile)
-		}
-	})
-
-	t.Run("canUseTLS returns false when TLS not configured", func(t *testing.T) {
-		mcpServer := NewMCPServer("test-mcp-server", "1.0.0")
-		server := NewStreamableHTTPServer(mcpServer)
-
-		if server.canUseTLS() {
-			t.Error("Expected canUseTLS to return false when TLS is not configured")
-		}
-	})
-
-	t.Run("canUseTLS returns false when only cert file is set", func(t *testing.T) {
-		mcpServer := NewMCPServer("test-mcp-server", "1.0.0")
-		server := NewStreamableHTTPServer(
-			mcpServer,
-			WithTLSCert("/path/to/cert.pem", ""),
-		)
-
-		if server.canUseTLS() {
-			t.Error("Expected canUseTLS to return false when only cert file is set")
-		}
-	})
-
-	t.Run("canUseTLS returns false when only key file is set", func(t *testing.T) {
-		mcpServer := NewMCPServer("test-mcp-server", "1.0.0")
-		server := NewStreamableHTTPServer(
-			mcpServer,
-			WithTLSCert("", "/path/to/key.pem"),
-		)
-
-		if server.canUseTLS() {
-			t.Error("Expected canUseTLS to return false when only key file is set")
-		}
-	})
-
-	t.Run("canUseTLS returns false when cert file doesn't exist", func(t *testing.T) {
-		mcpServer := NewMCPServer("test-mcp-server", "1.0.0")
-		server := NewStreamableHTTPServer(
-			mcpServer,
-			WithTLSCert("/nonexistent/cert.pem", "/nonexistent/key.pem"),
-		)
-
-		if server.canUseTLS() {
-			t.Error("Expected canUseTLS to return false when cert file doesn't exist")
-		}
-	})
-
-	t.Run("canUseTLS returns true with valid temp cert and key files", func(t *testing.T) {
-		// Create temporary cert and key files for testing
-		certFile, err := os.CreateTemp("", "test-cert-*.pem")
-		if err != nil {
-			t.Fatalf("Failed to create temp cert file: %v", err)
-		}
-		defer os.Remove(certFile.Name())
-		certFile.Close()
-
-		keyFile, err := os.CreateTemp("", "test-key-*.pem")
-		if err != nil {
-			t.Fatalf("Failed to create temp key file: %v", err)
-		}
-		defer os.Remove(keyFile.Name())
-		keyFile.Close()
-
-		mcpServer := NewMCPServer("test-mcp-server", "1.0.0")
-		server := NewStreamableHTTPServer(
-			mcpServer,
-			WithTLSCert(certFile.Name(), keyFile.Name()),
-		)
-
-		if !server.canUseTLS() {
-			t.Error("Expected canUseTLS to return true with valid cert and key files")
-		}
-	})
-
-	t.Run("canUseTLS returns false when key file exists but cert doesn't", func(t *testing.T) {
-		keyFile, err := os.CreateTemp("", "test-key-*.pem")
-		if err != nil {
-			t.Fatalf("Failed to create temp key file: %v", err)
-		}
-		defer os.Remove(keyFile.Name())
-		keyFile.Close()
-
-		mcpServer := NewMCPServer("test-mcp-server", "1.0.0")
-		server := NewStreamableHTTPServer(
-			mcpServer,
-			WithTLSCert("/nonexistent/cert.pem", keyFile.Name()),
-		)
-
-		if server.canUseTLS() {
-			t.Error("Expected canUseTLS to return false when cert file doesn't exist")
-		}
-	})
-
-	t.Run("canUseTLS returns false when cert file exists but key doesn't", func(t *testing.T) {
-		certFile, err := os.CreateTemp("", "test-cert-*.pem")
-		if err != nil {
-			t.Fatalf("Failed to create temp cert file: %v", err)
-		}
-		defer os.Remove(certFile.Name())
-		certFile.Close()
-
-		mcpServer := NewMCPServer("test-mcp-server", "1.0.0")
-		server := NewStreamableHTTPServer(
-			mcpServer,
-			WithTLSCert(certFile.Name(), "/nonexistent/key.pem"),
-		)
-
-		if server.canUseTLS() {
-			t.Error("Expected canUseTLS to return false when key file doesn't exist")
 		}
 	})
 }

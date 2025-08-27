@@ -201,7 +201,16 @@ func (s *StreamableHTTPServer) Start(addr string) error {
 	srv := s.httpServer
 	s.mu.Unlock()
 
-	if s.canUseTLS() {
+	if s.tlsCertFile != "" || s.tlsKeyFile != "" {
+		if s.tlsCertFile == "" || s.tlsKeyFile == "" {
+			return fmt.Errorf("both TLS cert and key must be provided")
+		}
+		if _, err := os.Stat(s.tlsCertFile); err != nil {
+			return fmt.Errorf("Failed to find TLS certificate file: %w", err)
+		}
+		if _, err := os.Stat(s.tlsKeyFile); err != nil {
+			return fmt.Errorf("Failed to find TLS key file: %w", err)
+		}
 		return srv.ListenAndServeTLS(s.tlsCertFile, s.tlsKeyFile)
 	}
 
@@ -674,25 +683,24 @@ func (s *StreamableHTTPServer) nextRequestID(sessionID string) int64 {
 }
 
 // canUseTLS checks if TLS is properly configured and files are valid
-func (s *StreamableHTTPServer) canUseTLS() bool {
-	// Not configured
+func (s *StreamableHTTPServer) canUseTLS() (bool, error) {
+	// Not configured - this is fine, return false with no error
 	if s.tlsCertFile == "" || s.tlsKeyFile == "" {
-		return false
+		return false, nil
 	}
 
+	// TLS was configured, so files must exist
 	// Check certificate file
 	if _, err := os.Stat(s.tlsCertFile); err != nil {
-		s.logger.Errorf("Failed to stat TLS certificate file: %v", err)
-		return false
+		return false, fmt.Errorf("Failed to find TLS certificate file: %w", err)
 	}
 
 	// Check key file
 	if _, err := os.Stat(s.tlsKeyFile); err != nil {
-		s.logger.Errorf("Failed to stat TLS key file: %v", err)
-		return false
+		return false, fmt.Errorf("Failed to find TLS key file: %w", err)
 	}
 
-	return true
+	return true, nil
 }
 
 // --- session ---
