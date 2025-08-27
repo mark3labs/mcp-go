@@ -682,27 +682,6 @@ func (s *StreamableHTTPServer) nextRequestID(sessionID string) int64 {
 	return counter.Add(1)
 }
 
-// canUseTLS checks if TLS is properly configured and files are valid
-func (s *StreamableHTTPServer) canUseTLS() (bool, error) {
-	// Not configured - this is fine, return false with no error
-	if s.tlsCertFile == "" || s.tlsKeyFile == "" {
-		return false, nil
-	}
-
-	// TLS was configured, so files must exist
-	// Check certificate file
-	if _, err := os.Stat(s.tlsCertFile); err != nil {
-		return false, fmt.Errorf("Failed to find TLS certificate file: %w", err)
-	}
-
-	// Check key file
-	if _, err := os.Stat(s.tlsKeyFile); err != nil {
-		return false, fmt.Errorf("Failed to find TLS key file: %w", err)
-	}
-
-	return true, nil
-}
-
 // --- session ---
 type sessionLogLevelsStore struct {
 	mu   sync.RWMutex
