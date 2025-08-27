@@ -206,10 +206,10 @@ func (s *StreamableHTTPServer) Start(addr string) error {
 			return fmt.Errorf("both TLS cert and key must be provided")
 		}
 		if _, err := os.Stat(s.tlsCertFile); err != nil {
-			return fmt.Errorf("Failed to find TLS certificate file: %w", err)
+			return fmt.Errorf("failed to find TLS certificate file: %w", err)
 		}
 		if _, err := os.Stat(s.tlsKeyFile); err != nil {
-			return fmt.Errorf("Failed to find TLS key file: %w", err)
+			return fmt.Errorf("failed to find TLS key file: %w", err)
 		}
 		return srv.ListenAndServeTLS(s.tlsCertFile, s.tlsKeyFile)
 	}
