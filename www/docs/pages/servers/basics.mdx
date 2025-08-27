@@ -182,6 +182,7 @@ Configure transport-specific options:
 httpServer := server.NewStreamableHTTPServer(s,
     server.WithEndpointPath("/mcp"),
     server.WithStateless(true),
+    server.WithTLSCert("/path/to/cert", "/path/to/key")
 )
 
 if err := httpServer.Start(":8080"); err != nil {
