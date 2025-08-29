@@ -239,6 +239,24 @@ func WithResourceHandlerMiddleware(
 	}
 }
 
+// WithResourceRecovery adds a middleware that recovers from panics in resource handlers.
+func WithResourceRecovery() ServerOption {
+	return WithResourceHandlerMiddleware(func(next ResourceHandlerFunc) ResourceHandlerFunc {
+		return func(ctx context.Context, request mcp.ReadResourceRequest) (result []mcp.ResourceContents, err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf(
+						"panic recovered in %s resource handler: %v",
+						request.Params.URI,
+						r,
+					)
+				}
+			}()
+			return next(ctx, request)
+		}
+	})
+}
+
 // WithToolFilter adds a filter function that will be applied to tools before they are returned in list_tools
 func WithToolFilter(
 	toolFilter ToolFilterFunc,
