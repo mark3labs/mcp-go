@@ -43,6 +43,9 @@ type ToolHandlerFunc func(ctx context.Context, request mcp.CallToolRequest) (*mc
 // ToolHandlerMiddleware is a middleware function that wraps a ToolHandlerFunc.
 type ToolHandlerMiddleware func(ToolHandlerFunc) ToolHandlerFunc
 
+// ResourceHandlerMiddleware is a middleware function that wraps a ResourceHandlerFunc.
+type ResourceHandlerMiddleware func(ResourceHandlerFunc) ResourceHandlerFunc
+
 // ToolFilterFunc is a function that filters tools based on context, typically using session information.
 type ToolFilterFunc func(ctx context.Context, tools []mcp.Tool) []mcp.Tool
 
@@ -151,21 +154,22 @@ type MCPServer struct {
 	capabilitiesMu         sync.RWMutex
 	toolFiltersMu          sync.RWMutex
 
-	name                   string
-	version                string
-	instructions           string
-	resources              map[string]resourceEntry
-	resourceTemplates      map[string]resourceTemplateEntry
-	prompts                map[string]mcp.Prompt
-	promptHandlers         map[string]PromptHandlerFunc
-	tools                  map[string]ServerTool
-	toolHandlerMiddlewares []ToolHandlerMiddleware
-	toolFilters            []ToolFilterFunc
-	notificationHandlers   map[string]NotificationHandlerFunc
-	capabilities           serverCapabilities
-	paginationLimit        *int
-	sessions               sync.Map
-	hooks                  *Hooks
+	name                       string
+	version                    string
+	instructions               string
+	resources                  map[string]resourceEntry
+	resourceTemplates          map[string]resourceTemplateEntry
+	prompts                    map[string]mcp.Prompt
+	promptHandlers             map[string]PromptHandlerFunc
+	tools                      map[string]ServerTool
+	toolHandlerMiddlewares     []ToolHandlerMiddleware
+	resourceHandlerMiddlewares []ResourceHandlerMiddleware
+	toolFilters                []ToolFilterFunc
+	notificationHandlers       map[string]NotificationHandlerFunc
+	capabilities               serverCapabilities
+	paginationLimit            *int
+	sessions                   sync.Map
+	hooks                      *Hooks
 }
 
 // WithPaginationLimit sets the pagination limit for the server.
@@ -219,6 +223,18 @@ func WithToolHandlerMiddleware(
 	return func(s *MCPServer) {
 		s.middlewareMu.Lock()
 		s.toolHandlerMiddlewares = append(s.toolHandlerMiddlewares, toolHandlerMiddleware)
+		s.middlewareMu.Unlock()
+	}
+}
+
+// WithResourceHandlerMiddleware allows adding a middleware for the
+// resource handler call chain.
+func WithResourceHandlerMiddleware(
+	resourceHandlerMiddleware ResourceHandlerMiddleware,
+) ServerOption {
+	return func(s *MCPServer) {
+		s.middlewareMu.Lock()
+		s.resourceHandlerMiddlewares = append(s.resourceHandlerMiddlewares, resourceHandlerMiddleware)
 		s.middlewareMu.Unlock()
 	}
 }
@@ -301,14 +317,16 @@ func NewMCPServer(
 	opts ...ServerOption,
 ) *MCPServer {
 	s := &MCPServer{
-		resources:            make(map[string]resourceEntry),
-		resourceTemplates:    make(map[string]resourceTemplateEntry),
-		prompts:              make(map[string]mcp.Prompt),
-		promptHandlers:       make(map[string]PromptHandlerFunc),
-		tools:                make(map[string]ServerTool),
-		name:                 name,
-		version:              version,
-		notificationHandlers: make(map[string]NotificationHandlerFunc),
+		resources:                  make(map[string]resourceEntry),
+		resourceTemplates:          make(map[string]resourceTemplateEntry),
+		prompts:                    make(map[string]mcp.Prompt),
+		promptHandlers:             make(map[string]PromptHandlerFunc),
+		tools:                      make(map[string]ServerTool),
+		toolHandlerMiddlewares:     make([]ToolHandlerMiddleware, 0),
+		resourceHandlerMiddlewares: make([]ResourceHandlerMiddleware, 0),
+		name:                       name,
+		version:                    version,
+		notificationHandlers:       make(map[string]NotificationHandlerFunc),
 		capabilities: serverCapabilities{
 			tools:     nil,
 			resources: nil,
@@ -838,7 +856,17 @@ func (s *MCPServer) handleReadResource(
 	if entry, ok := s.resources[request.Params.URI]; ok {
 		handler := entry.handler
 		s.resourcesMu.RUnlock()
-		contents, err := handler(ctx, request)
+
+		finalHandler := handler
+		s.middlewareMu.RLock()
+		mw := s.resourceHandlerMiddlewares
+		// Apply middlewares in reverse order
+		for i := len(mw) - 1; i >= 0; i-- {
+			finalHandler = mw[i](finalHandler)
+		}
+		s.middlewareMu.RUnlock()
+
+		contents, err := finalHandler(ctx, request)
 		if err != nil {
 			return nil, &requestError{
 				id:   id,
