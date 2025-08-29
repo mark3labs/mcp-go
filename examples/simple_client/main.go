@@ -124,9 +124,9 @@ func main() {
 	// Perform health check using ping
 	fmt.Println("Performing health check...")
 	if err := c.Ping(ctx); err != nil {
-		log.Fatalf("❌ Health check failed: %v", err)
+		log.Fatalf("Health check failed: %v", err)
 	}
-	fmt.Println("✅ Server is alive and responding")
+	fmt.Println("Server is alive and responding")
 
 	// List available tools if the server supports them
 	if serverInfo.Capabilities.Tools != nil {
