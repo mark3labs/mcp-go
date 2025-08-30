@@ -593,7 +593,7 @@ func TestToolWithOutputSchema(t *testing.T) {
 	)
 
 	// Check that RawOutputSchema was set
-	assert.NotNil(t, tool.RawOutputSchema)
+	assert.NotNil(t, tool.OutputSchema)
 
 	// Marshal and verify structure
 	data, err := json.Marshal(tool)
