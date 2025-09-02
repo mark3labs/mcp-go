@@ -586,27 +586,51 @@ func TestToolWithOutputSchema(t *testing.T) {
 		Email string `json:"email,omitempty" jsonschema_description:"Email address"`
 	}
 
-	tool := NewTool("test_tool",
-		WithDescription("Test tool with output schema"),
-		WithOutputSchema[TestOutput](),
-		WithString("input", Required()),
-	)
+	tests := []struct {
+		name                 string
+		tool                 Tool
+		expectedOutputSchema bool
+	}{
+		{
+			name: "default behavior",
+			tool: NewTool("test_tool",
+				WithDescription("Test tool with output schema"),
+				WithOutputSchema[TestOutput](),
+				WithString("input", Required()),
+			),
+			expectedOutputSchema: true,
+		},
+		{
+			name: "no output schema is set",
+			tool: NewTool("test_tool",
+				WithDescription("Test tool with output schema"),
+				WithString("input", Required()),
+			),
+			expectedOutputSchema: false,
+		},
+	}
 
-	// Check that RawOutputSchema was set
-	assert.NotNil(t, tool.OutputSchema)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Marshal and verify structure
+			data, err := json.Marshal(tt.tool)
+			assert.NoError(t, err)
 
-	// Marshal and verify structure
-	data, err := json.Marshal(tool)
-	assert.NoError(t, err)
+			var toolData map[string]any
+			err = json.Unmarshal(data, &toolData)
+			assert.NoError(t, err)
 
-	var toolData map[string]any
-	err = json.Unmarshal(data, &toolData)
-	assert.NoError(t, err)
-
-	// Verify outputSchema exists
-	outputSchema, exists := toolData["outputSchema"]
-	assert.True(t, exists)
-	assert.NotNil(t, outputSchema)
+			// Verify outputSchema exists
+			outputSchema, exists := toolData["outputSchema"]
+			if tt.expectedOutputSchema {
+				assert.True(t, exists)
+				assert.NotNil(t, outputSchema)
+			} else {
+				assert.False(t, exists)
+				assert.Nil(t, outputSchema)
+			}
+		})
+	}
 }
 
 // TestNewToolResultStructured tests that the NewToolResultStructured function

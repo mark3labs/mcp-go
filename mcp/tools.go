@@ -607,7 +607,7 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 			return nil, fmt.Errorf("tool %s has both OutputSchema and RawOutputSchema set: %w", t.Name, errToolSchemaConflict)
 		}
 		m["outputSchema"] = t.RawOutputSchema
-	} else {
+	} else if t.OutputSchema.Type != "" { // If no output schema is specified, do not return anything
 		m["outputSchema"] = t.OutputSchema
 	}
 
