@@ -603,7 +603,7 @@ func TestToolWithOutputSchema(t *testing.T) {
 		{
 			name: "no output schema is set",
 			tool: NewTool("test_tool",
-				WithDescription("Test tool with output schema"),
+				WithDescription("Test tool with no output schema"),
 				WithString("input", Required()),
 			),
 			expectedOutputSchema: false,
