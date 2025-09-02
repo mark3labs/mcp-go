@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -137,6 +138,7 @@ func (c *Client) sendRequest(
 	ctx context.Context,
 	method string,
 	params any,
+	header http.Header,
 ) (*json.RawMessage, error) {
 	if !c.initialized && method != "initialize" {
 		return nil, fmt.Errorf("client not initialized")
@@ -149,6 +151,7 @@ func (c *Client) sendRequest(
 		ID:      mcp.NewRequestId(id),
 		Method:  method,
 		Params:  params,
+		Header: header,
 	}
 
 	response, err := c.transport.SendRequest(ctx, request)
@@ -186,7 +189,7 @@ func (c *Client) Initialize(
 		Capabilities:    capabilities,
 	}
 
-	response, err := c.sendRequest(ctx, "initialize", params)
+	response, err := c.sendRequest(ctx, "initialize", params, request.Header)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +234,7 @@ func (c *Client) Initialize(
 }
 
 func (c *Client) Ping(ctx context.Context) error {
-	_, err := c.sendRequest(ctx, "ping", nil)
+	_, err := c.sendRequest(ctx, "ping", nil, nil)
 	return err
 }
 
@@ -312,7 +315,7 @@ func (c *Client) ReadResource(
 	ctx context.Context,
 	request mcp.ReadResourceRequest,
 ) (*mcp.ReadResourceResult, error) {
-	response, err := c.sendRequest(ctx, "resources/read", request.Params)
+	response, err := c.sendRequest(ctx, "resources/read", request.Params, request.Header)
 	if err != nil {
 		return nil, err
 	}
@@ -324,7 +327,7 @@ func (c *Client) Subscribe(
 	ctx context.Context,
 	request mcp.SubscribeRequest,
 ) error {
-	_, err := c.sendRequest(ctx, "resources/subscribe", request.Params)
+	_, err := c.sendRequest(ctx, "resources/subscribe", request.Params, request.Header)
 	return err
 }
 
@@ -332,7 +335,7 @@ func (c *Client) Unsubscribe(
 	ctx context.Context,
 	request mcp.UnsubscribeRequest,
 ) error {
-	_, err := c.sendRequest(ctx, "resources/unsubscribe", request.Params)
+	_, err := c.sendRequest(ctx, "resources/unsubscribe", request.Params, request.Header)
 	return err
 }
 
@@ -376,7 +379,7 @@ func (c *Client) GetPrompt(
 	ctx context.Context,
 	request mcp.GetPromptRequest,
 ) (*mcp.GetPromptResult, error) {
-	response, err := c.sendRequest(ctx, "prompts/get", request.Params)
+	response, err := c.sendRequest(ctx, "prompts/get", request.Params, request.Header)
 	if err != nil {
 		return nil, err
 	}
@@ -424,7 +427,7 @@ func (c *Client) CallTool(
 	ctx context.Context,
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	response, err := c.sendRequest(ctx, "tools/call", request.Params)
+	response, err := c.sendRequest(ctx, "tools/call", request.Params, request.Header)
 	if err != nil {
 		return nil, err
 	}
@@ -436,7 +439,7 @@ func (c *Client) SetLevel(
 	ctx context.Context,
 	request mcp.SetLevelRequest,
 ) error {
-	_, err := c.sendRequest(ctx, "logging/setLevel", request.Params)
+	_, err := c.sendRequest(ctx, "logging/setLevel", request.Params, request.Header)
 	return err
 }
 
@@ -444,7 +447,7 @@ func (c *Client) Complete(
 	ctx context.Context,
 	request mcp.CompleteRequest,
 ) (*mcp.CompleteResult, error) {
-	response, err := c.sendRequest(ctx, "completion/complete", request.Params)
+	response, err := c.sendRequest(ctx, "completion/complete", request.Params, request.Header)
 	if err != nil {
 		return nil, err
 	}
@@ -521,7 +524,7 @@ func listByPage[T any](
 	request mcp.PaginatedRequest,
 	method string,
 ) (*T, error) {
-	response, err := client.sendRequest(ctx, method, request.Params)
+	response, err := client.sendRequest(ctx, method, request.Params, nil)
 	if err != nil {
 		return nil, err
 	}
