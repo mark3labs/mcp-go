@@ -58,8 +58,8 @@ func TestMemoryTokenStore(t *testing.T) {
 
 	// Test getting token from empty store
 	_, err := store.GetToken(ctx)
-	if err == nil {
-		t.Errorf("Expected error when getting token from empty store")
+	if !errors.Is(err, ErrNoToken) {
+		t.Errorf("Expected ErrNoToken when getting token from empty store, got %v", err)
 	}
 
 	// Create a test token
