@@ -54,11 +54,12 @@ func TestToken_IsExpired(t *testing.T) {
 func TestMemoryTokenStore(t *testing.T) {
 	// Create a token store
 	store := NewMemoryTokenStore()
+	ctx := context.Background()
 
 	// Test getting token from empty store
-	_, err := store.GetToken()
-	if err == nil {
-		t.Errorf("Expected error when getting token from empty store")
+	_, err := store.GetToken(ctx)
+	if !errors.Is(err, ErrNoToken) {
+		t.Errorf("Expected ErrNoToken when getting token from empty store, got %v", err)
 	}
 
 	// Create a test token
@@ -71,13 +72,13 @@ func TestMemoryTokenStore(t *testing.T) {
 	}
 
 	// Save the token
-	err = store.SaveToken(token)
+	err = store.SaveToken(ctx, token)
 	if err != nil {
 		t.Fatalf("Failed to save token: %v", err)
 	}
 
 	// Get the token
-	retrievedToken, err := store.GetToken()
+	retrievedToken, err := store.GetToken(ctx)
 	if err != nil {
 		t.Fatalf("Failed to get token: %v", err)
 	}
@@ -158,6 +159,7 @@ func TestValidateRedirectURI(t *testing.T) {
 
 func TestOAuthHandler_GetAuthorizationHeader_EmptyAccessToken(t *testing.T) {
 	// Create a token store with a token that has an empty access token
+	ctx := context.Background()
 	tokenStore := NewMemoryTokenStore()
 	invalidToken := &Token{
 		AccessToken:  "", // Empty access token
@@ -166,7 +168,7 @@ func TestOAuthHandler_GetAuthorizationHeader_EmptyAccessToken(t *testing.T) {
 		ExpiresIn:    3600,
 		ExpiresAt:    time.Now().Add(1 * time.Hour), // Valid for 1 hour
 	}
-	if err := tokenStore.SaveToken(invalidToken); err != nil {
+	if err := tokenStore.SaveToken(ctx, invalidToken); err != nil {
 		t.Fatalf("Failed to save token: %v", err)
 	}
 
@@ -392,4 +394,407 @@ func TestOAuthHandler_SetExpectedState_CrossRequestScenario(t *testing.T) {
 	if !errors.Is(err, ErrInvalidState) {
 		t.Errorf("Expected ErrInvalidState with wrong state, got %v", err)
 	}
+}
+
+func TestMemoryTokenStore_ContextCancellation(t *testing.T) {
+	store := NewMemoryTokenStore()
+
+	t.Run("GetToken with canceled context", func(t *testing.T) {
+		// Create a canceled context
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel immediately
+
+		// Attempt to get token with canceled context
+		_, err := store.GetToken(ctx)
+
+		// Should return context.Canceled error
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Expected context.Canceled error, got %v", err)
+		}
+	})
+
+	t.Run("SaveToken with canceled context", func(t *testing.T) {
+		// Create a canceled context
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel immediately
+
+		token := &Token{
+			AccessToken: "test-token",
+			TokenType:   "Bearer",
+		}
+
+		// Attempt to save token with canceled context
+		err := store.SaveToken(ctx, token)
+
+		// Should return context.Canceled error
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Expected context.Canceled error, got %v", err)
+		}
+	})
+
+	t.Run("GetToken with deadline exceeded", func(t *testing.T) {
+		// Create a context with past deadline
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+		defer cancel()
+
+		// Attempt to get token with expired context
+		_, err := store.GetToken(ctx)
+
+		// Should return context.DeadlineExceeded error
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Expected context.DeadlineExceeded error, got %v", err)
+		}
+	})
+
+	t.Run("SaveToken with deadline exceeded", func(t *testing.T) {
+		// Create a context with past deadline
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+		defer cancel()
+
+		token := &Token{
+			AccessToken: "test-token",
+			TokenType:   "Bearer",
+		}
+
+		// Attempt to save token with expired context
+		err := store.SaveToken(ctx, token)
+
+		// Should return context.DeadlineExceeded error
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Expected context.DeadlineExceeded error, got %v", err)
+		}
+	})
+}
+
+func TestOAuthHandler_GetAuthorizationHeader_ContextCancellation(t *testing.T) {
+	// Create a token store with a valid token
+	tokenStore := NewMemoryTokenStore()
+	validToken := &Token{
+		AccessToken:  "test-token",
+		TokenType:    "Bearer",
+		RefreshToken: "refresh-token",
+		ExpiresIn:    3600,
+		ExpiresAt:    time.Now().Add(1 * time.Hour),
+	}
+
+	// Save the token with a valid context
+	ctx := context.Background()
+	if err := tokenStore.SaveToken(ctx, validToken); err != nil {
+		t.Fatalf("Failed to save token: %v", err)
+	}
+
+	config := OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost:8085/callback",
+		Scopes:      []string{"mcp.read", "mcp.write"},
+		TokenStore:  tokenStore,
+		PKCEEnabled: true,
+	}
+
+	handler := NewOAuthHandler(config)
+
+	t.Run("GetAuthorizationHeader with canceled context", func(t *testing.T) {
+		// Create a canceled context
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel immediately
+
+		// Attempt to get authorization header with canceled context
+		_, err := handler.GetAuthorizationHeader(ctx)
+
+		// Should return context.Canceled error (propagated from TokenStore.GetToken)
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Expected context.Canceled error, got %v", err)
+		}
+	})
+
+	t.Run("GetAuthorizationHeader with deadline exceeded", func(t *testing.T) {
+		// Create a context with past deadline
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+		defer cancel()
+
+		// Attempt to get authorization header with expired context
+		_, err := handler.GetAuthorizationHeader(ctx)
+
+		// Should return context.DeadlineExceeded error (propagated from TokenStore.GetToken)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Expected context.DeadlineExceeded error, got %v", err)
+		}
+	})
+}
+
+func TestOAuthHandler_getValidToken_ContextCancellation(t *testing.T) {
+	// Use regular MemoryTokenStore for testing
+	tokenStore := NewMemoryTokenStore()
+
+	config := OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost:8085/callback",
+		Scopes:      []string{"mcp.read", "mcp.write"},
+		TokenStore:  tokenStore,
+		PKCEEnabled: true,
+	}
+
+	handler := NewOAuthHandler(config)
+
+	t.Run("Context canceled during initial token retrieval", func(t *testing.T) {
+		// Create a canceled context
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel immediately
+
+		// This will call getValidToken internally
+		_, err := handler.GetAuthorizationHeader(ctx)
+
+		// Should return context.Canceled error
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Expected context.Canceled error, got %v", err)
+		}
+	})
+
+	t.Run("Context deadline exceeded during token retrieval", func(t *testing.T) {
+		// Create a context with past deadline
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+		defer cancel()
+
+		// This will call getValidToken internally
+		_, err := handler.GetAuthorizationHeader(ctx)
+
+		// Should return context.DeadlineExceeded error
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Expected context.DeadlineExceeded error, got %v", err)
+		}
+	})
+
+	t.Run("Context canceled with existing expired token", func(t *testing.T) {
+		// First save an expired token
+		expiredToken := &Token{
+			AccessToken:  "expired-token",
+			TokenType:    "Bearer",
+			RefreshToken: "refresh-token",
+			ExpiresAt:    time.Now().Add(-1 * time.Hour), // Expired
+		}
+
+		validCtx := context.Background()
+		if err := tokenStore.SaveToken(validCtx, expiredToken); err != nil {
+			t.Fatalf("Failed to save expired token: %v", err)
+		}
+
+		// Now try to get authorization header with canceled context
+		// This should detect the canceled context during the refresh attempt
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel immediately
+
+		_, err := handler.GetAuthorizationHeader(ctx)
+
+		// Should return context.Canceled error or authorization required
+		// (depending on where exactly the cancellation is detected)
+		if err == nil {
+			t.Errorf("Expected an error due to context cancellation, got nil")
+		}
+
+		// The error could be context.Canceled or authorization required
+		// Both are valid depending on timing
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, ErrOAuthAuthorizationRequired) {
+			t.Errorf("Expected context.Canceled or ErrOAuthAuthorizationRequired, got %v", err)
+		}
+	})
+}
+
+func TestOAuthHandler_RefreshToken_ContextCancellation(t *testing.T) {
+	// Create a token store with a valid refresh token
+	tokenStore := NewMemoryTokenStore()
+	tokenWithRefresh := &Token{
+		AccessToken:  "expired-access-token",
+		TokenType:    "Bearer",
+		RefreshToken: "valid-refresh-token",
+		ExpiresAt:    time.Now().Add(-1 * time.Hour), // Expired access token
+	}
+
+	ctx := context.Background()
+	if err := tokenStore.SaveToken(ctx, tokenWithRefresh); err != nil {
+		t.Fatalf("Failed to save token with refresh: %v", err)
+	}
+
+	config := OAuthConfig{
+		ClientID:              "test-client",
+		ClientSecret:          "test-secret",
+		RedirectURI:           "http://localhost:8085/callback",
+		Scopes:                []string{"mcp.read", "mcp.write"},
+		TokenStore:            tokenStore,
+		AuthServerMetadataURL: "https://example.com/.well-known/oauth-authorization-server",
+		PKCEEnabled:           true,
+	}
+
+	handler := NewOAuthHandler(config)
+
+	t.Run("RefreshToken with canceled context", func(t *testing.T) {
+		// Create a canceled context
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel immediately
+
+		// Attempt to refresh token with canceled context
+		_, err := handler.RefreshToken(ctx, "valid-refresh-token")
+
+		// Should return context.Canceled error (from getting old token)
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Expected context.Canceled error, got %v", err)
+		}
+	})
+
+	t.Run("RefreshToken with deadline exceeded", func(t *testing.T) {
+		// Create a context with past deadline
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+		defer cancel()
+
+		// Attempt to refresh token with expired context
+		_, err := handler.RefreshToken(ctx, "valid-refresh-token")
+
+		// Should return context.DeadlineExceeded or context.Canceled error
+		// (HTTP client may convert deadline exceeded to canceled)
+		if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) &&
+			!strings.Contains(err.Error(), "context canceled") && !strings.Contains(err.Error(), "context deadline exceeded") {
+			t.Errorf("Expected context cancellation/deadline error, got %v", err)
+		}
+	})
+}
+
+func TestOAuthHandler_CachedClientContextScenario(t *testing.T) {
+	// This test simulates scenarios where a cached MCP client
+	// may retain a stale or canceled context, causing context cancellation errors
+	// during token retrieval operations.
+
+	t.Run("Cached client with stale context", func(t *testing.T) {
+		// Step 1: Create initial client with valid context and token
+		tokenStore := NewMemoryTokenStore()
+		validToken := &Token{
+			AccessToken:  "initial-token",
+			TokenType:    "Bearer",
+			RefreshToken: "refresh-token",
+			ExpiresIn:    3600,
+			ExpiresAt:    time.Now().Add(1 * time.Hour),
+		}
+
+		// Save token with initial valid context
+		initialCtx := context.Background()
+		if err := tokenStore.SaveToken(initialCtx, validToken); err != nil {
+			t.Fatalf("Failed to save initial token: %v", err)
+		}
+
+		config := OAuthConfig{
+			ClientID:    "test-client",
+			RedirectURI: "http://localhost:8085/callback",
+			Scopes:      []string{"mcp.read", "mcp.write"},
+			TokenStore:  tokenStore,
+			PKCEEnabled: true,
+		}
+
+		// Create handler (simulating cached client)
+		handler := NewOAuthHandler(config)
+
+		// Verify initial operation works
+		authHeader, err := handler.GetAuthorizationHeader(initialCtx)
+		if err != nil {
+			t.Fatalf("Initial operation should work: %v", err)
+		}
+		if authHeader != "Bearer initial-token" {
+			t.Errorf("Expected 'Bearer initial-token', got %s", authHeader)
+		}
+
+		// Step 2: Simulate production scenario - context gets canceled
+		// (this could happen due to request timeout, user cancellation, etc.)
+		staleCancelableCtx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel immediately to simulate stale context
+
+		// Step 3: Try to use cached client with canceled context
+		// This should properly detect context cancellation instead of causing
+		// mysterious database errors or other issues
+		_, err = handler.GetAuthorizationHeader(staleCancelableCtx)
+
+		// Verify we get proper context cancellation error
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Expected context.Canceled error, got %v", err)
+		}
+	})
+
+	t.Run("Cached client with context deadline exceeded", func(t *testing.T) {
+		// Similar test but with deadline exceeded context
+		tokenStore := NewMemoryTokenStore()
+		validToken := &Token{
+			AccessToken: "deadline-test-token",
+			TokenType:   "Bearer",
+			ExpiresAt:   time.Now().Add(1 * time.Hour),
+		}
+
+		// Save token with valid context
+		validCtx := context.Background()
+		if err := tokenStore.SaveToken(validCtx, validToken); err != nil {
+			t.Fatalf("Failed to save token: %v", err)
+		}
+
+		config := OAuthConfig{
+			ClientID:    "test-client",
+			RedirectURI: "http://localhost:8085/callback",
+			TokenStore:  tokenStore,
+		}
+
+		handler := NewOAuthHandler(config)
+
+		// Create context with past deadline (simulating expired request context)
+		expiredCtx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+		defer cancel()
+
+		// Try to use cached client with expired context
+		_, err := handler.GetAuthorizationHeader(expiredCtx)
+
+		// Should get deadline exceeded error
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("Expected context.DeadlineExceeded error, got %v", err)
+		}
+	})
+
+	t.Run("Token refresh with canceled context during refresh", func(t *testing.T) {
+		// Test the scenario where context gets canceled during token refresh
+		// This simulates timing issues that can occur with context cancellation
+		tokenStore := NewMemoryTokenStore()
+
+		// Create an expired token that would trigger refresh
+		expiredToken := &Token{
+			AccessToken:  "expired-token",
+			TokenType:    "Bearer",
+			RefreshToken: "refresh-token",
+			ExpiresAt:    time.Now().Add(-1 * time.Hour), // Expired
+		}
+
+		// Save expired token
+		validCtx := context.Background()
+		if err := tokenStore.SaveToken(validCtx, expiredToken); err != nil {
+			t.Fatalf("Failed to save expired token: %v", err)
+		}
+
+		config := OAuthConfig{
+			ClientID:              "test-client",
+			ClientSecret:          "test-secret",
+			RedirectURI:           "http://localhost:8085/callback",
+			TokenStore:            tokenStore,
+			AuthServerMetadataURL: "https://example.com/.well-known/oauth-authorization-server",
+		}
+
+		handler := NewOAuthHandler(config)
+
+		// Create a context that's already canceled (simulating race condition)
+		canceledCtx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel before the operation
+
+		// This should detect the canceled context early in the refresh process
+		_, err := handler.GetAuthorizationHeader(canceledCtx)
+
+		// Should get context.Canceled error
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("Expected context.Canceled error during refresh, got %v", err)
+		}
+
+		// Verify the error message is appropriate
+		if strings.Contains(err.Error(), "database") || strings.Contains(err.Error(), "connection refused") {
+			t.Errorf("Error message should not mention unrelated issues, got: %v", err)
+		}
+	})
 }

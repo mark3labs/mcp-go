@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,8 +14,9 @@ import (
 )
 
 func TestStreamableHTTP_WithOAuth(t *testing.T) {
+	ctx := context.Background()
 	// Track request count to simulate 401 on first request, then success
-	requestCount := 0
+	var requestCount int32
 	authHeaderReceived := ""
 
 	// Create a test server that requires OAuth
@@ -23,9 +25,9 @@ func TestStreamableHTTP_WithOAuth(t *testing.T) {
 		authHeaderReceived = r.Header.Get("Authorization")
 
 		// Check for Authorization header
-		if requestCount == 0 {
+		if atomic.LoadInt32(&requestCount) == 0 {
 			// First request - simulate 401 to test error handling
-			requestCount++
+			atomic.AddInt32(&requestCount, 1)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -59,7 +61,7 @@ func TestStreamableHTTP_WithOAuth(t *testing.T) {
 		ExpiresIn:    3600,
 		ExpiresAt:    time.Now().Add(1 * time.Hour), // Valid for 1 hour
 	}
-	if err := tokenStore.SaveToken(validToken); err != nil {
+	if err := tokenStore.SaveToken(ctx, validToken); err != nil {
 		t.Fatalf("Failed to save token: %v", err)
 	}
 
@@ -111,8 +113,8 @@ func TestStreamableHTTP_WithOAuth(t *testing.T) {
 	}
 
 	// Verify the server received the first request
-	if requestCount != 1 {
-		t.Errorf("Expected server to receive 1 request, got %d", requestCount)
+	if got := atomic.LoadInt32(&requestCount); got != 1 {
+		t.Errorf("Expected server to receive 1 request, got %d", got)
 	}
 
 	// Second request should succeed
