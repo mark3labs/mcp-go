@@ -406,13 +406,6 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 	// Create a channel for this specific request
 	responseChan := make(chan *JSONRPCResponse, 1)
 
-	// Add timeout context for request processing if not already set
-	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 30*time.Second {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-	}
-
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -601,8 +594,7 @@ func (c *StreamableHTTP) IsOAuthEnabled() bool {
 func (c *StreamableHTTP) listenForever(ctx context.Context) {
 	c.logger.Infof("listening to server forever")
 	for {
-		// Add timeout for individual connection attempts
-		connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		connectCtx, cancel := context.WithCancel(ctx)
 		err := c.createGETConnectionToServer(connectCtx)
 		cancel()
 
@@ -771,7 +763,7 @@ func (c *StreamableHTTP) sendResponseToServer(ctx context.Context, response *JSO
 	ctx, cancel := c.contextAwareOfClientClose(ctx)
 	defer cancel()
 
-	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(responseBody), "application/json")
+	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(responseBody), "application/json, text/event-stream")
 	if err != nil {
 		c.logger.Errorf("failed to send response to server: %v", err)
 		return

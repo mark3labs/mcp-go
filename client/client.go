@@ -458,11 +458,13 @@ func (c *Client) Complete(
 }
 
 // handleIncomingRequest processes incoming requests from the server.
-// This is the main entry point for server-to-client requests like sampling.
+// This is the main entry point for server-to-client requests like sampling and ping.
 func (c *Client) handleIncomingRequest(ctx context.Context, request transport.JSONRPCRequest) (*transport.JSONRPCResponse, error) {
 	switch request.Method {
 	case string(mcp.MethodSamplingCreateMessage):
 		return c.handleSamplingRequestTransport(ctx, request)
+	case string(mcp.MethodPing):
+		return c.handlePingRequest(ctx, request)
 	default:
 		return nil, fmt.Errorf("unsupported request method: %s", request.Method)
 	}
@@ -515,6 +517,18 @@ func (c *Client) handleSamplingRequestTransport(ctx context.Context, request tra
 
 	return response, nil
 }
+
+// handlePingRequest handles ping requests from the server.
+func (c *Client) handlePingRequest(ctx context.Context, request transport.JSONRPCRequest) (*transport.JSONRPCResponse, error) {
+	response := &transport.JSONRPCResponse{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		ID:      request.ID,
+		Result:  json.RawMessage("{}"),
+	}
+
+	return response, nil
+}
+
 func listByPage[T any](
 	ctx context.Context,
 	client *Client,
