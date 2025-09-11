@@ -50,12 +50,12 @@ func demoElicitationHandler(s *server.MCPServer) server.ToolHandlerFunc {
 		}
 
 		// Handle the user's response
-		switch result.Response.Type {
-		case mcp.ElicitationResponseTypeAccept:
+		switch result.Action {
+		case mcp.ElicitationResponseActionAccept:
 			// User provided the information
-			data, ok := result.Response.Value.(map[string]any)
+			data, ok := result.Content.(map[string]any)
 			if !ok {
-				return nil, fmt.Errorf("unexpected response format: expected map[string]any, got %T", result.Response.Value)
+				return nil, fmt.Errorf("unexpected response format: expected map[string]any, got %T", result.Content)
 			}
 
 			// Safely extract projectName (required field)
@@ -103,18 +103,18 @@ func demoElicitationHandler(s *server.MCPServer) server.ToolHandlerFunc {
 				},
 			}, nil
 
-		case mcp.ElicitationResponseTypeDecline:
+		case mcp.ElicitationResponseActionDecline:
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{
 					mcp.NewTextContent("Project creation cancelled - user declined to provide information"),
 				},
 			}, nil
 
-		case mcp.ElicitationResponseTypeCancel:
+		case mcp.ElicitationResponseActionCancel:
 			return nil, fmt.Errorf("project creation cancelled by user")
 
 		default:
-			return nil, fmt.Errorf("unexpected response type: %s", result.Response.Type)
+			return nil, fmt.Errorf("unexpected response action: %s", result.Action)
 		}
 	}
 }
@@ -183,7 +183,7 @@ func main() {
 					return nil, fmt.Errorf("failed to get confirmation: %w", err)
 				}
 
-				if result.Response.Type != mcp.ElicitationResponseTypeAccept {
+				if result.Action != mcp.ElicitationResponseActionAccept {
 					return &mcp.CallToolResult{
 						Content: []mcp.Content{
 							mcp.NewTextContent("Processing cancelled by user"),
@@ -192,9 +192,9 @@ func main() {
 				}
 
 				// Safely extract response data
-				responseData, ok := result.Response.Value.(map[string]any)
+				responseData, ok := result.Content.(map[string]any)
 				if !ok {
-					return nil, fmt.Errorf("unexpected response format: expected map[string]any, got %T", result.Response.Value)
+					return nil, fmt.Errorf("unexpected response format: expected map[string]any, got %T", result.Content)
 				}
 
 				// Safely extract proceed field
