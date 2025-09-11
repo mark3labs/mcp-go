@@ -8882,7 +8882,7 @@ func main() {
     mux := http.NewServeMux()
     
     // Add MCP endpoints
-    server.AddMCPRoutes(mux, s, "/mcp")
+    mux.Handle("/mcp", server.NewStreamableHTTPServer(s))
     
     // Add custom endpoints
     mux.HandleFunc("/api/status", handleStatus)

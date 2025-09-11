@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script src="/initializeTheme.iife.js"></script><link rel="preload" as="image" href="/logo.png"/><title>StreamableHTTP Transport – MCP-Go</title><meta property="og:type" content="website"/><meta property="og:title" content="StreamableHTTP Transport"/><meta property="og:url" content="https://mcp-go.dev"/><meta name="twitter:card" content="summary_large_image"/>
-    <script type="module" crossorigin src="/assets/index-CEO3Pfw4.js"></script>
+    <script type="module" crossorigin src="/assets/index-BbvQDkaO.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/style-3fK4AU4f.css">
   </head>
   <body>
@@ -357,7 +357,7 @@
 <span class="line vocs_Span"><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">    mux </span><span style="color:#D73A49;--shiki-dark:#F47067" class="vocs_Span">:=</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span"> http.</span><span style="color:#6F42C1;--shiki-dark:#DCBDFB" class="vocs_Span">NewServeMux</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">()</span></span>
 <span class="line vocs_Span"><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">    </span></span>
 <span class="line vocs_Span"><span style="color:#6A737D;--shiki-dark:#768390" class="vocs_Span">    // Add MCP endpoints</span></span>
-<span class="line vocs_Span"><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">    server.</span><span style="color:#6F42C1;--shiki-dark:#DCBDFB" class="vocs_Span">AddMCPRoutes</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">(mux, s, </span><span style="color:#032F62;--shiki-dark:#96D0FF" class="vocs_Span">&quot;/mcp&quot;</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">)</span></span>
+<span class="line vocs_Span"><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">    mux.</span><span style="color:#6F42C1;--shiki-dark:#DCBDFB" class="vocs_Span">Handle</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">(</span><span style="color:#032F62;--shiki-dark:#96D0FF" class="vocs_Span">&quot;/mcp&quot;</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">, server.</span><span style="color:#6F42C1;--shiki-dark:#DCBDFB" class="vocs_Span">NewStreamableHTTPServer</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">(s))</span></span>
 <span class="line vocs_Span"><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">    </span></span>
 <span class="line vocs_Span"><span style="color:#6A737D;--shiki-dark:#768390" class="vocs_Span">    // Add custom endpoints</span></span>
 <span class="line vocs_Span"><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">    mux.</span><span style="color:#6F42C1;--shiki-dark:#DCBDFB" class="vocs_Span">HandleFunc</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">(</span><span style="color:#032F62;--shiki-dark:#96D0FF" class="vocs_Span">&quot;/api/status&quot;</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">, handleStatus)</span></span>
