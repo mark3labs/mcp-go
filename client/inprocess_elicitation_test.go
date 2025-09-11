@@ -22,9 +22,9 @@ func (h *MockElicitationHandler) Elicit(ctx context.Context, request mcp.Elicita
 
 	// Simulate user accepting and providing data
 	return &mcp.ElicitationResult{
-		Response: mcp.ElicitationResponse{
-			Type: mcp.ElicitationResponseTypeAccept,
-			Value: map[string]any{
+		ElicitationResponse: mcp.ElicitationResponse{
+			Action: mcp.ElicitationResponseActionAccept,
+			Content: map[string]any{
 				"confirm": true,
 				"details": "User provided additional details",
 			},
@@ -84,12 +84,12 @@ func TestInProcessElicitation(t *testing.T) {
 
 		// Handle the response
 		var responseText string
-		switch result.Response.Type {
-		case mcp.ElicitationResponseTypeAccept:
+		switch result.Action {
+		case mcp.ElicitationResponseActionAccept:
 			responseText = "User accepted and provided data"
-		case mcp.ElicitationResponseTypeDecline:
+		case mcp.ElicitationResponseActionDecline:
 			responseText = "User declined to provide information"
-		case mcp.ElicitationResponseTypeCancel:
+		case mcp.ElicitationResponseActionCancel:
 			responseText = "User cancelled the request"
 		}
 
