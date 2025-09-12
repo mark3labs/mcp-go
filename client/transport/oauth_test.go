@@ -2,7 +2,10 @@ package transport
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -391,5 +394,141 @@ func TestOAuthHandler_SetExpectedState_CrossRequestScenario(t *testing.T) {
 	err = handler2.ProcessAuthorizationResponse(context.Background(), "test-code", testState, "test-code-verifier")
 	if !errors.Is(err, ErrInvalidState) {
 		t.Errorf("Expected ErrInvalidState with wrong state, got %v", err)
+	}
+}
+
+func TestOAuthHandler_GetServerMetadata_FallbackToOAuthAuthorizationServer(t *testing.T) {
+	// Test that when protected resource request fails, the handler falls back to
+	// .well-known/oauth-authorization-server instead of getDefaultEndpoints
+	
+	protectedResourceRequested := false
+	authServerRequested := false
+	
+	// Create a test server that simulates the OAuth provider
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource":
+			// Simulate failure of protected resource request
+			protectedResourceRequested = true
+			w.WriteHeader(http.StatusNotFound)
+			
+		case "/.well-known/oauth-authorization-server":
+			// Return OAuth Authorization Server metadata
+			authServerRequested = true
+			metadata := AuthServerMetadata{
+				Issuer:                server.URL,
+				AuthorizationEndpoint: server.URL + "/authorize",
+				TokenEndpoint:         server.URL + "/token",
+				RegistrationEndpoint:  server.URL + "/register",
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(metadata)
+			
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	
+	// Create OAuth handler with empty AuthServerMetadataURL to trigger discovery
+	config := OAuthConfig{
+		ClientID:              "test-client",
+		RedirectURI:           server.URL + "/callback",
+		Scopes:                []string{"mcp.read"},
+		TokenStore:            NewMemoryTokenStore(),
+		AuthServerMetadataURL: "", // Empty to trigger discovery
+		PKCEEnabled:           true,
+	}
+	
+	handler := NewOAuthHandler(config)
+	handler.SetBaseURL(server.URL)
+	
+	// Call getServerMetadata which should trigger the fallback behavior
+	metadata, err := handler.GetServerMetadata(context.Background())
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	
+	// Verify that both requests were made in the correct order
+	if !protectedResourceRequested {
+		t.Error("Expected protected resource request to be made")
+	}
+	if !authServerRequested {
+		t.Error("Expected OAuth Authorization Server request to be made as fallback")
+	}
+	
+	// Verify the metadata was correctly parsed
+	if metadata.Issuer != server.URL {
+		t.Errorf("Expected issuer to be %s, got %s", server.URL, metadata.Issuer)
+	}
+	if metadata.AuthorizationEndpoint != server.URL+"/authorize" {
+		t.Errorf("Expected authorization endpoint to be %s/authorize, got %s", server.URL, metadata.AuthorizationEndpoint)
+	}
+	if metadata.TokenEndpoint != server.URL+"/token" {
+		t.Errorf("Expected token endpoint to be %s/token, got %s", server.URL, metadata.TokenEndpoint)
+	}
+}
+
+func TestOAuthHandler_GetServerMetadata_FallbackToDefaultEndpoints(t *testing.T) {
+	// Test that when both protected resource and oauth-authorization-server fail,
+	// the handler falls back to default endpoints
+	
+	protectedResourceRequested := false
+	authServerRequested := false
+	
+	// Create a test server that returns 404 for both endpoints
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource":
+			protectedResourceRequested = true
+			w.WriteHeader(http.StatusNotFound)
+			
+		case "/.well-known/oauth-authorization-server":
+			authServerRequested = true
+			w.WriteHeader(http.StatusNotFound)
+			
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	
+	// Create OAuth handler
+	config := OAuthConfig{
+		ClientID:              "test-client",
+		RedirectURI:           server.URL + "/callback",
+		Scopes:                []string{"mcp.read"},
+		TokenStore:            NewMemoryTokenStore(),
+		AuthServerMetadataURL: "", // Empty to trigger discovery
+		PKCEEnabled:           true,
+	}
+	
+	handler := NewOAuthHandler(config)
+	handler.SetBaseURL(server.URL)
+	
+	// Call getServerMetadata which should fall back to default endpoints
+	metadata, err := handler.GetServerMetadata(context.Background())
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+	
+	// Verify that both discovery requests were made
+	if !protectedResourceRequested {
+		t.Error("Expected protected resource request to be made")
+	}
+	if !authServerRequested {
+		t.Error("Expected OAuth Authorization Server request to be made as first fallback")
+	}
+	
+	// Verify the default endpoints were used
+	if metadata.Issuer != server.URL {
+		t.Errorf("Expected issuer to be %s, got %s", server.URL, metadata.Issuer)
+	}
+	if metadata.AuthorizationEndpoint != server.URL+"/authorize" {
+		t.Errorf("Expected authorization endpoint to be %s/authorize, got %s", server.URL, metadata.AuthorizationEndpoint)
+	}
+	if metadata.TokenEndpoint != server.URL+"/token" {
+		t.Errorf("Expected token endpoint to be %s/token, got %s", server.URL, metadata.TokenEndpoint)
 	}
 }

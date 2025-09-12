@@ -343,8 +343,13 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		}
 		defer resp.Body.Close()
 
-		// If we can't get the protected resource metadata, fall back to default endpoints
+		// If we can't get the protected resource metadata, try OAuth Authorization Server discovery
 		if resp.StatusCode != http.StatusOK {
+			h.fetchMetadataFromURL(ctx, baseURL+"/.well-known/oauth-authorization-server")
+			if h.serverMetadata != nil {
+				return
+			}
+			// If that also fails, fall back to default endpoints
 			metadata, err := h.getDefaultEndpoints(baseURL)
 			if err != nil {
 				h.metadataFetchErr = fmt.Errorf("failed to get default endpoints: %w", err)
