@@ -842,32 +842,28 @@ type ElicitationParams struct {
 // ElicitationResult represents the result of an elicitation request.
 type ElicitationResult struct {
 	Result
-	// The user's response, which could be:
-	// - The requested information (if user accepted)
-	// - A decline indicator (if user declined)
-	// - A cancel indicator (if user cancelled)
-	Response ElicitationResponse `json:"response"`
+	ElicitationResponse
 }
 
 // ElicitationResponse represents the user's response to an elicitation request.
 type ElicitationResponse struct {
-	// Type indicates whether the user accepted, declined, or cancelled.
-	Type ElicitationResponseType `json:"type"`
-	// Value contains the user's response data if they accepted.
+	// Action indicates whether the user accepted, declined, or cancelled.
+	Action ElicitationResponseAction `json:"action"`
+	// Content contains the user's response data if they accepted.
 	// Should conform to the requestedSchema from the ElicitationRequest.
-	Value any `json:"value,omitempty"`
+	Content any `json:"content,omitempty"`
 }
 
-// ElicitationResponseType indicates how the user responded to an elicitation request.
-type ElicitationResponseType string
+// ElicitationResponseAction indicates how the user responded to an elicitation request.
+type ElicitationResponseAction string
 
 const (
-	// ElicitationResponseTypeAccept indicates the user provided the requested information.
-	ElicitationResponseTypeAccept ElicitationResponseType = "accept"
-	// ElicitationResponseTypeDecline indicates the user explicitly declined to provide information.
-	ElicitationResponseTypeDecline ElicitationResponseType = "decline"
-	// ElicitationResponseTypeCancel indicates the user cancelled without making a choice.
-	ElicitationResponseTypeCancel ElicitationResponseType = "cancel"
+	// ElicitationResponseActionAccept indicates the user provided the requested information.
+	ElicitationResponseActionAccept ElicitationResponseAction = "accept"
+	// ElicitationResponseActionDecline indicates the user explicitly declined to provide information.
+	ElicitationResponseActionDecline ElicitationResponseAction = "decline"
+	// ElicitationResponseActionCancel indicates the user cancelled without making a choice.
+	ElicitationResponseActionCancel ElicitationResponseAction = "cancel"
 )
 
 /* Sampling */

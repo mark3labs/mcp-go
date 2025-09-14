@@ -117,9 +117,9 @@ func TestMCPServer_RequestElicitation_Success(t *testing.T) {
 	mockSession := &mockElicitationSession{
 		sessionID: "test-session",
 		result: &mcp.ElicitationResult{
-			Response: mcp.ElicitationResponse{
-				Type: mcp.ElicitationResponseTypeAccept,
-				Value: map[string]any{
+			ElicitationResponse: mcp.ElicitationResponse{
+				Action: mcp.ElicitationResponseActionAccept,
+				Content: map[string]any{
 					"projectName": "my-project",
 					"framework":   "react",
 				},
@@ -155,11 +155,11 @@ func TestMCPServer_RequestElicitation_Success(t *testing.T) {
 		return
 	}
 
-	if result.Response.Type != mcp.ElicitationResponseTypeAccept {
-		t.Errorf("expected response type %q, got %q", mcp.ElicitationResponseTypeAccept, result.Response.Type)
+	if result.Action != mcp.ElicitationResponseActionAccept {
+		t.Errorf("expected response type %q, got %q", mcp.ElicitationResponseActionAccept, result.Action)
 	}
 
-	value, ok := result.Response.Value.(map[string]any)
+	value, ok := result.Content.(map[string]any)
 	if !ok {
 		t.Error("expected value to be a map")
 		return
@@ -176,16 +176,16 @@ func TestRequestElicitation(t *testing.T) {
 		session       ClientSession
 		request       mcp.ElicitationRequest
 		expectedError error
-		expectedType  mcp.ElicitationResponseType
+		expectedType  mcp.ElicitationResponseAction
 	}{
 		{
 			name: "successful elicitation with accept",
 			session: &mockElicitationSession{
 				sessionID: "test-1",
 				result: &mcp.ElicitationResult{
-					Response: mcp.ElicitationResponse{
-						Type: mcp.ElicitationResponseTypeAccept,
-						Value: map[string]any{
+					ElicitationResponse: mcp.ElicitationResponse{
+						Action: mcp.ElicitationResponseActionAccept,
+						Content: map[string]any{
 							"name":      "test-project",
 							"framework": "react",
 						},
@@ -204,15 +204,15 @@ func TestRequestElicitation(t *testing.T) {
 					},
 				},
 			},
-			expectedType: mcp.ElicitationResponseTypeAccept,
+			expectedType: mcp.ElicitationResponseActionAccept,
 		},
 		{
 			name: "elicitation declined by user",
 			session: &mockElicitationSession{
 				sessionID: "test-2",
 				result: &mcp.ElicitationResult{
-					Response: mcp.ElicitationResponse{
-						Type: mcp.ElicitationResponseTypeDecline,
+					ElicitationResponse: mcp.ElicitationResponse{
+						Action: mcp.ElicitationResponseActionDecline,
 					},
 				},
 			},
@@ -222,7 +222,7 @@ func TestRequestElicitation(t *testing.T) {
 					RequestedSchema: map[string]any{"type": "object"},
 				},
 			},
-			expectedType: mcp.ElicitationResponseTypeDecline,
+			expectedType: mcp.ElicitationResponseActionDecline,
 		},
 		{
 			name:    "session does not support elicitation",
@@ -252,10 +252,10 @@ func TestRequestElicitation(t *testing.T) {
 
 			require.NoError(t, err)
 			require.NotNil(t, result)
-			assert.Equal(t, tt.expectedType, result.Response.Type)
+			assert.Equal(t, tt.expectedType, result.Action)
 
-			if tt.expectedType == mcp.ElicitationResponseTypeAccept {
-				assert.NotNil(t, result.Response.Value)
+			if tt.expectedType == mcp.ElicitationResponseActionAccept {
+				assert.NotNil(t, result.Action)
 			}
 		})
 	}
