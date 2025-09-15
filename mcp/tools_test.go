@@ -1396,3 +1396,335 @@ func TestNewItemsAPICompatibility(t *testing.T) {
 		})
 	}
 }
+
+// TestToolMetaMarshaling tests that the Meta field is properly marshaled as _meta in JSON output
+func TestToolMetaMarshaling(t *testing.T) {
+	tests := []struct {
+		name     string
+		tool     Tool
+		expected map[string]any
+	}{
+		{
+			name: "tool with meta data",
+			tool: Tool{
+				Name:        "test-tool",
+				Description: "A test tool with meta data",
+				Meta:        NewMetaFromMap(map[string]any{"version": "1.0.0", "author": "test"}),
+				InputSchema: ToolInputSchema{
+					Type: "object",
+					Properties: map[string]any{
+						"input": map[string]any{
+							"type":        "string",
+							"description": "Test input",
+						},
+					},
+				},
+			},
+			expected: map[string]any{
+				"_meta": map[string]any{
+					"version": "1.0.0",
+					"author":  "test",
+				},
+				"name":        "test-tool",
+				"description": "A test tool with meta data",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"input": map[string]any{
+							"type":        "string",
+							"description": "Test input",
+						},
+					},
+				},
+				"annotations": map[string]any{},
+			},
+		},
+		{
+			name: "tool without meta data",
+			tool: Tool{
+				Name:        "test-tool-no-meta",
+				Description: "A test tool without meta data",
+				Meta:        nil,
+				InputSchema: ToolInputSchema{
+					Type: "object",
+					Properties: map[string]any{
+						"input": map[string]any{
+							"type":        "string",
+							"description": "Test input",
+						},
+					},
+				},
+			},
+			expected: map[string]any{
+				"name":        "test-tool-no-meta",
+				"description": "A test tool without meta data",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"input": map[string]any{
+							"type":        "string",
+							"description": "Test input",
+						},
+					},
+				},
+				"annotations": map[string]any{},
+			},
+		},
+		{
+			name: "tool with empty meta data",
+			tool: Tool{
+				Name:        "test-tool-empty-meta",
+				Description: "A test tool with empty meta data",
+				Meta:        NewMetaFromMap(map[string]any{}),
+				InputSchema: ToolInputSchema{
+					Type: "object",
+					Properties: map[string]any{
+						"input": map[string]any{
+							"type":        "string",
+							"description": "Test input",
+						},
+					},
+				},
+			},
+			expected: map[string]any{
+				"_meta": map[string]any{},
+				"name":        "test-tool-empty-meta",
+				"description": "A test tool with empty meta data",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"input": map[string]any{
+							"type":        "string",
+							"description": "Test input",
+						},
+					},
+				},
+				"annotations": map[string]any{},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Marshal the tool to JSON
+			data, err := json.Marshal(tt.tool)
+			assert.NoError(t, err)
+
+			// Unmarshal to map for comparison
+			var result map[string]any
+			err = json.Unmarshal(data, &result)
+			assert.NoError(t, err)
+
+			// Check if _meta field is present/absent as expected
+			if tt.tool.Meta != nil {
+				assert.Contains(t, result, "_meta", "Tool with Meta should include _meta field")
+				assert.Equal(t, tt.expected["_meta"], result["_meta"], "_meta field should match expected value")
+			} else {
+				assert.NotContains(t, result, "_meta", "Tool without Meta should not include _meta field")
+			}
+
+			// Verify other fields are present
+			assert.Equal(t, tt.expected["name"], result["name"])
+			assert.Equal(t, tt.expected["description"], result["description"])
+			assert.Equal(t, tt.expected["inputSchema"], result["inputSchema"])
+			assert.Equal(t, tt.expected["annotations"], result["annotations"])
+		})
+	}
+}
+
+// TestToolMetaUnmarshaling tests that the _meta field is properly unmarshaled to Meta field
+func TestToolMetaUnmarshaling(t *testing.T) {
+	tests := []struct {
+		name     string
+		jsonData string
+		expected Tool
+	}{
+		{
+			name: "tool with _meta field",
+			jsonData: `{
+				"_meta": {"version": "2.0.0", "category": "utility"},
+				"name": "unmarshal-test-tool",
+				"description": "A tool for testing unmarshaling",
+				"inputSchema": {
+					"type": "object",
+					"properties": {
+						"param": {
+							"type": "string",
+							"description": "Test parameter"
+						}
+					}
+				},
+				"annotations": {}
+			}`,
+			expected: Tool{
+				Name:        "unmarshal-test-tool",
+				Description: "A tool for testing unmarshaling",
+				Meta:        NewMetaFromMap(map[string]any{"version": "2.0.0", "category": "utility"}),
+				InputSchema: ToolInputSchema{
+					Type: "object",
+					Properties: map[string]any{
+						"param": map[string]any{
+							"type":        "string",
+							"description": "Test parameter",
+						},
+					},
+				},
+				Annotations: ToolAnnotation{},
+			},
+		},
+		{
+			name: "tool without _meta field",
+			jsonData: `{
+				"name": "no-meta-tool",
+				"description": "A tool without meta data",
+				"inputSchema": {
+					"type": "object",
+					"properties": {
+						"param": {
+							"type": "string",
+							"description": "Test parameter"
+						}
+					}
+				},
+				"annotations": {}
+			}`,
+			expected: Tool{
+				Name:        "no-meta-tool",
+				Description: "A tool without meta data",
+				Meta:        nil,
+				InputSchema: ToolInputSchema{
+					Type: "object",
+					Properties: map[string]any{
+						"param": map[string]any{
+							"type":        "string",
+							"description": "Test parameter",
+						},
+					},
+				},
+				Annotations: ToolAnnotation{},
+			},
+		},
+		{
+			name: "tool with empty _meta field",
+			jsonData: `{
+				"_meta": {},
+				"name": "empty-meta-tool",
+				"description": "A tool with empty meta data",
+				"inputSchema": {
+					"type": "object",
+					"properties": {
+						"param": {
+							"type": "string",
+							"description": "Test parameter"
+						}
+					}
+				},
+				"annotations": {}
+			}`,
+			expected: Tool{
+				Name:        "empty-meta-tool",
+				Description: "A tool with empty meta data",
+				Meta:        NewMetaFromMap(map[string]any{}),
+				InputSchema: ToolInputSchema{
+					Type: "object",
+					Properties: map[string]any{
+						"param": map[string]any{
+							"type":        "string",
+							"description": "Test parameter",
+						},
+					},
+				},
+				Annotations: ToolAnnotation{},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var tool Tool
+			err := json.Unmarshal([]byte(tt.jsonData), &tool)
+			assert.NoError(t, err)
+
+			// Compare Meta field
+			if tt.expected.Meta != nil {
+				assert.NotNil(t, tool.Meta, "Expected Meta to be non-nil")
+				assert.Equal(t, tt.expected.Meta, tool.Meta, "Meta field should match expected value")
+			} else {
+				assert.Nil(t, tool.Meta, "Expected Meta to be nil")
+			}
+
+			// Compare other fields
+			assert.Equal(t, tt.expected.Name, tool.Name)
+			assert.Equal(t, tt.expected.Description, tool.Description)
+			assert.Equal(t, tt.expected.InputSchema, tool.InputSchema)
+			assert.Equal(t, tt.expected.Annotations, tool.Annotations)
+		})
+	}
+}
+
+// TestToolMetaRoundTrip tests that marshaling and unmarshaling preserves Meta data
+func TestToolMetaRoundTrip(t *testing.T) {
+	original := Tool{
+		Name:        "roundtrip-test-tool",
+		Description: "A tool for testing roundtrip marshaling",
+		Meta: NewMetaFromMap(map[string]any{
+			"version":    "1.2.3",
+			"author":     "test-author",
+			"created_at": "2024-01-01T00:00:00Z",
+			"tags":       []string{"test", "utility", "mcp"},
+			"config": map[string]any{
+				"timeout": 30,
+				"retries": 3,
+			},
+		}),
+		InputSchema: ToolInputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"input": map[string]any{
+					"type":        "string",
+					"description": "Test input parameter",
+				},
+			},
+		},
+		Annotations: ToolAnnotation{},
+	}
+
+	// Marshal to JSON
+	data, err := json.Marshal(original)
+	assert.NoError(t, err)
+
+	// Unmarshal back
+	var unmarshaled Tool
+	err = json.Unmarshal(data, &unmarshaled)
+	assert.NoError(t, err)
+
+	// Verify Meta field is preserved
+	assert.NotNil(t, unmarshaled.Meta, "Meta should not be nil after roundtrip")
+
+	// Note: JSON unmarshaling converts numbers to float64 and arrays to []interface{}
+	// So we need to compare the values rather than exact equality
+	assert.NotNil(t, unmarshaled.Meta.AdditionalFields, "Meta AdditionalFields should not be nil")
+	assert.Equal(t, "1.2.3", unmarshaled.Meta.AdditionalFields["version"])
+	assert.Equal(t, "test-author", unmarshaled.Meta.AdditionalFields["author"])
+	assert.Equal(t, "2024-01-01T00:00:00Z", unmarshaled.Meta.AdditionalFields["created_at"])
+
+	// Check tags array (converted to []interface{})
+	tags, ok := unmarshaled.Meta.AdditionalFields["tags"].([]interface{})
+	assert.True(t, ok, "tags should be []interface{}")
+	assert.Len(t, tags, 3)
+	assert.Contains(t, tags, "test")
+	assert.Contains(t, tags, "utility")
+	assert.Contains(t, tags, "mcp")
+
+	// Check config object (numbers converted to float64)
+	config, ok := unmarshaled.Meta.AdditionalFields["config"].(map[string]interface{})
+	assert.True(t, ok, "config should be map[string]interface{}")
+	assert.Equal(t, float64(30), config["timeout"])
+	assert.Equal(t, float64(3), config["retries"])
+
+	// Verify other fields are preserved
+	assert.Equal(t, original.Name, unmarshaled.Name)
+	assert.Equal(t, original.Description, unmarshaled.Description)
+	assert.Equal(t, original.InputSchema, unmarshaled.InputSchema)
+	assert.Equal(t, original.Annotations, unmarshaled.Annotations)
+}
