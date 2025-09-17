@@ -725,6 +725,8 @@ type TextResourceContents struct {
 	// The text of the item. This must only be set if the item can actually be
 	// represented as text (not binary data).
 	Text string `json:"text"`
+	// Metadata associated with this resource
+	Meta map[string]interface{} `json:"_meta,omitempty"`
 }
 
 func (TextResourceContents) isResourceContents() {}
@@ -738,6 +740,8 @@ type BlobResourceContents struct {
 	MIMEType string `json:"mimeType,omitempty"`
 	// A base64-encoded string representing the binary data of the item.
 	Blob string `json:"blob"`
+	// Metadata associated with this resource
+	Meta map[string]interface{} `json:"_meta,omitempty"`
 }
 
 func (BlobResourceContents) isResourceContents() {}

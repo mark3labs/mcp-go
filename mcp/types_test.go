@@ -138,3 +138,128 @@ func TestCallToolResultWithResourceLink(t *testing.T) {
 	assert.Equal(t, "A test document", resourceLink.Description)
 	assert.Equal(t, "application/pdf", resourceLink.MIMEType)
 }
+
+func TestResourceContentsMetaField(t *testing.T) {
+	tests := []struct {
+		name         string
+		inputJSON    string
+		expectedType string
+		expectedMeta map[string]interface{}
+	}{
+		{
+			name: "TextResourceContents with _meta field",
+			inputJSON: `{
+				"uri": "file://test.txt",
+				"mimeType": "text/plain",
+				"text": "Hello World",
+				"_meta": {
+					"mcpui.dev/ui-preferred-frame-size": ["800px", "600px"],
+					"mcpui.dev/ui-initial-render-data": {
+						"test": "value"
+					}
+				}
+			}`,
+			expectedType: "text",
+			expectedMeta: map[string]interface{}{
+				"mcpui.dev/ui-preferred-frame-size": []interface{}{"800px", "600px"},
+				"mcpui.dev/ui-initial-render-data": map[string]interface{}{
+					"test": "value",
+				},
+			},
+		},
+		{
+			name: "BlobResourceContents with _meta field",
+			inputJSON: `{
+				"uri": "file://image.png",
+				"mimeType": "image/png",
+				"blob": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
+				"_meta": {
+					"width": 100,
+					"height": 100,
+					"format": "PNG"
+				}
+			}`,
+			expectedType: "blob",
+			expectedMeta: map[string]interface{}{
+				"width":  float64(100), // JSON numbers are always float64
+				"height": float64(100),
+				"format": "PNG",
+			},
+		},
+		{
+			name: "TextResourceContents without _meta field",
+			inputJSON: `{
+				"uri": "file://simple.txt",
+				"mimeType": "text/plain",
+				"text": "Simple content"
+			}`,
+			expectedType: "text",
+			expectedMeta: nil,
+		},
+		{
+			name: "BlobResourceContents without _meta field",
+			inputJSON: `{
+				"uri": "file://simple.png",
+				"mimeType": "image/png",
+				"blob": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+			}`,
+			expectedType: "blob",
+			expectedMeta: nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Parse the JSON as a generic map first
+			var contentMap map[string]interface{}
+			err := json.Unmarshal([]byte(tc.inputJSON), &contentMap)
+			require.NoError(t, err)
+
+			// Use ParseResourceContents to convert to ResourceContents
+			resourceContent, err := ParseResourceContents(contentMap)
+			require.NoError(t, err)
+			require.NotNil(t, resourceContent)
+
+			// Test based on expected type
+			if tc.expectedType == "text" {
+				textContent, ok := resourceContent.(TextResourceContents)
+				require.True(t, ok, "Expected TextResourceContents")
+
+				// Verify standard fields
+				assert.Equal(t, contentMap["uri"], textContent.URI)
+				assert.Equal(t, contentMap["mimeType"], textContent.MIMEType)
+				assert.Equal(t, contentMap["text"], textContent.Text)
+
+				// Verify _meta field
+				assert.Equal(t, tc.expectedMeta, textContent.Meta)
+
+			} else if tc.expectedType == "blob" {
+				blobContent, ok := resourceContent.(BlobResourceContents)
+				require.True(t, ok, "Expected BlobResourceContents")
+
+				// Verify standard fields
+				assert.Equal(t, contentMap["uri"], blobContent.URI)
+				assert.Equal(t, contentMap["mimeType"], blobContent.MIMEType)
+				assert.Equal(t, contentMap["blob"], blobContent.Blob)
+
+				// Verify _meta field
+				assert.Equal(t, tc.expectedMeta, blobContent.Meta)
+			}
+
+			// Test round-trip marshaling to ensure _meta is preserved
+			marshaledJSON, err := json.Marshal(resourceContent)
+			require.NoError(t, err)
+
+			var marshaledMap map[string]interface{}
+			err = json.Unmarshal(marshaledJSON, &marshaledMap)
+			require.NoError(t, err)
+
+			// Verify _meta field is preserved in marshaled output
+			if tc.expectedMeta != nil {
+				assert.Equal(t, tc.expectedMeta, marshaledMap["_meta"])
+			} else {
+				assert.Nil(t, marshaledMap["_meta"])
+			}
+		})
+	}
+}
