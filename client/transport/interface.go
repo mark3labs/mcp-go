@@ -61,13 +61,13 @@ type JSONRPCRequest struct {
 	Params  any           `json:"params,omitempty"`
 }
 
+// JSONRPCResponse represents a JSON-RPC 2.0 response message.
+// Use NewJSONRPCResultResponse to create a JSONRPCResponse with a result.
+// Use NewJSONRPCErrorResponse to create a JSONRPCResponse with an error.
 type JSONRPCResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      mcp.RequestId   `json:"id"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *struct {
-		Code    int             `json:"code"`
-		Message string          `json:"message"`
-		Data    json.RawMessage `json:"data"`
-	} `json:"error,omitempty"`
+	JSONRPC string                   `json:"jsonrpc"`
+	ID      mcp.RequestId            `json:"id"`
+	Result  json.RawMessage          `json:"result,omitempty"`
+	Error   *mcp.JSONRPCErrorDetails `json:"error,omitempty"`
 }
+
