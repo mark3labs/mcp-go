@@ -478,6 +478,8 @@ func (c *Client) handleIncomingRequest(ctx context.Context, request transport.JS
 		return c.handleSamplingRequestTransport(ctx, request)
 	case string(mcp.MethodElicitationCreate):
 		return c.handleElicitationRequestTransport(ctx, request)
+	case string(mcp.MethodPing):
+		return c.handlePingRequestTransport(ctx, request)
 	default:
 		return nil, fmt.Errorf("unsupported request method: %s", request.Method)
 	}
@@ -577,6 +579,15 @@ func (c *Client) handleElicitationRequestTransport(ctx context.Context, request 
 	}
 
 	return response, nil
+}
+
+func (c *Client) handlePingRequestTransport(ctx context.Context, request transport.JSONRPCRequest) (*transport.JSONRPCResponse, error) {
+	b, _ := json.Marshal(&mcp.EmptyResult{})
+	return &transport.JSONRPCResponse{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		ID:      request.ID,
+		Result:  b,
+	}, nil
 }
 
 func listByPage[T any](
