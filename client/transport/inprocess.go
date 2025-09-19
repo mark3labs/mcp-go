@@ -82,7 +82,7 @@ func (c *InProcessTransport) SendRequest(ctx context.Context, request JSONRPCReq
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal response message: %w", err)
 	}
-	rpcResp := JSONRPCResponse{}
+	var rpcResp JSONRPCResponse
 	err = json.Unmarshal(respByte, &rpcResp)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response message: %w", err)
