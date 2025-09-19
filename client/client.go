@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -166,7 +165,7 @@ func (c *Client) sendRequest(
 	}
 
 	if response.Error != nil {
-		return nil, errors.New(response.Error.Message)
+		return nil, response.Error.AsError()
 	}
 
 	return &response.Result, nil
@@ -524,11 +523,7 @@ func (c *Client) handleSamplingRequestTransport(ctx context.Context, request tra
 	}
 
 	// Create the transport response
-	response := &transport.JSONRPCResponse{
-		JSONRPC: mcp.JSONRPC_VERSION,
-		ID:      request.ID,
-		Result:  json.RawMessage(resultBytes),
-	}
+	response := transport.NewJSONRPCResultResponse(request.ID, json.RawMessage(resultBytes))
 
 	return response, nil
 }
@@ -572,22 +567,14 @@ func (c *Client) handleElicitationRequestTransport(ctx context.Context, request 
 	}
 
 	// Create the transport response
-	response := &transport.JSONRPCResponse{
-		JSONRPC: mcp.JSONRPC_VERSION,
-		ID:      request.ID,
-		Result:  json.RawMessage(resultBytes),
-	}
+	response := transport.NewJSONRPCResultResponse(request.ID, resultBytes)
 
 	return response, nil
 }
 
 func (c *Client) handlePingRequestTransport(ctx context.Context, request transport.JSONRPCRequest) (*transport.JSONRPCResponse, error) {
 	b, _ := json.Marshal(&mcp.EmptyResult{})
-	return &transport.JSONRPCResponse{
-		JSONRPC: mcp.JSONRPC_VERSION,
-		ID:      request.ID,
-		Result:  b,
-	}, nil
+	return transport.NewJSONRPCResultResponse(request.ID, b), nil
 }
 
 func listByPage[T any](
