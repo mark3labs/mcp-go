@@ -26,7 +26,7 @@ type StdioContextFunc func(ctx context.Context) context.Context
 // It provides a simple way to create command-line MCP servers that
 // communicate via standard input/output streams using JSON-RPC messages.
 type StdioServer struct {
-	server      *MCPServer
+	server      Interface
 	errLogger   *log.Logger
 	contextFunc StdioContextFunc
 
@@ -250,7 +250,7 @@ var stdioSessionInstance = stdioSession{
 
 // NewStdioServer creates a new stdio server wrapper around an MCPServer.
 // It initializes the server with a default error logger that discards all output.
-func NewStdioServer(server *MCPServer) *StdioServer {
+func NewStdioServer(server Interface) *StdioServer {
 	return &StdioServer{
 		server: server,
 		errLogger: log.New(
@@ -569,7 +569,7 @@ func (s *StdioServer) writeResponse(
 // ServeStdio is a convenience function that creates and starts a StdioServer with os.Stdin and os.Stdout.
 // It sets up signal handling for graceful shutdown on SIGTERM and SIGINT.
 // Returns an error if the server encounters any issues during operation.
-func ServeStdio(server *MCPServer, opts ...StdioOption) error {
+func ServeStdio(server Interface, opts ...StdioOption) error {
 	s := NewStdioServer(server)
 
 	for _, opt := range opts {
