@@ -8,8 +8,9 @@ import (
 	"maps"
 	"strconv"
 
-	"github.com/yosida95/uritemplate/v3"
 	"net/http"
+
+	"github.com/yosida95/uritemplate/v3"
 )
 
 type MCPMethod string
@@ -1146,23 +1147,23 @@ func UnmarshalContent(data []byte) (Content, error) {
 	}
 
 	switch contentType {
-	case "text":
+	case ContentTypeText:
 		var content TextContent
 		err := json.Unmarshal(data, &content)
 		return content, err
-	case "image":
+	case ContentTypeImage:
 		var content ImageContent
 		err := json.Unmarshal(data, &content)
 		return content, err
-	case "audio":
+	case ContentTypeAudio:
 		var content AudioContent
 		err := json.Unmarshal(data, &content)
 		return content, err
-	case "resource_link":
+	case ContentTypeLink:
 		var content ResourceLink
 		err := json.Unmarshal(data, &content)
 		return content, err
-	case "resource":
+	case ContentTypeResource:
 		var content EmbeddedResource
 		err := json.Unmarshal(data, &content)
 		return content, err

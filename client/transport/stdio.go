@@ -27,7 +27,7 @@ type Stdio struct {
 	cmd            *exec.Cmd
 	cmdFunc        CommandFunc
 	stdin          io.WriteCloser
-	stdout         *bufio.Reader
+	stdout         *bufio.Scanner
 	stderr         io.ReadCloser
 	responses      map[string]chan *JSONRPCResponse
 	mu             sync.RWMutex
@@ -72,7 +72,7 @@ func WithCommandLogger(logger util.Logger) StdioOption {
 func NewIO(input io.Reader, output io.WriteCloser, logging io.ReadCloser) *Stdio {
 	return &Stdio{
 		stdin:  output,
-		stdout: bufio.NewReader(input),
+		stdout: bufio.NewScanner(input),
 		stderr: logging,
 
 		responses: make(map[string]chan *JSONRPCResponse),
@@ -180,7 +180,7 @@ func (c *Stdio) spawnCommand(ctx context.Context) error {
 	c.cmd = cmd
 	c.stdin = stdin
 	c.stderr = stderr
-	c.stdout = bufio.NewReader(stdout)
+	c.stdout = bufio.NewScanner(stdout)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start command: %w", err)
@@ -200,11 +200,15 @@ func (c *Stdio) Close() error {
 	// cancel all in-flight request
 	close(c.done)
 
-	if err := c.stdin.Close(); err != nil {
-		return fmt.Errorf("failed to close stdin: %w", err)
+	if c.stdin != nil {
+		if err := c.stdin.Close(); err != nil {
+			return fmt.Errorf("failed to close stdin: %w", err)
+		}
 	}
-	if err := c.stderr.Close(); err != nil {
-		return fmt.Errorf("failed to close stderr: %w", err)
+	if c.stderr != nil {
+		if err := c.stderr.Close(); err != nil {
+			return fmt.Errorf("failed to close stderr: %w", err)
+		}
 	}
 
 	if c.cmd != nil {
@@ -247,14 +251,15 @@ func (c *Stdio) readResponses() {
 		case <-c.done:
 			return
 		default:
-			line, err := c.stdout.ReadString('\n')
-			if err != nil {
-				if err != io.EOF && !errors.Is(err, context.Canceled) {
+			if !c.stdout.Scan() {
+				err := c.stdout.Err()
+				if err != nil && !errors.Is(err, context.Canceled) {
 					c.logger.Errorf("Error reading from stdout: %v", err)
 				}
 				return
 			}
 
+			line := c.stdout.Text()
 			// First try to parse as a generic message to check for ID field
 			var baseMessage struct {
 				JSONRPC string         `json:"jsonrpc"`

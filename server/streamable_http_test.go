@@ -985,6 +985,26 @@ func TestStreamableHTTP_PongResponseHandling(t *testing.T) {
 
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("Expected status 200 for response with empty error, got %d. Body: %s", resp.StatusCode, bodyStr)
+ 		}
+	})
+}
+      
+func TestStreamableHTTPServer_TLS(t *testing.T) {
+	t.Run("TLS options are set correctly", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-mcp-server", "1.0.0")
+		certFile := "/path/to/cert.pem"
+		keyFile := "/path/to/key.pem"
+
+		server := NewStreamableHTTPServer(
+			mcpServer,
+			WithTLSCert(certFile, keyFile),
+		)
+
+		if server.tlsCertFile != certFile {
+			t.Errorf("Expected tlsCertFile to be %s, got %s", certFile, server.tlsCertFile)
+		}
+		if server.tlsKeyFile != keyFile {
+			t.Errorf("Expected tlsKeyFile to be %s, got %s", keyFile, server.tlsKeyFile)
 		}
 	})
 }

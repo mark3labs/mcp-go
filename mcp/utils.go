@@ -8,54 +8,54 @@ import (
 )
 
 // ClientRequest types
-var _ ClientRequest = &PingRequest{}
-var _ ClientRequest = &InitializeRequest{}
-var _ ClientRequest = &CompleteRequest{}
-var _ ClientRequest = &SetLevelRequest{}
-var _ ClientRequest = &GetPromptRequest{}
-var _ ClientRequest = &ListPromptsRequest{}
-var _ ClientRequest = &ListResourcesRequest{}
-var _ ClientRequest = &ReadResourceRequest{}
-var _ ClientRequest = &SubscribeRequest{}
-var _ ClientRequest = &UnsubscribeRequest{}
-var _ ClientRequest = &CallToolRequest{}
-var _ ClientRequest = &ListToolsRequest{}
+var _ ClientRequest = (*PingRequest)(nil)
+var _ ClientRequest = (*InitializeRequest)(nil)
+var _ ClientRequest = (*CompleteRequest)(nil)
+var _ ClientRequest = (*SetLevelRequest)(nil)
+var _ ClientRequest = (*GetPromptRequest)(nil)
+var _ ClientRequest = (*ListPromptsRequest)(nil)
+var _ ClientRequest = (*ListResourcesRequest)(nil)
+var _ ClientRequest = (*ReadResourceRequest)(nil)
+var _ ClientRequest = (*SubscribeRequest)(nil)
+var _ ClientRequest = (*UnsubscribeRequest)(nil)
+var _ ClientRequest = (*CallToolRequest)(nil)
+var _ ClientRequest = (*ListToolsRequest)(nil)
 
 // ClientNotification types
-var _ ClientNotification = &CancelledNotification{}
-var _ ClientNotification = &ProgressNotification{}
-var _ ClientNotification = &InitializedNotification{}
-var _ ClientNotification = &RootsListChangedNotification{}
+var _ ClientNotification = (*CancelledNotification)(nil)
+var _ ClientNotification = (*ProgressNotification)(nil)
+var _ ClientNotification = (*InitializedNotification)(nil)
+var _ ClientNotification = (*RootsListChangedNotification)(nil)
 
 // ClientResult types
-var _ ClientResult = &EmptyResult{}
-var _ ClientResult = &CreateMessageResult{}
-var _ ClientResult = &ListRootsResult{}
+var _ ClientResult = (*EmptyResult)(nil)
+var _ ClientResult = (*CreateMessageResult)(nil)
+var _ ClientResult = (*ListRootsResult)(nil)
 
 // ServerRequest types
-var _ ServerRequest = &PingRequest{}
-var _ ServerRequest = &CreateMessageRequest{}
-var _ ServerRequest = &ListRootsRequest{}
+var _ ServerRequest = (*PingRequest)(nil)
+var _ ServerRequest = (*CreateMessageRequest)(nil)
+var _ ServerRequest = (*ListRootsRequest)(nil)
 
 // ServerNotification types
-var _ ServerNotification = &CancelledNotification{}
-var _ ServerNotification = &ProgressNotification{}
-var _ ServerNotification = &LoggingMessageNotification{}
-var _ ServerNotification = &ResourceUpdatedNotification{}
-var _ ServerNotification = &ResourceListChangedNotification{}
-var _ ServerNotification = &ToolListChangedNotification{}
-var _ ServerNotification = &PromptListChangedNotification{}
+var _ ServerNotification = (*CancelledNotification)(nil)
+var _ ServerNotification = (*ProgressNotification)(nil)
+var _ ServerNotification = (*LoggingMessageNotification)(nil)
+var _ ServerNotification = (*ResourceUpdatedNotification)(nil)
+var _ ServerNotification = (*ResourceListChangedNotification)(nil)
+var _ ServerNotification = (*ToolListChangedNotification)(nil)
+var _ ServerNotification = (*PromptListChangedNotification)(nil)
 
 // ServerResult types
-var _ ServerResult = &EmptyResult{}
-var _ ServerResult = &InitializeResult{}
-var _ ServerResult = &CompleteResult{}
-var _ ServerResult = &GetPromptResult{}
-var _ ServerResult = &ListPromptsResult{}
-var _ ServerResult = &ListResourcesResult{}
-var _ ServerResult = &ReadResourceResult{}
-var _ ServerResult = &CallToolResult{}
-var _ ServerResult = &ListToolsResult{}
+var _ ServerResult = (*EmptyResult)(nil)
+var _ ServerResult = (*InitializeResult)(nil)
+var _ ServerResult = (*CompleteResult)(nil)
+var _ ServerResult = (*GetPromptResult)(nil)
+var _ ServerResult = (*ListPromptsResult)(nil)
+var _ ServerResult = (*ListResourcesResult)(nil)
+var _ ServerResult = (*ReadResourceResult)(nil)
+var _ ServerResult = (*CallToolResult)(nil)
+var _ ServerResult = (*ListToolsResult)(nil)
 
 // Helper functions for type assertions
 
@@ -198,7 +198,7 @@ func NewPromptMessage(role Role, content Content) PromptMessage {
 // Helper function to create a new TextContent
 func NewTextContent(text string) TextContent {
 	return TextContent{
-		Type: "text",
+		Type: ContentTypeText,
 		Text: text,
 	}
 }
@@ -207,7 +207,7 @@ func NewTextContent(text string) TextContent {
 // Helper function to create a new ImageContent
 func NewImageContent(data, mimeType string) ImageContent {
 	return ImageContent{
-		Type:     "image",
+		Type:     ContentTypeImage,
 		Data:     data,
 		MIMEType: mimeType,
 	}
@@ -216,7 +216,7 @@ func NewImageContent(data, mimeType string) ImageContent {
 // Helper function to create a new AudioContent
 func NewAudioContent(data, mimeType string) AudioContent {
 	return AudioContent{
-		Type:     "audio",
+		Type:     ContentTypeAudio,
 		Data:     data,
 		MIMEType: mimeType,
 	}
@@ -225,7 +225,7 @@ func NewAudioContent(data, mimeType string) AudioContent {
 // Helper function to create a new ResourceLink
 func NewResourceLink(uri, name, description, mimeType string) ResourceLink {
 	return ResourceLink{
-		Type:        "resource_link",
+		Type:        ContentTypeLink,
 		URI:         uri,
 		Name:        name,
 		Description: description,
@@ -236,7 +236,7 @@ func NewResourceLink(uri, name, description, mimeType string) ResourceLink {
 // Helper function to create a new EmbeddedResource
 func NewEmbeddedResource(resource ResourceContents) EmbeddedResource {
 	return EmbeddedResource{
-		Type:     "resource",
+		Type:     ContentTypeResource,
 		Resource: resource,
 	}
 }
@@ -246,11 +246,29 @@ func NewToolResultText(text string) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: text,
 			},
 		},
 	}
+}
+
+// NewToolResultJSON creates a new CallToolResult with a JSON content.
+func NewToolResultJSON[T any](data T) (*CallToolResult, error) {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("unable to marshal JSON: %w", err)
+	}
+
+	return &CallToolResult{
+		Content: []Content{
+			TextContent{
+				Type: ContentTypeText,
+				Text: string(b),
+			},
+		},
+		StructuredContent: data,
+	}, nil
 }
 
 // NewToolResultStructured creates a new CallToolResult with structured content.
@@ -296,11 +314,11 @@ func NewToolResultImage(text, imageData, mimeType string) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: text,
 			},
 			ImageContent{
-				Type:     "image",
+				Type:     ContentTypeImage,
 				Data:     imageData,
 				MIMEType: mimeType,
 			},
@@ -313,11 +331,11 @@ func NewToolResultAudio(text, imageData, mimeType string) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: text,
 			},
 			AudioContent{
-				Type:     "audio",
+				Type:     ContentTypeAudio,
 				Data:     imageData,
 				MIMEType: mimeType,
 			},
@@ -333,11 +351,11 @@ func NewToolResultResource(
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: text,
 			},
 			EmbeddedResource{
-				Type:     "resource",
+				Type:     ContentTypeResource,
 				Resource: resource,
 			},
 		},
@@ -350,7 +368,7 @@ func NewToolResultError(text string) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: text,
 			},
 		},
@@ -368,7 +386,7 @@ func NewToolResultErrorFromErr(text string, err error) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: text,
 			},
 		},
@@ -383,7 +401,7 @@ func NewToolResultErrorf(format string, a ...any) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: fmt.Sprintf(format, a...),
 			},
 		},
@@ -505,11 +523,11 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 	contentType := ExtractString(contentMap, "type")
 
 	switch contentType {
-	case "text":
+	case ContentTypeText:
 		text := ExtractString(contentMap, "text")
 		return NewTextContent(text), nil
 
-	case "image":
+	case ContentTypeImage:
 		data := ExtractString(contentMap, "data")
 		mimeType := ExtractString(contentMap, "mimeType")
 		if data == "" || mimeType == "" {
@@ -517,7 +535,7 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		}
 		return NewImageContent(data, mimeType), nil
 
-	case "audio":
+	case ContentTypeAudio:
 		data := ExtractString(contentMap, "data")
 		mimeType := ExtractString(contentMap, "mimeType")
 		if data == "" || mimeType == "" {
@@ -525,7 +543,7 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		}
 		return NewAudioContent(data, mimeType), nil
 
-	case "resource_link":
+	case ContentTypeLink:
 		uri := ExtractString(contentMap, "uri")
 		name := ExtractString(contentMap, "name")
 		description := ExtractString(contentMap, "description")
@@ -535,7 +553,7 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		}
 		return NewResourceLink(uri, name, description, mimeType), nil
 
-	case "resource":
+	case ContentTypeResource:
 		resourceMap := ExtractMap(contentMap, "resource")
 		if resourceMap == nil {
 			return nil, fmt.Errorf("resource is missing")
@@ -668,6 +686,12 @@ func ParseCallToolResult(rawMessage *json.RawMessage) (*CallToolResult, error) {
 		}
 
 		result.Content = append(result.Content, content)
+	}
+
+	// Handle structured content
+	structuredContent, ok := jsonContent["structuredContent"]
+	if ok {
+		result.StructuredContent = structuredContent
 	}
 
 	return &result, nil

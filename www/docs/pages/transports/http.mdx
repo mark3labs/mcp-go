@@ -367,7 +367,7 @@ func main() {
     mux := http.NewServeMux()
     
     // Add MCP endpoints
-    server.AddMCPRoutes(mux, s, "/mcp")
+    mux.Handle("/mcp", server.NewStreamableHTTPServer(s))
     
     // Add custom endpoints
     mux.HandleFunc("/api/status", handleStatus)
@@ -494,7 +494,7 @@ func handleStatelessTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
         return nil, err
     }
     
-    return mcp.NewToolResultJSON(result), nil
+    return mcp.NewToolResultJSON(result)
 }
 
 // Use external storage for persistence

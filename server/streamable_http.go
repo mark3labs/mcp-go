@@ -9,6 +9,7 @@ import (
 	"mime"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -95,6 +96,15 @@ func WithLogger(logger util.Logger) StreamableHTTPOption {
 	}
 }
 
+// WithTLSCert sets the TLS certificate and key files for HTTPS support.
+// Both certFile and keyFile must be provided to enable TLS.
+func WithTLSCert(certFile, keyFile string) StreamableHTTPOption {
+	return func(s *StreamableHTTPServer) {
+		s.tlsCertFile = certFile
+		s.tlsKeyFile = keyFile
+	}
+}
+
 // StreamableHTTPServer implements a Streamable-http based MCP server.
 // It communicates with clients over HTTP protocol, supporting both direct HTTP responses, and SSE streams.
 // https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http
@@ -133,6 +143,9 @@ type StreamableHTTPServer struct {
 	listenHeartbeatInterval time.Duration
 	logger                  util.Logger
 	sessionLogLevels        *sessionLogLevelsStore
+
+	tlsCertFile string
+	tlsKeyFile  string
 }
 
 // NewStreamableHTTPServer creates a new streamable-http server instance
@@ -189,6 +202,19 @@ func (s *StreamableHTTPServer) Start(addr string) error {
 	}
 	srv := s.httpServer
 	s.mu.Unlock()
+
+	if s.tlsCertFile != "" || s.tlsKeyFile != "" {
+		if s.tlsCertFile == "" || s.tlsKeyFile == "" {
+			return fmt.Errorf("both TLS cert and key must be provided")
+		}
+		if _, err := os.Stat(s.tlsCertFile); err != nil {
+			return fmt.Errorf("failed to find TLS certificate file: %w", err)
+		}
+		if _, err := os.Stat(s.tlsKeyFile); err != nil {
+			return fmt.Errorf("failed to find TLS key file: %w", err)
+		}
+		return srv.ListenAndServeTLS(s.tlsCertFile, s.tlsKeyFile)
+	}
 
 	return srv.ListenAndServe()
 }
@@ -400,7 +426,7 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer s.server.UnregisterSession(r.Context(), sessionID)
-	
+
 	// Register session for sampling response delivery
 	s.activeSessions.Store(sessionID, session)
 	defer s.activeSessions.Delete(sessionID)
@@ -753,18 +779,18 @@ type streamableHttpSession struct {
 	logLevels           *sessionLogLevelsStore
 
 	// Sampling support for bidirectional communication
-	samplingRequestChan  chan samplingRequestItem      // server -> client sampling requests
-	samplingRequests     sync.Map                      // requestID -> pending sampling request context
-	requestIDCounter     atomic.Int64                  // for generating unique request IDs
+	samplingRequestChan chan samplingRequestItem // server -> client sampling requests
+	samplingRequests    sync.Map                 // requestID -> pending sampling request context
+	requestIDCounter    atomic.Int64             // for generating unique request IDs
 }
 
 func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, levels *sessionLogLevelsStore) *streamableHttpSession {
 	s := &streamableHttpSession{
-		sessionID:            sessionID,
-		notificationChannel:  make(chan mcp.JSONRPCNotification, 100),
-		tools:                toolStore,
-		logLevels:            levels,
-		samplingRequestChan:  make(chan samplingRequestItem, 10),
+		sessionID:           sessionID,
+		notificationChannel: make(chan mcp.JSONRPCNotification, 100),
+		tools:               toolStore,
+		logLevels:           levels,
+		samplingRequestChan: make(chan samplingRequestItem, 10),
 	}
 	return s
 }
@@ -820,21 +846,21 @@ var _ SessionWithStreamableHTTPConfig = (*streamableHttpSession)(nil)
 func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
 	// Generate unique request ID
 	requestID := s.requestIDCounter.Add(1)
-	
+
 	// Create response channel for this specific request
 	responseChan := make(chan samplingResponseItem, 1)
-	
+
 	// Create the sampling request item
 	samplingRequest := samplingRequestItem{
 		requestID: requestID,
 		request:   request,
 		response:  responseChan,
 	}
-	
+
 	// Store the pending request
 	s.samplingRequests.Store(requestID, responseChan)
 	defer s.samplingRequests.Delete(requestID)
-	
+
 	// Send the sampling request via the channel (non-blocking)
 	select {
 	case s.samplingRequestChan <- samplingRequest:
@@ -844,7 +870,7 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 	default:
 		return nil, fmt.Errorf("sampling request queue is full - server overloaded")
 	}
-	
+
 	// Wait for response or context cancellation
 	select {
 	case response := <-responseChan:
