@@ -155,10 +155,7 @@ func TestClient_Initialize_WithElicitationHandler(t *testing.T) {
 			}
 
 			resultBytes, _ := json.Marshal(result)
-			return &transport.JSONRPCResponse{
-				ID:     request.ID,
-				Result: json.RawMessage(resultBytes),
-			}, nil
+			return transport.NewJSONRPCResultResponse(request.ID, resultBytes), nil
 		},
 		sendNotificationFunc: func(ctx context.Context, notification mcp.JSONRPCNotification) error {
 			return nil
@@ -183,7 +180,6 @@ func TestClient_Initialize_WithElicitationHandler(t *testing.T) {
 			Capabilities: mcp.ClientCapabilities{},
 		},
 	})
-
 	if err != nil {
 		t.Fatalf("failed to initialize: %v", err)
 	}

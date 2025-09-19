@@ -50,11 +50,7 @@ func TestStreamableHTTP_SamplingFlow(t *testing.T) {
 
 		resultBytes, _ := json.Marshal(result)
 
-		return &JSONRPCResponse{
-			JSONRPC: "2.0",
-			ID:      request.ID,
-			Result:  resultBytes,
-		}, nil
+		return NewJSONRPCResultResponse(request.ID, resultBytes), nil
 	})
 
 	// Start the client
@@ -360,11 +356,7 @@ func TestStreamableHTTP_ConcurrentSamplingRequests(t *testing.T) {
 
 		resultBytes, _ := json.Marshal(result)
 
-		return &JSONRPCResponse{
-			JSONRPC: "2.0",
-			ID:      request.ID,
-			Result:  resultBytes,
-		}, nil
+		return NewJSONRPCResultResponse(request.ID, resultBytes), nil
 	})
 
 	// Start the client

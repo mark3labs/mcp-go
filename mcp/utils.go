@@ -8,54 +8,66 @@ import (
 )
 
 // ClientRequest types
-var _ ClientRequest = (*PingRequest)(nil)
-var _ ClientRequest = (*InitializeRequest)(nil)
-var _ ClientRequest = (*CompleteRequest)(nil)
-var _ ClientRequest = (*SetLevelRequest)(nil)
-var _ ClientRequest = (*GetPromptRequest)(nil)
-var _ ClientRequest = (*ListPromptsRequest)(nil)
-var _ ClientRequest = (*ListResourcesRequest)(nil)
-var _ ClientRequest = (*ReadResourceRequest)(nil)
-var _ ClientRequest = (*SubscribeRequest)(nil)
-var _ ClientRequest = (*UnsubscribeRequest)(nil)
-var _ ClientRequest = (*CallToolRequest)(nil)
-var _ ClientRequest = (*ListToolsRequest)(nil)
+var (
+	_ ClientRequest = (*PingRequest)(nil)
+	_ ClientRequest = (*InitializeRequest)(nil)
+	_ ClientRequest = (*CompleteRequest)(nil)
+	_ ClientRequest = (*SetLevelRequest)(nil)
+	_ ClientRequest = (*GetPromptRequest)(nil)
+	_ ClientRequest = (*ListPromptsRequest)(nil)
+	_ ClientRequest = (*ListResourcesRequest)(nil)
+	_ ClientRequest = (*ReadResourceRequest)(nil)
+	_ ClientRequest = (*SubscribeRequest)(nil)
+	_ ClientRequest = (*UnsubscribeRequest)(nil)
+	_ ClientRequest = (*CallToolRequest)(nil)
+	_ ClientRequest = (*ListToolsRequest)(nil)
+)
 
 // ClientNotification types
-var _ ClientNotification = (*CancelledNotification)(nil)
-var _ ClientNotification = (*ProgressNotification)(nil)
-var _ ClientNotification = (*InitializedNotification)(nil)
-var _ ClientNotification = (*RootsListChangedNotification)(nil)
+var (
+	_ ClientNotification = (*CancelledNotification)(nil)
+	_ ClientNotification = (*ProgressNotification)(nil)
+	_ ClientNotification = (*InitializedNotification)(nil)
+	_ ClientNotification = (*RootsListChangedNotification)(nil)
+)
 
 // ClientResult types
-var _ ClientResult = (*EmptyResult)(nil)
-var _ ClientResult = (*CreateMessageResult)(nil)
-var _ ClientResult = (*ListRootsResult)(nil)
+var (
+	_ ClientResult = (*EmptyResult)(nil)
+	_ ClientResult = (*CreateMessageResult)(nil)
+	_ ClientResult = (*ListRootsResult)(nil)
+)
 
 // ServerRequest types
-var _ ServerRequest = (*PingRequest)(nil)
-var _ ServerRequest = (*CreateMessageRequest)(nil)
-var _ ServerRequest = (*ListRootsRequest)(nil)
+var (
+	_ ServerRequest = (*PingRequest)(nil)
+	_ ServerRequest = (*CreateMessageRequest)(nil)
+	_ ServerRequest = (*ListRootsRequest)(nil)
+)
 
 // ServerNotification types
-var _ ServerNotification = (*CancelledNotification)(nil)
-var _ ServerNotification = (*ProgressNotification)(nil)
-var _ ServerNotification = (*LoggingMessageNotification)(nil)
-var _ ServerNotification = (*ResourceUpdatedNotification)(nil)
-var _ ServerNotification = (*ResourceListChangedNotification)(nil)
-var _ ServerNotification = (*ToolListChangedNotification)(nil)
-var _ ServerNotification = (*PromptListChangedNotification)(nil)
+var (
+	_ ServerNotification = (*CancelledNotification)(nil)
+	_ ServerNotification = (*ProgressNotification)(nil)
+	_ ServerNotification = (*LoggingMessageNotification)(nil)
+	_ ServerNotification = (*ResourceUpdatedNotification)(nil)
+	_ ServerNotification = (*ResourceListChangedNotification)(nil)
+	_ ServerNotification = (*ToolListChangedNotification)(nil)
+	_ ServerNotification = (*PromptListChangedNotification)(nil)
+)
 
 // ServerResult types
-var _ ServerResult = (*EmptyResult)(nil)
-var _ ServerResult = (*InitializeResult)(nil)
-var _ ServerResult = (*CompleteResult)(nil)
-var _ ServerResult = (*GetPromptResult)(nil)
-var _ ServerResult = (*ListPromptsResult)(nil)
-var _ ServerResult = (*ListResourcesResult)(nil)
-var _ ServerResult = (*ReadResourceResult)(nil)
-var _ ServerResult = (*CallToolResult)(nil)
-var _ ServerResult = (*ListToolsResult)(nil)
+var (
+	_ ServerResult = (*EmptyResult)(nil)
+	_ ServerResult = (*InitializeResult)(nil)
+	_ ServerResult = (*CompleteResult)(nil)
+	_ ServerResult = (*GetPromptResult)(nil)
+	_ ServerResult = (*ListPromptsResult)(nil)
+	_ ServerResult = (*ListResourcesResult)(nil)
+	_ ServerResult = (*ReadResourceResult)(nil)
+	_ ServerResult = (*CallToolResult)(nil)
+	_ ServerResult = (*ListToolsResult)(nil)
+)
 
 // Helper functions for type assertions
 
@@ -100,12 +112,34 @@ func AsBlobResourceContents(content any) (*BlobResourceContents, bool) {
 
 // Helper function for JSON-RPC
 
-// NewJSONRPCResponse creates a new JSONRPCResponse with the given id and result
+// NewJSONRPCResponse creates a new JSONRPCResponse with the given id and result.
+// NOTE: This function expects a Result struct, but JSONRPCResponse.Result is typed as `any`.
+// The Result struct wraps the actual result data with optional metadata.
+// For direct result assignment, use NewJSONRPCResultResponse instead.
 func NewJSONRPCResponse(id RequestId, result Result) JSONRPCResponse {
 	return JSONRPCResponse{
 		JSONRPC: JSONRPC_VERSION,
 		ID:      id,
 		Result:  result,
+	}
+}
+
+// NewJSONRPCResultResponse creates a new JSONRPCResponse with the given id and result.
+// This function accepts any type for the result, matching the JSONRPCResponse.Result field type.
+func NewJSONRPCResultResponse(id RequestId, result any) JSONRPCResponse {
+	return JSONRPCResponse{
+		JSONRPC: JSONRPC_VERSION,
+		ID:      id,
+		Result:  result,
+	}
+}
+
+// NewJSONRPCErrorDetails creates a new JSONRPCErrorDetails with the given code, message, and data.
+func NewJSONRPCErrorDetails(code int, message string, data any) JSONRPCErrorDetails {
+	return JSONRPCErrorDetails{
+		Code:    code,
+		Message: message,
+		Data:    data,
 	}
 }
 
@@ -119,15 +153,7 @@ func NewJSONRPCError(
 	return JSONRPCError{
 		JSONRPC: JSONRPC_VERSION,
 		ID:      id,
-		Error: struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-			Data    any    `json:"data,omitempty"`
-		}{
-			Code:    code,
-			Message: message,
-			Data:    data,
-		},
+		Error:   NewJSONRPCErrorDetails(code, message, data),
 	}
 }
 

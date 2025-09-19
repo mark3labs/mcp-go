@@ -6,9 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"strconv"
-
 	"net/http"
+	"strconv"
 
 	"github.com/yosida95/uritemplate/v3"
 )
@@ -298,7 +297,6 @@ func (r RequestId) MarshalJSON() ([]byte, error) {
 }
 
 func (r *RequestId) UnmarshalJSON(data []byte) error {
-
 	if string(data) == "null" {
 		r.value = nil
 		return nil
@@ -348,31 +346,48 @@ type JSONRPCResponse struct {
 
 // JSONRPCError represents a non-successful (error) response to a request.
 type JSONRPCError struct {
-	JSONRPC string    `json:"jsonrpc"`
-	ID      RequestId `json:"id"`
-	Error   struct {
-		// The error type that occurred.
-		Code int `json:"code"`
-		// A short description of the error. The message SHOULD be limited
-		// to a concise single sentence.
-		Message string `json:"message"`
-		// Additional information about the error. The value of this member
-		// is defined by the sender (e.g. detailed error information, nested errors etc.).
-		Data any `json:"data,omitempty"`
-	} `json:"error"`
+	JSONRPC string              `json:"jsonrpc"`
+	ID      RequestId           `json:"id"`
+	Error   JSONRPCErrorDetails `json:"error"`
+}
+
+// JSONRPCErrorDetails represents a JSON-RPC error for Go error handling.
+// This is separate from the JSONRPCError type which represents the full JSON-RPC error response structure.
+type JSONRPCErrorDetails struct {
+	// The error type that occurred.
+	Code int `json:"code"`
+	// A short description of the error. The message SHOULD be limited
+	// to a concise single sentence.
+	Message string `json:"message"`
+	// Additional information about the error. The value of this member
+	// is defined by the sender (e.g. detailed error information, nested errors etc.).
+	Data any `json:"data,omitempty"`
 }
 
 // Standard JSON-RPC error codes
 const (
-	PARSE_ERROR      = -32700
-	INVALID_REQUEST  = -32600
+	// PARSE_ERROR indicates invalid JSON was received by the server.
+	PARSE_ERROR = -32700
+
+	// INVALID_REQUEST indicates the JSON sent is not a valid Request object.
+	INVALID_REQUEST = -32600
+
+	// METHOD_NOT_FOUND indicates the method does not exist/is not available.
 	METHOD_NOT_FOUND = -32601
-	INVALID_PARAMS   = -32602
-	INTERNAL_ERROR   = -32603
+
+	// INVALID_PARAMS indicates invalid method parameter(s).
+	INVALID_PARAMS = -32602
+
+	// INTERNAL_ERROR indicates internal JSON-RPC error.
+	INTERNAL_ERROR = -32603
+
+	// REQUEST_INTERRUPTED indicates a request was cancelled or timed out.
+	REQUEST_INTERRUPTED = -32800
 )
 
 // MCP error codes
 const (
+	// RESOURCE_NOT_FOUND indicates a requested resource was not found.
 	RESOURCE_NOT_FOUND = -32002
 )
 

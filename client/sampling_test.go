@@ -175,11 +175,10 @@ func TestClient_Initialize_WithSampling(t *testing.T) {
 	}
 
 	// Prepare mock response for initialization
-	initResponse := &transport.JSONRPCResponse{
-		JSONRPC: mcp.JSONRPC_VERSION,
-		ID:      mcp.NewRequestId(1),
-		Result:  []byte(`{"protocolVersion":"2024-11-05","capabilities":{"logging":{},"prompts":{},"resources":{},"tools":{}},"serverInfo":{"name":"test-server","version":"1.0.0"}}`),
-	}
+	initResponse := transport.NewJSONRPCResultResponse(
+		mcp.NewRequestId(1),
+		[]byte(`{"protocolVersion":"2024-11-05","capabilities":{"logging":{},"prompts":{},"resources":{},"tools":{}},"serverInfo":{"name":"test-server","version":"1.0.0"}}`),
+	)
 
 	// Send the response in a goroutine
 	go func() {

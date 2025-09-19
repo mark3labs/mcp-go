@@ -536,11 +536,7 @@ func TestStdioErrors(t *testing.T) {
 		t.Cleanup(func() { _ = stdio.Close() })
 
 		stdio.SetRequestHandler(func(ctx context.Context, request JSONRPCRequest) (*JSONRPCResponse, error) {
-			return &JSONRPCResponse{
-				JSONRPC: "2.0",
-				ID:      request.ID,
-				Result:  json.RawMessage(`"test response"`),
-			}, nil
+			return NewJSONRPCResultResponse(request.ID, json.RawMessage(`"test response"`)), nil
 		})
 
 		doneChan := make(chan struct{})

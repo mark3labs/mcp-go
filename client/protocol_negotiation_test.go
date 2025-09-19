@@ -30,11 +30,7 @@ func (m *mockProtocolTransport) SendRequest(ctx context.Context, request transpo
 		return nil, fmt.Errorf("no mock response for method %s", request.Method)
 	}
 
-	return &transport.JSONRPCResponse{
-		JSONRPC: "2.0",
-		ID:      request.ID,
-		Result:  json.RawMessage(responseStr),
-	}, nil
+	return transport.NewJSONRPCResultResponse(request.ID, json.RawMessage(responseStr)), nil
 }
 
 func (m *mockProtocolTransport) SendNotification(ctx context.Context, notification mcp.JSONRPCNotification) error {
