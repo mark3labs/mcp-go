@@ -11,6 +11,7 @@ import (
 )
 
 func TestSSE_WithOAuth(t *testing.T) {
+	ctx := context.Background()
 	// Track request count to simulate 401 on first request, then success
 	requestCount := 0
 	authHeaderReceived := ""
@@ -80,7 +81,7 @@ func TestSSE_WithOAuth(t *testing.T) {
 		ExpiresIn:    3600,
 		ExpiresAt:    time.Now().Add(1 * time.Hour), // Valid for 1 hour
 	}
-	if err := tokenStore.SaveToken(validToken); err != nil {
+	if err := tokenStore.SaveToken(ctx, validToken); err != nil {
 		t.Fatalf("Failed to save token: %v", err)
 	}
 

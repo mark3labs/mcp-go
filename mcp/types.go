@@ -56,6 +56,10 @@ const (
 	// https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging
 	MethodSetLogLevel MCPMethod = "logging/setLevel"
 
+	// MethodElicitationCreate requests additional information from the user during interactions.
+	// https://modelcontextprotocol.io/docs/concepts/elicitation
+	MethodElicitationCreate MCPMethod = "elicitation/create"
+
 	// MethodNotificationResourcesListChanged notifies when the list of available resources changes.
 	// https://modelcontextprotocol.io/specification/2025-03-26/server/resources#list-changed-notification
 	MethodNotificationResourcesListChanged = "notifications/resources/list_changed"
@@ -462,6 +466,8 @@ type ClientCapabilities struct {
 	} `json:"roots,omitempty"`
 	// Present if the client supports sampling from an LLM.
 	Sampling *struct{} `json:"sampling,omitempty"`
+	// Present if the client supports elicitation requests from the server.
+	Elicitation *struct{} `json:"elicitation,omitempty"`
 }
 
 // ServerCapabilities represents capabilities that a server may support. Known
@@ -492,6 +498,8 @@ type ServerCapabilities struct {
 		// Whether this server supports notifications for changes to the tool list.
 		ListChanged bool `json:"listChanged,omitempty"`
 	} `json:"tools,omitempty"`
+	// Present if the server supports elicitation requests to the client.
+	Elicitation *struct{} `json:"elicitation,omitempty"`
 }
 
 // Implementation describes the name and version of an MCP implementation.
@@ -813,6 +821,50 @@ func (l LoggingLevel) ShouldSendTo(minLevel LoggingLevel) bool {
 	}
 	return ia >= ib
 }
+
+/* Elicitation */
+
+// ElicitationRequest is a request from the server to the client to request additional
+// information from the user during an interaction.
+type ElicitationRequest struct {
+	Request
+	Params ElicitationParams `json:"params"`
+}
+
+// ElicitationParams contains the parameters for an elicitation request.
+type ElicitationParams struct {
+	// A human-readable message explaining what information is being requested and why.
+	Message string `json:"message"`
+	// A JSON Schema defining the expected structure of the user's response.
+	RequestedSchema any `json:"requestedSchema"`
+}
+
+// ElicitationResult represents the result of an elicitation request.
+type ElicitationResult struct {
+	Result
+	ElicitationResponse
+}
+
+// ElicitationResponse represents the user's response to an elicitation request.
+type ElicitationResponse struct {
+	// Action indicates whether the user accepted, declined, or cancelled.
+	Action ElicitationResponseAction `json:"action"`
+	// Content contains the user's response data if they accepted.
+	// Should conform to the requestedSchema from the ElicitationRequest.
+	Content any `json:"content,omitempty"`
+}
+
+// ElicitationResponseAction indicates how the user responded to an elicitation request.
+type ElicitationResponseAction string
+
+const (
+	// ElicitationResponseActionAccept indicates the user provided the requested information.
+	ElicitationResponseActionAccept ElicitationResponseAction = "accept"
+	// ElicitationResponseActionDecline indicates the user explicitly declined to provide information.
+	ElicitationResponseActionDecline ElicitationResponseAction = "decline"
+	// ElicitationResponseActionCancel indicates the user cancelled without making a choice.
+	ElicitationResponseActionCancel ElicitationResponseAction = "cancel"
+)
 
 /* Sampling */
 

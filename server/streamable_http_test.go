@@ -894,6 +894,101 @@ func TestStreamableHTTP_HeaderPassthrough(t *testing.T) {
 	}
 }
 
+func TestStreamableHTTP_PongResponseHandling(t *testing.T) {
+	// Ping/Pong does not require session ID
+	// https://modelcontextprotocol.io/specification/2025-03-26/basic/utilities/ping
+	mcpServer := NewMCPServer("test-mcp-server", "1.0")
+	server := NewTestStreamableHTTPServer(mcpServer)
+	defer server.Close()
+
+	t.Run("Pong response with empty result should not be treated as sampling response", func(t *testing.T) {
+		// According to MCP spec, pong responses have empty result: {"jsonrpc": "2.0", "id": "123", "result": {}}
+		pongResponse := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      123,
+			"result":  map[string]any{},
+		}
+
+		resp, err := postJSON(server.URL, pongResponse)
+		if err != nil {
+			t.Fatalf("Failed to send pong response: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Failed to read response body: %v", err)
+		}
+		bodyStr := string(bodyBytes)
+
+		if strings.Contains(bodyStr, "Missing session ID for sampling response") {
+			t.Errorf("Pong response was incorrectly detected as sampling response. Response: %s", bodyStr)
+		}
+		if strings.Contains(bodyStr, "Failed to handle sampling response") {
+			t.Errorf("Pong response was incorrectly detected as sampling response. Response: %s", bodyStr)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200 for pong response, got %d. Body: %s", resp.StatusCode, bodyStr)
+		}
+	})
+
+	t.Run("Pong response with null result should not be treated as sampling response", func(t *testing.T) {
+		pongResponse := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      124,
+		}
+
+		resp, err := postJSON(server.URL, pongResponse)
+		if err != nil {
+			t.Fatalf("Failed to send pong response: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Failed to read response body: %v", err)
+		}
+		bodyStr := string(bodyBytes)
+
+		if strings.Contains(bodyStr, "Missing session ID for sampling response") {
+			t.Errorf("Pong response with omitted result was incorrectly detected as sampling response. Response: %s", bodyStr)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200 for pong response, got %d. Body: %s", resp.StatusCode, bodyStr)
+		}
+	})
+
+	t.Run("Response with empty error should not be treated as sampling response", func(t *testing.T) {
+		response := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      125,
+			"error":   map[string]any{},
+		}
+
+		resp, err := postJSON(server.URL, response)
+		if err != nil {
+			t.Fatalf("Failed to send response: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Failed to read response body: %v", err)
+		}
+		bodyStr := string(bodyBytes)
+
+		if strings.Contains(bodyStr, "Missing session ID for sampling response") {
+			t.Errorf("Response with empty error was incorrectly detected as sampling response. Response: %s", bodyStr)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200 for response with empty error, got %d. Body: %s", resp.StatusCode, bodyStr)
+		}
+	})
+}
+
 func TestStreamableHTTPServer_TLS(t *testing.T) {
 	t.Run("TLS options are set correctly", func(t *testing.T) {
 		mcpServer := NewMCPServer("test-mcp-server", "1.0.0")

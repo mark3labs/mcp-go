@@ -14,6 +14,9 @@ import (
 	"time"
 )
 
+// ErrNoToken is returned when no token is available in the token store
+var ErrNoToken = errors.New("no token available")
+
 // OAuthConfig holds the OAuth configuration for the client
 type OAuthConfig struct {
 	// ClientID is the OAuth client ID
@@ -33,12 +36,26 @@ type OAuthConfig struct {
 	PKCEEnabled bool
 }
 
-// TokenStore is an interface for storing and retrieving OAuth tokens
+// TokenStore is an interface for storing and retrieving OAuth tokens.
+//
+// Implementations must:
+//   - Honor context cancellation and deadlines, returning context.Canceled
+//     or context.DeadlineExceeded as appropriate
+//   - Return ErrNoToken (or a sentinel error that wraps it) when no token
+//     is available, rather than conflating this with other operational errors
+//   - Properly propagate all other errors (database failures, I/O errors, etc.)
+//   - Check ctx.Done() before performing operations and return ctx.Err() if cancelled
 type TokenStore interface {
-	// GetToken returns the current token
-	GetToken() (*Token, error)
-	// SaveToken saves a token
-	SaveToken(token *Token) error
+	// GetToken returns the current token.
+	// Returns ErrNoToken if no token is available.
+	// Returns context.Canceled or context.DeadlineExceeded if ctx is cancelled.
+	// Returns other errors for operational failures (I/O, database, etc.).
+	GetToken(ctx context.Context) (*Token, error)
+
+	// SaveToken saves a token.
+	// Returns context.Canceled or context.DeadlineExceeded if ctx is cancelled.
+	// Returns other errors for operational failures (I/O, database, etc.).
+	SaveToken(ctx context.Context, token *Token) error
 }
 
 // Token represents an OAuth token
@@ -76,18 +93,27 @@ func NewMemoryTokenStore() *MemoryTokenStore {
 	return &MemoryTokenStore{}
 }
 
-// GetToken returns the current token
-func (s *MemoryTokenStore) GetToken() (*Token, error) {
+// GetToken returns the current token.
+// Returns ErrNoToken if no token is available.
+// Returns context.Canceled or context.DeadlineExceeded if ctx is cancelled.
+func (s *MemoryTokenStore) GetToken(ctx context.Context) (*Token, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.token == nil {
-		return nil, errors.New("no token available")
+		return nil, ErrNoToken
 	}
 	return s.token, nil
 }
 
-// SaveToken saves a token
-func (s *MemoryTokenStore) SaveToken(token *Token) error {
+// SaveToken saves a token.
+// Returns context.Canceled or context.DeadlineExceeded if ctx is cancelled.
+func (s *MemoryTokenStore) SaveToken(ctx context.Context, token *Token) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.token = token
@@ -150,7 +176,10 @@ func (h *OAuthHandler) GetAuthorizationHeader(ctx context.Context) (string, erro
 
 // getValidToken returns a valid token, refreshing if necessary
 func (h *OAuthHandler) getValidToken(ctx context.Context) (*Token, error) {
-	token, err := h.config.TokenStore.GetToken()
+	token, err := h.config.TokenStore.GetToken(ctx)
+	if err != nil && !errors.Is(err, ErrNoToken) {
+		return nil, err
+	}
 	if err == nil && !token.IsExpired() && token.AccessToken != "" {
 		return token, nil
 	}
@@ -218,13 +247,12 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken string) (*
 	}
 
 	// If no new refresh token is provided, keep the old one
-	oldToken, _ := h.config.TokenStore.GetToken()
-	if tokenResp.RefreshToken == "" && oldToken != nil {
-		tokenResp.RefreshToken = oldToken.RefreshToken
+	if tokenResp.RefreshToken == "" {
+		tokenResp.RefreshToken = refreshToken
 	}
 
 	// Save the token
-	if err := h.config.TokenStore.SaveToken(&tokenResp); err != nil {
+	if err := h.config.TokenStore.SaveToken(ctx, &tokenResp); err != nil {
 		return nil, fmt.Errorf("failed to save token: %w", err)
 	}
 
@@ -637,7 +665,7 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 	}
 
 	// Save the token
-	if err := h.config.TokenStore.SaveToken(&tokenResp); err != nil {
+	if err := h.config.TokenStore.SaveToken(ctx, &tokenResp); err != nil {
 		return fmt.Errorf("failed to save token: %w", err)
 	}
 
