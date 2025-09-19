@@ -554,19 +554,21 @@ func startMockStreamableWithGETSupport(getSupport bool) (string, func(), chan bo
 				return
 			}
 
-			// Handle ping responses from client
-			if _, hasResult := request["result"]; hasResult {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusAccepted)
-				if err := json.NewEncoder(w).Encode(map[string]any{
-					"jsonrpc": "2.0",
-					"id":      request["id"],
-					"result":  "response received",
-				}); err != nil {
-					http.Error(w, "Failed to encode response acknowledgment", http.StatusInternalServerError)
+			// Handle client JSON-RPC responses (e.g., ping replies)
+			if request["jsonrpc"] == "2.0" && request["id"] != nil && request["method"] == nil {
+				if _, hasResult := request["result"]; hasResult {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusAccepted)
+					if err := json.NewEncoder(w).Encode(map[string]any{
+						"jsonrpc": "2.0",
+						"id":      request["id"],
+						"result":  "response received",
+					}); err != nil {
+						http.Error(w, "Failed to encode response acknowledgment", http.StatusInternalServerError)
+						return
+					}
 					return
 				}
-				return
 			}
 
 			method := request["method"]
