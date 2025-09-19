@@ -705,8 +705,15 @@ func ParseResourceContents(contentMap map[string]any) (ResourceContents, error) 
 
 	mimeType := ExtractString(contentMap, "mimeType")
 
+	meta := ExtractMap(contentMap, "_meta")
+
+	if _, present := contentMap["_meta"]; present && meta == nil {
+		return nil, fmt.Errorf("_meta must be an object")
+	}
+
 	if text := ExtractString(contentMap, "text"); text != "" {
 		return TextResourceContents{
+			Meta:     meta,
 			URI:      uri,
 			MIMEType: mimeType,
 			Text:     text,
@@ -715,6 +722,7 @@ func ParseResourceContents(contentMap map[string]any) (ResourceContents, error) 
 
 	if blob := ExtractString(contentMap, "blob"); blob != "" {
 		return BlobResourceContents{
+			Meta:     meta,
 			URI:      uri,
 			MIMEType: mimeType,
 			Blob:     blob,
