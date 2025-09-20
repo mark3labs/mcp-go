@@ -554,6 +554,23 @@ func startMockStreamableWithGETSupport(getSupport bool) (string, func(), chan bo
 				return
 			}
 
+			// Handle client JSON-RPC responses (e.g., ping replies)
+			if request["jsonrpc"] == "2.0" && request["id"] != nil && request["method"] == nil {
+				if _, hasResult := request["result"]; hasResult {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusAccepted)
+					if err := json.NewEncoder(w).Encode(map[string]any{
+						"jsonrpc": "2.0",
+						"id":      request["id"],
+						"result":  "response received",
+					}); err != nil {
+						http.Error(w, "Failed to encode response acknowledgment", http.StatusInternalServerError)
+						return
+					}
+					return
+				}
+			}
+
 			method := request["method"]
 			if method == "initialize" {
 				// Generate a new session ID
@@ -627,7 +644,31 @@ func startMockStreamableWithGETSupport(getSupport bool) (string, func(), chan bo
 				fmt.Fprintf(w, "event: message\ndata: %s\n\n", notificationData)
 				flusher.Flush()
 				sendNotification()
-				return
+			}
+
+			// Keep the connection open, send periodic pings
+			pingTicker := time.NewTicker(3 * time.Second)
+			defer pingTicker.Stop()
+
+			for {
+				select {
+				case <-disconnectCh:
+					// Force disconnect
+					return
+				case <-r.Context().Done():
+					// Client disconnected
+					return
+				case <-pingTicker.C:
+					// Send ping message according to MCP specification
+					pingMessage := map[string]any{
+						"jsonrpc": "2.0",
+						"id":      fmt.Sprintf("ping-%d", time.Now().UnixNano()),
+						"method":  "ping",
+					}
+					pingData, _ := json.Marshal(pingMessage)
+					fmt.Fprintf(w, "event: message\ndata: %s\n\n", pingData)
+					flusher.Flush()
+				}
 			}
 		} else {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -665,6 +706,23 @@ func TestContinuousListening(t *testing.T) {
 	notificationReceived := make(chan struct{}, 10)
 	trans.SetNotificationHandler(func(notification mcp.JSONRPCNotification) {
 		notificationReceived <- struct{}{}
+	})
+
+	// Setup ping handler
+	pingReceived := make(chan struct{}, 10)
+
+	// Setup request handler for ping requests
+	trans.SetRequestHandler(func(ctx context.Context, request JSONRPCRequest) (*JSONRPCResponse, error) {
+		if request.Method == "ping" {
+			pingReceived <- struct{}{}
+			// Return proper ping response according to MCP specification
+			return &JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      request.ID,
+				Result:  json.RawMessage("{}"),
+			}, nil
+		}
+		return nil, fmt.Errorf("unsupported request method: %s", request.Method)
 	})
 
 	// Start the transport - this will launch listenForever in a goroutine
@@ -713,6 +771,15 @@ func TestContinuousListening(t *testing.T) {
 			t.Fatalf("Timed out waiting for notifications after reconnect")
 			return
 		}
+	}
+
+	// Wait for at least one ping to be received (should happen within 3 seconds)
+	select {
+	case <-pingReceived:
+		t.Log("Received ping message successfully")
+		time.Sleep(10 * time.Millisecond) // Allow time for response
+	case <-time.After(5 * time.Second):
+		t.Errorf("Expected to receive ping message within 5 seconds, but didn't")
 	}
 }
 
