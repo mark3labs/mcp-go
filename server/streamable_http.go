@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -262,6 +264,14 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// detect empty ping response, skip session ID validation
+	isPingResponse := jsonMessage.Method == "" && jsonMessage.ID != nil &&
+		(isJSONEmpty(jsonMessage.Result) && isJSONEmpty(jsonMessage.Error))
+
+	if isPingResponse {
+		return
+	}
+
 	// Check if this is a sampling response (has result/error but no method)
 	isSamplingResponse := jsonMessage.Method == "" && jsonMessage.ID != nil &&
 		(jsonMessage.Result != nil || jsonMessage.Error != nil)
@@ -463,6 +473,21 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 				case <-done:
 					return
 				}
+			case elicitationReq := <-session.elicitationRequestChan:
+				// Send elicitation request to client via SSE
+				jsonrpcRequest := mcp.JSONRPCRequest{
+					JSONRPC: "2.0",
+					ID:      mcp.NewRequestId(elicitationReq.requestID),
+					Request: mcp.Request{
+						Method: string(mcp.MethodElicitationCreate),
+					},
+					Params: elicitationReq.request.Params,
+				}
+				select {
+				case writeChan <- jsonrpcRequest:
+				case <-done:
+					return
+				}
 			case <-done:
 				return
 			}
@@ -602,12 +627,6 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w http.ResponseWriter, r *
 		}
 	} else if responseMessage.Result != nil {
 		// Parse result
-		var result mcp.CreateMessageResult
-		if err := json.Unmarshal(responseMessage.Result, &result); err != nil {
-			response.err = fmt.Errorf("failed to parse sampling result: %v", err)
-		} else {
-			response.result = &result
-		}
 	} else {
 		response.err = fmt.Errorf("sampling response has neither result nor error")
 	}
@@ -754,8 +773,15 @@ type samplingRequestItem struct {
 
 type samplingResponseItem struct {
 	requestID int64
-	result    *mcp.CreateMessageResult
+	result    json.RawMessage
 	err       error
+}
+
+// Elicitation support types for HTTP transport
+type elicitationRequestItem struct {
+	requestID int64
+	request   mcp.ElicitationRequest
+	response  chan samplingResponseItem
 }
 
 // streamableHttpSession is a session for streamable-http transport
@@ -769,18 +795,21 @@ type streamableHttpSession struct {
 	logLevels           *sessionLogLevelsStore
 
 	// Sampling support for bidirectional communication
-	samplingRequestChan chan samplingRequestItem // server -> client sampling requests
-	samplingRequests    sync.Map                 // requestID -> pending sampling request context
-	requestIDCounter    atomic.Int64             // for generating unique request IDs
+	samplingRequestChan    chan samplingRequestItem    // server -> client sampling requests
+	elicitationRequestChan chan elicitationRequestItem // server -> client elicitation requests
+
+	samplingRequests sync.Map     // requestID -> pending sampling request context
+	requestIDCounter atomic.Int64 // for generating unique request IDs
 }
 
 func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, levels *sessionLogLevelsStore) *streamableHttpSession {
 	s := &streamableHttpSession{
-		sessionID:           sessionID,
-		notificationChannel: make(chan mcp.JSONRPCNotification, 100),
-		tools:               toolStore,
-		logLevels:           levels,
-		samplingRequestChan: make(chan samplingRequestItem, 10),
+		sessionID:              sessionID,
+		notificationChannel:    make(chan mcp.JSONRPCNotification, 100),
+		tools:                  toolStore,
+		logLevels:              levels,
+		samplingRequestChan:    make(chan samplingRequestItem, 10),
+		elicitationRequestChan: make(chan elicitationRequestItem, 10),
 	}
 	return s
 }
@@ -867,13 +896,63 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 		if response.err != nil {
 			return nil, response.err
 		}
-		return response.result, nil
+		var result mcp.CreateMessageResult
+		if err := json.Unmarshal(response.result, &result); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal sampling response: %v", err)
+		}
+		return &result, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// RequestElicitation implements SessionWithElicitation interface for HTTP transport
+func (s *streamableHttpSession) RequestElicitation(ctx context.Context, request mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
+	// Generate unique request ID
+	requestID := s.requestIDCounter.Add(1)
+
+	// Create response channel for this specific request
+	responseChan := make(chan samplingResponseItem, 1)
+
+	// Create the sampling request item
+	elicitationRequest := elicitationRequestItem{
+		requestID: requestID,
+		request:   request,
+		response:  responseChan,
+	}
+
+	// Store the pending request
+	s.samplingRequests.Store(requestID, responseChan)
+	defer s.samplingRequests.Delete(requestID)
+
+	// Send the sampling request via the channel (non-blocking)
+	select {
+	case s.elicitationRequestChan <- elicitationRequest:
+		// Request queued successfully
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+		return nil, fmt.Errorf("elicitation request queue is full - server overloaded")
+	}
+
+	// Wait for response or context cancellation
+	select {
+	case response := <-responseChan:
+		if response.err != nil {
+			return nil, response.err
+		}
+		var result mcp.ElicitationResult
+		if err := json.Unmarshal(response.result, &result); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal elicitation response: %v", err)
+		}
+		return &result, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 }
 
 var _ SessionWithSampling = (*streamableHttpSession)(nil)
+var _ SessionWithElicitation = (*streamableHttpSession)(nil)
 
 // --- session id manager ---
 
@@ -936,4 +1015,53 @@ func NewTestStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption
 	sseServer := NewStreamableHTTPServer(server, opts...)
 	testServer := httptest.NewServer(sseServer)
 	return testServer
+}
+
+// isJSONEmpty reports whether the provided JSON value is "empty":
+//   - null
+//   - empty object: {}
+//   - empty array: []
+//
+// It also treats nil/whitespace-only input as empty.
+// It does NOT treat 0, false, "" or non-empty composites as empty.
+func isJSONEmpty(data json.RawMessage) bool {
+	if len(data) == 0 {
+		return true
+	}
+
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return true
+	}
+
+	switch trimmed[0] {
+	case '{':
+		if len(trimmed) == 2 && trimmed[1] == '}' {
+			return true
+		}
+		for i := 1; i < len(trimmed); i++ {
+			if !unicode.IsSpace(rune(trimmed[i])) {
+				return trimmed[i] == '}'
+			}
+		}
+	case '[':
+		if len(trimmed) == 2 && trimmed[1] == ']' {
+			return true
+		}
+		for i := 1; i < len(trimmed); i++ {
+			if !unicode.IsSpace(rune(trimmed[i])) {
+				return trimmed[i] == ']'
+			}
+		}
+
+	case '"': // treat "" as not empty
+		return false
+
+	case 'n': // null
+		return len(trimmed) == 4 &&
+			trimmed[1] == 'u' &&
+			trimmed[2] == 'l' &&
+			trimmed[3] == 'l'
+	}
+	return false
 }
