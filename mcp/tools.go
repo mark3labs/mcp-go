@@ -565,6 +565,8 @@ type Tool struct {
 	InputSchema ToolInputSchema `json:"inputSchema"`
 	// Alternative to InputSchema - allows arbitrary JSON Schema to be provided
 	RawInputSchema json.RawMessage `json:"-"` // Hide this from JSON marshaling
+	// A JSON Schema object defining the expected output returned by the tool .
+	OutputSchema ToolOutputSchema `json:"outputSchema,omitempty"`
 	// Optional JSON Schema defining expected output structure
 	RawOutputSchema json.RawMessage `json:"-"` // Hide this from JSON marshaling
 	// Optional properties describing tool behavior
@@ -601,7 +603,12 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 
 	// Add output schema if present
 	if t.RawOutputSchema != nil {
+		if t.OutputSchema.Type != "" {
+			return nil, fmt.Errorf("tool %s has both OutputSchema and RawOutputSchema set: %w", t.Name, errToolSchemaConflict)
+		}
 		m["outputSchema"] = t.RawOutputSchema
+	} else if t.OutputSchema.Type != "" { // If no output schema is specified, do not return anything
+		m["outputSchema"] = t.OutputSchema
 	}
 
 	m["annotations"] = t.Annotations
@@ -609,15 +616,19 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
-type ToolInputSchema struct {
+// ToolArgumentsSchema represents a JSON Schema for tool arguments.
+type ToolArgumentsSchema struct {
 	Defs       map[string]any `json:"$defs,omitempty"`
 	Type       string         `json:"type"`
 	Properties map[string]any `json:"properties,omitempty"`
 	Required   []string       `json:"required,omitempty"`
 }
 
+type ToolInputSchema ToolArgumentsSchema // For retro-compatibility
+type ToolOutputSchema ToolArgumentsSchema
+
 // MarshalJSON implements the json.Marshaler interface for ToolInputSchema.
-func (tis ToolInputSchema) MarshalJSON() ([]byte, error) {
+func (tis ToolArgumentsSchema) MarshalJSON() ([]byte, error) {
 	m := make(map[string]any)
 	m["type"] = tis.Type
 
@@ -780,7 +791,15 @@ func WithOutputSchema[T any]() ToolOption {
 			return
 		}
 
-		t.RawOutputSchema = json.RawMessage(mcpSchema)
+		// Retrieve the schema from raw JSON
+		if err := json.Unmarshal(mcpSchema, &t.OutputSchema); err != nil {
+			// Skip and maintain backward compatibility
+			return
+		}
+
+		// Always set the type to "object" as of the current MCP spec
+		// https://modelcontextprotocol.io/specification/2025-06-18/server/tools#output-schema
+		t.OutputSchema.Type = "object"
 	}
 }
 

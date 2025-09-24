@@ -8,54 +8,66 @@ import (
 )
 
 // ClientRequest types
-var _ ClientRequest = &PingRequest{}
-var _ ClientRequest = &InitializeRequest{}
-var _ ClientRequest = &CompleteRequest{}
-var _ ClientRequest = &SetLevelRequest{}
-var _ ClientRequest = &GetPromptRequest{}
-var _ ClientRequest = &ListPromptsRequest{}
-var _ ClientRequest = &ListResourcesRequest{}
-var _ ClientRequest = &ReadResourceRequest{}
-var _ ClientRequest = &SubscribeRequest{}
-var _ ClientRequest = &UnsubscribeRequest{}
-var _ ClientRequest = &CallToolRequest{}
-var _ ClientRequest = &ListToolsRequest{}
+var (
+	_ ClientRequest = (*PingRequest)(nil)
+	_ ClientRequest = (*InitializeRequest)(nil)
+	_ ClientRequest = (*CompleteRequest)(nil)
+	_ ClientRequest = (*SetLevelRequest)(nil)
+	_ ClientRequest = (*GetPromptRequest)(nil)
+	_ ClientRequest = (*ListPromptsRequest)(nil)
+	_ ClientRequest = (*ListResourcesRequest)(nil)
+	_ ClientRequest = (*ReadResourceRequest)(nil)
+	_ ClientRequest = (*SubscribeRequest)(nil)
+	_ ClientRequest = (*UnsubscribeRequest)(nil)
+	_ ClientRequest = (*CallToolRequest)(nil)
+	_ ClientRequest = (*ListToolsRequest)(nil)
+)
 
 // ClientNotification types
-var _ ClientNotification = &CancelledNotification{}
-var _ ClientNotification = &ProgressNotification{}
-var _ ClientNotification = &InitializedNotification{}
-var _ ClientNotification = &RootsListChangedNotification{}
+var (
+	_ ClientNotification = (*CancelledNotification)(nil)
+	_ ClientNotification = (*ProgressNotification)(nil)
+	_ ClientNotification = (*InitializedNotification)(nil)
+	_ ClientNotification = (*RootsListChangedNotification)(nil)
+)
 
 // ClientResult types
-var _ ClientResult = &EmptyResult{}
-var _ ClientResult = &CreateMessageResult{}
-var _ ClientResult = &ListRootsResult{}
+var (
+	_ ClientResult = (*EmptyResult)(nil)
+	_ ClientResult = (*CreateMessageResult)(nil)
+	_ ClientResult = (*ListRootsResult)(nil)
+)
 
 // ServerRequest types
-var _ ServerRequest = &PingRequest{}
-var _ ServerRequest = &CreateMessageRequest{}
-var _ ServerRequest = &ListRootsRequest{}
+var (
+	_ ServerRequest = (*PingRequest)(nil)
+	_ ServerRequest = (*CreateMessageRequest)(nil)
+	_ ServerRequest = (*ListRootsRequest)(nil)
+)
 
 // ServerNotification types
-var _ ServerNotification = &CancelledNotification{}
-var _ ServerNotification = &ProgressNotification{}
-var _ ServerNotification = &LoggingMessageNotification{}
-var _ ServerNotification = &ResourceUpdatedNotification{}
-var _ ServerNotification = &ResourceListChangedNotification{}
-var _ ServerNotification = &ToolListChangedNotification{}
-var _ ServerNotification = &PromptListChangedNotification{}
+var (
+	_ ServerNotification = (*CancelledNotification)(nil)
+	_ ServerNotification = (*ProgressNotification)(nil)
+	_ ServerNotification = (*LoggingMessageNotification)(nil)
+	_ ServerNotification = (*ResourceUpdatedNotification)(nil)
+	_ ServerNotification = (*ResourceListChangedNotification)(nil)
+	_ ServerNotification = (*ToolListChangedNotification)(nil)
+	_ ServerNotification = (*PromptListChangedNotification)(nil)
+)
 
 // ServerResult types
-var _ ServerResult = &EmptyResult{}
-var _ ServerResult = &InitializeResult{}
-var _ ServerResult = &CompleteResult{}
-var _ ServerResult = &GetPromptResult{}
-var _ ServerResult = &ListPromptsResult{}
-var _ ServerResult = &ListResourcesResult{}
-var _ ServerResult = &ReadResourceResult{}
-var _ ServerResult = &CallToolResult{}
-var _ ServerResult = &ListToolsResult{}
+var (
+	_ ServerResult = (*EmptyResult)(nil)
+	_ ServerResult = (*InitializeResult)(nil)
+	_ ServerResult = (*CompleteResult)(nil)
+	_ ServerResult = (*GetPromptResult)(nil)
+	_ ServerResult = (*ListPromptsResult)(nil)
+	_ ServerResult = (*ListResourcesResult)(nil)
+	_ ServerResult = (*ReadResourceResult)(nil)
+	_ ServerResult = (*CallToolResult)(nil)
+	_ ServerResult = (*ListToolsResult)(nil)
+)
 
 // Helper functions for type assertions
 
@@ -100,12 +112,34 @@ func AsBlobResourceContents(content any) (*BlobResourceContents, bool) {
 
 // Helper function for JSON-RPC
 
-// NewJSONRPCResponse creates a new JSONRPCResponse with the given id and result
+// NewJSONRPCResponse creates a new JSONRPCResponse with the given id and result.
+// NOTE: This function expects a Result struct, but JSONRPCResponse.Result is typed as `any`.
+// The Result struct wraps the actual result data with optional metadata.
+// For direct result assignment, use NewJSONRPCResultResponse instead.
 func NewJSONRPCResponse(id RequestId, result Result) JSONRPCResponse {
 	return JSONRPCResponse{
 		JSONRPC: JSONRPC_VERSION,
 		ID:      id,
 		Result:  result,
+	}
+}
+
+// NewJSONRPCResultResponse creates a new JSONRPCResponse with the given id and result.
+// This function accepts any type for the result, matching the JSONRPCResponse.Result field type.
+func NewJSONRPCResultResponse(id RequestId, result any) JSONRPCResponse {
+	return JSONRPCResponse{
+		JSONRPC: JSONRPC_VERSION,
+		ID:      id,
+		Result:  result,
+	}
+}
+
+// NewJSONRPCErrorDetails creates a new JSONRPCErrorDetails with the given code, message, and data.
+func NewJSONRPCErrorDetails(code int, message string, data any) JSONRPCErrorDetails {
+	return JSONRPCErrorDetails{
+		Code:    code,
+		Message: message,
+		Data:    data,
 	}
 }
 
@@ -119,15 +153,7 @@ func NewJSONRPCError(
 	return JSONRPCError{
 		JSONRPC: JSONRPC_VERSION,
 		ID:      id,
-		Error: struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-			Data    any    `json:"data,omitempty"`
-		}{
-			Code:    code,
-			Message: message,
-			Data:    data,
-		},
+		Error:   NewJSONRPCErrorDetails(code, message, data),
 	}
 }
 
@@ -251,6 +277,24 @@ func NewToolResultText(text string) *CallToolResult {
 			},
 		},
 	}
+}
+
+// NewToolResultJSON creates a new CallToolResult with a JSON content.
+func NewToolResultJSON[T any](data T) (*CallToolResult, error) {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("unable to marshal JSON: %w", err)
+	}
+
+	return &CallToolResult{
+		Content: []Content{
+			TextContent{
+				Type: ContentTypeText,
+				Text: string(b),
+			},
+		},
+		StructuredContent: data,
+	}, nil
 }
 
 // NewToolResultStructured creates a new CallToolResult with structured content.

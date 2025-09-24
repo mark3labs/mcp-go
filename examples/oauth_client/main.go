@@ -129,9 +129,11 @@ func maybeAuthorize(err error) {
 			log.Fatalf("Failed to generate state: %v", err)
 		}
 
-		err = oauthHandler.RegisterClient(context.Background(), "mcp-go-oauth-example")
-		if err != nil {
-			log.Fatalf("Failed to register client: %v", err)
+		if oauthHandler.GetClientID() == "" {
+			err = oauthHandler.RegisterClient(context.Background(), "mcp-go-oauth-example")
+			if err != nil {
+				log.Fatalf("Failed to register client: %v", err)
+			}
 		}
 
 		// Get the authorization URL
