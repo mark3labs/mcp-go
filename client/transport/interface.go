@@ -70,4 +70,3 @@ type JSONRPCResponse struct {
 	Result  json.RawMessage          `json:"result,omitempty"`
 	Error   *mcp.JSONRPCErrorDetails `json:"error,omitempty"`
 }
-

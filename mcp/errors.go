@@ -83,4 +83,3 @@ func (e *JSONRPCErrorDetails) AsError() error {
 
 	return err
 }
-

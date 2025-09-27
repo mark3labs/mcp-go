@@ -112,7 +112,6 @@ func TestJSONRPCErrorDetails_AsError_WithPointer(t *testing.T) {
 	require.True(t, errors.Is(result, ErrMethodNotFound))
 }
 
-
 func TestSentinelErrors(t *testing.T) {
 	t.Parallel()
 
