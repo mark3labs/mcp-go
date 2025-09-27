@@ -12,7 +12,7 @@ import (
 // It launches the specified command with given arguments and sets up stdin/stdout pipes for communication.
 // Returns an error if the subprocess cannot be started or the pipes cannot be created.
 //
-// NOTICE: NewStdioMCPClient will start the connection automatically. Don't call the Start method manually.
+// NOTICE: NewStdioMCPClient will start the connection automatically.
 // This is for backward compatibility.
 func NewStdioMCPClient(
 	command string,
@@ -28,7 +28,6 @@ func NewStdioMCPClient(
 // such as setting a custom command function.
 //
 // NOTICE: NewStdioMCPClientWithOptions automatically starts the underlying transport.
-// Don't call the Start method manually.
 // This is for backward compatibility.
 func NewStdioMCPClientWithOptions(
 	command string,

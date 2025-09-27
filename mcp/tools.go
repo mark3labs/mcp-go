@@ -486,6 +486,11 @@ func (r CallToolResult) MarshalJSON() ([]byte, error) {
 	}
 	m["content"] = content
 
+	// Marshal StructuredContent if present
+	if r.StructuredContent != nil {
+		m["structuredContent"] = r.StructuredContent
+	}
+
 	// Marshal IsError if true
 	if r.IsError {
 		m["isError"] = r.IsError
@@ -526,6 +531,11 @@ func (r *CallToolResult) UnmarshalJSON(data []byte) error {
 		}
 	}
 
+	// Unmarshal StructuredContent if present
+	if structured, ok := raw["structuredContent"]; ok {
+		r.StructuredContent = structured
+	}
+
 	// Unmarshal IsError
 	if isError, ok := raw["isError"]; ok {
 		if isErrorBool, ok := isError.(bool); ok {
@@ -555,6 +565,8 @@ type Tool struct {
 	InputSchema ToolInputSchema `json:"inputSchema"`
 	// Alternative to InputSchema - allows arbitrary JSON Schema to be provided
 	RawInputSchema json.RawMessage `json:"-"` // Hide this from JSON marshaling
+	// A JSON Schema object defining the expected output returned by the tool .
+	OutputSchema ToolOutputSchema `json:"outputSchema,omitempty"`
 	// Optional JSON Schema defining expected output structure
 	RawOutputSchema json.RawMessage `json:"-"` // Hide this from JSON marshaling
 	// Optional properties describing tool behavior
@@ -591,7 +603,12 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 
 	// Add output schema if present
 	if t.RawOutputSchema != nil {
+		if t.OutputSchema.Type != "" {
+			return nil, fmt.Errorf("tool %s has both OutputSchema and RawOutputSchema set: %w", t.Name, errToolSchemaConflict)
+		}
 		m["outputSchema"] = t.RawOutputSchema
+	} else if t.OutputSchema.Type != "" { // If no output schema is specified, do not return anything
+		m["outputSchema"] = t.OutputSchema
 	}
 
 	m["annotations"] = t.Annotations
@@ -599,15 +616,19 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
-type ToolInputSchema struct {
+// ToolArgumentsSchema represents a JSON Schema for tool arguments.
+type ToolArgumentsSchema struct {
 	Defs       map[string]any `json:"$defs,omitempty"`
 	Type       string         `json:"type"`
 	Properties map[string]any `json:"properties,omitempty"`
 	Required   []string       `json:"required,omitempty"`
 }
 
+type ToolInputSchema ToolArgumentsSchema // For retro-compatibility
+type ToolOutputSchema ToolArgumentsSchema
+
 // MarshalJSON implements the json.Marshaler interface for ToolInputSchema.
-func (tis ToolInputSchema) MarshalJSON() ([]byte, error) {
+func (tis ToolArgumentsSchema) MarshalJSON() ([]byte, error) {
 	m := make(map[string]any)
 	m["type"] = tis.Type
 
@@ -704,6 +725,47 @@ func WithDescription(description string) ToolOption {
 	}
 }
 
+// WithInputSchema creates a ToolOption that sets the input schema for a tool.
+// It accepts any Go type, usually a struct, and automatically generates a JSON schema from it.
+func WithInputSchema[T any]() ToolOption {
+	return func(t *Tool) {
+		var zero T
+
+		// Generate schema using invopop/jsonschema library
+		// Configure reflector to generate clean, MCP-compatible schemas
+		reflector := jsonschema.Reflector{
+			DoNotReference:            true, // Removes $defs map, outputs entire structure inline
+			Anonymous:                 true, // Hides auto-generated Schema IDs
+			AllowAdditionalProperties: true, // Removes additionalProperties: false
+		}
+		schema := reflector.Reflect(zero)
+
+		// Clean up schema for MCP compliance
+		schema.Version = "" // Remove $schema field
+
+		// Convert to raw JSON for MCP
+		mcpSchema, err := json.Marshal(schema)
+		if err != nil {
+			// Skip and maintain backward compatibility
+			return
+		}
+
+		t.InputSchema.Type = ""
+		t.RawInputSchema = json.RawMessage(mcpSchema)
+	}
+}
+
+// WithRawInputSchema sets a raw JSON schema for the tool's input.
+// Use this when you need full control over the schema or when working with
+// complex schemas that can't be generated from Go types. The jsonschema library
+// can handle complex schemas and provides nice extension points, so be sure to
+// check that out before using this.
+func WithRawInputSchema(schema json.RawMessage) ToolOption {
+	return func(t *Tool) {
+		t.RawInputSchema = schema
+	}
+}
+
 // WithOutputSchema creates a ToolOption that sets the output schema for a tool.
 // It accepts any Go type, usually a struct, and automatically generates a JSON schema from it.
 func WithOutputSchema[T any]() ToolOption {
@@ -729,7 +791,15 @@ func WithOutputSchema[T any]() ToolOption {
 			return
 		}
 
-		t.RawOutputSchema = json.RawMessage(mcpSchema)
+		// Retrieve the schema from raw JSON
+		if err := json.Unmarshal(mcpSchema, &t.OutputSchema); err != nil {
+			// Skip and maintain backward compatibility
+			return
+		}
+
+		// Always set the type to "object" as of the current MCP spec
+		// https://modelcontextprotocol.io/specification/2025-06-18/server/tools#output-schema
+		t.OutputSchema.Type = "object"
 	}
 }
 

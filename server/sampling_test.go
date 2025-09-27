@@ -116,7 +116,7 @@ func TestMCPServer_RequestSampling_Success(t *testing.T) {
 
 func TestMCPServer_EnableSampling_SetsCapability(t *testing.T) {
 	server := NewMCPServer("test", "1.0.0")
-	
+
 	// Verify sampling capability is not set initially
 	ctx := context.Background()
 	initRequest := mcp.InitializeRequest{
@@ -129,25 +129,25 @@ func TestMCPServer_EnableSampling_SetsCapability(t *testing.T) {
 			Capabilities: mcp.ClientCapabilities{},
 		},
 	}
-	
+
 	result, err := server.handleInitialize(ctx, 1, initRequest)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	
+
 	if result.Capabilities.Sampling != nil {
 		t.Error("sampling capability should not be set before EnableSampling() is called")
 	}
-	
+
 	// Enable sampling
 	server.EnableSampling()
-	
+
 	// Verify sampling capability is now set
 	result, err = server.handleInitialize(ctx, 2, initRequest)
 	if err != nil {
 		t.Fatalf("unexpected error after EnableSampling(): %v", err)
 	}
-	
+
 	if result.Capabilities.Sampling == nil {
 		t.Error("sampling capability should be set after EnableSampling() is called")
 	}

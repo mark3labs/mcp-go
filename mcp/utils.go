@@ -8,54 +8,66 @@ import (
 )
 
 // ClientRequest types
-var _ ClientRequest = &PingRequest{}
-var _ ClientRequest = &InitializeRequest{}
-var _ ClientRequest = &CompleteRequest{}
-var _ ClientRequest = &SetLevelRequest{}
-var _ ClientRequest = &GetPromptRequest{}
-var _ ClientRequest = &ListPromptsRequest{}
-var _ ClientRequest = &ListResourcesRequest{}
-var _ ClientRequest = &ReadResourceRequest{}
-var _ ClientRequest = &SubscribeRequest{}
-var _ ClientRequest = &UnsubscribeRequest{}
-var _ ClientRequest = &CallToolRequest{}
-var _ ClientRequest = &ListToolsRequest{}
+var (
+	_ ClientRequest = (*PingRequest)(nil)
+	_ ClientRequest = (*InitializeRequest)(nil)
+	_ ClientRequest = (*CompleteRequest)(nil)
+	_ ClientRequest = (*SetLevelRequest)(nil)
+	_ ClientRequest = (*GetPromptRequest)(nil)
+	_ ClientRequest = (*ListPromptsRequest)(nil)
+	_ ClientRequest = (*ListResourcesRequest)(nil)
+	_ ClientRequest = (*ReadResourceRequest)(nil)
+	_ ClientRequest = (*SubscribeRequest)(nil)
+	_ ClientRequest = (*UnsubscribeRequest)(nil)
+	_ ClientRequest = (*CallToolRequest)(nil)
+	_ ClientRequest = (*ListToolsRequest)(nil)
+)
 
 // ClientNotification types
-var _ ClientNotification = &CancelledNotification{}
-var _ ClientNotification = &ProgressNotification{}
-var _ ClientNotification = &InitializedNotification{}
-var _ ClientNotification = &RootsListChangedNotification{}
+var (
+	_ ClientNotification = (*CancelledNotification)(nil)
+	_ ClientNotification = (*ProgressNotification)(nil)
+	_ ClientNotification = (*InitializedNotification)(nil)
+	_ ClientNotification = (*RootsListChangedNotification)(nil)
+)
 
 // ClientResult types
-var _ ClientResult = &EmptyResult{}
-var _ ClientResult = &CreateMessageResult{}
-var _ ClientResult = &ListRootsResult{}
+var (
+	_ ClientResult = (*EmptyResult)(nil)
+	_ ClientResult = (*CreateMessageResult)(nil)
+	_ ClientResult = (*ListRootsResult)(nil)
+)
 
 // ServerRequest types
-var _ ServerRequest = &PingRequest{}
-var _ ServerRequest = &CreateMessageRequest{}
-var _ ServerRequest = &ListRootsRequest{}
+var (
+	_ ServerRequest = (*PingRequest)(nil)
+	_ ServerRequest = (*CreateMessageRequest)(nil)
+	_ ServerRequest = (*ListRootsRequest)(nil)
+)
 
 // ServerNotification types
-var _ ServerNotification = &CancelledNotification{}
-var _ ServerNotification = &ProgressNotification{}
-var _ ServerNotification = &LoggingMessageNotification{}
-var _ ServerNotification = &ResourceUpdatedNotification{}
-var _ ServerNotification = &ResourceListChangedNotification{}
-var _ ServerNotification = &ToolListChangedNotification{}
-var _ ServerNotification = &PromptListChangedNotification{}
+var (
+	_ ServerNotification = (*CancelledNotification)(nil)
+	_ ServerNotification = (*ProgressNotification)(nil)
+	_ ServerNotification = (*LoggingMessageNotification)(nil)
+	_ ServerNotification = (*ResourceUpdatedNotification)(nil)
+	_ ServerNotification = (*ResourceListChangedNotification)(nil)
+	_ ServerNotification = (*ToolListChangedNotification)(nil)
+	_ ServerNotification = (*PromptListChangedNotification)(nil)
+)
 
 // ServerResult types
-var _ ServerResult = &EmptyResult{}
-var _ ServerResult = &InitializeResult{}
-var _ ServerResult = &CompleteResult{}
-var _ ServerResult = &GetPromptResult{}
-var _ ServerResult = &ListPromptsResult{}
-var _ ServerResult = &ListResourcesResult{}
-var _ ServerResult = &ReadResourceResult{}
-var _ ServerResult = &CallToolResult{}
-var _ ServerResult = &ListToolsResult{}
+var (
+	_ ServerResult = (*EmptyResult)(nil)
+	_ ServerResult = (*InitializeResult)(nil)
+	_ ServerResult = (*CompleteResult)(nil)
+	_ ServerResult = (*GetPromptResult)(nil)
+	_ ServerResult = (*ListPromptsResult)(nil)
+	_ ServerResult = (*ListResourcesResult)(nil)
+	_ ServerResult = (*ReadResourceResult)(nil)
+	_ ServerResult = (*CallToolResult)(nil)
+	_ ServerResult = (*ListToolsResult)(nil)
+)
 
 // Helper functions for type assertions
 
@@ -100,12 +112,34 @@ func AsBlobResourceContents(content any) (*BlobResourceContents, bool) {
 
 // Helper function for JSON-RPC
 
-// NewJSONRPCResponse creates a new JSONRPCResponse with the given id and result
+// NewJSONRPCResponse creates a new JSONRPCResponse with the given id and result.
+// NOTE: This function expects a Result struct, but JSONRPCResponse.Result is typed as `any`.
+// The Result struct wraps the actual result data with optional metadata.
+// For direct result assignment, use NewJSONRPCResultResponse instead.
 func NewJSONRPCResponse(id RequestId, result Result) JSONRPCResponse {
 	return JSONRPCResponse{
 		JSONRPC: JSONRPC_VERSION,
 		ID:      id,
 		Result:  result,
+	}
+}
+
+// NewJSONRPCResultResponse creates a new JSONRPCResponse with the given id and result.
+// This function accepts any type for the result, matching the JSONRPCResponse.Result field type.
+func NewJSONRPCResultResponse(id RequestId, result any) JSONRPCResponse {
+	return JSONRPCResponse{
+		JSONRPC: JSONRPC_VERSION,
+		ID:      id,
+		Result:  result,
+	}
+}
+
+// NewJSONRPCErrorDetails creates a new JSONRPCErrorDetails with the given code, message, and data.
+func NewJSONRPCErrorDetails(code int, message string, data any) JSONRPCErrorDetails {
+	return JSONRPCErrorDetails{
+		Code:    code,
+		Message: message,
+		Data:    data,
 	}
 }
 
@@ -119,15 +153,7 @@ func NewJSONRPCError(
 	return JSONRPCError{
 		JSONRPC: JSONRPC_VERSION,
 		ID:      id,
-		Error: struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-			Data    any    `json:"data,omitempty"`
-		}{
-			Code:    code,
-			Message: message,
-			Data:    data,
-		},
+		Error:   NewJSONRPCErrorDetails(code, message, data),
 	}
 }
 
@@ -198,7 +224,7 @@ func NewPromptMessage(role Role, content Content) PromptMessage {
 // Helper function to create a new TextContent
 func NewTextContent(text string) TextContent {
 	return TextContent{
-		Type: "text",
+		Type: ContentTypeText,
 		Text: text,
 	}
 }
@@ -207,7 +233,7 @@ func NewTextContent(text string) TextContent {
 // Helper function to create a new ImageContent
 func NewImageContent(data, mimeType string) ImageContent {
 	return ImageContent{
-		Type:     "image",
+		Type:     ContentTypeImage,
 		Data:     data,
 		MIMEType: mimeType,
 	}
@@ -216,7 +242,7 @@ func NewImageContent(data, mimeType string) ImageContent {
 // Helper function to create a new AudioContent
 func NewAudioContent(data, mimeType string) AudioContent {
 	return AudioContent{
-		Type:     "audio",
+		Type:     ContentTypeAudio,
 		Data:     data,
 		MIMEType: mimeType,
 	}
@@ -225,7 +251,7 @@ func NewAudioContent(data, mimeType string) AudioContent {
 // Helper function to create a new ResourceLink
 func NewResourceLink(uri, name, description, mimeType string) ResourceLink {
 	return ResourceLink{
-		Type:        "resource_link",
+		Type:        ContentTypeLink,
 		URI:         uri,
 		Name:        name,
 		Description: description,
@@ -236,7 +262,7 @@ func NewResourceLink(uri, name, description, mimeType string) ResourceLink {
 // Helper function to create a new EmbeddedResource
 func NewEmbeddedResource(resource ResourceContents) EmbeddedResource {
 	return EmbeddedResource{
-		Type:     "resource",
+		Type:     ContentTypeResource,
 		Resource: resource,
 	}
 }
@@ -246,11 +272,29 @@ func NewToolResultText(text string) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: text,
 			},
 		},
 	}
+}
+
+// NewToolResultJSON creates a new CallToolResult with a JSON content.
+func NewToolResultJSON[T any](data T) (*CallToolResult, error) {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("unable to marshal JSON: %w", err)
+	}
+
+	return &CallToolResult{
+		Content: []Content{
+			TextContent{
+				Type: ContentTypeText,
+				Text: string(b),
+			},
+		},
+		StructuredContent: data,
+	}, nil
 }
 
 // NewToolResultStructured creates a new CallToolResult with structured content.
@@ -296,11 +340,11 @@ func NewToolResultImage(text, imageData, mimeType string) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: text,
 			},
 			ImageContent{
-				Type:     "image",
+				Type:     ContentTypeImage,
 				Data:     imageData,
 				MIMEType: mimeType,
 			},
@@ -313,11 +357,11 @@ func NewToolResultAudio(text, imageData, mimeType string) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: text,
 			},
 			AudioContent{
-				Type:     "audio",
+				Type:     ContentTypeAudio,
 				Data:     imageData,
 				MIMEType: mimeType,
 			},
@@ -333,11 +377,11 @@ func NewToolResultResource(
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: text,
 			},
 			EmbeddedResource{
-				Type:     "resource",
+				Type:     ContentTypeResource,
 				Resource: resource,
 			},
 		},
@@ -350,7 +394,7 @@ func NewToolResultError(text string) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: text,
 			},
 		},
@@ -368,7 +412,7 @@ func NewToolResultErrorFromErr(text string, err error) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: text,
 			},
 		},
@@ -383,7 +427,7 @@ func NewToolResultErrorf(format string, a ...any) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
-				Type: "text",
+				Type: ContentTypeText,
 				Text: fmt.Sprintf(format, a...),
 			},
 		},
@@ -492,6 +536,27 @@ func ExtractString(data map[string]any, key string) string {
 	return ""
 }
 
+func ParseAnnotations(data map[string]any) *Annotations {
+	if data == nil {
+		return nil
+	}
+	annotations := &Annotations{}
+	if value, ok := data["priority"]; ok {
+		annotations.Priority = cast.ToFloat64(value)
+	}
+
+	if value, ok := data["audience"]; ok {
+		for _, a := range cast.ToStringSlice(value) {
+			a := Role(a)
+			if a == RoleUser || a == RoleAssistant {
+				annotations.Audience = append(annotations.Audience, a)
+			}
+		}
+	}
+	return annotations
+
+}
+
 func ExtractMap(data map[string]any, key string) map[string]any {
 	if value, ok := data[key]; ok {
 		if m, ok := value.(map[string]any); ok {
@@ -504,28 +569,39 @@ func ExtractMap(data map[string]any, key string) map[string]any {
 func ParseContent(contentMap map[string]any) (Content, error) {
 	contentType := ExtractString(contentMap, "type")
 
-	switch contentType {
-	case "text":
-		text := ExtractString(contentMap, "text")
-		return NewTextContent(text), nil
+	var annotations *Annotations
+	if annotationsMap := ExtractMap(contentMap, "annotations"); annotationsMap != nil {
+		annotations = ParseAnnotations(annotationsMap)
+	}
 
-	case "image":
+	switch contentType {
+	case ContentTypeText:
+		text := ExtractString(contentMap, "text")
+		c := NewTextContent(text)
+		c.Annotations = annotations
+		return c, nil
+
+	case ContentTypeImage:
 		data := ExtractString(contentMap, "data")
 		mimeType := ExtractString(contentMap, "mimeType")
 		if data == "" || mimeType == "" {
 			return nil, fmt.Errorf("image data or mimeType is missing")
 		}
-		return NewImageContent(data, mimeType), nil
+		c := NewImageContent(data, mimeType)
+		c.Annotations = annotations
+		return c, nil
 
-	case "audio":
+	case ContentTypeAudio:
 		data := ExtractString(contentMap, "data")
 		mimeType := ExtractString(contentMap, "mimeType")
 		if data == "" || mimeType == "" {
 			return nil, fmt.Errorf("audio data or mimeType is missing")
 		}
-		return NewAudioContent(data, mimeType), nil
+		c := NewAudioContent(data, mimeType)
+		c.Annotations = annotations
+		return c, nil
 
-	case "resource_link":
+	case ContentTypeLink:
 		uri := ExtractString(contentMap, "uri")
 		name := ExtractString(contentMap, "name")
 		description := ExtractString(contentMap, "description")
@@ -533,9 +609,11 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		if uri == "" || name == "" {
 			return nil, fmt.Errorf("resource_link uri or name is missing")
 		}
-		return NewResourceLink(uri, name, description, mimeType), nil
+		c := NewResourceLink(uri, name, description, mimeType)
+		c.Annotations = annotations
+		return c, nil
 
-	case "resource":
+	case ContentTypeResource:
 		resourceMap := ExtractMap(contentMap, "resource")
 		if resourceMap == nil {
 			return nil, fmt.Errorf("resource is missing")
@@ -546,7 +624,9 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 			return nil, err
 		}
 
-		return NewEmbeddedResource(resourceContents), nil
+		c := NewEmbeddedResource(resourceContents)
+		c.Annotations = annotations
+		return c, nil
 	}
 
 	return nil, fmt.Errorf("unsupported content type: %s", contentType)
@@ -668,6 +748,12 @@ func ParseCallToolResult(rawMessage *json.RawMessage) (*CallToolResult, error) {
 		}
 
 		result.Content = append(result.Content, content)
+	}
+
+	// Handle structured content
+	structuredContent, ok := jsonContent["structuredContent"]
+	if ok {
+		result.StructuredContent = structuredContent
 	}
 
 	return &result, nil

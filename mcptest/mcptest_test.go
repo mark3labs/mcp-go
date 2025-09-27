@@ -78,6 +78,95 @@ func resultToString(result *mcp.CallToolResult) (string, error) {
 	return b.String(), nil
 }
 
+func TestServerWithToolStructuredContent(t *testing.T) {
+	ctx := context.Background()
+
+	srv, err := mcptest.NewServer(t, server.ServerTool{
+		Tool: mcp.NewTool("get_user",
+			mcp.WithDescription("Gets user information with structured data."),
+			mcp.WithString("user_id", mcp.Description("The user ID to look up.")),
+		),
+		Handler: structuredContentHandler,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+
+	client := srv.Client()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "get_user"
+	req.Params.Arguments = map[string]any{
+		"user_id": "123",
+	}
+
+	result, err := client.CallTool(ctx, req)
+	if err != nil {
+		t.Fatal("CallTool:", err)
+	}
+
+	if result.IsError {
+		t.Fatalf("unexpected error result: %+v", result)
+	}
+
+	if len(result.Content) != 1 {
+		t.Fatalf("Expected 1 content item, got %d", len(result.Content))
+	}
+
+	// Check text content (fallback)
+	textContent, ok := result.Content[0].(mcp.TextContent)
+	if !ok {
+		t.Fatalf("Expected content to be TextContent, got %T", result.Content[0])
+	}
+	expectedText := "User found"
+	if textContent.Text != expectedText {
+		t.Errorf("Expected text %q, got %q", expectedText, textContent.Text)
+	}
+
+	// Check structured content
+	if result.StructuredContent == nil {
+		t.Fatal("Expected StructuredContent to be present")
+	}
+
+	structuredData, ok := result.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("Expected StructuredContent to be map[string]any, got %T", result.StructuredContent)
+	}
+
+	// Verify structured data
+	if structuredData["id"] != "123" {
+		t.Errorf("Expected id '123', got %v", structuredData["id"])
+	}
+	if structuredData["name"] != "John Doe" {
+		t.Errorf("Expected name 'John Doe', got %v", structuredData["name"])
+	}
+	if structuredData["email"] != "john@example.com" {
+		t.Errorf("Expected email 'john@example.com', got %v", structuredData["email"])
+	}
+	if structuredData["active"] != true {
+		t.Errorf("Expected active true, got %v", structuredData["active"])
+	}
+}
+
+func structuredContentHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	userID, ok := request.GetArguments()["user_id"].(string)
+	if !ok {
+		return mcp.NewToolResultError("user_id parameter is required"), nil
+	}
+
+	// Create structured data
+	userData := map[string]any{
+		"id":     userID,
+		"name":   "John Doe",
+		"email":  "john@example.com",
+		"active": true,
+	}
+
+	// Use NewToolResultStructured to create result with both text fallback and structured content
+	return mcp.NewToolResultStructured(userData, "User found"), nil
+}
+
 func TestServerWithPrompt(t *testing.T) {
 	ctx := context.Background()
 

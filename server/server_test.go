@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -963,6 +964,50 @@ func TestMCPServer_Prompts(t *testing.T) {
 				assert.Equal(t, "test-prompt-2", prompts[1].Name)
 			},
 		},
+		{
+			name: "SetPrompts sends single notifications/prompts/list_changed with one active session",
+			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
+				err := server.RegisterSession(context.TODO(), &fakeSession{
+					sessionID:           "test",
+					notificationChannel: notificationChannel,
+					initialized:         true,
+				})
+				require.NoError(t, err)
+				server.SetPrompts(ServerPrompt{
+					Prompt: mcp.Prompt{
+						Name:        "test-prompt-1",
+						Description: "A test prompt",
+						Arguments: []mcp.PromptArgument{
+							{
+								Name:        "arg1",
+								Description: "First argument",
+							},
+						},
+					},
+					Handler: nil,
+				}, ServerPrompt{
+					Prompt: mcp.Prompt{
+						Name:        "test-prompt-2",
+						Description: "Another test prompt",
+						Arguments: []mcp.PromptArgument{
+							{
+								Name:        "arg2",
+								Description: "Second argument",
+							},
+						},
+					},
+					Handler: nil,
+				})
+			},
+			expectedNotifications: 1,
+			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, promptsList mcp.JSONRPCMessage) {
+				assert.Equal(t, mcp.MethodNotificationPromptsListChanged, notifications[0].Method)
+				prompts := promptsList.(mcp.JSONRPCResponse).Result.(mcp.ListPromptsResult).Prompts
+				assert.Len(t, prompts, 2)
+				assert.Equal(t, "test-prompt-1", prompts[0].Name)
+				assert.Equal(t, "test-prompt-2", prompts[1].Name)
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -994,6 +1039,211 @@ func TestMCPServer_Prompts(t *testing.T) {
 				"method": "prompts/list"
 			}`))
 			tt.validate(t, notifications, promptsList)
+		})
+	}
+}
+
+func TestMCPServer_Resources(t *testing.T) {
+	tests := []struct {
+		name                  string
+		action                func(*testing.T, *MCPServer, chan mcp.JSONRPCNotification)
+		expectedNotifications int
+		validate              func(*testing.T, []mcp.JSONRPCNotification, mcp.JSONRPCMessage)
+	}{
+		{
+			name: "DeleteResources sends single notifications/resources/list_changed",
+			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
+				err := server.RegisterSession(context.TODO(), &fakeSession{
+					sessionID:           "test",
+					notificationChannel: notificationChannel,
+					initialized:         true,
+				})
+				require.NoError(t, err)
+				server.AddResource(
+					mcp.Resource{
+						URI:  "test://test-resource-1",
+						Name: "Test Resource 1",
+					},
+					func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+						return []mcp.ResourceContents{}, nil
+					},
+				)
+				server.DeleteResources("test://test-resource-1")
+			},
+			expectedNotifications: 2,
+			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, resourcesList mcp.JSONRPCMessage) {
+				// One for AddResource
+				assert.Equal(t, mcp.MethodNotificationResourcesListChanged, notifications[0].Method)
+				// One for DeleteResources
+				assert.Equal(t, mcp.MethodNotificationResourcesListChanged, notifications[1].Method)
+
+				// Expect a successful response with an empty list of resources
+				resp, ok := resourcesList.(mcp.JSONRPCResponse)
+				assert.True(t, ok, "Expected JSONRPCResponse, got %T", resourcesList)
+
+				result, ok := resp.Result.(mcp.ListResourcesResult)
+				assert.True(t, ok, "Expected ListResourcesResult, got %T", resp.Result)
+
+				assert.Empty(t, result.Resources, "Expected empty resources list")
+			},
+		},
+		{
+			name: "DeleteResources removes the first resource and retains the other",
+			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
+				err := server.RegisterSession(context.TODO(), &fakeSession{
+					sessionID:           "test",
+					notificationChannel: notificationChannel,
+					initialized:         true,
+				})
+				require.NoError(t, err)
+				server.AddResource(
+					mcp.Resource{
+						URI:  "test://test-resource-1",
+						Name: "Test Resource 1",
+					},
+					func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+						return []mcp.ResourceContents{}, nil
+					},
+				)
+				server.AddResource(
+					mcp.Resource{
+						URI:  "test://test-resource-2",
+						Name: "Test Resource 2",
+					},
+					func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+						return []mcp.ResourceContents{}, nil
+					},
+				)
+				server.DeleteResources("test://test-resource-1")
+			},
+			expectedNotifications: 3,
+			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, resourcesList mcp.JSONRPCMessage) {
+				// first notification expected for AddResource test-resource-1
+				assert.Equal(t, mcp.MethodNotificationResourcesListChanged, notifications[0].Method)
+				// second notification expected for AddResource test-resource-2
+				assert.Equal(t, mcp.MethodNotificationResourcesListChanged, notifications[1].Method)
+				// third notification expected for DeleteResources test-resource-1
+				assert.Equal(t, mcp.MethodNotificationResourcesListChanged, notifications[2].Method)
+
+				// Confirm the resource list contains only test-resource-2
+				resources := resourcesList.(mcp.JSONRPCResponse).Result.(mcp.ListResourcesResult).Resources
+				assert.Len(t, resources, 1)
+				assert.Equal(t, "test://test-resource-2", resources[0].URI)
+			},
+		},
+		{
+			name: "DeleteResources with non-existent resources does nothing and not receives notifications from MCPServer",
+			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
+				err := server.RegisterSession(context.TODO(), &fakeSession{
+					sessionID:           "test",
+					notificationChannel: notificationChannel,
+					initialized:         true,
+				})
+				require.NoError(t, err)
+				server.AddResource(
+					mcp.Resource{
+						URI:  "test://test-resource-1",
+						Name: "Test Resource 1",
+					},
+					func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+						return []mcp.ResourceContents{}, nil
+					},
+				)
+				server.AddResource(
+					mcp.Resource{
+						URI:  "test://test-resource-2",
+						Name: "Test Resource 2",
+					},
+					func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+						return []mcp.ResourceContents{}, nil
+					},
+				)
+				// Remove non-existing resources
+				server.DeleteResources("test://test-resource-3", "test://test-resource-4")
+			},
+			expectedNotifications: 2,
+			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, resourcesList mcp.JSONRPCMessage) {
+				// first notification expected for AddResource test-resource-1
+				assert.Equal(t, mcp.MethodNotificationResourcesListChanged, notifications[0].Method)
+				// second notification expected for AddResource test-resource-2
+				assert.Equal(t, mcp.MethodNotificationResourcesListChanged, notifications[1].Method)
+
+				// Confirm the resource list does not change
+				resources := resourcesList.(mcp.JSONRPCResponse).Result.(mcp.ListResourcesResult).Resources
+				assert.Len(t, resources, 2)
+				// Resources are sorted by name
+				assert.Equal(t, "test://test-resource-1", resources[0].URI)
+				assert.Equal(t, "test://test-resource-2", resources[1].URI)
+			},
+		},
+		{
+			name: "SetResources sends single notifications/resources/list_changed with one active session",
+			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
+				err := server.RegisterSession(context.TODO(), &fakeSession{
+					sessionID:           "test",
+					notificationChannel: notificationChannel,
+					initialized:         true,
+				})
+				require.NoError(t, err)
+				server.SetResources(ServerResource{
+					Resource: mcp.Resource{
+						URI:  "test://test-resource-1",
+						Name: "Test Resource 1",
+					},
+					Handler: func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+						return []mcp.ResourceContents{}, nil
+					},
+				}, ServerResource{
+					Resource: mcp.Resource{
+						URI:  "test://test-resource-2",
+						Name: "Test Resource 2",
+					},
+					Handler: func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+						return []mcp.ResourceContents{}, nil
+					},
+				})
+			},
+			expectedNotifications: 1,
+			validate: func(t *testing.T, notifications []mcp.JSONRPCNotification, resourcesList mcp.JSONRPCMessage) {
+				assert.Equal(t, mcp.MethodNotificationResourcesListChanged, notifications[0].Method)
+				resources := resourcesList.(mcp.JSONRPCResponse).Result.(mcp.ListResourcesResult).Resources
+				assert.Len(t, resources, 2)
+				// Resources are sorted by name
+				assert.Equal(t, "test://test-resource-1", resources[0].URI)
+				assert.Equal(t, "test://test-resource-2", resources[1].URI)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			server := NewMCPServer("test-server", "1.0.0", WithResourceCapabilities(true, true))
+			_ = server.HandleMessage(ctx, []byte(`{
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "initialize"
+			}`))
+			notificationChannel := make(chan mcp.JSONRPCNotification, 100)
+			notifications := make([]mcp.JSONRPCNotification, 0)
+			tt.action(t, server, notificationChannel)
+			for done := false; !done; {
+				select {
+				case serverNotification := <-notificationChannel:
+					notifications = append(notifications, serverNotification)
+					if len(notifications) == tt.expectedNotifications {
+						done = true
+					}
+				case <-time.After(1 * time.Second):
+					done = true
+				}
+			}
+			assert.Len(t, notifications, tt.expectedNotifications)
+			resourcesList := server.HandleMessage(ctx, []byte(`{
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "resources/list"
+			}`))
+			tt.validate(t, notifications, resourcesList)
 		})
 	}
 }
@@ -2070,4 +2320,550 @@ func TestMCPServer_ProtocolNegotiation(t *testing.T) {
 			)
 		})
 	}
+}
+
+func TestMCPServer_GetTool(t *testing.T) {
+	t.Run("ExistingTool", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		expectedTool := mcp.Tool{
+			Name:        "test-tool",
+			Description: "A test tool",
+			InputSchema: mcp.ToolInputSchema{
+				Type: "object",
+				Properties: map[string]any{
+					"input": map[string]any{
+						"type":        "string",
+						"description": "Test input",
+					},
+				},
+			},
+		}
+
+		expectedHandler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					mcp.TextContent{
+						Type: "text",
+						Text: "test result",
+					},
+				},
+			}, nil
+		}
+
+		server.AddTool(expectedTool, expectedHandler)
+
+		tool := server.GetTool("test-tool")
+
+		assert.NotNil(t, tool)
+		assert.Equal(t, expectedTool, tool.Tool)
+		assert.NotNil(t, tool.Handler)
+	})
+
+	t.Run("NonExistingTool", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		tool := server.GetTool("non-existing-tool")
+
+		assert.Nil(t, tool) // GetTool returns nil when tool doesn't exist
+	})
+
+	t.Run("EmptyServer", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		tool := server.GetTool("any-tool")
+
+		assert.Nil(t, tool) // GetTool returns nil when no tools are registered
+	})
+
+	t.Run("MultipleToolsGetSpecific", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		tools := []mcp.Tool{
+			{Name: "tool1", Description: "First tool"},
+			{Name: "tool2", Description: "Second tool"},
+			{Name: "tool3", Description: "Third tool"},
+		}
+
+		// Add all tools
+		for _, tool := range tools {
+			server.AddTool(tool, nil)
+		}
+
+		// Get specific tool
+		tool := server.GetTool("tool2")
+
+		assert.NotNil(t, tool)
+		assert.Equal(t, "tool2", tool.Tool.Name)
+		assert.Equal(t, "Second tool", tool.Tool.Description)
+	})
+
+	t.Run("WithComplexToolSchema", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		complexTool := mcp.Tool{
+			Name:        "complex-tool",
+			Description: "A complex tool with detailed schema",
+			InputSchema: mcp.ToolInputSchema{
+				Type: "object",
+				Properties: map[string]any{
+					"stringParam": map[string]any{
+						"type":        "string",
+						"description": "A string parameter",
+						"enum":        []string{"option1", "option2", "option3"},
+					},
+					"numberParam": map[string]any{
+						"type":        "number",
+						"description": "A number parameter",
+						"minimum":     0,
+						"maximum":     100,
+					},
+				},
+				Required: []string{"stringParam", "numberParam"},
+			},
+			Annotations: mcp.ToolAnnotation{
+				Title:           "Complex Tool",
+				DestructiveHint: mcp.ToBoolPtr(true),
+			},
+		}
+
+		handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		}
+
+		server.AddTool(complexTool, handler)
+
+		tool := server.GetTool("complex-tool")
+
+		assert.NotNil(t, tool)
+		assert.Equal(t, complexTool, tool.Tool)
+		assert.NotNil(t, tool.Handler)
+
+		// Verify the complex schema is preserved
+		assert.Equal(t, "object", tool.Tool.InputSchema.Type)
+		assert.Contains(t, tool.Tool.InputSchema.Properties, "stringParam")
+		assert.Contains(t, tool.Tool.InputSchema.Properties, "numberParam")
+		assert.Equal(t, []string{"stringParam", "numberParam"}, tool.Tool.InputSchema.Required)
+
+		// Verify annotations
+		assert.Equal(t, "Complex Tool", tool.Tool.Annotations.Title)
+		assert.NotNil(t, tool.Tool.Annotations.DestructiveHint)
+		assert.True(t, *tool.Tool.Annotations.DestructiveHint)
+	})
+
+	t.Run("CaseSensitivity", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		expectedTool := mcp.Tool{
+			Name:        "Test-Tool",
+			Description: "A case-sensitive test tool",
+		}
+
+		server.AddTool(expectedTool, nil)
+
+		// Exact match should work
+		tool := server.GetTool("Test-Tool")
+		assert.NotNil(t, tool)
+		assert.Equal(t, "Test-Tool", tool.Tool.Name)
+
+		// Different case should not match
+		tool = server.GetTool("test-tool")
+		assert.Nil(t, tool)
+
+		tool = server.GetTool("TEST-TOOL")
+		assert.Nil(t, tool)
+	})
+
+	t.Run("ConcurrentAccess", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add some tools for concurrent access testing
+		for i := 0; i < 10; i++ {
+			server.AddTool(mcp.Tool{
+				Name:        fmt.Sprintf("tool-%d", i),
+				Description: fmt.Sprintf("Tool %d", i),
+			}, nil)
+		}
+
+		numGoroutines := 100
+		results := make(chan *ServerTool, numGoroutines)
+		var wg sync.WaitGroup
+
+		// Test concurrent reads
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				toolName := fmt.Sprintf("tool-%d", id%10) // Access tools cyclically
+				tool := server.GetTool(toolName)
+				results <- tool
+			}(i)
+		}
+
+		wg.Wait()
+		close(results)
+
+		// Verify all results are valid
+		validResults := 0
+		for tool := range results {
+			if tool != nil {
+				validResults++
+				assert.Contains(t, tool.Tool.Name, "tool-")
+			}
+		}
+
+		// All results should be valid since we're accessing existing tools
+		assert.Equal(t, numGoroutines, validResults)
+	})
+
+	t.Run("ReturnsCopyNotReference", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		originalTool := mcp.Tool{
+			Name:        "test-tool",
+			Description: "Original description",
+		}
+
+		server.AddTool(originalTool, nil)
+
+		// Get the tool twice
+		tool1 := server.GetTool("test-tool")
+		tool2 := server.GetTool("test-tool")
+
+		assert.NotNil(t, tool1)
+		assert.NotNil(t, tool2)
+
+		// Both should have the same content
+		assert.Equal(t, tool1.Tool, tool2.Tool)
+
+		// But they should be different memory addresses (copies)
+		assert.NotSame(t, tool1, tool2, "GetTool should return copies, not shared references")
+
+		// Modifying one should not affect the other or the server's copy
+		tool1.Tool.Description = "Modified description"
+
+		tool3 := server.GetTool("test-tool")
+		assert.NotNil(t, tool3)
+		assert.Equal(t, "Original description", tool3.Tool.Description, "Server's copy should be unchanged")
+		assert.Equal(t, "Original description", tool2.Tool.Description, "Other copy should be unchanged")
+	})
+
+	t.Run("EmptyToolName", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add a tool with non-empty name
+		server.AddTool(mcp.Tool{Name: "valid-tool", Description: "Valid tool"}, nil)
+
+		// Request with empty string should return nil
+		tool := server.GetTool("")
+		assert.Nil(t, tool)
+	})
+
+	t.Run("NilAfterToolDeletion", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add a tool
+		server.AddTool(mcp.Tool{Name: "temp-tool", Description: "Temporary tool"}, nil)
+
+		// Verify it exists
+		tool := server.GetTool("temp-tool")
+		assert.NotNil(t, tool)
+
+		// Delete the tool
+		server.DeleteTools("temp-tool")
+
+		// Now it should return nil
+		tool = server.GetTool("temp-tool")
+		assert.Nil(t, tool)
+	})
+}
+
+func TestMCPServer_ListTools(t *testing.T) {
+	t.Run("EmptyServer", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		tools := server.ListTools()
+
+		assert.Nil(t, tools)
+	})
+
+	t.Run("SingleTool", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		expectedTool := mcp.Tool{
+			Name:        "test-tool",
+			Description: "A test tool",
+			InputSchema: mcp.ToolInputSchema{
+				Type: "object",
+				Properties: map[string]any{
+					"input": map[string]any{
+						"type":        "string",
+						"description": "Test input",
+					},
+				},
+			},
+		}
+
+		expectedHandler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					mcp.TextContent{
+						Type: "text",
+						Text: "test result",
+					},
+				},
+			}, nil
+		}
+
+		server.AddTool(expectedTool, expectedHandler)
+
+		tools := server.ListTools()
+
+		assert.NotNil(t, tools)
+		assert.Len(t, tools, 1)
+
+		serverTool, exists := tools["test-tool"]
+		assert.True(t, exists)
+		assert.Equal(t, expectedTool, serverTool.Tool)
+		assert.NotNil(t, serverTool.Handler)
+	})
+
+	t.Run("MultipleTools", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		tools := []struct {
+			tool    mcp.Tool
+			handler ToolHandlerFunc
+		}{
+			{
+				tool: mcp.Tool{
+					Name:        "tool1",
+					Description: "First tool",
+					InputSchema: mcp.ToolInputSchema{Type: "object"},
+				},
+				handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return &mcp.CallToolResult{}, nil
+				},
+			},
+			{
+				tool: mcp.Tool{
+					Name:        "tool2",
+					Description: "Second tool",
+					InputSchema: mcp.ToolInputSchema{Type: "object"},
+				},
+				handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return &mcp.CallToolResult{}, nil
+				},
+			},
+			{
+				tool: mcp.Tool{
+					Name:        "tool3",
+					Description: "Third tool",
+					InputSchema: mcp.ToolInputSchema{Type: "object"},
+				},
+				handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return &mcp.CallToolResult{}, nil
+				},
+			},
+		}
+
+		// Add tools one by one
+		for _, tool := range tools {
+			server.AddTool(tool.tool, tool.handler)
+		}
+
+		retrievedTools := server.ListTools()
+
+		assert.NotNil(t, retrievedTools)
+		assert.Len(t, retrievedTools, 3)
+
+		// Verify each tool exists with correct data
+		for _, expectedTool := range tools {
+			serverTool, exists := retrievedTools[expectedTool.tool.Name]
+			assert.True(t, exists, "Tool %s should exist", expectedTool.tool.Name)
+			assert.Equal(t, expectedTool.tool, serverTool.Tool)
+			assert.NotNil(t, serverTool.Handler)
+		}
+	})
+
+	t.Run("AfterToolDeletion", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add multiple tools
+		server.AddTool(mcp.Tool{Name: "tool1", Description: "Tool 1"}, nil)
+		server.AddTool(mcp.Tool{Name: "tool2", Description: "Tool 2"}, nil)
+		server.AddTool(mcp.Tool{Name: "tool3", Description: "Tool 3"}, nil)
+
+		// Verify all tools exist
+		tools := server.ListTools()
+		assert.NotNil(t, tools)
+		assert.Len(t, tools, 3)
+
+		// Delete one tool
+		server.DeleteTools("tool2")
+
+		// Verify tool is removed
+		tools = server.ListTools()
+		assert.NotNil(t, tools)
+		assert.Len(t, tools, 2)
+
+		_, exists := tools["tool1"]
+		assert.True(t, exists)
+		_, exists = tools["tool2"]
+		assert.False(t, exists)
+		_, exists = tools["tool3"]
+		assert.True(t, exists)
+	})
+
+	t.Run("SetToolsReplacesExisting", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add initial tools
+		server.AddTool(mcp.Tool{Name: "old-tool1", Description: "Old Tool 1"}, nil)
+		server.AddTool(mcp.Tool{Name: "old-tool2", Description: "Old Tool 2"}, nil)
+
+		// Verify initial tools
+		tools := server.ListTools()
+		assert.NotNil(t, tools)
+		assert.Len(t, tools, 2)
+
+		// Set new tools (should replace existing)
+		newTools := []ServerTool{
+			{
+				Tool: mcp.Tool{Name: "new-tool1", Description: "New Tool 1"},
+				Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return &mcp.CallToolResult{}, nil
+				},
+			},
+			{
+				Tool: mcp.Tool{Name: "new-tool2", Description: "New Tool 2"},
+				Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return &mcp.CallToolResult{}, nil
+				},
+			},
+		}
+		server.SetTools(newTools...)
+
+		// Verify only new tools exist
+		tools = server.ListTools()
+		assert.NotNil(t, tools)
+		assert.Len(t, tools, 2)
+
+		_, exists := tools["old-tool1"]
+		assert.False(t, exists)
+		_, exists = tools["old-tool2"]
+		assert.False(t, exists)
+		_, exists = tools["new-tool1"]
+		assert.True(t, exists)
+		_, exists = tools["new-tool2"]
+		assert.True(t, exists)
+	})
+
+	t.Run("ConcurrentAccess", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Pre-add some tools to test concurrent reads
+		for i := 0; i < 50; i++ {
+			server.AddTool(mcp.Tool{
+				Name:        fmt.Sprintf("pre-tool-%d", i),
+				Description: fmt.Sprintf("Pre-added tool %d", i),
+			}, nil)
+		}
+
+		numGoroutines := 100
+		results := make(chan map[string]*ServerTool, numGoroutines)
+		var wg sync.WaitGroup
+
+		// Test concurrent reads (no race conditions in test logic)
+		for i := 0; i < numGoroutines; i++ {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				tools := server.ListTools()
+				results <- tools
+			}(i)
+		}
+
+		wg.Wait()
+		close(results)
+
+		// Collect all results
+		var allResults []map[string]*ServerTool
+		for result := range results {
+			allResults = append(allResults, result)
+		}
+
+		// Verify that no data races occurred and all results are valid
+		for i, result := range allResults {
+			assert.NotNil(t, result, "Result %d should not be nil", i)
+			assert.Equal(t, 50, len(result), "All concurrent reads should return same number of tools")
+		}
+	})
+
+	t.Run("ConsistentResults", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add a tool
+		server.AddTool(mcp.Tool{
+			Name:        "test-tool",
+			Description: "Test tool",
+		}, nil)
+
+		// Get tools multiple times
+		tools1 := server.ListTools()
+		tools2 := server.ListTools()
+		tools3 := server.ListTools()
+
+		assert.NotNil(t, tools1)
+		assert.NotNil(t, tools2)
+		assert.NotNil(t, tools3)
+
+		// All should have the same tool
+		assert.Len(t, tools1, 1)
+		assert.Len(t, tools2, 1)
+		assert.Len(t, tools3, 1)
+
+		assert.Contains(t, tools1, "test-tool")
+		assert.Contains(t, tools2, "test-tool")
+		assert.Contains(t, tools3, "test-tool")
+
+		// Verify tool content is the same
+		assert.Equal(t, tools1["test-tool"].Tool, tools2["test-tool"].Tool)
+		assert.Equal(t, tools2["test-tool"].Tool, tools3["test-tool"].Tool)
+	})
+
+	t.Run("ReturnsCopiesNotReferences", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add a tool
+		server.AddTool(mcp.Tool{
+			Name:        "test-tool",
+			Description: "Test tool",
+		}, nil)
+
+		// Get tools twice
+		tools1 := server.ListTools()
+		tools2 := server.ListTools()
+
+		assert.NotNil(t, tools1)
+		assert.NotNil(t, tools2)
+
+		// They should NOT be the same reference (different memory addresses)
+		// This verifies that ListTools returns copies, not shared references
+		if len(tools1) > 0 && len(tools2) > 0 {
+			assert.NotSame(t, tools1, tools2, "ListTools should return copies, not shared references")
+		}
+
+		// Modifying one should not affect the other
+		delete(tools1, "test-tool")
+		assert.Len(t, tools1, 0, "Modified copy should be empty")
+		assert.Len(t, tools2, 1, "Original copy should be unchanged")
+		assert.Contains(t, tools2, "test-tool", "Original copy should still contain the tool")
+
+		// Server should still have the tool
+		tools3 := server.ListTools()
+		assert.NotNil(t, tools3)
+		assert.Len(t, tools3, 1)
+		assert.Contains(t, tools3, "test-tool")
+	})
 }
