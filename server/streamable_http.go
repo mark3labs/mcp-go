@@ -648,7 +648,8 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w http.ResponseWriter, r *
 			response.err = fmt.Errorf("sampling error %d: %s", jsonrpcError.Code, jsonrpcError.Message)
 		}
 	} else if responseMessage.Result != nil {
-		// Parse result
+		// Store the result to be unmarshaled later
+		response.result = responseMessage.Result
 	} else {
 		response.err = fmt.Errorf("sampling response has neither result nor error")
 	}

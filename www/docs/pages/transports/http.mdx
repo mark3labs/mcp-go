@@ -689,6 +689,94 @@ This works for all MCP request types including:
 
 The headers are automatically populated by the transport layer and are available in your handlers without any additional configuration.
 
+## Sampling Support
+
+StreamableHTTP transport now supports bidirectional sampling, allowing servers to request LLM completions from clients. This enables advanced scenarios where servers can leverage client-side LLM capabilities.
+
+### Requirements for Sampling
+
+To enable sampling with StreamableHTTP transport, the client **must** use the `WithContinuousListening()` option:
+
+```go
+// Client setup with sampling support
+httpTransport, err := transport.NewStreamableHTTP(
+    serverURL,
+    transport.WithContinuousListening(), // Required for sampling
+)
+
+// Create client with sampling handler
+mcpClient := client.NewClient(httpTransport, 
+    client.WithSamplingHandler(samplingHandler))
+```
+
+Without `WithContinuousListening()`, the client won't maintain a persistent connection to receive sampling requests from the server.
+
+### Server-Side Implementation
+
+Enable sampling in your StreamableHTTP server:
+
+```go
+mcpServer := server.NewMCPServer("HTTP Sampling Server", "1.0.0")
+mcpServer.EnableSampling()
+
+// Add a tool that uses sampling
+mcpServer.AddTool(mcp.Tool{
+    Name:        "ask-llm",
+    Description: "Ask the LLM a question",
+    InputSchema: mcp.ToolInputSchema{
+        Type: "object",
+        Properties: map[string]any{
+            "question": map[string]any{
+                "type":        "string",
+                "description": "Question to ask",
+            },
+        },
+        Required: []string{"question"},
+    },
+}, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    question := mcp.ParseString(req, "question", "")
+    
+    // Request sampling from client
+    samplingRequest := mcp.CreateMessageRequest{
+        Request: mcp.Request{
+            Method: string(mcp.MethodSamplingCreateMessage),
+        },
+        CreateMessageParams: mcp.CreateMessageParams{
+            Messages: []mcp.SamplingMessage{
+                {
+                    Role: mcp.RoleUser,
+                    Content: mcp.TextContent{
+                        Type: "text",
+                        Text: question,
+                    },
+                },
+            },
+            MaxTokens: 1000,
+        },
+    }
+    
+    result, err := mcpServer.RequestSampling(ctx, samplingRequest)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("Sampling failed: %v", err)), nil
+    }
+    
+    return mcp.NewToolResultText(mcp.GetTextFromContent(result.Content)), nil
+})
+```
+
+### How It Works
+
+1. **Persistent Connection**: When `WithContinuousListening()` is enabled, the client maintains a persistent SSE connection to the server
+2. **Bidirectional Communication**: The server can send sampling requests through the SSE stream
+3. **Response Channel**: The client responds to sampling requests via HTTP POST to the same endpoint
+4. **Session Correlation**: Responses are correlated using session IDs to ensure they reach the correct handler
+
+### Limitations
+
+- Sampling requires `WithContinuousListening()` to maintain the SSE connection
+- Without continuous listening, the transport operates in stateless request/response mode only
+- Network interruptions may require reconnection and re-establishment of the sampling channel
+
 ## Next Steps
 
 - **[In-Process Transport](/transports/inprocess)** - Learn about embedded scenarios

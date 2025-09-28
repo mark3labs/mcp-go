@@ -941,3 +941,25 @@ func ParseStringMap(request CallToolRequest, key string, defaultValue map[string
 func ToBoolPtr(b bool) *bool {
 	return &b
 }
+
+// GetTextFromContent extracts text from a Content interface that might be a TextContent struct
+// or a map[string]any that was unmarshaled from JSON. This is useful when dealing with content
+// that comes from different transport layers that may handle JSON differently.
+func GetTextFromContent(content any) string {
+	switch c := content.(type) {
+	case TextContent:
+		return c.Text
+	case map[string]any:
+		// Handle JSON unmarshaled content
+		if contentType, exists := c["type"]; exists && contentType == "text" {
+			if text, exists := c["text"].(string); exists {
+				return text
+			}
+		}
+		return fmt.Sprintf("%v", content)
+	case string:
+		return c
+	default:
+		return fmt.Sprintf("%v", content)
+	}
+}
