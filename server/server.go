@@ -43,6 +43,9 @@ type ToolHandlerFunc func(ctx context.Context, request mcp.CallToolRequest) (*mc
 // ToolHandlerMiddleware is a middleware function that wraps a ToolHandlerFunc.
 type ToolHandlerMiddleware func(ToolHandlerFunc) ToolHandlerFunc
 
+// ResourceHandlerMiddleware is a middleware function that wraps a ResourceHandlerFunc.
+type ResourceHandlerMiddleware func(ResourceHandlerFunc) ResourceHandlerFunc
+
 // ToolFilterFunc is a function that filters tools based on context, typically using session information.
 type ToolFilterFunc func(ctx context.Context, tools []mcp.Tool) []mcp.Tool
 
@@ -121,14 +124,7 @@ func (e *requestError) ToJSONRPCError() mcp.JSONRPCError {
 	return mcp.JSONRPCError{
 		JSONRPC: mcp.JSONRPC_VERSION,
 		ID:      mcp.NewRequestId(e.id),
-		Error: struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-			Data    any    `json:"data,omitempty"`
-		}{
-			Code:    e.code,
-			Message: e.err.Error(),
-		},
+		Error:   mcp.NewJSONRPCErrorDetails(e.code, e.err.Error(), nil),
 	}
 }
 
@@ -144,28 +140,30 @@ type NotificationHandlerFunc func(ctx context.Context, notification mcp.JSONRPCN
 type MCPServer struct {
 	// Separate mutexes for different resource types
 	resourcesMu            sync.RWMutex
+	resourceMiddlewareMu   sync.RWMutex
 	promptsMu              sync.RWMutex
 	toolsMu                sync.RWMutex
-	middlewareMu           sync.RWMutex
+	toolMiddlewareMu       sync.RWMutex
 	notificationHandlersMu sync.RWMutex
 	capabilitiesMu         sync.RWMutex
 	toolFiltersMu          sync.RWMutex
 
-	name                   string
-	version                string
-	instructions           string
-	resources              map[string]resourceEntry
-	resourceTemplates      map[string]resourceTemplateEntry
-	prompts                map[string]mcp.Prompt
-	promptHandlers         map[string]PromptHandlerFunc
-	tools                  map[string]ServerTool
-	toolHandlerMiddlewares []ToolHandlerMiddleware
-	toolFilters            []ToolFilterFunc
-	notificationHandlers   map[string]NotificationHandlerFunc
-	capabilities           serverCapabilities
-	paginationLimit        *int
-	sessions               sync.Map
-	hooks                  *Hooks
+	name                       string
+	version                    string
+	instructions               string
+	resources                  map[string]resourceEntry
+	resourceTemplates          map[string]resourceTemplateEntry
+	prompts                    map[string]mcp.Prompt
+	promptHandlers             map[string]PromptHandlerFunc
+	tools                      map[string]ServerTool
+	toolHandlerMiddlewares     []ToolHandlerMiddleware
+	resourceHandlerMiddlewares []ResourceHandlerMiddleware
+	toolFilters                []ToolFilterFunc
+	notificationHandlers       map[string]NotificationHandlerFunc
+	capabilities               serverCapabilities
+	paginationLimit            *int
+	sessions                   sync.Map
+	hooks                      *Hooks
 }
 
 // WithPaginationLimit sets the pagination limit for the server.
@@ -177,11 +175,12 @@ func WithPaginationLimit(limit int) ServerOption {
 
 // serverCapabilities defines the supported features of the MCP server
 type serverCapabilities struct {
-	tools     *toolCapabilities
-	resources *resourceCapabilities
-	prompts   *promptCapabilities
-	logging   *bool
-	sampling  *bool
+	tools       *toolCapabilities
+	resources   *resourceCapabilities
+	prompts     *promptCapabilities
+	logging     *bool
+	sampling    *bool
+	elicitation *bool
 }
 
 // resourceCapabilities defines the supported resource-related features
@@ -217,10 +216,40 @@ func WithToolHandlerMiddleware(
 	toolHandlerMiddleware ToolHandlerMiddleware,
 ) ServerOption {
 	return func(s *MCPServer) {
-		s.middlewareMu.Lock()
+		s.toolMiddlewareMu.Lock()
 		s.toolHandlerMiddlewares = append(s.toolHandlerMiddlewares, toolHandlerMiddleware)
-		s.middlewareMu.Unlock()
+		s.toolMiddlewareMu.Unlock()
 	}
+}
+
+// WithResourceHandlerMiddleware allows adding a middleware for the
+// resource handler call chain.
+func WithResourceHandlerMiddleware(
+	resourceHandlerMiddleware ResourceHandlerMiddleware,
+) ServerOption {
+	return func(s *MCPServer) {
+		s.resourceMiddlewareMu.Lock()
+		s.resourceHandlerMiddlewares = append(s.resourceHandlerMiddlewares, resourceHandlerMiddleware)
+		s.resourceMiddlewareMu.Unlock()
+	}
+}
+
+// WithResourceRecovery adds a middleware that recovers from panics in resource handlers.
+func WithResourceRecovery() ServerOption {
+	return WithResourceHandlerMiddleware(func(next ResourceHandlerFunc) ResourceHandlerFunc {
+		return func(ctx context.Context, request mcp.ReadResourceRequest) (result []mcp.ResourceContents, err error) {
+			defer func() {
+				if r := recover(); r != nil {
+					err = fmt.Errorf(
+						"panic recovered in %s resource handler: %v",
+						request.Params.URI,
+						r,
+					)
+				}
+			}()
+			return next(ctx, request)
+		}
+	})
 }
 
 // WithToolFilter adds a filter function that will be applied to tools before they are returned in list_tools
@@ -288,6 +317,13 @@ func WithLogging() ServerOption {
 	}
 }
 
+// WithElicitation enables elicitation capabilities for the server
+func WithElicitation() ServerOption {
+	return func(s *MCPServer) {
+		s.capabilities.elicitation = mcp.ToBoolPtr(true)
+	}
+}
+
 // WithInstructions sets the server instructions for the client returned in the initialize response
 func WithInstructions(instructions string) ServerOption {
 	return func(s *MCPServer) {
@@ -301,14 +337,16 @@ func NewMCPServer(
 	opts ...ServerOption,
 ) *MCPServer {
 	s := &MCPServer{
-		resources:            make(map[string]resourceEntry),
-		resourceTemplates:    make(map[string]resourceTemplateEntry),
-		prompts:              make(map[string]mcp.Prompt),
-		promptHandlers:       make(map[string]PromptHandlerFunc),
-		tools:                make(map[string]ServerTool),
-		name:                 name,
-		version:              version,
-		notificationHandlers: make(map[string]NotificationHandlerFunc),
+		resources:                  make(map[string]resourceEntry),
+		resourceTemplates:          make(map[string]resourceTemplateEntry),
+		prompts:                    make(map[string]mcp.Prompt),
+		promptHandlers:             make(map[string]PromptHandlerFunc),
+		tools:                      make(map[string]ServerTool),
+		toolHandlerMiddlewares:     make([]ToolHandlerMiddleware, 0),
+		resourceHandlerMiddlewares: make([]ResourceHandlerMiddleware, 0),
+		name:                       name,
+		version:                    version,
+		notificationHandlers:       make(map[string]NotificationHandlerFunc),
 		capabilities: serverCapabilities{
 			tools:     nil,
 			resources: nil,
@@ -555,6 +593,30 @@ func (s *MCPServer) SetTools(tools ...ServerTool) {
 	s.AddTools(tools...)
 }
 
+// GetTool retrieves the specified tool
+func (s *MCPServer) GetTool(toolName string) *ServerTool {
+	s.toolsMu.RLock()
+	defer s.toolsMu.RUnlock()
+	if tool, ok := s.tools[toolName]; ok {
+		return &tool
+	}
+	return nil
+}
+
+func (s *MCPServer) ListTools() map[string]*ServerTool {
+	s.toolsMu.RLock()
+	defer s.toolsMu.RUnlock()
+	if len(s.tools) == 0 {
+		return nil
+	}
+	// Create a copy to prevent external modification
+	toolsCopy := make(map[string]*ServerTool, len(s.tools))
+	for name, tool := range s.tools {
+		toolsCopy[name] = &tool
+	}
+	return toolsCopy
+}
+
 // DeleteTools removes tools from the server
 func (s *MCPServer) DeleteTools(names ...string) {
 	s.toolsMu.Lock()
@@ -626,6 +688,10 @@ func (s *MCPServer) handleInitialize(
 
 	if s.capabilities.sampling != nil && *s.capabilities.sampling {
 		capabilities.Sampling = &struct{}{}
+	}
+
+	if s.capabilities.elicitation != nil && *s.capabilities.elicitation {
+		capabilities.Elicitation = &struct{}{}
 	}
 
 	result := mcp.InitializeResult{
@@ -838,7 +904,17 @@ func (s *MCPServer) handleReadResource(
 	if entry, ok := s.resources[request.Params.URI]; ok {
 		handler := entry.handler
 		s.resourcesMu.RUnlock()
-		contents, err := handler(ctx, request)
+
+		finalHandler := handler
+		s.resourceMiddlewareMu.RLock()
+		mw := s.resourceHandlerMiddlewares
+		// Apply middlewares in reverse order
+		for i := len(mw) - 1; i >= 0; i-- {
+			finalHandler = mw[i](finalHandler)
+		}
+		s.resourceMiddlewareMu.RUnlock()
+
+		contents, err := finalHandler(ctx, request)
 		if err != nil {
 			return nil, &requestError{
 				id:   id,
@@ -1092,14 +1168,14 @@ func (s *MCPServer) handleToolCall(
 
 	finalHandler := tool.Handler
 
-	s.middlewareMu.RLock()
+	s.toolMiddlewareMu.RLock()
 	mw := s.toolHandlerMiddlewares
 
 	// Apply middlewares in reverse order
 	for i := len(mw) - 1; i >= 0; i-- {
 		finalHandler = mw[i](finalHandler)
 	}
-	s.middlewareMu.RUnlock()
+	s.toolMiddlewareMu.RUnlock()
 
 	result, err := finalHandler(ctx, request)
 	if err != nil {
@@ -1128,11 +1204,7 @@ func (s *MCPServer) handleNotification(
 }
 
 func createResponse(id any, result any) mcp.JSONRPCMessage {
-	return mcp.JSONRPCResponse{
-		JSONRPC: mcp.JSONRPC_VERSION,
-		ID:      mcp.NewRequestId(id),
-		Result:  result,
-	}
+	return mcp.NewJSONRPCResultResponse(mcp.NewRequestId(id), result)
 }
 
 func createErrorResponse(
@@ -1143,13 +1215,6 @@ func createErrorResponse(
 	return mcp.JSONRPCError{
 		JSONRPC: mcp.JSONRPC_VERSION,
 		ID:      mcp.NewRequestId(id),
-		Error: struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-			Data    any    `json:"data,omitempty"`
-		}{
-			Code:    code,
-			Message: message,
-		},
+		Error:   mcp.NewJSONRPCErrorDetails(code, message, nil),
 	}
 }

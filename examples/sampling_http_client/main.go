@@ -63,7 +63,7 @@ func main() {
 		log.Fatalf("Failed to create HTTP transport: %v", err)
 	}
 	defer httpTransport.Close()
-	
+
 	// Create client with sampling support
 	mcpClient := client.NewClient(
 		httpTransport,
@@ -81,7 +81,7 @@ func main() {
 	initRequest := mcp.InitializeRequest{
 		Params: mcp.InitializeParams{
 			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
-			Capabilities: mcp.ClientCapabilities{
+			Capabilities:    mcp.ClientCapabilities{
 				// Sampling capability will be automatically added by the client
 			},
 			ClientInfo: mcp.Implementation{
@@ -90,7 +90,7 @@ func main() {
 			},
 		},
 	}
-	
+
 	_, err = mcpClient.Initialize(ctx, initRequest)
 	if err != nil {
 		log.Fatalf("Failed to initialize MCP session: %v", err)
@@ -102,7 +102,7 @@ func main() {
 
 	// In a real application, you would keep the client running to handle sampling requests
 	// For this example, we'll just demonstrate that it's working
-	
+
 	// Keep the client running (in a real app, you'd have your main application logic here)
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)

@@ -412,13 +412,6 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 	// Create a channel for this specific request
 	responseChan := make(chan *JSONRPCResponse, 1)
 
-	// Add timeout context for request processing if not already set
-	if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 30*time.Second {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-	}
-
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -431,7 +424,7 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 			// Try to unmarshal as a response first
 			var message JSONRPCResponse
 			if err := json.Unmarshal([]byte(data), &message); err != nil {
-				c.logger.Errorf("failed to unmarshal message: %v", err)
+				c.logger.Infof("failed to unmarshal message (non-fatal): %v", err, "message", data)
 				return
 			}
 
@@ -607,8 +600,7 @@ func (c *StreamableHTTP) IsOAuthEnabled() bool {
 func (c *StreamableHTTP) listenForever(ctx context.Context) {
 	c.logger.Infof("listening to server forever")
 	for {
-		// Add timeout for individual connection attempts
-		connectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		connectCtx, cancel := context.WithCancel(ctx)
 		err := c.createGETConnectionToServer(connectCtx)
 		cancel()
 
@@ -689,18 +681,12 @@ func (c *StreamableHTTP) handleIncomingRequest(ctx context.Context, request JSON
 	if handler == nil {
 		c.logger.Errorf("received request from server but no handler set: %s", request.Method)
 		// Send method not found error
-		errorResponse := &JSONRPCResponse{
-			JSONRPC: "2.0",
-			ID:      request.ID,
-			Error: &struct {
-				Code    int             `json:"code"`
-				Message string          `json:"message"`
-				Data    json.RawMessage `json:"data"`
-			}{
-				Code:    -32601, // Method not found
-				Message: fmt.Sprintf("no handler configured for method: %s", request.Method),
-			},
-		}
+		errorResponse := NewJSONRPCErrorResponse(
+			request.ID,
+			mcp.METHOD_NOT_FOUND,
+			fmt.Sprintf("no handler configured for method: %s", request.Method),
+			nil,
+		)
 		c.sendResponseToServer(ctx, errorResponse)
 		return
 	}
@@ -721,36 +707,25 @@ func (c *StreamableHTTP) handleIncomingRequest(ctx context.Context, request JSON
 
 			// Check for specific sampling-related errors
 			if errors.Is(err, context.Canceled) {
-				errorCode = -32800 // Request cancelled
+				errorCode = mcp.REQUEST_INTERRUPTED
 				errorMessage = "request was cancelled"
 			} else if errors.Is(err, context.DeadlineExceeded) {
-				errorCode = -32800 // Request timeout
+				errorCode = mcp.REQUEST_INTERRUPTED
 				errorMessage = "request timed out"
 			} else {
 				// Generic error cases
 				switch request.Method {
 				case string(mcp.MethodSamplingCreateMessage):
-					errorCode = -32603 // Internal error
+					errorCode = mcp.INTERNAL_ERROR
 					errorMessage = fmt.Sprintf("sampling request failed: %v", err)
 				default:
-					errorCode = -32603 // Internal error
+					errorCode = mcp.INTERNAL_ERROR
 					errorMessage = err.Error()
 				}
 			}
 
 			// Send error response
-			errorResponse := &JSONRPCResponse{
-				JSONRPC: "2.0",
-				ID:      request.ID,
-				Error: &struct {
-					Code    int             `json:"code"`
-					Message string          `json:"message"`
-					Data    json.RawMessage `json:"data"`
-				}{
-					Code:    errorCode,
-					Message: errorMessage,
-				},
-			}
+			errorResponse := NewJSONRPCErrorResponse(request.ID, errorCode, errorMessage, nil)
 			c.sendResponseToServer(requestCtx, errorResponse)
 			return
 		}
@@ -777,7 +752,7 @@ func (c *StreamableHTTP) sendResponseToServer(ctx context.Context, response *JSO
 	ctx, cancel := c.contextAwareOfClientClose(ctx)
 	defer cancel()
 
-	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(responseBody), "application/json", nil)
+	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(responseBody), "application/json, text/event-stream")
 	if err != nil {
 		c.logger.Errorf("failed to send response to server: %v", err)
 		return

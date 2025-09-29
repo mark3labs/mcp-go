@@ -12,6 +12,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Create GitHub Release
+        id: create_release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -20,3 +21,38 @@ jobs:
           release_name: Release ${{ github.ref }}
           draft: false
           prerelease: false
+
+      - name: Send Discord Notification
+        if: success()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.RELEASES_WEBHOOK }}
+          TAG_NAME: ${{ github.ref_name }}
+          RELEASE_URL: ${{ steps.create_release.outputs.html_url }}
+        run: |
+          curl -H "Content-Type: application/json" \
+            -X POST \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"🚀 New Release: $TAG_NAME\",
+                \"description\": \"A new version of mcp-go has been released!\",
+                \"color\": 5814783,
+                \"fields\": [
+                  {
+                    \"name\": \"Version\",
+                    \"value\": \"$TAG_NAME\",
+                    \"inline\": true
+                  },
+                  {
+                    \"name\": \"Repository\",
+                    \"value\": \"[mcp-go](https://github.com/${{ github.repository }})\",
+                    \"inline\": true
+                  }
+                ],
+                \"footer\": {
+                  \"text\": \"Released via GitHub Actions\"
+                },
+                \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%S.000Z)\",
+                \"url\": \"$RELEASE_URL\"
+              }]
+            }" \
+            $DISCORD_WEBHOOK
