@@ -594,10 +594,14 @@ func (c *StreamableHTTP) IsOAuthEnabled() bool {
 func (c *StreamableHTTP) listenForever(ctx context.Context) {
 	c.logger.Infof("listening to server forever")
 	for {
-		connectCtx, cancel := context.WithCancel(ctx)
-		err := c.createGETConnectionToServer(connectCtx)
-		cancel()
-
+		// Use the original context for continuous listening - no per-iteration timeout
+		// The SSE connection itself will detect disconnections via the underlying HTTP transport,
+		// and the context cancellation will propagate from the parent to stop listening gracefully.
+		// We don't add an artificial timeout here because:
+		// 1. Persistent SSE connections are meant to stay open indefinitely
+		// 2. Network-level timeouts and keep-alives handle connection health
+		// 3. Context cancellation (user-initiated or system shutdown) provides clean shutdown
+		err := c.createGETConnectionToServer(ctx)
 		if errors.Is(err, ErrGetMethodNotAllowed) {
 			// server does not support listening
 			c.logger.Errorf("server does not support listening")

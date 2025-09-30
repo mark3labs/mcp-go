@@ -502,6 +502,19 @@ func (c *Client) handleSamplingRequestTransport(ctx context.Context, request tra
 		}
 	}
 
+	// Fix content parsing - HTTP transport unmarshals TextContent as map[string]any
+	// Use the helper function to properly handle content from different transports
+	for i := range params.Messages {
+		if contentMap, ok := params.Messages[i].Content.(map[string]any); ok {
+			// Parse the content map into a proper Content type
+			content, err := mcp.ParseContent(contentMap)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse content for message %d: %w", i, err)
+			}
+			params.Messages[i].Content = content
+		}
+	}
+
 	// Create the MCP request
 	mcpRequest := mcp.CreateMessageRequest{
 		Request: mcp.Request{

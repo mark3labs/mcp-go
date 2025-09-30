@@ -309,7 +309,19 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	session := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
+	// Check if a persistent session exists (for sampling support), otherwise create ephemeral session
+	// Persistent sessions are created by GET (continuous listening) connections
+	var session *streamableHttpSession
+	if sessionInterface, exists := s.activeSessions.Load(sessionID); exists {
+		if persistentSession, ok := sessionInterface.(*streamableHttpSession); ok {
+			session = persistentSession
+		}
+	}
+
+	// Create ephemeral session if no persistent session exists
+	if session == nil {
+		session = newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
+	}
 
 	// Set the client context before handling the message
 	ctx := s.server.WithContext(r.Context(), session)
@@ -420,16 +432,23 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		sessionID = uuid.New().String()
 	}
 
-	session := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
-	if err := s.server.RegisterSession(r.Context(), session); err != nil {
-		http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusBadRequest)
-		return
-	}
-	defer s.server.UnregisterSession(r.Context(), sessionID)
+	// Get or create session atomically to prevent TOCTOU races
+	// where concurrent GETs could both create and register duplicate sessions
+	var session *streamableHttpSession
+	newSession := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
+	actual, loaded := s.activeSessions.LoadOrStore(sessionID, newSession)
+	session = actual.(*streamableHttpSession)
 
-	// Register session for sampling response delivery
-	s.activeSessions.Store(sessionID, session)
-	defer s.activeSessions.Delete(sessionID)
+	if !loaded {
+		// We created a new session, need to register it
+		if err := s.server.RegisterSession(r.Context(), session); err != nil {
+			s.activeSessions.Delete(sessionID)
+			http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusBadRequest)
+			return
+		}
+		defer s.server.UnregisterSession(r.Context(), sessionID)
+		defer s.activeSessions.Delete(sessionID)
+	}
 
 	// Set the client context before handling the message
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -626,7 +645,8 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w http.ResponseWriter, r *
 			response.err = fmt.Errorf("sampling error %d: %s", jsonrpcError.Code, jsonrpcError.Message)
 		}
 	} else if responseMessage.Result != nil {
-		// Parse result
+		// Store the result to be unmarshaled later
+		response.result = responseMessage.Result
 	} else {
 		response.err = fmt.Errorf("sampling response has neither result nor error")
 	}
@@ -900,6 +920,17 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 		if err := json.Unmarshal(response.result, &result); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal sampling response: %v", err)
 		}
+
+		// Parse content from map[string]any to proper Content type (TextContent, ImageContent, AudioContent)
+		// HTTP transport unmarshals Content as map[string]any, we need to convert it to the proper type
+		if contentMap, ok := result.Content.(map[string]any); ok {
+			content, err := mcp.ParseContent(contentMap)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse sampling response content: %w", err)
+			}
+			result.Content = content
+		}
+
 		return &result, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
