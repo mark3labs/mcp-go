@@ -15,6 +15,25 @@ jobs:
       with:
         go-version-file: 'go.mod'
     - run: go test ./... -race
+  
+  coverage:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: 'go.mod'
+    - name: Run tests with coverage
+      run: |
+        go test -coverprofile=coverage.out -covermode=atomic $(go list ./... | grep -v '/examples/')
+    - name: Generate coverage report
+      uses: fgrosse/go-coverage-report@v1.1.0
+      with:
+        coverage-file: coverage.out
+        coverage-threshold: 50
 
   verify-codegen:
     runs-on: ubuntu-latest
