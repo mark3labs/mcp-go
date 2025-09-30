@@ -235,21 +235,6 @@ func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 
 // --- internal methods ---
 
-// getOrCreateSession retrieves an existing persistent session or creates a new ephemeral one.
-// Persistent sessions are used for bidirectional communication (sampling, elicitation) and are
-// stored in activeSessions. Ephemeral sessions are created per-request for stateless operation.
-func (s *StreamableHTTPServer) getOrCreateSession(sessionID string) *streamableHttpSession {
-	// Check if a persistent session exists (created by continuous listening GET connection)
-	if sessionInterface, exists := s.activeSessions.Load(sessionID); exists {
-		if persistentSession, ok := sessionInterface.(*streamableHttpSession); ok {
-			return persistentSession
-		}
-	}
-
-	// Create ephemeral session if no persistent session exists
-	return newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
-}
-
 func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {
 	// post request carry request/notification message
 
@@ -324,8 +309,19 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Get or create session (reuses persistent sessions for bidirectional communication)
-	session := s.getOrCreateSession(sessionID)
+	// Check if a persistent session exists (for sampling support), otherwise create ephemeral session
+	// Persistent sessions are created by GET (continuous listening) connections
+	var session *streamableHttpSession
+	if sessionInterface, exists := s.activeSessions.Load(sessionID); exists {
+		if persistentSession, ok := sessionInterface.(*streamableHttpSession); ok {
+			session = persistentSession
+		}
+	}
+
+	// Create ephemeral session if no persistent session exists
+	if session == nil {
+		session = newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
+	}
 
 	// Set the client context before handling the message
 	ctx := s.server.WithContext(r.Context(), session)
@@ -436,26 +432,21 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		sessionID = uuid.New().String()
 	}
 
-	// Check if session already exists (reuse for persistent bidirectional communication)
-	sessionInterface, sessionExists := s.activeSessions.Load(sessionID)
+	// Get or create session atomically to prevent TOCTOU races
+	// where concurrent GETs could both create and register duplicate sessions
 	var session *streamableHttpSession
-	if sessionExists {
-		if existingSession, ok := sessionInterface.(*streamableHttpSession); ok {
-			session = existingSession
-		}
-	}
+	newSession := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
+	actual, loaded := s.activeSessions.LoadOrStore(sessionID, newSession)
+	session = actual.(*streamableHttpSession)
 
-	// Create and register new persistent session if none exists
-	if session == nil {
-		session = newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
+	if !loaded {
+		// We created a new session, need to register it
 		if err := s.server.RegisterSession(r.Context(), session); err != nil {
+			s.activeSessions.Delete(sessionID)
 			http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusBadRequest)
 			return
 		}
 		defer s.server.UnregisterSession(r.Context(), sessionID)
-
-		// Store session for bidirectional communication (sampling/elicitation response delivery)
-		s.activeSessions.Store(sessionID, session)
 		defer s.activeSessions.Delete(sessionID)
 	}
 
