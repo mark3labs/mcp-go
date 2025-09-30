@@ -703,3 +703,120 @@ func TestStdio_NewStdioWithOptions_AppliesOptions(t *testing.T) {
 	require.NotNil(t, stdio)
 	require.True(t, configured, "option was not applied")
 }
+
+func TestStdio_LargeMessages(t *testing.T) {
+	tempFile, err := os.CreateTemp("", "mockstdio_server")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	tempFile.Close()
+	mockServerPath := tempFile.Name()
+
+	if runtime.GOOS == "windows" {
+		os.Remove(mockServerPath)
+		mockServerPath += ".exe"
+	}
+
+	if compileErr := compileTestServer(mockServerPath); compileErr != nil {
+		t.Fatalf("Failed to compile mock server: %v", compileErr)
+	}
+	defer os.Remove(mockServerPath)
+
+	stdio := NewStdio(mockServerPath, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	startErr := stdio.Start(ctx)
+	if startErr != nil {
+		t.Fatalf("Failed to start Stdio transport: %v", startErr)
+	}
+	defer stdio.Close()
+
+	testCases := []struct {
+		name        string
+		dataSize    int
+		description string
+	}{
+		{"SmallMessage_1KB", 1024, "Small message under scanner default limit"},
+		{"MediumMessage_32KB", 32 * 1024, "Medium message under scanner default limit"},
+		{"AtLimit_64KB", 64 * 1024, "Message at default scanner limit"},
+		{"OverLimit_128KB", 128 * 1024, "Message over default scanner limit - would fail with Scanner"},
+		{"Large_256KB", 256 * 1024, "Large message well over scanner limit"},
+		{"VeryLarge_1MB", 1024 * 1024, "Very large message"},
+		{"Huge_5MB", 5 * 1024 * 1024, "Huge message to stress test"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			largeString := generateRandomString(tc.dataSize)
+
+			params := map[string]any{
+				"data": largeString,
+				"size": len(largeString),
+			}
+
+			request := JSONRPCRequest{
+				JSONRPC: "2.0",
+				ID:      mcp.NewRequestId(int64(1)),
+				Method:  "debug/echo",
+				Params:  params,
+			}
+
+			response, err := stdio.SendRequest(ctx, request)
+			if err != nil {
+				t.Fatalf("SendRequest failed for %s: %v", tc.description, err)
+			}
+
+			var result struct {
+				JSONRPC string         `json:"jsonrpc"`
+				ID      mcp.RequestId  `json:"id"`
+				Method  string         `json:"method"`
+				Params  map[string]any `json:"params"`
+			}
+
+			if err := json.Unmarshal(response.Result, &result); err != nil {
+				t.Fatalf("Failed to unmarshal result for %s: %v", tc.description, err)
+			}
+
+			if result.JSONRPC != "2.0" {
+				t.Errorf("Expected JSONRPC value '2.0', got '%s'", result.JSONRPC)
+			}
+
+			returnedData, ok := result.Params["data"].(string)
+			if !ok {
+				t.Fatalf("Expected data to be string, got %T", result.Params["data"])
+			}
+
+			if returnedData != largeString {
+				t.Errorf("Data mismatch for %s: expected length %d, got length %d",
+					tc.description, len(largeString), len(returnedData))
+			}
+
+			returnedSize, ok := result.Params["size"].(float64)
+			if !ok {
+				t.Fatalf("Expected size to be number, got %T", result.Params["size"])
+			}
+
+			if int(returnedSize) != tc.dataSize {
+				t.Errorf("Size mismatch for %s: expected %d, got %d",
+					tc.description, tc.dataSize, int(returnedSize))
+			}
+
+			t.Logf("Successfully handled %s message of size %d bytes", tc.name, tc.dataSize)
+		})
+	}
+}
+
+func generateRandomString(size int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 "
+
+	b := make([]byte, size)
+	for i := range b {
+		b[i] = charset[i%len(charset)]
+	}
+	return string(b)
+}
