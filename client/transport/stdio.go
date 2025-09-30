@@ -255,11 +255,22 @@ func (c *Stdio) readResponses() {
 			// Read line with no size limit (same approach as server)
 			line, err := c.stdout.ReadString('\n')
 			if err != nil {
-				if err != io.EOF && !errors.Is(err, context.Canceled) {
+				// Process any partial line before handling the error
+				if len(line) > 0 {
+					// Continue processing below - don't return yet
+				} else if err != io.EOF && !errors.Is(err, context.Canceled) {
 					c.logger.Errorf("Error reading from stdout: %v", err)
+					return
+				} else {
+					return
 				}
-				return
 			}
+			
+			// Only process the line if it has content
+			if len(line) == 0 {
+				continue
+			}
+			
 			// First try to parse as a generic message to check for ID field
 			var baseMessage struct {
 				JSONRPC string         `json:"jsonrpc"`
