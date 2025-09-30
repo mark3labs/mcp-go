@@ -253,24 +253,23 @@ func (c *Stdio) readResponses() {
 			return
 		default:
 			// Read line with no size limit (same approach as server)
-			line, err := c.stdout.ReadString('\n')
-			if err != nil {
+			line, readErr := c.stdout.ReadString('\n')
+			if readErr != nil {
 				// Process any partial line before handling the error
-				if len(line) > 0 {
-					// Continue processing below - don't return yet
-				} else if err != io.EOF && !errors.Is(err, context.Canceled) {
-					c.logger.Errorf("Error reading from stdout: %v", err)
-					return
-				} else {
+				if len(line) == 0 {
+					if readErr != io.EOF && !errors.Is(readErr, context.Canceled) {
+						c.logger.Errorf("Error reading from stdout: %v", readErr)
+					}
 					return
 				}
+				// Continue processing below - don't return yet, will check readErr at end
 			}
-			
+
 			// Only process the line if it has content
 			if len(line) == 0 {
 				continue
 			}
-			
+
 			// First try to parse as a generic message to check for ID field
 			var baseMessage struct {
 				JSONRPC string         `json:"jsonrpc"`
@@ -322,6 +321,11 @@ func (c *Stdio) readResponses() {
 				c.mu.Lock()
 				delete(c.responses, idKey)
 				c.mu.Unlock()
+			}
+			
+			// Check if we had a read error and exit after processing the partial line
+			if readErr != nil {
+				return
 			}
 		}
 	}
