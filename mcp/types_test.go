@@ -231,29 +231,25 @@ func TestResourceContentsMetaField(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, resourceContent)
 
-			// Test based on expected type
-			if tc.expectedType == "text" {
+			switch tc.expectedType {
+			case "text":
 				textContent, ok := resourceContent.(TextResourceContents)
 				require.True(t, ok, "Expected TextResourceContents")
 
-				// Verify standard fields
 				assert.Equal(t, contentMap["uri"], textContent.URI)
 				assert.Equal(t, contentMap["mimeType"], textContent.MIMEType)
 				assert.Equal(t, contentMap["text"], textContent.Text)
 
-				// Verify _meta field
 				assert.Equal(t, tc.expectedMeta, textContent.Meta)
 
-			} else if tc.expectedType == "blob" {
+			case "blob":
 				blobContent, ok := resourceContent.(BlobResourceContents)
 				require.True(t, ok, "Expected BlobResourceContents")
 
-				// Verify standard fields
 				assert.Equal(t, contentMap["uri"], blobContent.URI)
 				assert.Equal(t, contentMap["mimeType"], blobContent.MIMEType)
 				assert.Equal(t, contentMap["blob"], blobContent.Blob)
 
-				// Verify _meta field
 				assert.Equal(t, tc.expectedMeta, blobContent.Meta)
 			}
 
