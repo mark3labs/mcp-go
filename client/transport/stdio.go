@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -27,7 +28,7 @@ type Stdio struct {
 	cmd            *exec.Cmd
 	cmdFunc        CommandFunc
 	stdin          io.WriteCloser
-	stdout         *bufio.Scanner
+	stdout         *bufio.Reader
 	stderr         io.ReadCloser
 	responses      map[string]chan *JSONRPCResponse
 	mu             sync.RWMutex
@@ -72,7 +73,7 @@ func WithCommandLogger(logger util.Logger) StdioOption {
 func NewIO(input io.Reader, output io.WriteCloser, logging io.ReadCloser) *Stdio {
 	return &Stdio{
 		stdin:  output,
-		stdout: bufio.NewScanner(input),
+		stdout: bufio.NewReader(input),
 		stderr: logging,
 
 		responses: make(map[string]chan *JSONRPCResponse),
@@ -180,7 +181,7 @@ func (c *Stdio) spawnCommand(ctx context.Context) error {
 	c.cmd = cmd
 	c.stdin = stdin
 	c.stderr = stderr
-	c.stdout = bufio.NewScanner(stdout)
+	c.stdout = bufio.NewReader(stdout)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start command: %w", err)
@@ -251,15 +252,15 @@ func (c *Stdio) readResponses() {
 		case <-c.done:
 			return
 		default:
-			if !c.stdout.Scan() {
-				err := c.stdout.Err()
-				if err != nil && !errors.Is(err, context.Canceled) {
+			line, err := c.stdout.ReadString('\n')
+			if err != nil {
+				if err != io.EOF && !errors.Is(err, context.Canceled) {
 					c.logger.Errorf("Error reading from stdout: %v", err)
 				}
 				return
 			}
 
-			line := c.stdout.Text()
+			line = strings.TrimRight(line, "\r\n")
 			// First try to parse as a generic message to check for ID field
 			var baseMessage struct {
 				JSONRPC string         `json:"jsonrpc"`

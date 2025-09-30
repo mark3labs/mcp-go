@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -18,19 +19,26 @@ type JSONRPCRequest struct {
 }
 
 type JSONRPCResponse struct {
-	JSONRPC string         `json:"jsonrpc"`
-	ID      *mcp.RequestId `json:"id,omitempty"`
-	Result  any            `json:"result,omitempty"`
+	JSONRPC string                   `json:"jsonrpc"`
+	ID      *mcp.RequestId           `json:"id,omitempty"`
+	Result  any                      `json:"result,omitempty"`
 	Error   *mcp.JSONRPCErrorDetails `json:"error,omitempty"`
 }
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{}))
 	logger.Info("launch successful")
-	scanner := bufio.NewScanner(os.Stdin)
-	for scanner.Scan() {
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+
+		line = strings.TrimRight(line, "\r\n")
+
 		var request JSONRPCRequest
-		if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
+		if err := json.Unmarshal([]byte(line), &request); err != nil {
 			continue
 		}
 
