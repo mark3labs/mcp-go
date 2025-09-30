@@ -28,12 +28,15 @@ jobs:
         go-version-file: 'go.mod'
     - name: Run tests with coverage
       run: |
-        go test -coverprofile=coverage.out -covermode=atomic $(go list ./... | grep -v '/examples/')
-    - name: Generate coverage report
-      uses: fgrosse/go-coverage-report@v1.1.0
+        go test -coverprofile=coverage.txt -covermode=atomic $(go list ./... | grep -v '/examples/')
+    - name: Upload coverage artifact
+      uses: actions/upload-artifact@v4
       with:
-        coverage-file: coverage.out
-        coverage-threshold: 50
+        name: code-coverage
+        path: coverage.txt
+    - name: Generate coverage report
+      uses: fgrosse/go-coverage-report@v1.2.0
+      if: github.event_name == 'pull_request'
 
   verify-codegen:
     runs-on: ubuntu-latest
