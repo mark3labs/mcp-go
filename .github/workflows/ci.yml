@@ -28,7 +28,7 @@ jobs:
         go-version-file: 'go.mod'
     - name: Run tests with coverage
       run: |
-        go test -coverprofile=coverage.txt -covermode=atomic $(go list ./... | grep -v '/examples/')
+        go test -coverprofile=coverage.txt -covermode=atomic $(go list ./... | grep -v '/examples/' | grep -v '/testdata' | grep -v '/mcptest' | grep -v '/server/internal/gen')
     - name: Upload coverage artifact
       uses: actions/upload-artifact@v4
       with:
