@@ -508,9 +508,10 @@ func (c *Client) handleSamplingRequestTransport(ctx context.Context, request tra
 		if contentMap, ok := params.Messages[i].Content.(map[string]any); ok {
 			// Parse the content map into a proper Content type
 			content, err := mcp.ParseContent(contentMap)
-			if err == nil {
-				params.Messages[i].Content = content
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse content for message %d: %w", i, err)
 			}
+			params.Messages[i].Content = content
 		}
 	}
 

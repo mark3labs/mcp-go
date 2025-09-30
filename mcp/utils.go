@@ -945,6 +945,12 @@ func ToBoolPtr(b bool) *bool {
 // GetTextFromContent extracts text from a Content interface that might be a TextContent struct
 // or a map[string]any that was unmarshaled from JSON. This is useful when dealing with content
 // that comes from different transport layers that may handle JSON differently.
+//
+// This function uses fallback behavior for non-text content - it returns a string representation
+// via fmt.Sprintf for any content that cannot be extracted as text. This is a lossy operation
+// intended for convenience in logging and display scenarios.
+//
+// For strict type validation, use ParseContent() instead, which returns an error for invalid content.
 func GetTextFromContent(content any) string {
 	switch c := content.(type) {
 	case TextContent:

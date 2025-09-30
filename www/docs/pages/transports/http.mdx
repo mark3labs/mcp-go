@@ -693,6 +693,24 @@ The headers are automatically populated by the transport layer and are available
 
 StreamableHTTP transport now supports bidirectional sampling, allowing servers to request LLM completions from clients. This enables advanced scenarios where servers can leverage client-side LLM capabilities.
 
+:::warning[Security: Human-in-the-Loop Required]
+Per the [MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/client/sampling), implementations **SHOULD** always include a human in the loop with the ability to deny sampling requests.
+
+**Your sampling handler implementation MUST:**
+- Present sampling requests to users for review before execution
+- Allow users to view and edit prompts before sending to the LLM
+- Display generated responses for approval before returning to the server
+- Provide clear UI to accept or reject sampling requests
+
+Failing to implement approval flows creates serious security and trust risks, including:
+- Servers making unauthorized LLM requests on behalf of users
+- Exposure of sensitive data through unreviewed prompts
+- Uncontrolled API costs from automated sampling
+- Lack of user consent for AI interactions
+
+See the [example implementation](#example-with-approval-flow) below for a reference approval pattern.
+:::
+
 ### Requirements for Sampling
 
 To enable sampling with StreamableHTTP transport, the client **must** use the `WithContinuousListening()` option:
@@ -776,6 +794,54 @@ mcpServer.AddTool(mcp.Tool{
 - Sampling requires `WithContinuousListening()` to maintain the SSE connection
 - Without continuous listening, the transport operates in stateless request/response mode only
 - Network interruptions may require reconnection and re-establishment of the sampling channel
+
+### Example with Approval Flow
+
+Here's a reference implementation showing proper human-in-the-loop approval:
+
+```go
+type ApprovalSamplingHandler struct {
+    llmClient LLMClient // Your actual LLM client
+    ui        UserInterface // Your UI for presenting requests to users
+}
+
+func (h *ApprovalSamplingHandler) CreateMessage(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
+    // Step 1: Present the sampling request to the user for review
+    approved, modifiedRequest, err := h.ui.PresentSamplingRequest(ctx, request)
+    if err != nil {
+        return nil, fmt.Errorf("failed to get user approval: %w", err)
+    }
+    
+    if !approved {
+        return nil, fmt.Errorf("user rejected sampling request")
+    }
+    
+    // Step 2: Send the approved/modified request to the LLM
+    response, err := h.llmClient.CreateCompletion(ctx, modifiedRequest)
+    if err != nil {
+        return nil, fmt.Errorf("LLM request failed: %w", err)
+    }
+    
+    // Step 3: Present the response to the user for final approval
+    approved, modifiedResponse, err := h.ui.PresentSamplingResponse(ctx, response)
+    if err != nil {
+        return nil, fmt.Errorf("failed to get response approval: %w", err)
+    }
+    
+    if !approved {
+        return nil, fmt.Errorf("user rejected sampling response")
+    }
+    
+    // Step 4: Return the approved response to the server
+    return modifiedResponse, nil
+}
+```
+
+**Key Points:**
+- Users must explicitly approve both the request (before sending to LLM) and the response (before returning to server)
+- Users can modify prompts or responses before approval
+- Rejection at any stage returns an error to the server
+- The UI should clearly display what the server is requesting and why
 
 ## Next Steps
 

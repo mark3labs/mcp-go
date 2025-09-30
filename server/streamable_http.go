@@ -235,6 +235,21 @@ func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 
 // --- internal methods ---
 
+// getOrCreateSession retrieves an existing persistent session or creates a new ephemeral one.
+// Persistent sessions are used for bidirectional communication (sampling, elicitation) and are
+// stored in activeSessions. Ephemeral sessions are created per-request for stateless operation.
+func (s *StreamableHTTPServer) getOrCreateSession(sessionID string) *streamableHttpSession {
+	// Check if a persistent session exists (created by continuous listening GET connection)
+	if sessionInterface, exists := s.activeSessions.Load(sessionID); exists {
+		if persistentSession, ok := sessionInterface.(*streamableHttpSession); ok {
+			return persistentSession
+		}
+	}
+
+	// Create ephemeral session if no persistent session exists
+	return newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
+}
+
 func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {
 	// post request carry request/notification message
 
@@ -309,18 +324,8 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Check if a persistent session exists (for sampling support), otherwise create ephemeral session
-	var session *streamableHttpSession
-	if sessionInterface, exists := s.activeSessions.Load(sessionID); exists {
-		if persistentSession, ok := sessionInterface.(*streamableHttpSession); ok {
-			session = persistentSession
-		}
-	}
-
-	// Create ephemeral session if no persistent session exists
-	if session == nil {
-		session = newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
-	}
+	// Get or create session (reuses persistent sessions for bidirectional communication)
+	session := s.getOrCreateSession(sessionID)
 
 	// Set the client context before handling the message
 	ctx := s.server.WithContext(r.Context(), session)
@@ -431,15 +436,16 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		sessionID = uuid.New().String()
 	}
 
-	// Check if session already exists, if so reuse it for sampling
+	// Check if session already exists (reuse for persistent bidirectional communication)
+	sessionInterface, sessionExists := s.activeSessions.Load(sessionID)
 	var session *streamableHttpSession
-	if sessionInterface, exists := s.activeSessions.Load(sessionID); exists {
+	if sessionExists {
 		if existingSession, ok := sessionInterface.(*streamableHttpSession); ok {
 			session = existingSession
 		}
 	}
 
-	// Create new session if none exists
+	// Create and register new persistent session if none exists
 	if session == nil {
 		session = newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
 		if err := s.server.RegisterSession(r.Context(), session); err != nil {
@@ -448,7 +454,7 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		}
 		defer s.server.UnregisterSession(r.Context(), sessionID)
 
-		// Register session for sampling response delivery
+		// Store session for bidirectional communication (sampling/elicitation response delivery)
 		s.activeSessions.Store(sessionID, session)
 		defer s.activeSessions.Delete(sessionID)
 	}
@@ -923,6 +929,17 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 		if err := json.Unmarshal(response.result, &result); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal sampling response: %v", err)
 		}
+
+		// Parse content from map[string]any to proper Content type (TextContent, ImageContent, AudioContent)
+		// HTTP transport unmarshals Content as map[string]any, we need to convert it to the proper type
+		if contentMap, ok := result.Content.(map[string]any); ok {
+			content, err := mcp.ParseContent(contentMap)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse sampling response content: %w", err)
+			}
+			result.Content = content
+		}
+
 		return &result, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
