@@ -1,7 +1,19 @@
-import{u as r,j as s}from"./index-bnINOIIO.js";const a={title:"Sampling",description:"undefined"};function e(i){const l={a:"a",code:"code",div:"div",h1:"h1",h2:"h2",h3:"h3",h4:"h4",header:"header",li:"li",ol:"ol",p:"p",pre:"pre",span:"span",strong:"strong",ul:"ul",...r(),...i.components};return s.jsxs(s.Fragment,{children:[s.jsx(l.header,{children:s.jsxs(l.h1,{id:"sampling",children:["Sampling",s.jsx(l.a,{"aria-hidden":"true",tabIndex:"-1",href:"#sampling",children:s.jsx(l.div,{"data-autolink-icon":!0})})]})}),`
+import{u as r,j as s}from"./index-ChCeXQuT.js";const a={title:"Sampling",description:"undefined"};function e(i){const l={a:"a",aside:"aside",code:"code",div:"div",h1:"h1",h2:"h2",h3:"h3",h4:"h4",header:"header",li:"li",ol:"ol",p:"p",pre:"pre",span:"span",strong:"strong",ul:"ul",...r(),...i.components};return s.jsxs(s.Fragment,{children:[s.jsx(l.header,{children:s.jsxs(l.h1,{id:"sampling",children:["Sampling",s.jsx(l.a,{"aria-hidden":"true",tabIndex:"-1",href:"#sampling",children:s.jsx(l.div,{"data-autolink-icon":!0})})]})}),`
 `,s.jsx(l.p,{children:"Learn how to implement MCP servers that can request LLM completions from clients using the sampling capability."}),`
 `,s.jsxs(l.h2,{id:"overview",children:["Overview",s.jsx(l.a,{"aria-hidden":"true",tabIndex:"-1",href:"#overview",children:s.jsx(l.div,{"data-autolink-icon":!0})})]}),`
 `,s.jsx(l.p,{children:"Sampling allows MCP servers to request LLM completions from clients, enabling bidirectional communication where servers can leverage client-side LLM capabilities. This is particularly useful for tools that need to generate content, answer questions, or perform reasoning tasks."}),`
+`,s.jsxs(l.aside,{"data-callout":"info",children:[s.jsx(l.strong,{"data-callout-title":!0,children:"User Consent Required"}),s.jsxs(l.p,{children:["Per the ",s.jsx(l.a,{href:"https://modelcontextprotocol.io/specification/2025-06-18/client/sampling#user-interaction-model",children:"MCP specification"}),", clients ",s.jsx(l.strong,{children:"SHOULD"})," implement human-in-the-loop approval for sampling requests."]}),s.jsx(l.p,{children:"When you request sampling from a client:"}),s.jsxs(l.ul,{children:[`
+`,s.jsx(l.li,{children:"The user will typically be prompted to review and approve your request"}),`
+`,s.jsx(l.li,{children:"The user may modify your prompts before sending to their LLM"}),`
+`,s.jsx(l.li,{children:"The user may reject your request entirely"}),`
+`,s.jsx(l.li,{children:"Response times may be longer due to user interaction"}),`
+`]}),s.jsx(l.strong,{children:"Design your tools accordingly:"}),s.jsxs(l.ul,{children:[`
+`,s.jsx(l.li,{children:"Provide clear descriptions of why sampling is needed"}),`
+`,s.jsx(l.li,{children:"Use descriptive system prompts explaining the purpose"}),`
+`,s.jsx(l.li,{children:"Handle rejection errors gracefully"}),`
+`,s.jsx(l.li,{children:"Consider timeouts for user approval delays"}),`
+`,s.jsx(l.li,{children:"Don't assume immediate or automatic approval"}),`
+`]}),s.jsx(l.p,{children:"Well-designed sampling requests improve user trust and approval rates."})]}),`
 `,s.jsxs(l.h2,{id:"enabling-sampling",children:["Enabling Sampling",s.jsx(l.a,{"aria-hidden":"true",tabIndex:"-1",href:"#enabling-sampling",children:s.jsx(l.div,{"data-autolink-icon":!0})})]}),`
 `,s.jsxs(l.p,{children:["To enable sampling in your server, call ",s.jsx(l.code,{children:"EnableSampling()"})," during server setup:"]}),`
 `,s.jsx(s.Fragment,{children:s.jsx(l.pre,{className:"shiki shiki-themes github-light github-dark-dimmed",style:{backgroundColor:"#fff","--shiki-dark-bg":"#22272e",color:"#24292e","--shiki-dark":"#adbac7"},tabIndex:"0",children:s.jsxs(l.code,{children:[s.jsxs(l.span,{className:"line",children:[s.jsx(l.span,{style:{color:"#D73A49","--shiki-dark":"#F47067"},children:"package"}),s.jsx(l.span,{style:{color:"#6F42C1","--shiki-dark":"#F69D50"},children:" main"})]}),`
