@@ -273,8 +273,10 @@ func TestTypedToolHandler_ContextPropagation(t *testing.T) {
 		Value string `json:"value"`
 	}
 
+	type contextKey string
+
 	t.Run("context is passed to handler", func(t *testing.T) {
-		ctxKey := "test-key"
+		ctxKey := contextKey("test-key")
 		ctxValue := "test-value"
 
 		handler := func(ctx context.Context, request CallToolRequest, args Args) (*CallToolResult, error) {
