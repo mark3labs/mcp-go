@@ -38,7 +38,7 @@ func (h *TestSamplingHandler) SetResponse(question, response string) {
 
 func (h *TestSamplingHandler) CreateMessage(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
 	log.Printf("[TestSamplingHandler] *** CLIENT RECEIVED SAMPLING REQUEST *** with %d messages", len(request.Messages))
-	
+
 	if len(request.Messages) == 0 {
 		log.Printf("[TestSamplingHandler] ERROR: no messages provided")
 		return nil, fmt.Errorf("no messages provided")
@@ -174,7 +174,7 @@ func TestSamplingHTTPE2E(t *testing.T) {
 		}
 
 		log.Printf("[E2E Test] SERVER calling RequestSampling...")
-		
+
 		// Check what session we have
 		session := server.ClientSessionFromContext(ctx)
 		if session != nil {
@@ -182,7 +182,7 @@ func TestSamplingHTTPE2E(t *testing.T) {
 		} else {
 			log.Printf("[E2E Test] SERVER ERROR: No session in context")
 		}
-		
+
 		// This creates the sampling request to the client
 		result, err := serverFromCtx.RequestSampling(samplingCtx, samplingRequest)
 		if err != nil {
@@ -221,7 +221,7 @@ func TestSamplingHTTPE2E(t *testing.T) {
 
 	// Start HTTP server
 	httpServer := server.NewStreamableHTTPServer(mcpServer)
-	
+
 	serverDone := make(chan struct{})
 	go func() {
 		defer close(serverDone)
@@ -240,7 +240,7 @@ func TestSamplingHTTPE2E(t *testing.T) {
 		t.Fatalf("Failed to create HTTP transport: %v", err)
 	}
 	defer httpTransport.Close()
-	
+
 	log.Printf("[E2E Test] HTTP transport created, will connect to: %s", serverURL+"/mcp")
 
 	// Create HTTP client with sampling handler - this is the actual client connecting over HTTP
@@ -288,7 +288,7 @@ func TestSamplingHTTPE2E(t *testing.T) {
 	// Test Case 1: HTTP client calls "question" tool - complete e2e flow
 	t.Run("HTTPClientCallsQuestionTool", func(t *testing.T) {
 		log.Printf("[E2E Test] HTTP client calling 'question' tool")
-		
+
 		// Client calls "question" tool over HTTP
 		result, err := httpClient.CallTool(ctx, mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
@@ -379,10 +379,10 @@ func TestSamplingHTTPE2E(t *testing.T) {
 
 	// Cleanup
 	httpClient.Close()
-	
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		t.Logf("Server shutdown error: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestSamplingHTTPBasic(t *testing.T) {
 
 	// Start HTTP server
 	httpServer := server.NewStreamableHTTPServer(mcpServer)
-	
+
 	serverDone := make(chan struct{})
 	go func() {
 		defer close(serverDone)
@@ -526,10 +526,10 @@ func TestSamplingHTTPBasic(t *testing.T) {
 
 	// Cleanup
 	mcpClient.Close()
-	
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		t.Logf("Server shutdown error: %v", err)
 	}
@@ -543,7 +543,7 @@ func TestMain(m *testing.M) {
 	// Enable debug logging for better visibility during tests
 	log.SetOutput(os.Stdout)
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	
+
 	code := m.Run()
 	os.Exit(code)
 }
