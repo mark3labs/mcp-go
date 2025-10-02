@@ -16,6 +16,10 @@ import (
 	"github.com/mark3labs/mcp-go/util"
 )
 
+// DefaultBufferSize is the default buffer size for stdio communication (1MB)
+// This is much larger than the default bufio buffer (4KB) to handle large JSON-RPC messages
+const DefaultBufferSize = 1024 * 1024
+
 // Stdio implements the transport layer of the MCP protocol using stdio communication.
 // It launches a subprocess and communicates with it via standard input/output streams
 // using JSON-RPC messages. The client handles message routing between requests and
@@ -24,6 +28,10 @@ type Stdio struct {
 	command string
 	args    []string
 	env     []string
+
+	// bufferSize configures the buffer size for reading from stdout
+	// Larger buffer sizes can handle bigger JSON-RPC messages but use more memory
+	bufferSize int
 
 	cmd            *exec.Cmd
 	cmdFunc        CommandFunc
@@ -60,6 +68,18 @@ func WithCommandFunc(f CommandFunc) StdioOption {
 	}
 }
 
+// WithBufferSize sets a custom buffer size for stdio communication.
+// Larger buffer sizes can handle bigger JSON-RPC messages but use more memory.
+// If size <= 0, DefaultBufferSize will be used.
+func WithBufferSize(size int) StdioOption {
+	return func(s *Stdio) {
+		if size <= 0 {
+			size = DefaultBufferSize
+		}
+		s.bufferSize = size
+	}
+}
+
 // WithCommandLogger sets a custom logger for the stdio transport.
 func WithCommandLogger(logger util.Logger) StdioOption {
 	return func(s *Stdio) {
@@ -72,9 +92,10 @@ func WithCommandLogger(logger util.Logger) StdioOption {
 // This is useful for testing and simulating client behavior.
 func NewIO(input io.Reader, output io.WriteCloser, logging io.ReadCloser) *Stdio {
 	return &Stdio{
-		stdin:  output,
-		stdout: bufio.NewReader(input),
-		stderr: logging,
+		stdin:      output,
+		stdout:     bufio.NewReaderSize(input, DefaultBufferSize),
+		stderr:     logging,
+		bufferSize: DefaultBufferSize,
 
 		responses: make(map[string]chan *JSONRPCResponse),
 		done:      make(chan struct{}),
@@ -106,9 +127,10 @@ func NewStdioWithOptions(
 	opts ...StdioOption,
 ) *Stdio {
 	s := &Stdio{
-		command: command,
-		args:    args,
-		env:     env,
+		command:    command,
+		args:       args,
+		env:        env,
+		bufferSize: DefaultBufferSize,
 
 		responses: make(map[string]chan *JSONRPCResponse),
 		done:      make(chan struct{}),
@@ -181,7 +203,7 @@ func (c *Stdio) spawnCommand(ctx context.Context) error {
 	c.cmd = cmd
 	c.stdin = stdin
 	c.stderr = stderr
-	c.stdout = bufio.NewReader(stdout)
+	c.stdout = bufio.NewReaderSize(stdout, c.bufferSize)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start command: %w", err)
@@ -217,6 +239,22 @@ func (c *Stdio) Close() error {
 	}
 
 	return nil
+}
+
+// GetBufferSize returns the current buffer size configuration.
+func (c *Stdio) GetBufferSize() int {
+	return c.bufferSize
+}
+
+// SetBufferSize updates the buffer size for future connections.
+// This only affects new connections; existing connections continue
+// to use their original buffer size.
+// If size <= 0, DefaultBufferSize will be used.
+func (c *Stdio) SetBufferSize(size int) {
+	if size <= 0 {
+		size = DefaultBufferSize
+	}
+	c.bufferSize = size
 }
 
 // GetSessionId returns the session ID of the transport.
