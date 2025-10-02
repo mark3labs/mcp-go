@@ -70,6 +70,7 @@ func startMockStreamableHTTPServer() (string, func()) {
 				"jsonrpc": "2.0",
 				"id":      request["id"],
 				"result":  request,
+				"headers": r.Header,
 			}); err != nil {
 				http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 				return
@@ -118,6 +119,24 @@ func startMockStreamableHTTPServer() (string, func()) {
 					"code":    -1,
 					"message": string(data),
 				},
+			}); err != nil {
+				http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+				return
+			}
+		case "debug/echo_header":
+			// Check session ID
+			if r.Header.Get("Mcp-Session-Id") != sessionID {
+				http.Error(w, "Invalid session ID", http.StatusNotFound)
+				return
+			}
+
+			// Echo back the request headersas the response result
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      request["id"],
+				"result":  r.Header,
 			}); err != nil {
 				http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 				return
@@ -212,6 +231,40 @@ func TestStreamableHTTP(t *testing.T) {
 
 		if arr, ok := result.Params["array"].([]any); !ok || len(arr) != 3 {
 			t.Errorf("Expected array with 3 items, got %v", result.Params["array"])
+		}
+	})
+
+	t.Run("SendRequestWithHeader", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		params := map[string]any{
+			"string": "hello world",
+			"array":  []any{1, 2, 3},
+		}
+
+		request := JSONRPCRequest{
+			JSONRPC: "2.0",
+			ID:      mcp.NewRequestId(int64(1)),
+			Method:  "debug/echo_header",
+			Params:  params,
+			Header:  http.Header{"X-Test-Header": {"test-header-value"}},
+		}
+
+		// Send the request
+		response, err := trans.SendRequest(ctx, request)
+		if err != nil {
+			t.Fatalf("SendRequest failed: %v", err)
+		}
+
+		// Parse the result to verify echo
+		var result map[string]any
+		if err := json.Unmarshal(response.Result, &result); err != nil {
+			t.Fatalf("Failed to unmarshal result: %v", err)
+		}
+
+		if hdr, ok := result["X-Test-Header"].([]any); !ok || len(hdr) == 0 || hdr[0] != "test-header-value" {
+			t.Errorf("Expected X-Test-Header to be ['test-header-value'], got %v", result["X-Test-Header"])
 		}
 	})
 
