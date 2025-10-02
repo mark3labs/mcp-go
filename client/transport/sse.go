@@ -115,7 +115,7 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 // Returns an error if the connection fails or times out waiting for the endpoint.
 func (c *SSE) Start(ctx context.Context) error {
 	if c.started.Load() {
-		return fmt.Errorf("has already started")
+		return nil
 	}
 
 	ctx, cancel := context.WithCancel(ctx)

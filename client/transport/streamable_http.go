@@ -162,6 +162,13 @@ func NewStreamableHTTP(serverURL string, options ...StreamableHTTPCOption) (*Str
 
 // Start initiates the HTTP connection to the server.
 func (c *StreamableHTTP) Start(ctx context.Context) error {
+	// Start is idempotent - check if already initialized
+	select {
+	case <-c.initialized:
+		return nil
+	default:
+	}
+
 	// For Streamable HTTP, we don't need to establish a persistent connection by default
 	if c.getListeningEnabled {
 		go func() {

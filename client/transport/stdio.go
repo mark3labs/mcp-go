@@ -40,6 +40,8 @@ type Stdio struct {
 	ctx            context.Context
 	ctxMu          sync.RWMutex
 	logger         util.Logger
+	started        bool
+	startedMu      sync.Mutex
 }
 
 // StdioOption defines a function that configures a Stdio transport instance.
@@ -124,12 +126,23 @@ func NewStdioWithOptions(
 }
 
 func (c *Stdio) Start(ctx context.Context) error {
+	c.startedMu.Lock()
+	if c.started {
+		c.startedMu.Unlock()
+		return nil
+	}
+	c.started = true
+	c.startedMu.Unlock()
+
 	// Store the context for use in request handling
 	c.ctxMu.Lock()
 	c.ctx = ctx
 	c.ctxMu.Unlock()
 
 	if err := c.spawnCommand(ctx); err != nil {
+		c.startedMu.Lock()
+		c.started = false
+		c.startedMu.Unlock()
 		return err
 	}
 
