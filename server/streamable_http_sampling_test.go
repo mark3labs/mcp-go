@@ -45,7 +45,7 @@ func TestStreamableHTTPServer_SamplingErrorHandling(t *testing.T) {
 	mcpServer := NewMCPServer("test-server", "1.0.0")
 	mcpServer.EnableSampling()
 
-	httpServer := NewStreamableHTTPServer(mcpServer)
+	httpServer := NewStreamableHTTPServer(mcpServer, WithStateLess(true))
 	testServer := httptest.NewServer(httpServer)
 	defer testServer.Close()
 
@@ -76,7 +76,7 @@ func TestStreamableHTTPServer_SamplingErrorHandling(t *testing.T) {
 		},
 		{
 			name:      "invalid request ID",
-			sessionID: "mcp-session-550e8400-e29b-41d4-a716-446655440000",
+			sessionID: "any-session-id",
 			body: map[string]any{
 				"jsonrpc": "2.0",
 				"id":      "invalid-id",
@@ -92,13 +92,13 @@ func TestStreamableHTTPServer_SamplingErrorHandling(t *testing.T) {
 		},
 		{
 			name:      "malformed result",
-			sessionID: "mcp-session-550e8400-e29b-41d4-a716-446655440000",
+			sessionID: "any-session-id",
 			body: map[string]any{
 				"jsonrpc": "2.0",
 				"id":      1,
 				"result":  "invalid-result",
 			},
-			expectedStatus: http.StatusInternalServerError, // Now correctly returns 500 due to no active session
+			expectedStatus: http.StatusInternalServerError,
 		},
 	}
 

@@ -1015,3 +1015,281 @@ func postJSON(url string, bodyObject any) (*http.Response, error) {
 	req.Header.Set("Content-Type", "application/json")
 	return http.DefaultClient.Do(req)
 }
+
+func TestStreamableHTTP_SessionValidation(t *testing.T) {
+	mcpServer := NewMCPServer("test-server", "1.0.0")
+	mcpServer.AddTool(mcp.NewTool("time",
+		mcp.WithDescription("Get the current time")), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("2024-01-01T00:00:00Z"), nil
+	})
+
+	server := NewTestStreamableHTTPServer(mcpServer)
+	defer server.Close()
+
+	t.Run("Reject tool call with fake session ID", func(t *testing.T) {
+		toolCallRequest := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name": "time",
+			},
+		}
+
+		jsonBody, _ := json.Marshal(toolCallRequest)
+		req, _ := http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(HeaderKeySessionID, "mcp-session-ffffffff-ffff-ffff-ffff-ffffffffffff")
+
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to send request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d", resp.StatusCode)
+		}
+
+		body, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(string(body), "Invalid session ID") {
+			t.Errorf("Expected 'Invalid session ID' error, got: %s", string(body))
+		}
+	})
+
+	t.Run("Reject tool call with malformed session ID", func(t *testing.T) {
+		toolCallRequest := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name": "time",
+			},
+		}
+
+		jsonBody, _ := json.Marshal(toolCallRequest)
+		req, _ := http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(HeaderKeySessionID, "invalid-session-id")
+
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to send request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d", resp.StatusCode)
+		}
+
+		body, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(string(body), "Invalid session ID") {
+			t.Errorf("Expected 'Invalid session ID' error, got: %s", string(body))
+		}
+	})
+
+	t.Run("Accept tool call with valid session ID from initialize", func(t *testing.T) {
+		jsonBody, _ := json.Marshal(initRequest)
+		req, _ := http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to initialize: %v", err)
+		}
+		defer resp.Body.Close()
+
+		sessionID := resp.Header.Get(HeaderKeySessionID)
+		if sessionID == "" {
+			t.Fatal("Expected session ID in response header")
+		}
+
+		toolCallRequest := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      2,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name": "time",
+			},
+		}
+
+		jsonBody, _ = json.Marshal(toolCallRequest)
+		req, _ = http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(HeaderKeySessionID, sessionID)
+
+		resp, err = server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to call tool: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Errorf("Expected status 200, got %d. Body: %s", resp.StatusCode, string(body))
+		}
+	})
+
+	t.Run("Reject tool call with terminated session ID", func(t *testing.T) {
+		jsonBody, _ := json.Marshal(initRequest)
+		req, _ := http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to initialize: %v", err)
+		}
+		resp.Body.Close()
+
+		sessionID := resp.Header.Get(HeaderKeySessionID)
+		if sessionID == "" {
+			t.Fatal("Expected session ID in response header")
+		}
+
+		req, _ = http.NewRequest(http.MethodDelete, server.URL, nil)
+		req.Header.Set(HeaderKeySessionID, sessionID)
+
+		resp, err = server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to terminate session: %v", err)
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200 for termination, got %d", resp.StatusCode)
+		}
+
+		toolCallRequest := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      2,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name": "time",
+			},
+		}
+
+		jsonBody, _ = json.Marshal(toolCallRequest)
+		req, _ = http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(HeaderKeySessionID, sessionID)
+
+		resp, err = server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to send request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusNotFound {
+			body, _ := io.ReadAll(resp.Body)
+			t.Errorf("Expected status 404, got %d. Body: %s", resp.StatusCode, string(body))
+		}
+	})
+}
+
+func TestInsecureStatefulSessionIdManager(t *testing.T) {
+	t.Run("Generate creates valid session ID", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		sessionID := manager.Generate()
+
+		if !strings.HasPrefix(sessionID, idPrefix) {
+			t.Errorf("Expected session ID to start with %s, got %s", idPrefix, sessionID)
+		}
+
+		isTerminated, err := manager.Validate(sessionID)
+		if err != nil {
+			t.Errorf("Expected valid session ID, got error: %v", err)
+		}
+		if isTerminated {
+			t.Error("Expected session to not be terminated")
+		}
+	})
+
+	t.Run("Validate rejects non-existent session ID", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		fakeSessionID := "mcp-session-ffffffff-ffff-ffff-ffff-ffffffffffff"
+
+		isTerminated, err := manager.Validate(fakeSessionID)
+		if err == nil {
+			t.Error("Expected error for non-existent session ID")
+		}
+		if isTerminated {
+			t.Error("Expected isTerminated to be false for invalid session")
+		}
+		if !strings.Contains(err.Error(), "session not found") {
+			t.Errorf("Expected 'session not found' error, got: %v", err)
+		}
+	})
+
+	t.Run("Validate rejects malformed session ID", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		invalidSessionID := "invalid-session-id"
+
+		_, err := manager.Validate(invalidSessionID)
+		if err == nil {
+			t.Error("Expected error for malformed session ID")
+		}
+		if !strings.Contains(err.Error(), "invalid session id") {
+			t.Errorf("Expected 'invalid session id' error, got: %v", err)
+		}
+	})
+
+	t.Run("Terminate marks session as terminated", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		sessionID := manager.Generate()
+
+		isNotAllowed, err := manager.Terminate(sessionID)
+		if err != nil {
+			t.Errorf("Expected no error on termination, got: %v", err)
+		}
+		if isNotAllowed {
+			t.Error("Expected termination to be allowed")
+		}
+
+		isTerminated, err := manager.Validate(sessionID)
+		if !isTerminated {
+			t.Error("Expected session to be marked as terminated")
+		}
+		if err != nil {
+			t.Errorf("Expected no error for terminated session, got: %v", err)
+		}
+	})
+
+	t.Run("Terminate rejects non-existent session ID", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		fakeSessionID := "mcp-session-ffffffff-ffff-ffff-ffff-ffffffffffff"
+
+		_, err := manager.Terminate(fakeSessionID)
+		if err == nil {
+			t.Error("Expected error when terminating non-existent session")
+		}
+		if !strings.Contains(err.Error(), "session not found") {
+			t.Errorf("Expected 'session not found' error, got: %v", err)
+		}
+	})
+
+	t.Run("Concurrent generate and validate", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		var wg sync.WaitGroup
+		sessionIDs := make([]string, 100)
+
+		for i := 0; i < 100; i++ {
+			wg.Add(1)
+			go func(index int) {
+				defer wg.Done()
+				sessionIDs[index] = manager.Generate()
+			}(i)
+		}
+
+		wg.Wait()
+
+		for _, sessionID := range sessionIDs {
+			isTerminated, err := manager.Validate(sessionID)
+			if err != nil {
+				t.Errorf("Expected valid session ID %s, got error: %v", sessionID, err)
+			}
+			if isTerminated {
+				t.Errorf("Expected session %s to not be terminated", sessionID)
+			}
+		}
+	})
+}
