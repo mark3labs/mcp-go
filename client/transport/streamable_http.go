@@ -752,7 +752,7 @@ func (c *StreamableHTTP) sendResponseToServer(ctx context.Context, response *JSO
 	ctx, cancel := c.contextAwareOfClientClose(ctx)
 	defer cancel()
 
-	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(responseBody), "application/json, text/event-stream")
+	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(responseBody), "application/json, text/event-stream", nil)
 	if err != nil {
 		c.logger.Errorf("failed to send response to server: %v", err)
 		return
