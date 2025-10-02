@@ -86,15 +86,10 @@ func (c *Client) Start(ctx context.Context) error {
 		return fmt.Errorf("transport is nil")
 	}
 
-	if _, ok := c.transport.(*transport.Stdio); !ok {
-		// the stdio transport from NewStdioMCPClientWithOptions
-		// is already started, dont start again.
-		//
-		// Start the transport for other transport types
-		err := c.transport.Start(ctx)
-		if err != nil {
-			return err
-		}
+	// Start is idempotent - transports handle being called multiple times
+	err := c.transport.Start(ctx)
+	if err != nil {
+		return err
 	}
 
 	c.transport.SetNotificationHandler(func(notification mcp.JSONRPCNotification) {

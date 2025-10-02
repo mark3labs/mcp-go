@@ -19,6 +19,8 @@ type InProcessTransport struct {
 
 	onNotification func(mcp.JSONRPCNotification)
 	notifyMu       sync.RWMutex
+	started        bool
+	startedMu      sync.Mutex
 }
 
 type InProcessOption func(*InProcessTransport)
@@ -55,10 +57,21 @@ func NewInProcessTransportWithOptions(server *server.MCPServer, opts ...InProces
 }
 
 func (c *InProcessTransport) Start(ctx context.Context) error {
+	c.startedMu.Lock()
+	if c.started {
+		c.startedMu.Unlock()
+		return nil
+	}
+	c.started = true
+	c.startedMu.Unlock()
+
 	// Create and register session if we have handlers
 	if c.samplingHandler != nil || c.elicitationHandler != nil {
 		c.session = server.NewInProcessSessionWithHandlers(c.sessionID, c.samplingHandler, c.elicitationHandler)
 		if err := c.server.RegisterSession(ctx, c.session); err != nil {
+			c.startedMu.Lock()
+			c.started = false
+			c.startedMu.Unlock()
 			return fmt.Errorf("failed to register session: %w", err)
 		}
 	}
