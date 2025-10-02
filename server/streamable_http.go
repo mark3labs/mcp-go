@@ -1015,29 +1015,44 @@ func (s *StatelessSessionIdManager) Terminate(sessionID string) (isNotAllowed bo
 	return false, nil
 }
 
-// InsecureStatefulSessionIdManager generate id with uuid
-// It won't validate the id indeed, so it could be fake.
+// InsecureStatefulSessionIdManager generate id with uuid and tracks active sessions.
+// It validates both format and existence of session IDs.
 // For more secure session id, use a more complex generator, like a JWT.
-type InsecureStatefulSessionIdManager struct{}
+type InsecureStatefulSessionIdManager struct {
+	sessions   sync.Map
+	terminated sync.Map
+}
 
 const idPrefix = "mcp-session-"
 
 func (s *InsecureStatefulSessionIdManager) Generate() string {
-	return idPrefix + uuid.New().String()
+	sessionID := idPrefix + uuid.New().String()
+	s.sessions.Store(sessionID, true)
+	return sessionID
 }
 
 func (s *InsecureStatefulSessionIdManager) Validate(sessionID string) (isTerminated bool, err error) {
-	// validate the session id is a valid uuid
 	if !strings.HasPrefix(sessionID, idPrefix) {
 		return false, fmt.Errorf("invalid session id: %s", sessionID)
 	}
 	if _, err := uuid.Parse(sessionID[len(idPrefix):]); err != nil {
 		return false, fmt.Errorf("invalid session id: %s", sessionID)
 	}
+	if _, exists := s.terminated.Load(sessionID); exists {
+		return true, nil
+	}
+	if _, exists := s.sessions.Load(sessionID); !exists {
+		return false, fmt.Errorf("session not found: %s", sessionID)
+	}
 	return false, nil
 }
 
 func (s *InsecureStatefulSessionIdManager) Terminate(sessionID string) (isNotAllowed bool, err error) {
+	if _, exists := s.sessions.Load(sessionID); !exists {
+		return false, fmt.Errorf("session not found: %s", sessionID)
+	}
+	s.terminated.Store(sessionID, true)
+	s.sessions.Delete(sessionID)
 	return false, nil
 }
 
