@@ -945,7 +945,17 @@ func (s *MCPServer) handleReadResource(
 	s.resourcesMu.RUnlock()
 
 	if matched {
-		contents, err := matchedHandler(ctx, request)
+		// If a match is found, then we have a final handler and can
+		// apply middlewares.
+		s.resourceMiddlewareMu.RLock()
+		finalHandler := ResourceHandlerFunc(matchedHandler)
+		mw := s.resourceHandlerMiddlewares
+		// Apply middlewares in reverse order
+		for i := len(mw) - 1; i >= 0; i-- {
+			finalHandler = mw[i](finalHandler)
+		}
+		s.resourceMiddlewareMu.RUnlock()
+		contents, err := finalHandler(ctx, request)
 		if err != nil {
 			return nil, &requestError{
 				id:   id,
