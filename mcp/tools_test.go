@@ -1426,3 +1426,24 @@ func TestToolMetaMarshaling(t *testing.T) {
 	assert.Contains(t, result, "_meta", "Tool with Meta should include _meta field")
 	assert.Equal(t, meta, result["_meta"], "_meta field should match expected value")
 }
+
+func TestToolMetaMarshalingOmitsWhenNil(t *testing.T) {
+	// Marshal a tool without Meta
+	data, err := json.Marshal(Tool{
+		Name:        "test-tool-no-meta",
+		Description: "A test tool without meta data",
+		InputSchema: ToolInputSchema{
+			Type:       "object",
+			Properties: map[string]any{},
+		},
+	})
+	assert.NoError(t, err)
+
+	// Unmarshal to map
+	var result map[string]any
+	err = json.Unmarshal(data, &result)
+	assert.NoError(t, err)
+
+	// Check that _meta field is not present
+	assert.NotContains(t, result, "_meta", "Tool without Meta should not include _meta field")
+}
