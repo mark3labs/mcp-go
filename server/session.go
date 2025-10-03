@@ -39,6 +39,17 @@ type SessionWithTools interface {
 	SetSessionTools(tools map[string]ServerTool)
 }
 
+// SessionWithResources is an extension of ClientSession that can store session-specific resource data
+type SessionWithResources interface {
+	ClientSession
+	// GetSessionResources returns the resources specific to this session, if any
+	// This method must be thread-safe for concurrent access
+	GetSessionResources() map[string]ServerResource
+	// SetSessionResources sets resources specific to this session
+	// This method must be thread-safe for concurrent access
+	SetSessionResources(resources map[string]ServerResource)
+}
+
 // SessionWithClientInfo is an extension of ClientSession that can store client info
 type SessionWithClientInfo interface {
 	ClientSession

@@ -822,15 +822,56 @@ func (s *MCPServer) handleListResources(
 ) (*mcp.ListResourcesResult, *requestError) {
 	s.resourcesMu.RLock()
 	resources := make([]mcp.Resource, 0, len(s.resources))
-	for _, entry := range s.resources {
-		resources = append(resources, entry.resource)
+
+	// Get all resource names for consistent ordering
+	resourceNames := make([]string, 0, len(s.resources))
+	for name := range s.resources {
+		resourceNames = append(resourceNames, name)
+	}
+
+	// Sort the resource names for consistent ordering
+	sort.Strings(resourceNames)
+
+	// Add resources in sorted order
+	for _, name := range resourceNames {
+		resources = append(resources, s.resources[name].resource)
 	}
 	s.resourcesMu.RUnlock()
 
-	// Sort the resources by name
-	sort.Slice(resources, func(i, j int) bool {
-		return resources[i].Name < resources[j].Name
-	})
+	// Check if there are session-specific resources
+	session := ClientSessionFromContext(ctx)
+	if session != nil {
+		if sessionWithResources, ok := session.(SessionWithResources); ok {
+			if sessionResources := sessionWithResources.GetSessionResources(); sessionResources != nil {
+				// Override or add session-specific resources
+				// We need to create a map first to merge the resources properly
+				resourceMap := make(map[string]mcp.Resource)
+
+				// Add global resources first
+				for _, resource := range resources {
+					resourceMap[resource.Name] = resource
+				}
+
+				// Then override with session-specific resources
+				for name, serverResource := range sessionResources {
+					resourceMap[name] = serverResource.Resource
+				}
+
+				// Convert back to slice
+				resources = make([]mcp.Resource, 0, len(resourceMap))
+				for _, resource := range resourceMap {
+					resources = append(resources, resource)
+				}
+
+				// Sort again to maintain consistent ordering
+				sort.Slice(resources, func(i, j int) bool {
+					return resources[i].Name < resources[j].Name
+				})
+			}
+		}
+	}
+
+	// Apply pagination
 	resourcesToReturn, nextCursor, err := listByPagination(
 		ctx,
 		s,
