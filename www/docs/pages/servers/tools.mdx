@@ -1047,6 +1047,36 @@ func addConditionalTools(s *server.MCPServer, userRole string) {
 }
 ```
 
+### Session-specific Tools
+
+You can add tools to a specific client session using the `SessionWithTools` interface.
+
+```go
+sseServer := server.NewSSEServer(
+    s,
+    server.WithAppendQueryToMessageEndpoint(),
+    server.WithSSEContextFunc(func(ctx context.Context, r *http.Request) context.Context {
+        withNewTools := r.URL.Query().Get("withNewTools")
+        if withNewTools != "1" {
+            return ctx
+        }
+
+        session := server.ClientSessionFromContext(ctx)
+        if sessionWithTools, ok := session.(server.SessionWithTools); ok {
+            // Add the new tools
+            sessionWithTools.SetSessionTools(map[string]server.ServerTool{
+                myNewTool.Name: {
+                    Tool:    myNewTool,
+                    Handler: NewToolHandler(myNewToolHandler),
+                },
+            })
+        }
+
+        return ctx
+    }),
+)
+```
+
 ## Next Steps
 
 - **[Prompts](/servers/prompts)** - Learn to create reusable interaction templates

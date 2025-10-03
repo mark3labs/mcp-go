@@ -543,6 +543,38 @@ func (h *CachedResourceHandler) HandleResource(ctx context.Context, req mcp.Read
 }
 ```
 
+## Advanced Resource Patterns
+
+### Session-specific Resources
+
+You can add resources to a specific client session using the `SessionWithResources` interface.
+
+```go
+sseServer := server.NewSSEServer(
+    s,
+    server.WithAppendQueryToMessageEndpoint(),
+    server.WithSSEContextFunc(func(ctx context.Context, r *http.Request) context.Context {
+        withNewResources := r.URL.Query().Get("withNewResources")
+        if withNewResources != "1" {
+            return ctx
+        }
+
+        session := server.ClientSessionFromContext(ctx)
+        if sessionWithResources, ok := session.(server.SessionWithResources); ok {
+            // Add the new resources
+            sessionWithResources.SetSessionResources(map[string]server.ServerResource{
+                myNewResource.URI: {
+                    Resource: myNewResource,
+                    Handler:  myNewResourceHandler,
+                },
+            })
+        }
+
+        return ctx
+    }),
+)
+```
+
 ## Next Steps
 
 - **[Tools](/servers/tools)** - Learn to implement interactive functionality
