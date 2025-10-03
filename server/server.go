@@ -936,9 +936,35 @@ func (s *MCPServer) handleReadResource(
 	request mcp.ReadResourceRequest,
 ) (*mcp.ReadResourceResult, *requestError) {
 	s.resourcesMu.RLock()
+
+	// First check session-specific resources
+	var handler ResourceHandlerFunc
+	var ok bool
+
+	session := ClientSessionFromContext(ctx)
+	if session != nil {
+		if sessionWithResources, typeAssertOk := session.(SessionWithResources); typeAssertOk {
+			if sessionResources := sessionWithResources.GetSessionResources(); sessionResources != nil {
+				resource, sessionOk := sessionResources[request.Params.URI]
+				if sessionOk {
+					handler = resource.Handler
+					ok = true
+				}
+			}
+		}
+	}
+
+	// If not found in session tools, check global tools
+	if !ok {
+		globalResource, rok := s.resources[request.Params.URI]
+		if rok {
+			handler = globalResource.handler
+			ok = true
+		}
+	}
+
 	// First try direct resource handlers
-	if entry, ok := s.resources[request.Params.URI]; ok {
-		handler := entry.handler
+	if ok {
 		s.resourcesMu.RUnlock()
 
 		finalHandler := handler
