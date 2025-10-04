@@ -823,18 +823,18 @@ func (s *MCPServer) handleListResources(
 	s.resourcesMu.RLock()
 	resources := make([]mcp.Resource, 0, len(s.resources))
 
-	// Get all resource names for consistent ordering
-	resourceNames := make([]string, 0, len(s.resources))
-	for name := range s.resources {
-		resourceNames = append(resourceNames, name)
+	// Get all resource URIs for consistent ordering
+	resourceURIs := make([]string, 0, len(s.resources))
+	for uri := range s.resources {
+		resourceURIs = append(resourceURIs, uri)
 	}
 
-	// Sort the resource names for consistent ordering
-	sort.Strings(resourceNames)
+	// Sort the resource URIs for consistent ordering
+	sort.Strings(resourceURIs)
 
 	// Add resources in sorted order
-	for _, name := range resourceNames {
-		resources = append(resources, s.resources[name].resource)
+	for _, uri := range resourceURIs {
+		resources = append(resources, s.resources[uri].resource)
 	}
 	s.resourcesMu.RUnlock()
 
@@ -849,12 +849,12 @@ func (s *MCPServer) handleListResources(
 
 				// Add global resources first
 				for _, resource := range resources {
-					resourceMap[resource.Name] = resource
+					resourceMap[resource.URI] = resource
 				}
 
 				// Then override with session-specific resources
-				for name, serverResource := range sessionResources {
-					resourceMap[name] = serverResource.Resource
+				for uri, serverResource := range sessionResources {
+					resourceMap[uri] = serverResource.Resource
 				}
 
 				// Convert back to slice
@@ -865,7 +865,7 @@ func (s *MCPServer) handleListResources(
 
 				// Sort again to maintain consistent ordering
 				sort.Slice(resources, func(i, j int) bool {
-					return resources[i].Name < resources[j].Name
+					return resources[i].URI < resources[j].URI
 				})
 			}
 		}

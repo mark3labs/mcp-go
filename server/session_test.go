@@ -101,13 +101,13 @@ func (f *sessionTestClientWithTools) SetSessionTools(tools map[string]ServerTool
 	f.sessionTools = toolsCopy
 }
 
-// sessionTestClientWithTools implements the SessionWithTools interface for testing
+// sessionTestClientWithResources implements the SessionWithResources interface for testing
 type sessionTestClientWithResources struct {
 	sessionID           string
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         bool
 	sessionResources    map[string]ServerResource
-	mu                  sync.RWMutex // Mutex to protect concurrent access to sessionTools
+	mu                  sync.RWMutex // Mutex to protect concurrent access to sessionResources
 }
 
 func (f *sessionTestClientWithResources) SessionID() string {
@@ -206,7 +206,7 @@ func (f *sessionTestClientWithClientInfo) SetClientCapabilities(clientCapabiliti
 	f.clientCapabilities.Store(clientCapabilities)
 }
 
-// sessionTestClientWithTools implements the SessionWithLogging interface for testing
+// sessionTestClientWithLogging implements the SessionWithLogging interface for testing
 type sessionTestClientWithLogging struct {
 	sessionID           string
 	notificationChannel chan mcp.JSONRPCNotification
@@ -245,6 +245,7 @@ func (f *sessionTestClientWithLogging) GetLogLevel() mcp.LoggingLevel {
 var (
 	_ ClientSession         = (*sessionTestClient)(nil)
 	_ SessionWithTools      = (*sessionTestClientWithTools)(nil)
+	_ SessionWithResources  = (*sessionTestClientWithResources)(nil)
 	_ SessionWithLogging    = (*sessionTestClientWithLogging)(nil)
 	_ SessionWithClientInfo = (*sessionTestClientWithClientInfo)(nil)
 )
