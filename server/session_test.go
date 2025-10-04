@@ -364,12 +364,12 @@ func TestSessionWithResources_Integration(t *testing.T) {
 	// Check if the resources are accessible
 	resources := swr.GetSessionResources()
 	require.NotNil(t, resources, "Session resources should be available")
-	require.Contains(t, resources, "session-resource", "Session should have session-resource")
+	require.Contains(t, resources, "ui://resource", "Session should have ui://resource")
 
 	// Test session resource access with session context
 	t.Run("test session resource access", func(t *testing.T) {
 		// First test directly getting the resource from session resources
-		resource, exists := resources["session-resource"]
+		resource, exists := resources["ui://resource"]
 		require.True(t, exists, "Session resource should exist in the map")
 		require.NotNil(t, resource, "Session resource should not be nil")
 
