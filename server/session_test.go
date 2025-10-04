@@ -323,7 +323,10 @@ func TestSessionWithResources_Integration(t *testing.T) {
 	sessionResource := ServerResource{
 		Resource: mcp.NewResource("ui://resource", "session-resource"),
 		Handler: func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-			return []mcp.ResourceContents{mcp.TextResourceContents{Text: "session-resource result"}}, nil
+			return []mcp.ResourceContents{mcp.TextResourceContents{
+				URI:  "ui://resource",
+				Text: "session-resource result",
+			}}, nil
 		},
 	}
 
@@ -333,7 +336,7 @@ func TestSessionWithResources_Integration(t *testing.T) {
 		notificationChannel: make(chan mcp.JSONRPCNotification, 10),
 		initialized:         true,
 		sessionResources: map[string]ServerResource{
-			"session-resource": sessionResource,
+			"ui://resource": sessionResource,
 		},
 	}
 
