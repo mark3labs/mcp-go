@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -100,6 +101,60 @@ func (f *sessionTestClientWithTools) SetSessionTools(tools map[string]ServerTool
 	f.sessionTools = toolsCopy
 }
 
+// sessionTestClientWithResources implements the SessionWithResources interface for testing
+type sessionTestClientWithResources struct {
+	sessionID           string
+	notificationChannel chan mcp.JSONRPCNotification
+	initialized         bool
+	sessionResources    map[string]ServerResource
+	mu                  sync.RWMutex // Mutex to protect concurrent access to sessionResources
+}
+
+func (f *sessionTestClientWithResources) SessionID() string {
+	return f.sessionID
+}
+
+func (f *sessionTestClientWithResources) NotificationChannel() chan<- mcp.JSONRPCNotification {
+	return f.notificationChannel
+}
+
+func (f *sessionTestClientWithResources) Initialize() {
+	f.initialized = true
+}
+
+func (f *sessionTestClientWithResources) Initialized() bool {
+	return f.initialized
+}
+
+func (f *sessionTestClientWithResources) GetSessionResources() map[string]ServerResource {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	if f.sessionResources == nil {
+		return nil
+	}
+
+	// Return a copy of the map to prevent concurrent modification
+	resourcesCopy := make(map[string]ServerResource, len(f.sessionResources))
+	maps.Copy(resourcesCopy, f.sessionResources)
+	return resourcesCopy
+}
+
+func (f *sessionTestClientWithResources) SetSessionResources(resources map[string]ServerResource) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if resources == nil {
+		f.sessionResources = nil
+		return
+	}
+
+	// Create a copy of the map to prevent concurrent modification
+	resourcesCopy := make(map[string]ServerResource, len(resources))
+	maps.Copy(resourcesCopy, resources)
+	f.sessionResources = resourcesCopy
+}
+
 // sessionTestClientWithClientInfo implements the SessionWithClientInfo interface for testing
 type sessionTestClientWithClientInfo struct {
 	sessionID           string
@@ -151,7 +206,7 @@ func (f *sessionTestClientWithClientInfo) SetClientCapabilities(clientCapabiliti
 	f.clientCapabilities.Store(clientCapabilities)
 }
 
-// sessionTestClientWithTools implements the SessionWithLogging interface for testing
+// sessionTestClientWithLogging implements the SessionWithLogging interface for testing
 type sessionTestClientWithLogging struct {
 	sessionID           string
 	notificationChannel chan mcp.JSONRPCNotification
@@ -190,6 +245,7 @@ func (f *sessionTestClientWithLogging) GetLogLevel() mcp.LoggingLevel {
 var (
 	_ ClientSession         = (*sessionTestClient)(nil)
 	_ SessionWithTools      = (*sessionTestClientWithTools)(nil)
+	_ SessionWithResources  = (*sessionTestClientWithResources)(nil)
 	_ SessionWithLogging    = (*sessionTestClientWithLogging)(nil)
 	_ SessionWithClientInfo = (*sessionTestClientWithClientInfo)(nil)
 )
@@ -257,6 +313,75 @@ func TestSessionWithTools_Integration(t *testing.T) {
 		textContent, ok := result.Content[0].(mcp.TextContent)
 		require.True(t, ok, "Content should be TextContent")
 		assert.Equal(t, "session-tool result", textContent.Text, "Result text should match")
+	})
+}
+
+func TestSessionWithResources_Integration(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0")
+
+	// Create session-specific resources
+	sessionResource := ServerResource{
+		Resource: mcp.NewResource("ui://resource", "session-resource"),
+		Handler: func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+			return []mcp.ResourceContents{mcp.TextResourceContents{
+				URI:  "ui://resource",
+				Text: "session-resource result",
+			}}, nil
+		},
+	}
+
+	// Create a session with resources
+	session := &sessionTestClientWithResources{
+		sessionID:           "session-1",
+		notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+		initialized:         true,
+		sessionResources: map[string]ServerResource{
+			"ui://resource": sessionResource,
+		},
+	}
+
+	// Register the session
+	err := server.RegisterSession(context.Background(), session)
+	require.NoError(t, err)
+
+	// Test that we can access the session-specific resource
+	testReq := mcp.ReadResourceRequest{}
+	testReq.Params.URI = "ui://resource"
+	testReq.Params.Arguments = map[string]any{}
+
+	// Call using session context
+	sessionCtx := server.WithContext(context.Background(), session)
+
+	// Check if the session was stored in the context correctly
+	s := ClientSessionFromContext(sessionCtx)
+	require.NotNil(t, s, "Session should be available from context")
+	assert.Equal(t, session.SessionID(), s.SessionID(), "Session ID should match")
+
+	// Check if the session can be cast to SessionWithResources
+	swr, ok := s.(SessionWithResources)
+	require.True(t, ok, "Session should implement SessionWithResources")
+
+	// Check if the resources are accessible
+	resources := swr.GetSessionResources()
+	require.NotNil(t, resources, "Session resources should be available")
+	require.Contains(t, resources, "ui://resource", "Session should have ui://resource")
+
+	// Test session resource access with session context
+	t.Run("test session resource access", func(t *testing.T) {
+		// First test directly getting the resource from session resources
+		resource, exists := resources["ui://resource"]
+		require.True(t, exists, "Session resource should exist in the map")
+		require.NotNil(t, resource, "Session resource should not be nil")
+
+		// Now test calling directly with the handler
+		result, err := resource.Handler(sessionCtx, testReq)
+		require.NoError(t, err, "No error calling session resource handler directly")
+		require.NotNil(t, result, "Result should not be nil")
+		require.Len(t, result, 1, "Result should have one content item")
+
+		textContent, ok := result[0].(mcp.TextResourceContents)
+		require.True(t, ok, "Content should be TextResourceContents")
+		assert.Equal(t, "session-resource result", textContent.Text, "Result text should match")
 	})
 }
 
