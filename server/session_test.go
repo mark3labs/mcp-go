@@ -317,13 +317,13 @@ func TestSessionWithTools_Integration(t *testing.T) {
 }
 
 func TestSessionWithResources_Integration(t *testing.T) {
-	server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(true))
+	server := NewMCPServer("test-server", "1.0.0")
 
 	// Create session-specific resources
 	sessionResource := ServerResource{
 		Resource: mcp.NewResource("ui://resource", "session-resource"),
 		Handler: func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-			return []mcp.ResourceContents{mcp.TextResourceContents{Text: "session-tool result"}}, nil
+			return []mcp.ResourceContents{mcp.TextResourceContents{Text: "session-resource result"}}, nil
 		},
 	}
 
@@ -341,7 +341,7 @@ func TestSessionWithResources_Integration(t *testing.T) {
 	err := server.RegisterSession(context.Background(), session)
 	require.NoError(t, err)
 
-	// Test that we can access the session-specific tool
+	// Test that we can access the session-specific resource
 	testReq := mcp.ReadResourceRequest{}
 	testReq.Params.URI = "ui://resource"
 	testReq.Params.Arguments = map[string]any{}
@@ -378,7 +378,7 @@ func TestSessionWithResources_Integration(t *testing.T) {
 
 		textContent, ok := result[0].(mcp.TextResourceContents)
 		require.True(t, ok, "Content should be TextResourceContents")
-		assert.Equal(t, "session-tool result", textContent.Text, "Result text should match")
+		assert.Equal(t, "session-resource result", textContent.Text, "Result text should match")
 	})
 }
 
