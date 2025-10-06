@@ -1254,16 +1254,37 @@ func TestInsecureStatefulSessionIdManager(t *testing.T) {
 		}
 	})
 
-	t.Run("Terminate rejects non-existent session ID", func(t *testing.T) {
+	t.Run("Terminate is idempotent for non-existent session ID", func(t *testing.T) {
 		manager := &InsecureStatefulSessionIdManager{}
 		fakeSessionID := "mcp-session-ffffffff-ffff-ffff-ffff-ffffffffffff"
 
-		_, err := manager.Terminate(fakeSessionID)
-		if err == nil {
-			t.Error("Expected error when terminating non-existent session")
+		isNotAllowed, err := manager.Terminate(fakeSessionID)
+		if err != nil {
+			t.Errorf("Expected no error when terminating non-existent session, got: %v", err)
 		}
-		if !strings.Contains(err.Error(), "session not found") {
-			t.Errorf("Expected 'session not found' error, got: %v", err)
+		if isNotAllowed {
+			t.Error("Expected isNotAllowed to be false")
+		}
+	})
+
+	t.Run("Terminate is idempotent for already-terminated session", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		sessionID := manager.Generate()
+
+		isNotAllowed, err := manager.Terminate(sessionID)
+		if err != nil {
+			t.Errorf("Expected no error on first termination, got: %v", err)
+		}
+		if isNotAllowed {
+			t.Error("Expected termination to be allowed")
+		}
+
+		isNotAllowed, err = manager.Terminate(sessionID)
+		if err != nil {
+			t.Errorf("Expected no error on second termination (idempotent), got: %v", err)
+		}
+		if isNotAllowed {
+			t.Error("Expected termination to be allowed on retry")
 		}
 	})
 

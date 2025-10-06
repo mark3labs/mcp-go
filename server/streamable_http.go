@@ -1048,8 +1048,11 @@ func (s *InsecureStatefulSessionIdManager) Validate(sessionID string) (isTermina
 }
 
 func (s *InsecureStatefulSessionIdManager) Terminate(sessionID string) (isNotAllowed bool, err error) {
+	if _, exists := s.terminated.Load(sessionID); exists {
+		return false, nil
+	}
 	if _, exists := s.sessions.Load(sessionID); !exists {
-		return false, fmt.Errorf("session not found: %s", sessionID)
+		return false, nil
 	}
 	s.terminated.Store(sessionID, true)
 	s.sessions.Delete(sessionID)
