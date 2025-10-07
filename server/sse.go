@@ -29,6 +29,7 @@ type sseSession struct {
 	initialized         atomic.Bool
 	loggingLevel        atomic.Value
 	tools               sync.Map     // stores session-specific tools
+	resources           sync.Map     // stores session-specific resources
 	clientInfo          atomic.Value // stores session-specific client info
 	clientCapabilities  atomic.Value // stores session-specific client capabilities
 }
@@ -73,6 +74,27 @@ func (s *sseSession) GetLogLevel() mcp.LoggingLevel {
 		return mcp.LoggingLevelError
 	}
 	return level.(mcp.LoggingLevel)
+}
+
+func (s *sseSession) GetSessionResources() map[string]ServerResource {
+	resources := make(map[string]ServerResource)
+	s.resources.Range(func(key, value any) bool {
+		if resource, ok := value.(ServerResource); ok {
+			resources[key.(string)] = resource
+		}
+		return true
+	})
+	return resources
+}
+
+func (s *sseSession) SetSessionResources(resources map[string]ServerResource) {
+	// Clear existing resources
+	s.resources.Clear()
+
+	// Set new resources
+	for name, resource := range resources {
+		s.resources.Store(name, resource)
+	}
 }
 
 func (s *sseSession) GetSessionTools() map[string]ServerTool {
@@ -125,6 +147,7 @@ func (s *sseSession) GetClientCapabilities() mcp.ClientCapabilities {
 var (
 	_ ClientSession         = (*sseSession)(nil)
 	_ SessionWithTools      = (*sseSession)(nil)
+	_ SessionWithResources  = (*sseSession)(nil)
 	_ SessionWithLogging    = (*sseSession)(nil)
 	_ SessionWithClientInfo = (*sseSession)(nil)
 )

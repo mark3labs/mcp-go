@@ -827,15 +827,56 @@ func (s *MCPServer) handleListResources(
 ) (*mcp.ListResourcesResult, *requestError) {
 	s.resourcesMu.RLock()
 	resources := make([]mcp.Resource, 0, len(s.resources))
-	for _, entry := range s.resources {
-		resources = append(resources, entry.resource)
+
+	// Get all resource URIs for consistent ordering
+	resourceURIs := make([]string, 0, len(s.resources))
+	for uri := range s.resources {
+		resourceURIs = append(resourceURIs, uri)
+	}
+
+	// Sort the resource URIs for consistent ordering
+	sort.Strings(resourceURIs)
+
+	// Add resources in sorted order
+	for _, uri := range resourceURIs {
+		resources = append(resources, s.resources[uri].resource)
 	}
 	s.resourcesMu.RUnlock()
 
-	// Sort the resources by name
-	sort.Slice(resources, func(i, j int) bool {
-		return resources[i].Name < resources[j].Name
-	})
+	// Check if there are session-specific resources
+	session := ClientSessionFromContext(ctx)
+	if session != nil {
+		if sessionWithResources, ok := session.(SessionWithResources); ok {
+			if sessionResources := sessionWithResources.GetSessionResources(); sessionResources != nil {
+				// Override or add session-specific resources
+				// We need to create a map first to merge the resources properly
+				resourceMap := make(map[string]mcp.Resource)
+
+				// Add global resources first
+				for _, resource := range resources {
+					resourceMap[resource.URI] = resource
+				}
+
+				// Then override with session-specific resources
+				for uri, serverResource := range sessionResources {
+					resourceMap[uri] = serverResource.Resource
+				}
+
+				// Convert back to slice
+				resources = make([]mcp.Resource, 0, len(resourceMap))
+				for _, resource := range resourceMap {
+					resources = append(resources, resource)
+				}
+
+				// Sort again to maintain consistent ordering
+				sort.Slice(resources, func(i, j int) bool {
+					return resources[i].URI < resources[j].URI
+				})
+			}
+		}
+	}
+
+	// Apply pagination
 	resourcesToReturn, nextCursor, err := listByPagination(
 		ctx,
 		s,
@@ -900,9 +941,35 @@ func (s *MCPServer) handleReadResource(
 	request mcp.ReadResourceRequest,
 ) (*mcp.ReadResourceResult, *requestError) {
 	s.resourcesMu.RLock()
+
+	// First check session-specific resources
+	var handler ResourceHandlerFunc
+	var ok bool
+
+	session := ClientSessionFromContext(ctx)
+	if session != nil {
+		if sessionWithResources, typeAssertOk := session.(SessionWithResources); typeAssertOk {
+			if sessionResources := sessionWithResources.GetSessionResources(); sessionResources != nil {
+				resource, sessionOk := sessionResources[request.Params.URI]
+				if sessionOk {
+					handler = resource.Handler
+					ok = true
+				}
+			}
+		}
+	}
+
+	// If not found in session tools, check global tools
+	if !ok {
+		globalResource, rok := s.resources[request.Params.URI]
+		if rok {
+			handler = globalResource.handler
+			ok = true
+		}
+	}
+
 	// First try direct resource handlers
-	if entry, ok := s.resources[request.Params.URI]; ok {
-		handler := entry.handler
+	if ok {
 		s.resourcesMu.RUnlock()
 
 		finalHandler := handler
