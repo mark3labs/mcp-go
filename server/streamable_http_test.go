@@ -590,6 +590,135 @@ func TestStreamableHTTP_HttpHandler(t *testing.T) {
 	})
 }
 
+func TestStreamableHttpResourceGet(t *testing.T) {
+	s := NewMCPServer("test-mcp-server", "1.0", WithResourceCapabilities(true, true))
+
+	testServer := NewTestStreamableHTTPServer(
+		s,
+		WithHTTPContextFunc(func(ctx context.Context, r *http.Request) context.Context {
+			session := ClientSessionFromContext(ctx)
+
+			if st, ok := session.(SessionWithResources); ok {
+				if _, ok := st.GetSessionResources()["file://test_resource"]; !ok {
+					st.SetSessionResources(map[string]ServerResource{
+						"file://test_resource": ServerResource{
+							Resource: mcp.Resource{
+								URI:         "file://test_resource",
+								Name:        "test_resource",
+								Description: "A test resource",
+								MIMEType:    "text/plain",
+							},
+							Handler: func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+								return []mcp.ResourceContents{
+									mcp.TextResourceContents{
+										URI:      "file://test_resource",
+										Text:     "test content",
+										MIMEType: "text/plain",
+									},
+								}, nil
+							},
+						},
+					})
+				}
+			} else {
+				t.Error("Session does not support tools/resources")
+			}
+
+			return ctx
+		}),
+	)
+
+	var sessionID string
+
+	// Initialize session
+	resp, err := postJSON(testServer.URL, initRequest)
+	if err != nil {
+		t.Fatalf("Failed to send initialize request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", resp.StatusCode)
+	}
+
+	sessionID = resp.Header.Get(HeaderKeySessionID)
+	if sessionID == "" {
+		t.Fatal("Expected session id in header")
+	}
+
+	// List resources
+	listResourcesRequest := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "resources/list",
+		"params":  map[string]any{},
+	}
+	resp, err = postSessionJSON(testServer.URL, sessionID, listResourcesRequest)
+	if err != nil {
+		t.Fatalf("Failed to send list resources request: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", resp.StatusCode)
+	}
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	var listResponse jsonRPCResponse
+	if err := json.Unmarshal(bodyBytes, &listResponse); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	items, ok := listResponse.Result["resources"].([]any)
+	if !ok {
+		t.Fatal("Expected resources array in response")
+	}
+	if len(items) != 1 {
+		t.Fatalf("Expected 1 resource, got %d", len(items))
+	}
+	imap, ok := items[0].(map[string]any)
+	if !ok {
+		t.Fatal("Expected resource to be a map")
+	}
+	if imap["uri"] != "file://test_resource" {
+		t.Errorf("Expected resource URI file://test_resource, got %v", imap["uri"])
+	}
+
+	// List resources
+	getResourceRequest := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "resources/read",
+		"params":  map[string]any{"uri": "file://test_resource"},
+	}
+	resp, err = postSessionJSON(testServer.URL, sessionID, getResourceRequest)
+	if err != nil {
+		t.Fatalf("Failed to send list resources request: %v", err)
+	}
+
+	bodyBytes, _ = io.ReadAll(resp.Body)
+	var readResponse jsonRPCResponse
+	if err := json.Unmarshal(bodyBytes, &readResponse); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	contents, ok := readResponse.Result["contents"].([]any)
+	if !ok {
+		t.Fatal("Expected contents array in response")
+	}
+	if len(contents) != 1 {
+		t.Fatalf("Expected 1 content, got %d", len(contents))
+	}
+
+	cmap, ok := contents[0].(map[string]any)
+	if !ok {
+		t.Fatal("Expected content to be a map")
+	}
+	if cmap["uri"] != "file://test_resource" {
+		t.Errorf("Expected content URI file://test_resource, got %v", cmap["uri"])
+	}
+
+}
+
 func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 
 	t.Run("SessionWithTools implementation", func(t *testing.T) {
@@ -1053,5 +1182,13 @@ func postJSON(url string, bodyObject any) (*http.Response, error) {
 	jsonBody, _ := json.Marshal(bodyObject)
 	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
+	return http.DefaultClient.Do(req)
+}
+
+func postSessionJSON(url, session string, bodyObject any) (*http.Response, error) {
+	jsonBody, _ := json.Marshal(bodyObject)
+	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(HeaderKeySessionID, session)
 	return http.DefaultClient.Do(req)
 }
