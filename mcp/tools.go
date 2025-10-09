@@ -613,6 +613,11 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 
 	m["annotations"] = t.Annotations
 
+	// Marshal Meta if present
+	if t.Meta != nil {
+		m["_meta"] = t.Meta
+	}
+
 	return json.Marshal(m)
 }
 
