@@ -129,6 +129,7 @@ func WithTLSCert(certFile, keyFile string) StreamableHTTPOption {
 type StreamableHTTPServer struct {
 	server            *MCPServer
 	sessionTools      *sessionToolsStore
+	sessionResources  *sessionResourcesStore
 	sessionRequestIDs sync.Map // sessionId --> last requestID(*atomic.Int64)
 	activeSessions    sync.Map // sessionId --> *streamableHttpSession (for sampling responses)
 
@@ -155,6 +156,7 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 		endpointPath:     "/mcp",
 		sessionIdManager: &InsecureStatefulSessionIdManager{},
 		logger:           util.DefaultLogger(),
+		sessionResources: newSessionResourcesStore(),
 	}
 
 	// Apply all options
@@ -299,7 +301,7 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	session := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
+	session := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionResources, s.sessionLogLevels)
 
 	// Set the client context before handling the message
 	ctx := s.server.WithContext(r.Context(), session)
@@ -410,7 +412,7 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		sessionID = uuid.New().String()
 	}
 
-	session := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionLogLevels)
+	session := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionResources, s.sessionLogLevels)
 	if err := s.server.RegisterSession(r.Context(), session); err != nil {
 		http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusBadRequest)
 		return
@@ -716,6 +718,35 @@ func (s *sessionLogLevelsStore) delete(sessionID string) {
 	delete(s.logs, sessionID)
 }
 
+type sessionResourcesStore struct {
+	mu        sync.RWMutex
+	resources map[string]map[string]ServerResource // sessionID -> resourceURI -> resource
+}
+
+func newSessionResourcesStore() *sessionResourcesStore {
+	return &sessionResourcesStore{
+		resources: make(map[string]map[string]ServerResource),
+	}
+}
+
+func (s *sessionResourcesStore) get(sessionID string) map[string]ServerResource {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.resources[sessionID]
+}
+
+func (s *sessionResourcesStore) set(sessionID string, resources map[string]ServerResource) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resources[sessionID] = resources
+}
+
+func (s *sessionResourcesStore) delete(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.resources, sessionID)
+}
+
 type sessionToolsStore struct {
 	mu    sync.RWMutex
 	tools map[string]map[string]ServerTool // sessionID -> toolName -> tool
@@ -765,6 +796,7 @@ type streamableHttpSession struct {
 	sessionID           string
 	notificationChannel chan mcp.JSONRPCNotification // server -> client notifications
 	tools               *sessionToolsStore
+	resources           *sessionResourcesStore
 	upgradeToSSE        atomic.Bool
 	logLevels           *sessionLogLevelsStore
 
@@ -774,11 +806,12 @@ type streamableHttpSession struct {
 	requestIDCounter    atomic.Int64             // for generating unique request IDs
 }
 
-func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, levels *sessionLogLevelsStore) *streamableHttpSession {
+func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, resourcesStore *sessionResourcesStore, levels *sessionLogLevelsStore) *streamableHttpSession {
 	s := &streamableHttpSession{
 		sessionID:           sessionID,
 		notificationChannel: make(chan mcp.JSONRPCNotification, 100),
 		tools:               toolStore,
+		resources:           resourcesStore,
 		logLevels:           levels,
 		samplingRequestChan: make(chan samplingRequestItem, 10),
 	}
@@ -821,9 +854,18 @@ func (s *streamableHttpSession) SetSessionTools(tools map[string]ServerTool) {
 	s.tools.set(s.sessionID, tools)
 }
 
+func (s *streamableHttpSession) GetSessionResources() map[string]ServerResource {
+	return s.resources.get(s.sessionID)
+}
+
+func (s *streamableHttpSession) SetSessionResources(resources map[string]ServerResource) {
+	s.resources.set(s.sessionID, resources)
+}
+
 var (
-	_ SessionWithTools   = (*streamableHttpSession)(nil)
-	_ SessionWithLogging = (*streamableHttpSession)(nil)
+	_ SessionWithTools     = (*streamableHttpSession)(nil)
+	_ SessionWithResources = (*streamableHttpSession)(nil)
+	_ SessionWithLogging   = (*streamableHttpSession)(nil)
 )
 
 func (s *streamableHttpSession) UpgradeToSSEWhenReceiveNotification() {
