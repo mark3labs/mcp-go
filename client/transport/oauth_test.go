@@ -1111,4 +1111,117 @@ func TestWithOAuthHTTPClient(t *testing.T) {
 			t.Errorf("Expected default timeout to be 30s, got %v", handler.httpClient.Timeout)
 		}
 	})
+
+	t.Run("WithOAuthHTTPClient validates and sets default timeout for zero timeout", func(t *testing.T) {
+		config := OAuthConfig{
+			ClientID:    "test-client",
+			RedirectURI: "http://localhost:8085/callback",
+			TokenStore:  NewMemoryTokenStore(),
+		}
+
+		// Create a client with zero timeout
+		customClient := &http.Client{
+			Timeout: 0, // Zero timeout
+		}
+
+		// Original client should have zero timeout
+		if customClient.Timeout != 0 {
+			t.Errorf("Expected original client timeout to be 0, got %v", customClient.Timeout)
+		}
+
+		// Create handler with zero-timeout client
+		handler := NewOAuthHandler(config, WithOAuthHTTPClient(customClient))
+
+		// Verify the timeout was automatically set to 30 seconds
+		if handler.httpClient.Timeout != 30*time.Second {
+			t.Errorf("Expected timeout to be auto-set to 30s, got %v", handler.httpClient.Timeout)
+		}
+
+		// Verify the same client instance was used (modified in place)
+		if handler.httpClient != customClient {
+			t.Error("Expected the same client instance to be used")
+		}
+
+		// Verify the client was modified in place
+		if customClient.Timeout != 30*time.Second {
+			t.Errorf("Expected client timeout to be modified to 30s, got %v", customClient.Timeout)
+		}
+	})
+
+	t.Run("WithOAuthHTTPClient preserves non-zero timeout", func(t *testing.T) {
+		config := OAuthConfig{
+			ClientID:    "test-client",
+			RedirectURI: "http://localhost:8085/callback",
+			TokenStore:  NewMemoryTokenStore(),
+		}
+
+		// Create a client with explicit timeout
+		customClient := &http.Client{
+			Timeout: 5 * time.Second,
+		}
+
+		handler := NewOAuthHandler(config, WithOAuthHTTPClient(customClient))
+
+		// Verify the original timeout is preserved
+		if handler.httpClient.Timeout != 5*time.Second {
+			t.Errorf("Expected timeout to remain 5s, got %v", handler.httpClient.Timeout)
+		}
+	})
+
+	t.Run("WithOAuthHTTPClient zero timeout with custom transport", func(t *testing.T) {
+		config := OAuthConfig{
+			ClientID:    "test-client",
+			RedirectURI: "http://localhost:8085/callback",
+			TokenStore:  NewMemoryTokenStore(),
+		}
+
+		// Create a client with custom transport but zero timeout
+		customTransport := &http.Transport{
+			MaxIdleConns: 100,
+		}
+		customClient := &http.Client{
+			Timeout:   0, // Zero timeout
+			Transport: customTransport,
+		}
+
+		handler := NewOAuthHandler(config, WithOAuthHTTPClient(customClient))
+
+		// Verify timeout was set
+		if handler.httpClient.Timeout != 30*time.Second {
+			t.Errorf("Expected timeout to be auto-set to 30s, got %v", handler.httpClient.Timeout)
+		}
+
+		// Verify transport is preserved
+		if handler.httpClient.Transport != customTransport {
+			t.Error("Expected custom transport to be preserved")
+		}
+	})
+
+	t.Run("WithOAuthHTTPClient validation prevents indefinite hangs", func(t *testing.T) {
+		// This test demonstrates that the validation prevents potential production issues
+		config := OAuthConfig{
+			ClientID:    "test-client",
+			RedirectURI: "http://localhost:8085/callback",
+			TokenStore:  NewMemoryTokenStore(),
+		}
+
+		// User might create a client without thinking about timeout
+		customClient := &http.Client{
+			Transport: &http.Transport{
+				MaxIdleConns: 50,
+			},
+			// Forgot to set Timeout!
+		}
+
+		handler := NewOAuthHandler(config, WithOAuthHTTPClient(customClient))
+
+		// The validation should have added a timeout automatically
+		if handler.httpClient.Timeout == 0 {
+			t.Error("Expected validation to prevent zero timeout, but it's still zero")
+		}
+
+		if handler.httpClient.Timeout != 30*time.Second {
+			t.Errorf("Expected validation to set 30s timeout, got %v", handler.httpClient.Timeout)
+		}
+	})
 }

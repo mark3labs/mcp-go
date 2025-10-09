@@ -149,9 +149,63 @@ type OAuthHandler struct {
 type OAuthHandlerOption func(*OAuthHandler)
 
 // WithOAuthHTTPClient allows setting a custom http.Client for the OAuthHandler.
+//
+// This is useful when you need to:
+//   - Configure custom timeouts for OAuth operations (token exchange, refresh, metadata discovery)
+//   - Use a custom transport (e.g., for proxy settings, TLS configuration, custom CA certificates)
+//   - Set connection pooling parameters (MaxIdleConns, IdleConnTimeout, etc.)
+//   - Add request/response interceptors or custom retry logic
+//   - Configure specific dial or keep-alive settings
+//
+// If not specified, a default http.Client with a 30-second timeout is used.
+// If nil is passed, the option is ignored and the default client is retained.
+//
+// Validation: If the provided client has a zero timeout, a default 30-second timeout
+// will be automatically applied to prevent indefinite hangs during OAuth operations.
+// This ensures robust behavior even if users forget to set a timeout.
+//
+// Note: The provided client will be used for all OAuth-related HTTP requests including:
+//   - OAuth server metadata discovery (/.well-known/oauth-authorization-server, etc.)
+//   - Token endpoint requests (authorization code exchange, token refresh)
+//   - Dynamic client registration
+//
+// Example usage with custom timeout:
+//
+//	customClient := &http.Client{
+//	    Timeout: 10 * time.Second,
+//	}
+//	handler := transport.NewOAuthHandler(config, transport.WithOAuthHTTPClient(customClient))
+//
+// Example usage with custom transport:
+//
+//	customTransport := &http.Transport{
+//	    MaxIdleConns:        100,
+//	    IdleConnTimeout:     90 * time.Second,
+//	    TLSHandshakeTimeout: 10 * time.Second,
+//	}
+//	customClient := &http.Client{
+//	    Timeout:   15 * time.Second,
+//	    Transport: customTransport,
+//	}
+//	handler := transport.NewOAuthHandler(config, transport.WithOAuthHTTPClient(customClient))
+//
+// Example usage with proxy:
+//
+//	proxyURL, _ := url.Parse("http://proxy.example.com:8080")
+//	customTransport := &http.Transport{
+//	    Proxy: http.ProxyURL(proxyURL),
+//	}
+//	customClient := &http.Client{
+//	    Transport: customTransport,
+//	}
+//	handler := transport.NewOAuthHandler(config, transport.WithOAuthHTTPClient(customClient))
 func WithOAuthHTTPClient(client *http.Client) OAuthHandlerOption {
 	return func(h *OAuthHandler) {
 		if client != nil {
+			// If client has zero timeout, set a reasonable default to prevent indefinite hangs
+			if client.Timeout == 0 {
+				client.Timeout = 30 * time.Second
+			}
 			h.httpClient = client
 		}
 	}
