@@ -914,6 +914,100 @@ func TestStreamableHTTPServer_TLS(t *testing.T) {
 	})
 }
 
+func TestStreamableHTTPServer_WithDisableStreaming(t *testing.T) {
+	t.Run("WithDisableStreaming blocks GET requests", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-mcp-server", "1.0.0")
+		server := NewTestStreamableHTTPServer(mcpServer, WithDisableStreaming(true))
+		defer server.Close()
+
+		// Attempt a GET request (which should be blocked)
+		req, err := http.NewRequest(http.MethodGet, server.URL, nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+		req.Header.Set("Content-Type", "text/event-stream")
+
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to send request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		// Verify the request is rejected with 405 Method Not Allowed
+		if resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("Expected status 405 Method Not Allowed, got %d", resp.StatusCode)
+		}
+
+		// Verify the error message
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Failed to read response body: %v", err)
+		}
+
+		expectedMessage := "Streaming is disabled on this server"
+		if !strings.Contains(string(bodyBytes), expectedMessage) {
+			t.Errorf("Expected error message to contain '%s', got '%s'", expectedMessage, string(bodyBytes))
+		}
+	})
+
+	t.Run("POST requests still work with WithDisableStreaming", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-mcp-server", "1.0.0")
+		server := NewTestStreamableHTTPServer(mcpServer, WithDisableStreaming(true))
+		defer server.Close()
+
+		// POST requests should still work
+		resp, err := postJSON(server.URL, initRequest)
+		if err != nil {
+			t.Fatalf("Failed to send message: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", resp.StatusCode)
+		}
+
+		// Verify the response is valid
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		var responseMessage jsonRPCResponse
+		if err := json.Unmarshal(bodyBytes, &responseMessage); err != nil {
+			t.Fatalf("Failed to unmarshal response: %v", err)
+		}
+		if responseMessage.Result["protocolVersion"] != mcp.LATEST_PROTOCOL_VERSION {
+			t.Errorf("Expected protocol version %s, got %s", mcp.LATEST_PROTOCOL_VERSION, responseMessage.Result["protocolVersion"])
+		}
+	})
+
+	t.Run("Streaming works when WithDisableStreaming is false", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-mcp-server", "1.0.0")
+		server := NewTestStreamableHTTPServer(mcpServer, WithDisableStreaming(false))
+		defer server.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+
+		// GET request should work when streaming is enabled
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+		req.Header.Set("Content-Type", "text/event-stream")
+
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to send request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", resp.StatusCode)
+		}
+
+		if resp.Header.Get("content-type") != "text/event-stream" {
+			t.Errorf("Expected content-type text/event-stream, got %s", resp.Header.Get("content-type"))
+		}
+	})
+}
+
 func postJSON(url string, bodyObject any) (*http.Response, error) {
 	jsonBody, _ := json.Marshal(bodyObject)
 	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(jsonBody))
