@@ -70,7 +70,7 @@ func WithHeartbeatInterval(interval time.Duration) StreamableHTTPOption {
 }
 
 // WithDisableStreaming prevents the server from responding to GET requests with
-// a streaming response. Instead, it will respond with a 403 Forbidden status.
+// a streaming response. Instead, it will respond with a 405 Method Not Allowed status.
 // This can be useful in scenarios where streaming is not desired or supported.
 // The default is false, meaning streaming is enabled.
 func WithDisableStreaming(disable bool) StreamableHTTPOption {
