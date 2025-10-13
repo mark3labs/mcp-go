@@ -59,6 +59,10 @@ const (
 	// https://modelcontextprotocol.io/docs/concepts/elicitation
 	MethodElicitationCreate MCPMethod = "elicitation/create"
 
+	// MethodListRoots requests roots list from the client during interactions.
+	// https://modelcontextprotocol.io/specification/2025-06-18/client/roots
+	MethodListRoots MCPMethod = "roots/list"
+
 	// MethodNotificationResourcesListChanged notifies when the list of available resources changes.
 	// https://modelcontextprotocol.io/specification/2025-03-26/server/resources#list-changed-notification
 	MethodNotificationResourcesListChanged = "notifications/resources/list_changed"

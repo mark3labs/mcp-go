@@ -102,6 +102,7 @@ type stdioSession struct {
 	mu                  sync.RWMutex                        // protects writer
 	pendingRequests     map[int64]chan *samplingResponse    // for tracking pending sampling requests
 	pendingElicitations map[int64]chan *elicitationResponse // for tracking pending elicitation requests
+	pendingRoots        map[int64]chan *rootsResponse       // for tracking pending list roots requests
 	pendingMu           sync.RWMutex                        // protects pendingRequests and pendingElicitations
 }
 
@@ -114,6 +115,12 @@ type samplingResponse struct {
 // elicitationResponse represents a response to an elicitation request
 type elicitationResponse struct {
 	result *mcp.ElicitationResult
+	err    error
+}
+
+// rootsResponse represents a response to an list root request
+type rootsResponse struct {
+	result *mcp.ListRootsResult
 	err    error
 }
 
@@ -222,6 +229,67 @@ func (s *stdioSession) RequestSampling(ctx context.Context, request mcp.CreateMe
 
 	if _, err := writer.Write(requestBytes); err != nil {
 		return nil, fmt.Errorf("failed to write sampling request: %w", err)
+	}
+
+	// Wait for the response or context cancellation
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case response := <-responseChan:
+		if response.err != nil {
+			return nil, response.err
+		}
+		return response.result, nil
+	}
+}
+
+// ListRoots sends an list roots request to the client and waits for the response.
+func (s *stdioSession) ListRoots(ctx context.Context, request mcp.ListRootsRequest) (*mcp.ListRootsResult, error) {
+	s.mu.RLock()
+	writer := s.writer
+	s.mu.RUnlock()
+
+	if writer == nil {
+		return nil, fmt.Errorf("no writer available for sending requests")
+	}
+
+	// Generate a unique request ID
+	id := s.requestID.Add(1)
+
+	// Create a response channel for this request
+	responseChan := make(chan *rootsResponse, 1)
+	s.pendingMu.Lock()
+	s.pendingRoots[id] = responseChan
+	s.pendingMu.Unlock()
+
+	// Cleanup function to remove the pending request
+	cleanup := func() {
+		s.pendingMu.Lock()
+		delete(s.pendingRoots, id)
+		s.pendingMu.Unlock()
+	}
+	defer cleanup()
+
+	// Create the JSON-RPC request
+	jsonRPCRequest := struct {
+		JSONRPC string `json:"jsonrpc"`
+		ID      int64  `json:"id"`
+		Method  string `json:"method"`
+	}{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		ID:      id,
+		Method:  string(mcp.MethodListRoots),
+	}
+
+	// Marshal and send the request
+	requestBytes, err := json.Marshal(jsonRPCRequest)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal list roots request: %w", err)
+	}
+	requestBytes = append(requestBytes, '\n')
+
+	if _, err := writer.Write(requestBytes); err != nil {
+		return nil, fmt.Errorf("failed to write list roots request: %w", err)
 	}
 
 	// Wait for the response or context cancellation

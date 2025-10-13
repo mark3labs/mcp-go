@@ -804,6 +804,13 @@ type elicitationRequestItem struct {
 	response  chan samplingResponseItem
 }
 
+// Roots support types for HTTP transport
+type rootsRequestItem struct {
+	requestID int64
+	request   mcp.ListRootsRequest
+	response  chan samplingResponseItem
+}
+
 // streamableHttpSession is a session for streamable-http transport
 // When in POST handlers(request/notification), it's ephemeral, and only exists in the life of the request handler.
 // When in GET handlers(listening), it's a real session, and will be registered in the MCP server.
@@ -817,6 +824,7 @@ type streamableHttpSession struct {
 	// Sampling support for bidirectional communication
 	samplingRequestChan    chan samplingRequestItem    // server -> client sampling requests
 	elicitationRequestChan chan elicitationRequestItem // server -> client elicitation requests
+	rootsRequestChan       chan rootsRequestItem       // server -> client list roots requests
 
 	samplingRequests sync.Map     // requestID -> pending sampling request context
 	requestIDCounter atomic.Int64 // for generating unique request IDs
@@ -931,6 +939,51 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 			result.Content = content
 		}
 
+		return &result, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// ListRoots implements SessionWithRoots interface for HTTP transport
+func (s *streamableHttpSession) ListRoots(ctx context.Context, request mcp.ListRootsRequest) (*mcp.ListRootsResult, error) {
+	// Generate unique request ID
+	requestID := s.requestIDCounter.Add(1)
+
+	// Create response channel for this specific request
+	responseChan := make(chan samplingResponseItem, 1)
+
+	// Create the sampling request item
+	rootsRequest := rootsRequestItem{
+		requestID: requestID,
+		request:   request,
+		response:  responseChan,
+	}
+
+	// Store the pending request
+	s.samplingRequests.Store(requestID, responseChan)
+	defer s.samplingRequests.Delete(requestID)
+
+	// Send the sampling request via the channel (non-blocking)
+	select {
+	case s.rootsRequestChan <- rootsRequest:
+		// Request queued successfully
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+		return nil, fmt.Errorf("list roots request queue is full - server overloaded")
+	}
+
+	// Wait for response or context cancellation
+	select {
+	case response := <-responseChan:
+		if response.err != nil {
+			return nil, response.err
+		}
+		var result mcp.ListRootsResult
+		if err := json.Unmarshal(response.result, &result); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal list roots response: %v", err)
+		}
 		return &result, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
