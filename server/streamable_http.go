@@ -604,6 +604,7 @@ func (s *StreamableHTTPServer) handleDelete(w http.ResponseWriter, r *http.Reque
 
 	// remove the session relateddata from the sessionToolsStore
 	s.sessionTools.delete(sessionID)
+	s.sessionResources.delete(sessionID)
 	s.sessionLogLevels.delete(sessionID)
 	// remove current session's requstID information
 	s.sessionRequestIDs.Delete(sessionID)
