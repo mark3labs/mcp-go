@@ -124,14 +124,7 @@ func (e *requestError) ToJSONRPCError() mcp.JSONRPCError {
 	return mcp.JSONRPCError{
 		JSONRPC: mcp.JSONRPC_VERSION,
 		ID:      mcp.NewRequestId(e.id),
-		Error: struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-			Data    any    `json:"data,omitempty"`
-		}{
-			Code:    e.code,
-			Message: e.err.Error(),
-		},
+		Error:   mcp.NewJSONRPCErrorDetails(e.code, e.err.Error(), nil),
 	}
 }
 
@@ -182,11 +175,12 @@ func WithPaginationLimit(limit int) ServerOption {
 
 // serverCapabilities defines the supported features of the MCP server
 type serverCapabilities struct {
-	tools     *toolCapabilities
-	resources *resourceCapabilities
-	prompts   *promptCapabilities
-	logging   *bool
-	sampling  *bool
+	tools       *toolCapabilities
+	resources   *resourceCapabilities
+	prompts     *promptCapabilities
+	logging     *bool
+	sampling    *bool
+	elicitation *bool
 }
 
 // resourceCapabilities defines the supported resource-related features
@@ -320,6 +314,13 @@ func WithToolCapabilities(listChanged bool) ServerOption {
 func WithLogging() ServerOption {
 	return func(s *MCPServer) {
 		s.capabilities.logging = mcp.ToBoolPtr(true)
+	}
+}
+
+// WithElicitation enables elicitation capabilities for the server
+func WithElicitation() ServerOption {
+	return func(s *MCPServer) {
+		s.capabilities.elicitation = mcp.ToBoolPtr(true)
 	}
 }
 
@@ -689,6 +690,10 @@ func (s *MCPServer) handleInitialize(
 		capabilities.Sampling = &struct{}{}
 	}
 
+	if s.capabilities.elicitation != nil && *s.capabilities.elicitation {
+		capabilities.Elicitation = &struct{}{}
+	}
+
 	result := mcp.InitializeResult{
 		ProtocolVersion: s.protocolVersion(request.Params.ProtocolVersion),
 		ServerInfo: mcp.Implementation{
@@ -1007,7 +1012,17 @@ func (s *MCPServer) handleReadResource(
 	s.resourcesMu.RUnlock()
 
 	if matched {
-		contents, err := matchedHandler(ctx, request)
+		// If a match is found, then we have a final handler and can
+		// apply middlewares.
+		s.resourceMiddlewareMu.RLock()
+		finalHandler := ResourceHandlerFunc(matchedHandler)
+		mw := s.resourceHandlerMiddlewares
+		// Apply middlewares in reverse order
+		for i := len(mw) - 1; i >= 0; i-- {
+			finalHandler = mw[i](finalHandler)
+		}
+		s.resourceMiddlewareMu.RUnlock()
+		contents, err := finalHandler(ctx, request)
 		if err != nil {
 			return nil, &requestError{
 				id:   id,
@@ -1266,11 +1281,7 @@ func (s *MCPServer) handleNotification(
 }
 
 func createResponse(id any, result any) mcp.JSONRPCMessage {
-	return mcp.JSONRPCResponse{
-		JSONRPC: mcp.JSONRPC_VERSION,
-		ID:      mcp.NewRequestId(id),
-		Result:  result,
-	}
+	return mcp.NewJSONRPCResultResponse(mcp.NewRequestId(id), result)
 }
 
 func createErrorResponse(
@@ -1281,13 +1292,6 @@ func createErrorResponse(
 	return mcp.JSONRPCError{
 		JSONRPC: mcp.JSONRPC_VERSION,
 		ID:      mcp.NewRequestId(id),
-		Error: struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-			Data    any    `json:"data,omitempty"`
-		}{
-			Code:    code,
-			Message: message,
-		},
+		Error:   mcp.NewJSONRPCErrorDetails(code, message, nil),
 	}
 }
