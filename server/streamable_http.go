@@ -309,12 +309,23 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	// For non-initialize requests, try to reuse existing registered session
+	var session *streamableHttpSession
+	if !isInitializeRequest {
+		if sessionValue, ok := s.server.sessions.Load(sessionID); ok {
+			if existingSession, ok := sessionValue.(*streamableHttpSession); ok {
+				session = existingSession
+			}
+		}
+	}
+
 	// Check if a persistent session exists (for sampling support), otherwise create ephemeral session
 	// Persistent sessions are created by GET (continuous listening) connections
-	var session *streamableHttpSession
-	if sessionInterface, exists := s.activeSessions.Load(sessionID); exists {
-		if persistentSession, ok := sessionInterface.(*streamableHttpSession); ok {
-			session = persistentSession
+	if session == nil {
+		if sessionInterface, exists := s.activeSessions.Load(sessionID); exists {
+			if persistentSession, ok := sessionInterface.(*streamableHttpSession); ok {
+				session = persistentSession
+			}
 		}
 	}
 
@@ -415,6 +426,21 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		err := json.NewEncoder(w).Encode(response)
 		if err != nil {
 			s.logger.Errorf("Failed to write response: %v", err)
+		}
+	}
+
+	// Register session after successful initialization
+	// Only register if not already registered (e.g., by a GET connection)
+	if isInitializeRequest && sessionID != "" {
+		if _, exists := s.server.sessions.Load(sessionID); !exists {
+			// Store in activeSessions to prevent duplicate registration from GET
+			s.activeSessions.Store(sessionID, session)
+			// Register the session with the MCPServer for notification support
+			if err := s.server.RegisterSession(ctx, session); err != nil {
+				s.logger.Errorf("Failed to register POST session: %v", err)
+				s.activeSessions.Delete(sessionID)
+				// Don't fail the request, just log the error
+			}
 		}
 	}
 }
