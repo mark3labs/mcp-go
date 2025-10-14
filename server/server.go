@@ -2,10 +2,12 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"sync"
@@ -826,20 +828,9 @@ func (s *MCPServer) handleListResources(
 	request mcp.ListResourcesRequest,
 ) (*mcp.ListResourcesResult, *requestError) {
 	s.resourcesMu.RLock()
-	resources := make([]mcp.Resource, 0, len(s.resources))
-
-	// Get all resource URIs for consistent ordering
-	resourceURIs := make([]string, 0, len(s.resources))
-	for uri := range s.resources {
-		resourceURIs = append(resourceURIs, uri)
-	}
-
-	// Sort the resource URIs for consistent ordering
-	sort.Strings(resourceURIs)
-
-	// Add resources in sorted order
-	for _, uri := range resourceURIs {
-		resources = append(resources, s.resources[uri].resource)
+	resourceMap := make(map[string]mcp.Resource, len(s.resources))
+	for uri, entry := range s.resources {
+		resourceMap[uri] = entry.resource
 	}
 	s.resourcesMu.RUnlock()
 
@@ -848,33 +839,18 @@ func (s *MCPServer) handleListResources(
 	if session != nil {
 		if sessionWithResources, ok := session.(SessionWithResources); ok {
 			if sessionResources := sessionWithResources.GetSessionResources(); sessionResources != nil {
-				// Override or add session-specific resources
-				// We need to create a map first to merge the resources properly
-				resourceMap := make(map[string]mcp.Resource)
-
-				// Add global resources first
-				for _, resource := range resources {
-					resourceMap[resource.URI] = resource
-				}
-
-				// Then override with session-specific resources
+				// Merge session-specific resources with global resources
 				for uri, serverResource := range sessionResources {
 					resourceMap[uri] = serverResource.Resource
 				}
-
-				// Convert back to slice
-				resources = make([]mcp.Resource, 0, len(resourceMap))
-				for _, resource := range resourceMap {
-					resources = append(resources, resource)
-				}
-
-				// Sort again to maintain consistent ordering
-				sort.Slice(resources, func(i, j int) bool {
-					return resources[i].URI < resources[j].URI
-				})
 			}
 		}
 	}
+
+	// Sort the resources by name
+	resources := slices.SortedFunc(maps.Values(resourceMap), func(a, b mcp.Resource) int {
+		return cmp.Compare(a.Name, b.Name)
+	})
 
 	// Apply pagination
 	resourcesToReturn, nextCursor, err := listByPagination(

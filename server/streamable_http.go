@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"mime"
 	"net/http"
 	"net/http/httptest"
@@ -798,13 +799,17 @@ func newSessionResourcesStore() *sessionResourcesStore {
 func (s *sessionResourcesStore) get(sessionID string) map[string]ServerResource {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.resources[sessionID]
+	cloned := make(map[string]ServerResource, len(s.resources[sessionID]))
+	maps.Copy(cloned, s.resources[sessionID])
+	return cloned
 }
 
 func (s *sessionResourcesStore) set(sessionID string, resources map[string]ServerResource) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.resources[sessionID] = resources
+	cloned := make(map[string]ServerResource, len(resources))
+	maps.Copy(cloned, resources)
+	s.resources[sessionID] = cloned
 }
 
 func (s *sessionResourcesStore) delete(sessionID string) {
@@ -827,13 +832,17 @@ func newSessionToolsStore() *sessionToolsStore {
 func (s *sessionToolsStore) get(sessionID string) map[string]ServerTool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.tools[sessionID]
+	cloned := make(map[string]ServerTool, len(s.tools[sessionID]))
+	maps.Copy(cloned, s.tools[sessionID])
+	return cloned
 }
 
 func (s *sessionToolsStore) set(sessionID string, tools map[string]ServerTool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.tools[sessionID] = tools
+	cloned := make(map[string]ServerTool, len(tools))
+	maps.Copy(cloned, tools)
+	s.tools[sessionID] = cloned
 }
 
 func (s *sessionToolsStore) delete(sessionID string) {
@@ -886,7 +895,7 @@ func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, re
 		sessionID:              sessionID,
 		notificationChannel:    make(chan mcp.JSONRPCNotification, 100),
 		tools:                  toolStore,
-		resources:           resourcesStore,
+		resources:              resourcesStore,
 		logLevels:              levels,
 		samplingRequestChan:    make(chan samplingRequestItem, 10),
 		elicitationRequestChan: make(chan elicitationRequestItem, 10),
