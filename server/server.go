@@ -848,7 +848,7 @@ func (s *MCPServer) handleListResources(
 	}
 
 	// Sort the resources by name
-	resources := slices.SortedFunc(maps.Values(resourceMap), func(a, b mcp.Resource) int {
+	resourcesList := slices.SortedFunc(maps.Values(resourceMap), func(a, b mcp.Resource) int {
 		return cmp.Compare(a.Name, b.Name)
 	})
 
@@ -857,7 +857,7 @@ func (s *MCPServer) handleListResources(
 		ctx,
 		s,
 		request.Params.Cursor,
-		resources,
+		resourcesList,
 	)
 	if err != nil {
 		return nil, &requestError{

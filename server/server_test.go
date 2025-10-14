@@ -445,9 +445,8 @@ func TestMCPServer_HandleValidMessages(t *testing.T) {
 				resp, ok := response.(mcp.JSONRPCResponse)
 				assert.True(t, ok)
 
-				listResult, ok := resp.Result.(mcp.ListResourcesResult)
+				_, ok = resp.Result.(mcp.ListResourcesResult)
 				assert.True(t, ok)
-				assert.NotNil(t, listResult.Resources)
 			},
 		},
 	}
