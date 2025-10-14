@@ -34,8 +34,8 @@ type OAuthConfig struct {
 	AuthServerMetadataURL string
 	// PKCEEnabled enables PKCE for the OAuth flow (recommended for public clients)
 	PKCEEnabled bool
-	// An optional HTTP client to use for requests.
-	// If not provided, a default HTTP client will be used.
+	// HTTPClient is an optional HTTP client to use for requests.
+	// If nil, a default HTTP client with a 30 second timeout will be used.
 	HTTPClient *http.Client
 }
 
