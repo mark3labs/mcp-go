@@ -412,7 +412,7 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 	// get request is for listening to notifications
 	// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
 	if s.disableStreaming {
-		s.logger.Debugf("Rejected GET request: streaming is disabled (session: %s)", r.Header.Get(HeaderKeySessionID))
+		s.logger.Infof("Rejected GET request: streaming is disabled (session: %s)", r.Header.Get(HeaderKeySessionID))
 		http.Error(w, "Streaming is disabled on this server", http.StatusMethodNotAllowed)
 		return
 	}
