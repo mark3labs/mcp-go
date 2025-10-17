@@ -260,20 +260,62 @@ func TestSessionResourcesWithGlobalResources(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Get effective resources (global + session)
-	sessionResources := session.GetSessionResources()
+	// Create a context with the session for server operations
+	sessionCtx := server.WithContext(ctx, session)
 
-	// Session should have 2 session-specific resources
-	assert.Len(t, sessionResources, 2)
+	// Test ListResources to verify merge behavior
+	listResult, rerr := server.handleListResources(sessionCtx, "test-id", mcp.ListResourcesRequest{})
+	require.Nil(t, rerr)
+	require.NotNil(t, listResult)
 
-	// Verify that session resource overrides work correctly
-	overriddenResource := sessionResources["test://global1"]
-	assert.Equal(t, "Session Override Resource", overriddenResource.Resource.Name)
+	// Should have 3 resources: global2, session-overridden global1, and session1
+	assert.Len(t, listResult.Resources, 3)
 
-	// Test read operations use correct handlers
-	contents, err := sessionResources["test://global1"].Handler(ctx, mcp.ReadResourceRequest{Params: mcp.ReadResourceParams{URI: "test://global1"}})
-	require.NoError(t, err)
-	assert.Equal(t, "session override content", contents[0].(mcp.TextResourceContents).Text)
+	// Verify all expected resources are present
+	resourceMap := make(map[string]mcp.Resource)
+	for _, r := range listResult.Resources {
+		resourceMap[r.URI] = r
+	}
+
+	// Global resource 2 should appear unchanged
+	assert.Contains(t, resourceMap, "test://global2")
+	assert.Equal(t, "Global Resource 2", resourceMap["test://global2"].Name)
+
+	// Global resource 1 should be overridden by session resource
+	assert.Contains(t, resourceMap, "test://global1")
+	assert.Equal(t, "Session Override Resource", resourceMap["test://global1"].Name)
+
+	// Session-only resource should appear
+	assert.Contains(t, resourceMap, "test://session1")
+	assert.Equal(t, "Session Resource 1", resourceMap["test://session1"].Name)
+
+	// Test ReadResource to verify handlers are correctly resolved
+	// Test reading the overridden resource - should use session handler
+	readResult1, rerr := server.handleReadResource(sessionCtx, "test-id", mcp.ReadResourceRequest{
+		Params: mcp.ReadResourceParams{URI: "test://global1"},
+	})
+	require.Nil(t, rerr)
+	require.NotNil(t, readResult1)
+	assert.Len(t, readResult1.Contents, 1)
+	assert.Equal(t, "session override content", readResult1.Contents[0].(mcp.TextResourceContents).Text)
+
+	// Test reading global resource that wasn't overridden
+	readResult2, rerr := server.handleReadResource(sessionCtx, "test-id", mcp.ReadResourceRequest{
+		Params: mcp.ReadResourceParams{URI: "test://global2"},
+	})
+	require.Nil(t, rerr)
+	require.NotNil(t, readResult2)
+	assert.Len(t, readResult2.Contents, 1)
+	assert.Equal(t, "global content 2", readResult2.Contents[0].(mcp.TextResourceContents).Text)
+
+	// Test reading session-only resource
+	readResult3, rerr := server.handleReadResource(sessionCtx, "test-id", mcp.ReadResourceRequest{
+		Params: mcp.ReadResourceParams{URI: "test://session1"},
+	})
+	require.Nil(t, rerr)
+	require.NotNil(t, readResult3)
+	assert.Len(t, readResult3.Contents, 1)
+	assert.Equal(t, "session content 1", readResult3.Contents[0].(mcp.TextResourceContents).Text)
 }
 
 // TestAddSessionResourcesUninitialized tests adding resources to uninitialized session
