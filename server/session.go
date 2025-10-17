@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -495,8 +496,18 @@ func (s *MCPServer) AddSessionResources(sessionID string, resources ...ServerRes
 		newSessionResources[k] = v
 	}
 
-	// Add new resources
+	// Add new resources with validation
 	for _, resource := range resources {
+		// Validate that URI is non-empty
+		if resource.Resource.URI == "" {
+			return fmt.Errorf("resource URI cannot be empty")
+		}
+
+		// Validate that URI conforms to RFC 3986
+		if _, err := url.ParseRequestURI(resource.Resource.URI); err != nil {
+			return fmt.Errorf("invalid resource URI: %w", err)
+		}
+
 		newSessionResources[resource.Resource.URI] = resource
 	}
 
@@ -564,6 +575,11 @@ func (s *MCPServer) DeleteSessionResources(sessionID string, uris ...string) err
 			delete(newSessionResources, uri)
 			actuallyDeleted = true
 		}
+	}
+
+	// Skip no-op write if nothing was actually deleted
+	if !actuallyDeleted {
+		return nil
 	}
 
 	// Set the resources (this should be thread-safe)
