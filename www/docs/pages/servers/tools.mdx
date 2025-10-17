@@ -1049,7 +1049,61 @@ func addConditionalTools(s *server.MCPServer, userRole string) {
 
 ### Session-specific Tools
 
-You can add tools to a specific client session using the `SessionWithTools` interface.
+You can add tools to a specific client session, allowing different clients to have access to different tools or different implementations of the same tool.
+
+#### Using Helper Functions (Recommended)
+
+The server provides convenient helper functions for managing session tools:
+
+```go
+// Add a single session tool
+userTool := mcp.NewTool(
+    "get_user_data",
+    mcp.WithDescription("Get current user's data"),
+)
+
+err := s.AddSessionTool(
+    sessionID,
+    userTool,
+    func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        // This handler is only available to this specific session
+        return mcp.NewToolResultText("User data for " + sessionID), nil
+    },
+)
+if err != nil {
+    log.Printf("Failed to add session tool: %v", err)
+}
+
+// Add multiple session tools at once
+err = s.AddSessionTools(
+    sessionID,
+    server.ServerTool{
+        Tool: mcp.NewTool("user_settings", mcp.WithDescription("Manage user settings")),
+        Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            return handleUserSettings(sessionID, req)
+        },
+    },
+    server.ServerTool{
+        Tool: mcp.NewTool("user_history", mcp.WithDescription("Access user history")),
+        Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            return handleUserHistory(sessionID, req)
+        },
+    },
+)
+if err != nil {
+    log.Printf("Failed to add session tools: %v", err)
+}
+
+// Delete session tools when no longer needed
+err = s.DeleteSessionTools(sessionID, "get_user_data", "user_settings")
+if err != nil {
+    log.Printf("Failed to delete session tools: %v", err)
+}
+```
+
+#### Direct Interface Usage
+
+You can also work directly with the `SessionWithTools` interface:
 
 ```go
 sseServer := server.NewSSEServer(
@@ -1076,6 +1130,14 @@ sseServer := server.NewSSEServer(
     }),
 )
 ```
+
+#### Important Notes
+
+- Session tools override global tools with the same name
+- Notifications (`tools/list_changed`) are automatically sent when tools are added/removed
+- The server automatically registers tool capabilities when session tools are first added
+- Operations are thread-safe and can be called concurrently
+- Tools are only available to initialized sessions unless explicitly added before initialization
 
 ## Next Steps
 

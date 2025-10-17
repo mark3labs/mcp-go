@@ -547,7 +547,68 @@ func (h *CachedResourceHandler) HandleResource(ctx context.Context, req mcp.Read
 
 ### Session-specific Resources
 
-You can add resources to a specific client session using the `SessionWithResources` interface.
+You can add resources to a specific client session, allowing different clients to see different resources or override global resources with session-specific implementations.
+
+#### Using Helper Functions (Recommended)
+
+The server provides convenient helper functions that mirror the session tool helpers:
+
+```go
+// Add a single session resource
+userResource := mcp.NewResource(
+    "user://profile", 
+    "User Profile",
+    mcp.WithResourceDescription("Current user's profile data"),
+)
+
+err := s.AddSessionResource(
+    sessionID,
+    userResource,
+    func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+        // This handler is only available to this specific session
+        return []mcp.ResourceContents{
+            mcp.TextResourceContents{
+                URI:      request.Params.URI,
+                MIMEType: "application/json",
+                Text:     getUserProfile(sessionID),
+            },
+        }, nil
+    },
+)
+if err != nil {
+    log.Printf("Failed to add session resource: %v", err)
+}
+
+// Add multiple session resources at once
+err = s.AddSessionResources(
+    sessionID,
+    server.ServerResource{
+        Resource: mcp.NewResource("user://settings", "User Settings"),
+        Handler: func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+            return getUserSettings(sessionID)
+        },
+    },
+    server.ServerResource{
+        Resource: mcp.NewResource("user://history", "User History"),
+        Handler: func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+            return getUserHistory(sessionID)
+        },
+    },
+)
+if err != nil {
+    log.Printf("Failed to add session resources: %v", err)
+}
+
+// Delete session resources when no longer needed
+err = s.DeleteSessionResources(sessionID, "user://profile", "user://settings")
+if err != nil {
+    log.Printf("Failed to delete session resources: %v", err)
+}
+```
+
+#### Direct Interface Usage
+
+You can also work directly with the `SessionWithResources` interface:
 
 ```go
 sseServer := server.NewSSEServer(
@@ -574,6 +635,14 @@ sseServer := server.NewSSEServer(
     }),
 )
 ```
+
+#### Important Notes
+
+- Session resources override global resources with the same URI
+- Notifications (`resources/list_changed`) are automatically sent when resources are added/removed
+- The server automatically registers resource capabilities when session resources are first added
+- Operations are thread-safe and can be called concurrently
+- Resources are only available to initialized sessions unless explicitly added before initialization
 
 ## Next Steps
 
