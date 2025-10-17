@@ -432,6 +432,9 @@ func TestSessionResourceCapabilitiesBehavior(t *testing.T) {
 			err := server.RegisterSession(ctx, session)
 			require.NoError(t, err)
 
+			// Capture pre-call state
+			preAddResourceCount := len(session.sessionResources)
+
 			// Add a resource
 			err = server.AddSessionResource(
 				session.SessionID(),
@@ -443,6 +446,15 @@ func TestSessionResourceCapabilitiesBehavior(t *testing.T) {
 				},
 			)
 			require.NoError(t, err)
+
+			// Verify post-call state: resource was added
+			assert.Contains(t, session.sessionResources, "test://resource", "Resource should be present after AddSessionResource")
+			assert.Equal(t, preAddResourceCount+1, len(session.sessionResources), "Resource count should increase by 1")
+
+			// Verify the listChanged default behavior
+			if server.capabilities.resources != nil {
+				assert.Equal(t, server.capabilities.resources.listChanged, tt.expectNotification, "listChanged value should match expectation")
+			}
 
 			// Check notification based on expectation
 			if tt.expectNotification {
@@ -461,10 +473,12 @@ func TestSessionResourceCapabilitiesBehavior(t *testing.T) {
 				}
 			}
 
-			// If no capability was set, verify it was auto-registered
-			if server.capabilities.resources == nil {
+			// Verify auto-registration behavior for servers without initial resource capabilities
+			if tt.name == "no resource capability auto-registers and sends notifications" {
 				// After first Add, capability should be auto-registered
-				assert.NotNil(t, server.capabilities.resources)
+				assert.NotNil(t, server.capabilities.resources, "Resource capability should be auto-registered")
+				// When auto-registered, default listChanged should be true
+				assert.Equal(t, true, server.capabilities.resources.listChanged, "Auto-registered resources should have listChanged=true by default")
 			}
 		})
 	}
