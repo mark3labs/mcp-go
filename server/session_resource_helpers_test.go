@@ -193,12 +193,12 @@ func TestDeleteSessionResources(t *testing.T) {
 	err = server.DeleteSessionResources(session.SessionID(), "test://nonexistent")
 	require.NoError(t, err)
 
-	// Verify another notification was sent
+	// Verify no notification is sent for non-existent resource deletion
 	select {
-	case notification := <-sessionChan:
-		assert.Equal(t, "notifications/resources/list_changed", notification.Method)
+	case <-sessionChan:
+		t.Error("Unexpected notification received when deleting non-existent resource")
 	case <-time.After(100 * time.Millisecond):
-		t.Error("Expected notification not received")
+		// Expected: no notification for non-existent resource
 	}
 }
 
