@@ -855,11 +855,11 @@ func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 func TestStreamableHTTP_SessionWithResources(t *testing.T) {
 
 	t.Run("SessionWithResources implementation", func(t *testing.T) {
-		// Create hooks to track sessions
+		var registeredSession SessionWithResources
 		hooks := &Hooks{}
-		var registeredSession *streamableHttpSession
 		var mu sync.Mutex
 		var sessionRegistered sync.WaitGroup
+		var sessionRegisteredOnce sync.Once
 		sessionRegistered.Add(1)
 
 		hooks.AddOnRegisterSession(func(ctx context.Context, session ClientSession) {
@@ -867,7 +867,9 @@ func TestStreamableHTTP_SessionWithResources(t *testing.T) {
 				mu.Lock()
 				registeredSession = s
 				mu.Unlock()
-				sessionRegistered.Done()
+				sessionRegisteredOnce.Do(func() {
+					sessionRegistered.Done()
+				})
 			}
 		})
 
@@ -956,11 +958,21 @@ func TestStreamableHTTP_SessionWithResources(t *testing.T) {
 						},
 					},
 				}
-				registeredSession.SetSessionResources(resources)
+				mu.Lock()
+				session := registeredSession
+				mu.Unlock()
+				if session != nil {
+					session.SetSessionResources(resources)
+				}
 			}(i)
 			go func() {
 				defer wg.Done()
-				_ = registeredSession.GetSessionResources()
+				mu.Lock()
+				session := registeredSession
+				mu.Unlock()
+				if session != nil {
+					_ = session.GetSessionResources()
+				}
 			}()
 		}
 		wg.Wait()

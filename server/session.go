@@ -557,9 +557,13 @@ func (s *MCPServer) DeleteSessionResources(sessionID string, uris ...string) err
 		newSessionResources[k] = v
 	}
 
-	// Remove specified resources
+	// Remove specified resources and track if anything was actually deleted
+	actuallyDeleted := false
 	for _, uri := range uris {
-		delete(newSessionResources, uri)
+		if _, exists := newSessionResources[uri]; exists {
+			delete(newSessionResources, uri)
+			actuallyDeleted = true
+		}
 	}
 
 	// Set the resources (this should be thread-safe)
@@ -572,7 +576,8 @@ func (s *MCPServer) DeleteSessionResources(sessionID string, uris ...string) err
 	// For initialized sessions, honor resources.listChanged, which is specifically
 	// about whether notifications will be sent or not.
 	// see <https://modelcontextprotocol.io/specification/2025-03-26/server/resources#capabilities>
-	if session.Initialized() && s.capabilities.resources != nil && s.capabilities.resources.listChanged {
+	// Only send notification if something was actually deleted
+	if actuallyDeleted && session.Initialized() && s.capabilities.resources != nil && s.capabilities.resources.listChanged {
 		// Send notification only to this session
 		if err := s.SendNotificationToSpecificClient(sessionID, "notifications/resources/list_changed", nil); err != nil {
 			// Log the error but don't fail the operation
