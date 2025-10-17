@@ -648,14 +648,18 @@ func TestSessionDoesNotSupportResources(t *testing.T) {
 func TestNotificationErrorHandling(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithResourceCapabilities(false, true))
 
-	// Set up error tracking
-	var capturedError error
+	// Set up error tracking with a channel to avoid race conditions
+	errorChan := make(chan error, 1)
 	if server.hooks == nil {
 		server.hooks = &Hooks{}
 	}
 	server.hooks.OnError = []OnErrorHookFunc{
 		func(ctx context.Context, id any, method mcp.MCPMethod, message any, err error) {
-			capturedError = err
+			select {
+			case errorChan <- err:
+			default:
+				// Channel already has an error, ignore subsequent ones
+			}
 		},
 	}
 
@@ -687,12 +691,15 @@ func TestNotificationErrorHandling(t *testing.T) {
 	// Operation should succeed despite notification failure
 	require.NoError(t, err)
 
-	// Give some time for the notification timeout
-	time.Sleep(150 * time.Millisecond)
-
-	// Verify error was logged
-	assert.NotNil(t, capturedError)
-	assert.Contains(t, capturedError.Error(), "blocked")
+	// Wait for the error to be logged
+	select {
+	case capturedError := <-errorChan:
+		// Verify error was logged
+		assert.NotNil(t, capturedError)
+		assert.Contains(t, capturedError.Error(), "channel")
+	case <-time.After(200 * time.Millisecond):
+		t.Error("Expected error was not logged")
+	}
 
 	// Verify resource was actually added despite notification failure
 	sessionResources := session.GetSessionResources()
