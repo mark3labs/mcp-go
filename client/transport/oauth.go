@@ -34,6 +34,9 @@ type OAuthConfig struct {
 	AuthServerMetadataURL string
 	// PKCEEnabled enables PKCE for the OAuth flow (recommended for public clients)
 	PKCEEnabled bool
+	// HTTPClient is an optional HTTP client to use for requests.
+	// If nil, a default HTTP client with a 30 second timeout will be used.
+	HTTPClient *http.Client
 }
 
 // TokenStore is an interface for storing and retrieving OAuth tokens.
@@ -151,10 +154,13 @@ func NewOAuthHandler(config OAuthConfig) *OAuthHandler {
 	if config.TokenStore == nil {
 		config.TokenStore = NewMemoryTokenStore()
 	}
+	if config.HTTPClient == nil {
+		config.HTTPClient = &http.Client{Timeout: 30 * time.Second}
+	}
 
 	return &OAuthHandler{
 		config:     config,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: config.HTTPClient,
 	}
 }
 
