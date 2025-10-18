@@ -18,6 +18,7 @@ type GreetingArgs struct {
 		Location string `json:"location"`
 		Timezone string `json:"timezone"`
 	} `json:"metadata"`
+	AnyData any `json:"any_data"`
 }
 
 func main() {
@@ -61,6 +62,9 @@ func main() {
 				},
 			}),
 		),
+		mcp.WithAny("any_data",
+			mcp.Description("Any kind of data, e.g., an integer"),
+		),
 	)
 
 	// Add tool handler using the typed handler
@@ -99,6 +103,10 @@ func typedGreetingHandler(ctx context.Context, request mcp.CallToolRequest, args
 		if args.Metadata.Timezone != "" {
 			greeting += fmt.Sprintf(" Your timezone is %s.", args.Metadata.Timezone)
 		}
+	}
+
+	if args.AnyData != nil {
+		greeting += fmt.Sprintf(" I also received some other data: %v.", args.AnyData)
 	}
 
 	return mcp.NewToolResultText(greeting), nil
