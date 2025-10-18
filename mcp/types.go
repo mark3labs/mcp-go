@@ -519,6 +519,8 @@ type ServerCapabilities struct {
 	} `json:"tools,omitempty"`
 	// Present if the server supports elicitation requests to the client.
 	Elicitation *struct{} `json:"elicitation,omitempty"`
+	// Present if the server supports roots requests to the client.
+	Roots *struct{} `json:"roots,omitempty"`
 }
 
 // Implementation describes the name and version of an MCP implementation.
@@ -1147,7 +1149,6 @@ type PromptReference struct {
 // structure or access specific locations that the client has permission to read from.
 type ListRootsRequest struct {
 	Request
-	Header http.Header `json:"-"`
 }
 
 // ListRootsResult is the client's response to a roots/list request from the server.

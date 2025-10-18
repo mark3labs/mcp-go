@@ -533,6 +533,20 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 				case <-done:
 					return
 				}
+			case rootsReq := <-session.rootsRequestChan:
+				// Send list roots request to client via SSE
+				jsonrpcRequest := mcp.JSONRPCRequest{
+					JSONRPC: "2.0",
+					ID:      mcp.NewRequestId(rootsReq.requestID),
+					Request: mcp.Request{
+						Method: string(mcp.MethodListRoots),
+					},
+				}
+				select {
+				case writeChan <- jsonrpcRequest:
+				case <-done:
+					return
+				}
 			case <-done:
 				return
 			}
@@ -864,6 +878,7 @@ func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, le
 		logLevels:              levels,
 		samplingRequestChan:    make(chan samplingRequestItem, 10),
 		elicitationRequestChan: make(chan elicitationRequestItem, 10),
+		rootsRequestChan:       make(chan rootsRequestItem, 10),
 	}
 	return s
 }
@@ -1063,6 +1078,7 @@ func (s *streamableHttpSession) RequestElicitation(ctx context.Context, request 
 
 var _ SessionWithSampling = (*streamableHttpSession)(nil)
 var _ SessionWithElicitation = (*streamableHttpSession)(nil)
+var _ SessionWithRoots = (*streamableHttpSession)(nil)
 
 // --- session id manager ---
 

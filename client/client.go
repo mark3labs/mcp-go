@@ -487,7 +487,7 @@ func (c *Client) RootListChanges(
 	notification := mcp.JSONRPCNotification{
 		JSONRPC: mcp.JSONRPC_VERSION,
 		Notification: mcp.Notification{
-			Method: "notifications/roots/list_changed",
+			Method: mcp.MethodNotificationToolsListChanged,
 		},
 	}
 

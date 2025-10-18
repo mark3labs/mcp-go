@@ -380,12 +380,14 @@ var (
 	_ SessionWithClientInfo  = (*stdioSession)(nil)
 	_ SessionWithSampling    = (*stdioSession)(nil)
 	_ SessionWithElicitation = (*stdioSession)(nil)
+	_ SessionWithRoots       = (*stdioSession)(nil)
 )
 
 var stdioSessionInstance = stdioSession{
 	notifications:       make(chan mcp.JSONRPCNotification, 100),
 	pendingRequests:     make(map[int64]chan *samplingResponse),
 	pendingElicitations: make(map[int64]chan *elicitationResponse),
+	pendingRoots:        make(map[int64]chan *rootsResponse),
 }
 
 // NewStdioServer creates a new stdio server wrapper around an MCPServer.
