@@ -1113,6 +1113,26 @@ func WithArray(name string, opts ...PropertyOption) ToolOption {
 	}
 }
 
+// WithAny adds a property of any type to the tool schema.
+// It accepts property options to configure the property's behavior and constraints.
+func WithAny(name string, opts ...PropertyOption) ToolOption {
+	return func(t *Tool) {
+		schema := map[string]any{}
+
+		for _, opt := range opts {
+			opt(schema)
+		}
+
+		// Remove required from property schema and add to InputSchema.required
+		if required, ok := schema["required"].(bool); ok && required {
+			delete(schema, "required")
+			t.InputSchema.Required = append(t.InputSchema.Required, name)
+		}
+
+		t.InputSchema.Properties[name] = schema
+	}
+}
+
 // Properties defines the properties for an object schema
 func Properties(props map[string]any) PropertyOption {
 	return func(schema map[string]any) {
