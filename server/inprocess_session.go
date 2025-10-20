@@ -135,7 +135,6 @@ func (s *InProcessSession) RequestElicitation(ctx context.Context, request mcp.E
 }
 
 func (s *InProcessSession) ListRoots(ctx context.Context, request mcp.ListRootsRequest) (*mcp.ListRootsResult, error) {
-	fmt.Print("SDK InProcessSession ListRoots called\n")
 	s.mu.RLock()
 	handler := s.rootsHandler
 	s.mu.RUnlock()
@@ -144,7 +143,6 @@ func (s *InProcessSession) ListRoots(ctx context.Context, request mcp.ListRootsR
 		return nil, fmt.Errorf("no roots handler available")
 	}
 
-	fmt.Print("SDK InProcessSession handler ListRoots called\n")
 	return handler.ListRoots(ctx, request)
 }
 
