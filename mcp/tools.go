@@ -1091,7 +1091,6 @@ func WithObject(name string, opts ...PropertyOption) ToolOption {
 	}
 }
 
-// WithArray adds an array property to the tool schema.
 // WithArray returns a ToolOption that adds an array-typed property with the given name to a Tool's input schema.
 // It applies provided PropertyOption functions to configure the property's schema, moves a `required` flag
 // from the property schema into the Tool's InputSchema.Required slice when present, and registers the resulting
