@@ -1116,7 +1116,6 @@ func WithArray(name string, opts ...PropertyOption) ToolOption {
 	}
 }
 
-// WithAny adds a property of any type to the tool schema.
 // WithAny adds an input property named name with no predefined JSON Schema type to the Tool's input schema.
 // The returned ToolOption applies the provided PropertyOption functions to the property's schema, moves a property-level
 // `required` flag into the Tool's InputSchema.Required list if present, and stores the resulting schema under InputSchema.Properties[name].
