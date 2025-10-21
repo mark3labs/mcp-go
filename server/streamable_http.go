@@ -140,7 +140,7 @@ func WithTLSCert(certFile, keyFile string) StreamableHTTPOption {
 // The current implementation does not support the following features from the specification:
 //   - Stream Resumability
 type StreamableHTTPServer struct {
-	server            *MCPServer
+	server            Interface
 	sessionTools      *sessionToolsStore
 	sessionResources  *sessionResourcesStore
 	sessionRequestIDs sync.Map // sessionId --> last requestID(*atomic.Int64)
@@ -162,7 +162,7 @@ type StreamableHTTPServer struct {
 }
 
 // NewStreamableHTTPServer creates a new streamable-http server instance
-func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *StreamableHTTPServer {
+func NewStreamableHTTPServer(server Interface, opts ...StreamableHTTPOption) *StreamableHTTPServer {
 	s := &StreamableHTTPServer{
 		server:           server,
 		sessionTools:     newSessionToolsStore(),
