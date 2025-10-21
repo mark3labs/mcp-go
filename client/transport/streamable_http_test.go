@@ -267,6 +267,11 @@ func TestStreamableHTTP(t *testing.T) {
 		if headerValues, ok := result["X-Test-Header"].([]any); !ok || len(headerValues) == 0 || headerValues[0] != "test-header-value" {
 			t.Errorf("Expected X-Test-Header to be ['test-header-value'], got %v", result["X-Test-Header"])
 		}
+
+		// Verify system headers are still present
+		if contentType, ok := result["Content-Type"].([]any); !ok || len(contentType) == 0 {
+			t.Errorf("Expected Content-Type header to be preserved")
+		}
 	})
 
 	t.Run("SendRequestWithTimeout", func(t *testing.T) {
