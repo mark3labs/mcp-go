@@ -374,7 +374,7 @@ func (c *StreamableHTTP) sendHTTP(
 		authHeader, err := c.oauthHandler.GetAuthorizationHeader(ctx)
 		if err != nil {
 			// If we get an authorization error, return a specific error that can be handled by the client
-			if err.Error() == "no valid token available, authorization required" {
+			if errors.Is(err, ErrOAuthAuthorizationRequired) {
 				return nil, &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
 				}

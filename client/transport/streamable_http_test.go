@@ -130,7 +130,7 @@ func startMockStreamableHTTPServer() (string, func()) {
 				return
 			}
 
-			// Echo back the request headersas the response result
+			// Echo back the request headers as the response result
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			if err := json.NewEncoder(w).Encode(map[string]any{
@@ -243,12 +243,13 @@ func TestStreamableHTTP(t *testing.T) {
 			"array":  []any{1, 2, 3},
 		}
 
+		hdr := http.Header{"X-Test-Header": {"test-header-value"}}
 		request := JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      mcp.NewRequestId(int64(1)),
 			Method:  "debug/echo_header",
 			Params:  params,
-			Header:  http.Header{"X-Test-Header": {"test-header-value"}},
+			Header:  hdr,
 		}
 
 		// Send the request
