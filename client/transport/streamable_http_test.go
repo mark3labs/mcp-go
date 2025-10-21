@@ -264,7 +264,7 @@ func TestStreamableHTTP(t *testing.T) {
 			t.Fatalf("Failed to unmarshal result: %v", err)
 		}
 
-		if hdr, ok := result["X-Test-Header"].([]any); !ok || len(hdr) == 0 || hdr[0] != "test-header-value" {
+		if headerValues, ok := result["X-Test-Header"].([]any); !ok || len(headerValues) == 0 || headerValues[0] != "test-header-value" {
 			t.Errorf("Expected X-Test-Header to be ['test-header-value'], got %v", result["X-Test-Header"])
 		}
 	})
