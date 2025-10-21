@@ -2,10 +2,12 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"sync"
@@ -838,21 +840,36 @@ func (s *MCPServer) handleListResources(
 	request mcp.ListResourcesRequest,
 ) (*mcp.ListResourcesResult, *requestError) {
 	s.resourcesMu.RLock()
-	resources := make([]mcp.Resource, 0, len(s.resources))
-	for _, entry := range s.resources {
-		resources = append(resources, entry.resource)
+	resourceMap := make(map[string]mcp.Resource, len(s.resources))
+	for uri, entry := range s.resources {
+		resourceMap[uri] = entry.resource
 	}
 	s.resourcesMu.RUnlock()
 
+	// Check if there are session-specific resources
+	session := ClientSessionFromContext(ctx)
+	if session != nil {
+		if sessionWithResources, ok := session.(SessionWithResources); ok {
+			if sessionResources := sessionWithResources.GetSessionResources(); sessionResources != nil {
+				// Merge session-specific resources with global resources
+				for uri, serverResource := range sessionResources {
+					resourceMap[uri] = serverResource.Resource
+				}
+			}
+		}
+	}
+
 	// Sort the resources by name
-	sort.Slice(resources, func(i, j int) bool {
-		return resources[i].Name < resources[j].Name
+	resourcesList := slices.SortedFunc(maps.Values(resourceMap), func(a, b mcp.Resource) int {
+		return cmp.Compare(a.Name, b.Name)
 	})
+
+	// Apply pagination
 	resourcesToReturn, nextCursor, err := listByPagination(
 		ctx,
 		s,
 		request.Params.Cursor,
-		resources,
+		resourcesList,
 	)
 	if err != nil {
 		return nil, &requestError{
@@ -912,9 +929,35 @@ func (s *MCPServer) handleReadResource(
 	request mcp.ReadResourceRequest,
 ) (*mcp.ReadResourceResult, *requestError) {
 	s.resourcesMu.RLock()
+
+	// First check session-specific resources
+	var handler ResourceHandlerFunc
+	var ok bool
+
+	session := ClientSessionFromContext(ctx)
+	if session != nil {
+		if sessionWithResources, typeAssertOk := session.(SessionWithResources); typeAssertOk {
+			if sessionResources := sessionWithResources.GetSessionResources(); sessionResources != nil {
+				resource, sessionOk := sessionResources[request.Params.URI]
+				if sessionOk {
+					handler = resource.Handler
+					ok = true
+				}
+			}
+		}
+	}
+
+	// If not found in session tools, check global tools
+	if !ok {
+		globalResource, rok := s.resources[request.Params.URI]
+		if rok {
+			handler = globalResource.handler
+			ok = true
+		}
+	}
+
 	// First try direct resource handlers
-	if entry, ok := s.resources[request.Params.URI]; ok {
-		handler := entry.handler
+	if ok {
 		s.resourcesMu.RUnlock()
 
 		finalHandler := handler

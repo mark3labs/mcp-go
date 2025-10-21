@@ -242,6 +242,108 @@ func TestToolWithObjectAndArray(t *testing.T) {
 	assert.Contains(t, required, "books")
 }
 
+func TestToolWithAny(t *testing.T) {
+	const desc = "Can be any value: string, number, bool, object, or slice"
+
+	tool := NewTool("any-tool",
+		WithDescription("A tool with an 'any' type property"),
+		WithAny("data",
+			Description(desc),
+			Required(),
+		),
+	)
+
+	data, err := json.Marshal(tool)
+	assert.NoError(t, err)
+
+	var result map[string]any
+	err = json.Unmarshal(data, &result)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "any-tool", result["name"])
+
+	schema, ok := result["inputSchema"].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "object", schema["type"])
+
+	properties, ok := schema["properties"].(map[string]any)
+	assert.True(t, ok)
+
+	dataProp, ok := properties["data"].(map[string]any)
+	assert.True(t, ok)
+	_, typeExists := dataProp["type"]
+	assert.False(t, typeExists, "The 'any' type property should not have a 'type' field")
+	assert.Equal(t, desc, dataProp["description"])
+
+	required, ok := schema["required"].([]any)
+	assert.True(t, ok)
+	assert.Contains(t, required, "data")
+
+	type testStruct struct {
+		A string `json:"A"`
+	}
+	testCases := []struct {
+		description string
+		arg         any
+		expect      any
+	}{{
+		description: "string",
+		arg:         "hello world",
+		expect:      "hello world",
+	}, {
+		description: "integer",
+		arg:         123,
+		expect:      float64(123), // JSON unmarshals numbers to float64
+	}, {
+		description: "float",
+		arg:         3.14,
+		expect:      3.14,
+	}, {
+		description: "boolean",
+		arg:         true,
+		expect:      true,
+	}, {
+		description: "object",
+		arg:         map[string]any{"key": "value"},
+		expect:      map[string]any{"key": "value"},
+	}, {
+		description: "slice",
+		arg:         []any{1, "two", false},
+		expect:      []any{float64(1), "two", false},
+	}, {
+		description: "struct",
+		arg:         testStruct{A: "B"},
+		expect:      map[string]any{"A": "B"},
+	}}
+
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("with_%s", tc.description), func(t *testing.T) {
+			req := CallToolRequest{
+				Request: Request{},
+				Params: CallToolParams{
+					Name: "any-tool",
+					Arguments: map[string]any{
+						"data": tc.arg,
+					},
+				},
+			}
+
+			// Marshal and unmarshal to simulate a real request
+			reqBytes, err := json.Marshal(req)
+			assert.NoError(t, err)
+
+			var unmarshaledReq CallToolRequest
+			err = json.Unmarshal(reqBytes, &unmarshaledReq)
+			assert.NoError(t, err)
+
+			args := unmarshaledReq.GetArguments()
+			value, ok := args["data"]
+			assert.True(t, ok)
+			assert.Equal(t, tc.expect, value)
+		})
+	}
+}
+
 func TestParseToolCallToolRequest(t *testing.T) {
 	request := CallToolRequest{}
 	request.Params.Name = "test-tool"

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -37,6 +38,17 @@ type SessionWithTools interface {
 	// SetSessionTools sets tools specific to this session
 	// This method must be thread-safe for concurrent access
 	SetSessionTools(tools map[string]ServerTool)
+}
+
+// SessionWithResources is an extension of ClientSession that can store session-specific resource data
+type SessionWithResources interface {
+	ClientSession
+	// GetSessionResources returns the resources specific to this session, if any
+	// This method must be thread-safe for concurrent access
+	GetSessionResources() map[string]ServerResource
+	// SetSessionResources sets resources specific to this session
+	// This method must be thread-safe for concurrent access
+	SetSessionResources(resources map[string]ServerResource)
 }
 
 // SessionWithClientInfo is an extension of ClientSession that can store client info
@@ -449,6 +461,158 @@ func (s *MCPServer) DeleteSessionTools(sessionID string, names ...string) error 
 						"method":    "notifications/tools/list_changed",
 						"sessionID": sID,
 					}, fmt.Errorf("failed to send notification after deleting tools: %w", err))
+				}(sessionID, hooks)
+			}
+		}
+	}
+
+	return nil
+}
+
+// AddSessionResource adds a resource for a specific session
+func (s *MCPServer) AddSessionResource(sessionID string, resource mcp.Resource, handler ResourceHandlerFunc) error {
+	return s.AddSessionResources(sessionID, ServerResource{Resource: resource, Handler: handler})
+}
+
+// AddSessionResources adds resources for a specific session
+func (s *MCPServer) AddSessionResources(sessionID string, resources ...ServerResource) error {
+	sessionValue, ok := s.sessions.Load(sessionID)
+	if !ok {
+		return ErrSessionNotFound
+	}
+
+	session, ok := sessionValue.(SessionWithResources)
+	if !ok {
+		return ErrSessionDoesNotSupportResources
+	}
+
+	// For session resources, we want listChanged enabled by default
+	s.implicitlyRegisterCapabilities(
+		func() bool { return s.capabilities.resources != nil },
+		func() { s.capabilities.resources = &resourceCapabilities{listChanged: true} },
+	)
+
+	// Get existing resources (this should return a thread-safe copy)
+	sessionResources := session.GetSessionResources()
+
+	// Create a new map to avoid concurrent modification issues
+	newSessionResources := make(map[string]ServerResource, len(sessionResources)+len(resources))
+
+	// Copy existing resources
+	for k, v := range sessionResources {
+		newSessionResources[k] = v
+	}
+
+	// Add new resources with validation
+	for _, resource := range resources {
+		// Validate that URI is non-empty
+		if resource.Resource.URI == "" {
+			return fmt.Errorf("resource URI cannot be empty")
+		}
+
+		// Validate that URI conforms to RFC 3986
+		if _, err := url.ParseRequestURI(resource.Resource.URI); err != nil {
+			return fmt.Errorf("invalid resource URI: %w", err)
+		}
+
+		newSessionResources[resource.Resource.URI] = resource
+	}
+
+	// Set the resources (this should be thread-safe)
+	session.SetSessionResources(newSessionResources)
+
+	// It only makes sense to send resource notifications to initialized sessions --
+	// if we're not initialized yet the client can't possibly have sent their
+	// initial resources/list message.
+	//
+	// For initialized sessions, honor resources.listChanged, which is specifically
+	// about whether notifications will be sent or not.
+	// see <https://modelcontextprotocol.io/specification/2025-03-26/server/resources#capabilities>
+	if session.Initialized() && s.capabilities.resources != nil && s.capabilities.resources.listChanged {
+		// Send notification only to this session
+		if err := s.SendNotificationToSpecificClient(sessionID, "notifications/resources/list_changed", nil); err != nil {
+			// Log the error but don't fail the operation
+			// The resources were successfully added, but notification failed
+			if s.hooks != nil && len(s.hooks.OnError) > 0 {
+				hooks := s.hooks
+				go func(sID string, hooks *Hooks) {
+					ctx := context.Background()
+					hooks.onError(ctx, nil, "notification", map[string]any{
+						"method":    "notifications/resources/list_changed",
+						"sessionID": sID,
+					}, fmt.Errorf("failed to send notification after adding resources: %w", err))
+				}(sessionID, hooks)
+			}
+		}
+	}
+
+	return nil
+}
+
+// DeleteSessionResources removes resources from a specific session
+func (s *MCPServer) DeleteSessionResources(sessionID string, uris ...string) error {
+	sessionValue, ok := s.sessions.Load(sessionID)
+	if !ok {
+		return ErrSessionNotFound
+	}
+
+	session, ok := sessionValue.(SessionWithResources)
+	if !ok {
+		return ErrSessionDoesNotSupportResources
+	}
+
+	// Get existing resources (this should return a thread-safe copy)
+	sessionResources := session.GetSessionResources()
+	if sessionResources == nil {
+		return nil
+	}
+
+	// Create a new map to avoid concurrent modification issues
+	newSessionResources := make(map[string]ServerResource, len(sessionResources))
+
+	// Copy existing resources except those being deleted
+	for k, v := range sessionResources {
+		newSessionResources[k] = v
+	}
+
+	// Remove specified resources and track if anything was actually deleted
+	actuallyDeleted := false
+	for _, uri := range uris {
+		if _, exists := newSessionResources[uri]; exists {
+			delete(newSessionResources, uri)
+			actuallyDeleted = true
+		}
+	}
+
+	// Skip no-op write if nothing was actually deleted
+	if !actuallyDeleted {
+		return nil
+	}
+
+	// Set the resources (this should be thread-safe)
+	session.SetSessionResources(newSessionResources)
+
+	// It only makes sense to send resource notifications to initialized sessions --
+	// if we're not initialized yet the client can't possibly have sent their
+	// initial resources/list message.
+	//
+	// For initialized sessions, honor resources.listChanged, which is specifically
+	// about whether notifications will be sent or not.
+	// see <https://modelcontextprotocol.io/specification/2025-03-26/server/resources#capabilities>
+	// Only send notification if something was actually deleted
+	if actuallyDeleted && session.Initialized() && s.capabilities.resources != nil && s.capabilities.resources.listChanged {
+		// Send notification only to this session
+		if err := s.SendNotificationToSpecificClient(sessionID, "notifications/resources/list_changed", nil); err != nil {
+			// Log the error but don't fail the operation
+			// The resources were successfully deleted, but notification failed
+			if s.hooks != nil && len(s.hooks.OnError) > 0 {
+				hooks := s.hooks
+				go func(sID string, hooks *Hooks) {
+					ctx := context.Background()
+					hooks.onError(ctx, nil, "notification", map[string]any{
+						"method":    "notifications/resources/list_changed",
+						"sessionID": sID,
+					}, fmt.Errorf("failed to send notification after deleting resources: %w", err))
 				}(sessionID, hooks)
 			}
 		}
