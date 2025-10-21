@@ -592,6 +592,11 @@ func (s *StdioServer) processMessage(
 		return nil
 	}
 
+	// Check if this is a response to an list roots request
+	if s.handleListRootsResponse(rawMessage) {
+		return nil
+	}
+
 	// Check if this is a tool call that might need sampling (and thus should be processed concurrently)
 	var baseMessage struct {
 		Method string `json:"method"`
@@ -755,6 +760,67 @@ func (s *stdioSession) handleElicitationResponse(rawMessage json.RawMessage) boo
 	// Send the response (non-blocking)
 	select {
 	case responseChan <- elicitationResp:
+	default:
+		// Channel is full or closed, ignore
+	}
+
+	return true
+}
+
+// handleListRootsResponse checks if the message is a response to an list roots request
+// and routes it to the appropriate pending request channel.
+func (s *StdioServer) handleListRootsResponse(rawMessage json.RawMessage) bool {
+	return stdioSessionInstance.handleListRootsResponse(rawMessage)
+}
+
+// handleListRootsResponse handles incoming list root responses for this session
+func (s *stdioSession) handleListRootsResponse(rawMessage json.RawMessage) bool {
+	// Try to parse as a JSON-RPC response
+	var response struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.Number     `json:"id"`
+		Result  json.RawMessage `json:"result,omitempty"`
+		Error   *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error,omitempty"`
+	}
+
+	if err := json.Unmarshal(rawMessage, &response); err != nil {
+		return false
+	}
+	// Parse the ID as int64
+	id, err := response.ID.Int64()
+	if err != nil || (response.Result == nil && response.Error == nil) {
+		return false
+	}
+
+	// Check if we have a pending list root request with this ID
+	s.pendingMu.RLock()
+	responseChan, exists := s.pendingRoots[id]
+	s.pendingMu.RUnlock()
+
+	if !exists {
+		return false
+	}
+
+	// Parse and send the response
+	rootsResp := &rootsResponse{}
+
+	if response.Error != nil {
+		rootsResp.err = fmt.Errorf("list root request failed: %s", response.Error.Message)
+	} else {
+		var result mcp.ListRootsResult
+		if err := json.Unmarshal(response.Result, &result); err != nil {
+			rootsResp.err = fmt.Errorf("failed to unmarshal list root response: %w", err)
+		} else {
+			rootsResp.result = &result
+		}
+	}
+
+	// Send the response (non-blocking)
+	select {
+	case responseChan <- rootsResp:
 	default:
 		// Channel is full or closed, ignore
 	}

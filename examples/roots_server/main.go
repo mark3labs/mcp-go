@@ -20,10 +20,11 @@ func main() {
 		server.WithRoots(),
 	}
 	// Create MCP server with roots capability
-	mcpServer := server.NewMCPServer("roots-http-server", "1.0.0", opts...)
+	mcpServer := server.NewMCPServer("roots-stdio-server", "1.0.0", opts...)
 
 	// Add list root list change notification
 	mcpServer.AddNotificationHandler(mcp.MethodNotificationToolsListChanged, handleNotification)
+	mcpServer.EnableSampling()
 
 	// Add a simple tool to test roots list
 	mcpServer.AddTool(mcp.Tool{
@@ -68,24 +69,8 @@ func main() {
 		}
 	})
 
-	log.Println("Starting MCP Http server with roots support")
-	log.Println("Http Endpoint: http://localhost:8080/mcp")
-	log.Println("")
-	log.Println("This server supports roots over HTTP transport.")
-	log.Println("Clients must:")
-	log.Println("1. Initialize with roots capability")
-	log.Println("2. Establish SSE connection for bidirectional communication")
-	log.Println("3. Handle incoming roots requests from the server")
-	log.Println("4. Send responses back via HTTP POST")
-	log.Println("")
-	log.Println("Available tools:")
-	log.Println("- roots: Send back the list root request)")
-
-	// Create HTTP server
-	httpOpts := []server.StreamableHTTPOption{}
-	httpServer := server.NewStreamableHTTPServer(mcpServer, httpOpts...)
-	fmt.Printf("Starting HTTP server\n")
-	if err := httpServer.Start(":8080"); err != nil {
-		fmt.Printf("HTTP server failed: %v\n", err)
+	// Create stdio server
+	if err := server.ServeStdio(mcpServer); err != nil {
+		log.Fatalf("Server Stdio error: %v\n", err)
 	}
 }
