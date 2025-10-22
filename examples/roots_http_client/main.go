@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/mark3labs/mcp-go/client"
@@ -18,15 +20,18 @@ import (
 type MockRootsHandler struct{}
 
 func (h *MockRootsHandler) ListRoots(ctx context.Context, request mcp.ListRootsRequest) (*mcp.ListRootsResult, error) {
+	home, _ := os.UserHomeDir()
+	app := filepath.ToSlash(filepath.Join(home, "app"))
+	proj := filepath.ToSlash(filepath.Join(home, "projects", "test-project"))
 	result := &mcp.ListRootsResult{
 		Roots: []mcp.Root{
 			{
 				Name: "app",
-				URI:  "file:///User/haxxx/app",
+				URI:  (&url.URL{Scheme: "file", Path: "/" + app}).String(),
 			},
 			{
 				Name: "test-project",
-				URI:  "file:///User/haxxx/projects/test-project",
+				URI:  (&url.URL{Scheme: "file", Path: "/" + proj}).String(),
 			},
 		},
 	}
@@ -62,6 +67,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to start client: %v", err)
 	}
+	defer func() {
+		if cerr := mcpClient.Close(); cerr != nil {
+			log.Printf("Error closing client: %v", cerr)
+		}
+	}()
 
 	// Initialize the MCP session
 	initRequest := mcp.InitializeRequest{
@@ -101,6 +111,8 @@ func main() {
 	result, err := mcpClient.CallTool(ctx, request)
 	if err != nil {
 		log.Fatalf("failed to call tool roots: %v", err)
+	} else if result.IsError {
+		log.Printf("tool reported error")
 	} else if len(result.Content) > 0 {
 		resultStr := ""
 		for _, content := range result.Content {
@@ -115,10 +127,13 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	select {
-	case <-ctx.Done():
-		log.Println("Client context cancelled")
-	case <-sigChan:
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	go func() {
+		<-sigChan
 		log.Println("Received shutdown signal")
-	}
+		cancel()
+	}()
+	<-ctx.Done()
 }

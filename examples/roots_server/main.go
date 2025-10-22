@@ -15,8 +15,8 @@ func handleNotification(ctx context.Context, notification mcp.JSONRPCNotificatio
 }
 
 // main sets up and runs an MCP stdio server named "roots-stdio-server" with tool and roots capabilities.
-// It registers a handler for ToolsListChanged notifications, enables sampling, and adds a "roots" tool
-// that requests and returns the current root list. The program serves the MCP server over stdio and
+// It registers a handler for RootsListChanged notifications and adds a "roots" tool
+// that requests and returns the current roots list. The program serves the MCP server over stdio and
 // logs a fatal error if the server fails to start.
 func main() {
 	// Enable roots capability
@@ -42,7 +42,6 @@ func main() {
 					"description": "is this test only?",
 				},
 			},
-			Required: []string{"testonly"},
 		},
 	}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		rootRequest := mcp.ListRootsRequest{}
@@ -54,6 +53,9 @@ func main() {
 						Type: "text",
 						Text: fmt.Sprintf("Root list: %v", result.Roots),
 					},
+				},
+				StructuredContent: map[string]any{
+					"roots": result.Roots,
 				},
 			}, nil
 

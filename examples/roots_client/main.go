@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/mark3labs/mcp-go/client"
@@ -18,15 +20,18 @@ import (
 type MockRootsHandler struct{}
 
 func (h *MockRootsHandler) ListRoots(ctx context.Context, request mcp.ListRootsRequest) (*mcp.ListRootsResult, error) {
+	home, _ := os.UserHomeDir()
+	app := filepath.ToSlash(filepath.Join(home, "app"))
+	proj := filepath.ToSlash(filepath.Join(home, "projects", "test-project"))
 	result := &mcp.ListRootsResult{
 		Roots: []mcp.Root{
 			{
 				Name: "app",
-				URI:  "file:///User/haxxx/app",
+				URI:  (&url.URL{Scheme: "file", Path: "/" + app}).String(),
 			},
 			{
 				Name: "test-project",
-				URI:  "file:///User/haxxx/projects/test-project",
+				URI:  (&url.URL{Scheme: "file", Path: "/" + proj}).String(),
 			},
 		},
 	}
@@ -119,6 +124,8 @@ func main() {
 	result, err := mcpClient.CallTool(ctx, request)
 	if err != nil {
 		log.Fatalf("failed to call tool roots: %v", err)
+	} else if result.IsError {
+		log.Printf("tool reported error")
 	} else if len(result.Content) > 0 {
 		resultStr := ""
 		for _, content := range result.Content {
@@ -132,5 +139,13 @@ func main() {
 	// mock the root change
 	if err := mcpClient.RootListChanges(ctx); err != nil {
 		log.Printf("fail to notify root list change: %v", err)
+	}
+
+	// Keep running until cancelled by signal
+	select {
+	case <-ctx.Done():
+		log.Println("Client context cancelled")
+	case <-sigChan:
+		log.Println("Received shutdown signal")
 	}
 }
