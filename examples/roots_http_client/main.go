@@ -14,7 +14,7 @@ import (
 )
 
 // MockRootsHandler implements client.RootsHandler for demonstration.
-// In a real implementation, this would integrate with an actual LLM API.
+// In a real implementation, this would enumerate workspace/project roots.
 type MockRootsHandler struct{}
 
 func (h *MockRootsHandler) ListRoots(ctx context.Context, request mcp.ListRootsRequest) (*mcp.ListRootsResult, error) {
@@ -33,9 +33,9 @@ func (h *MockRootsHandler) ListRoots(ctx context.Context, request mcp.ListRootsR
 	return result, nil
 }
 
-// main starts a mock MCP roots client that communicates with a MCP server over http.
-// client will call server tool to get the root list. in server tool hander, it will send the list root request to client.
-// shuts down the client gracefully on SIGINT or SIGTERM.
+// main starts a mock MCP roots client over HTTP.
+// The server tool triggers a roots/list request on the client.
+// The client shuts down gracefully on SIGINT or SIGTERM.
 func main() {
 	// Create roots handler
 	rootsHandler := &MockRootsHandler{}
@@ -97,7 +97,7 @@ func main() {
 	// call server tool
 	request := mcp.CallToolRequest{}
 	request.Params.Name = "roots"
-	request.Params.Arguments = "{\"testonly\": \"yes\"}"
+	request.Params.Arguments = map[string]any{"testonly": "yes"}
 	result, err := mcpClient.CallTool(ctx, request)
 	if err != nil {
 		log.Fatalf("failed to call tool roots: %v", err)
@@ -108,7 +108,7 @@ func main() {
 				resultStr += fmt.Sprintf("%s\n", textContent.Text)
 			}
 		}
-		fmt.Printf("client call tool result: %s", resultStr)
+		fmt.Printf("client call tool result: %s\n", resultStr)
 	}
 
 	// Keep the client running (in a real app, you'd have your main application logic here)

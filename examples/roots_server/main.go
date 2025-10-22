@@ -11,7 +11,7 @@ import (
 
 // handleNotification handles JSON-RPC notifications by printing the notification method to standard output.
 func handleNotification(ctx context.Context, notification mcp.JSONRPCNotification) {
-	fmt.Printf("notification received: %v", notification.Notification.Method)
+	fmt.Printf("notification received: %v\n", notification.Notification.Method)
 }
 
 // main sets up and runs an MCP stdio server named "roots-stdio-server" with tool and roots capabilities.
@@ -27,9 +27,8 @@ func main() {
 	// Create MCP server with roots capability
 	mcpServer := server.NewMCPServer("roots-stdio-server", "1.0.0", opts...)
 
-	// Add list root list change notification
+	// Register roots list-change notification handler
 	mcpServer.AddNotificationHandler(mcp.MethodNotificationRootsListChanged, handleNotification)
-	mcpServer.EnableSampling()
 
 	// Add a simple tool to test roots list
 	mcpServer.AddTool(mcp.Tool{
@@ -59,7 +58,15 @@ func main() {
 			}, nil
 
 		} else {
-			return nil, err
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					mcp.TextContent{
+						Type: "text",
+						Text: fmt.Sprintf("Fail to list roots: %v", err),
+					},
+				},
+				IsError: true,
+			}, nil
 		}
 	})
 

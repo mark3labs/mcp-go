@@ -74,7 +74,7 @@ const (
 	MethodNotificationPromptsListChanged = "notifications/prompts/list_changed"
 
 	// MethodNotificationToolsListChanged notifies when the list of available tools changes.
-	// https://modelcontextprotocol.io/specification/2025-06-18/client/roots#root-list-changes
+	// https://modelcontextprotocol.io/specification/2025-06-18/server/tools#list-changed-notification
 	MethodNotificationToolsListChanged = "notifications/tools/list_changed"
 
 	// MethodNotificationRootsListChanged notifies when the list of available roots changes.

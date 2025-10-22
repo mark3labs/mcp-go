@@ -481,6 +481,7 @@ func (c *Client) Complete(
 	return &result, nil
 }
 
+// RootListChanges sends a roots list-changed notification to the server.
 func (c *Client) RootListChanges(
 	ctx context.Context,
 ) error {
@@ -602,7 +603,7 @@ func (c *Client) handleListRootsRequestTransport(ctx context.Context, request tr
 	}
 
 	// Create the transport response
-	response := transport.NewJSONRPCResultResponse(request.ID, resultBytes)
+	response := transport.NewJSONRPCResultResponse(request.ID, json.RawMessage(resultBytes))
 
 	return response, nil
 }
