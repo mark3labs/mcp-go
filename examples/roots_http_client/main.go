@@ -109,9 +109,12 @@ func main() {
 	}
 
 	// call server tool
-	request := mcp.CallToolRequest{}
-	request.Params.Name = "roots"
-	request.Params.Arguments = map[string]any{"testonly": "yes"}
+	request := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "roots",
+			Arguments: map[string]any{"testonly": "yes"},
+		},
+	}
 	result, err := mcpClient.CallTool(ctx, request)
 	if err != nil {
 		log.Fatalf("failed to call tool roots: %v", err)
@@ -131,7 +134,7 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	ctx, cancel := context.WithCancel(ctx)
+	shutdownCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	go func() {
@@ -139,5 +142,5 @@ func main() {
 		log.Println("Received shutdown signal")
 		cancel()
 	}()
-	<-ctx.Done()
+	<-shutdownCtx.Done()
 }
