@@ -14,6 +14,7 @@ type InProcessTransport struct {
 	server             *server.MCPServer
 	samplingHandler    server.SamplingHandler
 	elicitationHandler server.ElicitationHandler
+	rootsHandler       server.RootsHandler
 	session            *server.InProcessSession
 	sessionID          string
 
@@ -31,12 +32,23 @@ func WithSamplingHandler(handler server.SamplingHandler) InProcessOption {
 	}
 }
 
+// WithElicitationHandler returns an InProcessOption that sets the elicitation handler on an InProcessTransport.
+// The provided handler will be used to handle elicitation requests for the in-process session when the transport is started.
 func WithElicitationHandler(handler server.ElicitationHandler) InProcessOption {
 	return func(t *InProcessTransport) {
 		t.elicitationHandler = handler
 	}
 }
 
+// WithRootsHandler returns an InProcessOption that sets the transport's roots handler.
+// The provided handler is assigned to the transport's rootsHandler field when the option is applied.
+func WithRootsHandler(handler server.RootsHandler) InProcessOption {
+	return func(t *InProcessTransport) {
+		t.rootsHandler = handler
+	}
+}
+
+// NewInProcessTransport creates an InProcessTransport that wraps the provided MCPServer with default (zero-value) configuration.
 func NewInProcessTransport(server *server.MCPServer) *InProcessTransport {
 	return &InProcessTransport{
 		server: server,
@@ -66,8 +78,8 @@ func (c *InProcessTransport) Start(ctx context.Context) error {
 	c.startedMu.Unlock()
 
 	// Create and register session if we have handlers
-	if c.samplingHandler != nil || c.elicitationHandler != nil {
-		c.session = server.NewInProcessSessionWithHandlers(c.sessionID, c.samplingHandler, c.elicitationHandler)
+	if c.samplingHandler != nil || c.elicitationHandler != nil || c.rootsHandler != nil {
+		c.session = server.NewInProcessSessionWithHandlers(c.sessionID, c.samplingHandler, c.elicitationHandler, c.rootsHandler)
 		if err := c.server.RegisterSession(ctx, c.session); err != nil {
 			c.startedMu.Lock()
 			c.started = false

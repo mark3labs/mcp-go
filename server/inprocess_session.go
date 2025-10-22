@@ -20,6 +20,10 @@ type ElicitationHandler interface {
 	Elicit(ctx context.Context, request mcp.ElicitationRequest) (*mcp.ElicitationResult, error)
 }
 
+type RootsHandler interface {
+	ListRoots(ctx context.Context, request mcp.ListRootsRequest) (*mcp.ListRootsResult, error)
+}
+
 type InProcessSession struct {
 	sessionID          string
 	notifications      chan mcp.JSONRPCNotification
@@ -29,9 +33,12 @@ type InProcessSession struct {
 	clientCapabilities atomic.Value
 	samplingHandler    SamplingHandler
 	elicitationHandler ElicitationHandler
+	rootsHandler       RootsHandler
 	mu                 sync.RWMutex
 }
 
+// NewInProcessSession creates a new InProcessSession for the provided sessionID and samplingHandler.
+// The returned session has a buffered notifications channel and its sampling handler set; elicitation and roots handlers remain unset.
 func NewInProcessSession(sessionID string, samplingHandler SamplingHandler) *InProcessSession {
 	return &InProcessSession{
 		sessionID:       sessionID,
@@ -40,12 +47,16 @@ func NewInProcessSession(sessionID string, samplingHandler SamplingHandler) *InP
 	}
 }
 
-func NewInProcessSessionWithHandlers(sessionID string, samplingHandler SamplingHandler, elicitationHandler ElicitationHandler) *InProcessSession {
+// NewInProcessSessionWithHandlers creates an InProcessSession with the given session ID and handler implementations.
+// The session is created with a buffered notifications channel (capacity 100) and the provided sampling, elicitation,
+// and roots handlers attached.
+func NewInProcessSessionWithHandlers(sessionID string, samplingHandler SamplingHandler, elicitationHandler ElicitationHandler, rootsHandler RootsHandler) *InProcessSession {
 	return &InProcessSession{
 		sessionID:          sessionID,
 		notifications:      make(chan mcp.JSONRPCNotification, 100),
 		samplingHandler:    samplingHandler,
 		elicitationHandler: elicitationHandler,
+		rootsHandler:       rootsHandler,
 	}
 }
 
@@ -128,7 +139,19 @@ func (s *InProcessSession) RequestElicitation(ctx context.Context, request mcp.E
 	return handler.Elicit(ctx, request)
 }
 
-// GenerateInProcessSessionID generates a unique session ID for inprocess clients
+func (s *InProcessSession) ListRoots(ctx context.Context, request mcp.ListRootsRequest) (*mcp.ListRootsResult, error) {
+	s.mu.RLock()
+	handler := s.rootsHandler
+	s.mu.RUnlock()
+
+	if handler == nil {
+		return nil, fmt.Errorf("no roots handler available")
+	}
+
+	return handler.ListRoots(ctx, request)
+}
+
+// GenerateInProcessSessionID returns a session identifier formatted as "inprocess-<n>", where <n> is the current Unix time in nanoseconds, suitable for use as a unique in-process session ID.
 func GenerateInProcessSessionID() string {
 	return fmt.Sprintf("inprocess-%d", time.Now().UnixNano())
 }
@@ -140,4 +163,5 @@ var (
 	_ SessionWithClientInfo  = (*InProcessSession)(nil)
 	_ SessionWithSampling    = (*InProcessSession)(nil)
 	_ SessionWithElicitation = (*InProcessSession)(nil)
+	_ SessionWithRoots       = (*InProcessSession)(nil)
 )
