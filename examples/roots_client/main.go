@@ -106,11 +106,6 @@ func main() {
 		log.Printf("  - %s: %s", tool.Name, tool.Description)
 	}
 
-	// mock the root change
-	if err := mcpClient.RootListChanges(ctx); err != nil {
-		log.Printf("fail to notify root list change: %v", err)
-	}
-
 	// call server tool
 	request := mcp.CallToolRequest{}
 	request.Params.Name = "roots"
@@ -126,5 +121,10 @@ func main() {
 			}
 		}
 		fmt.Printf("client call tool result: %s", resultStr)
+	}
+
+	// mock the root change
+	if err := mcpClient.RootListChanges(ctx); err != nil {
+		log.Printf("fail to notify root list change: %v", err)
 	}
 }
