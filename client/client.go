@@ -25,6 +25,7 @@ type Client struct {
 	serverCapabilities mcp.ServerCapabilities
 	protocolVersion    string
 	samplingHandler    SamplingHandler
+	rootsHandler       RootsHandler
 	elicitationHandler ElicitationHandler
 }
 
@@ -42,6 +43,15 @@ func WithClientCapabilities(capabilities mcp.ClientCapabilities) ClientOption {
 func WithSamplingHandler(handler SamplingHandler) ClientOption {
 	return func(c *Client) {
 		c.samplingHandler = handler
+	}
+}
+
+// WithRootsHandler sets the roots handler for the client.
+// WithRootsHandler returns a ClientOption that sets the client's RootsHandler.
+// When provided, the client will declare the roots capability (ListChanged) during initialization.
+func WithRootsHandler(handler RootsHandler) ClientOption {
+	return func(c *Client) {
+		c.rootsHandler = handler
 	}
 }
 
@@ -179,6 +189,13 @@ func (c *Client) Initialize(
 	capabilities := request.Params.Capabilities
 	if c.samplingHandler != nil {
 		capabilities.Sampling = &struct{}{}
+	}
+	if c.rootsHandler != nil {
+		capabilities.Roots = &struct {
+			ListChanged bool `json:"listChanged,omitempty"`
+		}{
+			ListChanged: true,
+		}
 	}
 	// Add elicitation capability if handler is configured
 	if c.elicitationHandler != nil {
@@ -467,6 +484,28 @@ func (c *Client) Complete(
 	return &result, nil
 }
 
+// RootListChanges sends a roots list-changed notification to the server.
+func (c *Client) RootListChanges(
+	ctx context.Context,
+) error {
+	// Send root list changes notification
+	notification := mcp.JSONRPCNotification{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		Notification: mcp.Notification{
+			Method: mcp.MethodNotificationRootsListChanged,
+		},
+	}
+
+	err := c.transport.SendNotification(ctx, notification)
+	if err != nil {
+		return fmt.Errorf(
+			"failed to send root list change notification: %w",
+			err,
+		)
+	}
+	return nil
+}
+
 // handleIncomingRequest processes incoming requests from the server.
 // This is the main entry point for server-to-client requests like sampling and elicitation.
 func (c *Client) handleIncomingRequest(ctx context.Context, request transport.JSONRPCRequest) (*transport.JSONRPCResponse, error) {
@@ -477,6 +516,8 @@ func (c *Client) handleIncomingRequest(ctx context.Context, request transport.JS
 		return c.handleElicitationRequestTransport(ctx, request)
 	case string(mcp.MethodPing):
 		return c.handlePingRequestTransport(ctx, request)
+	case string(mcp.MethodListRoots):
+		return c.handleListRootsRequestTransport(ctx, request)
 	default:
 		return nil, fmt.Errorf("unsupported request method: %s", request.Method)
 	}
@@ -523,6 +564,37 @@ func (c *Client) handleSamplingRequestTransport(ctx context.Context, request tra
 
 	// Call the sampling handler
 	result, err := c.samplingHandler.CreateMessage(ctx, mcpRequest)
+	if err != nil {
+		return nil, err
+	}
+
+	// Marshal the result
+	resultBytes, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal result: %w", err)
+	}
+
+	// Create the transport response
+	response := transport.NewJSONRPCResultResponse(request.ID, json.RawMessage(resultBytes))
+
+	return response, nil
+}
+
+// handleListRootsRequestTransport handles list roots requests at the transport level.
+func (c *Client) handleListRootsRequestTransport(ctx context.Context, request transport.JSONRPCRequest) (*transport.JSONRPCResponse, error) {
+	if c.rootsHandler == nil {
+		return nil, fmt.Errorf("no roots handler configured")
+	}
+
+	// Create the MCP request
+	mcpRequest := mcp.ListRootsRequest{
+		Request: mcp.Request{
+			Method: string(mcp.MethodListRoots),
+		},
+	}
+
+	// Call the list roots handler
+	result, err := c.rootsHandler.ListRoots(ctx, mcpRequest)
 	if err != nil {
 		return nil, err
 	}

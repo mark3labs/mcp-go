@@ -20,6 +20,11 @@ type ElicitationHandler interface {
 	Elicit(ctx context.Context, request mcp.ElicitationRequest) (*mcp.ElicitationResult, error)
 }
 
+// RootsHandler defines the interface for handling roots list requests from servers.
+type RootsHandler interface {
+	ListRoots(ctx context.Context, request mcp.ListRootsRequest) (*mcp.ListRootsResult, error)
+}
+
 type InProcessSession struct {
 	sessionID          string
 	notifications      chan mcp.JSONRPCNotification
@@ -29,6 +34,7 @@ type InProcessSession struct {
 	clientCapabilities atomic.Value
 	samplingHandler    SamplingHandler
 	elicitationHandler ElicitationHandler
+	rootsHandler       RootsHandler
 	mu                 sync.RWMutex
 }
 
@@ -40,12 +46,13 @@ func NewInProcessSession(sessionID string, samplingHandler SamplingHandler) *InP
 	}
 }
 
-func NewInProcessSessionWithHandlers(sessionID string, samplingHandler SamplingHandler, elicitationHandler ElicitationHandler) *InProcessSession {
+func NewInProcessSessionWithHandlers(sessionID string, samplingHandler SamplingHandler, elicitationHandler ElicitationHandler, rootsHandler RootsHandler) *InProcessSession {
 	return &InProcessSession{
 		sessionID:          sessionID,
 		notifications:      make(chan mcp.JSONRPCNotification, 100),
 		samplingHandler:    samplingHandler,
 		elicitationHandler: elicitationHandler,
+		rootsHandler:       rootsHandler,
 	}
 }
 
@@ -128,6 +135,20 @@ func (s *InProcessSession) RequestElicitation(ctx context.Context, request mcp.E
 	return handler.Elicit(ctx, request)
 }
 
+// ListRoots sends a list roots request to the client and waits for the response.
+// Returns an error if no roots handler is available.
+func (s *InProcessSession) ListRoots(ctx context.Context, request mcp.ListRootsRequest) (*mcp.ListRootsResult, error) {
+	s.mu.RLock()
+	handler := s.rootsHandler
+	s.mu.RUnlock()
+
+	if handler == nil {
+		return nil, fmt.Errorf("no roots handler available")
+	}
+
+	return handler.ListRoots(ctx, request)
+}
+
 // GenerateInProcessSessionID generates a unique session ID for inprocess clients
 func GenerateInProcessSessionID() string {
 	return fmt.Sprintf("inprocess-%d", time.Now().UnixNano())
@@ -140,4 +161,5 @@ var (
 	_ SessionWithClientInfo  = (*InProcessSession)(nil)
 	_ SessionWithSampling    = (*InProcessSession)(nil)
 	_ SessionWithElicitation = (*InProcessSession)(nil)
+	_ SessionWithRoots       = (*InProcessSession)(nil)
 )

@@ -14,6 +14,7 @@ type InProcessTransport struct {
 	server             *server.MCPServer
 	samplingHandler    server.SamplingHandler
 	elicitationHandler server.ElicitationHandler
+	rootsHandler       server.RootsHandler
 	session            *server.InProcessSession
 	sessionID          string
 
@@ -34,6 +35,12 @@ func WithSamplingHandler(handler server.SamplingHandler) InProcessOption {
 func WithElicitationHandler(handler server.ElicitationHandler) InProcessOption {
 	return func(t *InProcessTransport) {
 		t.elicitationHandler = handler
+	}
+}
+
+func WithRootsHandler(handler server.RootsHandler) InProcessOption {
+	return func(t *InProcessTransport) {
+		t.rootsHandler = handler
 	}
 }
 
@@ -66,8 +73,8 @@ func (c *InProcessTransport) Start(ctx context.Context) error {
 	c.startedMu.Unlock()
 
 	// Create and register session if we have handlers
-	if c.samplingHandler != nil || c.elicitationHandler != nil {
-		c.session = server.NewInProcessSessionWithHandlers(c.sessionID, c.samplingHandler, c.elicitationHandler)
+	if c.samplingHandler != nil || c.elicitationHandler != nil || c.rootsHandler != nil {
+		c.session = server.NewInProcessSessionWithHandlers(c.sessionID, c.samplingHandler, c.elicitationHandler, c.rootsHandler)
 		if err := c.server.RegisterSession(ctx, c.session); err != nil {
 			c.startedMu.Lock()
 			c.started = false

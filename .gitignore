@@ -5,3 +5,4 @@
 .claude
 coverage.out
 coverage.txt
+.vscode/launch.json
