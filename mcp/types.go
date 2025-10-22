@@ -74,8 +74,12 @@ const (
 	MethodNotificationPromptsListChanged = "notifications/prompts/list_changed"
 
 	// MethodNotificationToolsListChanged notifies when the list of available tools changes.
-	// https://spec.modelcontextprotocol.io/specification/2024-11-05/server/tools/list_changed/
+	// https://modelcontextprotocol.io/specification/2025-06-18/client/roots#root-list-changes
 	MethodNotificationToolsListChanged = "notifications/tools/list_changed"
+
+	// MethodNotificationRootsListChanged notifies when the list of available roots changes.
+	// https://modelcontextprotocol.io/specification/2025-06-18/client/roots#root-list-changes
+	MethodNotificationRootsListChanged = "notifications/roots/list_changed"
 )
 
 type URITemplate struct {

@@ -33,6 +33,9 @@ func (h *MockRootsHandler) ListRoots(ctx context.Context, request mcp.ListRootsR
 	return result, nil
 }
 
+// main starts a mock MCP roots client that communicates with a MCP server over http.
+// client will call server tool to get the root list. in server tool hander, it will send the list root request to client.
+// shuts down the client gracefully on SIGINT or SIGTERM.
 func main() {
 	// Create roots handler
 	rootsHandler := &MockRootsHandler{}

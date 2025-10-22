@@ -20,6 +20,7 @@ type ElicitationHandler interface {
 	Elicit(ctx context.Context, request mcp.ElicitationRequest) (*mcp.ElicitationResult, error)
 }
 
+// RootsHandler defines the interface for handling roots list requests from servers.
 type RootsHandler interface {
 	ListRoots(ctx context.Context, request mcp.ListRootsRequest) (*mcp.ListRootsResult, error)
 }
@@ -134,6 +135,8 @@ func (s *InProcessSession) RequestElicitation(ctx context.Context, request mcp.E
 	return handler.Elicit(ctx, request)
 }
 
+// ListRoots sends a list roots request to the client and waits for the response.
+// Returns an error if no roots handler is available.
 func (s *InProcessSession) ListRoots(ctx context.Context, request mcp.ListRootsRequest) (*mcp.ListRootsResult, error) {
 	s.mu.RLock()
 	handler := s.rootsHandler

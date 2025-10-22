@@ -1054,7 +1054,8 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 	}
 }
 
-// ListRoots implements SessionWithRoots interface for HTTP transport
+// ListRoots implements SessionWithRoots interface for HTTP transport.
+// It sends a list roots request to the client via SSE and waits for the response.
 func (s *streamableHttpSession) ListRoots(ctx context.Context, request mcp.ListRootsRequest) (*mcp.ListRootsResult, error) {
 	// Generate unique request ID
 	requestID := s.requestIDCounter.Add(1)
@@ -1062,7 +1063,7 @@ func (s *streamableHttpSession) ListRoots(ctx context.Context, request mcp.ListR
 	// Create response channel for this specific request
 	responseChan := make(chan samplingResponseItem, 1)
 
-	// Create the sampling request item
+	// Create the roots request item
 	rootsRequest := rootsRequestItem{
 		requestID: requestID,
 		request:   request,
@@ -1073,7 +1074,7 @@ func (s *streamableHttpSession) ListRoots(ctx context.Context, request mcp.ListR
 	s.samplingRequests.Store(requestID, responseChan)
 	defer s.samplingRequests.Delete(requestID)
 
-	// Send the sampling request via the channel (non-blocking)
+	// Send the list roots request via the channel (non-blocking)
 	select {
 	case s.rootsRequestChan <- rootsRequest:
 		// Request queued successfully

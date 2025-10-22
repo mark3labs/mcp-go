@@ -9,10 +9,15 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+// handleNotification handles JSON-RPC notifications by printing the notification method to standard output.
 func handleNotification(ctx context.Context, notification mcp.JSONRPCNotification) {
 	fmt.Printf("notification received: %v", notification.Notification.Method)
 }
 
+// main sets up and runs an MCP stdio server named "roots-stdio-server" with tool and roots capabilities.
+// It registers a handler for ToolsListChanged notifications, enables sampling, and adds a "roots" tool
+// that requests and returns the current root list. The program serves the MCP server over stdio and
+// logs a fatal error if the server fails to start.
 func main() {
 	// Enable roots capability
 	opts := []server.ServerOption{
@@ -23,7 +28,7 @@ func main() {
 	mcpServer := server.NewMCPServer("roots-stdio-server", "1.0.0", opts...)
 
 	// Add list root list change notification
-	mcpServer.AddNotificationHandler(mcp.MethodNotificationToolsListChanged, handleNotification)
+	mcpServer.AddNotificationHandler(mcp.MethodNotificationRootsListChanged, handleNotification)
 	mcpServer.EnableSampling()
 
 	// Add a simple tool to test roots list
@@ -41,11 +46,7 @@ func main() {
 			Required: []string{"testonly"},
 		},
 	}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		rootRequest := mcp.ListRootsRequest{
-			Request: mcp.Request{
-				Method: string(mcp.MethodListRoots),
-			},
-		}
+		rootRequest := mcp.ListRootsRequest{}
 
 		if result, err := mcpServer.RequestRoots(ctx, rootRequest); err == nil {
 			return &mcp.CallToolResult{
@@ -58,14 +59,7 @@ func main() {
 			}, nil
 
 		} else {
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{
-					mcp.TextContent{
-						Type: "text",
-						Text: fmt.Sprintf("Fail to list root, %v", err),
-					},
-				},
-			}, err
+			return nil, err
 		}
 	})
 

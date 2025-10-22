@@ -327,7 +327,7 @@ func WithElicitation() ServerOption {
 	}
 }
 
-// WithRoots enables roots capabilities for the server
+// WithRoots returns a ServerOption that enables the roots capability on the MCPServer
 func WithRoots() ServerOption {
 	return func(s *MCPServer) {
 		s.capabilities.roots = mcp.ToBoolPtr(true)

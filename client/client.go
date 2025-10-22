@@ -46,7 +46,8 @@ func WithSamplingHandler(handler SamplingHandler) ClientOption {
 }
 
 // WithRootsHandler sets the roots handler for the client.
-// When set, the client will declare roots capability during initialization.
+// WithRootsHandler returns a ClientOption that sets the client's RootsHandler.
+// When provided, the client will declare the roots capability (ListChanged) during initialization.
 func WithRootsHandler(handler RootsHandler) ClientOption {
 	return func(c *Client) {
 		c.rootsHandler = handler
@@ -487,7 +488,7 @@ func (c *Client) RootListChanges(
 	notification := mcp.JSONRPCNotification{
 		JSONRPC: mcp.JSONRPC_VERSION,
 		Notification: mcp.Notification{
-			Method: mcp.MethodNotificationToolsListChanged,
+			Method: mcp.MethodNotificationRootsListChanged,
 		},
 	}
 

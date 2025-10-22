@@ -33,6 +33,12 @@ func (h *MockRootsHandler) ListRoots(ctx context.Context, request mcp.ListRootsR
 	return result, nil
 }
 
+// main starts a mock MCP roots client that communicates with a subprocess over stdio.
+// It expects the server command as the first command-line argument, creates a stdio
+// transport and an MCP client with a MockRootsHandler, starts and initializes the
+// client, logs server info and available tools, notifies the server of root list
+// changes, invokes the "roots" tool and prints any text content returned, and
+// shuts down the client gracefully on SIGINT or SIGTERM.
 func main() {
 	if len(os.Args) < 2 {
 		log.Fatal("Usage: roots_client <server_command>")
@@ -81,11 +87,11 @@ func main() {
 		Params: mcp.InitializeParams{
 			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
 			ClientInfo: mcp.Implementation{
-				Name:    "roots-stdio-server",
+				Name:    "roots-stdio-client",
 				Version: "1.0.0",
 			},
 			Capabilities: mcp.ClientCapabilities{
-				// Sampling capability will be automatically added by WithSamplingHandler
+				// Roots capability will be automatically added by WithRootsHandler
 			},
 		},
 	})
