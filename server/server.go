@@ -183,6 +183,7 @@ type serverCapabilities struct {
 	logging     *bool
 	sampling    *bool
 	elicitation *bool
+	roots       *bool
 }
 
 // resourceCapabilities defines the supported resource-related features
@@ -319,14 +320,23 @@ func WithLogging() ServerOption {
 	}
 }
 
-// WithElicitation enables elicitation capabilities for the server
+// WithElicitation returns a ServerOption that enables the server's elicitation capability.
+// When applied to an MCPServer, it sets the server's capabilities.elicitation flag to true.
 func WithElicitation() ServerOption {
 	return func(s *MCPServer) {
 		s.capabilities.elicitation = mcp.ToBoolPtr(true)
 	}
 }
 
-// WithInstructions sets the server instructions for the client returned in the initialize response
+// WithRoots returns a ServerOption that enables the roots capability on the MCPServer.
+func WithRoots() ServerOption {
+	return func(s *MCPServer) {
+		s.capabilities.roots = mcp.ToBoolPtr(true)
+	}
+}
+
+// WithInstructions returns a ServerOption that sets the server instructions sent to clients in the initialize response.
+// The provided instructions string is stored on the MCPServer and included in InitializeResult.Instructions.
 func WithInstructions(instructions string) ServerOption {
 	return func(s *MCPServer) {
 		s.instructions = instructions
@@ -694,6 +704,10 @@ func (s *MCPServer) handleInitialize(
 
 	if s.capabilities.elicitation != nil && *s.capabilities.elicitation {
 		capabilities.Elicitation = &struct{}{}
+	}
+
+	if s.capabilities.roots != nil && *s.capabilities.roots {
+		capabilities.Roots = &struct{}{}
 	}
 
 	result := mcp.InitializeResult{
