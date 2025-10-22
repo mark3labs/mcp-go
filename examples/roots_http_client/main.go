@@ -31,11 +31,11 @@ func (h *MockRootsHandler) ListRoots(ctx context.Context, request mcp.ListRootsR
 		Roots: []mcp.Root{
 			{
 				Name: "app",
-				URI:  (&url.URL{Scheme: "file", Path: "/" + app}).String(),
+				URI:  (&url.URL{Scheme: "file", Path: app}).String(),
 			},
 			{
 				Name: "test-project",
-				URI:  (&url.URL{Scheme: "file", Path: "/" + proj}).String(),
+				URI:  (&url.URL{Scheme: "file", Path: proj}).String(),
 			},
 		},
 	}

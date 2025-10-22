@@ -31,11 +31,11 @@ func (h *MockRootsHandler) ListRoots(ctx context.Context, request mcp.ListRootsR
 		Roots: []mcp.Root{
 			{
 				Name: "app",
-				URI:  (&url.URL{Scheme: "file", Path: "/" + app}).String(),
+				URI:  (&url.URL{Scheme: "file", Path: app}).String(),
 			},
 			{
 				Name: "test-project",
-				URI:  (&url.URL{Scheme: "file", Path: "/" + proj}).String(),
+				URI:  (&url.URL{Scheme: "file", Path: proj}).String(),
 			},
 		},
 	}
@@ -146,10 +146,6 @@ func main() {
 	}
 
 	// Keep running until cancelled by signal
-	select {
-	case <-ctx.Done():
-		log.Println("Client context cancelled")
-	case <-sigChan:
-		log.Println("Received shutdown signal")
-	}
+	<-ctx.Done()
+	log.Println("Client context cancelled")
 }
