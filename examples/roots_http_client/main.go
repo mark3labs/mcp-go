@@ -20,7 +20,11 @@ import (
 type MockRootsHandler struct{}
 
 func (h *MockRootsHandler) ListRoots(ctx context.Context, request mcp.ListRootsRequest) (*mcp.ListRootsResult, error) {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		log.Printf("Warning: failed to get home directory: %v", err)
+		home = "/tmp" // fallback for demonstration
+	}
 	app := filepath.ToSlash(filepath.Join(home, "app"))
 	proj := filepath.ToSlash(filepath.Join(home, "projects", "test-project"))
 	result := &mcp.ListRootsResult{
