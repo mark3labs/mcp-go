@@ -880,12 +880,34 @@ func (s *MCPServer) handleListResourceTemplates(
 	id any,
 	request mcp.ListResourceTemplatesRequest,
 ) (*mcp.ListResourceTemplatesResult, *requestError) {
+	// Get global templates
 	s.resourcesMu.RLock()
-	templates := make([]mcp.ResourceTemplate, 0, len(s.resourceTemplates))
-	for _, entry := range s.resourceTemplates {
-		templates = append(templates, entry.template)
+	templateMap := make(map[string]mcp.ResourceTemplate, len(s.resourceTemplates))
+	for uri, entry := range s.resourceTemplates {
+		templateMap[uri] = entry.template
 	}
 	s.resourcesMu.RUnlock()
+
+	// Check if there are session-specific resource templates
+	session := ClientSessionFromContext(ctx)
+	if session != nil {
+		if sessionWithTemplates, ok := session.(SessionWithResourceTemplates); ok {
+			if sessionTemplates := sessionWithTemplates.GetSessionResourceTemplates(); sessionTemplates != nil {
+				// Merge session-specific templates with global templates
+				// Session templates override global ones
+				for uriTemplate, serverTemplate := range sessionTemplates {
+					templateMap[uriTemplate] = serverTemplate.Template
+				}
+			}
+		}
+	}
+
+	// Convert map to slice for sorting and pagination
+	templates := make([]mcp.ResourceTemplate, 0, len(templateMap))
+	for _, template := range templateMap {
+		templates = append(templates, template)
+	}
+
 	sort.Slice(templates, func(i, j int) bool {
 		return templates[i].Name < templates[j].Name
 	})
@@ -971,18 +993,42 @@ func (s *MCPServer) handleReadResource(
 	// If no direct handler found, try matching against templates
 	var matchedHandler ResourceTemplateHandlerFunc
 	var matched bool
-	for _, entry := range s.resourceTemplates {
-		template := entry.template
-		if matchesTemplate(request.Params.URI, template.URITemplate) {
-			matchedHandler = entry.handler
-			matched = true
-			matchedVars := template.URITemplate.Match(request.Params.URI)
-			// Convert matched variables to a map
-			request.Params.Arguments = make(map[string]any, len(matchedVars))
-			for name, value := range matchedVars {
-				request.Params.Arguments[name] = value.V
+
+	// First check session templates if available
+	if session != nil {
+		if sessionWithTemplates, ok := session.(SessionWithResourceTemplates); ok {
+			sessionTemplates := sessionWithTemplates.GetSessionResourceTemplates()
+			for _, serverTemplate := range sessionTemplates {
+				if matchesTemplate(request.Params.URI, serverTemplate.Template.URITemplate) {
+					matchedHandler = serverTemplate.Handler
+					matched = true
+					matchedVars := serverTemplate.Template.URITemplate.Match(request.Params.URI)
+					// Convert matched variables to a map
+					request.Params.Arguments = make(map[string]any, len(matchedVars))
+					for name, value := range matchedVars {
+						request.Params.Arguments[name] = value.V
+					}
+					break
+				}
 			}
-			break
+		}
+	}
+
+	// If not found in session templates, check global templates
+	if !matched {
+		for _, entry := range s.resourceTemplates {
+			template := entry.template
+			if matchesTemplate(request.Params.URI, template.URITemplate) {
+				matchedHandler = entry.handler
+				matched = true
+				matchedVars := template.URITemplate.Match(request.Params.URI)
+				// Convert matched variables to a map
+				request.Params.Arguments = make(map[string]any, len(matchedVars))
+				for name, value := range matchedVars {
+					request.Params.Arguments[name] = value.V
+				}
+				break
+			}
 		}
 	}
 	s.resourcesMu.RUnlock()

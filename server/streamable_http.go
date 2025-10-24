@@ -140,11 +140,12 @@ func WithTLSCert(certFile, keyFile string) StreamableHTTPOption {
 // The current implementation does not support the following features from the specification:
 //   - Stream Resumability
 type StreamableHTTPServer struct {
-	server            *MCPServer
-	sessionTools      *sessionToolsStore
-	sessionResources  *sessionResourcesStore
-	sessionRequestIDs sync.Map // sessionId --> last requestID(*atomic.Int64)
-	activeSessions    sync.Map // sessionId --> *streamableHttpSession (for sampling responses)
+	server                   *MCPServer
+	sessionTools             *sessionToolsStore
+	sessionResources         *sessionResourcesStore
+	sessionResourceTemplates *sessionResourceTemplatesStore
+	sessionRequestIDs        sync.Map // sessionId --> last requestID(*atomic.Int64)
+	activeSessions           sync.Map // sessionId --> *streamableHttpSession (for sampling responses)
 
 	httpServer *http.Server
 	mu         sync.RWMutex
@@ -164,13 +165,14 @@ type StreamableHTTPServer struct {
 // NewStreamableHTTPServer creates a new streamable-http server instance
 func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *StreamableHTTPServer {
 	s := &StreamableHTTPServer{
-		server:           server,
-		sessionTools:     newSessionToolsStore(),
-		sessionLogLevels: newSessionLogLevelsStore(),
-		endpointPath:     "/mcp",
-		sessionIdManager: &InsecureStatefulSessionIdManager{},
-		logger:           util.DefaultLogger(),
-		sessionResources: newSessionResourcesStore(),
+		server:                   server,
+		sessionTools:             newSessionToolsStore(),
+		sessionLogLevels:         newSessionLogLevelsStore(),
+		endpointPath:             "/mcp",
+		sessionIdManager:         &InsecureStatefulSessionIdManager{},
+		logger:                   util.DefaultLogger(),
+		sessionResources:         newSessionResourcesStore(),
+		sessionResourceTemplates: newSessionResourceTemplatesStore(),
 	}
 
 	// Apply all options
@@ -345,7 +347,7 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 
 	// Create ephemeral session if no persistent session exists
 	if session == nil {
-		session = newStreamableHttpSession(sessionID, s.sessionTools, s.sessionResources, s.sessionLogLevels)
+		session = newStreamableHttpSession(sessionID, s.sessionTools, s.sessionResources, s.sessionResourceTemplates, s.sessionLogLevels)
 	}
 
 	// Set the client context before handling the message
@@ -480,7 +482,7 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 	// Get or create session atomically to prevent TOCTOU races
 	// where concurrent GETs could both create and register duplicate sessions
 	var session *streamableHttpSession
-	newSession := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionResources, s.sessionLogLevels)
+	newSession := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionResources, s.sessionResourceTemplates, s.sessionLogLevels)
 	actual, loaded := s.activeSessions.LoadOrStore(sessionID, newSession)
 	session = actual.(*streamableHttpSession)
 
@@ -622,6 +624,7 @@ func (s *StreamableHTTPServer) handleDelete(w http.ResponseWriter, r *http.Reque
 	// remove the session relateddata from the sessionToolsStore
 	s.sessionTools.delete(sessionID)
 	s.sessionResources.delete(sessionID)
+	s.sessionResourceTemplates.delete(sessionID)
 	s.sessionLogLevels.delete(sessionID)
 	// remove current session's requstID information
 	s.sessionRequestIDs.Delete(sessionID)
@@ -834,6 +837,39 @@ func (s *sessionResourcesStore) delete(sessionID string) {
 	delete(s.resources, sessionID)
 }
 
+type sessionResourceTemplatesStore struct {
+	mu        sync.RWMutex
+	templates map[string]map[string]ServerResourceTemplate // sessionID -> uriTemplate -> template
+}
+
+func newSessionResourceTemplatesStore() *sessionResourceTemplatesStore {
+	return &sessionResourceTemplatesStore{
+		templates: make(map[string]map[string]ServerResourceTemplate),
+	}
+}
+
+func (s *sessionResourceTemplatesStore) get(sessionID string) map[string]ServerResourceTemplate {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cloned := make(map[string]ServerResourceTemplate, len(s.templates[sessionID]))
+	maps.Copy(cloned, s.templates[sessionID])
+	return cloned
+}
+
+func (s *sessionResourceTemplatesStore) set(sessionID string, templates map[string]ServerResourceTemplate) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cloned := make(map[string]ServerResourceTemplate, len(templates))
+	maps.Copy(cloned, templates)
+	s.templates[sessionID] = cloned
+}
+
+func (s *sessionResourceTemplatesStore) delete(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.templates, sessionID)
+}
+
 type sessionToolsStore struct {
 	mu    sync.RWMutex
 	tools map[string]map[string]ServerTool // sessionID -> toolName -> tool
@@ -895,6 +931,7 @@ type streamableHttpSession struct {
 	notificationChannel chan mcp.JSONRPCNotification // server -> client notifications
 	tools               *sessionToolsStore
 	resources           *sessionResourcesStore
+	resourceTemplates   *sessionResourceTemplatesStore
 	upgradeToSSE        atomic.Bool
 	logLevels           *sessionLogLevelsStore
 
@@ -906,12 +943,13 @@ type streamableHttpSession struct {
 	requestIDCounter atomic.Int64 // for generating unique request IDs
 }
 
-func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, resourcesStore *sessionResourcesStore, levels *sessionLogLevelsStore) *streamableHttpSession {
+func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, resourcesStore *sessionResourcesStore, templatesStore *sessionResourceTemplatesStore, levels *sessionLogLevelsStore) *streamableHttpSession {
 	s := &streamableHttpSession{
 		sessionID:              sessionID,
 		notificationChannel:    make(chan mcp.JSONRPCNotification, 100),
 		tools:                  toolStore,
 		resources:              resourcesStore,
+		resourceTemplates:      templatesStore,
 		logLevels:              levels,
 		samplingRequestChan:    make(chan samplingRequestItem, 10),
 		elicitationRequestChan: make(chan elicitationRequestItem, 10),
@@ -963,10 +1001,19 @@ func (s *streamableHttpSession) SetSessionResources(resources map[string]ServerR
 	s.resources.set(s.sessionID, resources)
 }
 
+func (s *streamableHttpSession) GetSessionResourceTemplates() map[string]ServerResourceTemplate {
+	return s.resourceTemplates.get(s.sessionID)
+}
+
+func (s *streamableHttpSession) SetSessionResourceTemplates(templates map[string]ServerResourceTemplate) {
+	s.resourceTemplates.set(s.sessionID, templates)
+}
+
 var (
-	_ SessionWithTools     = (*streamableHttpSession)(nil)
-	_ SessionWithResources = (*streamableHttpSession)(nil)
-	_ SessionWithLogging   = (*streamableHttpSession)(nil)
+	_ SessionWithTools             = (*streamableHttpSession)(nil)
+	_ SessionWithResources         = (*streamableHttpSession)(nil)
+	_ SessionWithResourceTemplates = (*streamableHttpSession)(nil)
+	_ SessionWithLogging           = (*streamableHttpSession)(nil)
 )
 
 func (s *streamableHttpSession) UpgradeToSSEWhenReceiveNotification() {
