@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"maps"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,7 +18,7 @@ import (
 type sessionTestClientWithResourceTemplates struct {
 	sessionID                string
 	notificationChannel      chan mcp.JSONRPCNotification
-	initialized              bool
+	initialized              atomic.Bool
 	sessionResourceTemplates map[string]ServerResourceTemplate
 	mu                       sync.RWMutex
 }
@@ -31,38 +32,23 @@ func (f *sessionTestClientWithResourceTemplates) NotificationChannel() chan<- mc
 }
 
 func (f *sessionTestClientWithResourceTemplates) Initialize() {
-	f.initialized = true
+	f.initialized.Store(true)
 }
 
 func (f *sessionTestClientWithResourceTemplates) Initialized() bool {
-	return f.initialized
+	return f.initialized.Load()
 }
 
 func (f *sessionTestClientWithResourceTemplates) GetSessionResourceTemplates() map[string]ServerResourceTemplate {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
-
-	if f.sessionResourceTemplates == nil {
-		return nil
-	}
-
-	templatesCopy := make(map[string]ServerResourceTemplate, len(f.sessionResourceTemplates))
-	maps.Copy(templatesCopy, f.sessionResourceTemplates)
-	return templatesCopy
+	return maps.Clone(f.sessionResourceTemplates)
 }
 
 func (f *sessionTestClientWithResourceTemplates) SetSessionResourceTemplates(templates map[string]ServerResourceTemplate) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-
-	if templates == nil {
-		f.sessionResourceTemplates = nil
-		return
-	}
-
-	templatesCopy := make(map[string]ServerResourceTemplate, len(templates))
-	maps.Copy(templatesCopy, templates)
-	f.sessionResourceTemplates = templatesCopy
+	f.sessionResourceTemplates = maps.Clone(templates)
 }
 
 var _ SessionWithResourceTemplates = (*sessionTestClientWithResourceTemplates)(nil)
@@ -83,11 +69,11 @@ func TestSessionWithResourceTemplates_Integration(t *testing.T) {
 	session := &sessionTestClientWithResourceTemplates{
 		sessionID:           "session-1",
 		notificationChannel: make(chan mcp.JSONRPCNotification, 10),
-		initialized:         true,
 		sessionResourceTemplates: map[string]ServerResourceTemplate{
 			"test://session/{id}": sessionTemplate,
 		},
 	}
+	session.initialized.Store(true)
 
 	err := server.RegisterSession(context.Background(), session)
 	require.NoError(t, err)
@@ -151,7 +137,6 @@ func TestMCPServer_ResourceTemplatesWithSessionResourceTemplates(t *testing.T) {
 	session := &sessionTestClientWithResourceTemplates{
 		sessionID:           "session-1",
 		notificationChannel: make(chan mcp.JSONRPCNotification, 10),
-		initialized:         true,
 		sessionResourceTemplates: map[string]ServerResourceTemplate{
 			"test://global/{id}": {
 				Template: mcp.NewResourceTemplate("test://global/{id}", "global-template-1-overridden"),
@@ -164,6 +149,7 @@ func TestMCPServer_ResourceTemplatesWithSessionResourceTemplates(t *testing.T) {
 			},
 		},
 	}
+	session.initialized.Store(true)
 
 	err := server.RegisterSession(context.Background(), session)
 	require.NoError(t, err)
@@ -225,8 +211,8 @@ func TestMCPServer_AddSessionResourceTemplates(t *testing.T) {
 	session := &sessionTestClientWithResourceTemplates{
 		sessionID:           "session-1",
 		notificationChannel: sessionChan,
-		initialized:         true,
 	}
+	session.initialized.Store(true)
 
 	err := server.RegisterSession(ctx, session)
 	require.NoError(t, err)
@@ -255,8 +241,8 @@ func TestMCPServer_AddSessionResourceTemplate(t *testing.T) {
 	session := &sessionTestClientWithResourceTemplates{
 		sessionID:           "session-1",
 		notificationChannel: sessionChan,
-		initialized:         true,
 	}
+	session.initialized.Store(true)
 
 	err := server.RegisterSession(ctx, session)
 	require.NoError(t, err)
@@ -301,9 +287,8 @@ func TestMCPServer_AddSessionResourceTemplatesUninitialized(t *testing.T) {
 
 	sessionChan := make(chan mcp.JSONRPCNotification, 1)
 	session := &sessionTestClientWithResourceTemplates{
-		sessionID:           "uninitialized-session",
+		sessionID:           "session-1",
 		notificationChannel: sessionChan,
-		initialized:         false,
 	}
 
 	err := server.RegisterSession(ctx, session)
@@ -373,7 +358,6 @@ func TestMCPServer_DeleteSessionResourceTemplatesUninitialized(t *testing.T) {
 	session := &sessionTestClientWithResourceTemplates{
 		sessionID:           "uninitialized-session",
 		notificationChannel: sessionChan,
-		initialized:         false,
 		sessionResourceTemplates: map[string]ServerResourceTemplate{
 			"test://delete/{id}": {Template: mcp.NewResourceTemplate("test://delete/{id}", "template-to-delete")},
 			"test://keep/{id}":   {Template: mcp.NewResourceTemplate("test://keep/{id}", "template-to-keep")},
@@ -440,7 +424,6 @@ func TestMCPServer_CallSessionResourceTemplate(t *testing.T) {
 	session := &sessionTestClientWithResourceTemplates{
 		sessionID:           "session-1",
 		notificationChannel: sessionChan,
-		initialized:         true,
 	}
 
 	err := server.RegisterSession(context.Background(), session)
@@ -492,7 +475,6 @@ func TestMCPServer_DeleteSessionResourceTemplates(t *testing.T) {
 	session := &sessionTestClientWithResourceTemplates{
 		sessionID:           "session-1",
 		notificationChannel: sessionChan,
-		initialized:         true,
 		sessionResourceTemplates: map[string]ServerResourceTemplate{
 			"test://template1/{id}": {
 				Template: mcp.NewResourceTemplate("test://template1/{id}", "session-template-1"),
@@ -502,6 +484,7 @@ func TestMCPServer_DeleteSessionResourceTemplates(t *testing.T) {
 			},
 		},
 	}
+	session.initialized.Store(true)
 
 	err := server.RegisterSession(ctx, session)
 	require.NoError(t, err)
@@ -528,7 +511,6 @@ func TestMCPServer_SessionResourceTemplateError(t *testing.T) {
 	session := &sessionTestClient{
 		sessionID:           "session-1",
 		notificationChannel: make(chan mcp.JSONRPCNotification, 10),
-		initialized:         true,
 	}
 
 	err := server.RegisterSession(ctx, session)
@@ -549,7 +531,6 @@ func TestMCPServer_ResourceTemplatesNotificationsDisabled(t *testing.T) {
 	session := &sessionTestClientWithResourceTemplates{
 		sessionID:           "session-1",
 		notificationChannel: sessionChan,
-		initialized:         true,
 	}
 
 	err := server.RegisterSession(ctx, session)

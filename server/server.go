@@ -999,6 +999,9 @@ func (s *MCPServer) handleReadResource(
 		if sessionWithTemplates, ok := session.(SessionWithResourceTemplates); ok {
 			sessionTemplates := sessionWithTemplates.GetSessionResourceTemplates()
 			for _, serverTemplate := range sessionTemplates {
+				if serverTemplate.Template.URITemplate == nil {
+					continue
+				}
 				if matchesTemplate(request.Params.URI, serverTemplate.Template.URITemplate) {
 					matchedHandler = serverTemplate.Handler
 					matched = true
@@ -1018,6 +1021,9 @@ func (s *MCPServer) handleReadResource(
 	if !matched {
 		for _, entry := range s.resourceTemplates {
 			template := entry.template
+			if template.URITemplate == nil {
+				continue
+			}
 			if matchesTemplate(request.Params.URI, template.URITemplate) {
 				matchedHandler = entry.handler
 				matched = true

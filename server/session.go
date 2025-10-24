@@ -663,10 +663,19 @@ func (s *MCPServer) AddSessionResourceTemplates(sessionID string, templates ...S
 		newTemplates[k] = v
 	}
 
-	// Add new templates
-	for _, template := range templates {
-		key := template.Template.URITemplate.Raw()
-		newTemplates[key] = template
+	// Validate and add new templates
+	for _, t := range templates {
+		if t.Template.URITemplate == nil {
+			return fmt.Errorf("resource template URITemplate cannot be nil")
+		}
+		raw := t.Template.URITemplate.Raw()
+		if raw == "" {
+			return fmt.Errorf("resource template URITemplate cannot be empty")
+		}
+		if t.Template.Name == "" {
+			return fmt.Errorf("resource template name cannot be empty")
+		}
+		newTemplates[raw] = t
 	}
 
 	// Set the new templates (this method must handle thread-safety)
