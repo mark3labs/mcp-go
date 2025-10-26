@@ -41,7 +41,7 @@ func WithEndpointPath(endpointPath string) StreamableHTTPOption {
 // as a new session. No session id returned to the client.
 // The default is false.
 //
-// Notice: This is a convenience method. It's identical to set WithSessionIdManager option
+// Note: This is a convenience method. It's identical to set WithSessionIdManager option
 // to StatelessSessionIdManager.
 func WithStateLess(stateLess bool) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {
@@ -53,7 +53,8 @@ func WithStateLess(stateLess bool) StreamableHTTPOption {
 
 // WithSessionIdManager sets a custom session id generator for the server.
 // By default, the server uses InsecureStatefulSessionIdManager (UUID-based; insecure).
-// Notice: it will override the WithStateLess option.
+// Note: Options are applied in order; the last one wins. If combined with
+// WithStateLess or WithSessionIdManagerResolver, whichever is applied last takes effect.
 func WithSessionIdManager(manager SessionIdManager) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {
 		if manager == nil {
