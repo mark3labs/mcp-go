@@ -1991,6 +1991,36 @@ func TestSessionIdManagerResolver_Integration(t *testing.T) {
 			t.Error("Expected fallback manager to generate non-empty session ID")
 		}
 	})
+
+	t.Run("Nil manager falls back safely", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+		// requires nil-guard in WithSessionIdManager
+		srv := NewTestStreamableHTTPServer(mcpServer, WithSessionIdManager(nil))
+		defer srv.Close()
+		resp, err := postJSON(srv.URL, initRequest)
+		if err != nil {
+			t.Fatalf("init failed: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+		_ = resp.Body.Close()
+	})
+
+	t.Run("Nil resolver falls back safely", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+		// requires nil-guard in WithSessionIdManagerResolver
+		srv := NewTestStreamableHTTPServer(mcpServer, WithSessionIdManagerResolver(nil))
+		defer srv.Close()
+		resp, err := postJSON(srv.URL, initRequest)
+		if err != nil {
+			t.Fatalf("init failed: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+		_ = resp.Body.Close()
+	})
 }
 
 func TestStreamableHTTP_SendNotificationToSpecificClient(t *testing.T) {
