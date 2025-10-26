@@ -52,7 +52,7 @@ func WithStateLess(stateLess bool) StreamableHTTPOption {
 }
 
 // WithSessionIdManager sets a custom session id generator for the server.
-// By default, the server will use SimpleStatefulSessionIdGenerator, which generates
+// By default, the server will use InsecureStatefulSessionIdManager, which generates
 // session ids with uuid, and it's insecure.
 // Notice: it will override the WithStateLess option.
 func WithSessionIdManager(manager SessionIdManager) StreamableHTTPOption {
@@ -66,6 +66,10 @@ func WithSessionIdManager(manager SessionIdManager) StreamableHTTPOption {
 // Notice: it will override both WithStateLess and WithSessionIdManager options.
 func WithSessionIdManagerResolver(resolver SessionIdManagerResolver) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {
+		if resolver == nil {
+			s.sessionIdManagerResolver = NewDefaultSessionIdManagerResolver(&InsecureStatefulSessionIdManager{})
+			return
+		}
 		s.sessionIdManagerResolver = resolver
 	}
 }
@@ -1164,6 +1168,9 @@ type DefaultSessionIdManagerResolver struct {
 
 // NewDefaultSessionIdManagerResolver creates a new DefaultSessionIdManagerResolver with the given SessionIdManager
 func NewDefaultSessionIdManagerResolver(manager SessionIdManager) *DefaultSessionIdManagerResolver {
+	if manager == nil {
+		manager = &InsecureStatefulSessionIdManager{}
+	}
 	return &DefaultSessionIdManagerResolver{manager: manager}
 }
 

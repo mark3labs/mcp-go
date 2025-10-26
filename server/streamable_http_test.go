@@ -1766,6 +1766,29 @@ func TestDefaultSessionIdManagerResolver(t *testing.T) {
 			t.Error("Expected resolver to return the configured manager even with nil request")
 		}
 	})
+
+	t.Run("NewDefaultSessionIdManagerResolver handles nil manager defensively", func(t *testing.T) {
+		// This should not panic and should use default manager
+		resolver := NewDefaultSessionIdManagerResolver(nil)
+		if resolver == nil {
+			t.Fatal("Expected resolver to be created even with nil manager")
+		}
+
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := resolver.ResolveSessionIdManager(req)
+		if resolved == nil {
+			t.Error("Expected resolver to return a non-nil manager")
+		}
+
+		// Test that the resolved manager works (generates valid session IDs)
+		sessionID := resolved.Generate()
+		if sessionID == "" {
+			t.Error("Expected default manager to generate non-empty session ID")
+		}
+		if !strings.HasPrefix(sessionID, idPrefix) {
+			t.Error("Expected default manager to generate session ID with correct prefix")
+		}
+	})
 }
 
 func TestSessionIdManagerResolver_Integration(t *testing.T) {
@@ -1900,6 +1923,28 @@ func TestSessionIdManagerResolver_Integration(t *testing.T) {
 		sessionID := resolved.Generate()
 		if sessionID == "" {
 			t.Error("Expected stateful manager from resolver to be used")
+		}
+	})
+
+	t.Run("WithSessionIdManagerResolver handles nil resolver defensively", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+
+		// This should not panic and should fall back to default behavior
+		server := NewStreamableHTTPServer(mcpServer, WithSessionIdManagerResolver(nil))
+
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
+		if resolved == nil {
+			t.Error("Expected nil resolver to be replaced with default")
+		}
+
+		// Test that the resolved manager works (should be default stateful manager)
+		sessionID := resolved.Generate()
+		if sessionID == "" {
+			t.Error("Expected default manager to generate non-empty session ID")
+		}
+		if !strings.HasPrefix(sessionID, idPrefix) {
+			t.Error("Expected default manager to generate session ID with correct prefix")
 		}
 	})
 }
