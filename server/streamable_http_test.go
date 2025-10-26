@@ -1947,6 +1947,50 @@ func TestSessionIdManagerResolver_Integration(t *testing.T) {
 			t.Error("Expected default manager to generate session ID with correct prefix")
 		}
 	})
+
+	t.Run("WithSessionIdManager handles nil manager defensively", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+
+		// This should not panic and should fall back to default behavior
+		server := NewStreamableHTTPServer(mcpServer, WithSessionIdManager(nil))
+
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
+		if resolved == nil {
+			t.Error("Expected nil manager to be replaced with default")
+		}
+
+		// Test that the resolved manager works (should be default stateful manager)
+		sessionID := resolved.Generate()
+		if sessionID == "" {
+			t.Error("Expected default manager to generate non-empty session ID")
+		}
+		if !strings.HasPrefix(sessionID, idPrefix) {
+			t.Error("Expected default manager to generate session ID with correct prefix")
+		}
+	})
+
+	t.Run("Multiple nil options fall back safely", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+
+		// Chain multiple nil options - last one should win with safe fallback
+		server := NewStreamableHTTPServer(mcpServer,
+			WithSessionIdManager(nil),
+			WithSessionIdManagerResolver(nil),
+		)
+
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
+		if resolved == nil {
+			t.Error("Expected chained nil options to fall back safely")
+		}
+
+		// Verify it generates valid session IDs
+		sessionID := resolved.Generate()
+		if sessionID == "" {
+			t.Error("Expected fallback manager to generate non-empty session ID")
+		}
+	})
 }
 
 func TestStreamableHTTP_SendNotificationToSpecificClient(t *testing.T) {
