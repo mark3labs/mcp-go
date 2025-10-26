@@ -1693,6 +1693,217 @@ func TestInsecureStatefulSessionIdManager(t *testing.T) {
 	})
 }
 
+func TestDefaultSessionIdManagerResolver(t *testing.T) {
+	t.Run("ResolveSessionIdManager returns configured manager", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		resolver := NewDefaultSessionIdManagerResolver(manager)
+
+		req, err := http.NewRequest("POST", "/test", nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+
+		resolved := resolver.ResolveSessionIdManager(req)
+		if resolved != manager {
+			t.Error("Expected resolver to return the configured manager")
+		}
+	})
+
+	t.Run("ResolveSessionIdManager works with StatelessSessionIdManager", func(t *testing.T) {
+		manager := &StatelessSessionIdManager{}
+		resolver := NewDefaultSessionIdManagerResolver(manager)
+
+		req, err := http.NewRequest("GET", "/test", nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+
+		resolved := resolver.ResolveSessionIdManager(req)
+		if resolved != manager {
+			t.Error("Expected resolver to return the configured stateless manager")
+		}
+
+		// Test that the resolved manager works correctly
+		sessionID := resolved.Generate()
+		if sessionID != "" {
+			t.Errorf("Expected stateless manager to return empty session ID, got: %s", sessionID)
+		}
+
+		isTerminated, err := resolved.Validate("any-session-id")
+		if err != nil {
+			t.Errorf("Expected stateless manager to validate any session ID, got error: %v", err)
+		}
+		if isTerminated {
+			t.Error("Expected stateless manager to not mark sessions as terminated")
+		}
+	})
+
+	t.Run("ResolveSessionIdManager is consistent across multiple calls", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		resolver := NewDefaultSessionIdManagerResolver(manager)
+
+		req1, _ := http.NewRequest("POST", "/test1", nil)
+		req2, _ := http.NewRequest("GET", "/test2", nil)
+
+		resolved1 := resolver.ResolveSessionIdManager(req1)
+		resolved2 := resolver.ResolveSessionIdManager(req2)
+
+		if resolved1 != resolved2 {
+			t.Error("Expected resolver to return the same manager for different requests")
+		}
+		if resolved1 != manager {
+			t.Error("Expected resolver to return the configured manager")
+		}
+	})
+
+	t.Run("ResolveSessionIdManager handles nil request gracefully", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		resolver := NewDefaultSessionIdManagerResolver(manager)
+
+		// This should not panic even with nil request since we ignore the request parameter
+		resolved := resolver.ResolveSessionIdManager(nil)
+		if resolved != manager {
+			t.Error("Expected resolver to return the configured manager even with nil request")
+		}
+	})
+}
+
+func TestSessionIdManagerResolver_Integration(t *testing.T) {
+	t.Run("WithSessionIdManagerResolver option sets resolver correctly", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+		manager := &StatelessSessionIdManager{}
+		resolver := NewDefaultSessionIdManagerResolver(manager)
+
+		server := NewStreamableHTTPServer(mcpServer, WithSessionIdManagerResolver(resolver))
+
+		// Test that the resolver was set
+		if server.sessionIdManagerResolver != resolver {
+			t.Error("Expected WithSessionIdManagerResolver to set the resolver")
+		}
+
+		// Test that it resolves correctly
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
+		if resolved != manager {
+			t.Error("Expected resolver to return the configured manager")
+		}
+	})
+
+	t.Run("WithSessionIdManager option creates resolver with manager", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+		manager := &StatelessSessionIdManager{}
+
+		server := NewStreamableHTTPServer(mcpServer, WithSessionIdManager(manager))
+
+		// Test that a resolver was created
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
+		if resolved != manager {
+			t.Error("Expected WithSessionIdManager to create resolver with the configured manager")
+		}
+
+		// Verify it's a DefaultSessionIdManagerResolver
+		if defaultResolver, ok := server.sessionIdManagerResolver.(*DefaultSessionIdManagerResolver); ok {
+			if defaultResolver.manager != manager {
+				t.Error("Expected DefaultSessionIdManagerResolver to wrap the configured manager")
+			}
+		} else {
+			t.Error("Expected WithSessionIdManager to create a DefaultSessionIdManagerResolver")
+		}
+	})
+
+	t.Run("WithStateLess option creates resolver with StatelessSessionIdManager", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+
+		server := NewStreamableHTTPServer(mcpServer, WithStateLess(true))
+
+		// Test that a resolver was created with stateless manager
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
+
+		// Verify it's a stateless manager
+		sessionID := resolved.Generate()
+		if sessionID != "" {
+			t.Error("Expected stateless manager from WithStateLess(true)")
+		}
+
+		// Verify it's wrapped in DefaultSessionIdManagerResolver
+		if defaultResolver, ok := server.sessionIdManagerResolver.(*DefaultSessionIdManagerResolver); ok {
+			if _, ok := defaultResolver.manager.(*StatelessSessionIdManager); !ok {
+				t.Error("Expected DefaultSessionIdManagerResolver to wrap StatelessSessionIdManager")
+			}
+		} else {
+			t.Error("Expected WithStateLess to create a DefaultSessionIdManagerResolver")
+		}
+	})
+
+	t.Run("WithStateLess(false) does not override default manager", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+
+		server := NewStreamableHTTPServer(mcpServer, WithStateLess(false))
+
+		// Test that the default manager is still used (InsecureStatefulSessionIdManager)
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
+
+		// Verify it's NOT a stateless manager
+		sessionID := resolved.Generate()
+		if sessionID == "" {
+			t.Error("Expected stateful manager when WithStateLess(false)")
+		}
+		if !strings.HasPrefix(sessionID, idPrefix) {
+			t.Error("Expected stateful session ID format")
+		}
+	})
+
+	t.Run("Option precedence: WithSessionIdManagerResolver overrides WithSessionIdManager", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+		statefulManager := &InsecureStatefulSessionIdManager{}
+		statelessManager := &StatelessSessionIdManager{}
+		resolver := NewDefaultSessionIdManagerResolver(statelessManager)
+
+		server := NewStreamableHTTPServer(mcpServer,
+			WithSessionIdManager(statefulManager),
+			WithSessionIdManagerResolver(resolver),
+		)
+
+		// Test that the resolver option took precedence
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
+		if resolved != statelessManager {
+			t.Error("Expected WithSessionIdManagerResolver to override WithSessionIdManager")
+		}
+
+		sessionID := resolved.Generate()
+		if sessionID != "" {
+			t.Error("Expected stateless manager from resolver to be used")
+		}
+	})
+
+	t.Run("Option precedence: WithSessionIdManagerResolver overrides WithStateLess", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+		statefulManager := &InsecureStatefulSessionIdManager{}
+		resolver := NewDefaultSessionIdManagerResolver(statefulManager)
+
+		server := NewStreamableHTTPServer(mcpServer,
+			WithStateLess(true),
+			WithSessionIdManagerResolver(resolver),
+		)
+
+		// Test that the resolver option took precedence
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
+		if resolved != statefulManager {
+			t.Error("Expected WithSessionIdManagerResolver to override WithStateLess")
+		}
+
+		sessionID := resolved.Generate()
+		if sessionID == "" {
+			t.Error("Expected stateful manager from resolver to be used")
+		}
+	})
+}
+
 func TestStreamableHTTP_SendNotificationToSpecificClient(t *testing.T) {
 	t.Run("POST session registration enables SendNotificationToSpecificClient", func(t *testing.T) {
 		hooks := &Hooks{}
