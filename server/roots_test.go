@@ -73,8 +73,8 @@ func TestMCPServer_RequestRoots_NoSession(t *testing.T) {
 		t.Error("expected error when no session available")
 	}
 
-	if !errors.Is(err, ErrNoActiveSession) {
-		t.Errorf("expected ErrNoActiveSession, got %v", err)
+	if !errors.Is(err, ErrNoClientSession) {
+		t.Errorf("expected ErrNoClientSession, got %v", err)
 	}
 }
 

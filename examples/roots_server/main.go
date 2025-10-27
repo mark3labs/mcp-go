@@ -11,7 +11,7 @@ import (
 
 // handleNotification handles JSON-RPC notifications by printing the notification method to standard output.
 func handleNotification(ctx context.Context, notification mcp.JSONRPCNotification) {
-	fmt.Printf("notification received: %v\n", notification.Notification.Method)
+	fmt.Printf("notification received: %v\n", notification.Method)
 }
 
 // main sets up and runs an MCP stdio server named "roots-stdio-server" with tool and roots capabilities.
