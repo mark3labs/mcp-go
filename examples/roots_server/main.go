@@ -33,15 +33,10 @@ func main() {
 	// Add a simple tool to test roots list
 	mcpServer.AddTool(mcp.Tool{
 		Name:        "roots",
-		Description: "list root result",
+		Description: "Returns the current list of roots from the server",
 		InputSchema: mcp.ToolInputSchema{
-			Type: "object",
-			Properties: map[string]any{
-				"testonly": map[string]any{
-					"type":        "string",
-					"description": "is this test only?",
-				},
-			},
+			Type:       "object",
+			Properties: map[string]any{},
 		},
 	}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		rootRequest := mcp.ListRootsRequest{}
@@ -64,7 +59,7 @@ func main() {
 				Content: []mcp.Content{
 					mcp.TextContent{
 						Type: "text",
-						Text: fmt.Sprintf("Fail to list roots: %v", err),
+						Text: fmt.Sprintf("Failed to list roots: %v", err),
 					},
 				},
 				IsError: true,

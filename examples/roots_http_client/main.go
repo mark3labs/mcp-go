@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/mark3labs/mcp-go/client"
@@ -19,6 +20,7 @@ import (
 // In a real implementation, this would enumerate workspace/project roots.
 type MockRootsHandler struct{}
 
+// ListRoots implements client.RootsHandler by returning example workspace roots.
 func (h *MockRootsHandler) ListRoots(ctx context.Context, request mcp.ListRootsRequest) (*mcp.ListRootsResult, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -31,15 +33,24 @@ func (h *MockRootsHandler) ListRoots(ctx context.Context, request mcp.ListRootsR
 		Roots: []mcp.Root{
 			{
 				Name: "app",
-				URI:  (&url.URL{Scheme: "file", Path: app}).String(),
+				URI:  h.fileURI(app),
 			},
 			{
 				Name: "test-project",
-				URI:  (&url.URL{Scheme: "file", Path: proj}).String(),
+				URI:  h.fileURI(proj),
 			},
 		},
 	}
 	return result, nil
+}
+
+// fileURI returns a file:// URI for both Unix and Windows absolute paths.
+func (h *MockRootsHandler) fileURI(p string) string {
+	p = filepath.ToSlash(p)
+	if !strings.HasPrefix(p, "/") { // e.g., "C:/Users/..." on Windows
+		p = "/" + p
+	}
+	return (&url.URL{Scheme: "file", Path: p}).String()
 }
 
 // main starts a mock MCP roots client over HTTP.
@@ -57,7 +68,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create HTTP transport: %v", err)
 	}
-	defer httpTransport.Close()
 
 	// Create client with roots support
 	mcpClient := client.NewClient(
@@ -123,24 +133,19 @@ func main() {
 	} else if len(result.Content) > 0 {
 		resultStr := ""
 		for _, content := range result.Content {
-			if textContent, ok := content.(mcp.TextContent); ok {
-				resultStr += fmt.Sprintf("%s\n", textContent.Text)
+			switch tc := content.(type) {
+			case mcp.TextContent:
+				resultStr += fmt.Sprintf("%s\n", tc.Text)
+			case *mcp.TextContent:
+				resultStr += fmt.Sprintf("%s\n", tc.Text)
 			}
 		}
 		fmt.Printf("client call tool result: %s\n", resultStr)
 	}
 
 	// Keep the client running (in a real app, you'd have your main application logic here)
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
-	shutdownCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	go func() {
-		<-sigChan
-		log.Println("Received shutdown signal")
-		cancel()
-	}()
-	<-shutdownCtx.Done()
+	waitCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	<-waitCtx.Done()
+	log.Println("Received shutdown signal")
 }
