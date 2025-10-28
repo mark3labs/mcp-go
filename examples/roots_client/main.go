@@ -16,6 +16,15 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// fileURI returns a file:// URI for both Unix and Windows absolute paths.
+func fileURI(p string) string {
+	p = filepath.ToSlash(p)
+	if !strings.HasPrefix(p, "/") { // e.g., "C:/Users/..." on Windows
+		p = "/" + p
+	}
+	return (&url.URL{Scheme: "file", Path: p}).String()
+}
+
 // MockRootsHandler implements client.RootsHandler for demonstration.
 // In a real implementation, this would enumerate workspace/project roots.
 type MockRootsHandler struct{}
@@ -33,24 +42,15 @@ func (h *MockRootsHandler) ListRoots(ctx context.Context, request mcp.ListRootsR
 		Roots: []mcp.Root{
 			{
 				Name: "app",
-				URI:  h.fileURI(app),
+				URI:  fileURI(app),
 			},
 			{
 				Name: "test-project",
-				URI:  h.fileURI(proj),
+				URI:  fileURI(proj),
 			},
 		},
 	}
 	return result, nil
-}
-
-// fileURI returns a file:// URI for both Unix and Windows absolute paths.
-func (h *MockRootsHandler) fileURI(p string) string {
-	p = filepath.ToSlash(p)
-	if !strings.HasPrefix(p, "/") { // e.g., "C:/Users/..." on Windows
-		p = "/" + p
-	}
-	return (&url.URL{Scheme: "file", Path: p}).String()
 }
 
 // main starts a mock MCP roots client that communicates with a subprocess over stdio.
@@ -146,8 +146,6 @@ func main() {
 		for _, content := range result.Content {
 			switch tc := content.(type) {
 			case mcp.TextContent:
-				resultStr += fmt.Sprintf("%s\n", tc.Text)
-			case *mcp.TextContent:
 				resultStr += fmt.Sprintf("%s\n", tc.Text)
 			}
 		}
