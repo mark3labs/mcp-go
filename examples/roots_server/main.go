@@ -33,7 +33,7 @@ func main() {
 	// Add a simple tool to test roots list
 	mcpServer.AddTool(mcp.Tool{
 		Name:        "roots",
-		Description: "Returns the current list of roots from the server",
+		Description: "Requests and returns the current list of roots from the connected client",
 		InputSchema: mcp.ToolInputSchema{
 			Type:       "object",
 			Properties: map[string]any{},

@@ -115,14 +115,14 @@ func main() {
 
 	// mock the root change
 	if err := mcpClient.RootListChanges(ctx); err != nil {
-		log.Printf("fail to notify root list change: %v", err)
+		log.Printf("failed to notify root list change: %v", err)
 	}
 
 	// call server tool
 	request := mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
 			Name:      "roots",
-			Arguments: map[string]any{"testonly": "yes"},
+			Arguments: map[string]any{},
 		},
 	}
 	result, err := mcpClient.CallTool(ctx, request)

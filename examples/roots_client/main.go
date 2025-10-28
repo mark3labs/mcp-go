@@ -156,7 +156,7 @@ func main() {
 
 	// mock the root change
 	if err := mcpClient.RootListChanges(ctx); err != nil {
-		log.Printf("fail to notify root list change: %v", err)
+		log.Printf("failed to notify root list change: %v", err)
 	}
 
 	// Keep running until cancelled by signal
