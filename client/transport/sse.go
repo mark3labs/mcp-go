@@ -362,6 +362,12 @@ func (c *SSE) SendRequest(
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
 	}
+	
+	for k, v := range request.Header {
+		if _, ok := req.Header[k]; !ok {
+			req.Header[k] = v;
+		}
+	}
 
 	// Add OAuth authorization if configured
 	if c.oauthHandler != nil {
