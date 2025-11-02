@@ -531,6 +531,7 @@ type ServerCapabilities struct {
 type Implementation struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
+	Title   string `json:"title,omitempty"`
 }
 
 /* Ping */
