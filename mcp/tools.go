@@ -629,8 +629,8 @@ type ToolArgumentsSchema struct {
 	Required   []string       `json:"required,omitempty"`
 }
 
-type ToolInputSchema ToolArgumentsSchema // For retro-compatibility
-type ToolOutputSchema ToolArgumentsSchema
+type ToolInputSchema = ToolArgumentsSchema // For retro-compatibility
+type ToolOutputSchema = ToolArgumentsSchema
 
 // MarshalJSON implements the json.Marshaler interface for ToolInputSchema.
 func (tis ToolArgumentsSchema) MarshalJSON() ([]byte, error) {
