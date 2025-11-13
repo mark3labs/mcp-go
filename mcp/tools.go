@@ -625,12 +625,12 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 type ToolArgumentsSchema struct {
 	Defs       map[string]any `json:"$defs,omitempty"`
 	Type       string         `json:"type"`
-	Properties map[string]any `json:"properties"`
+	Properties map[string]any `json:"properties,omitempty"`
 	Required   []string       `json:"required,omitempty"`
 }
 
-type ToolInputSchema ToolArgumentsSchema // For retro-compatibility
-type ToolOutputSchema ToolArgumentsSchema
+type ToolInputSchema = ToolArgumentsSchema // For retro-compatibility
+type ToolOutputSchema = ToolArgumentsSchema
 
 // MarshalJSON implements the json.Marshaler interface for ToolInputSchema.
 func (tis ToolArgumentsSchema) MarshalJSON() ([]byte, error) {
