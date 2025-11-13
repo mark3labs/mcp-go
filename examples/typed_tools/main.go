@@ -18,8 +18,13 @@ type GreetingArgs struct {
 		Location string `json:"location"`
 		Timezone string `json:"timezone"`
 	} `json:"metadata"`
+	AnyData any `json:"any_data"`
 }
 
+// main starts the MCP-based example server, registers a typed "greeting" tool, and serves it over standard I/O.
+//
+// The registered tool exposes a schema for typed inputs (name, age, is_vip, languages, metadata, and any_data)
+// and uses a typed handler to produce personalized greetings. If the server fails to start, an error is printed to stdout.
 func main() {
 	// Create a new MCP server
 	s := server.NewMCPServer(
@@ -61,6 +66,9 @@ func main() {
 				},
 			}),
 		),
+		mcp.WithAny("any_data",
+			mcp.Description("Any kind of data, e.g., an integer"),
+		),
 	)
 
 	// Add tool handler using the typed handler
@@ -72,7 +80,11 @@ func main() {
 	}
 }
 
-// Our typed handler function that receives strongly-typed arguments
+// typedGreetingHandler constructs a personalized greeting from the provided GreetingArgs and returns it as a text tool result.
+//
+// If args.Name is empty the function returns a tool error result with the message "name is required" and a nil error.
+// The returned greeting may include the caller's age, a VIP acknowledgement, the number and list of spoken languages,
+// location and timezone from metadata, and a formatted representation of AnyData when present.
 func typedGreetingHandler(ctx context.Context, request mcp.CallToolRequest, args GreetingArgs) (*mcp.CallToolResult, error) {
 	if args.Name == "" {
 		return mcp.NewToolResultError("name is required"), nil
@@ -99,6 +111,10 @@ func typedGreetingHandler(ctx context.Context, request mcp.CallToolRequest, args
 		if args.Metadata.Timezone != "" {
 			greeting += fmt.Sprintf(" Your timezone is %s.", args.Metadata.Timezone)
 		}
+	}
+
+	if args.AnyData != nil {
+		greeting += fmt.Sprintf(" I also received some other data: %v.", args.AnyData)
 	}
 
 	return mcp.NewToolResultText(greeting), nil

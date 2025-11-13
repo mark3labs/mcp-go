@@ -6,6 +6,24 @@ Learn how to implement MCP clients that can handle sampling requests from server
 
 Sampling allows MCP clients to respond to LLM completion requests from servers. When a server needs to generate content, answer questions, or perform reasoning tasks, it can send a sampling request to the client, which then processes it using an LLM and returns the result.
 
+:::danger[Critical Security Requirement]
+Per the [MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/client/sampling#user-interaction-model), sampling implementations **SHOULD** always include a human in the loop with the ability to deny sampling requests.
+
+**You MUST implement approval flows that:**
+- Present each sampling request to the user for review before execution
+- Allow users to view and edit prompts before sending to the LLM
+- Display generated responses for user approval before returning to the server
+- Provide clear UI to accept or reject requests at each stage
+
+**Without human approval, your implementation:**
+- Allows servers to make unauthorized LLM requests without user consent
+- May expose sensitive information through unreviewed prompts
+- Creates uncontrolled API costs from automated sampling
+- Violates user trust and security best practices
+
+The examples below show basic handler implementation. **You must add approval logic** before using in production.
+:::
+
 ## Implementing a Sampling Handler
 
 Create a sampling handler by implementing the `SamplingHandler` interface:

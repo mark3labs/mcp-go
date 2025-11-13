@@ -6,6 +6,25 @@ Learn how to implement MCP servers that can request LLM completions from clients
 
 Sampling allows MCP servers to request LLM completions from clients, enabling bidirectional communication where servers can leverage client-side LLM capabilities. This is particularly useful for tools that need to generate content, answer questions, or perform reasoning tasks.
 
+:::info[User Consent Required]
+Per the [MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/client/sampling#user-interaction-model), clients **SHOULD** implement human-in-the-loop approval for sampling requests.
+
+When you request sampling from a client:
+- The user will typically be prompted to review and approve your request
+- The user may modify your prompts before sending to their LLM
+- The user may reject your request entirely
+- Response times may be longer due to user interaction
+
+**Design your tools accordingly:**
+- Provide clear descriptions of why sampling is needed
+- Use descriptive system prompts explaining the purpose
+- Handle rejection errors gracefully
+- Consider timeouts for user approval delays
+- Don't assume immediate or automatic approval
+
+Well-designed sampling requests improve user trust and approval rates.
+:::
+
 ## Enabling Sampling
 
 To enable sampling in your server, call `EnableSampling()` during server setup:

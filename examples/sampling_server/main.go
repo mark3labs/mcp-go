@@ -83,7 +83,7 @@ func main() {
 			Content: []mcp.Content{
 				mcp.TextContent{
 					Type: "text",
-					Text: fmt.Sprintf("LLM Response (model: %s): %s", result.Model, getTextFromContent(result.Content)),
+					Text: fmt.Sprintf("LLM Response (model: %s): %s", result.Model, mcp.GetTextFromContent(result.Content)),
 				},
 			},
 		}, nil
@@ -123,23 +123,5 @@ func main() {
 	log.Println("Starting sampling example server...")
 	if err := server.ServeStdio(mcpServer); err != nil {
 		log.Fatalf("Server error: %v", err)
-	}
-}
-
-// Helper function to extract text from content
-func getTextFromContent(content any) string {
-	switch c := content.(type) {
-	case mcp.TextContent:
-		return c.Text
-	case map[string]any:
-		// Handle JSON unmarshaled content
-		if text, ok := c["text"].(string); ok {
-			return text
-		}
-		return fmt.Sprintf("%v", content)
-	case string:
-		return c
-	default:
-		return fmt.Sprintf("%v", content)
 	}
 }

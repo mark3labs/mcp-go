@@ -242,6 +242,108 @@ func TestToolWithObjectAndArray(t *testing.T) {
 	assert.Contains(t, required, "books")
 }
 
+func TestToolWithAny(t *testing.T) {
+	const desc = "Can be any value: string, number, bool, object, or slice"
+
+	tool := NewTool("any-tool",
+		WithDescription("A tool with an 'any' type property"),
+		WithAny("data",
+			Description(desc),
+			Required(),
+		),
+	)
+
+	data, err := json.Marshal(tool)
+	assert.NoError(t, err)
+
+	var result map[string]any
+	err = json.Unmarshal(data, &result)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "any-tool", result["name"])
+
+	schema, ok := result["inputSchema"].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "object", schema["type"])
+
+	properties, ok := schema["properties"].(map[string]any)
+	assert.True(t, ok)
+
+	dataProp, ok := properties["data"].(map[string]any)
+	assert.True(t, ok)
+	_, typeExists := dataProp["type"]
+	assert.False(t, typeExists, "The 'any' type property should not have a 'type' field")
+	assert.Equal(t, desc, dataProp["description"])
+
+	required, ok := schema["required"].([]any)
+	assert.True(t, ok)
+	assert.Contains(t, required, "data")
+
+	type testStruct struct {
+		A string `json:"A"`
+	}
+	testCases := []struct {
+		description string
+		arg         any
+		expect      any
+	}{{
+		description: "string",
+		arg:         "hello world",
+		expect:      "hello world",
+	}, {
+		description: "integer",
+		arg:         123,
+		expect:      float64(123), // JSON unmarshals numbers to float64
+	}, {
+		description: "float",
+		arg:         3.14,
+		expect:      3.14,
+	}, {
+		description: "boolean",
+		arg:         true,
+		expect:      true,
+	}, {
+		description: "object",
+		arg:         map[string]any{"key": "value"},
+		expect:      map[string]any{"key": "value"},
+	}, {
+		description: "slice",
+		arg:         []any{1, "two", false},
+		expect:      []any{float64(1), "two", false},
+	}, {
+		description: "struct",
+		arg:         testStruct{A: "B"},
+		expect:      map[string]any{"A": "B"},
+	}}
+
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("with_%s", tc.description), func(t *testing.T) {
+			req := CallToolRequest{
+				Request: Request{},
+				Params: CallToolParams{
+					Name: "any-tool",
+					Arguments: map[string]any{
+						"data": tc.arg,
+					},
+				},
+			}
+
+			// Marshal and unmarshal to simulate a real request
+			reqBytes, err := json.Marshal(req)
+			assert.NoError(t, err)
+
+			var unmarshaledReq CallToolRequest
+			err = json.Unmarshal(reqBytes, &unmarshaledReq)
+			assert.NoError(t, err)
+
+			args := unmarshaledReq.GetArguments()
+			value, ok := args["data"]
+			assert.True(t, ok)
+			assert.Equal(t, tc.expect, value)
+		})
+	}
+}
+
 func TestParseToolCallToolRequest(t *testing.T) {
 	request := CallToolRequest{}
 	request.Params.Name = "test-tool"
@@ -1395,4 +1497,55 @@ func TestNewItemsAPICompatibility(t *testing.T) {
 			assert.Equal(t, oldArrayProp["type"], newArrayProp["type"], "Array types should match")
 		})
 	}
+}
+
+// TestToolMetaMarshaling tests that the Meta field is properly marshaled as _meta in JSON output
+func TestToolMetaMarshaling(t *testing.T) {
+	meta := map[string]any{"version": "1.0.0", "author": "test"}
+	// Marshal the tool to JSON
+	data, err := json.Marshal(Tool{
+		Name:        "test-tool",
+		Description: "A test tool with meta data",
+		Meta:        NewMetaFromMap(meta),
+		InputSchema: ToolInputSchema{
+			Type: "object",
+			Properties: map[string]any{
+				"input": map[string]any{
+					"type":        "string",
+					"description": "Test input",
+				},
+			},
+		},
+	})
+	assert.NoError(t, err)
+
+	// Unmarshal to map for comparison
+	var result map[string]any
+	err = json.Unmarshal(data, &result)
+	assert.NoError(t, err)
+
+	// Check if _meta field is present and correct
+	assert.Contains(t, result, "_meta", "Tool with Meta should include _meta field")
+	assert.Equal(t, meta, result["_meta"], "_meta field should match expected value")
+}
+
+func TestToolMetaMarshalingOmitsWhenNil(t *testing.T) {
+	// Marshal a tool without Meta
+	data, err := json.Marshal(Tool{
+		Name:        "test-tool-no-meta",
+		Description: "A test tool without meta data",
+		InputSchema: ToolInputSchema{
+			Type:       "object",
+			Properties: map[string]any{},
+		},
+	})
+	assert.NoError(t, err)
+
+	// Unmarshal to map
+	var result map[string]any
+	err = json.Unmarshal(data, &result)
+	assert.NoError(t, err)
+
+	// Check that _meta field is not present
+	assert.NotContains(t, result, "_meta", "Tool without Meta should not include _meta field")
 }

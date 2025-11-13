@@ -613,6 +613,11 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 
 	m["annotations"] = t.Annotations
 
+	// Marshal Meta if present
+	if t.Meta != nil {
+		m["_meta"] = t.Meta
+	}
+
 	return json.Marshal(m)
 }
 
@@ -1086,8 +1091,10 @@ func WithObject(name string, opts ...PropertyOption) ToolOption {
 	}
 }
 
-// WithArray adds an array property to the tool schema.
-// It accepts property options to configure the array property's behavior and constraints.
+// WithArray returns a ToolOption that adds an array-typed property with the given name to a Tool's input schema.
+// It applies provided PropertyOption functions to configure the property's schema, moves a `required` flag
+// from the property schema into the Tool's InputSchema.Required slice when present, and registers the resulting
+// schema under InputSchema.Properties[name].
 func WithArray(name string, opts ...PropertyOption) ToolOption {
 	return func(t *Tool) {
 		schema := map[string]any{
@@ -1108,7 +1115,29 @@ func WithArray(name string, opts ...PropertyOption) ToolOption {
 	}
 }
 
-// Properties defines the properties for an object schema
+// WithAny adds an input property named name with no predefined JSON Schema type to the Tool's input schema.
+// The returned ToolOption applies the provided PropertyOption functions to the property's schema, moves a property-level
+// `required` flag into the Tool's InputSchema.Required list if present, and stores the resulting schema under InputSchema.Properties[name].
+func WithAny(name string, opts ...PropertyOption) ToolOption {
+	return func(t *Tool) {
+		schema := map[string]any{}
+
+		for _, opt := range opts {
+			opt(schema)
+		}
+
+		// Remove required from property schema and add to InputSchema.required
+		if required, ok := schema["required"].(bool); ok && required {
+			delete(schema, "required")
+			t.InputSchema.Required = append(t.InputSchema.Required, name)
+		}
+
+		t.InputSchema.Properties[name] = schema
+	}
+}
+
+// Properties sets the "properties" map for an object schema.
+// The returned PropertyOption stores the provided map under the schema's "properties" key.
 func Properties(props map[string]any) PropertyOption {
 	return func(schema map[string]any) {
 		schema["properties"] = props

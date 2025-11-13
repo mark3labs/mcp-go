@@ -26,7 +26,7 @@ func TestStreamableHTTPServer_SamplingBasic(t *testing.T) {
 
 	// Test session creation and interface implementation
 	sessionID := "test-session"
-	session := newStreamableHttpSession(sessionID, httpServer.sessionTools, httpServer.sessionLogLevels)
+	session := newStreamableHttpSession(sessionID, httpServer.sessionTools, httpServer.sessionResources, httpServer.sessionResourceTemplates, httpServer.sessionLogLevels)
 
 	// Verify it implements SessionWithSampling
 	_, ok := any(session).(SessionWithSampling)
@@ -45,7 +45,7 @@ func TestStreamableHTTPServer_SamplingErrorHandling(t *testing.T) {
 	mcpServer := NewMCPServer("test-server", "1.0.0")
 	mcpServer.EnableSampling()
 
-	httpServer := NewStreamableHTTPServer(mcpServer)
+	httpServer := NewStreamableHTTPServer(mcpServer, WithStateLess(true))
 	testServer := httptest.NewServer(httpServer)
 	defer testServer.Close()
 
@@ -76,7 +76,7 @@ func TestStreamableHTTPServer_SamplingErrorHandling(t *testing.T) {
 		},
 		{
 			name:      "invalid request ID",
-			sessionID: "mcp-session-550e8400-e29b-41d4-a716-446655440000",
+			sessionID: "any-session-id",
 			body: map[string]any{
 				"jsonrpc": "2.0",
 				"id":      "invalid-id",
@@ -92,13 +92,13 @@ func TestStreamableHTTPServer_SamplingErrorHandling(t *testing.T) {
 		},
 		{
 			name:      "malformed result",
-			sessionID: "mcp-session-550e8400-e29b-41d4-a716-446655440000",
+			sessionID: "any-session-id",
 			body: map[string]any{
 				"jsonrpc": "2.0",
 				"id":      1,
 				"result":  "invalid-result",
 			},
-			expectedStatus: http.StatusInternalServerError, // Now correctly returns 500 due to no active session
+			expectedStatus: http.StatusInternalServerError,
 		},
 	}
 
@@ -139,7 +139,7 @@ func TestStreamableHTTPServer_SamplingInterface(t *testing.T) {
 
 	// Create a session
 	sessionID := "test-session"
-	session := newStreamableHttpSession(sessionID, httpServer.sessionTools, httpServer.sessionLogLevels)
+	session := newStreamableHttpSession(sessionID, httpServer.sessionTools, httpServer.sessionResources, httpServer.sessionResourceTemplates, httpServer.sessionLogLevels)
 
 	// Verify it implements SessionWithSampling
 	_, ok := any(session).(SessionWithSampling)
@@ -178,7 +178,7 @@ func TestStreamableHTTPServer_SamplingInterface(t *testing.T) {
 // TestStreamableHTTPServer_SamplingQueueFull tests queue overflow scenarios
 func TestStreamableHTTPServer_SamplingQueueFull(t *testing.T) {
 	sessionID := "test-session"
-	session := newStreamableHttpSession(sessionID, nil, nil)
+	session := newStreamableHttpSession(sessionID, nil, nil, nil, nil)
 
 	// Fill the sampling request queue
 	for i := 0; i < cap(session.samplingRequestChan); i++ {

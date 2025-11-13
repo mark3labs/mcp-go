@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -18,22 +19,26 @@ type JSONRPCRequest struct {
 }
 
 type JSONRPCResponse struct {
-	JSONRPC string         `json:"jsonrpc"`
-	ID      *mcp.RequestId `json:"id,omitempty"`
-	Result  any            `json:"result,omitempty"`
-	Error   *struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
+	JSONRPC string                   `json:"jsonrpc"`
+	ID      *mcp.RequestId           `json:"id,omitempty"`
+	Result  any                      `json:"result,omitempty"`
+	Error   *mcp.JSONRPCErrorDetails `json:"error,omitempty"`
 }
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{}))
 	logger.Info("launch successful")
-	scanner := bufio.NewScanner(os.Stdin)
-	for scanner.Scan() {
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+
+		line = strings.TrimRight(line, "\r\n")
+
 		var request JSONRPCRequest
-		if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
+		if err := json.Unmarshal([]byte(line), &request); err != nil {
 			continue
 		}
 
@@ -157,21 +162,11 @@ func handleRequest(request JSONRPCRequest) JSONRPCResponse {
 
 	case "debug/echo_error_string":
 		all, _ := json.Marshal(request)
-		response.Error = &struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-		}{
-			Code:    -32601,
-			Message: string(all),
-		}
+		details := mcp.NewJSONRPCErrorDetails(mcp.METHOD_NOT_FOUND, string(all), nil)
+		response.Error = &details
 	default:
-		response.Error = &struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-		}{
-			Code:    -32601,
-			Message: "Method not found",
-		}
+		details := mcp.NewJSONRPCErrorDetails(mcp.METHOD_NOT_FOUND, "Method not found", nil)
+		response.Error = &details
 	}
 
 	return response

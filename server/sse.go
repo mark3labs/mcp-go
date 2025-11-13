@@ -29,6 +29,8 @@ type sseSession struct {
 	initialized         atomic.Bool
 	loggingLevel        atomic.Value
 	tools               sync.Map     // stores session-specific tools
+	resources           sync.Map     // stores session-specific resources
+	resourceTemplates   sync.Map     // stores session-specific resource templates
 	clientInfo          atomic.Value // stores session-specific client info
 	clientCapabilities  atomic.Value // stores session-specific client capabilities
 }
@@ -73,6 +75,48 @@ func (s *sseSession) GetLogLevel() mcp.LoggingLevel {
 		return mcp.LoggingLevelError
 	}
 	return level.(mcp.LoggingLevel)
+}
+
+func (s *sseSession) GetSessionResources() map[string]ServerResource {
+	resources := make(map[string]ServerResource)
+	s.resources.Range(func(key, value any) bool {
+		if resource, ok := value.(ServerResource); ok {
+			resources[key.(string)] = resource
+		}
+		return true
+	})
+	return resources
+}
+
+func (s *sseSession) SetSessionResources(resources map[string]ServerResource) {
+	// Clear existing resources
+	s.resources.Clear()
+
+	// Set new resources
+	for name, resource := range resources {
+		s.resources.Store(name, resource)
+	}
+}
+
+func (s *sseSession) GetSessionResourceTemplates() map[string]ServerResourceTemplate {
+	templates := make(map[string]ServerResourceTemplate)
+	s.resourceTemplates.Range(func(key, value any) bool {
+		if template, ok := value.(ServerResourceTemplate); ok {
+			templates[key.(string)] = template
+		}
+		return true
+	})
+	return templates
+}
+
+func (s *sseSession) SetSessionResourceTemplates(templates map[string]ServerResourceTemplate) {
+	// Clear existing templates
+	s.resourceTemplates.Clear()
+
+	// Set new templates
+	for uriTemplate, template := range templates {
+		s.resourceTemplates.Store(uriTemplate, template)
+	}
 }
 
 func (s *sseSession) GetSessionTools() map[string]ServerTool {
@@ -123,10 +167,12 @@ func (s *sseSession) GetClientCapabilities() mcp.ClientCapabilities {
 }
 
 var (
-	_ ClientSession         = (*sseSession)(nil)
-	_ SessionWithTools      = (*sseSession)(nil)
-	_ SessionWithLogging    = (*sseSession)(nil)
-	_ SessionWithClientInfo = (*sseSession)(nil)
+	_ ClientSession                = (*sseSession)(nil)
+	_ SessionWithTools             = (*sseSession)(nil)
+	_ SessionWithResources         = (*sseSession)(nil)
+	_ SessionWithResourceTemplates = (*sseSession)(nil)
+	_ SessionWithLogging           = (*sseSession)(nil)
+	_ SessionWithClientInfo        = (*sseSession)(nil)
 )
 
 // SSEServer implements a Server-Sent Events (SSE) based MCP server.

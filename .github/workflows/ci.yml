@@ -4,6 +4,7 @@ on:
     branches:
       - main
   pull_request:
+  pull_request_target:
   workflow_dispatch:
 
 jobs:
@@ -15,6 +16,30 @@ jobs:
       with:
         go-version-file: 'go.mod'
     - run: go test ./... -race
+  
+  coverage:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: 'go.mod'
+    - name: Run tests with coverage
+      run: |
+        go test -coverprofile=coverage.txt -covermode=atomic $(go list ./... | grep -v '/examples/' | grep -v '/testdata' | grep -v '/mcptest' | grep -v '/server/internal/gen')
+    - name: Upload coverage artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: code-coverage
+        path: coverage.txt
+    - name: Generate coverage report
+      uses: fgrosse/go-coverage-report@v1.2.0
 
   verify-codegen:
     runs-on: ubuntu-latest

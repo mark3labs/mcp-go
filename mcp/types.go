@@ -6,9 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"strconv"
-
 	"net/http"
+	"strconv"
 
 	"github.com/yosida95/uritemplate/v3"
 )
@@ -56,6 +55,14 @@ const (
 	// https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging
 	MethodSetLogLevel MCPMethod = "logging/setLevel"
 
+	// MethodElicitationCreate requests additional information from the user during interactions.
+	// https://modelcontextprotocol.io/docs/concepts/elicitation
+	MethodElicitationCreate MCPMethod = "elicitation/create"
+
+	// MethodListRoots requests roots list from the client during interactions.
+	// https://modelcontextprotocol.io/specification/2025-06-18/client/roots
+	MethodListRoots MCPMethod = "roots/list"
+
 	// MethodNotificationResourcesListChanged notifies when the list of available resources changes.
 	// https://modelcontextprotocol.io/specification/2025-03-26/server/resources#list-changed-notification
 	MethodNotificationResourcesListChanged = "notifications/resources/list_changed"
@@ -67,8 +74,12 @@ const (
 	MethodNotificationPromptsListChanged = "notifications/prompts/list_changed"
 
 	// MethodNotificationToolsListChanged notifies when the list of available tools changes.
-	// https://spec.modelcontextprotocol.io/specification/2024-11-05/server/tools/list_changed/
+	// https://modelcontextprotocol.io/specification/2025-06-18/server/tools#list-changed-notification
 	MethodNotificationToolsListChanged = "notifications/tools/list_changed"
+
+	// MethodNotificationRootsListChanged notifies when the list of available roots changes.
+	// https://modelcontextprotocol.io/specification/2025-06-18/client/roots#root-list-changes
+	MethodNotificationRootsListChanged = "notifications/roots/list_changed"
 )
 
 type URITemplate struct {
@@ -294,7 +305,6 @@ func (r RequestId) MarshalJSON() ([]byte, error) {
 }
 
 func (r *RequestId) UnmarshalJSON(data []byte) error {
-
 	if string(data) == "null" {
 		r.value = nil
 		return nil
@@ -344,31 +354,48 @@ type JSONRPCResponse struct {
 
 // JSONRPCError represents a non-successful (error) response to a request.
 type JSONRPCError struct {
-	JSONRPC string    `json:"jsonrpc"`
-	ID      RequestId `json:"id"`
-	Error   struct {
-		// The error type that occurred.
-		Code int `json:"code"`
-		// A short description of the error. The message SHOULD be limited
-		// to a concise single sentence.
-		Message string `json:"message"`
-		// Additional information about the error. The value of this member
-		// is defined by the sender (e.g. detailed error information, nested errors etc.).
-		Data any `json:"data,omitempty"`
-	} `json:"error"`
+	JSONRPC string              `json:"jsonrpc"`
+	ID      RequestId           `json:"id"`
+	Error   JSONRPCErrorDetails `json:"error"`
+}
+
+// JSONRPCErrorDetails represents a JSON-RPC error for Go error handling.
+// This is separate from the JSONRPCError type which represents the full JSON-RPC error response structure.
+type JSONRPCErrorDetails struct {
+	// The error type that occurred.
+	Code int `json:"code"`
+	// A short description of the error. The message SHOULD be limited
+	// to a concise single sentence.
+	Message string `json:"message"`
+	// Additional information about the error. The value of this member
+	// is defined by the sender (e.g. detailed error information, nested errors etc.).
+	Data any `json:"data,omitempty"`
 }
 
 // Standard JSON-RPC error codes
 const (
-	PARSE_ERROR      = -32700
-	INVALID_REQUEST  = -32600
+	// PARSE_ERROR indicates invalid JSON was received by the server.
+	PARSE_ERROR = -32700
+
+	// INVALID_REQUEST indicates the JSON sent is not a valid Request object.
+	INVALID_REQUEST = -32600
+
+	// METHOD_NOT_FOUND indicates the method does not exist/is not available.
 	METHOD_NOT_FOUND = -32601
-	INVALID_PARAMS   = -32602
-	INTERNAL_ERROR   = -32603
+
+	// INVALID_PARAMS indicates invalid method parameter(s).
+	INVALID_PARAMS = -32602
+
+	// INTERNAL_ERROR indicates internal JSON-RPC error.
+	INTERNAL_ERROR = -32603
+
+	// REQUEST_INTERRUPTED indicates a request was cancelled or timed out.
+	REQUEST_INTERRUPTED = -32800
 )
 
 // MCP error codes
 const (
+	// RESOURCE_NOT_FOUND indicates a requested resource was not found.
 	RESOURCE_NOT_FOUND = -32002
 )
 
@@ -462,6 +489,8 @@ type ClientCapabilities struct {
 	} `json:"roots,omitempty"`
 	// Present if the client supports sampling from an LLM.
 	Sampling *struct{} `json:"sampling,omitempty"`
+	// Present if the client supports elicitation requests from the server.
+	Elicitation *struct{} `json:"elicitation,omitempty"`
 }
 
 // ServerCapabilities represents capabilities that a server may support. Known
@@ -492,12 +521,17 @@ type ServerCapabilities struct {
 		// Whether this server supports notifications for changes to the tool list.
 		ListChanged bool `json:"listChanged,omitempty"`
 	} `json:"tools,omitempty"`
+	// Present if the server supports elicitation requests to the client.
+	Elicitation *struct{} `json:"elicitation,omitempty"`
+	// Present if the server supports roots requests to the client.
+	Roots *struct{} `json:"roots,omitempty"`
 }
 
 // Implementation describes the name and version of an MCP implementation.
 type Implementation struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
+	Title   string `json:"title,omitempty"`
 }
 
 /* Ping */
@@ -716,8 +750,9 @@ type ResourceContents interface {
 }
 
 type TextResourceContents struct {
-	// Meta is a metadata object that is reserved by MCP for storing additional information.
-	Meta *Meta `json:"_meta,omitempty"`
+	// Raw per‑resource metadata; pass‑through as defined by MCP. Not the same as mcp.Meta.
+	// Allows _meta to be used for MCP-UI features for example. Does not assume any specific format.
+	Meta map[string]any `json:"_meta,omitempty"`
 	// The URI of this resource.
 	URI string `json:"uri"`
 	// The MIME type of this resource, if known.
@@ -730,8 +765,9 @@ type TextResourceContents struct {
 func (TextResourceContents) isResourceContents() {}
 
 type BlobResourceContents struct {
-	// Meta is a metadata object that is reserved by MCP for storing additional information.
-	Meta *Meta `json:"_meta,omitempty"`
+	// Raw per‑resource metadata; pass‑through as defined by MCP. Not the same as mcp.Meta.
+	// Allows _meta to be used for MCP-UI features for example. Does not assume any specific format.
+	Meta map[string]any `json:"_meta,omitempty"`
 	// The URI of this resource.
 	URI string `json:"uri"`
 	// The MIME type of this resource, if known.
@@ -813,6 +849,50 @@ func (l LoggingLevel) ShouldSendTo(minLevel LoggingLevel) bool {
 	}
 	return ia >= ib
 }
+
+/* Elicitation */
+
+// ElicitationRequest is a request from the server to the client to request additional
+// information from the user during an interaction.
+type ElicitationRequest struct {
+	Request
+	Params ElicitationParams `json:"params"`
+}
+
+// ElicitationParams contains the parameters for an elicitation request.
+type ElicitationParams struct {
+	// A human-readable message explaining what information is being requested and why.
+	Message string `json:"message"`
+	// A JSON Schema defining the expected structure of the user's response.
+	RequestedSchema any `json:"requestedSchema"`
+}
+
+// ElicitationResult represents the result of an elicitation request.
+type ElicitationResult struct {
+	Result
+	ElicitationResponse
+}
+
+// ElicitationResponse represents the user's response to an elicitation request.
+type ElicitationResponse struct {
+	// Action indicates whether the user accepted, declined, or cancelled.
+	Action ElicitationResponseAction `json:"action"`
+	// Content contains the user's response data if they accepted.
+	// Should conform to the requestedSchema from the ElicitationRequest.
+	Content any `json:"content,omitempty"`
+}
+
+// ElicitationResponseAction indicates how the user responded to an elicitation request.
+type ElicitationResponseAction string
+
+const (
+	// ElicitationResponseActionAccept indicates the user provided the requested information.
+	ElicitationResponseActionAccept ElicitationResponseAction = "accept"
+	// ElicitationResponseActionDecline indicates the user explicitly declined to provide information.
+	ElicitationResponseActionDecline ElicitationResponseAction = "decline"
+	// ElicitationResponseActionCancel indicates the user cancelled without making a choice.
+	ElicitationResponseActionCancel ElicitationResponseAction = "cancel"
+)
 
 /* Sampling */
 
@@ -1074,7 +1154,6 @@ type PromptReference struct {
 // structure or access specific locations that the client has permission to read from.
 type ListRootsRequest struct {
 	Request
-	Header http.Header `json:"-"`
 }
 
 // ListRootsResult is the client's response to a roots/list request from the server.

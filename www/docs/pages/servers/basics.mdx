@@ -36,7 +36,7 @@ s := server.NewMCPServer(
     "Advanced Server",
     "2.0.0",
     server.WithToolCapabilities(true),      // Enable tools
-    server.WithResourceCapabilities(true),  // Enable resources  
+    server.WithResourceCapabilities(true, true),  // Enable resources
     server.WithPromptCapabilities(true),    // Enable prompts
     server.WithRecovery(),                  // Add panic recovery
     server.WithHooks(myHooks),              // Add lifecycle hooks
@@ -55,7 +55,7 @@ s := server.NewMCPServer(
     "Specialized Server",
     "1.0.0",
     server.WithToolCapabilities(true),      // Can execute tools
-    server.WithResourceCapabilities(true),  // Can provide resources
+    server.WithResourceCapabilities(true, true),  // Can provide resources
     server.WithPromptCapabilities(true),    // Can provide prompts
 )
 
@@ -64,7 +64,7 @@ s := server.NewMCPServer(
     "Full-Featured Server", 
     "1.0.0",
     server.WithToolCapabilities(true),
-    server.WithResourceCapabilities(true),
+    server.WithResourceCapabilities(true, true),
     server.WithPromptCapabilities(true),
 )
 ```
@@ -181,7 +181,7 @@ Configure transport-specific options:
 // HTTP with custom options
 httpServer := server.NewStreamableHTTPServer(s,
     server.WithEndpointPath("/mcp"),
-    server.WithStateless(true),
+    server.WithStateLess(true),
     server.WithTLSCert("/path/to/cert.pem", "/path/to/key.pem"),
 )
 

@@ -590,6 +590,135 @@ func TestStreamableHTTP_HttpHandler(t *testing.T) {
 	})
 }
 
+func TestStreamableHttpResourceGet(t *testing.T) {
+	s := NewMCPServer("test-mcp-server", "1.0", WithResourceCapabilities(true, true))
+
+	testServer := NewTestStreamableHTTPServer(
+		s,
+		WithHTTPContextFunc(func(ctx context.Context, r *http.Request) context.Context {
+			session := ClientSessionFromContext(ctx)
+
+			if st, ok := session.(SessionWithResources); ok {
+				if _, ok := st.GetSessionResources()["file://test_resource"]; !ok {
+					st.SetSessionResources(map[string]ServerResource{
+						"file://test_resource": ServerResource{
+							Resource: mcp.Resource{
+								URI:         "file://test_resource",
+								Name:        "test_resource",
+								Description: "A test resource",
+								MIMEType:    "text/plain",
+							},
+							Handler: func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+								return []mcp.ResourceContents{
+									mcp.TextResourceContents{
+										URI:      "file://test_resource",
+										Text:     "test content",
+										MIMEType: "text/plain",
+									},
+								}, nil
+							},
+						},
+					})
+				}
+			} else {
+				t.Error("Session does not support tools/resources")
+			}
+
+			return ctx
+		}),
+	)
+
+	var sessionID string
+
+	// Initialize session
+	resp, err := postJSON(testServer.URL, initRequest)
+	if err != nil {
+		t.Fatalf("Failed to send initialize request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", resp.StatusCode)
+	}
+
+	sessionID = resp.Header.Get(HeaderKeySessionID)
+	if sessionID == "" {
+		t.Fatal("Expected session id in header")
+	}
+
+	// List resources
+	listResourcesRequest := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "resources/list",
+		"params":  map[string]any{},
+	}
+	resp, err = postSessionJSON(testServer.URL, sessionID, listResourcesRequest)
+	if err != nil {
+		t.Fatalf("Failed to send list resources request: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", resp.StatusCode)
+	}
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	var listResponse jsonRPCResponse
+	if err := json.Unmarshal(bodyBytes, &listResponse); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	items, ok := listResponse.Result["resources"].([]any)
+	if !ok {
+		t.Fatal("Expected resources array in response")
+	}
+	if len(items) != 1 {
+		t.Fatalf("Expected 1 resource, got %d", len(items))
+	}
+	imap, ok := items[0].(map[string]any)
+	if !ok {
+		t.Fatal("Expected resource to be a map")
+	}
+	if imap["uri"] != "file://test_resource" {
+		t.Errorf("Expected resource URI file://test_resource, got %v", imap["uri"])
+	}
+
+	// List resources
+	getResourceRequest := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "resources/read",
+		"params":  map[string]any{"uri": "file://test_resource"},
+	}
+	resp, err = postSessionJSON(testServer.URL, sessionID, getResourceRequest)
+	if err != nil {
+		t.Fatalf("Failed to send list resources request: %v", err)
+	}
+
+	bodyBytes, _ = io.ReadAll(resp.Body)
+	var readResponse jsonRPCResponse
+	if err := json.Unmarshal(bodyBytes, &readResponse); err != nil {
+		t.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	contents, ok := readResponse.Result["contents"].([]any)
+	if !ok {
+		t.Fatal("Expected contents array in response")
+	}
+	if len(contents) != 1 {
+		t.Fatalf("Expected 1 content, got %d", len(contents))
+	}
+
+	cmap, ok := contents[0].(map[string]any)
+	if !ok {
+		t.Fatal("Expected content to be a map")
+	}
+	if cmap["uri"] != "file://test_resource" {
+		t.Errorf("Expected content URI file://test_resource, got %v", cmap["uri"])
+	}
+
+}
+
 func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 
 	t.Run("SessionWithTools implementation", func(t *testing.T) {
@@ -719,6 +848,153 @@ func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 		}
 		if _, exists := retrievedTools["final_tool"]; !exists {
 			t.Error("Expected final_tool to exist")
+		}
+	})
+}
+
+func TestStreamableHTTP_SessionWithResources(t *testing.T) {
+
+	t.Run("SessionWithResources implementation", func(t *testing.T) {
+		var registeredSession SessionWithResources
+		hooks := &Hooks{}
+		var mu sync.Mutex
+		var sessionRegistered sync.WaitGroup
+		var sessionRegisteredOnce sync.Once
+		sessionRegistered.Add(1)
+
+		hooks.AddOnRegisterSession(func(ctx context.Context, session ClientSession) {
+			if s, ok := session.(*streamableHttpSession); ok {
+				mu.Lock()
+				registeredSession = s
+				mu.Unlock()
+				sessionRegisteredOnce.Do(func() {
+					sessionRegistered.Done()
+				})
+			}
+		})
+
+		mcpServer := NewMCPServer("test", "1.0.0", WithHooks(hooks))
+		testServer := NewTestStreamableHTTPServer(mcpServer)
+		defer testServer.Close()
+
+		// send initialize request to trigger the session registration
+		resp, err := postJSON(testServer.URL, initRequest)
+		if err != nil {
+			t.Fatalf("Failed to send message: %v", err)
+		}
+		defer resp.Body.Close()
+
+		// Watch the notification to ensure the session is registered
+		// (Normal http request (post) will not trigger the session registration)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		go func() {
+			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, testServer.URL, nil)
+			req.Header.Set("Content-Type", "text/event-stream")
+			getResp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				fmt.Printf("Failed to get: %v\n", err)
+				return
+			}
+			defer getResp.Body.Close()
+		}()
+
+		// Verify we got a session
+		sessionRegistered.Wait()
+		mu.Lock()
+		if registeredSession == nil {
+			mu.Unlock()
+			t.Fatal("Session was not registered via hook")
+		}
+		mu.Unlock()
+
+		// Test setting and getting resources
+		resources := map[string]ServerResource{
+			"test_resource": {
+				Resource: mcp.Resource{
+					URI:         "file://test_resource",
+					Name:        "test_resource",
+					Description: "A test resource",
+					MIMEType:    "text/plain",
+				},
+				Handler: func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+					return []mcp.ResourceContents{
+						mcp.TextResourceContents{
+							URI:  "file://test_resource",
+							Text: "test content",
+						},
+					}, nil
+				},
+			},
+		}
+
+		// Test SetSessionResources
+		registeredSession.SetSessionResources(resources)
+
+		// Test GetSessionResources
+		retrievedResources := registeredSession.GetSessionResources()
+		if len(retrievedResources) != 1 {
+			t.Errorf("Expected 1 resource, got %d", len(retrievedResources))
+		}
+		if resource, exists := retrievedResources["test_resource"]; !exists {
+			t.Error("Expected test_resource to exist")
+		} else if resource.Resource.Name != "test_resource" {
+			t.Errorf("Expected resource name test_resource, got %s", resource.Resource.Name)
+		}
+
+		// Test concurrent access
+		var wg sync.WaitGroup
+		for i := 0; i < 10; i++ {
+			wg.Add(2)
+			go func(i int) {
+				defer wg.Done()
+				resources := map[string]ServerResource{
+					fmt.Sprintf("resource_%d", i): {
+						Resource: mcp.Resource{
+							URI:         fmt.Sprintf("file://resource_%d", i),
+							Name:        fmt.Sprintf("resource_%d", i),
+							Description: fmt.Sprintf("Resource %d", i),
+							MIMEType:    "text/plain",
+						},
+					},
+				}
+				mu.Lock()
+				session := registeredSession
+				mu.Unlock()
+				if session != nil {
+					session.SetSessionResources(resources)
+				}
+			}(i)
+			go func() {
+				defer wg.Done()
+				mu.Lock()
+				session := registeredSession
+				mu.Unlock()
+				if session != nil {
+					_ = session.GetSessionResources()
+				}
+			}()
+		}
+		wg.Wait()
+
+		// Verify we can still get and set resources after concurrent access
+		finalResources := map[string]ServerResource{
+			"final_resource": {
+				Resource: mcp.Resource{
+					URI:         "file://final_resource",
+					Name:        "final_resource",
+					Description: "Final Resource",
+					MIMEType:    "text/plain",
+				},
+			},
+		}
+		registeredSession.SetSessionResources(finalResources)
+		retrievedResources = registeredSession.GetSessionResources()
+		if len(retrievedResources) != 1 {
+			t.Errorf("Expected 1 resource, got %d", len(retrievedResources))
+		}
+		if _, exists := retrievedResources["final_resource"]; !exists {
+			t.Error("Expected final_resource to exist")
 		}
 	})
 }
@@ -894,6 +1170,101 @@ func TestStreamableHTTP_HeaderPassthrough(t *testing.T) {
 	}
 }
 
+func TestStreamableHTTP_PongResponseHandling(t *testing.T) {
+	// Ping/Pong does not require session ID
+	// https://modelcontextprotocol.io/specification/2025-03-26/basic/utilities/ping
+	mcpServer := NewMCPServer("test-mcp-server", "1.0")
+	server := NewTestStreamableHTTPServer(mcpServer)
+	defer server.Close()
+
+	t.Run("Pong response with empty result should not be treated as sampling response", func(t *testing.T) {
+		// According to MCP spec, pong responses have empty result: {"jsonrpc": "2.0", "id": "123", "result": {}}
+		pongResponse := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      123,
+			"result":  map[string]any{},
+		}
+
+		resp, err := postJSON(server.URL, pongResponse)
+		if err != nil {
+			t.Fatalf("Failed to send pong response: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Failed to read response body: %v", err)
+		}
+		bodyStr := string(bodyBytes)
+
+		if strings.Contains(bodyStr, "Missing session ID for sampling response") {
+			t.Errorf("Pong response was incorrectly detected as sampling response. Response: %s", bodyStr)
+		}
+		if strings.Contains(bodyStr, "Failed to handle sampling response") {
+			t.Errorf("Pong response was incorrectly detected as sampling response. Response: %s", bodyStr)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200 for pong response, got %d. Body: %s", resp.StatusCode, bodyStr)
+		}
+	})
+
+	t.Run("Pong response with null result should not be treated as sampling response", func(t *testing.T) {
+		pongResponse := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      124,
+		}
+
+		resp, err := postJSON(server.URL, pongResponse)
+		if err != nil {
+			t.Fatalf("Failed to send pong response: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Failed to read response body: %v", err)
+		}
+		bodyStr := string(bodyBytes)
+
+		if strings.Contains(bodyStr, "Missing session ID for sampling response") {
+			t.Errorf("Pong response with omitted result was incorrectly detected as sampling response. Response: %s", bodyStr)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200 for pong response, got %d. Body: %s", resp.StatusCode, bodyStr)
+		}
+	})
+
+	t.Run("Response with empty error should not be treated as sampling response", func(t *testing.T) {
+		response := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      125,
+			"error":   map[string]any{},
+		}
+
+		resp, err := postJSON(server.URL, response)
+		if err != nil {
+			t.Fatalf("Failed to send response: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Failed to read response body: %v", err)
+		}
+		bodyStr := string(bodyBytes)
+
+		if strings.Contains(bodyStr, "Missing session ID for sampling response") {
+			t.Errorf("Response with empty error was incorrectly detected as sampling response. Response: %s", bodyStr)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200 for response with empty error, got %d. Body: %s", resp.StatusCode, bodyStr)
+		}
+	})
+}
+
 func TestStreamableHTTPServer_TLS(t *testing.T) {
 	t.Run("TLS options are set correctly", func(t *testing.T) {
 		mcpServer := NewMCPServer("test-mcp-server", "1.0.0")
@@ -914,9 +1285,907 @@ func TestStreamableHTTPServer_TLS(t *testing.T) {
 	})
 }
 
+func TestStreamableHTTPServer_WithDisableStreaming(t *testing.T) {
+	t.Run("WithDisableStreaming blocks GET requests", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-mcp-server", "1.0.0")
+		server := NewTestStreamableHTTPServer(mcpServer, WithDisableStreaming(true))
+		defer server.Close()
+
+		// Attempt a GET request (which should be blocked)
+		req, err := http.NewRequest(http.MethodGet, server.URL, nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+		req.Header.Set("Content-Type", "text/event-stream")
+
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to send request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		// Verify the request is rejected with 405 Method Not Allowed
+		if resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("Expected status 405 Method Not Allowed, got %d", resp.StatusCode)
+		}
+
+		// Verify the error message
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("Failed to read response body: %v", err)
+		}
+
+		expectedMessage := "Streaming is disabled on this server"
+		if !strings.Contains(string(bodyBytes), expectedMessage) {
+			t.Errorf("Expected error message to contain '%s', got '%s'", expectedMessage, string(bodyBytes))
+		}
+	})
+
+	t.Run("POST requests still work with WithDisableStreaming", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-mcp-server", "1.0.0")
+		server := NewTestStreamableHTTPServer(mcpServer, WithDisableStreaming(true))
+		defer server.Close()
+
+		// POST requests should still work
+		resp, err := postJSON(server.URL, initRequest)
+		if err != nil {
+			t.Fatalf("Failed to send message: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", resp.StatusCode)
+		}
+
+		// Verify the response is valid
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		var responseMessage jsonRPCResponse
+		if err := json.Unmarshal(bodyBytes, &responseMessage); err != nil {
+			t.Fatalf("Failed to unmarshal response: %v", err)
+		}
+		if responseMessage.Result["protocolVersion"] != mcp.LATEST_PROTOCOL_VERSION {
+			t.Errorf("Expected protocol version %s, got %s", mcp.LATEST_PROTOCOL_VERSION, responseMessage.Result["protocolVersion"])
+		}
+	})
+
+	t.Run("Streaming works when WithDisableStreaming is false", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-mcp-server", "1.0.0")
+		server := NewTestStreamableHTTPServer(mcpServer, WithDisableStreaming(false))
+		defer server.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+
+		// GET request should work when streaming is enabled
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+		req.Header.Set("Content-Type", "text/event-stream")
+
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to send request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", resp.StatusCode)
+		}
+
+		if resp.Header.Get("content-type") != "text/event-stream" {
+			t.Errorf("Expected content-type text/event-stream, got %s", resp.Header.Get("content-type"))
+		}
+	})
+}
+
 func postJSON(url string, bodyObject any) (*http.Response, error) {
 	jsonBody, _ := json.Marshal(bodyObject)
 	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(jsonBody))
 	req.Header.Set("Content-Type", "application/json")
 	return http.DefaultClient.Do(req)
+}
+
+func postSessionJSON(url, session string, bodyObject any) (*http.Response, error) {
+	jsonBody, _ := json.Marshal(bodyObject)
+	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(jsonBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(HeaderKeySessionID, session)
+	return http.DefaultClient.Do(req)
+}
+
+func TestStreamableHTTP_SessionValidation(t *testing.T) {
+	mcpServer := NewMCPServer("test-server", "1.0.0")
+	mcpServer.AddTool(mcp.NewTool("time",
+		mcp.WithDescription("Get the current time")), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("2024-01-01T00:00:00Z"), nil
+	})
+
+	server := NewTestStreamableHTTPServer(mcpServer)
+	defer server.Close()
+
+	t.Run("Reject tool call with fake session ID", func(t *testing.T) {
+		toolCallRequest := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name": "time",
+			},
+		}
+
+		jsonBody, _ := json.Marshal(toolCallRequest)
+		req, _ := http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(HeaderKeySessionID, "mcp-session-ffffffff-ffff-ffff-ffff-ffffffffffff")
+
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to send request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d", resp.StatusCode)
+		}
+
+		body, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(string(body), "Invalid session ID") {
+			t.Errorf("Expected 'Invalid session ID' error, got: %s", string(body))
+		}
+	})
+
+	t.Run("Reject tool call with malformed session ID", func(t *testing.T) {
+		toolCallRequest := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name": "time",
+			},
+		}
+
+		jsonBody, _ := json.Marshal(toolCallRequest)
+		req, _ := http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(HeaderKeySessionID, "invalid-session-id")
+
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to send request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d", resp.StatusCode)
+		}
+
+		body, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(string(body), "Invalid session ID") {
+			t.Errorf("Expected 'Invalid session ID' error, got: %s", string(body))
+		}
+	})
+
+	t.Run("Accept tool call with valid session ID from initialize", func(t *testing.T) {
+		jsonBody, _ := json.Marshal(initRequest)
+		req, _ := http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to initialize: %v", err)
+		}
+		defer resp.Body.Close()
+
+		sessionID := resp.Header.Get(HeaderKeySessionID)
+		if sessionID == "" {
+			t.Fatal("Expected session ID in response header")
+		}
+
+		toolCallRequest := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      2,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name": "time",
+			},
+		}
+
+		jsonBody, _ = json.Marshal(toolCallRequest)
+		req, _ = http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(HeaderKeySessionID, sessionID)
+
+		resp, err = server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to call tool: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Errorf("Expected status 200, got %d. Body: %s", resp.StatusCode, string(body))
+		}
+	})
+
+	t.Run("Reject tool call with terminated session ID", func(t *testing.T) {
+		jsonBody, _ := json.Marshal(initRequest)
+		req, _ := http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to initialize: %v", err)
+		}
+		resp.Body.Close()
+
+		sessionID := resp.Header.Get(HeaderKeySessionID)
+		if sessionID == "" {
+			t.Fatal("Expected session ID in response header")
+		}
+
+		req, _ = http.NewRequest(http.MethodDelete, server.URL, nil)
+		req.Header.Set(HeaderKeySessionID, sessionID)
+
+		resp, err = server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to terminate session: %v", err)
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200 for termination, got %d", resp.StatusCode)
+		}
+
+		toolCallRequest := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      2,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name": "time",
+			},
+		}
+
+		jsonBody, _ = json.Marshal(toolCallRequest)
+		req, _ = http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(HeaderKeySessionID, sessionID)
+
+		resp, err = server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to send request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusNotFound {
+			body, _ := io.ReadAll(resp.Body)
+			t.Errorf("Expected status 404, got %d. Body: %s", resp.StatusCode, string(body))
+		}
+	})
+}
+
+func TestInsecureStatefulSessionIdManager(t *testing.T) {
+	t.Run("Generate creates valid session ID", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		sessionID := manager.Generate()
+
+		if !strings.HasPrefix(sessionID, idPrefix) {
+			t.Errorf("Expected session ID to start with %s, got %s", idPrefix, sessionID)
+		}
+
+		isTerminated, err := manager.Validate(sessionID)
+		if err != nil {
+			t.Errorf("Expected valid session ID, got error: %v", err)
+		}
+		if isTerminated {
+			t.Error("Expected session to not be terminated")
+		}
+	})
+
+	t.Run("Validate rejects non-existent session ID", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		fakeSessionID := "mcp-session-ffffffff-ffff-ffff-ffff-ffffffffffff"
+
+		isTerminated, err := manager.Validate(fakeSessionID)
+		if err == nil {
+			t.Error("Expected error for non-existent session ID")
+		}
+		if isTerminated {
+			t.Error("Expected isTerminated to be false for invalid session")
+		}
+		if !strings.Contains(err.Error(), "session not found") {
+			t.Errorf("Expected 'session not found' error, got: %v", err)
+		}
+	})
+
+	t.Run("Validate rejects malformed session ID", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		invalidSessionID := "invalid-session-id"
+
+		_, err := manager.Validate(invalidSessionID)
+		if err == nil {
+			t.Error("Expected error for malformed session ID")
+		}
+		if !strings.Contains(err.Error(), "invalid session id") {
+			t.Errorf("Expected 'invalid session id' error, got: %v", err)
+		}
+	})
+
+	t.Run("Terminate marks session as terminated", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		sessionID := manager.Generate()
+
+		isNotAllowed, err := manager.Terminate(sessionID)
+		if err != nil {
+			t.Errorf("Expected no error on termination, got: %v", err)
+		}
+		if isNotAllowed {
+			t.Error("Expected termination to be allowed")
+		}
+
+		isTerminated, err := manager.Validate(sessionID)
+		if !isTerminated {
+			t.Error("Expected session to be marked as terminated")
+		}
+		if err != nil {
+			t.Errorf("Expected no error for terminated session, got: %v", err)
+		}
+	})
+
+	t.Run("Terminate is idempotent for non-existent session ID", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		fakeSessionID := "mcp-session-ffffffff-ffff-ffff-ffff-ffffffffffff"
+
+		isNotAllowed, err := manager.Terminate(fakeSessionID)
+		if err != nil {
+			t.Errorf("Expected no error when terminating non-existent session, got: %v", err)
+		}
+		if isNotAllowed {
+			t.Error("Expected isNotAllowed to be false")
+		}
+	})
+
+	t.Run("Terminate is idempotent for already-terminated session", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		sessionID := manager.Generate()
+
+		isNotAllowed, err := manager.Terminate(sessionID)
+		if err != nil {
+			t.Errorf("Expected no error on first termination, got: %v", err)
+		}
+		if isNotAllowed {
+			t.Error("Expected termination to be allowed")
+		}
+
+		isNotAllowed, err = manager.Terminate(sessionID)
+		if err != nil {
+			t.Errorf("Expected no error on second termination (idempotent), got: %v", err)
+		}
+		if isNotAllowed {
+			t.Error("Expected termination to be allowed on retry")
+		}
+	})
+
+	t.Run("Concurrent generate and validate", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		var wg sync.WaitGroup
+		sessionIDs := make([]string, 100)
+
+		for i := 0; i < 100; i++ {
+			wg.Add(1)
+			go func(index int) {
+				defer wg.Done()
+				sessionIDs[index] = manager.Generate()
+			}(i)
+		}
+
+		wg.Wait()
+
+		for _, sessionID := range sessionIDs {
+			isTerminated, err := manager.Validate(sessionID)
+			if err != nil {
+				t.Errorf("Expected valid session ID %s, got error: %v", sessionID, err)
+			}
+			if isTerminated {
+				t.Errorf("Expected session %s to not be terminated", sessionID)
+			}
+		}
+	})
+}
+
+func TestDefaultSessionIdManagerResolver(t *testing.T) {
+	t.Run("ResolveSessionIdManager returns configured manager", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		resolver := NewDefaultSessionIdManagerResolver(manager)
+
+		req, err := http.NewRequest("POST", "/test", nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+
+		resolved := resolver.ResolveSessionIdManager(req)
+		if resolved != manager {
+			t.Error("Expected resolver to return the configured manager")
+		}
+	})
+
+	t.Run("ResolveSessionIdManager works with StatelessSessionIdManager", func(t *testing.T) {
+		manager := &StatelessSessionIdManager{}
+		resolver := NewDefaultSessionIdManagerResolver(manager)
+
+		req, err := http.NewRequest("GET", "/test", nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+
+		resolved := resolver.ResolveSessionIdManager(req)
+		if resolved != manager {
+			t.Error("Expected resolver to return the configured stateless manager")
+		}
+
+		// Test that the resolved manager works correctly
+		sessionID := resolved.Generate()
+		if sessionID != "" {
+			t.Errorf("Expected stateless manager to return empty session ID, got: %s", sessionID)
+		}
+
+		isTerminated, err := resolved.Validate("any-session-id")
+		if err != nil {
+			t.Errorf("Expected stateless manager to validate any session ID, got error: %v", err)
+		}
+		if isTerminated {
+			t.Error("Expected stateless manager to not mark sessions as terminated")
+		}
+	})
+
+	t.Run("ResolveSessionIdManager is consistent across multiple calls", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		resolver := NewDefaultSessionIdManagerResolver(manager)
+
+		req1, _ := http.NewRequest("POST", "/test1", nil)
+		req2, _ := http.NewRequest("GET", "/test2", nil)
+
+		resolved1 := resolver.ResolveSessionIdManager(req1)
+		resolved2 := resolver.ResolveSessionIdManager(req2)
+
+		if resolved1 != resolved2 {
+			t.Error("Expected resolver to return the same manager for different requests")
+		}
+		if resolved1 != manager {
+			t.Error("Expected resolver to return the configured manager")
+		}
+	})
+
+	t.Run("ResolveSessionIdManager handles nil request gracefully", func(t *testing.T) {
+		manager := &InsecureStatefulSessionIdManager{}
+		resolver := NewDefaultSessionIdManagerResolver(manager)
+
+		// This should not panic even with nil request since we ignore the request parameter
+		resolved := resolver.ResolveSessionIdManager(nil)
+		if resolved != manager {
+			t.Error("Expected resolver to return the configured manager even with nil request")
+		}
+	})
+
+	t.Run("NewDefaultSessionIdManagerResolver handles nil manager defensively", func(t *testing.T) {
+		// This should not panic and should use default manager
+		resolver := NewDefaultSessionIdManagerResolver(nil)
+		if resolver == nil {
+			t.Fatal("Expected resolver to be created even with nil manager")
+		}
+
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := resolver.ResolveSessionIdManager(req)
+		if resolved == nil {
+			t.Error("Expected resolver to return a non-nil manager")
+		}
+
+		// Test that the resolved manager works (generates valid session IDs)
+		sessionID := resolved.Generate()
+		if sessionID == "" {
+			t.Error("Expected default manager to generate non-empty session ID")
+		}
+		if !strings.HasPrefix(sessionID, idPrefix) {
+			t.Error("Expected default manager to generate session ID with correct prefix")
+		}
+	})
+}
+
+func TestSessionIdManagerResolver_Integration(t *testing.T) {
+	t.Run("WithSessionIdManagerResolver option sets resolver correctly", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+		manager := &StatelessSessionIdManager{}
+		resolver := NewDefaultSessionIdManagerResolver(manager)
+
+		server := NewStreamableHTTPServer(mcpServer, WithSessionIdManagerResolver(resolver))
+
+		// Test that the resolver was set
+		if server.sessionIdManagerResolver != resolver {
+			t.Error("Expected WithSessionIdManagerResolver to set the resolver")
+		}
+
+		// Test that it resolves correctly
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
+		if resolved != manager {
+			t.Error("Expected resolver to return the configured manager")
+		}
+	})
+
+	t.Run("WithSessionIdManager option creates resolver with manager", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+		manager := &StatelessSessionIdManager{}
+
+		server := NewStreamableHTTPServer(mcpServer, WithSessionIdManager(manager))
+
+		// Test that a resolver was created
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
+		if resolved != manager {
+			t.Error("Expected WithSessionIdManager to create resolver with the configured manager")
+		}
+
+		// Verify it's a DefaultSessionIdManagerResolver
+		if defaultResolver, ok := server.sessionIdManagerResolver.(*DefaultSessionIdManagerResolver); ok {
+			if defaultResolver.manager != manager {
+				t.Error("Expected DefaultSessionIdManagerResolver to wrap the configured manager")
+			}
+		} else {
+			t.Error("Expected WithSessionIdManager to create a DefaultSessionIdManagerResolver")
+		}
+	})
+
+	t.Run("WithStateLess option creates resolver with StatelessSessionIdManager", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+
+		server := NewStreamableHTTPServer(mcpServer, WithStateLess(true))
+
+		// Test that a resolver was created with stateless manager
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
+
+		// Verify it's a stateless manager
+		sessionID := resolved.Generate()
+		if sessionID != "" {
+			t.Error("Expected stateless manager from WithStateLess(true)")
+		}
+
+		// Verify it's wrapped in DefaultSessionIdManagerResolver
+		if defaultResolver, ok := server.sessionIdManagerResolver.(*DefaultSessionIdManagerResolver); ok {
+			if _, ok := defaultResolver.manager.(*StatelessSessionIdManager); !ok {
+				t.Error("Expected DefaultSessionIdManagerResolver to wrap StatelessSessionIdManager")
+			}
+		} else {
+			t.Error("Expected WithStateLess to create a DefaultSessionIdManagerResolver")
+		}
+	})
+
+	t.Run("WithStateLess(false) does not override default manager", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+
+		server := NewStreamableHTTPServer(mcpServer, WithStateLess(false))
+
+		// Test that the default manager is still used (InsecureStatefulSessionIdManager)
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
+
+		// Verify it's NOT a stateless manager
+		sessionID := resolved.Generate()
+		if sessionID == "" {
+			t.Error("Expected stateful manager when WithStateLess(false)")
+		}
+		if !strings.HasPrefix(sessionID, idPrefix) {
+			t.Error("Expected stateful session ID format")
+		}
+	})
+
+	t.Run("Option precedence: WithSessionIdManagerResolver overrides WithSessionIdManager", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+		statefulManager := &InsecureStatefulSessionIdManager{}
+		statelessManager := &StatelessSessionIdManager{}
+		resolver := NewDefaultSessionIdManagerResolver(statelessManager)
+
+		server := NewStreamableHTTPServer(mcpServer,
+			WithSessionIdManager(statefulManager),
+			WithSessionIdManagerResolver(resolver),
+		)
+
+		// Test that the resolver option took precedence
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
+		if resolved != statelessManager {
+			t.Error("Expected WithSessionIdManagerResolver to override WithSessionIdManager")
+		}
+
+		sessionID := resolved.Generate()
+		if sessionID != "" {
+			t.Error("Expected stateless manager from resolver to be used")
+		}
+	})
+
+	t.Run("Option precedence: WithSessionIdManagerResolver overrides WithStateLess", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+		statefulManager := &InsecureStatefulSessionIdManager{}
+		resolver := NewDefaultSessionIdManagerResolver(statefulManager)
+
+		server := NewStreamableHTTPServer(mcpServer,
+			WithStateLess(true),
+			WithSessionIdManagerResolver(resolver),
+		)
+
+		// Test that the resolver option took precedence
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
+		if resolved != statefulManager {
+			t.Error("Expected WithSessionIdManagerResolver to override WithStateLess")
+		}
+
+		sessionID := resolved.Generate()
+		if sessionID == "" {
+			t.Error("Expected stateful manager from resolver to be used")
+		}
+	})
+
+	t.Run("WithSessionIdManagerResolver handles nil resolver defensively", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+
+		// This should not panic and should fall back to default behavior
+		server := NewStreamableHTTPServer(mcpServer, WithSessionIdManagerResolver(nil))
+
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
+		if resolved == nil {
+			t.Error("Expected nil resolver to be replaced with default")
+		}
+
+		// Test that the resolved manager works (should be default stateful manager)
+		sessionID := resolved.Generate()
+		if sessionID == "" {
+			t.Error("Expected default manager to generate non-empty session ID")
+		}
+		if !strings.HasPrefix(sessionID, idPrefix) {
+			t.Error("Expected default manager to generate session ID with correct prefix")
+		}
+	})
+
+	t.Run("WithSessionIdManager handles nil manager defensively", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+
+		// This should not panic and should fall back to default behavior
+		server := NewStreamableHTTPServer(mcpServer, WithSessionIdManager(nil))
+
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
+		if resolved == nil {
+			t.Error("Expected nil manager to be replaced with default")
+		}
+
+		// Test that the resolved manager works (should be default stateful manager)
+		sessionID := resolved.Generate()
+		if sessionID == "" {
+			t.Error("Expected default manager to generate non-empty session ID")
+		}
+		if !strings.HasPrefix(sessionID, idPrefix) {
+			t.Error("Expected default manager to generate session ID with correct prefix")
+		}
+	})
+
+	t.Run("Multiple nil options fall back safely", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+
+		// Chain multiple nil options - last one should win with safe fallback
+		server := NewStreamableHTTPServer(mcpServer,
+			WithSessionIdManager(nil),
+			WithSessionIdManagerResolver(nil),
+		)
+
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
+		if resolved == nil {
+			t.Error("Expected chained nil options to fall back safely")
+		}
+
+		// Verify it generates valid session IDs
+		sessionID := resolved.Generate()
+		if sessionID == "" {
+			t.Error("Expected fallback manager to generate non-empty session ID")
+		}
+	})
+
+	t.Run("Nil manager falls back safely", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+		// requires nil-guard in WithSessionIdManager
+		srv := NewTestStreamableHTTPServer(mcpServer, WithSessionIdManager(nil))
+		defer srv.Close()
+		resp, err := postJSON(srv.URL, initRequest)
+		if err != nil {
+			t.Fatalf("init failed: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+		_ = resp.Body.Close()
+	})
+
+	t.Run("Nil resolver falls back safely", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+		// requires nil-guard in WithSessionIdManagerResolver
+		srv := NewTestStreamableHTTPServer(mcpServer, WithSessionIdManagerResolver(nil))
+		defer srv.Close()
+		resp, err := postJSON(srv.URL, initRequest)
+		if err != nil {
+			t.Fatalf("init failed: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+		_ = resp.Body.Close()
+	})
+}
+
+func TestStreamableHTTP_SendNotificationToSpecificClient(t *testing.T) {
+	t.Run("POST session registration enables SendNotificationToSpecificClient", func(t *testing.T) {
+		hooks := &Hooks{}
+		var registeredSessionID string
+		var mu sync.Mutex
+		var sessionRegistered sync.WaitGroup
+		sessionRegistered.Add(1)
+
+		hooks.AddOnRegisterSession(func(ctx context.Context, session ClientSession) {
+			mu.Lock()
+			registeredSessionID = session.SessionID()
+			mu.Unlock()
+			sessionRegistered.Done()
+		})
+
+		mcpServer := NewMCPServer("test", "1.0.0", WithHooks(hooks))
+		testServer := NewTestStreamableHTTPServer(mcpServer)
+		defer testServer.Close()
+
+		// Send initialize request to register session
+		resp, err := postJSON(testServer.URL, initRequest)
+		if err != nil {
+			t.Fatalf("Failed to send initialize request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d", resp.StatusCode)
+		}
+
+		// Get session ID from response header
+		sessionID := resp.Header.Get(HeaderKeySessionID)
+		if sessionID == "" {
+			t.Fatal("Expected session ID in response header")
+		}
+
+		// Wait for session registration
+		done := make(chan struct{})
+		go func() {
+			sessionRegistered.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			// Session registered successfully
+		case <-time.After(2 * time.Second):
+			t.Fatal("Timeout waiting for session registration")
+		}
+
+		mu.Lock()
+		if registeredSessionID != sessionID {
+			t.Errorf("Expected registered session ID %s, got %s", sessionID, registeredSessionID)
+		}
+		mu.Unlock()
+
+		// Now test SendNotificationToSpecificClient
+		err = mcpServer.SendNotificationToSpecificClient(sessionID, "test/notification", map[string]any{
+			"message": "test notification",
+		})
+		if err != nil {
+			t.Errorf("SendNotificationToSpecificClient failed: %v", err)
+		}
+	})
+
+	t.Run("Session reuse for non-initialize requests", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0.0")
+
+		// Add a tool that sends a notification
+		mcpServer.AddTool(mcp.NewTool("notify_tool"), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			session := ClientSessionFromContext(ctx)
+			if session == nil {
+				return mcp.NewToolResultError("no session in context"), nil
+			}
+
+			// Try to send notification to specific client
+			server := ServerFromContext(ctx)
+			err := server.SendNotificationToSpecificClient(session.SessionID(), "tool/notification", map[string]any{
+				"from": "tool",
+			})
+			if err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("notification failed: %v", err)), nil
+			}
+
+			return mcp.NewToolResultText("notification sent"), nil
+		})
+
+		testServer := NewTestStreamableHTTPServer(mcpServer)
+		defer testServer.Close()
+
+		// Initialize session
+		resp, err := postJSON(testServer.URL, initRequest)
+		if err != nil {
+			t.Fatalf("Failed to send initialize request: %v", err)
+		}
+		sessionID := resp.Header.Get(HeaderKeySessionID)
+		resp.Body.Close()
+
+		if sessionID == "" {
+			t.Fatal("Expected session ID in response header")
+		}
+
+		// Give time for registration to complete
+		time.Sleep(100 * time.Millisecond)
+
+		// Call tool with the session ID
+		toolCallRequest := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      2,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name": "notify_tool",
+			},
+		}
+
+		jsonBody, _ := json.Marshal(toolCallRequest)
+		req, _ := http.NewRequest(http.MethodPost, testServer.URL, bytes.NewBuffer(jsonBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(HeaderKeySessionID, sessionID)
+
+		resp, err = http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Failed to call tool: %v", err)
+		}
+		defer resp.Body.Close()
+
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyStr := string(bodyBytes)
+
+		// Response might be SSE format if notification was sent
+		var toolResponse jsonRPCResponse
+		if strings.HasPrefix(bodyStr, "event: message") {
+			// Parse SSE format
+			lines := strings.Split(bodyStr, "\n")
+			for _, line := range lines {
+				if strings.HasPrefix(line, "data: ") {
+					jsonData := strings.TrimPrefix(line, "data: ")
+					if err := json.Unmarshal([]byte(jsonData), &toolResponse); err == nil {
+						break
+					}
+				}
+			}
+		} else {
+			if err := json.Unmarshal(bodyBytes, &toolResponse); err != nil {
+				t.Fatalf("Failed to unmarshal response: %v. Body: %s", err, bodyStr)
+			}
+		}
+
+		if toolResponse.Error != nil {
+			t.Errorf("Tool call failed: %v", toolResponse.Error)
+		}
+
+		// Verify the tool result indicates success
+		if result, ok := toolResponse.Result["content"].([]any); ok {
+			if len(result) > 0 {
+				if content, ok := result[0].(map[string]any); ok {
+					if text, ok := content["text"].(string); ok {
+						if text != "notification sent" {
+							t.Errorf("Expected 'notification sent', got %s", text)
+						}
+					}
+				}
+			}
+		}
+	})
 }
