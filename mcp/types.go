@@ -63,6 +63,22 @@ const (
 	// https://modelcontextprotocol.io/specification/2025-06-18/client/roots
 	MethodListRoots MCPMethod = "roots/list"
 
+	// MethodTasksGet retrieves the current status of a task.
+	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	MethodTasksGet MCPMethod = "tasks/get"
+
+	// MethodTasksList lists all tasks for the current session.
+	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	MethodTasksList MCPMethod = "tasks/list"
+
+	// MethodTasksResult retrieves the result of a completed task.
+	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	MethodTasksResult MCPMethod = "tasks/result"
+
+	// MethodTasksCancel cancels an in-progress task.
+	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	MethodTasksCancel MCPMethod = "tasks/cancel"
+
 	// MethodNotificationResourcesListChanged notifies when the list of available resources changes.
 	// https://modelcontextprotocol.io/specification/2025-03-26/server/resources#list-changed-notification
 	MethodNotificationResourcesListChanged = "notifications/resources/list_changed"
@@ -80,6 +96,10 @@ const (
 	// MethodNotificationRootsListChanged notifies when the list of available roots changes.
 	// https://modelcontextprotocol.io/specification/2025-06-18/client/roots#root-list-changes
 	MethodNotificationRootsListChanged = "notifications/roots/list_changed"
+
+	// MethodNotificationTasksStatus notifies when a task's status changes.
+	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	MethodNotificationTasksStatus = "notifications/tasks/status"
 )
 
 type URITemplate struct {
@@ -491,6 +511,8 @@ type ClientCapabilities struct {
 	Sampling *struct{} `json:"sampling,omitempty"`
 	// Present if the client supports elicitation requests from the server.
 	Elicitation *struct{} `json:"elicitation,omitempty"`
+	// Present if the client supports task-based execution.
+	Tasks *TasksCapability `json:"tasks,omitempty"`
 }
 
 // ServerCapabilities represents capabilities that a server may support. Known
@@ -525,6 +547,8 @@ type ServerCapabilities struct {
 	Elicitation *struct{} `json:"elicitation,omitempty"`
 	// Present if the server supports roots requests to the client.
 	Roots *struct{} `json:"roots,omitempty"`
+	// Present if the server supports task-based execution.
+	Tasks *TasksCapability `json:"tasks,omitempty"`
 }
 
 // Icon represents a visual identifier for MCP entities.
@@ -1212,6 +1236,164 @@ type Root struct {
 // The server should then request an updated list of roots using the ListRootsRequest.
 type RootsListChangedNotification struct {
 	Notification
+}
+
+/* Tasks */
+
+// TasksCapability represents the task capabilities that a client or server may support.
+// Tasks enable long-running, asynchronous operations with status polling.
+type TasksCapability struct {
+	// Whether the party supports the tasks/list operation.
+	List *struct{} `json:"list,omitempty"`
+	// Whether the party supports the tasks/cancel operation.
+	Cancel *struct{} `json:"cancel,omitempty"`
+	// Requests that can be augmented with task metadata.
+	Requests *TaskRequestsCapability `json:"requests,omitempty"`
+}
+
+// TaskRequestsCapability indicates which request types support task augmentation.
+type TaskRequestsCapability struct {
+	// Tool-related capabilities.
+	Tools *struct {
+		// Whether tools/call can be augmented with task metadata.
+		Call *struct{} `json:"call,omitempty"`
+	} `json:"tools,omitempty"`
+	// Sampling-related capabilities.
+	Sampling *struct {
+		// Whether sampling/createMessage can be augmented with task metadata.
+		CreateMessage *struct{} `json:"createMessage,omitempty"`
+	} `json:"sampling,omitempty"`
+	// Elicitation-related capabilities.
+	Elicitation *struct {
+		// Whether elicitation/create can be augmented with task metadata.
+		Create *struct{} `json:"create,omitempty"`
+	} `json:"elicitation,omitempty"`
+}
+
+// TaskStatus represents the execution state of a task.
+type TaskStatus string
+
+const (
+	// TaskStatusWorking indicates the request is currently being processed.
+	TaskStatusWorking TaskStatus = "working"
+	// TaskStatusInputRequired indicates the receiver needs input from the requestor.
+	TaskStatusInputRequired TaskStatus = "input_required"
+	// TaskStatusCompleted indicates the request completed successfully.
+	TaskStatusCompleted TaskStatus = "completed"
+	// TaskStatusFailed indicates the request did not complete successfully.
+	TaskStatusFailed TaskStatus = "failed"
+	// TaskStatusCancelled indicates the request was cancelled before completion.
+	TaskStatusCancelled TaskStatus = "cancelled"
+)
+
+// IsTerminal returns true if the task status is terminal (completed, failed, or cancelled).
+func (s TaskStatus) IsTerminal() bool {
+	return s == TaskStatusCompleted || s == TaskStatusFailed || s == TaskStatusCancelled
+}
+
+// Task represents the execution state of a request.
+type Task struct {
+	// Unique identifier for the task.
+	TaskId string `json:"taskId"`
+	// Current state of the task execution.
+	Status TaskStatus `json:"status"`
+	// Optional human-readable message describing the current state.
+	StatusMessage string `json:"statusMessage,omitempty"`
+	// ISO 8601 timestamp when the task was created.
+	CreatedAt string `json:"createdAt"`
+	// Time in milliseconds from creation before task may be deleted.
+	// If null, the task has no expiration.
+	TTL *int64 `json:"ttl"`
+	// Suggested time in milliseconds between status checks.
+	PollInterval *int64 `json:"pollInterval,omitempty"`
+}
+
+// TaskParams represents the task metadata included when augmenting a request.
+type TaskParams struct {
+	// Requested duration in milliseconds to retain task from creation.
+	TTL *int64 `json:"ttl,omitempty"`
+}
+
+// CreateTaskResult is returned immediately when a task-augmented request is accepted.
+// It contains task metadata rather than the actual operation result.
+type CreateTaskResult struct {
+	Result
+	Task Task `json:"task"`
+}
+
+// GetTaskRequest retrieves the current status of a task.
+type GetTaskRequest struct {
+	Request
+	Header http.Header     `json:"-"`
+	Params GetTaskParams   `json:"params"`
+}
+
+type GetTaskParams struct {
+	TaskId string `json:"taskId"`
+}
+
+// GetTaskResult returns the current state of a task.
+type GetTaskResult struct {
+	Result
+	Task
+}
+
+// ListTasksRequest retrieves a paginated list of tasks.
+type ListTasksRequest struct {
+	PaginatedRequest
+	Header http.Header `json:"-"`
+}
+
+// ListTasksResult returns a list of tasks.
+type ListTasksResult struct {
+	PaginatedResult
+	Tasks []Task `json:"tasks"`
+}
+
+// TaskResultRequest retrieves the result of a completed task.
+type TaskResultRequest struct {
+	Request
+	Header http.Header        `json:"-"`
+	Params TaskResultParams   `json:"params"`
+}
+
+type TaskResultParams struct {
+	TaskId string `json:"taskId"`
+}
+
+// TaskResultResult contains the actual operation result.
+// The structure depends on the original request type.
+type TaskResultResult struct {
+	Result
+	// The actual result varies by request type (e.g., CallToolResult for tools/call).
+	// This will be handled by the specific implementation.
+}
+
+// CancelTaskRequest cancels an in-progress task.
+type CancelTaskRequest struct {
+	Request
+	Header http.Header       `json:"-"`
+	Params CancelTaskParams  `json:"params"`
+}
+
+type CancelTaskParams struct {
+	TaskId string `json:"taskId"`
+}
+
+// CancelTaskResult returns the cancelled task state.
+type CancelTaskResult struct {
+	Result
+	Task
+}
+
+// TaskStatusNotification is sent when a task's status changes.
+type TaskStatusNotification struct {
+	Notification
+	Params TaskStatusNotificationParams `json:"params"`
+}
+
+type TaskStatusNotificationParams struct {
+	Task
 }
 
 // ClientRequest represents any request that can be sent from client to server.
