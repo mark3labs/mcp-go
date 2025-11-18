@@ -184,6 +184,7 @@ type serverCapabilities struct {
 	sampling    *bool
 	elicitation *bool
 	roots       *bool
+	tasks       *taskCapabilities
 }
 
 // resourceCapabilities defines the supported resource-related features
@@ -200,6 +201,13 @@ type promptCapabilities struct {
 // toolCapabilities defines the supported tool-related features
 type toolCapabilities struct {
 	listChanged bool
+}
+
+// taskCapabilities defines the supported task-related features
+type taskCapabilities struct {
+	list           bool
+	cancel         bool
+	toolCallTasks  bool
 }
 
 // WithResourceCapabilities configures resource-related server capabilities
@@ -331,6 +339,18 @@ func WithElicitation() ServerOption {
 func WithRoots() ServerOption {
 	return func(s *MCPServer) {
 		s.capabilities.roots = mcp.ToBoolPtr(true)
+	}
+}
+
+// WithTaskCapabilities configures task-related server capabilities
+func WithTaskCapabilities(list, cancel, toolCallTasks bool) ServerOption {
+	return func(s *MCPServer) {
+		// Always create a non-nil capability object
+		s.capabilities.tasks = &taskCapabilities{
+			list:          list,
+			cancel:        cancel,
+			toolCallTasks: toolCallTasks,
+		}
 	}
 }
 
@@ -706,6 +726,31 @@ func (s *MCPServer) handleInitialize(
 
 	if s.capabilities.roots != nil && *s.capabilities.roots {
 		capabilities.Roots = &struct{}{}
+	}
+
+	// Only add task capabilities if they're configured
+	if s.capabilities.tasks != nil {
+		tasksCapability := &mcp.TasksCapability{}
+
+		if s.capabilities.tasks.list {
+			tasksCapability.List = &struct{}{}
+		}
+
+		if s.capabilities.tasks.cancel {
+			tasksCapability.Cancel = &struct{}{}
+		}
+
+		if s.capabilities.tasks.toolCallTasks {
+			tasksCapability.Requests = &mcp.TaskRequestsCapability{
+				Tools: &struct {
+					Call *struct{} `json:"call,omitempty"`
+				}{
+					Call: &struct{}{},
+				},
+			}
+		}
+
+		capabilities.Tasks = tasksCapability
 	}
 
 	result := mcp.InitializeResult{
