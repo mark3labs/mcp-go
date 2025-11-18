@@ -1396,6 +1396,129 @@ func createErrorResponse(
 }
 
 //
+// Task Request Handlers
+//
+
+// handleGetTask handles tasks/get requests to retrieve task status.
+func (s *MCPServer) handleGetTask(
+	ctx context.Context,
+	id any,
+	request mcp.GetTaskRequest,
+) (*mcp.GetTaskResult, *requestError) {
+	entry, err := s.getTask(ctx, request.Params.TaskId)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  err,
+		}
+	}
+
+	result := mcp.NewGetTaskResult(entry.task)
+	return &result, nil
+}
+
+// handleListTasks handles tasks/list requests to list all tasks.
+func (s *MCPServer) handleListTasks(
+	ctx context.Context,
+	_ any,
+	request mcp.ListTasksRequest,
+) (*mcp.ListTasksResult, *requestError) {
+	entries := s.listTasks(ctx)
+
+	// Convert taskEntry to Task
+	tasks := make([]mcp.Task, 0, len(entries))
+	for _, entry := range entries {
+		tasks = append(tasks, entry.task)
+	}
+
+	// Apply pagination if needed
+	if s.paginationLimit != nil {
+		// Pagination logic would go here
+		// For now, return all tasks
+	}
+
+	result := mcp.NewListTasksResult(tasks)
+	return &result, nil
+}
+
+// handleTaskResult handles tasks/result requests to get task results.
+func (s *MCPServer) handleTaskResult(
+	ctx context.Context,
+	id any,
+	request mcp.TaskResultRequest,
+) (*mcp.TaskResultResult, *requestError) {
+	entry, err := s.getTask(ctx, request.Params.TaskId)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  err,
+		}
+	}
+
+	// Wait for task completion if not terminal
+	if !entry.task.Status.IsTerminal() {
+		select {
+		case <-entry.done:
+			// Task completed
+		case <-ctx.Done():
+			return nil, &requestError{
+				id:   id,
+				code: mcp.REQUEST_INTERRUPTED,
+				err:  ctx.Err(),
+			}
+		}
+	}
+
+	// Return error if task failed
+	if entry.resultErr != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INTERNAL_ERROR,
+			err:  entry.resultErr,
+		}
+	}
+
+	// The result structure varies by original request type
+	// For now, return the raw result wrapped in TaskResultResult
+	result := &mcp.TaskResultResult{
+		Result: mcp.Result{},
+	}
+
+	return result, nil
+}
+
+// handleCancelTask handles tasks/cancel requests to cancel a task.
+func (s *MCPServer) handleCancelTask(
+	ctx context.Context,
+	id any,
+	request mcp.CancelTaskRequest,
+) (*mcp.CancelTaskResult, *requestError) {
+	err := s.cancelTask(ctx, request.Params.TaskId)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  err,
+		}
+	}
+
+	// Get the updated task
+	entry, err := s.getTask(ctx, request.Params.TaskId)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  err,
+		}
+	}
+
+	result := mcp.NewCancelTaskResult(entry.task)
+	return &result, nil
+}
+
+//
 // Task Management Methods
 //
 
@@ -1537,7 +1660,7 @@ func (s *MCPServer) scheduleTaskCleanup(taskID string, ttlMs int64) {
 // getSessionID extracts the session ID from the context.
 func getSessionID(ctx context.Context) string {
 	if session := ClientSessionFromContext(ctx); session != nil {
-		return session.ID()
+		return session.SessionID()
 	}
 	return ""
 }
