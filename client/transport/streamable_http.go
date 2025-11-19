@@ -237,9 +237,49 @@ func (c *StreamableHTTP) SetProtocolVersion(version string) {
 // ErrOAuthAuthorizationRequired is a sentinel error for OAuth authorization required
 var ErrOAuthAuthorizationRequired = errors.New("no valid token available, authorization required")
 
+// ErrAuthorizationRequired is a sentinel error for authorization required (401)
+var ErrAuthorizationRequired = errors.New("authorization required")
+
+// extractResourceMetadataURL extracts the resource_metadata parameter from a WWW-Authenticate header
+// per RFC9728 Section 5.1. Returns empty string if not found.
+// Example: Bearer resource_metadata="https://resource.example.com/.well-known/oauth-protected-resource"
+func extractResourceMetadataURL(wwwAuthHeader string) string {
+	// Parse: Bearer resource_metadata="https://..." ...
+	const prefix = "resource_metadata=\""
+
+	idx := strings.Index(wwwAuthHeader, prefix)
+	if idx == -1 {
+		return ""
+	}
+
+	start := idx + len(prefix)
+	end := strings.Index(wwwAuthHeader[start:], "\"")
+	if end == -1 {
+		return ""
+	}
+
+	return wwwAuthHeader[start : start+end]
+}
+
+// AuthorizationRequiredError is returned when a 401 Unauthorized response is received.
+// It contains the protected resource metadata URL from the WWW-Authenticate header if present.
+type AuthorizationRequiredError struct {
+	ResourceMetadataURL string // Extracted from WWW-Authenticate header per RFC9728
+}
+
+func (e *AuthorizationRequiredError) Error() string {
+	return ErrAuthorizationRequired.Error()
+}
+
+func (e *AuthorizationRequiredError) Unwrap() error {
+	return ErrAuthorizationRequired
+}
+
 // OAuthAuthorizationRequiredError is returned when OAuth authorization is required
+// and an OAuth handler is available.
 type OAuthAuthorizationRequiredError struct {
 	Handler *OAuthHandler
+	AuthorizationRequiredError
 }
 
 func (e *OAuthAuthorizationRequiredError) Error() string {
@@ -287,10 +327,24 @@ func (c *StreamableHTTP) SendRequest(
 	// Check if we got an error response
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 
-		// Handle OAuth unauthorized error
-		if resp.StatusCode == http.StatusUnauthorized && c.oauthHandler != nil {
-			return nil, &OAuthAuthorizationRequiredError{
-				Handler: c.oauthHandler,
+		// Handle unauthorized error
+		if resp.StatusCode == http.StatusUnauthorized {
+			// Extract discovered metadata URL per RFC9728
+			metadataURL := extractResourceMetadataURL(resp.Header.Get("WWW-Authenticate"))
+
+			// If OAuth handler exists, return OAuth-specific error
+			if c.oauthHandler != nil {
+				return nil, &OAuthAuthorizationRequiredError{
+					Handler: c.oauthHandler,
+					AuthorizationRequiredError: AuthorizationRequiredError{
+						ResourceMetadataURL: metadataURL,
+					},
+				}
+			}
+
+			// No OAuth handler, return base authorization error
+			return nil, &AuthorizationRequiredError{
+				ResourceMetadataURL: metadataURL,
 			}
 		}
 
@@ -384,6 +438,9 @@ func (c *StreamableHTTP) sendHTTP(
 			if errors.Is(err, ErrOAuthAuthorizationRequired) {
 				return nil, &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
+					AuthorizationRequiredError: AuthorizationRequiredError{
+						ResourceMetadataURL: "", // No response available in this code path
+					},
 				}
 			}
 			return nil, fmt.Errorf("failed to get authorization header: %w", err)
@@ -559,10 +616,24 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
-		// Handle OAuth unauthorized error
-		if resp.StatusCode == http.StatusUnauthorized && c.oauthHandler != nil {
-			return &OAuthAuthorizationRequiredError{
-				Handler: c.oauthHandler,
+		// Handle unauthorized error
+		if resp.StatusCode == http.StatusUnauthorized {
+			// Extract discovered metadata URL per RFC9728
+			metadataURL := extractResourceMetadataURL(resp.Header.Get("WWW-Authenticate"))
+
+			// If OAuth handler exists, return OAuth-specific error
+			if c.oauthHandler != nil {
+				return &OAuthAuthorizationRequiredError{
+					Handler: c.oauthHandler,
+					AuthorizationRequiredError: AuthorizationRequiredError{
+						ResourceMetadataURL: metadataURL,
+					},
+				}
+			}
+
+			// No OAuth handler, return base authorization error
+			return &AuthorizationRequiredError{
+				ResourceMetadataURL: metadataURL,
 			}
 		}
 
