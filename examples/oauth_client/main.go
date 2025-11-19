@@ -108,6 +108,12 @@ func maybeAuthorize(err error) {
 	if client.IsOAuthAuthorizationRequiredError(err) {
 		fmt.Println("OAuth authorization required. Starting authorization flow...")
 
+		// Check if server provided OAuth metadata URL via WWW-Authenticate header (RFC9728)
+		if metadataURL := client.GetResourceMetadataURL(err); metadataURL != "" {
+			fmt.Printf("Server provided OAuth metadata URL: %s\n", metadataURL)
+			fmt.Println("The client will automatically use this URL for OAuth configuration.")
+		}
+
 		// Get the OAuth handler from the error
 		oauthHandler := client.GetOAuthHandler(err)
 
