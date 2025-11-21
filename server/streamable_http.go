@@ -976,6 +976,8 @@ type streamableHttpSession struct {
 	resourceTemplates   *sessionResourceTemplatesStore
 	upgradeToSSE        atomic.Bool
 	logLevels           *sessionLogLevelsStore
+	clientInfo          atomic.Value // stores session-specific client info
+	clientCapabilities  atomic.Value // stores session-specific client capabilities
 
 	// Sampling support for bidirectional communication
 	samplingRequestChan    chan samplingRequestItem    // server -> client sampling requests
@@ -1053,11 +1055,38 @@ func (s *streamableHttpSession) SetSessionResourceTemplates(templates map[string
 	s.resourceTemplates.set(s.sessionID, templates)
 }
 
+func (s *streamableHttpSession) GetClientInfo() mcp.Implementation {
+	if value := s.clientInfo.Load(); value != nil {
+		if clientInfo, ok := value.(mcp.Implementation); ok {
+			return clientInfo
+		}
+	}
+	return mcp.Implementation{}
+}
+
+func (s *streamableHttpSession) SetClientInfo(clientInfo mcp.Implementation) {
+	s.clientInfo.Store(clientInfo)
+}
+
+func (s *streamableHttpSession) GetClientCapabilities() mcp.ClientCapabilities {
+	if value := s.clientCapabilities.Load(); value != nil {
+		if clientCapabilities, ok := value.(mcp.ClientCapabilities); ok {
+			return clientCapabilities
+		}
+	}
+	return mcp.ClientCapabilities{}
+}
+
+func (s *streamableHttpSession) SetClientCapabilities(clientCapabilities mcp.ClientCapabilities) {
+	s.clientCapabilities.Store(clientCapabilities)
+}
+
 var (
 	_ SessionWithTools             = (*streamableHttpSession)(nil)
 	_ SessionWithResources         = (*streamableHttpSession)(nil)
 	_ SessionWithResourceTemplates = (*streamableHttpSession)(nil)
 	_ SessionWithLogging           = (*streamableHttpSession)(nil)
+	_ SessionWithClientInfo        = (*streamableHttpSession)(nil)
 )
 
 func (s *streamableHttpSession) UpgradeToSSEWhenReceiveNotification() {
