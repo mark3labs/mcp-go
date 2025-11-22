@@ -1865,17 +1865,14 @@ func TestSessionIdManagerResolver_Integration(t *testing.T) {
 
 		server := NewStreamableHTTPServer(mcpServer, WithStateLess(false))
 
-		// Test that the default manager is still used (InsecureStatefulSessionIdManager)
+		// Test that the default manager is still used (StatelessSessionIdManager)
 		req, _ := http.NewRequest("POST", "/test", nil)
 		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
 
-		// Verify it's NOT a stateless manager
+		// Verify it's a stateless manager (default behavior)
 		sessionID := resolved.Generate()
-		if sessionID == "" {
-			t.Error("Expected stateful manager when WithStateLess(false)")
-		}
-		if !strings.HasPrefix(sessionID, idPrefix) {
-			t.Error("Expected stateful session ID format")
+		if sessionID != "" {
+			t.Error("Expected stateless manager (empty session ID) by default")
 		}
 	})
 
@@ -1938,13 +1935,10 @@ func TestSessionIdManagerResolver_Integration(t *testing.T) {
 			t.Error("Expected nil resolver to be replaced with default")
 		}
 
-		// Test that the resolved manager works (should be default stateful manager)
+		// Test that the resolved manager works (should be default stateless manager)
 		sessionID := resolved.Generate()
-		if sessionID == "" {
-			t.Error("Expected default manager to generate non-empty session ID")
-		}
-		if !strings.HasPrefix(sessionID, idPrefix) {
-			t.Error("Expected default manager to generate session ID with correct prefix")
+		if sessionID != "" {
+			t.Error("Expected default manager to generate empty session ID (stateless)")
 		}
 	})
 
@@ -1960,13 +1954,10 @@ func TestSessionIdManagerResolver_Integration(t *testing.T) {
 			t.Error("Expected nil manager to be replaced with default")
 		}
 
-		// Test that the resolved manager works (should be default stateful manager)
+		// Test that the resolved manager works (should be default stateless manager)
 		sessionID := resolved.Generate()
-		if sessionID == "" {
-			t.Error("Expected default manager to generate non-empty session ID")
-		}
-		if !strings.HasPrefix(sessionID, idPrefix) {
-			t.Error("Expected default manager to generate session ID with correct prefix")
+		if sessionID != "" {
+			t.Error("Expected default manager to generate empty session ID (stateless)")
 		}
 	})
 
@@ -1985,10 +1976,10 @@ func TestSessionIdManagerResolver_Integration(t *testing.T) {
 			t.Error("Expected chained nil options to fall back safely")
 		}
 
-		// Verify it generates valid session IDs
+		// Verify it uses stateless behavior (default)
 		sessionID := resolved.Generate()
-		if sessionID == "" {
-			t.Error("Expected fallback manager to generate non-empty session ID")
+		if sessionID != "" {
+			t.Error("Expected fallback manager to generate empty session ID (stateless)")
 		}
 	})
 
@@ -2020,6 +2011,22 @@ func TestSessionIdManagerResolver_Integration(t *testing.T) {
 			t.Fatalf("expected 200, got %d", resp.StatusCode)
 		}
 		_ = resp.Body.Close()
+	})
+
+	t.Run("WithStateful enables stateful manager", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+		server := NewStreamableHTTPServer(mcpServer, WithStateful(true))
+
+		req, _ := http.NewRequest("POST", "/test", nil)
+		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
+
+		sessionID := resolved.Generate()
+		if sessionID == "" {
+			t.Error("Expected stateful manager to generate session ID")
+		}
+		if !strings.HasPrefix(sessionID, idPrefix) {
+			t.Error("Expected stateful session ID format")
+		}
 	})
 }
 
