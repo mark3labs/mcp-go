@@ -125,7 +125,7 @@ func TestStreamableHTTP_POST_InvalidContent(t *testing.T) {
 func TestStreamableHTTP_POST_SendAndReceive(t *testing.T) {
 	mcpServer := NewMCPServer("test-mcp-server", "1.0")
 	addSSETool(mcpServer)
-	server := NewTestStreamableHTTPServer(mcpServer)
+	server := NewTestStreamableHTTPServer(mcpServer, WithStateful(true))
 	var sessionID string
 
 	t.Run("initialize", func(t *testing.T) {
@@ -595,6 +595,7 @@ func TestStreamableHttpResourceGet(t *testing.T) {
 
 	testServer := NewTestStreamableHTTPServer(
 		s,
+		WithStateful(true),
 		WithHTTPContextFunc(func(ctx context.Context, r *http.Request) context.Context {
 			session := ClientSessionFromContext(ctx)
 
@@ -1014,7 +1015,7 @@ func TestStreamableHTTP_SessionWithLogging(t *testing.T) {
 		})
 
 		mcpServer := NewMCPServer("test", "1.0.0", WithHooks(hooks), WithLogging())
-		testServer := NewTestStreamableHTTPServer(mcpServer)
+		testServer := NewTestStreamableHTTPServer(mcpServer, WithStateful(true))
 		defer testServer.Close()
 
 		// obtain a valid session ID first
@@ -2100,7 +2101,7 @@ func TestStreamableHTTP_SendNotificationToSpecificClient(t *testing.T) {
 		})
 
 		mcpServer := NewMCPServer("test", "1.0.0", WithHooks(hooks))
-		testServer := NewTestStreamableHTTPServer(mcpServer)
+		testServer := NewTestStreamableHTTPServer(mcpServer, WithStateful(true))
 		defer testServer.Close()
 
 		// Send initialize request to register session
@@ -2171,7 +2172,7 @@ func TestStreamableHTTP_SendNotificationToSpecificClient(t *testing.T) {
 			return mcp.NewToolResultText("notification sent"), nil
 		})
 
-		testServer := NewTestStreamableHTTPServer(mcpServer)
+		testServer := NewTestStreamableHTTPServer(mcpServer, WithStateful(true))
 		defer testServer.Close()
 
 		// Initialize session
