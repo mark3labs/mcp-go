@@ -19,7 +19,7 @@ jobs:
   
   coverage:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     permissions:
       contents: read
       pull-requests: write
@@ -38,6 +38,7 @@ jobs:
       with:
         name: code-coverage
         path: coverage.txt
+        retention-days: 30
     - name: Generate coverage report
       uses: fgrosse/go-coverage-report@v1.2.0
 
