@@ -1404,7 +1404,7 @@ func TestStreamableHTTP_SessionValidation(t *testing.T) {
 	server := NewTestStreamableHTTPServer(mcpServer)
 	defer server.Close()
 
-	t.Run("Reject tool call with fake session ID", func(t *testing.T) {
+	t.Run("Accept tool call with properly formatted session ID", func(t *testing.T) {
 		toolCallRequest := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      1,
@@ -1425,13 +1425,29 @@ func TestStreamableHTTP_SessionValidation(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("Expected status 400, got %d", resp.StatusCode)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", resp.StatusCode)
 		}
 
 		body, _ := io.ReadAll(resp.Body)
-		if !strings.Contains(string(body), "Invalid session ID") {
-			t.Errorf("Expected 'Invalid session ID' error, got: %s", string(body))
+		var response map[string]any
+		if err := json.Unmarshal(body, &response); err != nil {
+			t.Fatalf("Failed to unmarshal response: %v", err)
+		}
+
+		if result, ok := response["result"].(map[string]any); ok {
+			if content, ok := result["content"].([]any); ok && len(content) > 0 {
+				if textContent, ok := content[0].(map[string]any); ok {
+					if text, ok := textContent["text"].(string); ok {
+						// Should be a valid timestamp response
+						if text == "" {
+							t.Error("Expected non-empty timestamp response")
+						}
+					}
+				}
+			}
+		} else {
+			t.Errorf("Expected result in response, got: %s", string(body))
 		}
 	})
 
@@ -1508,22 +1524,45 @@ func TestStreamableHTTP_SessionValidation(t *testing.T) {
 		}
 	})
 
-	t.Run("Reject tool call with terminated session ID", func(t *testing.T) {
+	t.Run("Reject tool call with terminated session ID (stateful mode)", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-server", "1.0.0")
+		// Use explicit stateful mode for this test since termination requires local tracking
+		server := NewTestStreamableHTTPServer(mcpServer, WithStateful(true))
+		defer server.Close()
+
+		// First, initialize a session
+		initRequest := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "initialize",
+			"params": map[string]any{
+				"protocolVersion": "2025-03-26",
+				"capabilities": map[string]any{
+					"tools": map[string]any{},
+				},
+				"clientInfo": map[string]any{
+					"name":    "test-client",
+					"version": "1.0.0",
+				},
+			},
+		}
+
 		jsonBody, _ := json.Marshal(initRequest)
 		req, _ := http.NewRequest(http.MethodPost, server.URL, bytes.NewBuffer(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := server.Client().Do(req)
 		if err != nil {
-			t.Fatalf("Failed to initialize: %v", err)
+			t.Fatalf("Failed to initialize session: %v", err)
 		}
-		resp.Body.Close()
 
 		sessionID := resp.Header.Get(HeaderKeySessionID)
 		if sessionID == "" {
 			t.Fatal("Expected session ID in response header")
 		}
+		resp.Body.Close()
 
+		// Now terminate the session
 		req, _ = http.NewRequest(http.MethodDelete, server.URL, nil)
 		req.Header.Set(HeaderKeySessionID, sessionID)
 
@@ -1865,14 +1904,17 @@ func TestSessionIdManagerResolver_Integration(t *testing.T) {
 
 		server := NewStreamableHTTPServer(mcpServer, WithStateLess(false))
 
-		// Test that the default manager is still used (StatelessSessionIdManager)
+		// Test that the default manager is still used (StatelessGeneratingSessionIdManager)
 		req, _ := http.NewRequest("POST", "/test", nil)
 		resolved := server.sessionIdManagerResolver.ResolveSessionIdManager(req)
 
-		// Verify it's a stateless manager (default behavior)
+		// Verify it's a generating manager (default behavior)
 		sessionID := resolved.Generate()
-		if sessionID != "" {
-			t.Error("Expected stateless manager (empty session ID) by default")
+		if sessionID == "" {
+			t.Error("Expected generating manager to generate session ID by default")
+		}
+		if !strings.HasPrefix(sessionID, idPrefix) {
+			t.Error("Expected generating manager to generate session ID with correct prefix")
 		}
 	})
 
@@ -1935,10 +1977,13 @@ func TestSessionIdManagerResolver_Integration(t *testing.T) {
 			t.Error("Expected nil resolver to be replaced with default")
 		}
 
-		// Test that the resolved manager works (should be default stateless manager)
+		// Test that the resolved manager works (should be default generating manager)
 		sessionID := resolved.Generate()
-		if sessionID != "" {
-			t.Error("Expected default manager to generate empty session ID (stateless)")
+		if sessionID == "" {
+			t.Error("Expected default manager to generate session ID")
+		}
+		if !strings.HasPrefix(sessionID, idPrefix) {
+			t.Error("Expected default manager to generate session ID with correct prefix")
 		}
 	})
 
@@ -1954,10 +1999,13 @@ func TestSessionIdManagerResolver_Integration(t *testing.T) {
 			t.Error("Expected nil manager to be replaced with default")
 		}
 
-		// Test that the resolved manager works (should be default stateless manager)
+		// Test that the resolved manager works (should be default generating manager)
 		sessionID := resolved.Generate()
-		if sessionID != "" {
-			t.Error("Expected default manager to generate empty session ID (stateless)")
+		if sessionID == "" {
+			t.Error("Expected default manager to generate session ID")
+		}
+		if !strings.HasPrefix(sessionID, idPrefix) {
+			t.Error("Expected default manager to generate session ID with correct prefix")
 		}
 	})
 
@@ -1976,10 +2024,13 @@ func TestSessionIdManagerResolver_Integration(t *testing.T) {
 			t.Error("Expected chained nil options to fall back safely")
 		}
 
-		// Verify it uses stateless behavior (default)
+		// Verify it uses generating behavior (default)
 		sessionID := resolved.Generate()
-		if sessionID != "" {
-			t.Error("Expected fallback manager to generate empty session ID (stateless)")
+		if sessionID == "" {
+			t.Error("Expected fallback manager to generate session ID")
+		}
+		if !strings.HasPrefix(sessionID, idPrefix) {
+			t.Error("Expected fallback manager to generate session ID with correct prefix")
 		}
 	})
 
@@ -2026,6 +2077,12 @@ func TestSessionIdManagerResolver_Integration(t *testing.T) {
 		}
 		if !strings.HasPrefix(sessionID, idPrefix) {
 			t.Error("Expected stateful session ID format")
+		}
+
+		// Test that stateful manager validates session existence (unlike default)
+		_, err := resolved.Validate("unknown-session-id")
+		if err == nil {
+			t.Error("Expected stateful manager to reject unknown session ID")
 		}
 	})
 }
