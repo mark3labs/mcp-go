@@ -58,7 +58,7 @@ func WithStateLess(stateLess bool) StreamableHTTPOption {
 func WithSessionIdManager(manager SessionIdManager) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {
 		if manager == nil {
-			s.sessionIdManagerResolver = NewDefaultSessionIdManagerResolver(&StatelessGeneratingSessionIdManager{})
+			s.sessionIdManagerResolver = NewDefaultSessionIdManagerResolver(&StatelessSessionIdManager{})
 			return
 		}
 		s.sessionIdManagerResolver = NewDefaultSessionIdManagerResolver(manager)
@@ -72,7 +72,7 @@ func WithSessionIdManager(manager SessionIdManager) StreamableHTTPOption {
 func WithSessionIdManagerResolver(resolver SessionIdManagerResolver) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {
 		if resolver == nil {
-			s.sessionIdManagerResolver = NewDefaultSessionIdManagerResolver(&StatelessGeneratingSessionIdManager{})
+			s.sessionIdManagerResolver = NewDefaultSessionIdManagerResolver(&StatelessSessionIdManager{})
 			return
 		}
 		s.sessionIdManagerResolver = resolver
@@ -1254,7 +1254,7 @@ type DefaultSessionIdManagerResolver struct {
 // NewDefaultSessionIdManagerResolver creates a new DefaultSessionIdManagerResolver with the given SessionIdManager
 func NewDefaultSessionIdManagerResolver(manager SessionIdManager) *DefaultSessionIdManagerResolver {
 	if manager == nil {
-		manager = &StatelessGeneratingSessionIdManager{}
+		manager = &StatelessSessionIdManager{}
 	}
 	return &DefaultSessionIdManagerResolver{manager: manager}
 }
