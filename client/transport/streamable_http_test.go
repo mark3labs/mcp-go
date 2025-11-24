@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/stretchr/testify/require"
 )
 
 // startMockStreamableHTTPServer starts a test HTTP server that implements
@@ -70,6 +71,7 @@ func startMockStreamableHTTPServer() (string, func()) {
 				"jsonrpc": "2.0",
 				"id":      request["id"],
 				"result":  request,
+				"headers": r.Header,
 			}); err != nil {
 				http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 				return
@@ -118,6 +120,24 @@ func startMockStreamableHTTPServer() (string, func()) {
 					"code":    -1,
 					"message": string(data),
 				},
+			}); err != nil {
+				http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+				return
+			}
+		case "debug/echo_header":
+			// Check session ID
+			if r.Header.Get("Mcp-Session-Id") != sessionID {
+				http.Error(w, "Invalid session ID", http.StatusNotFound)
+				return
+			}
+
+			// Echo back the request headers as the response result
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      request["id"],
+				"result":  r.Header,
 			}); err != nil {
 				http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 				return
@@ -212,6 +232,46 @@ func TestStreamableHTTP(t *testing.T) {
 
 		if arr, ok := result.Params["array"].([]any); !ok || len(arr) != 3 {
 			t.Errorf("Expected array with 3 items, got %v", result.Params["array"])
+		}
+	})
+
+	t.Run("SendRequestWithHeader", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		params := map[string]any{
+			"string": "hello world",
+			"array":  []any{1, 2, 3},
+		}
+
+		hdr := http.Header{"X-Test-Header": {"test-header-value"}}
+		request := JSONRPCRequest{
+			JSONRPC: "2.0",
+			ID:      mcp.NewRequestId(int64(1)),
+			Method:  "debug/echo_header",
+			Params:  params,
+			Header:  hdr,
+		}
+
+		// Send the request
+		response, err := trans.SendRequest(ctx, request)
+		if err != nil {
+			t.Fatalf("SendRequest failed: %v", err)
+		}
+
+		// Parse the result to verify echo
+		var result map[string]any
+		if err := json.Unmarshal(response.Result, &result); err != nil {
+			t.Fatalf("Failed to unmarshal result: %v", err)
+		}
+
+		if headerValues, ok := result["X-Test-Header"].([]any); !ok || len(headerValues) == 0 || headerValues[0] != "test-header-value" {
+			t.Errorf("Expected X-Test-Header to be ['test-header-value'], got %v", result["X-Test-Header"])
+		}
+
+		// Verify system headers are still present
+		if contentType, ok := result["Content-Type"].([]any); !ok || len(contentType) == 0 {
+			t.Errorf("Expected Content-Type header to be preserved")
 		}
 	})
 
@@ -476,9 +536,7 @@ func TestStreamableHTTP(t *testing.T) {
 			t.Fatalf("SendRequest failed: %v", err)
 		}
 
-		if response == nil {
-			t.Fatal("Expected response, got nil")
-		}
+		require.NotNil(t, response, "Expected response, got nil")
 
 		// Verify the response
 		var result string

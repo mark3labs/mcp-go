@@ -26,7 +26,7 @@ func TestStreamableHTTPServer_SamplingBasic(t *testing.T) {
 
 	// Test session creation and interface implementation
 	sessionID := "test-session"
-	session := newStreamableHttpSession(sessionID, httpServer.sessionTools, httpServer.sessionResources, httpServer.sessionLogLevels)
+	session := newStreamableHttpSession(sessionID, httpServer.sessionTools, httpServer.sessionResources, httpServer.sessionResourceTemplates, httpServer.sessionLogLevels)
 
 	// Verify it implements SessionWithSampling
 	_, ok := any(session).(SessionWithSampling)
@@ -139,7 +139,7 @@ func TestStreamableHTTPServer_SamplingInterface(t *testing.T) {
 
 	// Create a session
 	sessionID := "test-session"
-	session := newStreamableHttpSession(sessionID, httpServer.sessionTools, httpServer.sessionResources, httpServer.sessionLogLevels)
+	session := newStreamableHttpSession(sessionID, httpServer.sessionTools, httpServer.sessionResources, httpServer.sessionResourceTemplates, httpServer.sessionLogLevels)
 
 	// Verify it implements SessionWithSampling
 	_, ok := any(session).(SessionWithSampling)
@@ -178,7 +178,7 @@ func TestStreamableHTTPServer_SamplingInterface(t *testing.T) {
 // TestStreamableHTTPServer_SamplingQueueFull tests queue overflow scenarios
 func TestStreamableHTTPServer_SamplingQueueFull(t *testing.T) {
 	sessionID := "test-session"
-	session := newStreamableHttpSession(sessionID, nil, nil, nil)
+	session := newStreamableHttpSession(sessionID, nil, nil, nil, nil)
 
 	// Fill the sampling request queue
 	for i := 0; i < cap(session.samplingRequestChan); i++ {

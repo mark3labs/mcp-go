@@ -525,9 +525,7 @@ func TestSSE(t *testing.T) {
 			t.Fatalf("SendRequest failed: %v", err)
 		}
 
-		if response == nil {
-			t.Fatal("Expected response, got nil")
-		}
+		require.NotNil(t, response, "Expected response, got nil")
 
 		// Verify the response
 		var result string

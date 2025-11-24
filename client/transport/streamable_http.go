@@ -265,7 +265,7 @@ func (c *StreamableHTTP) SendRequest(
 	ctx, cancel := c.contextAwareOfClientClose(ctx)
 	defer cancel()
 
-	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream")
+	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream", request.Header)
 	if err != nil {
 		if errors.Is(err, ErrSessionTerminated) && request.Method == string(mcp.MethodInitialize) {
 			// If the request is initialize, should not return a SessionTerminated error
@@ -346,11 +346,17 @@ func (c *StreamableHTTP) sendHTTP(
 	method string,
 	body io.Reader,
 	acceptType string,
+	header http.Header,
 ) (resp *http.Response, err error) {
 	// Create HTTP request
 	req, err := http.NewRequestWithContext(ctx, method, c.serverURL.String(), body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// request headers
+	if header != nil {
+		req.Header = header
 	}
 
 	// Set headers
@@ -375,7 +381,7 @@ func (c *StreamableHTTP) sendHTTP(
 		authHeader, err := c.oauthHandler.GetAuthorizationHeader(ctx)
 		if err != nil {
 			// If we get an authorization error, return a specific error that can be handled by the client
-			if err.Error() == "no valid token available, authorization required" {
+			if errors.Is(err, ErrOAuthAuthorizationRequired) {
 				return nil, &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
 				}
@@ -546,7 +552,7 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	ctx, cancel := c.contextAwareOfClientClose(ctx)
 	defer cancel()
 
-	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream")
+	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream", nil)
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
@@ -642,7 +648,7 @@ var (
 )
 
 func (c *StreamableHTTP) createGETConnectionToServer(ctx context.Context) error {
-	resp, err := c.sendHTTP(ctx, http.MethodGet, nil, "text/event-stream")
+	resp, err := c.sendHTTP(ctx, http.MethodGet, nil, "text/event-stream", nil)
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
@@ -757,7 +763,7 @@ func (c *StreamableHTTP) sendResponseToServer(ctx context.Context, response *JSO
 	ctx, cancel := c.contextAwareOfClientClose(ctx)
 	defer cancel()
 
-	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(responseBody), "application/json, text/event-stream")
+	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(responseBody), "application/json, text/event-stream", nil)
 	if err != nil {
 		c.logger.Errorf("failed to send response to server: %v", err)
 		return
