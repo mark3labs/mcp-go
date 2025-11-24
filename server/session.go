@@ -171,6 +171,9 @@ func (s *MCPServer) SendLogMessageToClient(ctx context.Context, notification mcp
 func (s *MCPServer) sendNotificationToAllClients(notification mcp.JSONRPCNotification) {
 	s.sessions.Range(func(k, v any) bool {
 		if session, ok := v.(ClientSession); ok && session.Initialized() {
+			if sessionWithStreamableHTTPConfig, ok := session.(SessionWithStreamableHTTPConfig); ok {
+				sessionWithStreamableHTTPConfig.UpgradeToSSEWhenReceiveNotification()
+			}
 			select {
 			case session.NotificationChannel() <- notification:
 				// Successfully sent notification
