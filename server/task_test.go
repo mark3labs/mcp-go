@@ -116,9 +116,9 @@ func TestMCPServer_TaskLifecycle(t *testing.T) {
 	assert.Equal(t, int64(60000), *entry.task.TTL)
 
 	// Get task
-	retrieved, err := server.getTask(ctx, "task-123")
+	retrievedTask, _, err := server.getTask(ctx, "task-123")
 	require.NoError(t, err)
-	assert.Equal(t, "task-123", retrieved.task.TaskId)
+	assert.Equal(t, "task-123", retrievedTask.TaskId)
 
 	// Complete task
 	result := map[string]string{"result": "success"}
@@ -357,14 +357,14 @@ func TestMCPServer_TaskTTLCleanup(t *testing.T) {
 	server.createTask(ctx, "task-ttl", &ttl, &pollInterval)
 
 	// Task should exist initially
-	_, err := server.getTask(ctx, "task-ttl")
+	_, _, err := server.getTask(ctx, "task-ttl")
 	require.NoError(t, err)
 
 	// Wait for TTL to expire
 	time.Sleep(150 * time.Millisecond)
 
 	// Task should be cleaned up
-	_, err = server.getTask(ctx, "task-ttl")
+	_, _, err = server.getTask(ctx, "task-ttl")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "task not found")
 }
@@ -505,6 +505,17 @@ func TestTask_HelperFunctions(t *testing.T) {
 		cap := mcp.NewTasksCapability()
 		assert.NotNil(t, cap.List)
 		assert.NotNil(t, cap.Cancel)
+		assert.NotNil(t, cap.Requests)
+		assert.NotNil(t, cap.Requests.Tools)
+		assert.NotNil(t, cap.Requests.Tools.Call)
+	})
+
+	t.Run("NewTasksCapabilityWithToolsOnly", func(t *testing.T) {
+		cap := mcp.NewTasksCapabilityWithToolsOnly()
+		// List and Cancel should NOT be set with tools-only capability
+		assert.Nil(t, cap.List)
+		assert.Nil(t, cap.Cancel)
+		// But tool call support should be enabled
 		assert.NotNil(t, cap.Requests)
 		assert.NotNil(t, cap.Requests.Tools)
 		assert.NotNil(t, cap.Requests.Tools.Call)
