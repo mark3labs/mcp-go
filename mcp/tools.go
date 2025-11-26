@@ -653,6 +653,31 @@ func (tis ToolArgumentsSchema) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
+// UnmarshalJSON implements the json.Unmarshaler interface for ToolArgumentsSchema.
+// It handles both "$defs" (JSON Schema 2019-09+) and "definitions" (JSON Schema draft-07)
+// by reading either field and storing it in the Defs field.
+func (tis *ToolArgumentsSchema) UnmarshalJSON(data []byte) error {
+	// Use a temporary type to avoid infinite recursion
+	type Alias ToolArgumentsSchema
+	aux := &struct {
+		Definitions map[string]any `json:"definitions,omitempty"`
+		*Alias
+	}{
+		Alias: (*Alias)(tis),
+	}
+
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+
+	// If $defs wasn't provided but definitions was, use definitions
+	if tis.Defs == nil && aux.Definitions != nil {
+		tis.Defs = aux.Definitions
+	}
+
+	return nil
+}
+
 type ToolAnnotation struct {
 	// Human-readable title for the tool
 	Title string `json:"title,omitempty"`
