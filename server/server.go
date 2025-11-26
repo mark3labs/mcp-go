@@ -30,12 +30,13 @@ type resourceTemplateEntry struct {
 
 // taskEntry holds task state and associated data
 type taskEntry struct {
-	task         mcp.Task
-	sessionID    string
-	result       any            // The actual result once completed
-	resultErr    error          // Error if task failed
-	cancelFunc   context.CancelFunc // Function to cancel the task
-	done         chan struct{}  // Channel to signal task completion
+	task       mcp.Task
+	sessionID  string
+	result     any                // The actual result once completed
+	resultErr  error              // Error if task failed
+	cancelFunc context.CancelFunc // Function to cancel the task
+	done       chan struct{}      // Channel to signal task completion
+	completed  bool               // Whether the task has been completed (guards done channel closure)
 }
 
 // ServerOption is a function that configures an MCPServer.
@@ -1405,7 +1406,7 @@ func (s *MCPServer) handleGetTask(
 	id any,
 	request mcp.GetTaskRequest,
 ) (*mcp.GetTaskResult, *requestError) {
-	entry, err := s.getTask(ctx, request.Params.TaskId)
+	task, _, err := s.getTask(ctx, request.Params.TaskId)
 	if err != nil {
 		return nil, &requestError{
 			id:   id,
@@ -1414,7 +1415,7 @@ func (s *MCPServer) handleGetTask(
 		}
 	}
 
-	result := mcp.NewGetTaskResult(entry.task)
+	result := mcp.NewGetTaskResult(task)
 	return &result, nil
 }
 
@@ -1424,13 +1425,7 @@ func (s *MCPServer) handleListTasks(
 	_ any,
 	request mcp.ListTasksRequest,
 ) (*mcp.ListTasksResult, *requestError) {
-	entries := s.listTasks(ctx)
-
-	// Convert taskEntry to Task
-	tasks := make([]mcp.Task, 0, len(entries))
-	for _, entry := range entries {
-		tasks = append(tasks, entry.task)
-	}
+	tasks := s.listTasks(ctx)
 
 	// Apply pagination if needed
 	if s.paginationLimit != nil {
@@ -1448,7 +1443,7 @@ func (s *MCPServer) handleTaskResult(
 	id any,
 	request mcp.TaskResultRequest,
 ) (*mcp.TaskResultResult, *requestError) {
-	entry, err := s.getTask(ctx, request.Params.TaskId)
+	task, done, err := s.getTask(ctx, request.Params.TaskId)
 	if err != nil {
 		return nil, &requestError{
 			id:   id,
@@ -1458,9 +1453,9 @@ func (s *MCPServer) handleTaskResult(
 	}
 
 	// Wait for task completion if not terminal
-	if !entry.task.Status.IsTerminal() {
+	if !task.Status.IsTerminal() {
 		select {
-		case <-entry.done:
+		case <-done:
 			// Task completed
 		case <-ctx.Done():
 			return nil, &requestError{
@@ -1471,12 +1466,27 @@ func (s *MCPServer) handleTaskResult(
 		}
 	}
 
+	// Re-fetch the task entry to get the final result/error under lock
+	entry, err := s.getTaskEntry(ctx, request.Params.TaskId)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  err,
+		}
+	}
+
+	// Read result error under lock
+	s.tasksMu.RLock()
+	resultErr := entry.resultErr
+	s.tasksMu.RUnlock()
+
 	// Return error if task failed
-	if entry.resultErr != nil {
+	if resultErr != nil {
 		return nil, &requestError{
 			id:   id,
 			code: mcp.INTERNAL_ERROR,
-			err:  entry.resultErr,
+			err:  resultErr,
 		}
 	}
 
@@ -1505,7 +1515,7 @@ func (s *MCPServer) handleCancelTask(
 	}
 
 	// Get the updated task
-	entry, err := s.getTask(ctx, request.Params.TaskId)
+	task, _, err := s.getTask(ctx, request.Params.TaskId)
 	if err != nil {
 		return nil, &requestError{
 			id:   id,
@@ -1514,7 +1524,7 @@ func (s *MCPServer) handleCancelTask(
 		}
 	}
 
-	result := mcp.NewCancelTaskResult(entry.task)
+	result := mcp.NewCancelTaskResult(task)
 	return &result, nil
 }
 
@@ -1524,10 +1534,14 @@ func (s *MCPServer) handleCancelTask(
 
 // createTask creates a new task entry and returns it.
 func (s *MCPServer) createTask(ctx context.Context, taskID string, ttl *int64, pollInterval *int64) *taskEntry {
-	task := mcp.NewTask(taskID,
-		mcp.WithTaskTTL(*ttl),
-		mcp.WithTaskPollInterval(*pollInterval),
-	)
+	opts := []mcp.TaskOption{}
+	if ttl != nil {
+		opts = append(opts, mcp.WithTaskTTL(*ttl))
+	}
+	if pollInterval != nil {
+		opts = append(opts, mcp.WithTaskPollInterval(*pollInterval))
+	}
+	task := mcp.NewTask(taskID, opts...)
 
 	entry := &taskEntry{
 		task:      task,
@@ -1548,7 +1562,32 @@ func (s *MCPServer) createTask(ctx context.Context, taskID string, ttl *int64, p
 }
 
 // getTask retrieves a task by ID, checking session isolation if applicable.
-func (s *MCPServer) getTask(ctx context.Context, taskID string) (*taskEntry, error) {
+// Returns a copy of the task and the done channel for waiting on completion.
+func (s *MCPServer) getTask(ctx context.Context, taskID string) (mcp.Task, chan struct{}, error) {
+	s.tasksMu.RLock()
+	entry, exists := s.tasks[taskID]
+	if !exists {
+		s.tasksMu.RUnlock()
+		return mcp.Task{}, nil, fmt.Errorf("task not found")
+	}
+
+	// Verify session isolation
+	sessionID := getSessionID(ctx)
+	if entry.sessionID != "" && sessionID != "" && entry.sessionID != sessionID {
+		s.tasksMu.RUnlock()
+		return mcp.Task{}, nil, fmt.Errorf("task not found")
+	}
+
+	// Return a copy of the task and the done channel
+	taskCopy := entry.task
+	done := entry.done
+	s.tasksMu.RUnlock()
+
+	return taskCopy, done, nil
+}
+
+// getTaskEntry retrieves the raw task entry for internal use (requires caller to handle synchronization).
+func (s *MCPServer) getTaskEntry(ctx context.Context, taskID string) (*taskEntry, error) {
 	s.tasksMu.RLock()
 	entry, exists := s.tasks[taskID]
 	s.tasksMu.RUnlock()
@@ -1566,18 +1605,18 @@ func (s *MCPServer) getTask(ctx context.Context, taskID string) (*taskEntry, err
 	return entry, nil
 }
 
-// listTasks returns all tasks for the current session.
-func (s *MCPServer) listTasks(ctx context.Context) []*taskEntry {
+// listTasks returns copies of all tasks for the current session.
+func (s *MCPServer) listTasks(ctx context.Context) []mcp.Task {
 	sessionID := getSessionID(ctx)
 
 	s.tasksMu.RLock()
 	defer s.tasksMu.RUnlock()
 
-	var tasks []*taskEntry
+	var tasks []mcp.Task
 	for _, entry := range s.tasks {
 		// Filter by session if applicable
 		if sessionID == "" || entry.sessionID == "" || entry.sessionID == sessionID {
-			tasks = append(tasks, entry)
+			tasks = append(tasks, entry.task)
 		}
 	}
 
@@ -1601,6 +1640,11 @@ func (s *MCPServer) completeTask(entry *taskEntry, result any, err error) {
 	s.tasksMu.Lock()
 	defer s.tasksMu.Unlock()
 
+	// Guard against double completion
+	if entry.completed {
+		return
+	}
+
 	if err != nil {
 		entry.task.Status = mcp.TaskStatusFailed
 		entry.task.StatusMessage = err.Error()
@@ -1610,13 +1654,14 @@ func (s *MCPServer) completeTask(entry *taskEntry, result any, err error) {
 		entry.result = result
 	}
 
-	// Signal completion
+	// Mark as completed and signal
+	entry.completed = true
 	close(entry.done)
 }
 
 // cancelTask cancels a running task.
 func (s *MCPServer) cancelTask(ctx context.Context, taskID string) error {
-	entry, err := s.getTask(ctx, taskID)
+	entry, err := s.getTaskEntry(ctx, taskID)
 	if err != nil {
 		return err
 	}
@@ -1624,8 +1669,8 @@ func (s *MCPServer) cancelTask(ctx context.Context, taskID string) error {
 	s.tasksMu.Lock()
 	defer s.tasksMu.Unlock()
 
-	// Don't allow cancelling already terminal tasks
-	if entry.task.Status.IsTerminal() {
+	// Don't allow cancelling already completed tasks
+	if entry.completed {
 		return fmt.Errorf("cannot cancel task in terminal status: %s", entry.task.Status)
 	}
 
@@ -1637,13 +1682,9 @@ func (s *MCPServer) cancelTask(ctx context.Context, taskID string) error {
 	entry.task.Status = mcp.TaskStatusCancelled
 	entry.task.StatusMessage = "Task cancelled by request"
 
-	// Signal completion
-	select {
-	case <-entry.done:
-		// Already closed
-	default:
-		close(entry.done)
-	}
+	// Mark as completed and signal
+	entry.completed = true
+	close(entry.done)
 
 	return nil
 }

@@ -137,10 +137,9 @@ func NewTasksCapability() *TasksCapability {
 }
 
 // NewTasksCapabilityWithToolsOnly creates a TasksCapability with only tool call support.
+// List and Cancel operations are not enabled with this capability.
 func NewTasksCapabilityWithToolsOnly() *TasksCapability {
 	return &TasksCapability{
-		List:   &struct{}{},
-		Cancel: &struct{}{},
 		Requests: &TaskRequestsCapability{
 			Tools: &struct {
 				Call *struct{} `json:"call,omitempty"`
