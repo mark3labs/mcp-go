@@ -991,17 +991,9 @@ func TestOAuthHandler_RefreshToken_GitHubErrorIn200Response(t *testing.T) {
 	_, err := handler.RefreshToken(ctx, "bad-refresh-token")
 
 	// Should detect the error even though status code is 200
-	if err == nil {
-		t.Fatal("Expected error when GitHub returns error in 200 response, got nil")
-	}
-
-	// Should contain the OAuth error details
-	if !strings.Contains(err.Error(), "bad_refresh_token") {
-		t.Errorf("Expected error to contain 'bad_refresh_token', got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "incorrect or expired") {
-		t.Errorf("Expected error to contain error description, got: %v", err)
-	}
+	require.Error(t, err, "Expected error when GitHub returns error in 200 response")
+	assert.Contains(t, err.Error(), "bad_refresh_token", "Error should contain OAuth error code")
+	assert.Contains(t, err.Error(), "incorrect or expired", "Error should contain error description")
 }
 
 // TestOAuthHandler_RefreshToken_EmptyAccessToken tests that mcp-go properly parses
@@ -1116,40 +1108,20 @@ func TestOAuthHandler_RefreshToken_RefreshTokenRotation(t *testing.T) {
 
 	handler := NewOAuthHandler(config)
 	ctx := context.Background()
-
-	// First refresh
 	token1, err := handler.RefreshToken(ctx, "ghr_original")
-	if err != nil {
-		t.Fatalf("First refresh failed: %v", err)
-	}
-
-	if token1.RefreshToken != "ghr_refresh_1" {
-		t.Errorf("Expected new refresh token 'ghr_refresh_1', got '%s'", token1.RefreshToken)
-	}
-	if lastRefreshTokenSent != "ghr_original" {
-		t.Errorf("Expected to send 'ghr_original', sent '%s'", lastRefreshTokenSent)
-	}
+	require.NoError(t, err, "First refresh should succeed")
+	assert.Equal(t, "ghr_refresh_1", token1.RefreshToken, "Should receive new refresh token")
+	assert.Equal(t, "ghr_original", lastRefreshTokenSent, "Should send original refresh token")
 
 	// Second refresh - should use the NEW refresh token
 	token2, err := handler.RefreshToken(ctx, token1.RefreshToken)
-	if err != nil {
-		t.Fatalf("Second refresh failed: %v", err)
-	}
-
-	if token2.RefreshToken != "ghr_refresh_2" {
-		t.Errorf("Expected rotated refresh token 'ghr_refresh_2', got '%s'", token2.RefreshToken)
-	}
-	if lastRefreshTokenSent != "ghr_refresh_1" {
-		t.Errorf("Expected to send 'ghr_refresh_1', sent '%s'", lastRefreshTokenSent)
-	}
+	require.NoError(t, err, "Second refresh should succeed")
+	assert.Equal(t, "ghr_refresh_2", token2.RefreshToken, "Should receive rotated refresh token")
+	assert.Equal(t, "ghr_refresh_1", lastRefreshTokenSent, "Should send first rotated token")
 
 	// Verify tokens are different
-	if token1.AccessToken == token2.AccessToken {
-		t.Error("Access tokens should be different after rotation")
-	}
-	if token1.RefreshToken == token2.RefreshToken {
-		t.Error("Refresh tokens should be rotated")
-	}
+	assert.NotEqual(t, token1.AccessToken, token2.AccessToken, "Access tokens should be different after rotation")
+	assert.NotEqual(t, token1.RefreshToken, token2.RefreshToken, "Refresh tokens should be rotated")
 }
 
 // TestOAuthHandler_RefreshToken_SingleUseRefreshToken tests that using an old
@@ -1217,35 +1189,18 @@ func TestOAuthHandler_RefreshToken_SingleUseRefreshToken(t *testing.T) {
 
 	// First use of refresh token - should succeed
 	token1, err := handler.RefreshToken(ctx, "ghr_original")
-	if err != nil {
-		t.Fatalf("First refresh should succeed: %v", err)
-	}
+	require.NoError(t, err, "First refresh should succeed")
 
 	// Try to use the SAME refresh token again - should fail
 	_, err = handler.RefreshToken(ctx, "ghr_original")
-	if err == nil {
-		t.Fatal("Expected error when reusing old refresh token, got nil")
-	}
-
-	if !strings.Contains(err.Error(), "bad_refresh_token") {
-		t.Errorf("Expected 'bad_refresh_token' error, got: %v", err)
-	}
-
-	// Verify the error was detected even though it came in HTTP 200 response
-	// The error is wrapped, so just verify it contains the OAuth error details
-	if !strings.Contains(err.Error(), "OAuth error") {
-		t.Errorf("Expected error to contain 'OAuth error', got: %v", err)
-	}
+	require.Error(t, err, "Expected error when reusing old refresh token")
+	assert.Contains(t, err.Error(), "bad_refresh_token", "Error should contain bad_refresh_token")
+	assert.Contains(t, err.Error(), "OAuth error", "Error should be wrapped as OAuth error")
 
 	// Using the NEW refresh token should succeed
 	token2, err := handler.RefreshToken(ctx, token1.RefreshToken)
-	if err != nil {
-		t.Fatalf("Refresh with new token should succeed: %v", err)
-	}
-
-	if token2.AccessToken == "" {
-		t.Error("Should have received valid access token")
-	}
+	require.NoError(t, err, "Refresh with new token should succeed")
+	assert.NotEmpty(t, token2.AccessToken, "Should have received valid access token")
 }
 
 // TestOAuthHandler_ProcessAuthorizationResponse_ErrorIn200 tests that we detect
@@ -1298,18 +1253,13 @@ func TestOAuthHandler_ProcessAuthorizationResponse_ErrorIn200(t *testing.T) {
 	err := handler.ProcessAuthorizationResponse(ctx, "bad-code", "test-state", "test-verifier")
 
 	// Should fail with OAuth error
-	if err == nil {
-		t.Fatal("Expected error when processing invalid authorization code, got nil")
-	}
-
-	if !strings.Contains(err.Error(), "invalid_grant") {
-		t.Errorf("Expected 'invalid_grant' error, got: %v", err)
-	}
+	require.Error(t, err, "Expected error when processing invalid authorization code")
+	assert.Contains(t, err.Error(), "invalid_grant", "Error should contain invalid_grant")
 
 	// Verify no empty token was saved
 	savedToken, getErr := tokenStore.GetToken(ctx)
-	if getErr == nil && savedToken.AccessToken == "" {
-		t.Error("Empty access token should not have been saved")
+	if getErr == nil {
+		assert.NotEmpty(t, savedToken.AccessToken, "Empty access token should not have been saved")
 	}
 }
 
@@ -1361,20 +1311,13 @@ func TestOAuthHandler_RefreshToken_KeepsOldRefreshToken(t *testing.T) {
 
 	// Refresh the token
 	newToken, err := handler.RefreshToken(ctx, originalRefreshToken)
-	if err != nil {
-		t.Fatalf("Refresh failed: %v", err)
-	}
+	require.NoError(t, err, "Refresh should succeed")
 
 	// Should have new access token
-	if newToken.AccessToken != "ghu_new_access_token" {
-		t.Errorf("Expected new access token, got: %s", newToken.AccessToken)
-	}
+	assert.Equal(t, "ghu_new_access_token", newToken.AccessToken, "Should receive new access token")
 
 	// Should keep the old refresh token
-	if newToken.RefreshToken != originalRefreshToken {
-		t.Errorf("Expected to keep old refresh token '%s', got '%s'",
-			originalRefreshToken, newToken.RefreshToken)
-	}
+	assert.Equal(t, originalRefreshToken, newToken.RefreshToken, "Should keep old refresh token when server doesn't provide new one")
 }
 
 // TestOAuthHandler_RefreshToken_ProperHTTP400Error tests that we handle
@@ -1423,11 +1366,6 @@ func TestOAuthHandler_RefreshToken_ProperHTTP400Error(t *testing.T) {
 	_, err := handler.RefreshToken(ctx, "invalid-token")
 
 	// Should fail with OAuth error
-	if err == nil {
-		t.Fatal("Expected error for HTTP 400 response, got nil")
-	}
-
-	if !strings.Contains(err.Error(), "invalid_grant") {
-		t.Errorf("Expected 'invalid_grant' error, got: %v", err)
-	}
+	require.Error(t, err, "Expected error for HTTP 400 response")
+	assert.Contains(t, err.Error(), "invalid_grant", "Error should contain invalid_grant")
 }

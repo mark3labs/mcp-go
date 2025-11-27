@@ -252,7 +252,7 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken string) (*
 	// Check if the response contains an error field before parsing as Token
 	var oauthErr OAuthError
 	if err := json.Unmarshal(body, &oauthErr); err == nil && oauthErr.ErrorCode != "" {
-		return nil, extractOAuthError(body, resp.StatusCode, "refresh token request failed")
+		return nil, fmt.Errorf("refresh token request failed: %w", oauthErr)
 	}
 
 	var tokenResp Token
@@ -688,7 +688,7 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 	// Check if the response contains an error field before parsing as Token
 	var oauthErr OAuthError
 	if err := json.Unmarshal(body, &oauthErr); err == nil && oauthErr.ErrorCode != "" {
-		return extractOAuthError(body, resp.StatusCode, "token request failed")
+		return fmt.Errorf("token request failed: %w", oauthErr)
 	}
 
 	var tokenResp Token
