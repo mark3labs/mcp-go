@@ -242,8 +242,21 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken string) (*
 		return nil, extractOAuthError(body, resp.StatusCode, "refresh token request failed")
 	}
 
+	// Read the response body for parsing
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read token response body: %w", err)
+	}
+
+	// GitHub returns HTTP 200 even for errors, with error details in the JSON body
+	// Check if the response contains an error field before parsing as Token
+	var oauthErr OAuthError
+	if err := json.Unmarshal(body, &oauthErr); err == nil && oauthErr.ErrorCode != "" {
+		return nil, extractOAuthError(body, resp.StatusCode, "refresh token request failed")
+	}
+
 	var tokenResp Token
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
 		return nil, fmt.Errorf("failed to decode token response: %w", err)
 	}
 
@@ -665,8 +678,21 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 		return extractOAuthError(body, resp.StatusCode, "token request failed")
 	}
 
+	// Read the response body for parsing
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read token response body: %w", err)
+	}
+
+	// GitHub returns HTTP 200 even for errors, with error details in the JSON body
+	// Check if the response contains an error field before parsing as Token
+	var oauthErr OAuthError
+	if err := json.Unmarshal(body, &oauthErr); err == nil && oauthErr.ErrorCode != "" {
+		return extractOAuthError(body, resp.StatusCode, "token request failed")
+	}
+
 	var tokenResp Token
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
 		return fmt.Errorf("failed to decode token response: %w", err)
 	}
 
