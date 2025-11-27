@@ -994,6 +994,11 @@ func TestOAuthHandler_RefreshToken_GitHubErrorIn200Response(t *testing.T) {
 	require.Error(t, err, "Expected error when GitHub returns error in 200 response")
 	assert.Contains(t, err.Error(), "bad_refresh_token", "Error should contain OAuth error code")
 	assert.Contains(t, err.Error(), "incorrect or expired", "Error should contain error description")
+
+	// Verify no empty token was saved to token store (regression test for original bug)
+	if savedToken, getErr := tokenStore.GetToken(ctx); getErr == nil {
+		assert.NotEmpty(t, savedToken.AccessToken, "Empty access token should not be saved after OAuth error in 200 response")
+	}
 }
 
 // TestOAuthHandler_RefreshToken_EmptyAccessToken tests that mcp-go properly parses
@@ -1197,6 +1202,11 @@ func TestOAuthHandler_RefreshToken_SingleUseRefreshToken(t *testing.T) {
 	assert.Contains(t, err.Error(), "bad_refresh_token", "Error should contain bad_refresh_token")
 	assert.Contains(t, err.Error(), "OAuth error", "Error should be wrapped as OAuth error")
 
+	// Ensure the previously successful token is still stored after the failed reuse
+	savedToken, getErr := tokenStore.GetToken(ctx)
+	require.NoError(t, getErr)
+	assert.Equal(t, token1.RefreshToken, savedToken.RefreshToken, "Stored refresh token should remain unchanged after failed reuse")
+
 	// Using the NEW refresh token should succeed
 	token2, err := handler.RefreshToken(ctx, token1.RefreshToken)
 	require.NoError(t, err, "Refresh with new token should succeed")
@@ -1368,4 +1378,9 @@ func TestOAuthHandler_RefreshToken_ProperHTTP400Error(t *testing.T) {
 	// Should fail with OAuth error
 	require.Error(t, err, "Expected error for HTTP 400 response")
 	assert.Contains(t, err.Error(), "invalid_grant", "Error should contain invalid_grant")
+
+	// Verify no empty token was saved to token store (regression test for original bug)
+	if savedToken, getErr := tokenStore.GetToken(ctx); getErr == nil {
+		assert.NotEmpty(t, savedToken.AccessToken, "Empty access token should not be saved for HTTP 400 error")
+	}
 }
