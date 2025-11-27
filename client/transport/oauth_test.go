@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -995,10 +996,9 @@ func TestOAuthHandler_RefreshToken_GitHubErrorIn200Response(t *testing.T) {
 	assert.Contains(t, err.Error(), "bad_refresh_token", "Error should contain OAuth error code")
 	assert.Contains(t, err.Error(), "incorrect or expired", "Error should contain error description")
 
-	// Verify no empty token was saved to token store (regression test for original bug)
-	if savedToken, getErr := tokenStore.GetToken(ctx); getErr == nil {
-		assert.NotEmpty(t, savedToken.AccessToken, "Empty access token should not be saved after OAuth error in 200 response")
-	}
+	// Verify no token was saved to token store (regression test for original bug)
+	_, getErr := tokenStore.GetToken(ctx)
+	assert.ErrorIs(t, getErr, ErrNoToken, "No token should be saved after OAuth error in 200 response")
 }
 
 // TestOAuthHandler_RefreshToken_EmptyAccessToken tests that mcp-go properly parses
@@ -1092,10 +1092,10 @@ func TestOAuthHandler_RefreshToken_RefreshTokenRotation(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"access_token":  "ghu_access_" + string(rune('0'+callCount)),
+				"access_token":  "ghu_access_" + strconv.Itoa(callCount),
 				"token_type":    "bearer",
 				"expires_in":    28800,
-				"refresh_token": "ghr_refresh_" + string(rune('0'+callCount)), // New token each time
+				"refresh_token": "ghr_refresh_" + strconv.Itoa(callCount), // New token each time
 			})
 			return
 		}
@@ -1266,11 +1266,9 @@ func TestOAuthHandler_ProcessAuthorizationResponse_ErrorIn200(t *testing.T) {
 	require.Error(t, err, "Expected error when processing invalid authorization code")
 	assert.Contains(t, err.Error(), "invalid_grant", "Error should contain invalid_grant")
 
-	// Verify no empty token was saved
-	savedToken, getErr := tokenStore.GetToken(ctx)
-	if getErr == nil {
-		assert.NotEmpty(t, savedToken.AccessToken, "Empty access token should not have been saved")
-	}
+	// Verify no token was saved
+	_, getErr := tokenStore.GetToken(ctx)
+	assert.ErrorIs(t, getErr, ErrNoToken, "No token should be saved after OAuth error in authorization response")
 }
 
 // TestOAuthHandler_RefreshToken_KeepsOldRefreshToken tests that when a new
@@ -1379,8 +1377,7 @@ func TestOAuthHandler_RefreshToken_ProperHTTP400Error(t *testing.T) {
 	require.Error(t, err, "Expected error for HTTP 400 response")
 	assert.Contains(t, err.Error(), "invalid_grant", "Error should contain invalid_grant")
 
-	// Verify no empty token was saved to token store (regression test for original bug)
-	if savedToken, getErr := tokenStore.GetToken(ctx); getErr == nil {
-		assert.NotEmpty(t, savedToken.AccessToken, "Empty access token should not be saved for HTTP 400 error")
-	}
+	// Verify no token was saved to token store (regression test for original bug)
+	_, getErr := tokenStore.GetToken(ctx)
+	assert.ErrorIs(t, getErr, ErrNoToken, "No token should be saved after HTTP 400 error")
 }
