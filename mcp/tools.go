@@ -571,6 +571,8 @@ type Tool struct {
 	RawOutputSchema json.RawMessage `json:"-"` // Hide this from JSON marshaling
 	// Optional properties describing tool behavior
 	Annotations ToolAnnotation `json:"annotations"`
+	// Support for deferred loading
+	DeferLoading bool `json:"defer_loading,omitempty"`
 }
 
 // GetName returns the name of the tool.
@@ -612,6 +614,10 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 	}
 
 	m["annotations"] = t.Annotations
+
+	if t.DeferLoading {
+		m["defer_loading"] = t.DeferLoading
+	}
 
 	// Marshal Meta if present
 	if t.Meta != nil {
@@ -752,6 +758,14 @@ func NewToolWithRawSchema(name, description string, schema json.RawMessage) Tool
 func WithDescription(description string) ToolOption {
 	return func(t *Tool) {
 		t.Description = description
+	}
+}
+
+// WithDeferLoading sets the defer_loading flag for the tool.
+// This is used to implement dynamic tool loading/searching patterns.
+func WithDeferLoading(deferLoading bool) ToolOption {
+	return func(t *Tool) {
+		t.DeferLoading = deferLoading
 	}
 }
 
