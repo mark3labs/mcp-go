@@ -329,6 +329,110 @@ func (s *MCPServer) HandleMessage(
 		}
 		s.hooks.afterCallTool(ctx, baseMessage.ID, &request, result)
 		return createResponse(baseMessage.ID, *result)
+	case mcp.MethodTasksGet:
+		var request mcp.GetTaskRequest
+		var result *mcp.GetTaskResult
+		if s.capabilities.tasks == nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.METHOD_NOT_FOUND,
+				err:  fmt.Errorf("tasks %w", ErrUnsupported),
+			}
+		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.INVALID_REQUEST,
+				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
+			}
+		} else {
+			request.Header = headers
+			s.hooks.beforeGetTask(ctx, baseMessage.ID, &request)
+			result, err = s.handleGetTask(ctx, baseMessage.ID, request)
+		}
+		if err != nil {
+			s.hooks.onError(ctx, baseMessage.ID, baseMessage.Method, &request, err)
+			return err.ToJSONRPCError()
+		}
+		s.hooks.afterGetTask(ctx, baseMessage.ID, &request, result)
+		return createResponse(baseMessage.ID, *result)
+	case mcp.MethodTasksList:
+		var request mcp.ListTasksRequest
+		var result *mcp.ListTasksResult
+		if s.capabilities.tasks == nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.METHOD_NOT_FOUND,
+				err:  fmt.Errorf("tasks %w", ErrUnsupported),
+			}
+		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.INVALID_REQUEST,
+				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
+			}
+		} else {
+			request.Header = headers
+			s.hooks.beforeListTasks(ctx, baseMessage.ID, &request)
+			result, err = s.handleListTasks(ctx, baseMessage.ID, request)
+		}
+		if err != nil {
+			s.hooks.onError(ctx, baseMessage.ID, baseMessage.Method, &request, err)
+			return err.ToJSONRPCError()
+		}
+		s.hooks.afterListTasks(ctx, baseMessage.ID, &request, result)
+		return createResponse(baseMessage.ID, *result)
+	case mcp.MethodTasksResult:
+		var request mcp.TaskResultRequest
+		var result *mcp.TaskResultResult
+		if s.capabilities.tasks == nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.METHOD_NOT_FOUND,
+				err:  fmt.Errorf("tasks %w", ErrUnsupported),
+			}
+		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.INVALID_REQUEST,
+				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
+			}
+		} else {
+			request.Header = headers
+			s.hooks.beforeTaskResult(ctx, baseMessage.ID, &request)
+			result, err = s.handleTaskResult(ctx, baseMessage.ID, request)
+		}
+		if err != nil {
+			s.hooks.onError(ctx, baseMessage.ID, baseMessage.Method, &request, err)
+			return err.ToJSONRPCError()
+		}
+		s.hooks.afterTaskResult(ctx, baseMessage.ID, &request, result)
+		return createResponse(baseMessage.ID, *result)
+	case mcp.MethodTasksCancel:
+		var request mcp.CancelTaskRequest
+		var result *mcp.CancelTaskResult
+		if s.capabilities.tasks == nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.METHOD_NOT_FOUND,
+				err:  fmt.Errorf("tasks %w", ErrUnsupported),
+			}
+		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.INVALID_REQUEST,
+				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
+			}
+		} else {
+			request.Header = headers
+			s.hooks.beforeCancelTask(ctx, baseMessage.ID, &request)
+			result, err = s.handleCancelTask(ctx, baseMessage.ID, request)
+		}
+		if err != nil {
+			s.hooks.onError(ctx, baseMessage.ID, baseMessage.Method, &request, err)
+			return err.ToJSONRPCError()
+		}
+		s.hooks.afterCancelTask(ctx, baseMessage.ID, &request, result)
+		return createResponse(baseMessage.ID, *result)
 	default:
 		return createErrorResponse(
 			baseMessage.ID,
