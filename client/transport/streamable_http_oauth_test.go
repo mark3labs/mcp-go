@@ -218,3 +218,117 @@ func TestStreamableHTTP_IsOAuthEnabled(t *testing.T) {
 		t.Errorf("Expected IsOAuthEnabled() to return true")
 	}
 }
+
+func TestStreamableHTTP_OAuthMetadataDiscovery(t *testing.T) {
+	// Test that we correctly extract resource_metadata URL from WWW-Authenticate header per RFC9728
+	const expectedMetadataURL = "https://auth.example.com/.well-known/oauth-protected-resource"
+
+	// Create a test server that returns 401 with WWW-Authenticate header
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Return 401 with WWW-Authenticate header containing resource_metadata
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+expectedMetadataURL+`"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	// Create a token store with a valid token so the request reaches the server
+	// The server will still return 401 to simulate token rejection
+	tokenStore := NewMemoryTokenStore()
+	validToken := &Token{
+		AccessToken:  "test-token",
+		TokenType:    "Bearer",
+		RefreshToken: "refresh-token",
+		ExpiresIn:    3600,
+		ExpiresAt:    time.Now().Add(1 * time.Hour), // Valid for 1 hour
+	}
+	if err := tokenStore.SaveToken(context.Background(), validToken); err != nil {
+		t.Fatalf("Failed to save token: %v", err)
+	}
+
+	// Create OAuth config
+	oauthConfig := OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost:8085/callback",
+		Scopes:      []string{"mcp.read", "mcp.write"},
+		TokenStore:  tokenStore,
+		PKCEEnabled: true,
+	}
+
+	// Create StreamableHTTP with OAuth
+	transport, err := NewStreamableHTTP(server.URL, WithHTTPOAuth(oauthConfig))
+	if err != nil {
+		t.Fatalf("Failed to create StreamableHTTP: %v", err)
+	}
+
+	// Send a request that will trigger 401
+	_, err = transport.SendRequest(context.Background(), JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(1),
+		Method:  "test",
+	})
+
+	// Verify the error is an OAuthAuthorizationRequiredError
+	if err == nil {
+		t.Fatalf("Expected error, got nil")
+	}
+
+	var oauthErr *OAuthAuthorizationRequiredError
+	if !errors.As(err, &oauthErr) {
+		t.Fatalf("Expected OAuthAuthorizationRequiredError, got %T: %v", err, err)
+	}
+
+	// Verify the discovered metadata URL was extracted from WWW-Authenticate header
+	if oauthErr.ResourceMetadataURL != expectedMetadataURL {
+		t.Errorf("Expected ResourceMetadataURL to be %q, got %q",
+			expectedMetadataURL, oauthErr.ResourceMetadataURL)
+	}
+}
+
+func TestExtractResourceMetadataURL(t *testing.T) {
+	// Test the extractResourceMetadataURL helper function
+	testCases := []struct {
+		name        string
+		wwwAuth     string
+		expectedURL string
+	}{
+		{
+			name:        "Valid Bearer with resource_metadata",
+			wwwAuth:     `Bearer resource_metadata="https://auth.example.com/.well-known/oauth-protected-resource"`,
+			expectedURL: "https://auth.example.com/.well-known/oauth-protected-resource",
+		},
+		{
+			name:        "Bearer with resource_metadata and other parameters",
+			wwwAuth:     `Bearer realm="example", resource_metadata="https://example.com/metadata", scope="read write"`,
+			expectedURL: "https://example.com/metadata",
+		},
+		{
+			name:        "No resource_metadata parameter",
+			wwwAuth:     `Bearer realm="example", scope="read"`,
+			expectedURL: "",
+		},
+		{
+			name:        "Empty header",
+			wwwAuth:     "",
+			expectedURL: "",
+		},
+		{
+			name:        "Malformed resource_metadata (no closing quote)",
+			wwwAuth:     `Bearer resource_metadata="https://example.com/metadata`,
+			expectedURL: "",
+		},
+		{
+			name:        "DPoP scheme with resource_metadata",
+			wwwAuth:     `DPoP resource_metadata="https://dpop.example.com/.well-known/oauth-protected-resource"`,
+			expectedURL: "https://dpop.example.com/.well-known/oauth-protected-resource",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := extractResourceMetadataURL(tc.wwwAuth)
+			if result != tc.expectedURL {
+				t.Errorf("Expected %q, got %q", tc.expectedURL, result)
+			}
+		})
+	}
+}
