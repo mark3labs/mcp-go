@@ -519,8 +519,12 @@ func (s *SSEServer) GetMessageEndpointForClient(r *http.Request, sessionID strin
 	if s.useFullURLForMessageEndpoint && s.baseURL != "" {
 		endpointPath = s.baseURL + endpointPath
 	}
-
-	return fmt.Sprintf("%s?sessionId=%s", endpointPath, sessionID)
+	if strings.Contains(endpointPath, "?") {
+		endpointPath += "&"
+	} else {
+		endpointPath += "?"
+	}
+	return fmt.Sprintf("%ssessionId=%s", endpointPath, sessionID)
 }
 
 // handleMessage processes incoming JSON-RPC messages from clients and sends responses
