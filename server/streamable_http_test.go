@@ -725,17 +725,15 @@ func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 	t.Run("SessionWithTools implementation", func(t *testing.T) {
 		// Create hooks to track sessions
 		hooks := &Hooks{}
-		var registeredSession *streamableHttpSession
-		var mu sync.Mutex
-		var sessionRegistered sync.WaitGroup
-		sessionRegistered.Add(1)
+		sessionChan := make(chan *streamableHttpSession, 1)
 
 		hooks.AddOnRegisterSession(func(ctx context.Context, session ClientSession) {
 			if s, ok := session.(*streamableHttpSession); ok {
-				mu.Lock()
-				registeredSession = s
-				mu.Unlock()
-				sessionRegistered.Done()
+				select {
+				case sessionChan <- s:
+				default:
+					// Channel already has a session, ignore
+				}
 			}
 		})
 
@@ -765,16 +763,14 @@ func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 			defer getResp.Body.Close()
 		}()
 
-		// Verify we got a session
-		sessionRegistered.Wait()
-		mu.Lock()
-		if registeredSession == nil {
-			mu.Unlock()
-			t.Fatal("Session was not registered via hook")
+		// Wait for session with timeout
+		var session *streamableHttpSession
+		select {
+		case session = <-sessionChan:
+			// Got the session!
+		case <-time.After(10 * time.Second):
+			t.Fatal("Timeout waiting for session registration")
 		}
-		// Make a local copy while holding the lock to avoid races on the shared variable
-		session := registeredSession
-		mu.Unlock()
 
 		// Test setting and getting tools
 		tools := map[string]ServerTool{
@@ -844,8 +840,8 @@ func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 				},
 			},
 		}
-		registeredSession.SetSessionTools(finalTools)
-		retrievedTools = registeredSession.GetSessionTools()
+		session.SetSessionTools(finalTools)
+		retrievedTools = session.GetSessionTools()
 		if len(retrievedTools) != 1 {
 			t.Errorf("Expected 1 tool, got %d", len(retrievedTools))
 		}
@@ -858,21 +854,16 @@ func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 func TestStreamableHTTP_SessionWithResources(t *testing.T) {
 
 	t.Run("SessionWithResources implementation", func(t *testing.T) {
-		var registeredSession SessionWithResources
 		hooks := &Hooks{}
-		var mu sync.Mutex
-		var sessionRegistered sync.WaitGroup
-		var sessionRegisteredOnce sync.Once
-		sessionRegistered.Add(1)
+		sessionChan := make(chan *streamableHttpSession, 1)
 
 		hooks.AddOnRegisterSession(func(ctx context.Context, session ClientSession) {
 			if s, ok := session.(*streamableHttpSession); ok {
-				mu.Lock()
-				registeredSession = s
-				mu.Unlock()
-				sessionRegisteredOnce.Do(func() {
-					sessionRegistered.Done()
-				})
+				select {
+				case sessionChan <- s:
+				default:
+					// Channel already has a session, ignore
+				}
 			}
 		})
 
@@ -902,16 +893,14 @@ func TestStreamableHTTP_SessionWithResources(t *testing.T) {
 			defer getResp.Body.Close()
 		}()
 
-		// Verify we got a session
-		sessionRegistered.Wait()
-		mu.Lock()
-		if registeredSession == nil {
-			mu.Unlock()
-			t.Fatal("Session was not registered via hook")
+		// Wait for session with timeout
+		var session *streamableHttpSession
+		select {
+		case session = <-sessionChan:
+			// Got the session!
+		case <-time.After(10 * time.Second):
+			t.Fatal("Timeout waiting for session registration")
 		}
-		// Make a local copy while holding the lock to avoid races on the shared variable
-		session := registeredSession
-		mu.Unlock()
 
 		// Test setting and getting resources
 		resources := map[string]ServerResource{
