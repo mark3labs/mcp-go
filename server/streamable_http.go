@@ -499,6 +499,14 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Check streaming support in the responseWriter. This can happen if the responseWriter has been overridden.
+	// If not supported, return 405 early.
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusMethodNotAllowed)
+		return
+	}
+
 	sessionID := r.Header.Get(HeaderKeySessionID)
 	// the specification didn't say we should validate the session id
 
@@ -532,11 +540,6 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-		return
-	}
 	flusher.Flush()
 
 	// Start notification handler for this session

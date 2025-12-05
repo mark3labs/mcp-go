@@ -772,6 +772,8 @@ func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 			mu.Unlock()
 			t.Fatal("Session was not registered via hook")
 		}
+		// Make a local copy while holding the lock to avoid races on the shared variable
+		session := registeredSession
 		mu.Unlock()
 
 		// Test setting and getting tools
@@ -791,10 +793,10 @@ func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 		}
 
 		// Test SetSessionTools
-		registeredSession.SetSessionTools(tools)
+		session.SetSessionTools(tools)
 
 		// Test GetSessionTools
-		retrievedTools := registeredSession.GetSessionTools()
+		retrievedTools := session.GetSessionTools()
 		if len(retrievedTools) != 1 {
 			t.Errorf("Expected 1 tool, got %d", len(retrievedTools))
 		}
@@ -821,11 +823,11 @@ func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 						},
 					},
 				}
-				registeredSession.SetSessionTools(tools)
+				session.SetSessionTools(tools)
 			}(i)
 			go func() {
 				defer wg.Done()
-				_ = registeredSession.GetSessionTools()
+				_ = session.GetSessionTools()
 			}()
 		}
 		wg.Wait()
@@ -907,6 +909,8 @@ func TestStreamableHTTP_SessionWithResources(t *testing.T) {
 			mu.Unlock()
 			t.Fatal("Session was not registered via hook")
 		}
+		// Make a local copy while holding the lock to avoid races on the shared variable
+		session := registeredSession
 		mu.Unlock()
 
 		// Test setting and getting resources
@@ -930,10 +934,10 @@ func TestStreamableHTTP_SessionWithResources(t *testing.T) {
 		}
 
 		// Test SetSessionResources
-		registeredSession.SetSessionResources(resources)
+		session.SetSessionResources(resources)
 
 		// Test GetSessionResources
-		retrievedResources := registeredSession.GetSessionResources()
+		retrievedResources := session.GetSessionResources()
 		if len(retrievedResources) != 1 {
 			t.Errorf("Expected 1 resource, got %d", len(retrievedResources))
 		}
@@ -959,21 +963,11 @@ func TestStreamableHTTP_SessionWithResources(t *testing.T) {
 						},
 					},
 				}
-				mu.Lock()
-				session := registeredSession
-				mu.Unlock()
-				if session != nil {
-					session.SetSessionResources(resources)
-				}
+				session.SetSessionResources(resources)
 			}(i)
 			go func() {
 				defer wg.Done()
-				mu.Lock()
-				session := registeredSession
-				mu.Unlock()
-				if session != nil {
-					_ = session.GetSessionResources()
-				}
+				_ = session.GetSessionResources()
 			}()
 		}
 		wg.Wait()
@@ -989,8 +983,8 @@ func TestStreamableHTTP_SessionWithResources(t *testing.T) {
 				},
 			},
 		}
-		registeredSession.SetSessionResources(finalResources)
-		retrievedResources = registeredSession.GetSessionResources()
+		session.SetSessionResources(finalResources)
+		retrievedResources = session.GetSessionResources()
 		if len(retrievedResources) != 1 {
 			t.Errorf("Expected 1 resource, got %d", len(retrievedResources))
 		}
@@ -2338,4 +2332,166 @@ func TestStreamableHTTP_AddToolDuringToolCall(t *testing.T) {
 	if !strings.Contains(result.body, "done") {
 		t.Errorf("Expected response to contain 'done', got: %s", result.body)
 	}
+}
+
+// nonFlushingResponseWriter wraps an http.ResponseWriter but does NOT implement http.Flusher.
+// This is used to test the fix for servers/proxies that don't support streaming.
+type nonFlushingResponseWriter struct {
+	http.ResponseWriter
+	statusCode    int
+	body          bytes.Buffer
+	headerWritten bool // tracks if WriteHeader has been called
+}
+
+func (w *nonFlushingResponseWriter) Header() http.Header {
+	return w.ResponseWriter.Header()
+}
+
+func (w *nonFlushingResponseWriter) Write(b []byte) (int, error) {
+	// Write implicitly calls WriteHeader(200) if not already called
+	if !w.headerWritten {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.body.Write(b)
+}
+
+func (w *nonFlushingResponseWriter) WriteHeader(statusCode int) {
+	// Only honor the first WriteHeader call, just like real http.ResponseWriter
+	if w.headerWritten {
+		return
+	}
+	w.statusCode = statusCode
+	w.headerWritten = true
+}
+
+func TestStreamableHTTP_GET_NonFlusherReturns405(t *testing.T) {
+	t.Run("GET returns 405 when ResponseWriter does not support Flusher", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-mcp-server", "1.0")
+		sseServer := NewStreamableHTTPServer(mcpServer)
+
+		// Create a request
+		req, err := http.NewRequest(http.MethodGet, "/mcp", nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+		req.Header.Set("Content-Type", "text/event-stream")
+
+		// Create a ResponseWriter that does NOT implement http.Flusher
+		baseRecorder := httptest.NewRecorder()
+		nonFlusher := &nonFlushingResponseWriter{
+			ResponseWriter: baseRecorder,
+		}
+
+		// Call the handler directly
+		sseServer.ServeHTTP(nonFlusher, req)
+
+		// Verify we get HTTP 405 Method Not Allowed
+		if nonFlusher.statusCode != http.StatusMethodNotAllowed {
+			t.Errorf("Expected status 405 Method Not Allowed, got %d", nonFlusher.statusCode)
+		}
+
+		// Verify the error message
+		bodyStr := nonFlusher.body.String()
+		if !strings.Contains(bodyStr, "Streaming unsupported") {
+			t.Errorf("Expected error message to contain 'Streaming unsupported', got '%s'", bodyStr)
+		}
+	})
+
+	t.Run("GET returns 200 when ResponseWriter supports Flusher", func(t *testing.T) {
+		mcpServer := NewMCPServer("test-mcp-server", "1.0")
+		server := NewTestStreamableHTTPServer(mcpServer)
+		defer server.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+		req.Header.Set("Content-Type", "text/event-stream")
+
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("Failed to send request: %v", err)
+		}
+		defer resp.Body.Close()
+
+		// When Flusher is supported, we should get HTTP 200 and SSE content type
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", resp.StatusCode)
+		}
+
+		if resp.Header.Get("Content-Type") != "text/event-stream" {
+			t.Errorf("Expected content-type text/event-stream, got %s", resp.Header.Get("Content-Type"))
+		}
+	})
+
+	t.Run("Flusher check happens before headers are written", func(t *testing.T) {
+		// This test ensures the fix is correct: when the flusher check fails,
+		// we should get HTTP 405 and NOT HTTP 200 with an error in the body.
+		// The bug was that WriteHeader(200) was called before the flusher check,
+		// so http.Error() would write the error message but the status was already 200.
+		mcpServer := NewMCPServer("test-mcp-server", "1.0")
+		sseServer := NewStreamableHTTPServer(mcpServer)
+
+		req, err := http.NewRequest(http.MethodGet, "/mcp", nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+		req.Header.Set("Content-Type", "text/event-stream")
+
+		baseRecorder := httptest.NewRecorder()
+		nonFlusher := &nonFlushingResponseWriter{
+			ResponseWriter: baseRecorder,
+		}
+
+		sseServer.ServeHTTP(nonFlusher, req)
+
+		// The critical assertion: status code must be 405, NOT 200
+		// Before the fix, status would be 200 because WriteHeader(200) was called
+		// before the flusher check
+		if nonFlusher.statusCode == http.StatusOK {
+			t.Error("BUG: Got HTTP 200 when flusher is not supported. " +
+				"This means headers were written before the flusher check. " +
+				"Expected HTTP 405 Method Not Allowed.")
+		}
+
+		if nonFlusher.statusCode != http.StatusMethodNotAllowed {
+			t.Errorf("Expected status 405, got %d", nonFlusher.statusCode)
+		}
+	})
+
+	t.Run("Non-flusher does not orphan sessions", func(t *testing.T) {
+		// This test verifies that when the flusher check fails, we clean up
+		// the session from activeSessions to avoid orphaning it.
+		mcpServer := NewMCPServer("test-mcp-server", "1.0")
+		sseServer := NewStreamableHTTPServer(mcpServer)
+
+		// First request with non-flusher should fail and NOT leave orphaned session
+		req1, err := http.NewRequest(http.MethodGet, "/mcp", nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+		req1.Header.Set("X-Session-ID", "test-session-123")
+
+		baseRecorder := httptest.NewRecorder()
+		nonFlusher := &nonFlushingResponseWriter{
+			ResponseWriter: baseRecorder,
+		}
+
+		sseServer.ServeHTTP(nonFlusher, req1)
+
+		// Should get 405
+		if nonFlusher.statusCode != http.StatusMethodNotAllowed {
+			t.Errorf("Expected status 405, got %d", nonFlusher.statusCode)
+		}
+
+		// Verify the session was cleaned up from activeSessions
+		// We can't directly access activeSessions (it's private), but we can verify
+		// by checking that the server's internal session map doesn't have it
+		if _, exists := sseServer.activeSessions.Load("test-session-123"); exists {
+			t.Error("Session was orphaned in activeSessions after non-flusher error")
+		}
+	})
 }
