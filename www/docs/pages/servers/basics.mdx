@@ -40,6 +40,13 @@ s := server.NewMCPServer(
     server.WithPromptCapabilities(true),    // Enable prompts
     server.WithRecovery(),                  // Add panic recovery
     server.WithHooks(myHooks),              // Add lifecycle hooks
+    server.WithIcons(                       // Add server icons
+        mcp.Icon{
+            Src:      "https://example.com/server-icon.png",
+            MIMEType: "image/png",
+            Sizes:    []string{"48x48"},
+        },
+    ),
 )
 ```
 

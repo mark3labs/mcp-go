@@ -18,6 +18,25 @@ resource := mcp.NewResource(
 )
 ```
 
+### Resource Icons
+
+Resources can include icons for better visual identification:
+
+```go
+resource := mcp.NewResource(
+    "docs://readme",
+    "Project README",
+    mcp.WithResourceDescription("Main project documentation"),
+    mcp.WithMIMEType("text/markdown"),
+    mcp.WithResourceIcons(
+        mcp.Icon{
+            Src:      "https://example.com/icons/document.svg",
+            MIMEType: "image/svg+xml",
+        },
+    ),
+)
+```
+
 ## Static Resources
 
 Static resources have fixed URIs and typically serve predetermined content.

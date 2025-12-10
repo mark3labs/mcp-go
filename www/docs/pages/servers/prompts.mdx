@@ -23,6 +23,23 @@ prompt := mcp.NewPrompt("code_review",
 )
 ```
 
+### Prompt Icons
+
+Prompts can include visual identifiers:
+
+```go
+prompt := mcp.NewPrompt("code_review",
+    mcp.WithPromptDescription("Review code for best practices"),
+    mcp.WithPromptIcons(
+        mcp.Icon{
+            Src:      "https://example.com/icons/review.png",
+            MIMEType: "image/png",
+        },
+    ),
+    // ... arguments
+)
+```
+
 ## Prompt Templates
 
 ### Basic Code Review Prompt

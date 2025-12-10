@@ -1,5 +1,27 @@
 # Advanced Server Features
 
+## Icons
+
+Icons provide visual identifiers for servers, tools, resources, and prompts. All icon URIs must use HTTPS or data URI schemes for security.
+
+### Security Considerations
+
+- Always validate icon sources are from trusted domains
+- Enforce size limits to prevent memory issues
+- Support at least PNG and JPEG formats
+- Consider supporting SVG and WebP for better quality/size
+
+### Example with Data URI
+
+```go
+mcp.Icon{
+    Src:      "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiLz4=",
+    MIMEType: "image/svg+xml",
+}
+```
+
+
+
 Explore powerful features that make MCP-Go servers production-ready: typed tools, session management, middleware, hooks, and more.
 
 ## Typed Tools
