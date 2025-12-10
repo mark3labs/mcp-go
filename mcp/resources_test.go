@@ -45,14 +45,14 @@ func TestNewResource(t *testing.T) {
 		{
 			name: "resource with annotations",
 			resource: NewResource("file:///data.json", "data.json",
-				WithAnnotations([]Role{RoleUser, RoleAssistant}, 1.5)),
+				WithAnnotations([]Role{RoleUser, RoleAssistant}, 1.5, "")),
 			expected: Resource{
 				URI:  "file:///data.json",
 				Name: "data.json",
 				Annotated: Annotated{
 					Annotations: &Annotations{
 						Audience: []Role{RoleUser, RoleAssistant},
-						Priority: 1.5,
+						Priority: ptr(1.5),
 					},
 				},
 			},
@@ -62,7 +62,7 @@ func TestNewResource(t *testing.T) {
 			resource: NewResource("file:///complete.txt", "complete.txt",
 				WithResourceDescription("Complete resource"),
 				WithMIMEType("text/plain"),
-				WithAnnotations([]Role{RoleUser}, 2.0)),
+				WithAnnotations([]Role{RoleUser}, 2.0, "")),
 			expected: Resource{
 				URI:         "file:///complete.txt",
 				Name:        "complete.txt",
@@ -71,7 +71,7 @@ func TestNewResource(t *testing.T) {
 				Annotated: Annotated{
 					Annotations: &Annotations{
 						Audience: []Role{RoleUser},
-						Priority: 2.0,
+						Priority: ptr(2.0),
 					},
 				},
 			},
@@ -124,12 +124,12 @@ func TestNewResourceTemplate(t *testing.T) {
 		{
 			name: "template with annotations",
 			template: NewResourceTemplate("file:///{id}", "resources",
-				WithTemplateAnnotations([]Role{RoleUser}, 1.0)),
+				WithTemplateAnnotations([]Role{RoleUser}, 1.0, "")),
 			validate: func(t *testing.T, template ResourceTemplate) {
 				assert.Equal(t, "resources", template.Name)
 				require.NotNil(t, template.Annotations)
 				assert.Equal(t, []Role{RoleUser}, template.Annotations.Audience)
-				assert.Equal(t, 1.0, template.Annotations.Priority)
+				assert.Equal(t, 1.0, *template.Annotations.Priority)
 			},
 		},
 		{
@@ -137,14 +137,14 @@ func TestNewResourceTemplate(t *testing.T) {
 			template: NewResourceTemplate("api:///{version}/{resource}", "api-resources",
 				WithTemplateDescription("API resources"),
 				WithTemplateMIMEType("application/json"),
-				WithTemplateAnnotations([]Role{RoleUser, RoleAssistant}, 2.5)),
+				WithTemplateAnnotations([]Role{RoleUser, RoleAssistant}, 2.5, "")),
 			validate: func(t *testing.T, template ResourceTemplate) {
 				assert.Equal(t, "api-resources", template.Name)
 				assert.Equal(t, "API resources", template.Description)
 				assert.Equal(t, "application/json", template.MIMEType)
 				require.NotNil(t, template.Annotations)
 				assert.Equal(t, []Role{RoleUser, RoleAssistant}, template.Annotations.Audience)
-				assert.Equal(t, 2.5, template.Annotations.Priority)
+				assert.Equal(t, 2.5, *template.Annotations.Priority)
 			},
 		},
 	}
@@ -198,12 +198,12 @@ func TestWithAnnotations(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resource := Resource{}
-			opt := WithAnnotations(tt.audience, tt.priority)
+			opt := WithAnnotations(tt.audience, tt.priority, "")
 			opt(&resource)
 
 			require.NotNil(t, resource.Annotations)
 			assert.Equal(t, tt.audience, resource.Annotations.Audience)
-			assert.Equal(t, tt.priority, resource.Annotations.Priority)
+			assert.Equal(t, tt.priority, *resource.Annotations.Priority)
 		})
 	}
 }
@@ -245,12 +245,12 @@ func TestWithTemplateAnnotations(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			template := ResourceTemplate{}
-			opt := WithTemplateAnnotations(tt.audience, tt.priority)
+			opt := WithTemplateAnnotations(tt.audience, tt.priority, "")
 			opt(&template)
 
 			require.NotNil(t, template.Annotations)
 			assert.Equal(t, tt.audience, template.Annotations.Audience)
-			assert.Equal(t, tt.priority, template.Annotations.Priority)
+			assert.Equal(t, tt.priority, *template.Annotations.Priority)
 		})
 	}
 }
@@ -259,7 +259,7 @@ func TestResourceJSONMarshaling(t *testing.T) {
 	resource := NewResource("file:///test.txt", "test.txt",
 		WithResourceDescription("Test file"),
 		WithMIMEType("text/plain"),
-		WithAnnotations([]Role{RoleUser}, 1.0))
+		WithAnnotations([]Role{RoleUser}, 1.0, ""))
 
 	data, err := json.Marshal(resource)
 	require.NoError(t, err)
@@ -295,24 +295,26 @@ func TestResourceTemplateJSONMarshaling(t *testing.T) {
 func TestAnnotationsCreationFromNil(t *testing.T) {
 	// Test that annotations are created when nil
 	resource := Resource{}
-	opt := WithAnnotations([]Role{RoleUser}, 1.0)
+	opt := WithAnnotations([]Role{RoleUser}, 1.0, "")
 	opt(&resource)
 
 	require.NotNil(t, resource.Annotations)
 	assert.Equal(t, []Role{RoleUser}, resource.Annotations.Audience)
-	assert.Equal(t, 1.0, resource.Annotations.Priority)
+	assert.Equal(t, 1.0, *resource.Annotations.Priority)
 }
 
 func TestTemplateAnnotationsCreationFromNil(t *testing.T) {
 	// Test that annotations are created when nil
 	template := ResourceTemplate{}
-	opt := WithTemplateAnnotations([]Role{RoleAssistant}, 2.0)
+	opt := WithTemplateAnnotations([]Role{RoleAssistant}, 2.0, "")
 	opt(&template)
 
 	require.NotNil(t, template.Annotations)
 	assert.Equal(t, []Role{RoleAssistant}, template.Annotations.Audience)
-	assert.Equal(t, 2.0, template.Annotations.Priority)
+	assert.Equal(t, 2.0, *template.Annotations.Priority)
 }
+
+func ptr(v float64) *float64 { return &v }
 
 func TestWithResourceIcons(t *testing.T) {
 	resource := Resource{}
@@ -335,4 +337,59 @@ func TestWithTemplateIcons(t *testing.T) {
 	opt(&template)
 
 	assert.Equal(t, icons, template.Icons)
+}
+
+func TestValidateISO8601Timestamp(t *testing.T) {
+	tests := []struct {
+		name      string
+		timestamp string
+		wantErr   bool
+	}{
+		{
+			name:      "valid timestamp Z",
+			timestamp: "2025-01-12T15:00:58Z",
+			wantErr:   false,
+		},
+		{
+			name:      "valid timestamp offset",
+			timestamp: "2025-01-12T15:00:58+05:30",
+			wantErr:   false,
+		},
+		{
+			name:      "empty timestamp",
+			timestamp: "",
+			wantErr:   false,
+		},
+		{
+			name:      "invalid format",
+			timestamp: "2025/01/12 15:00:58",
+			wantErr:   true,
+		},
+		{
+			name:      "invalid date",
+			timestamp: "not-a-date",
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateISO8601Timestamp(tt.timestamp)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestWithLastModified(t *testing.T) {
+	resource := Resource{}
+	timestamp := "2025-01-12T15:00:58Z"
+	opt := WithLastModified(timestamp)
+	opt(&resource)
+
+	require.NotNil(t, resource.Annotations)
+	assert.Equal(t, timestamp, resource.Annotations.LastModified)
 }

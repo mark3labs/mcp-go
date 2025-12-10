@@ -542,7 +542,11 @@ func ParseAnnotations(data map[string]any) *Annotations {
 	}
 	annotations := &Annotations{}
 	if value, ok := data["priority"]; ok {
-		annotations.Priority = cast.ToFloat64(value)
+		if value != nil {
+			if priority, err := cast.ToFloat64E(value); err == nil {
+				annotations.Priority = &priority
+			}
+		}
 	}
 
 	if value, ok := data["audience"]; ok {

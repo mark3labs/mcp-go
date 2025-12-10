@@ -1,6 +1,10 @@
 package mcp
 
-import "github.com/yosida95/uritemplate/v3"
+import (
+	"time"
+
+	"github.com/yosida95/uritemplate/v3"
+)
 
 // ResourceOption is a function that configures a Resource.
 // It provides a flexible way to set various properties of a Resource using the functional options pattern.
@@ -40,13 +44,25 @@ func WithMIMEType(mimeType string) ResourceOption {
 
 // WithAnnotations adds annotations to the Resource.
 // Annotations can provide additional metadata about the resource's intended use.
-func WithAnnotations(audience []Role, priority float64) ResourceOption {
+func WithAnnotations(audience []Role, priority float64, lastModified string) ResourceOption {
 	return func(r *Resource) {
 		if r.Annotations == nil {
 			r.Annotations = &Annotations{}
 		}
 		r.Annotations.Audience = audience
-		r.Annotations.Priority = priority
+		r.Annotations.Priority = &priority
+		r.Annotations.LastModified = lastModified
+	}
+}
+
+// WithLastModified adds a last modified timestamp to the Resource.
+// The timestamp should be in ISO 8601 format (e.g., "2025-01-12T15:00:58Z").
+func WithLastModified(timestamp string) ResourceOption {
+	return func(r *Resource) {
+		if r.Annotations == nil {
+			r.Annotations = &Annotations{}
+		}
+		r.Annotations.LastModified = timestamp
 	}
 }
 
@@ -88,14 +104,25 @@ func WithTemplateMIMEType(mimeType string) ResourceTemplateOption {
 
 // WithTemplateAnnotations adds annotations to the ResourceTemplate.
 // Annotations can provide additional metadata about the template's intended use.
-func WithTemplateAnnotations(audience []Role, priority float64) ResourceTemplateOption {
+func WithTemplateAnnotations(audience []Role, priority float64, lastModified string) ResourceTemplateOption {
 	return func(t *ResourceTemplate) {
 		if t.Annotations == nil {
 			t.Annotations = &Annotations{}
 		}
 		t.Annotations.Audience = audience
-		t.Annotations.Priority = priority
+		t.Annotations.Priority = &priority
+		t.Annotations.LastModified = lastModified
 	}
+}
+
+// ValidateISO8601Timestamp checks if a string is a valid ISO 8601 timestamp
+func ValidateISO8601Timestamp(timestamp string) error {
+	if timestamp == "" {
+		return nil // Empty is valid (optional field)
+	}
+	// Use time.RFC3339 for ISO 8601 compatibility
+	_, err := time.Parse(time.RFC3339, timestamp)
+	return err
 }
 
 // WithResourceIcons adds icons to the Resource.
