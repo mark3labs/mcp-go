@@ -880,7 +880,7 @@ func (s *MCPServer) handleListResources(
 	}
 
 	if resourcesToReturn == nil {
-		resourceToReturn = []mcp.Resource{}
+		resourcesToReturn = []mcp.Resource{}
 	}
 
 	result := mcp.ListResourcesResult{
