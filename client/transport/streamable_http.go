@@ -287,11 +287,14 @@ func (c *StreamableHTTP) SendRequest(
 	// Check if we got an error response
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 
-		// Handle OAuth unauthorized error
-		if resp.StatusCode == http.StatusUnauthorized && c.oauthHandler != nil {
-			return nil, &OAuthAuthorizationRequiredError{
-				Handler: c.oauthHandler,
+		// Handle unauthorized error
+		if resp.StatusCode == http.StatusUnauthorized {
+			if c.oauthHandler != nil {
+				return nil, &OAuthAuthorizationRequiredError{
+					Handler: c.oauthHandler,
+				}
 			}
+			return nil, ErrUnauthorized
 		}
 
 		// handle error response
@@ -559,11 +562,14 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
-		// Handle OAuth unauthorized error
-		if resp.StatusCode == http.StatusUnauthorized && c.oauthHandler != nil {
-			return &OAuthAuthorizationRequiredError{
-				Handler: c.oauthHandler,
+		// Handle unauthorized error
+		if resp.StatusCode == http.StatusUnauthorized {
+			if c.oauthHandler != nil {
+				return &OAuthAuthorizationRequiredError{
+					Handler: c.oauthHandler,
+				}
 			}
+			return ErrUnauthorized
 		}
 
 		body, _ := io.ReadAll(resp.Body)
@@ -643,6 +649,7 @@ func (c *StreamableHTTP) listenForever(ctx context.Context) {
 var (
 	ErrSessionTerminated   = fmt.Errorf("session terminated (404). need to re-initialize")
 	ErrGetMethodNotAllowed = fmt.Errorf("GET method not allowed")
+	ErrUnauthorized        = fmt.Errorf("unauthorized (401)")
 
 	retryInterval = 1 * time.Second // a variable is convenient for testing
 )

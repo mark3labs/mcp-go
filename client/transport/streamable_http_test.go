@@ -904,3 +904,85 @@ func (l *testLogger) Infof(format string, args ...any) {
 func (l *testLogger) Errorf(format string, args ...any) {
 	l.logChan <- fmt.Sprintf(format, args...)
 }
+
+func TestStreamableHTTP_Unauthorized_StaticToken(t *testing.T) {
+	// Create a test server that always returns 401
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("Unauthorized"))
+	}))
+	defer server.Close()
+
+	// Create StreamableHTTP with static headers (no OAuth)
+	transport, err := NewStreamableHTTP(server.URL, WithHTTPHeaders(map[string]string{
+		"Authorization": "Bearer static-token",
+	}))
+	if err != nil {
+		t.Fatalf("Failed to create StreamableHTTP: %v", err)
+	}
+
+	// Verify OAuth is not enabled
+	if transport.IsOAuthEnabled() {
+		t.Errorf("Expected IsOAuthEnabled() to return false")
+	}
+
+	// Send a request
+	_, err = transport.SendRequest(context.Background(), JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(1),
+		Method:  "test",
+	})
+
+	// Verify the error is ErrUnauthorized
+	if err == nil {
+		t.Fatalf("Expected error, got nil")
+	}
+
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("Expected ErrUnauthorized, got %T: %v", err, err)
+	}
+
+	// Verify error message
+	if !strings.Contains(err.Error(), "401") {
+		t.Errorf("Expected error message to contain '401', got: %v", err)
+	}
+}
+
+func TestStreamableHTTP_SendNotification_Unauthorized_StaticToken(t *testing.T) {
+	// Create a test server that always returns 401
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("Unauthorized"))
+	}))
+	defer server.Close()
+
+	// Create StreamableHTTP with static headers (no OAuth)
+	transport, err := NewStreamableHTTP(server.URL, WithHTTPHeaders(map[string]string{
+		"Authorization": "Bearer static-token",
+	}))
+	if err != nil {
+		t.Fatalf("Failed to create StreamableHTTP: %v", err)
+	}
+
+	// Start the transport (needed for session initialization)
+	if err := transport.Start(context.Background()); err != nil {
+		t.Fatalf("Failed to start transport: %v", err)
+	}
+
+	// Send a notification
+	err = transport.SendNotification(context.Background(), mcp.JSONRPCNotification{
+		JSONRPC: "2.0",
+		Notification: mcp.Notification{
+			Method: "test/notification",
+		},
+	})
+
+	// Verify the error is ErrUnauthorized
+	if err == nil {
+		t.Fatalf("Expected error, got nil")
+	}
+
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("Expected ErrUnauthorized, got %T: %v", err, err)
+	}
+}

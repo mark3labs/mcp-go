@@ -911,3 +911,169 @@ func TestSSEErrors(t *testing.T) {
 		}
 	})
 }
+
+func TestSSE_Start_Unauthorized_StaticToken(t *testing.T) {
+	// Create a test server that always returns 401
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("Unauthorized"))
+	}))
+	defer server.Close()
+
+	// Create SSE with static headers (no OAuth)
+	transport, err := NewSSE(server.URL, WithHeaders(map[string]string{
+		"Authorization": "Bearer static-token",
+	}))
+	if err != nil {
+		t.Fatalf("Failed to create SSE: %v", err)
+	}
+
+	// Verify OAuth is not enabled
+	if transport.IsOAuthEnabled() {
+		t.Errorf("Expected IsOAuthEnabled() to return false")
+	}
+
+	// Start should fail with ErrUnauthorized
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = transport.Start(ctx)
+
+	// Verify the error is ErrUnauthorized
+	if err == nil {
+		t.Fatalf("Expected error, got nil")
+	}
+
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("Expected ErrUnauthorized, got %T: %v", err, err)
+	}
+
+	// Verify error message
+	if !strings.Contains(err.Error(), "401") {
+		t.Errorf("Expected error message to contain '401', got: %v", err)
+	}
+}
+
+func TestSSE_SendRequest_Unauthorized_StaticToken(t *testing.T) {
+	// Create a test server that:
+	// 1. Returns 200 with endpoint for SSE connection
+	// 2. Returns 401 for POST requests to endpoint
+	endpointReceived := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Accept") == "text/event-stream" {
+			// SSE connection request - return endpoint
+			endpointURL := "http://" + r.Host + "/endpoint"
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("event: endpoint\ndata: " + endpointURL + "\n\n"))
+			endpointReceived = true
+			return
+		}
+		// Regular request to endpoint - return 401
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("Unauthorized"))
+	}))
+	defer server.Close()
+
+	// Create SSE with static headers (no OAuth)
+	transport, err := NewSSE(server.URL, WithHeaders(map[string]string{
+		"Authorization": "Bearer static-token",
+	}))
+	if err != nil {
+		t.Fatalf("Failed to create SSE: %v", err)
+	}
+
+	// Start the transport
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = transport.Start(ctx)
+	if err != nil {
+		t.Fatalf("Failed to start SSE: %v", err)
+	}
+
+	// Verify endpoint was received
+	if !endpointReceived {
+		t.Fatal("Endpoint was not received")
+	}
+
+	// Send a request
+	_, err = transport.SendRequest(context.Background(), JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(1),
+		Method:  "test",
+	})
+
+	// Verify the error is ErrUnauthorized
+	if err == nil {
+		t.Fatalf("Expected error, got nil")
+	}
+
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("Expected ErrUnauthorized, got %T: %v", err, err)
+	}
+
+	// Clean up
+	transport.Close()
+}
+
+func TestSSE_SendNotification_Unauthorized_StaticToken(t *testing.T) {
+	// Create a test server that:
+	// 1. Returns 200 with endpoint for SSE connection
+	// 2. Returns 401 for POST requests to endpoint
+	endpointReceived := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Accept") == "text/event-stream" {
+			// SSE connection request - return endpoint
+			endpointURL := "http://" + r.Host + "/endpoint"
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("event: endpoint\ndata: " + endpointURL + "\n\n"))
+			endpointReceived = true
+			return
+		}
+		// Regular request to endpoint - return 401
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("Unauthorized"))
+	}))
+	defer server.Close()
+
+	// Create SSE with static headers (no OAuth)
+	transport, err := NewSSE(server.URL, WithHeaders(map[string]string{
+		"Authorization": "Bearer static-token",
+	}))
+	if err != nil {
+		t.Fatalf("Failed to create SSE: %v", err)
+	}
+
+	// Start the transport
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = transport.Start(ctx)
+	if err != nil {
+		t.Fatalf("Failed to start SSE: %v", err)
+	}
+
+	// Verify endpoint was received
+	if !endpointReceived {
+		t.Fatal("Endpoint was not received")
+	}
+
+	// Send a notification
+	err = transport.SendNotification(context.Background(), mcp.JSONRPCNotification{
+		JSONRPC: "2.0",
+		Notification: mcp.Notification{
+			Method: "test/notification",
+		},
+	})
+
+	// Verify the error is ErrUnauthorized
+	if err == nil {
+		t.Fatalf("Expected error, got nil")
+	}
+
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("Expected ErrUnauthorized, got %T: %v", err, err)
+	}
+
+	// Clean up
+	transport.Close()
+}
