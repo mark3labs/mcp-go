@@ -536,7 +536,7 @@ type ServerCapabilities struct {
 //   - URI scheme validation (HTTPS or data URI only)
 //   - Size/dimension limits to prevent resource exhaustion
 type Icon struct {
-	// URI pointing to the icon resource (HTTP/HTTPS URL or data URI)
+	// URI pointing to the icon resource (HTTPS URL or data URI)
 	Src string `json:"src"`
 
 	// Optional MIME type (e.g., "image/png", "image/svg+xml")
