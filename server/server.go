@@ -878,6 +878,11 @@ func (s *MCPServer) handleListResources(
 			err:  err,
 		}
 	}
+
+	if resourcesToReturn == nil {
+		resourceToReturn = []mcp.Resource{}
+	}
+
 	result := mcp.ListResourcesResult{
 		Resources: resourcesToReturn,
 		PaginatedResult: mcp.PaginatedResult{
