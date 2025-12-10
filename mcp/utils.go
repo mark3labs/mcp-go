@@ -536,13 +536,24 @@ func ExtractString(data map[string]any, key string) string {
 	return ""
 }
 
+// ParseAnnotations parses priority, audience, and lastModified fields from the provided map
+// and returns an Annotations struct populated with any valid values found.
+// 
+// If data is nil, ParseAnnotations returns nil.
+// Priority is set when a numeric value can be parsed and is stored as a *float64.
+// Audience is populated from string values and includes only RoleUser and RoleAssistant entries.
+// LastModified is set when the corresponding value is a string.
 func ParseAnnotations(data map[string]any) *Annotations {
 	if data == nil {
 		return nil
 	}
 	annotations := &Annotations{}
 	if value, ok := data["priority"]; ok {
-		annotations.Priority = cast.ToFloat64(value)
+		if value != nil {
+			if priority, err := cast.ToFloat64E(value); err == nil {
+				annotations.Priority = &priority
+			}
+		}
 	}
 
 	if value, ok := data["audience"]; ok {
@@ -551,6 +562,12 @@ func ParseAnnotations(data map[string]any) *Annotations {
 			if a == RoleUser || a == RoleAssistant {
 				annotations.Audience = append(annotations.Audience, a)
 			}
+		}
+	}
+
+	if value, ok := data["lastModified"]; ok {
+		if str, ok := value.(string); ok {
+			annotations.LastModified = str
 		}
 	}
 	return annotations
