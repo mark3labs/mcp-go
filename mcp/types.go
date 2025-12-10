@@ -527,11 +527,32 @@ type ServerCapabilities struct {
 	Roots *struct{} `json:"roots,omitempty"`
 }
 
+// Icon represents a visual identifier for MCP entities.
+//
+// Security considerations:
+//   - Clients MUST support at least image/png and image/jpeg MIME types
+//   - Clients SHOULD support image/svg+xml and image/webp
+//   - Icons should be treated as untrusted input
+//   - URI scheme validation (HTTPS or data URI only)
+//   - Size/dimension limits to prevent resource exhaustion
+type Icon struct {
+	// URI pointing to the icon resource (HTTP/HTTPS URL or data URI)
+	Src string `json:"src"`
+
+	// Optional MIME type (e.g., "image/png", "image/svg+xml")
+	MIMEType string `json:"mimeType,omitempty"`
+
+	// Optional size specifications (e.g., ["48x48"], ["any"] for SVG)
+	Sizes []string `json:"sizes,omitempty"`
+}
+
 // Implementation describes the name and version of an MCP implementation.
 type Implementation struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
 	Title   string `json:"title,omitempty"`
+	// Icons provides visual identifiers for the implementation
+	Icons []Icon `json:"icons,omitempty"`
 }
 
 /* Ping */
@@ -708,6 +729,8 @@ type Resource struct {
 	Description string `json:"description,omitempty"`
 	// The MIME type of this resource, if known.
 	MIMEType string `json:"mimeType,omitempty"`
+	// Icons provides visual identifiers for the resource
+	Icons []Icon `json:"icons,omitempty"`
 }
 
 // GetName returns the name of the resource.
@@ -736,6 +759,8 @@ type ResourceTemplate struct {
 	// The MIME type for all resources that match this template. This should only
 	// be included if all resources matching this template have the same type.
 	MIMEType string `json:"mimeType,omitempty"`
+	// Icons provides visual identifiers for the resource template
+	Icons []Icon `json:"icons,omitempty"`
 }
 
 // GetName returns the name of the resourceTemplate.

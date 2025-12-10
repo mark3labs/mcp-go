@@ -97,3 +97,19 @@ func WithTemplateAnnotations(audience []Role, priority float64) ResourceTemplate
 		t.Annotations.Priority = priority
 	}
 }
+
+// WithResourceIcons adds icons to the Resource.
+// Icons provide visual identifiers for the resource.
+func WithResourceIcons(icons ...Icon) ResourceOption {
+	return func(r *Resource) {
+		r.Icons = icons
+	}
+}
+
+// WithTemplateIcons adds icons to the ResourceTemplate.
+// Icons provide visual identifiers for the resource template.
+func WithTemplateIcons(icons ...Icon) ResourceTemplateOption {
+	return func(rt *ResourceTemplate) {
+		rt.Icons = icons
+	}
+}

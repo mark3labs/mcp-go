@@ -573,6 +573,8 @@ type Tool struct {
 	Annotations ToolAnnotation `json:"annotations"`
 	// Support for deferred loading
 	DeferLoading bool `json:"defer_loading,omitempty"`
+	// Icons provides visual identifiers for the tool
+	Icons []Icon `json:"icons,omitempty"`
 }
 
 // GetName returns the name of the tool.
@@ -622,6 +624,10 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 	// Marshal Meta if present
 	if t.Meta != nil {
 		m["_meta"] = t.Meta
+	}
+
+	if t.Icons != nil {
+		m["icons"] = t.Icons
 	}
 
 	return json.Marshal(m)
@@ -796,6 +802,14 @@ func WithInputSchema[T any]() ToolOption {
 
 		t.InputSchema.Type = ""
 		t.RawInputSchema = json.RawMessage(mcpSchema)
+	}
+}
+
+// WithToolIcons adds icons to the Tool.
+// Icons provide visual identifiers for the tool.
+func WithToolIcons(icons ...Icon) ToolOption {
+	return func(t *Tool) {
+		t.Icons = icons
 	}
 }
 

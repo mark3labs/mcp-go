@@ -1682,3 +1682,14 @@ func TestToolArgumentsSchema_MarshalRoundTrip(t *testing.T) {
 	assert.NotNil(t, unmarshaled.Defs)
 	assert.Contains(t, unmarshaled.Defs, "my_type")
 }
+
+func TestWithToolIcons(t *testing.T) {
+	tool := Tool{}
+	icons := []Icon{
+		{Src: "tool-icon.png", MIMEType: "image/png"},
+	}
+	opt := WithToolIcons(icons...)
+	opt(&tool)
+
+	assert.Equal(t, icons, tool.Icons)
+}

@@ -285,3 +285,14 @@ func TestPromptJSONStructure(t *testing.T) {
 	assert.Equal(t, "Second argument", arg2["description"])
 	// Optional arguments may not have "required" field or it's false
 }
+
+func TestWithPromptIcons(t *testing.T) {
+	prompt := Prompt{}
+	icons := []Icon{
+		{Src: "prompt-icon.png"},
+	}
+	opt := WithPromptIcons(icons...)
+	opt(&prompt)
+
+	assert.Equal(t, icons, prompt.Icons)
+}

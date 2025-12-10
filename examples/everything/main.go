@@ -74,6 +74,7 @@ func NewMCPServer() *server.MCPServer {
 	mcpServer.AddResource(mcp.NewResource("test://static/resource",
 		"Static Resource",
 		mcp.WithMIMEType("text/plain"),
+		mcp.WithResourceIcons(mcp.Icon{Src: "https://example.com/icon.png", MIMEType: "image/png"}),
 	), handleReadResource)
 	mcpServer.AddResourceTemplate(
 		mcp.NewResourceTemplate(
@@ -90,6 +91,7 @@ func NewMCPServer() *server.MCPServer {
 
 	mcpServer.AddPrompt(mcp.NewPrompt(string(SIMPLE),
 		mcp.WithPromptDescription("A simple prompt"),
+		mcp.WithPromptIcons(mcp.Icon{Src: "https://example.com/prompt.png"}),
 	), handleSimplePrompt)
 	mcpServer.AddPrompt(mcp.NewPrompt(string(COMPLEX),
 		mcp.WithPromptDescription("A complex prompt"),
@@ -108,6 +110,7 @@ func NewMCPServer() *server.MCPServer {
 			mcp.Description("Message to echo"),
 			mcp.Required(),
 		),
+		mcp.WithToolIcons(mcp.Icon{Src: "https://example.com/tool.png", Sizes: []string{"32x32"}}),
 	), handleEchoTool)
 
 	mcpServer.AddTool(

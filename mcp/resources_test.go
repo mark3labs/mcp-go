@@ -313,3 +313,26 @@ func TestTemplateAnnotationsCreationFromNil(t *testing.T) {
 	assert.Equal(t, []Role{RoleAssistant}, template.Annotations.Audience)
 	assert.Equal(t, 2.0, template.Annotations.Priority)
 }
+
+func TestWithResourceIcons(t *testing.T) {
+	resource := Resource{}
+	icons := []Icon{
+		{Src: "icon1.png", MIMEType: "image/png"},
+		{Src: "icon2.svg", Sizes: []string{"any"}},
+	}
+	opt := WithResourceIcons(icons...)
+	opt(&resource)
+
+	assert.Equal(t, icons, resource.Icons)
+}
+
+func TestWithTemplateIcons(t *testing.T) {
+	template := ResourceTemplate{}
+	icons := []Icon{
+		{Src: "template-icon.png"},
+	}
+	opt := WithTemplateIcons(icons...)
+	opt(&template)
+
+	assert.Equal(t, icons, template.Icons)
+}
