@@ -57,6 +57,7 @@ func WithAnnotations(audience []Role, priority float64, lastModified string) Res
 
 // WithLastModified adds a last modified timestamp to the Resource.
 // The timestamp should be in ISO 8601 format (e.g., "2025-01-12T15:00:58Z").
+// Callers should use ValidateISO8601Timestamp to validate the timestamp before use.
 func WithLastModified(timestamp string) ResourceOption {
 	return func(r *Resource) {
 		if r.Annotations == nil {

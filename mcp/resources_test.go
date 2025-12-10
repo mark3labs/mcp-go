@@ -393,3 +393,64 @@ func TestWithLastModified(t *testing.T) {
 	require.NotNil(t, resource.Annotations)
 	assert.Equal(t, timestamp, resource.Annotations.LastModified)
 }
+
+func TestWithAnnotationsIncludingLastModified(t *testing.T) {
+	resource := Resource{}
+	timestamp := "2025-01-12T15:00:58Z"
+	opt := WithAnnotations([]Role{RoleUser}, 1.0, timestamp)
+	opt(&resource)
+
+	require.NotNil(t, resource.Annotations)
+	assert.Equal(t, timestamp, resource.Annotations.LastModified)
+	assert.Equal(t, 1.0, *resource.Annotations.Priority)
+}
+
+func TestWithAnnotationsAndLastModifiedCombined(t *testing.T) {
+	t.Run("WithAnnotations then WithLastModified", func(t *testing.T) {
+		resource := Resource{}
+		ts1 := "2025-01-01T00:00:00Z"
+		ts2 := "2025-01-02T00:00:00Z"
+
+		// Apply WithAnnotations first, then WithLastModified
+		NewResource("file:///test", "test",
+			WithAnnotations([]Role{RoleUser}, 1.0, ts1),
+			WithLastModified(ts2),
+		)
+
+		// Create manually to verify
+		opt1 := WithAnnotations([]Role{RoleUser}, 1.0, ts1)
+		opt2 := WithLastModified(ts2)
+		opt1(&resource)
+		opt2(&resource)
+
+		require.NotNil(t, resource.Annotations)
+		assert.Equal(t, ts2, resource.Annotations.LastModified, "WithLastModified should overwrite timestamp")
+		assert.Equal(t, 1.0, *resource.Annotations.Priority, "Priority should remain")
+	})
+
+	t.Run("WithLastModified then WithAnnotations", func(t *testing.T) {
+		resource := Resource{}
+		ts1 := "2025-01-01T00:00:00Z"
+		ts2 := "2025-01-02T00:00:00Z"
+
+		opt1 := WithLastModified(ts1)
+		opt2 := WithAnnotations([]Role{RoleUser}, 1.0, ts2)
+		opt1(&resource)
+		opt2(&resource)
+
+		require.NotNil(t, resource.Annotations)
+		assert.Equal(t, ts2, resource.Annotations.LastModified, "WithAnnotations should overwrite timestamp")
+		assert.Equal(t, 1.0, *resource.Annotations.Priority)
+	})
+}
+
+func TestWithTemplateAnnotationsIncludingLastModified(t *testing.T) {
+	template := ResourceTemplate{}
+	timestamp := "2025-01-12T15:00:58Z"
+	opt := WithTemplateAnnotations([]Role{RoleAssistant}, 2.0, timestamp)
+	opt(&template)
+
+	require.NotNil(t, template.Annotations)
+	assert.Equal(t, timestamp, template.Annotations.LastModified)
+	assert.Equal(t, 2.0, *template.Annotations.Priority)
+}

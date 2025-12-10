@@ -557,6 +557,12 @@ func ParseAnnotations(data map[string]any) *Annotations {
 			}
 		}
 	}
+
+	if value, ok := data["lastModified"]; ok {
+		if str, ok := value.(string); ok {
+			annotations.LastModified = str
+		}
+	}
 	return annotations
 
 }
