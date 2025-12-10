@@ -4951,6 +4951,26 @@ For these transports, consider implementing LLM integration directly in your too
 
 ## Advanced Server Features
 
+### Icons
+
+Icons provide visual identifiers for servers, tools, resources, and prompts. All icon URIs must use HTTPS or data URI schemes for security.
+
+#### Security Considerations
+
+* Always validate icon sources are from trusted domains
+* Enforce size limits to prevent memory issues
+* Support at least PNG and JPEG formats
+* Consider supporting SVG and WebP for better quality/size
+
+#### Example with Data URI
+
+```go
+mcp.Icon{
+    Src:      "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiLz4=",
+    MIMEType: "image/svg+xml",
+}
+```
+
 Explore powerful features that make MCP-Go servers production-ready: typed tools, session management, middleware, hooks, and more.
 
 ### Typed Tools
@@ -5959,6 +5979,13 @@ s := server.NewMCPServer(
     server.WithPromptCapabilities(true),    // Enable prompts
     server.WithRecovery(),                  // Add panic recovery
     server.WithHooks(myHooks),              // Add lifecycle hooks
+    server.WithIcons(                       // Add server icons
+        mcp.Icon{
+            Src:      "https://example.com/server-icon.png",
+            MIMEType: "image/png",
+            Sizes:    []string{"48x48"},
+        },
+    ),
 )
 ```
 
@@ -6400,6 +6427,23 @@ prompt := mcp.NewPrompt("code_review",
         mcp.Description("Programming language"),
         mcp.Default("auto-detect"),
     ),
+)
+```
+
+#### Prompt Icons
+
+Prompts can include visual identifiers:
+
+```go
+prompt := mcp.NewPrompt("code_review",
+    mcp.WithPromptDescription("Review code for best practices"),
+    mcp.WithPromptIcons(
+        mcp.Icon{
+            Src:      "https://example.com/icons/review.png",
+            MIMEType: "image/png",
+        },
+    ),
+    // ... arguments
 )
 ```
 
@@ -6961,6 +7005,25 @@ resource := mcp.NewResource(
     "Project README",          // Name - human-readable
     mcp.WithResourceDescription("Main project documentation"),
     mcp.WithMIMEType("text/markdown"),
+)
+```
+
+#### Resource Icons
+
+Resources can include icons for better visual identification:
+
+```go
+resource := mcp.NewResource(
+    "docs://readme",
+    "Project README",
+    mcp.WithResourceDescription("Main project documentation"),
+    mcp.WithMIMEType("text/markdown"),
+    mcp.WithResourceIcons(
+        mcp.Icon{
+            Src:      "https://example.com/icons/document.svg",
+            MIMEType: "image/svg+xml",
+        },
+    ),
 )
 ```
 
@@ -7622,6 +7685,24 @@ tool := mcp.NewTool("calculate",
 ```
 
 ### Tool Definition
+
+#### Tool Icons
+
+Tools can include visual identifiers using icons. Icons must use HTTPS or data URIs:
+
+```go
+tool := mcp.NewTool("calculate",
+    mcp.WithDescription("Perform arithmetic operations"),
+    mcp.WithToolIcons(
+        mcp.Icon{
+            Src:      "https://example.com/icons/calculator.png",
+            MIMEType: "image/png",
+            Sizes:    []string{"32x32", "64x64"},
+        },
+    ),
+    // ... parameters
+)
+```
 
 #### Parameter Types
 

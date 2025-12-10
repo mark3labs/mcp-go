@@ -13,7 +13,7 @@
 - [Client Operations](/clients/operations): Learn how to use MCP clients to interact with servers through tools, resources, prompts, and subscriptions.
 - [Client Transports](/clients/transports): Learn about transport-specific client implementations and how to choose the right transport for your use case.
 - [Sampling](/servers/advanced-sampling): Learn how to implement MCP servers that can request LLM completions from clients using the sampling capability.
-- [Advanced Server Features](/servers/advanced): Explore powerful features that make MCP-Go servers production-ready: typed tools, session management, middleware, hooks, and more.
+- [Advanced Server Features](/servers/advanced): Icons provide visual identifiers for servers, tools, resources, and prompts. All icon URIs must use HTTPS or data URI schemes for security.
 - [Server Basics](/servers/basics): Learn how to create, configure, and start MCP servers with different transport options.
 - [Building MCP Servers](/servers): Learn how to build powerful MCP servers with MCP-Go. This section covers everything from basic server setup to advanced features like typed tools and session management.
 - [Implementing Prompts](/servers/prompts): Prompts are reusable interaction templates that help structure conversations between users and LLMs. They provide context, instructions, and can include dynamic content from resources.
