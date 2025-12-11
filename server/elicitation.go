@@ -66,22 +66,16 @@ func (s *MCPServer) RequestURLElicitation(
 }
 
 // SendElicitationComplete sends a notification that a URL mode elicitation has completed
+// SendElicitationComplete sends a notification that a URL mode elicitation has completed
 func (s *MCPServer) SendElicitationComplete(
 	ctx context.Context,
 	session ClientSession,
 	elicitationID string,
 ) error {
-	jsonRPCNotif := mcp.JSONRPCNotification{
-		JSONRPC: mcp.JSONRPC_VERSION,
-		Notification: mcp.Notification{
-			Method: "notifications/elicitation/complete",
-			Params: mcp.NotificationParams{
-				AdditionalFields: map[string]any{
-					"elicitationId": elicitationID,
-				},
-			},
-		},
+	if session == nil {
+		return ErrNoActiveSession
 	}
-	
+
+	jsonRPCNotif := mcp.NewElicitationCompleteNotification(elicitationID)
 	return s.sendNotificationCore(ctx, session, jsonRPCNotif)
 }
