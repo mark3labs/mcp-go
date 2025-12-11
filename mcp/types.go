@@ -58,6 +58,9 @@ const (
 	// MethodElicitationCreate requests additional information from the user during interactions.
 	// https://modelcontextprotocol.io/docs/concepts/elicitation
 	MethodElicitationCreate MCPMethod = "elicitation/create"
+	
+	// MethodNotificationElicitationComplete notifies when a URL mode elicitation completes.
+	MethodNotificationElicitationComplete MCPMethod = "notifications/elicitation/complete"
 
 	// MethodListRoots requests roots list from the client during interactions.
 	// https://modelcontextprotocol.io/specification/2025-06-18/client/roots
@@ -1298,23 +1301,17 @@ type ElicitationCapability struct {
 	URL  *struct{} `json:"url,omitempty"`  // Supports URL mode
 }
 
-// ElicitationCompleteNotification is sent when a URL mode elicitation completes
-type ElicitationCompleteNotification struct {
-	Notification
-	Params ElicitationCompleteNotificationParams `json:"params"`
-}
-
-type ElicitationCompleteNotificationParams struct {
-	ElicitationID string `json:"elicitationId"`
-}
-
-func NewElicitationCompleteNotification(elicitationID string) *ElicitationCompleteNotification {
-	return &ElicitationCompleteNotification{
+// NewElicitationCompleteNotification creates a new elicitation complete notification.
+func NewElicitationCompleteNotification(elicitationID string) JSONRPCNotification {
+	return JSONRPCNotification{
+		JSONRPC: JSONRPC_VERSION,
 		Notification: Notification{
-			Method: "notifications/elicitation/complete",
-		},
-		Params: ElicitationCompleteNotificationParams{
-			ElicitationID: elicitationID,
+			Method: string(MethodNotificationElicitationComplete),
+			Params: NotificationParams{
+				AdditionalFields: map[string]any{
+					"elicitationId": elicitationID,
+				},
+			},
 		},
 	}
 }
