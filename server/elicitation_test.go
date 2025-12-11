@@ -44,10 +44,10 @@ func (m *mockElicitationSession) SessionID() string {
 }
 
 func (m *mockElicitationSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
-	if m.notifyChan != nil {
-		return m.notifyChan
+	if m.notifyChan == nil {
+		m.notifyChan = make(chan mcp.JSONRPCNotification, 100)
 	}
-	return make(chan mcp.JSONRPCNotification, 10)
+	return m.notifyChan
 }
 
 func (m *mockElicitationSession) Initialize() {}
@@ -237,7 +237,7 @@ func TestRequestElicitation(t *testing.T) {
 			assert.Equal(t, tt.expectedType, result.Action)
 
 			if tt.expectedType == mcp.ElicitationResponseActionAccept {
-				assert.NotNil(t, result.Action)
+				assert.NotNil(t, result.Content)
 			}
 		})
 	}
