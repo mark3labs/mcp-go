@@ -162,11 +162,14 @@ func (c *SSE) Start(ctx context.Context) error {
 
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
-		// Handle OAuth unauthorized error
-		if resp.StatusCode == http.StatusUnauthorized && c.oauthHandler != nil {
-			return &OAuthAuthorizationRequiredError{
-				Handler: c.oauthHandler,
+		// Handle unauthorized error
+		if resp.StatusCode == http.StatusUnauthorized {
+			if c.oauthHandler != nil {
+				return &OAuthAuthorizationRequiredError{
+					Handler: c.oauthHandler,
+				}
 			}
+			return ErrUnauthorized
 		}
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
@@ -423,11 +426,14 @@ func (c *SSE) SendRequest(
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		deleteResponseChan()
 
-		// Handle OAuth unauthorized error
-		if resp.StatusCode == http.StatusUnauthorized && c.oauthHandler != nil {
-			return nil, &OAuthAuthorizationRequiredError{
-				Handler: c.oauthHandler,
+		// Handle unauthorized error
+		if resp.StatusCode == http.StatusUnauthorized {
+			if c.oauthHandler != nil {
+				return nil, &OAuthAuthorizationRequiredError{
+					Handler: c.oauthHandler,
+				}
 			}
+			return nil, ErrUnauthorized
 		}
 
 		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, body)
@@ -541,11 +547,14 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
-		// Handle OAuth unauthorized error
-		if resp.StatusCode == http.StatusUnauthorized && c.oauthHandler != nil {
-			return &OAuthAuthorizationRequiredError{
-				Handler: c.oauthHandler,
+		// Handle unauthorized error
+		if resp.StatusCode == http.StatusUnauthorized {
+			if c.oauthHandler != nil {
+				return &OAuthAuthorizationRequiredError{
+					Handler: c.oauthHandler,
+				}
 			}
+			return ErrUnauthorized
 		}
 
 		body, _ := io.ReadAll(resp.Body)
