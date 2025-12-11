@@ -42,7 +42,6 @@ func WithMIMEType(mimeType string) ResourceOption {
 	}
 }
 
-// WithAnnotations adds annotations to the Resource.
 // WithAnnotations returns a ResourceOption that sets the resource's Annotations fields.
 // It ensures Annotations is allocated when nil, sets Audience to the provided slice,
 // stores Priority as a pointer to the provided value, and sets LastModified to the provided timestamp.

@@ -977,7 +977,10 @@ type Annotations struct {
 	// A value of 1 means "most important," and indicates that the data is
 	// effectively required, while 0 means "least important," and indicates that
 	// the data is entirely optional.
-	Priority float64 `json:"priority,omitempty"`
+	// Priority ranges from 0.0 to 1.0 (1 = most important, 0 = least important).
+	Priority *float64 `json:"priority,omitempty"`
+	// ISO 8601 formatted timestamp (e.g., "2025-01-12T15:00:58Z")
+	LastModified string `json:"lastModified,omitempty"`
 }
 
 // Annotated is the base for objects that include optional annotations for the

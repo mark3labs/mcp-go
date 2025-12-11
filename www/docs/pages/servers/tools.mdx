@@ -929,7 +929,8 @@ func handleGetAnnotatedResourceTool(ctx context.Context, req mcp.CallToolRequest
 	// Create resource link with annotations
 	annotated := mcp.Annotated{
 		Annotations: &mcp.Annotations{
-			Audience: []mcp.Role{mcp.RoleUser},
+			Audience:     []mcp.Role{mcp.RoleUser},
+			LastModified: "2025-01-12T15:00:58Z",
 		},
 	}
 	url := "file://documents/test.pdf"
