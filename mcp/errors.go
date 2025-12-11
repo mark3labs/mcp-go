@@ -27,7 +27,31 @@ var (
 
 	// ErrResourceNotFound indicates a requested resource was not found (code: RESOURCE_NOT_FOUND).
 	ErrResourceNotFound = errors.New("resource not found")
+
+	// URL_ELICITATION_REQUIRED is the error code for when URL elicitation is required (-32042).
+	URL_ELICITATION_REQUIRED = -32042
 )
+
+// URLElicitationRequiredError is returned when the server requires URL elicitation to proceed.
+type URLElicitationRequiredError struct {
+	Elicitations []ElicitationParams `json:"elicitations"`
+}
+
+func (e URLElicitationRequiredError) Error() string {
+	return fmt.Sprintf("URL elicitation required: %d elicitation(s) needed", len(e.Elicitations))
+}
+
+func (e URLElicitationRequiredError) JSONRPCError() JSONRPCError {
+	return JSONRPCError{
+		Error: JSONRPCErrorDetails{
+			Code:    URL_ELICITATION_REQUIRED,
+			Message: e.Error(),
+			Data: map[string]any{
+				"elicitations": e.Elicitations,
+			},
+		},
+	}
+}
 
 // UnsupportedProtocolVersionError is returned when the server responds with
 // a protocol version that the client doesn't support.

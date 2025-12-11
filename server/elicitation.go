@@ -28,5 +28,60 @@ func (s *MCPServer) RequestElicitation(ctx context.Context, request mcp.Elicitat
 		return elicitationSession.RequestElicitation(ctx, request)
 	}
 
+
 	return nil, ErrElicitationNotSupported
+}
+
+// RequestURLElicitation sends a URL mode elicitation request to the client.
+// This is used when the server needs the user to perform an out-of-band interaction.
+func (s *MCPServer) RequestURLElicitation(
+	ctx context.Context,
+	session ClientSession,
+	elicitationID string,
+	url string,
+	message string,
+) (*mcp.ElicitationResult, error) {
+	if session == nil {
+		return nil, ErrNoActiveSession
+	}
+
+	params := mcp.ElicitationParams{
+		Mode:          mcp.ElicitationModeURL,
+		Message:       message,
+		ElicitationID: elicitationID,
+		URL:           url,
+	}
+
+	request := mcp.ElicitationRequest{
+		Request: mcp.Request{
+			Method: string(mcp.MethodElicitationCreate),
+		},
+		Params: params,
+	}
+
+	if elicitationSession, ok := session.(SessionWithElicitation); ok {
+		return elicitationSession.RequestElicitation(ctx, request)
+	}
+	return nil, ErrElicitationNotSupported
+}
+
+// SendElicitationComplete sends a notification that a URL mode elicitation has completed
+func (s *MCPServer) SendElicitationComplete(
+	ctx context.Context,
+	session ClientSession,
+	elicitationID string,
+) error {
+	jsonRPCNotif := mcp.JSONRPCNotification{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		Notification: mcp.Notification{
+			Method: "notifications/elicitation/complete",
+			Params: mcp.NotificationParams{
+				AdditionalFields: map[string]any{
+					"elicitationId": elicitationID,
+				},
+			},
+		},
+	}
+	
+	return s.sendNotificationCore(ctx, session, jsonRPCNotif)
 }

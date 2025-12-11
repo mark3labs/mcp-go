@@ -701,7 +701,7 @@ func (s *MCPServer) handleInitialize(
 	}
 
 	if s.capabilities.elicitation != nil && *s.capabilities.elicitation {
-		capabilities.Elicitation = &struct{}{}
+		capabilities.Elicitation = &mcp.ElicitationCapability{}
 	}
 
 	if s.capabilities.roots != nil && *s.capabilities.roots {

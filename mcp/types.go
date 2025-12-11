@@ -490,7 +490,7 @@ type ClientCapabilities struct {
 	// Present if the client supports sampling from an LLM.
 	Sampling *struct{} `json:"sampling,omitempty"`
 	// Present if the client supports elicitation requests from the server.
-	Elicitation *struct{} `json:"elicitation,omitempty"`
+	Elicitation *ElicitationCapability `json:"elicitation,omitempty"`
 }
 
 // ServerCapabilities represents capabilities that a server may support. Known
@@ -522,7 +522,7 @@ type ServerCapabilities struct {
 		ListChanged bool `json:"listChanged,omitempty"`
 	} `json:"tools,omitempty"`
 	// Present if the server supports elicitation requests to the client.
-	Elicitation *struct{} `json:"elicitation,omitempty"`
+	Elicitation *ElicitationCapability `json:"elicitation,omitempty"`
 	// Present if the server supports roots requests to the client.
 	Roots *struct{} `json:"roots,omitempty"`
 }
@@ -886,10 +886,23 @@ type ElicitationRequest struct {
 
 // ElicitationParams contains the parameters for an elicitation request.
 type ElicitationParams struct {
+	Meta *Meta `json:"_meta,omitempty"`
+	// Mode specifies the type of elicitation: "form" or "url". Defaults to "form".
+	Mode string `json:"mode,omitempty"`
 	// A human-readable message explaining what information is being requested and why.
 	Message string `json:"message"`
+
+	// Form mode fields
+
 	// A JSON Schema defining the expected structure of the user's response.
-	RequestedSchema any `json:"requestedSchema"`
+	RequestedSchema any `json:"requestedSchema,omitempty"`
+
+	// URL mode fields
+
+	// ElicitationID is a unique identifier for the elicitation request.
+	ElicitationID string `json:"elicitationId,omitempty"`
+	// URL is the URL to be opened by the user.
+	URL string `json:"url,omitempty"`
 }
 
 // ElicitationResult represents the result of an elicitation request.
@@ -1278,3 +1291,31 @@ func UnmarshalContent(data []byte) (Content, error) {
 		return nil, fmt.Errorf("unknown content type: %s", contentType)
 	}
 }
+
+// ElicitationCapability represents the elicitation capabilities of a client or server.
+type ElicitationCapability struct {
+	Form *struct{} `json:"form,omitempty"` // Supports form mode
+	URL  *struct{} `json:"url,omitempty"`  // Supports URL mode
+}
+
+// ElicitationCompleteNotification is sent when a URL mode elicitation completes
+type ElicitationCompleteNotification struct {
+	Notification
+	Params ElicitationCompleteNotificationParams `json:"params"`
+}
+
+type ElicitationCompleteNotificationParams struct {
+	ElicitationID string `json:"elicitationId"`
+}
+
+func NewElicitationCompleteNotification(elicitationID string) *ElicitationCompleteNotification {
+	return &ElicitationCompleteNotification{
+		Notification: Notification{
+			Method: "notifications/elicitation/complete",
+		},
+		Params: ElicitationCompleteNotificationParams{
+			ElicitationID: elicitationID,
+		},
+	}
+}
+

@@ -199,7 +199,7 @@ func (c *Client) Initialize(
 	}
 	// Add elicitation capability if handler is configured
 	if c.elicitationHandler != nil {
-		capabilities.Elicitation = &struct{}{}
+		capabilities.Elicitation = &mcp.ElicitationCapability{}
 	}
 
 	// Ensure we send a params object with all required fields

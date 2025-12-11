@@ -124,7 +124,7 @@ func TestInProcessElicitation(t *testing.T) {
 				Version: "1.0.0",
 			},
 			Capabilities: mcp.ClientCapabilities{
-				Elicitation: &struct{}{},
+				Elicitation: &mcp.ElicitationCapability{},
 			},
 		},
 	})

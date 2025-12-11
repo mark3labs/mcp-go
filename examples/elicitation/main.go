@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"sync/atomic"
 
+	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -129,7 +130,7 @@ func main() {
 		server.WithElicitation(), // Enable elicitation
 	)
 
-	// Add a tool that uses elicitation
+	// Add a tool that uses elicitation (Form Mode)
 	mcpServer.AddTool(
 		mcp.NewTool(
 			"create_project",
@@ -138,7 +139,7 @@ func main() {
 		demoElicitationHandler(mcpServer),
 	)
 
-	// Add another tool that demonstrates conditional elicitation
+	// Add another tool that demonstrates conditional elicitation (Form Mode)
 	mcpServer.AddTool(
 		mcp.NewTool(
 			"process_data",
@@ -236,7 +237,98 @@ func main() {
 		},
 	)
 
-	// Create and start stdio server
+	// Add a tool that uses URL elicitation (auth flow)
+	mcpServer.AddTool(
+		mcp.NewTool(
+			"auth_via_url",
+			mcp.WithDescription("Demonstrates out-of-band authentication via URL"),
+		),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			session := server.ClientSessionFromContext(ctx)
+			if session == nil {
+				return nil, fmt.Errorf("no active session")
+			}
+			
+			// Generate unique elicitation ID
+			elicitationID := uuid.New().String()
+			
+			// Create URL with elicitation ID for tracking
+			// In a real application, you would store the ID and associate it with the user session
+			url := fmt.Sprintf("https://myserver.com/set-api-key?elicitationId=%s", elicitationID)
+
+			// Request URL mode elicitation
+			result, err := mcpServer.RequestURLElicitation(
+				ctx, 
+				session, 
+				elicitationID, 
+				url, 
+				"Please authenticate in your browser to continue.",
+			)
+			if err != nil {
+				return nil, fmt.Errorf("URL elicitation failed: %w", err)
+			}
+
+			if result.Action == mcp.ElicitationResponseActionAccept {
+				// User consented to open the URL
+				// They will complete the flow in their browser
+				// Server will store credentials when user submits the form
+
+				// Simulate sending completion notification
+				if err := mcpServer.SendElicitationComplete(ctx, session, elicitationID); err != nil {
+					// Log error but continue
+					fmt.Fprintf(os.Stderr, "Failed to send completion notification: %v\n", err)
+				}
+				
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{
+						mcp.NewTextContent("Authentication flow initiated. User accepted URL open request."),
+					},
+				}, nil
+			}
+			
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					mcp.NewTextContent(fmt.Sprintf("User declined authentication: %s", result.Action)),
+				},
+			}, nil
+		},
+	)
+
+	// Add a tool that demonstrates returning URLElicitationRequiredError
+	mcpServer.AddTool(
+		mcp.NewTool(
+			"protected_action",
+			mcp.WithDescription("A protected action that requires prior authorization"),
+		),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			// Check if identified
+			isAuthorized := false 
+			
+			if !isAuthorized {
+				// When a request needs authorization that hasn't been set up
+				elicitationID := uuid.New().String()
+				
+				// Return a special error that tells the client to start elicitation
+				return nil, mcp.URLElicitationRequiredError{
+					Elicitations: []mcp.ElicitationParams{
+						{
+							Mode:          mcp.ElicitationModeURL,
+							ElicitationID: elicitationID,
+							URL:           fmt.Sprintf("https://myserver.com/authorize?id=%s", elicitationID),
+							Message:       "Authorization is required to access this resource.",
+						},
+					},
+				}
+			}
+
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					mcp.NewTextContent("Action completed successfully!"),
+				},
+			}, nil
+		},
+	)
+
 	stdioServer := server.NewStdioServer(mcpServer)
 
 	// Handle graceful shutdown
