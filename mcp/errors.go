@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -65,6 +66,12 @@ func (e UnsupportedProtocolVersionError) Error() string {
 }
 
 // Is implements the errors.Is interface for better error handling
+func (e URLElicitationRequiredError) Is(target error) bool {
+	_, ok := target.(URLElicitationRequiredError)
+	return ok
+}
+
+// Is implements the errors.Is interface for better error handling
 func (e UnsupportedProtocolVersionError) Is(target error) bool {
 	_, ok := target.(UnsupportedProtocolVersionError)
 	return ok
@@ -97,6 +104,24 @@ func (e *JSONRPCErrorDetails) AsError() error {
 		err = ErrRequestInterrupted
 	case RESOURCE_NOT_FOUND:
 		err = ErrResourceNotFound
+	case URL_ELICITATION_REQUIRED:
+		// Attempt to reconstruct URLElicitationRequiredError from Data
+		if e.Data != nil {
+			// Round-trip through JSON to parse into struct
+			// This handles both map[string]any (from unmarshal) and other forms
+			if dataBytes, err := json.Marshal(e.Data); err == nil {
+				var data struct {
+					Elicitations []ElicitationParams `json:"elicitations"`
+				}
+				if err := json.Unmarshal(dataBytes, &data); err == nil {
+					return URLElicitationRequiredError{
+						Elicitations: data.Elicitations,
+					}
+				}
+			}
+		}
+		// Fallback if data is missing or invalid
+		return URLElicitationRequiredError{}
 	default:
 		return errors.New(e.Message)
 	}
