@@ -45,6 +45,7 @@ func (m *mockElicitationSession) SessionID() string {
 
 func (m *mockElicitationSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
 	if m.notifyChan == nil {
+		// Buffer of 100 to avoid blocking during tests with multiple notifications
 		m.notifyChan = make(chan mcp.JSONRPCNotification, 100)
 	}
 	return m.notifyChan
@@ -275,6 +276,10 @@ func TestRequestURLElicitation(t *testing.T) {
 	select {
 	case notif := <-notifyChan:
 		assert.Equal(t, "notifications/elicitation/complete", notif.Method)
+		// Validate elicitationId is included in params
+		elicitationID, ok := notif.Params.AdditionalFields["elicitationId"]
+		assert.True(t, ok, "expected elicitationId in notification params")
+		assert.Equal(t, "id-123", elicitationID)
 	case <-time.After(100 * time.Millisecond):
 		t.Error("Expected notification not received")
 	}

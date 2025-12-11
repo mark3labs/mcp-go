@@ -107,11 +107,11 @@ func (e *JSONRPCErrorDetails) AsError() error {
 		if e.Data != nil {
 			// Round-trip through JSON to parse into struct
 			// This handles both map[string]any (from unmarshal) and other forms
-			if dataBytes, err := json.Marshal(e.Data); err == nil {
+			if dataBytes, marshalErr := json.Marshal(e.Data); marshalErr == nil {
 				var data struct {
 					Elicitations []ElicitationParams `json:"elicitations"`
 				}
-				if err := json.Unmarshal(dataBytes, &data); err == nil {
+				if unmarshalErr := json.Unmarshal(dataBytes, &data); unmarshalErr == nil {
 					return URLElicitationRequiredError{
 						Elicitations: data.Elicitations,
 					}
