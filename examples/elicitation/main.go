@@ -274,6 +274,9 @@ func main() {
 				// Server will store credentials when user submits the form
 
 				// Simulate sending completion notification
+				// NOTE: In production, this notification would be sent after
+				// the server receives the authentication callback from the browser.
+				// Here we simulate immediate completion for demonstration purposes.
 				if err := mcpServer.SendElicitationComplete(ctx, session, elicitationID); err != nil {
 					// Log error but continue
 					fmt.Fprintf(os.Stderr, "Failed to send completion notification: %v\n", err)
@@ -301,9 +304,10 @@ func main() {
 			mcp.WithDescription("A protected action that requires prior authorization"),
 		),
 		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			// Check if identified
-			isAuthorized := false 
-			
+			// TODO: In production, check actual authorization state
+			// For demo purposes, we always trigger elicitation
+			isAuthorized := false // Always false to demonstrate error flow
+
 			if !isAuthorized {
 				// When a request needs authorization that hasn't been set up
 				elicitationID := uuid.New().String()
