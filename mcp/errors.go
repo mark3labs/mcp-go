@@ -43,6 +43,7 @@ func (e URLElicitationRequiredError) Error() string {
 
 func (e URLElicitationRequiredError) JSONRPCError() JSONRPCError {
 	return JSONRPCError{
+		JSONRPC: JSONRPC_VERSION,
 		Error: JSONRPCErrorDetails{
 			Code:    URL_ELICITATION_REQUIRED,
 			Message: e.Error(),
