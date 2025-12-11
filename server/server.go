@@ -1427,11 +1427,8 @@ func (s *MCPServer) handleListTasks(
 ) (*mcp.ListTasksResult, *requestError) {
 	tasks := s.listTasks(ctx)
 
-	// Apply pagination if needed
-	if s.paginationLimit != nil {
-		// Pagination logic would go here
-		// For now, return all tasks
-	}
+	// Note: Pagination support for tasks can be added here if needed
+	// using s.paginationLimit
 
 	result := mcp.NewListTasksResult(tasks)
 	return &result, nil
@@ -1621,18 +1618,6 @@ func (s *MCPServer) listTasks(ctx context.Context) []mcp.Task {
 	}
 
 	return tasks
-}
-
-// updateTaskStatus updates the status of a task and optionally sends a notification.
-func (s *MCPServer) updateTaskStatus(entry *taskEntry, status mcp.TaskStatus, statusMessage string) {
-	s.tasksMu.Lock()
-	entry.task.Status = status
-	entry.task.StatusMessage = statusMessage
-	s.tasksMu.Unlock()
-
-	// Send status notification if supported
-	// Note: This would need access to the session to send notifications
-	// For now, we'll just update the status
 }
 
 // completeTask marks a task as completed with the given result.
