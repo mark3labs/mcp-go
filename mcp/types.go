@@ -398,8 +398,11 @@ const (
 
 // MCP error codes
 const (
-	// RESOURCE_NOT_FOUND indicates a requested resource was not found.
+	// RESOURCE_NOT_FOUND indicates that the requested resource was not found.
 	RESOURCE_NOT_FOUND = -32002
+
+	// URL_ELICITATION_REQUIRED is the error code for when URL elicitation is required.
+	URL_ELICITATION_REQUIRED = -32042
 )
 
 /* Empty result */
