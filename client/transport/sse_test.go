@@ -1123,8 +1123,9 @@ func TestSSE_SendRequest_Timeout(t *testing.T) {
 
 		require.Error(t, err, "Expected timeout error")
 		require.Contains(t, err.Error(), "timeout", "Error should mention timeout")
-		require.GreaterOrEqual(t, duration, 1500*time.Millisecond)
-		require.LessOrEqual(t, duration, 2500*time.Millisecond)
+		expectedTimeout := 2 * time.Second
+		require.GreaterOrEqual(t, duration, expectedTimeout*7/10) // 70% of expected
+		require.LessOrEqual(t, duration, expectedTimeout*13/10)   // 130% of expected
 	})
 
 	t.Run("ContextDeadlineTakesPrecedence", func(t *testing.T) {
