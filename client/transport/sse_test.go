@@ -1230,5 +1230,49 @@ func TestSSE_SendRequest_Timeout(t *testing.T) {
 		transport.mu.RUnlock()
 
 		require.Equal(t, 0, finalCount)
+		t.Run("AlreadyExpiredDeadline", func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Accept") == "text/event-stream" {
+					w.Header().Set("Content-Type", "text/event-stream")
+					w.WriteHeader(http.StatusOK)
+					flusher, _ := w.(http.Flusher)
+					fmt.Fprintf(w, "event: endpoint\ndata: /message\n\n")
+					flusher.Flush()
+					<-r.Context().Done()
+					return
+				}
+
+				if r.Method == http.MethodPost {
+					w.WriteHeader(http.StatusAccepted)
+					return
+				}
+			}))
+			defer server.Close()
+
+			transport, err := NewSSE(server.URL)
+			require.NoError(t, err)
+			defer transport.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			err = transport.Start(ctx)
+			require.NoError(t, err)
+
+			expiredCtx, expiredCancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+			defer expiredCancel()
+
+			request := JSONRPCRequest{
+				JSONRPC: "2.0",
+				ID:      mcp.NewRequestId(int64(1)),
+				Method:  "test/expired",
+			}
+
+			_, err = transport.SendRequest(expiredCtx, request)
+
+			require.Error(t, err)
+			require.True(t, errors.Is(err, context.DeadlineExceeded),
+				"Expected context. DeadlineExceeded, got:  %v", err)
+		})
 	})
 }
