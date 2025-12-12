@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type jsonRPCResponse struct {
@@ -2483,4 +2485,43 @@ func TestStreamableHTTP_GET_NonFlusherReturns405(t *testing.T) {
 			t.Error("Session was orphaned in activeSessions after non-flusher error")
 		}
 	})
+}
+
+func TestStreamableHTTP_Delete(t *testing.T) {
+	var hookCalled bool
+	var hookSession ClientSession
+
+	hooks := &Hooks{}
+	hooks.AddOnUnregisterSession(func(ctx context.Context, session ClientSession) {
+		hookCalled = true
+		hookSession = session
+	})
+
+	mcpServer := NewMCPServer("test-mcp-server", "1.0", WithHooks(hooks))
+	sseServer := NewStreamableHTTPServer(mcpServer, WithStateful(true))
+	testServer := httptest.NewServer(sseServer)
+	defer testServer.Close()
+
+	resp, err := postJSON(testServer.URL, initRequest)
+	require.NoError(t, err)
+	resp.Body.Close()
+	sessionID := resp.Header.Get(HeaderKeySessionID)
+
+	req, _ := http.NewRequest(http.MethodDelete, testServer.URL, nil)
+	req.Header.Set(HeaderKeySessionID, sessionID)
+
+	resp, err = testServer.Client().Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	_, activeSessionExists := sseServer.activeSessions.Load(sessionID)
+	assert.False(t, activeSessionExists)
+
+	_, serverSessionExists := mcpServer.sessions.Load(sessionID)
+	assert.False(t, serverSessionExists)
+
+	assert.True(t, hookCalled)
+	assert.Equal(t, sessionID, hookSession.SessionID())
 }

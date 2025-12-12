@@ -675,6 +675,8 @@ func (s *StreamableHTTPServer) handleDelete(w http.ResponseWriter, r *http.Reque
 	s.sessionLogLevels.delete(sessionID)
 	// remove current session's requstID information
 	s.sessionRequestIDs.Delete(sessionID)
+	s.activeSessions.Delete(sessionID)
+	s.server.UnregisterSession(r.Context(), sessionID)
 
 	w.WriteHeader(http.StatusOK)
 }
