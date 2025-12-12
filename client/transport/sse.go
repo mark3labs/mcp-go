@@ -439,10 +439,26 @@ func (c *SSE) SendRequest(
 		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, body)
 	}
 
+	// Calculate response timeout
+	responseTimeout := 60 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining < responseTimeout {
+			responseTimeout = remaining
+		}
+	}
+
+	timer := time.NewTimer(responseTimeout)
+	defer timer.Stop()
+
 	select {
 	case <-ctx.Done():
 		deleteResponseChan()
 		return nil, ctx.Err()
+	case <-timer.C:
+		// Timeout handling
+		deleteResponseChan()
+		return nil, fmt.Errorf("timeout waiting for SSE response after %v", responseTimeout)
 	case response, ok := <-responseChan:
 		if ok {
 			return response, nil
