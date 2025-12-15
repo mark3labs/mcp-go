@@ -414,14 +414,15 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		// Use the first authorization server
 		authServerURL := protectedResource.AuthorizationServers[0]
 
-		// Try OpenID Connect discovery first
-		h.fetchMetadataFromURL(ctx, authServerURL+"/.well-known/openid-configuration")
+
+		// Try OAuth Authorization Server Metadata first
+		h.fetchMetadataFromURL(ctx, authServerURL+"/.well-known/oauth-authorization-server")
 		if h.serverMetadata != nil {
 			return
 		}
 
-		// If OpenID Connect discovery fails, try OAuth Authorization Server Metadata
-		h.fetchMetadataFromURL(ctx, authServerURL+"/.well-known/oauth-authorization-server")
+		// If OAuth Authorization Server Metadata discovery fails, try OpenID Connect discovery
+		h.fetchMetadataFromURL(ctx, authServerURL+"/.well-known/openid-configuration")
 		if h.serverMetadata != nil {
 			return
 		}
