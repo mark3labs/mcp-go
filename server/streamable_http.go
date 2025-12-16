@@ -444,6 +444,29 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	// Write response
 	mu.Lock()
 	defer mu.Unlock()
+
+	drainLoop:
+	for {
+	    select {
+	    case nt := <-session.notificationChannel:
+	        if !upgradedHeader {
+	            w.Header().Set("Content-Type", "text/event-stream")
+	            w.Header().Set("Connection", "keep-alive")
+	            w.Header().Set("Cache-Control", "no-cache")
+	            w.WriteHeader(http.StatusOK)
+	            upgradedHeader = true
+	        }
+	        if err := writeSSEEvent(w, nt); err != nil {
+	            s.logger.Errorf("Failed to write SSE event during drain: %v", err)
+	        }
+	        if flusher, ok := w.(http.Flusher); ok {
+	            flusher.Flush()
+	        }
+	    default:
+	        break drainLoop
+	    }
+	}
+	
 	// close the done chan before unlock
 	defer close(done)
 	if ctx.Err() != nil {
