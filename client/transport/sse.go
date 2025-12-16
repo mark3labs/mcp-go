@@ -198,7 +198,7 @@ func (c *SSE) Start(ctx context.Context) error {
 	case <-c.endpointChan:
 		// Endpoint received, proceed
 	case <-ctx.Done():
-		return fmt.Errorf("context cancelled while waiting for endpoint:  %w", ctx.Err())
+		return fmt.Errorf("context cancelled while waiting for endpoint: %w", ctx.Err())
 	case <-timer.C:
 		cancel()
 		return fmt.Errorf("timeout waiting for endpoint after %v", endpointTimeout)
