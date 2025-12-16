@@ -1273,7 +1273,7 @@ func TestSSE_SendRequest_Timeout(t *testing.T) {
 
 			require.Error(t, err)
 			require.True(t, errors.Is(err, context.DeadlineExceeded),
-				"Expected context. DeadlineExceeded, got:  %v", err)
+				"Expected context. DeadlineExceeded, got: %v", err)
 		})
 	})
 }
