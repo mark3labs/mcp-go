@@ -100,6 +100,10 @@ const (
 	// MethodNotificationTasksStatus notifies when a task's status changes.
 	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
 	MethodNotificationTasksStatus = "notifications/tasks/status"
+
+	// MethodCompletionComplete returns completion suggestions for a given argument
+	// https://modelcontextprotocol.io/specification/2025-11-25/server/utilities/completion
+	MethodCompletionComplete MCPMethod = "completion/complete"
 )
 
 type URITemplate struct {
@@ -549,6 +553,8 @@ type ServerCapabilities struct {
 	Roots *struct{} `json:"roots,omitempty"`
 	// Present if the server supports task-based execution.
 	Tasks *TasksCapability `json:"tasks,omitempty"`
+	// Present if the server supports completions requests to the client.
+	Completions *struct{} `json:"completions,omitempty"`
 }
 
 // Icon represents a visual identifier for MCP entities.
@@ -1156,29 +1162,81 @@ type CompleteRequest struct {
 	Header http.Header    `json:"-"`
 }
 
+// CompleteParams are the parameters for a completion/complete request
 type CompleteParams struct {
-	Ref      any `json:"ref"` // Can be PromptReference or ResourceReference
-	Argument struct {
-		// The name of the argument
-		Name string `json:"name"`
-		// The value of the argument to use for completion matching.
-		Value string `json:"value"`
-	} `json:"argument"`
+	Ref      any              `json:"ref"` // Can be PromptReference or ResourceReference
+	Argument CompleteArgument `json:"argument"`
+	Context  *CompleteContext `json:"context,omitempty"`
+}
+
+func (p *CompleteParams) UnmarshalJSON(data []byte) error {
+	// Use a temporary type to avoid infinite recursion on UnmarshalJSON
+	type Alias CompleteParams
+	aux := &struct {
+		// Use RawMessage to delay unmarshalling until after the type is known
+		Ref json.RawMessage `json:"ref"`
+		*Alias
+	}{
+		Alias: (*Alias)(p),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	// Use a temporary "type peek" struct to determine the type
+	var typePeek struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(aux.Ref, &typePeek); err != nil {
+		return err
+	}
+	switch typePeek.Type {
+	case "ref/prompt":
+		var prompt PromptReference
+		if err := json.Unmarshal(aux.Ref, &prompt); err != nil {
+			return err
+		}
+		p.Ref = prompt
+	case "ref/resource":
+		var resource ResourceReference
+		if err := json.Unmarshal(aux.Ref, &resource); err != nil {
+			return err
+		}
+		p.Ref = resource
+	default:
+		return fmt.Errorf("unknown reference type: %s", typePeek.Type)
+	}
+	return nil
 }
 
 // CompleteResult is the server's response to a completion/complete request
 type CompleteResult struct {
 	Result
-	Completion struct {
-		// An array of completion values. Must not exceed 100 items.
-		Values []string `json:"values"`
-		// The total number of completion options available. This can exceed the
-		// number of values actually sent in the response.
-		Total int `json:"total,omitempty"`
-		// Indicates whether there are additional completion options beyond those
-		// provided in the current response, even if the exact total is unknown.
-		HasMore bool `json:"hasMore,omitempty"`
-	} `json:"completion"`
+	Completion Completion `json:"completion"`
+}
+
+// CompleteArgument is an argument to a completion request
+type CompleteArgument struct {
+	// The name of the argument
+	Name string `json:"name"`
+	// The value of the argument to use for completion matching.
+	Value string `json:"value"`
+}
+
+// CompleteContext is the context about already-resolved arguments
+type CompleteContext struct {
+	Arguments map[string]string `json:"arguments"`
+}
+
+// Completion is the server's response to a completion/complete request
+type Completion struct {
+	// An array of completion values. Must not exceed 100 items.
+	Values []string `json:"values"`
+	// The total number of completion options available. This can exceed the
+	// number of values actually sent in the response.
+	Total int `json:"total,omitempty"`
+	// Indicates whether there are additional completion options beyond those
+	// provided in the current response, even if the exact total is unknown.
+	HasMore bool `json:"hasMore,omitempty"`
 }
 
 // ResourceReference is a reference to a resource or resource template definition.
@@ -1324,8 +1382,8 @@ type CreateTaskResult struct {
 // GetTaskRequest retrieves the current status of a task.
 type GetTaskRequest struct {
 	Request
-	Header http.Header     `json:"-"`
-	Params GetTaskParams   `json:"params"`
+	Header http.Header   `json:"-"`
+	Params GetTaskParams `json:"params"`
 }
 
 type GetTaskParams struct {
@@ -1353,8 +1411,8 @@ type ListTasksResult struct {
 // TaskResultRequest retrieves the result of a completed task.
 type TaskResultRequest struct {
 	Request
-	Header http.Header        `json:"-"`
-	Params TaskResultParams   `json:"params"`
+	Header http.Header      `json:"-"`
+	Params TaskResultParams `json:"params"`
 }
 
 type TaskResultParams struct {
@@ -1372,8 +1430,8 @@ type TaskResultResult struct {
 // CancelTaskRequest cancels an in-progress task.
 type CancelTaskRequest struct {
 	Request
-	Header http.Header       `json:"-"`
-	Params CancelTaskParams  `json:"params"`
+	Header http.Header      `json:"-"`
+	Params CancelTaskParams `json:"params"`
 }
 
 type CancelTaskParams struct {

@@ -373,3 +373,85 @@ func TestParseResourceContentsInvalidMeta(t *testing.T) {
 		})
 	}
 }
+
+func TestCompleteParamsUnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		name        string
+		inputJSON   string
+		expected    CompleteParams
+		expectedErr string
+	}{
+		{
+			name: "PromptReference",
+			inputJSON: `{
+				"ref": {
+					"type": "ref/prompt",
+					"name": "test-prompt"
+				},
+				"argument": {
+					"name": "test-arg",
+					"value": "test-value"
+				}
+			}`,
+			expectedErr: "",
+			expected: CompleteParams{
+				Ref: PromptReference{
+					Type: "ref/prompt",
+					Name: "test-prompt",
+				},
+				Argument: CompleteArgument{
+					Name:  "test-arg",
+					Value: "test-value",
+				},
+			},
+		},
+		{
+			name: "ResourceReference",
+			inputJSON: `{
+				"ref": {
+					"type": "ref/resource",
+					"uri": "file://{param}/example"
+				},
+				"argument": {
+					"name": "param",
+					"value": "test-value"
+				}
+			}`,
+			expectedErr: "",
+			expected: CompleteParams{
+				Ref: ResourceReference{
+					Type: "ref/resource",
+					URI:  "file://{param}/example",
+				},
+				Argument: CompleteArgument{
+					Name:  "param",
+					Value: "test-value",
+				},
+			},
+		},
+		{
+			name: "Invalid reference type",
+			inputJSON: `{
+				"ref": {
+					"type": "invalid",
+					"name": "test-prompt"
+				}
+			}`,
+			expectedErr: "unknown reference type: invalid",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var got CompleteParams
+			err := json.Unmarshal([]byte(tc.inputJSON), &got)
+			if tc.expectedErr != "" {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tc.expectedErr)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tc.expected, got)
+			}
+		})
+	}
+}
