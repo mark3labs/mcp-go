@@ -2524,6 +2524,7 @@ func TestStreamableHTTP_Delete(t *testing.T) {
 
 	assert.True(t, hookCalled)
 	assert.Equal(t, sessionID, hookSession.SessionID())
+}
 
 func TestStreamableHTTP_DrainNotifications(t *testing.T) {
 	t.Run("drain pending notifications after response is computed", func(t *testing.T) {
