@@ -434,6 +434,7 @@ func (c *SSE) SendRequest(
 	resp.Body.Close()
 
 	if err != nil {
+		deleteResponseChan()
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
