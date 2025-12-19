@@ -175,6 +175,7 @@ type MCPServer struct {
 	resourceHandlerMiddlewares []ResourceHandlerMiddleware
 	toolFilters                []ToolFilterFunc
 	notificationHandlers       map[string]NotificationHandlerFunc
+	completionProvider         CompletionProvider
 	capabilities               serverCapabilities
 	paginationLimit            *int
 	sessions                   sync.Map
@@ -199,6 +200,7 @@ type serverCapabilities struct {
 	elicitation *bool
 	roots       *bool
 	tasks       *taskCapabilities
+	completions *bool
 }
 
 // resourceCapabilities defines the supported resource-related features
@@ -219,9 +221,9 @@ type toolCapabilities struct {
 
 // taskCapabilities defines the supported task-related features
 type taskCapabilities struct {
-	list           bool
-	cancel         bool
-	toolCallTasks  bool
+	list          bool
+	cancel        bool
+	toolCallTasks bool
 }
 
 // WithResourceCapabilities configures resource-related server capabilities
@@ -232,6 +234,13 @@ func WithResourceCapabilities(subscribe, listChanged bool) ServerOption {
 			subscribe:   subscribe,
 			listChanged: listChanged,
 		}
+	}
+}
+
+// WithCompletionProvider sets a custom completion provider
+func WithCompletionProvider(provider CompletionProvider) ServerOption {
+	return func(s *MCPServer) {
+		s.completionProvider = provider
 	}
 }
 
@@ -375,6 +384,13 @@ func WithInstructions(instructions string) ServerOption {
 	}
 }
 
+// WithCompletions enables the completion capability
+func WithCompletions() ServerOption {
+	return func(s *MCPServer) {
+		s.capabilities.completions = mcp.ToBoolPtr(true)
+	}
+}
+
 // NewMCPServer creates a new MCP server instance with the given name, version and options
 func NewMCPServer(
 	name, version string,
@@ -392,6 +408,7 @@ func NewMCPServer(
 		version:                    version,
 		notificationHandlers:       make(map[string]NotificationHandlerFunc),
 		tasks:                      make(map[string]*taskEntry),
+		completionProvider:         &DefaultCompletionProvider{},
 		capabilities: serverCapabilities{
 			tools:     nil,
 			resources: nil,
@@ -1523,6 +1540,38 @@ func (s *MCPServer) handleCancelTask(
 
 	result := mcp.NewCancelTaskResult(task)
 	return &result, nil
+}
+
+func (s *MCPServer) handleComplete(
+	ctx context.Context,
+	id any,
+	request mcp.CompleteRequest,
+) (*mcp.CompleteResult, *requestError) {
+	var completion *mcp.Completion
+	var err error
+	switch ref := request.Params.Ref.(type) {
+	case mcp.PromptReference:
+		completion, err = s.completionProvider.CompletePromptArgument(ctx, ref.Name, request.Params.Argument)
+	case mcp.ResourceReference:
+		completion, err = s.completionProvider.CompleteResourceArgument(ctx, ref.URI, request.Params.Argument)
+	default:
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  fmt.Errorf("unknown reference type: %T", ref),
+		}
+	}
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INTERNAL_ERROR,
+			err:  err,
+		}
+	}
+
+	return &mcp.CompleteResult{
+		Completion: *completion,
+	}, nil
 }
 
 //

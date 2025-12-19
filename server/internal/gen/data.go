@@ -147,5 +147,15 @@ var MCPRequestTypes = []MCPRequestType{
 		HookName:       "CancelTask",
 		UnmarshalError: "invalid cancel task request",
 		HandlerFunc:    "handleCancelTask",
+	}, {
+		MethodName:     "MethodCompletionComplete",
+		ParamType:      "CompleteRequest",
+		ResultType:     "CompleteResult",
+		Group:          "completions",
+		GroupName:      "Completions",
+		GroupHookName:  "Completion",
+		HookName:       "Complete",
+		UnmarshalError: "invalid completion request",
+		HandlerFunc:    "handleComplete",
 	},
 }
