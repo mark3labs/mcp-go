@@ -42,8 +42,9 @@ func WithMIMEType(mimeType string) ResourceOption {
 	}
 }
 
-// WithAnnotations adds annotations to the Resource.
-// Annotations can provide additional metadata about the resource's intended use.
+// WithAnnotations returns a ResourceOption that sets the resource's Annotations fields.
+// It initializes Annotations if nil, sets Audience to the provided slice,
+// stores Priority as a pointer to the provided value, and sets LastModified to the provided timestamp.
 func WithAnnotations(audience []Role, priority float64, lastModified string) ResourceOption {
 	return func(r *Resource) {
 		if r.Annotations == nil {
@@ -55,9 +56,9 @@ func WithAnnotations(audience []Role, priority float64, lastModified string) Res
 	}
 }
 
-// WithLastModified adds a last modified timestamp to the Resource.
-// The timestamp should be in ISO 8601 format (e.g., "2025-01-12T15:00:58Z").
-// Callers should use ValidateISO8601Timestamp to validate the timestamp before use.
+// WithLastModified returns a ResourceOption that sets the resource's Annotations.LastModified
+// to the provided timestamp. If the resource's Annotations is nil, it will be initialized.
+// The timestamp is expected to be an ISO 8601 (RFC3339) formatted string (e.g., "2025-01-12T15:00:58Z").
 func WithLastModified(timestamp string) ResourceOption {
 	return func(r *Resource) {
 		if r.Annotations == nil {
@@ -103,8 +104,8 @@ func WithTemplateMIMEType(mimeType string) ResourceTemplateOption {
 	}
 }
 
-// WithTemplateAnnotations adds annotations to the ResourceTemplate.
-// Annotations can provide additional metadata about the template's intended use.
+// WithTemplateAnnotations returns a ResourceTemplateOption that sets the template's
+// Annotations field, initializing it if nil, and setting Audience, Priority, and LastModified.
 func WithTemplateAnnotations(audience []Role, priority float64, lastModified string) ResourceTemplateOption {
 	return func(t *ResourceTemplate) {
 		if t.Annotations == nil {
@@ -116,7 +117,9 @@ func WithTemplateAnnotations(audience []Role, priority float64, lastModified str
 	}
 }
 
-// ValidateISO8601Timestamp checks if a string is a valid ISO 8601 timestamp
+// ValidateISO8601Timestamp verifies that timestamp is a valid ISO 8601 timestamp
+// using the RFC3339 layout. An empty string is considered valid. It returns nil
+// when the timestamp is valid, or the parsing error when it is not.
 func ValidateISO8601Timestamp(timestamp string) error {
 	if timestamp == "" {
 		return nil // Empty is valid (optional field)
