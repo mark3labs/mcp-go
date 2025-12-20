@@ -6,9 +6,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestToken_IsExpired(t *testing.T) {
@@ -939,4 +943,441 @@ func TestOAuthHandler_GetServerMetadata_FallbackToDefaultEndpoints(t *testing.T)
 	if metadata.TokenEndpoint != server.URL+"/token" {
 		t.Errorf("Expected token endpoint to be %s/token, got %s", server.URL, metadata.TokenEndpoint)
 	}
+}
+
+// TestOAuthHandler_RefreshToken_GitHubErrorIn200Response tests that we properly detect
+// GitHub's non-spec-compliant behavior of returning HTTP 200 with error details in the JSON body
+func TestOAuthHandler_RefreshToken_GitHubErrorIn200Response(t *testing.T) {
+	tokenStore := NewMemoryTokenStore()
+
+	// Create a server that returns HTTP 200 with an error in the body (GitHub's behavior)
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/oauth-authorization-server" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"authorization_endpoint": serverURL + "/authorize",
+				"token_endpoint":         serverURL + "/token",
+			})
+			return
+		}
+
+		if r.URL.Path == "/token" {
+			// Return HTTP 200 but with error in JSON body (GitHub's behavior)
+			w.WriteHeader(http.StatusOK)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":             "bad_refresh_token",
+				"error_description": "The refresh token passed is incorrect or expired.",
+				"error_uri":         "https://docs.github.com/apps/oauth",
+			})
+			return
+		}
+	}))
+	serverURL = server.URL
+	defer server.Close()
+
+	config := OAuthConfig{
+		ClientID:              "test-client",
+		ClientSecret:          "test-secret",
+		RedirectURI:           "http://localhost/callback",
+		TokenStore:            tokenStore,
+		AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
+	}
+
+	handler := NewOAuthHandler(config)
+
+	// Attempt to refresh with a "bad" token
+	ctx := context.Background()
+	_, err := handler.RefreshToken(ctx, "bad-refresh-token")
+
+	// Should detect the error even though status code is 200
+	require.Error(t, err, "Expected error when GitHub returns error in 200 response")
+	assert.Contains(t, err.Error(), "bad_refresh_token", "Error should contain OAuth error code")
+	assert.Contains(t, err.Error(), "incorrect or expired", "Error should contain error description")
+
+	// Verify no token was saved to token store (regression test for original bug)
+	_, getErr := tokenStore.GetToken(ctx)
+	assert.ErrorIs(t, getErr, ErrNoToken, "No token should be saved after OAuth error in 200 response")
+}
+
+// TestOAuthHandler_RefreshToken_EmptyAccessToken tests that mcp-go properly parses
+// responses where access_token is missing or empty (GitHub can return this on errors)
+// Note: The integration layer's MCPTokenStore validates and rejects empty tokens,
+// but mcp-go itself just parses what it receives.
+func TestOAuthHandler_RefreshToken_EmptyAccessToken(t *testing.T) {
+	tokenStore := NewMemoryTokenStore()
+
+	// Create a server that returns a token response with empty access_token
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/oauth-authorization-server" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"authorization_endpoint": serverURL + "/authorize",
+				"token_endpoint":         serverURL + "/token",
+			})
+			return
+		}
+
+		if r.URL.Path == "/token" {
+			// Return empty access_token (unusual but can happen with malformed responses)
+			w.WriteHeader(http.StatusOK)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"access_token":  "", // Empty!
+				"token_type":    "bearer",
+				"expires_in":    28800,
+				"refresh_token": "ghr_newrefreshtoken",
+			})
+			return
+		}
+	}))
+	serverURL = server.URL
+	defer server.Close()
+
+	config := OAuthConfig{
+		ClientID:              "test-client",
+		ClientSecret:          "test-secret",
+		RedirectURI:           "http://localhost/callback",
+		TokenStore:            tokenStore,
+		AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
+	}
+
+	handler := NewOAuthHandler(config)
+
+	ctx := context.Background()
+	token, err := handler.RefreshToken(ctx, "test-refresh-token")
+
+	// mcp-go doesn't validate empty tokens - it just parses the response
+	// The integration layer (MCPTokenStore) is responsible for validation
+	require.NoError(t, err, "mcp-go should successfully parse the response")
+
+	// Verify the token has empty access_token (as returned by server)
+	assert.Equal(t, "", token.AccessToken, "Should parse empty access_token from response")
+	assert.Equal(t, "ghr_newrefreshtoken", token.RefreshToken, "Should have refresh token")
+
+	// Note: In production, the integration layer's MCPTokenStore.SaveToken would
+	// reject this with: "access token is empty, refusing to save"
+}
+
+// TestOAuthHandler_RefreshToken_RefreshTokenRotation tests that we properly save
+// the new refresh token when GitHub rotates it
+func TestOAuthHandler_RefreshToken_RefreshTokenRotation(t *testing.T) {
+	tokenStore := NewMemoryTokenStore()
+
+	callCount := 0
+	var lastRefreshTokenSent string
+
+	// Create a server that rotates refresh tokens (GitHub's behavior)
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/oauth-authorization-server" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"authorization_endpoint": serverURL + "/authorize",
+				"token_endpoint":         serverURL + "/token",
+			})
+			return
+		}
+
+		if r.URL.Path == "/token" {
+			callCount++
+
+			// Parse the request to capture what refresh token was sent
+			_ = r.ParseForm()
+			lastRefreshTokenSent = r.FormValue("refresh_token")
+
+			// Return a new refresh token each time (rotation)
+			w.WriteHeader(http.StatusOK)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"access_token":  "ghu_access_" + strconv.Itoa(callCount),
+				"token_type":    "bearer",
+				"expires_in":    28800,
+				"refresh_token": "ghr_refresh_" + strconv.Itoa(callCount), // New token each time
+			})
+			return
+		}
+	}))
+	serverURL = server.URL
+	defer server.Close()
+
+	config := OAuthConfig{
+		ClientID:              "test-client",
+		ClientSecret:          "test-secret",
+		RedirectURI:           "http://localhost/callback",
+		TokenStore:            tokenStore,
+		AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
+	}
+
+	handler := NewOAuthHandler(config)
+	ctx := context.Background()
+	token1, err := handler.RefreshToken(ctx, "ghr_original")
+	require.NoError(t, err, "First refresh should succeed")
+	assert.Equal(t, "ghr_refresh_1", token1.RefreshToken, "Should receive new refresh token")
+	assert.Equal(t, "ghr_original", lastRefreshTokenSent, "Should send original refresh token")
+
+	// Second refresh - should use the NEW refresh token
+	token2, err := handler.RefreshToken(ctx, token1.RefreshToken)
+	require.NoError(t, err, "Second refresh should succeed")
+	assert.Equal(t, "ghr_refresh_2", token2.RefreshToken, "Should receive rotated refresh token")
+	assert.Equal(t, "ghr_refresh_1", lastRefreshTokenSent, "Should send first rotated token")
+
+	// Verify tokens are different
+	assert.NotEqual(t, token1.AccessToken, token2.AccessToken, "Access tokens should be different after rotation")
+	assert.NotEqual(t, token1.RefreshToken, token2.RefreshToken, "Refresh tokens should be rotated")
+}
+
+// TestOAuthHandler_RefreshToken_SingleUseRefreshToken tests that using an old
+// refresh token after rotation fails appropriately (GitHub's single-use behavior)
+func TestOAuthHandler_RefreshToken_SingleUseRefreshToken(t *testing.T) {
+	tokenStore := NewMemoryTokenStore()
+
+	usedTokens := make(map[string]bool)
+
+	// Create a server that tracks used refresh tokens and rejects reuse
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/oauth-authorization-server" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"authorization_endpoint": serverURL + "/authorize",
+				"token_endpoint":         serverURL + "/token",
+			})
+			return
+		}
+
+		if r.URL.Path == "/token" {
+			_ = r.ParseForm()
+			refreshToken := r.FormValue("refresh_token")
+
+			// Check if this refresh token was already used
+			if usedTokens[refreshToken] {
+				// Return HTTP 200 with error (GitHub's behavior)
+				w.WriteHeader(http.StatusOK)
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"error":             "bad_refresh_token",
+					"error_description": "The refresh token passed is incorrect or expired.",
+				})
+				return
+			}
+
+			// Mark as used and return new tokens
+			usedTokens[refreshToken] = true
+
+			w.WriteHeader(http.StatusOK)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"access_token":  "ghu_new_access",
+				"token_type":    "bearer",
+				"expires_in":    28800,
+				"refresh_token": "ghr_new_refresh_" + refreshToken, // Rotated token
+			})
+			return
+		}
+	}))
+	serverURL = server.URL
+	defer server.Close()
+
+	config := OAuthConfig{
+		ClientID:              "test-client",
+		ClientSecret:          "test-secret",
+		RedirectURI:           "http://localhost/callback",
+		TokenStore:            tokenStore,
+		AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
+	}
+
+	handler := NewOAuthHandler(config)
+	ctx := context.Background()
+
+	// First use of refresh token - should succeed
+	token1, err := handler.RefreshToken(ctx, "ghr_original")
+	require.NoError(t, err, "First refresh should succeed")
+
+	// Try to use the SAME refresh token again - should fail
+	_, err = handler.RefreshToken(ctx, "ghr_original")
+	require.Error(t, err, "Expected error when reusing old refresh token")
+	assert.Contains(t, err.Error(), "bad_refresh_token", "Error should contain bad_refresh_token")
+	assert.Contains(t, err.Error(), "OAuth error", "Error should be wrapped as OAuth error")
+
+	// Ensure the previously successful token is still stored after the failed reuse
+	savedToken, getErr := tokenStore.GetToken(ctx)
+	require.NoError(t, getErr)
+	assert.Equal(t, token1.RefreshToken, savedToken.RefreshToken, "Stored refresh token should remain unchanged after failed reuse")
+
+	// Using the NEW refresh token should succeed
+	token2, err := handler.RefreshToken(ctx, token1.RefreshToken)
+	require.NoError(t, err, "Refresh with new token should succeed")
+	assert.NotEmpty(t, token2.AccessToken, "Should have received valid access token")
+}
+
+// TestOAuthHandler_ProcessAuthorizationResponse_ErrorIn200 tests that we detect
+// errors in the authorization code exchange response
+func TestOAuthHandler_ProcessAuthorizationResponse_ErrorIn200(t *testing.T) {
+	tokenStore := NewMemoryTokenStore()
+
+	// Create a server that returns HTTP 200 with error for token exchange
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/oauth-authorization-server" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"authorization_endpoint": serverURL + "/authorize",
+				"token_endpoint":         serverURL + "/token",
+			})
+			return
+		}
+
+		if r.URL.Path == "/token" {
+			// Return HTTP 200 with error in body
+			w.WriteHeader(http.StatusOK)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":             "invalid_grant",
+				"error_description": "The authorization code is invalid or expired.",
+			})
+			return
+		}
+	}))
+	serverURL = server.URL
+	defer server.Close()
+
+	config := OAuthConfig{
+		ClientID:              "test-client",
+		ClientSecret:          "test-secret",
+		RedirectURI:           server.URL + "/callback",
+		TokenStore:            tokenStore,
+		AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
+		PKCEEnabled:           true,
+	}
+
+	handler := NewOAuthHandler(config)
+	ctx := context.Background()
+
+	// Set expected state
+	handler.SetExpectedState("test-state")
+
+	// Try to process authorization response
+	err := handler.ProcessAuthorizationResponse(ctx, "bad-code", "test-state", "test-verifier")
+
+	// Should fail with OAuth error
+	require.Error(t, err, "Expected error when processing invalid authorization code")
+	assert.Contains(t, err.Error(), "invalid_grant", "Error should contain invalid_grant")
+
+	// Verify no token was saved
+	_, getErr := tokenStore.GetToken(ctx)
+	assert.ErrorIs(t, getErr, ErrNoToken, "No token should be saved after OAuth error in authorization response")
+}
+
+// TestOAuthHandler_RefreshToken_KeepsOldRefreshToken tests that when a new
+// refresh token is not provided, we keep the old one
+func TestOAuthHandler_RefreshToken_KeepsOldRefreshToken(t *testing.T) {
+	tokenStore := NewMemoryTokenStore()
+
+	// Create a server that doesn't return a new refresh token
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/oauth-authorization-server" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"authorization_endpoint": serverURL + "/authorize",
+				"token_endpoint":         serverURL + "/token",
+			})
+			return
+		}
+
+		if r.URL.Path == "/token" {
+			// Return new access token but NO refresh token (some providers do this)
+			w.WriteHeader(http.StatusOK)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"access_token": "ghu_new_access_token",
+				"token_type":   "bearer",
+				"expires_in":   3600,
+				// Note: refresh_token is omitted
+			})
+			return
+		}
+	}))
+	serverURL = server.URL
+	defer server.Close()
+
+	config := OAuthConfig{
+		ClientID:              "test-client",
+		ClientSecret:          "test-secret",
+		RedirectURI:           "http://localhost/callback",
+		TokenStore:            tokenStore,
+		AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
+	}
+
+	handler := NewOAuthHandler(config)
+	ctx := context.Background()
+
+	originalRefreshToken := "ghr_original_refresh_token"
+
+	// Refresh the token
+	newToken, err := handler.RefreshToken(ctx, originalRefreshToken)
+	require.NoError(t, err, "Refresh should succeed")
+
+	// Should have new access token
+	assert.Equal(t, "ghu_new_access_token", newToken.AccessToken, "Should receive new access token")
+
+	// Should keep the old refresh token
+	assert.Equal(t, originalRefreshToken, newToken.RefreshToken, "Should keep old refresh token when server doesn't provide new one")
+}
+
+// TestOAuthHandler_RefreshToken_ProperHTTP400Error tests that we handle
+// spec-compliant HTTP 400 error responses correctly
+func TestOAuthHandler_RefreshToken_ProperHTTP400Error(t *testing.T) {
+	tokenStore := NewMemoryTokenStore()
+
+	// Create a server that returns proper HTTP 400 errors (spec-compliant)
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/oauth-authorization-server" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"authorization_endpoint": serverURL + "/authorize",
+				"token_endpoint":         serverURL + "/token",
+			})
+			return
+		}
+
+		if r.URL.Path == "/token" {
+			// Return HTTP 400 with error (spec-compliant)
+			w.WriteHeader(http.StatusBadRequest)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":             "invalid_grant",
+				"error_description": "The refresh token is invalid.",
+			})
+			return
+		}
+	}))
+	serverURL = server.URL
+	defer server.Close()
+
+	config := OAuthConfig{
+		ClientID:              "test-client",
+		ClientSecret:          "test-secret",
+		RedirectURI:           "http://localhost/callback",
+		TokenStore:            tokenStore,
+		AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
+	}
+
+	handler := NewOAuthHandler(config)
+	ctx := context.Background()
+
+	// Attempt refresh
+	_, err := handler.RefreshToken(ctx, "invalid-token")
+
+	// Should fail with OAuth error
+	require.Error(t, err, "Expected error for HTTP 400 response")
+	assert.Contains(t, err.Error(), "invalid_grant", "Error should contain invalid_grant")
+
+	// Verify no token was saved to token store (regression test for original bug)
+	_, getErr := tokenStore.GetToken(ctx)
+	assert.ErrorIs(t, getErr, ErrNoToken, "No token should be saved after HTTP 400 error")
 }

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -25,6 +26,17 @@ type resourceEntry struct {
 type resourceTemplateEntry struct {
 	template mcp.ResourceTemplate
 	handler  ResourceTemplateHandlerFunc
+}
+
+// taskEntry holds task state and associated data
+type taskEntry struct {
+	task       mcp.Task
+	sessionID  string
+	result     any                // The actual result once completed
+	resultErr  error              // Error if task failed
+	cancelFunc context.CancelFunc // Function to cancel the task
+	done       chan struct{}      // Channel to signal task completion
+	completed  bool               // Whether the task has been completed (guards done channel closure)
 }
 
 // ServerOption is a function that configures an MCPServer.
@@ -149,6 +161,7 @@ type MCPServer struct {
 	notificationHandlersMu sync.RWMutex
 	capabilitiesMu         sync.RWMutex
 	toolFiltersMu          sync.RWMutex
+	tasksMu                sync.RWMutex
 
 	name                       string
 	version                    string
@@ -166,6 +179,7 @@ type MCPServer struct {
 	paginationLimit            *int
 	sessions                   sync.Map
 	hooks                      *Hooks
+	tasks                      map[string]*taskEntry
 }
 
 // WithPaginationLimit sets the pagination limit for the server.
@@ -184,6 +198,7 @@ type serverCapabilities struct {
 	sampling    *bool
 	elicitation *bool
 	roots       *bool
+	tasks       *taskCapabilities
 }
 
 // resourceCapabilities defines the supported resource-related features
@@ -200,6 +215,13 @@ type promptCapabilities struct {
 // toolCapabilities defines the supported tool-related features
 type toolCapabilities struct {
 	listChanged bool
+}
+
+// taskCapabilities defines the supported task-related features
+type taskCapabilities struct {
+	list           bool
+	cancel         bool
+	toolCallTasks  bool
 }
 
 // WithResourceCapabilities configures resource-related server capabilities
@@ -334,6 +356,18 @@ func WithRoots() ServerOption {
 	}
 }
 
+// WithTaskCapabilities configures task-related server capabilities
+func WithTaskCapabilities(list, cancel, toolCallTasks bool) ServerOption {
+	return func(s *MCPServer) {
+		// Always create a non-nil capability object
+		s.capabilities.tasks = &taskCapabilities{
+			list:          list,
+			cancel:        cancel,
+			toolCallTasks: toolCallTasks,
+		}
+	}
+}
+
 // WithInstructions sets the server instructions for the client returned in the initialize response
 func WithInstructions(instructions string) ServerOption {
 	return func(s *MCPServer) {
@@ -357,6 +391,7 @@ func NewMCPServer(
 		name:                       name,
 		version:                    version,
 		notificationHandlers:       make(map[string]NotificationHandlerFunc),
+		tasks:                      make(map[string]*taskEntry),
 		capabilities: serverCapabilities{
 			tools:     nil,
 			resources: nil,
@@ -708,6 +743,31 @@ func (s *MCPServer) handleInitialize(
 		capabilities.Roots = &struct{}{}
 	}
 
+	// Only add task capabilities if they're configured
+	if s.capabilities.tasks != nil {
+		tasksCapability := &mcp.TasksCapability{}
+
+		if s.capabilities.tasks.list {
+			tasksCapability.List = &struct{}{}
+		}
+
+		if s.capabilities.tasks.cancel {
+			tasksCapability.Cancel = &struct{}{}
+		}
+
+		if s.capabilities.tasks.toolCallTasks {
+			tasksCapability.Requests = &mcp.TaskRequestsCapability{
+				Tools: &struct {
+					Call *struct{} `json:"call,omitempty"`
+				}{
+					Call: &struct{}{},
+				},
+			}
+		}
+
+		capabilities.Tasks = tasksCapability
+	}
+
 	result := mcp.InitializeResult{
 		ProtocolVersion: s.protocolVersion(request.Params.ProtocolVersion),
 		ServerInfo: mcp.Implementation{
@@ -878,6 +938,11 @@ func (s *MCPServer) handleListResources(
 			err:  err,
 		}
 	}
+
+	if resourcesToReturn == nil {
+		resourcesToReturn = []mcp.Resource{}
+	}
+
 	result := mcp.ListResourcesResult{
 		Resources: resourcesToReturn,
 		PaginatedResult: mcp.PaginatedResult{
@@ -1334,4 +1399,299 @@ func createErrorResponse(
 		ID:      mcp.NewRequestId(id),
 		Error:   mcp.NewJSONRPCErrorDetails(code, message, nil),
 	}
+}
+
+//
+// Task Request Handlers
+//
+
+// handleGetTask handles tasks/get requests to retrieve task status.
+func (s *MCPServer) handleGetTask(
+	ctx context.Context,
+	id any,
+	request mcp.GetTaskRequest,
+) (*mcp.GetTaskResult, *requestError) {
+	task, _, err := s.getTask(ctx, request.Params.TaskId)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  err,
+		}
+	}
+
+	result := mcp.NewGetTaskResult(task)
+	return &result, nil
+}
+
+// handleListTasks handles tasks/list requests to list all tasks.
+func (s *MCPServer) handleListTasks(
+	ctx context.Context,
+	_ any,
+	request mcp.ListTasksRequest,
+) (*mcp.ListTasksResult, *requestError) {
+	tasks := s.listTasks(ctx)
+
+	// Note: Pagination support for tasks can be added here if needed
+	// using s.paginationLimit
+
+	result := mcp.NewListTasksResult(tasks)
+	return &result, nil
+}
+
+// handleTaskResult handles tasks/result requests to get task results.
+func (s *MCPServer) handleTaskResult(
+	ctx context.Context,
+	id any,
+	request mcp.TaskResultRequest,
+) (*mcp.TaskResultResult, *requestError) {
+	task, done, err := s.getTask(ctx, request.Params.TaskId)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  err,
+		}
+	}
+
+	// Wait for task completion if not terminal
+	if !task.Status.IsTerminal() {
+		select {
+		case <-done:
+			// Task completed
+		case <-ctx.Done():
+			return nil, &requestError{
+				id:   id,
+				code: mcp.REQUEST_INTERRUPTED,
+				err:  ctx.Err(),
+			}
+		}
+	}
+
+	// Re-fetch the task entry to get the final result/error under lock
+	entry, err := s.getTaskEntry(ctx, request.Params.TaskId)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  err,
+		}
+	}
+
+	// Read result error under lock
+	s.tasksMu.RLock()
+	resultErr := entry.resultErr
+	s.tasksMu.RUnlock()
+
+	// Return error if task failed
+	if resultErr != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INTERNAL_ERROR,
+			err:  resultErr,
+		}
+	}
+
+	// The result structure varies by original request type
+	// For now, return the raw result wrapped in TaskResultResult
+	result := &mcp.TaskResultResult{
+		Result: mcp.Result{},
+	}
+
+	return result, nil
+}
+
+// handleCancelTask handles tasks/cancel requests to cancel a task.
+func (s *MCPServer) handleCancelTask(
+	ctx context.Context,
+	id any,
+	request mcp.CancelTaskRequest,
+) (*mcp.CancelTaskResult, *requestError) {
+	err := s.cancelTask(ctx, request.Params.TaskId)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  err,
+		}
+	}
+
+	// Get the updated task
+	task, _, err := s.getTask(ctx, request.Params.TaskId)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  err,
+		}
+	}
+
+	result := mcp.NewCancelTaskResult(task)
+	return &result, nil
+}
+
+//
+// Task Management Methods
+//
+
+// createTask creates a new task entry and returns it.
+func (s *MCPServer) createTask(ctx context.Context, taskID string, ttl *int64, pollInterval *int64) *taskEntry {
+	opts := []mcp.TaskOption{}
+	if ttl != nil {
+		opts = append(opts, mcp.WithTaskTTL(*ttl))
+	}
+	if pollInterval != nil {
+		opts = append(opts, mcp.WithTaskPollInterval(*pollInterval))
+	}
+	task := mcp.NewTask(taskID, opts...)
+
+	entry := &taskEntry{
+		task:      task,
+		sessionID: getSessionID(ctx),
+		done:      make(chan struct{}),
+	}
+
+	s.tasksMu.Lock()
+	s.tasks[taskID] = entry
+	s.tasksMu.Unlock()
+
+	// Start TTL cleanup if specified
+	if ttl != nil && *ttl > 0 {
+		go s.scheduleTaskCleanup(taskID, *ttl)
+	}
+
+	return entry
+}
+
+// getTask retrieves a task by ID, checking session isolation if applicable.
+// Returns a copy of the task and the done channel for waiting on completion.
+func (s *MCPServer) getTask(ctx context.Context, taskID string) (mcp.Task, chan struct{}, error) {
+	s.tasksMu.RLock()
+	entry, exists := s.tasks[taskID]
+	if !exists {
+		s.tasksMu.RUnlock()
+		return mcp.Task{}, nil, fmt.Errorf("task not found")
+	}
+
+	// Verify session isolation
+	sessionID := getSessionID(ctx)
+	if entry.sessionID != "" && sessionID != "" && entry.sessionID != sessionID {
+		s.tasksMu.RUnlock()
+		return mcp.Task{}, nil, fmt.Errorf("task not found")
+	}
+
+	// Return a copy of the task and the done channel
+	taskCopy := entry.task
+	done := entry.done
+	s.tasksMu.RUnlock()
+
+	return taskCopy, done, nil
+}
+
+// getTaskEntry retrieves the raw task entry for internal use (requires caller to handle synchronization).
+func (s *MCPServer) getTaskEntry(ctx context.Context, taskID string) (*taskEntry, error) {
+	s.tasksMu.RLock()
+	entry, exists := s.tasks[taskID]
+	s.tasksMu.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("task not found")
+	}
+
+	// Verify session isolation
+	sessionID := getSessionID(ctx)
+	if entry.sessionID != "" && sessionID != "" && entry.sessionID != sessionID {
+		return nil, fmt.Errorf("task not found")
+	}
+
+	return entry, nil
+}
+
+// listTasks returns copies of all tasks for the current session.
+func (s *MCPServer) listTasks(ctx context.Context) []mcp.Task {
+	sessionID := getSessionID(ctx)
+
+	s.tasksMu.RLock()
+	defer s.tasksMu.RUnlock()
+
+	var tasks []mcp.Task
+	for _, entry := range s.tasks {
+		// Filter by session if applicable
+		if sessionID == "" || entry.sessionID == "" || entry.sessionID == sessionID {
+			tasks = append(tasks, entry.task)
+		}
+	}
+
+	return tasks
+}
+
+// completeTask marks a task as completed with the given result.
+func (s *MCPServer) completeTask(entry *taskEntry, result any, err error) {
+	s.tasksMu.Lock()
+	defer s.tasksMu.Unlock()
+
+	// Guard against double completion
+	if entry.completed {
+		return
+	}
+
+	if err != nil {
+		entry.task.Status = mcp.TaskStatusFailed
+		entry.task.StatusMessage = err.Error()
+		entry.resultErr = err
+	} else {
+		entry.task.Status = mcp.TaskStatusCompleted
+		entry.result = result
+	}
+
+	// Mark as completed and signal
+	entry.completed = true
+	close(entry.done)
+}
+
+// cancelTask cancels a running task.
+func (s *MCPServer) cancelTask(ctx context.Context, taskID string) error {
+	entry, err := s.getTaskEntry(ctx, taskID)
+	if err != nil {
+		return err
+	}
+
+	s.tasksMu.Lock()
+	defer s.tasksMu.Unlock()
+
+	// Don't allow cancelling already completed tasks
+	if entry.completed {
+		return fmt.Errorf("cannot cancel task in terminal status: %s", entry.task.Status)
+	}
+
+	// Cancel the context if available
+	if entry.cancelFunc != nil {
+		entry.cancelFunc()
+	}
+
+	entry.task.Status = mcp.TaskStatusCancelled
+	entry.task.StatusMessage = "Task cancelled by request"
+
+	// Mark as completed and signal
+	entry.completed = true
+	close(entry.done)
+
+	return nil
+}
+
+// scheduleTaskCleanup schedules a task for cleanup after its TTL expires.
+func (s *MCPServer) scheduleTaskCleanup(taskID string, ttlMs int64) {
+	time.Sleep(time.Duration(ttlMs) * time.Millisecond)
+
+	s.tasksMu.Lock()
+	delete(s.tasks, taskID)
+	s.tasksMu.Unlock()
+}
+
+// getSessionID extracts the session ID from the context.
+func getSessionID(ctx context.Context) string {
+	if session := ClientSessionFromContext(ctx); session != nil {
+		return session.SessionID()
+	}
+	return ""
 }

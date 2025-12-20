@@ -177,16 +177,31 @@ func (c *SSE) Start(ctx context.Context) error {
 	go c.readSSE(resp.Body)
 
 	// Wait for the endpoint to be received
-	timeout := time.NewTimer(30 * time.Second)
-	defer timeout.Stop()
+	endpointTimeout := 30 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		// If context deadline has already passed, return immediately
+		if remaining <= 0 {
+			cancel()
+			return ctx.Err()
+		}
+		// Use the shorter of remaining time or default timeout
+		if remaining < endpointTimeout {
+			endpointTimeout = remaining
+		}
+	}
+
+	timer := time.NewTimer(endpointTimeout)
+	defer timer.Stop()
+
 	select {
 	case <-c.endpointChan:
 		// Endpoint received, proceed
 	case <-ctx.Done():
-		return fmt.Errorf("context cancelled while waiting for endpoint")
-	case <-timeout.C: // Add a timeout
+		return fmt.Errorf("context cancelled while waiting for endpoint: %w", ctx.Err())
+	case <-timer.C:
 		cancel()
-		return fmt.Errorf("timeout waiting for endpoint")
+		return fmt.Errorf("timeout waiting for endpoint after %v", endpointTimeout)
 	}
 
 	c.started.Store(true)
@@ -419,6 +434,7 @@ func (c *SSE) SendRequest(
 	resp.Body.Close()
 
 	if err != nil {
+		deleteResponseChan()
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
@@ -439,10 +455,32 @@ func (c *SSE) SendRequest(
 		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, body)
 	}
 
+	// Calculate response timeout
+	responseTimeout := 60 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		// Check if context deadline has already passed
+		if remaining <= 0 {
+			deleteResponseChan()
+			return nil, ctx.Err()
+		}
+		// Use the shorter of remaining time or default timeout
+		if remaining < responseTimeout {
+			responseTimeout = remaining
+		}
+	}
+
+	timer := time.NewTimer(responseTimeout)
+	defer timer.Stop()
+
 	select {
 	case <-ctx.Done():
 		deleteResponseChan()
 		return nil, ctx.Err()
+	case <-timer.C:
+		// Timeout handling
+		deleteResponseChan()
+		return nil, fmt.Errorf("timeout waiting for SSE response after %v", responseTimeout)
 	case response, ok := <-responseChan:
 		if ok {
 			return response, nil
