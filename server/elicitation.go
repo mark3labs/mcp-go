@@ -25,9 +25,11 @@ func (s *MCPServer) RequestElicitation(ctx context.Context, request mcp.Elicitat
 
 	// Check if the session supports elicitation requests
 	if elicitationSession, ok := session.(SessionWithElicitation); ok {
+		if err := request.Params.Validate(); err != nil {
+			return nil, err
+		}
 		return elicitationSession.RequestElicitation(ctx, request)
 	}
-
 
 	return nil, ErrElicitationNotSupported
 }
@@ -50,6 +52,10 @@ func (s *MCPServer) RequestURLElicitation(
 		Message:       message,
 		ElicitationID: elicitationID,
 		URL:           url,
+	}
+
+	if err := params.Validate(); err != nil {
+		return nil, err
 	}
 
 	request := mcp.ElicitationRequest{

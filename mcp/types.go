@@ -935,6 +935,32 @@ type ElicitationParams struct {
 	URL string `json:"url,omitempty"`
 }
 
+// Validate checks if the elicitation parameters are valid.
+func (p ElicitationParams) Validate() error {
+	mode := p.Mode
+	if mode == "" {
+		mode = ElicitationModeForm
+	}
+
+	switch mode {
+	case ElicitationModeForm:
+		if p.RequestedSchema == nil {
+			return fmt.Errorf("requestedSchema is required for form elicitation")
+		}
+	case ElicitationModeURL:
+		if p.ElicitationID == "" {
+			return fmt.Errorf("elicitationId is required for url elicitation")
+		}
+		if p.URL == "" {
+			return fmt.Errorf("url is required for url elicitation")
+		}
+	default:
+		return fmt.Errorf("invalid elicitation mode: %s", mode)
+	}
+
+	return nil
+}
+
 // ElicitationResult represents the result of an elicitation request.
 type ElicitationResult struct {
 	Result

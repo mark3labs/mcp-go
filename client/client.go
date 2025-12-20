@@ -629,6 +629,10 @@ func (c *Client) handleElicitationRequestTransport(ctx context.Context, request 
 		}
 	}
 
+	if err := params.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid elicitation params: %w", err)
+	}
+
 	// Create the MCP request
 	mcpRequest := mcp.ElicitationRequest{
 		Request: mcp.Request{
