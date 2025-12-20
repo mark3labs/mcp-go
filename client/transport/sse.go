@@ -34,6 +34,7 @@ type SSE struct {
 	endpointChan   chan struct{}
 	headers        map[string]string
 	headerFunc     HTTPHeaderFunc
+	host           string
 	logger         util.Logger
 
 	started          atomic.Bool
@@ -77,6 +78,15 @@ func WithHTTPClient(httpClient *http.Client) ClientOption {
 func WithOAuth(config OAuthConfig) ClientOption {
 	return func(sc *SSE) {
 		sc.oauthHandler = NewOAuthHandler(config)
+	}
+}
+
+// WIthHTTPHost sets a custom Host header for the SSE client, enabling manual DNS resolution.
+// This allows connecting to an IP address while sending a specific Host header to the server.
+// For example, connecting to "http://192.168.1.100:8080/sse" but sending Host: "api.example.com"
+func WIthHTTPHost(host string) ClientOption {
+	return func(sc *SSE) {
+		sc.host = host
 	}
 }
 
@@ -124,6 +134,11 @@ func (c *SSE) Start(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL.String(), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set custom Host header if provided
+	if c.host != "" {
+		req.Host = c.host
 	}
 
 	req.Header.Set("Accept", "text/event-stream")

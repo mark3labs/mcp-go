@@ -87,6 +87,15 @@ func WithSession(sessionID string) StreamableHTTPCOption {
 	}
 }
 
+// WithStreamableHTTPHost sets a custom Host header for the StreamableHTTP client, enabling manual DNS resolution.
+// This allows connecting to an IP address while sending a specific Host header to the server.
+// For example, connecting to "http://192.168.1.100:8080/mcp" but sending Host: "api.example.com"
+func WithStreamableHTTPHost(host string) StreamableHTTPCOption {
+	return func(sc *StreamableHTTP) {
+		sc.host = host
+	}
+}
+
 // StreamableHTTP implements Streamable HTTP transport.
 //
 // It transmits JSON-RPC messages over individual HTTP requests. One message per request.
@@ -103,6 +112,7 @@ type StreamableHTTP struct {
 	httpClient          *http.Client
 	headers             map[string]string
 	headerFunc          HTTPHeaderFunc
+	host                string
 	logger              util.Logger
 	getListeningEnabled bool
 
@@ -377,6 +387,11 @@ func (c *StreamableHTTP) sendHTTP(
 	}
 	for k, v := range c.headers {
 		req.Header.Set(k, v)
+	}
+
+	// Set custom Host header if provided
+	if c.host != "" {
+		req.Host = c.host
 	}
 
 	// Add OAuth authorization if configured
