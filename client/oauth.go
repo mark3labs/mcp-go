@@ -22,6 +22,12 @@ type MemoryTokenStore = transport.MemoryTokenStore
 // NewMemoryTokenStore is a convenience function that wraps transport.NewMemoryTokenStore
 var NewMemoryTokenStore = transport.NewMemoryTokenStore
 
+// OAuthProvider is a convenience type that wraps transport.OAuthProvider
+type OAuthProvider = transport.OAuthProvider
+
+// GitHubProvider is a convenience variable that wraps transport.GitHubProvider
+var GitHubProvider = transport.GitHubProvider
+
 // NewOAuthStreamableHttpClient creates a new streamable-http-based MCP client with OAuth support.
 // Returns an error if the URL is invalid.
 func NewOAuthStreamableHttpClient(baseURL string, oauthConfig OAuthConfig, options ...transport.StreamableHTTPCOption) (*Client, error) {

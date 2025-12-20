@@ -27,12 +27,17 @@ func main() {
 	// Create OAuth configuration
 	oauthConfig := client.OAuthConfig{
 		// Client ID can be empty if using dynamic registration
+		// Client ID can be empty if using dynamic registration
 		ClientID:     os.Getenv("MCP_CLIENT_ID"),
 		ClientSecret: os.Getenv("MCP_CLIENT_SECRET"),
 		RedirectURI:  redirectURI,
-		Scopes:       []string{"mcp.read", "mcp.write"},
-		TokenStore:   tokenStore,
-		PKCEEnabled:  true, // Enable PKCE for public clients
+		// GitHub does not support mcp.* scopes, so we use read:user
+		Scopes:     []string{"read:user"},
+		TokenStore: tokenStore,
+		// GitHub does not support PKCE for confidential clients (web app flow)
+		PKCEEnabled: false,
+		// Use the GitHub provider preset
+		Provider: client.GitHubProvider,
 	}
 
 	// Create the client with OAuth support

@@ -37,6 +37,9 @@ type OAuthConfig struct {
 	// HTTPClient is an optional HTTP client to use for requests.
 	// If nil, a default HTTP client with a 30 second timeout will be used.
 	HTTPClient *http.Client
+	// Provider allows specifying a known provider configuration (e.g. GitHub)
+	// to skip discovery and handle provider-specific quirk.
+	Provider *OAuthProvider
 }
 
 // TokenStore is an interface for storing and retrieving OAuth tokens.
@@ -358,6 +361,20 @@ type OAuthProtectedResource struct {
 // getServerMetadata fetches the OAuth server metadata
 func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetadata, error) {
 	h.metadataOnce.Do(func() {
+		// If a known Provider is specified, use its endpoints directly and skip discovery.
+		// This handles cases like GitHub where metadata is not hosted at the API domain
+		// and dynamic registration is not supported.
+		if h.config.Provider != nil {
+			h.serverMetadata = &AuthServerMetadata{
+				// Use the base URL as the issuer, or empty if not strictly required by the provider.
+				// For fixed providers, the endpoints are what matter most.
+				Issuer:                h.baseURL,
+				AuthorizationEndpoint: h.config.Provider.AuthorizationEndpoint,
+				TokenEndpoint:         h.config.Provider.TokenEndpoint,
+			}
+			return
+		}
+
 		// If AuthServerMetadataURL is explicitly provided, use it directly
 		if h.config.AuthServerMetadataURL != "" {
 			h.fetchMetadataFromURL(ctx, h.config.AuthServerMetadataURL)
@@ -543,6 +560,11 @@ func (h *OAuthHandler) getDefaultEndpoints(baseURL string) (*AuthServerMetadata,
 
 // RegisterClient performs dynamic client registration
 func (h *OAuthHandler) RegisterClient(ctx context.Context, clientName string) error {
+	// If a provider is specified and it does not support dynamic registration, return early.
+	if h.config.Provider != nil && !h.config.Provider.SupportsDynamicRegistration {
+		return errors.New("dynamic client registration is not supported by this provider")
+	}
+
 	metadata, err := h.getServerMetadata(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get server metadata: %w", err)

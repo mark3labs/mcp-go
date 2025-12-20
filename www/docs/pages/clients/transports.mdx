@@ -377,6 +377,31 @@ func isAuthError(err error) bool {
 }
 ```
 
+### Supported Provider Presets
+
+To simplify connection to popular providers that may not support standard discovery, `mcp-go` includes built-in presets.
+
+**Available Presets:**
+- `client.GitHubProvider`: Pre-configured for GitHub's OAuth flow (skips discovery, disables dynamic registration).
+
+**Usage Example:**
+
+```go
+oauthConfig := client.OAuthConfig{
+    ClientID:     os.Getenv("MCP_CLIENT_ID"),
+    ClientSecret: os.Getenv("MCP_CLIENT_SECRET"),
+    RedirectURI:  "http://localhost:8085/oauth/callback",
+    RedirectURI:  "http://localhost:8085/oauth/callback",
+    // GitHub does not support mcp.* scopes, so we use read:user
+    Scopes:       []string{"read:user"},
+    PKCEEnabled:  false,
+    // Use the built-in GitHub provider preset
+    Provider:     client.GitHubProvider,
+}
+
+c, err := client.NewOAuthStreamableHttpClient(serverURL, oauthConfig)
+```
+
 ### StreamableHTTP Connection Pooling
 
 ```go
