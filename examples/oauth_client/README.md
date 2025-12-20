@@ -33,7 +33,7 @@ go run main.go
 
 1. The example initializes the client with `client.GitHubProvider` to bypass incorrect auto-discovery for GitHub.
 2. It uses `read:user` scope as required by GitHub.
-3. PKCE is disabled as it is not supported by GitHub's OAuth implementation.
+3. PKCE is disabled for simplicity (GitHub OAuth Apps support PKCE optionally).
 4. The client starts the OAuth flow:
    - Generates a state parameter for security
    - Opens a browser to the GitHub authorization URL
