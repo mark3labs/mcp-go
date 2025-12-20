@@ -20,11 +20,11 @@ func WithHTTPClient(httpClient *http.Client) transport.ClientOption {
 	return transport.WithHTTPClient(httpClient)
 }
 
-// WithHttpHost sets a custom Host header for the SSE client, enabling manual DNS resolution.
+// WithHTTPHost sets a custom Host header for the SSE client, enabling manual DNS resolution.
 // This allows connecting to an IP address while sending a specific Host header to the server.
 // For example, connecting to "http://192.168.1.100:8080/sse" but sending Host: "api.example.com"
-func WithHttpHost(host string) transport.ClientOption {
-	return transport.WIthHTTPHost(host)
+func WithHTTPHost(host string) transport.ClientOption {
+	return transport.WithHTTPHost(host)
 }
 
 // NewSSEMCPClient creates a new SSE-based MCP client with the given base URL.

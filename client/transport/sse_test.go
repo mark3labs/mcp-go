@@ -1154,7 +1154,7 @@ func TestSSEHostOverride(t *testing.T) {
 		capturedHost = ""
 		customHost := "api.example.com"
 
-		trans, err := NewSSE(testServer.URL, WIthHTTPHost(customHost))
+		trans, err := NewSSE(testServer.URL, WithHTTPHost(customHost))
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1175,7 +1175,7 @@ func TestSSEHostOverride(t *testing.T) {
 		capturedHost = ""
 		customHost := "backend.internal.com:8443"
 
-		trans, err := NewSSE(testServer.URL, WIthHTTPHost(customHost))
+		trans, err := NewSSE(testServer.URL, WithHTTPHost(customHost))
 		require.NoError(t, err)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1191,25 +1191,25 @@ func TestSSEHostOverride(t *testing.T) {
 		mu.Unlock()
 	})
 
-	// Test WIthHTTPHost function directly (unit test)
-	t.Run("WIthHTTPHost function", func(t *testing.T) {
+	// Test WithHTTPHost function directly (unit test)
+	t.Run("WithHTTPHost function", func(t *testing.T) {
 		sse := &SSE{}
 		customHost := "test.example.com"
 
-		option := WIthHTTPHost(customHost)
+		option := WithHTTPHost(customHost)
 		option(sse)
 
 		require.Equal(t, customHost, sse.host)
 
 		// Test overwrite
 		newHost := "new.example.com"
-		option = WIthHTTPHost(newHost)
+		option = WithHTTPHost(newHost)
 		option(sse)
 
 		require.Equal(t, newHost, sse.host)
 
 		// Test empty string
-		option = WIthHTTPHost("")
+		option = WithHTTPHost("")
 		option(sse)
 
 		require.Equal(t, "", sse.host)
