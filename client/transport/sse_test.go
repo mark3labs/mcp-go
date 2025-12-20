@@ -1118,7 +1118,10 @@ func TestSSEHostOverride(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+			return
+		}
 	})
 
 	mux := http.NewServeMux()
@@ -1213,118 +1216,6 @@ func TestSSEHostOverride(t *testing.T) {
 		option(sse)
 
 		require.Equal(t, "", sse.host)
-	})
-}
-
-// TestStreamableHTTPHostOverride tests Host header override for StreamableHTTP transport
-func TestStreamableHTTPHostOverride(t *testing.T) {
-	// Create a test server that captures the Host header
-	var capturedHost string
-	var mu sync.Mutex
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		capturedHost = r.Host
-		mu.Unlock()
-
-		response := JSONRPCResponse{
-			JSONRPC: "2.0",
-			ID:      mcp.NewRequestId(1),
-			Result:  []byte("test"),
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-	})
-
-	testServer := httptest.NewServer(handler)
-	defer testServer.Close()
-
-	// Parse test server URL to get the actual host
-	serverURL, _ := url.Parse(testServer.URL)
-	actualHost := serverURL.Host
-
-	t.Run("Default Host (no override)", func(t *testing.T) {
-		capturedHost = ""
-		trans, err := NewStreamableHTTP(testServer.URL)
-		require.NoError(t, err)
-		defer trans.Close()
-
-		ctx := context.Background()
-		err = trans.Start(ctx)
-		require.NoError(t, err)
-
-		// Send a request to trigger Host header capture
-		request := JSONRPCRequest{
-			JSONRPC: "2.0",
-			ID:      mcp.NewRequestId(int64(1)),
-			Method:  "test",
-		}
-
-		_, err = trans.SendRequest(ctx, request)
-		require.NoError(t, err)
-
-		// Host should match the actual server host
-		mu.Lock()
-		require.Equal(t, actualHost, capturedHost)
-		mu.Unlock()
-	})
-
-	t.Run("Custom Host override", func(t *testing.T) {
-		capturedHost = ""
-		customHost := "api.example.com"
-
-		trans, err := NewStreamableHTTP(testServer.URL, WithStreamableHTTPHost(customHost))
-		require.NoError(t, err)
-		defer trans.Close()
-
-		ctx := context.Background()
-		err = trans.Start(ctx)
-		require.NoError(t, err)
-
-		// Send a request to trigger Host header capture
-		request := JSONRPCRequest{
-			JSONRPC: "2.0",
-			ID:      mcp.NewRequestId(int64(2)),
-			Method:  "test",
-		}
-
-		_, err = trans.SendRequest(ctx, request)
-		require.NoError(t, err)
-
-		// Host should be the custom host, not the actual server host
-		mu.Lock()
-		require.Equal(t, customHost, capturedHost)
-		require.NotEqual(t, actualHost, capturedHost)
-		mu.Unlock()
-	})
-
-	t.Run("Custom Host with port", func(t *testing.T) {
-		capturedHost = ""
-		customHost := "backend.internal.com:8443"
-
-		trans, err := NewStreamableHTTP(testServer.URL, WithStreamableHTTPHost(customHost))
-		require.NoError(t, err)
-		defer trans.Close()
-
-		ctx := context.Background()
-		err = trans.Start(ctx)
-		require.NoError(t, err)
-
-		// Send a request to trigger Host header capture
-		request := JSONRPCRequest{
-			JSONRPC: "2.0",
-			ID:      mcp.NewRequestId(int64(3)),
-			Method:  "test",
-		}
-
-		_, err = trans.SendRequest(ctx, request)
-		require.NoError(t, err)
-
-		// Host should be the custom host with port
-		mu.Lock()
-		require.Equal(t, customHost, capturedHost)
-		mu.Unlock()
 	})
 }
 

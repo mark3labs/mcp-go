@@ -402,6 +402,11 @@ func (c *SSE) SendRequest(
 		}
 	}
 
+	// Set custom Host header if provided
+	if c.host != "" {
+		req.Host = c.host
+	}
+
 	// Add OAuth authorization if configured
 	if c.oauthHandler != nil {
 		authHeader, err := c.oauthHandler.GetAuthorizationHeader(ctx)
@@ -591,6 +596,11 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 		for k, v := range c.headerFunc(ctx) {
 			req.Header.Set(k, v)
 		}
+	}
+
+	// Set custom Host header if provided
+	if c.host != "" {
+		req.Host = c.host
 	}
 
 	resp, err := c.httpClient.Do(req)

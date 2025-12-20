@@ -227,6 +227,11 @@ func (c *StreamableHTTP) Close() error {
 					req.Header.Set(HeaderKeyProtocolVersion, version)
 				}
 			}
+
+			// Set custom Host header if provided
+			if c.host != "" {
+				req.Host = c.host
+			}
 			res, err := c.httpClient.Do(req)
 			if err != nil {
 				c.logger.Errorf("failed to send close request: %v", err)
