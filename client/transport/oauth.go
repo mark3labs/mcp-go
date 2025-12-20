@@ -37,6 +37,9 @@ type OAuthConfig struct {
 	// HTTPClient is an optional HTTP client to use for requests.
 	// If nil, a default HTTP client with a 30 second timeout will be used.
 	HTTPClient *http.Client
+	// Provider is an optional OAuth provider configuration.
+	// If set, it overrides the auto-discovery mechanism.
+	Provider *OAuthProvider
 }
 
 // TokenStore is an interface for storing and retrieving OAuth tokens.
@@ -358,6 +361,17 @@ type OAuthProtectedResource struct {
 // getServerMetadata fetches the OAuth server metadata
 func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetadata, error) {
 	h.metadataOnce.Do(func() {
+		// If Provider is explicitly configured, use it directly
+		// This bypasses RFC 8414 discovery which fails for split-domain providers like GitHub
+		if h.config.Provider != nil {
+			h.serverMetadata = &AuthServerMetadata{
+				Issuer:                h.baseURL, // RFC 8414 issuers often don't match API domains
+				AuthorizationEndpoint: h.config.Provider.AuthorizationEndpoint,
+				TokenEndpoint:         h.config.Provider.TokenEndpoint,
+			}
+			return
+		}
+
 		// If AuthServerMetadataURL is explicitly provided, use it directly
 		if h.config.AuthServerMetadataURL != "" {
 			h.fetchMetadataFromURL(ctx, h.config.AuthServerMetadataURL)
@@ -543,6 +557,11 @@ func (h *OAuthHandler) getDefaultEndpoints(baseURL string) (*AuthServerMetadata,
 
 // RegisterClient performs dynamic client registration
 func (h *OAuthHandler) RegisterClient(ctx context.Context, clientName string) error {
+	// Check if the provider explicitly forbids dynamic registration
+	if h.config.Provider != nil && !h.config.Provider.SupportsDynamicRegistration {
+		return errors.New("dynamic client registration is not supported by this provider")
+	}
+
 	metadata, err := h.getServerMetadata(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get server metadata: %w", err)

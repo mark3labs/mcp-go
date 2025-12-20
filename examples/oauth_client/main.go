@@ -30,9 +30,10 @@ func main() {
 		ClientID:     os.Getenv("MCP_CLIENT_ID"),
 		ClientSecret: os.Getenv("MCP_CLIENT_SECRET"),
 		RedirectURI:  redirectURI,
-		Scopes:       []string{"mcp.read", "mcp.write"},
+		Scopes:       []string{"read:user"},
 		TokenStore:   tokenStore,
-		PKCEEnabled:  true, // Enable PKCE for public clients
+		PKCEEnabled:  false, // Disable PKCE for GitHub (not supported)
+		Provider:     client.GitHubProvider,
 	}
 
 	// Create the client with OAuth support
