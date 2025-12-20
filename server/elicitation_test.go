@@ -285,43 +285,27 @@ func TestRequestURLElicitation(t *testing.T) {
 	}
 }
 
-func TestSendElicitationComplete(t *testing.T) {
+func TestSendElicitationComplete_NoPriorRequest(t *testing.T) {
 	s := NewMCPServer("test", "1.0", WithElicitation())
-	
-	mockSession := &mockElicitationSession{
-		sessionID: "test-url-1",
-		result: &mcp.ElicitationResult{
-			ElicitationResponse: mcp.ElicitationResponse{
-				Action: mcp.ElicitationResponseActionAccept,
-			},
-		},
-	}
-
-	ctx := context.Background()
-	_, err := s.RequestURLElicitation(ctx, mockSession, "id-123", "https://example.com/auth", "Please auth")
-	require.NoError(t, err)
-
-	assert.Equal(t, mcp.ElicitationModeURL, mockSession.lastRequest.Params.Mode)
-	assert.Equal(t, "id-123", mockSession.lastRequest.Params.ElicitationID)
-	assert.Equal(t, "https://example.com/auth", mockSession.lastRequest.Params.URL)
 
 	notifyChan := make(chan mcp.JSONRPCNotification, 1)
-	mockSessionWithChan := &mockElicitationSession{
-		sessionID:  "test-url-2",
+	mockSession := &mockElicitationSession{
+		sessionID:  "test-session-complete",
 		notifyChan: notifyChan,
 	}
-	
-	err = s.SendElicitationComplete(ctx, mockSessionWithChan, "id-123")
+
+	// Call SendElicitationComplete directly without any prior request state
+	// This verifies the server can send completion notifications independently
+	err := s.SendElicitationComplete(context.Background(), mockSession, "independent-id-999")
 	require.NoError(t, err)
 
 	select {
 	case notif := <-notifyChan:
 		assert.Equal(t, "notifications/elicitation/complete", notif.Method)
-		// Validate elicitationId is included in params
 		elicitationID, ok := notif.Params.AdditionalFields["elicitationId"]
 		assert.True(t, ok, "expected elicitationId in notification params")
-		assert.Equal(t, "id-123", elicitationID)
+		assert.Equal(t, "independent-id-999", elicitationID)
 	case <-time.After(100 * time.Millisecond):
-		t.Error("Expected notification not received")
+		t.Fatal("Expected notification was not received")
 	}
 }

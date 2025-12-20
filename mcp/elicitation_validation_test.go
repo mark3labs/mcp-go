@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/stretchr/testify/require"
 )
 
 func TestElicitationParams_Validate(t *testing.T) {
@@ -77,8 +78,11 @@ func TestElicitationParams_Validate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := tt.params.Validate(); (err != nil) != tt.wantErr {
-				t.Errorf("ElicitationParams.Validate() error = %v, wantErr %v", err, tt.wantErr)
+			err := tt.params.Validate()
+			if tt.wantErr {
+				require.Error(t, err, "expected error for test case: %s", tt.name)
+			} else {
+				require.NoError(t, err, "unexpected error for test case: %s", tt.name)
 			}
 		})
 	}
