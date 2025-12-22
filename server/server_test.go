@@ -2866,3 +2866,150 @@ func TestMCPServer_ListTools(t *testing.T) {
 		assert.Contains(t, tools3, "test-tool")
 	})
 }
+
+type funcCompletionProvider struct {
+	completePromptArgument   func(ctx context.Context, promptName string, argument mcp.CompleteArgument) (*mcp.Completion, error)
+	completeResourceArgument func(ctx context.Context, uri string, argument mcp.CompleteArgument) (*mcp.Completion, error)
+}
+
+func (p *funcCompletionProvider) CompletePromptArgument(ctx context.Context, promptName string, argument mcp.CompleteArgument) (*mcp.Completion, error) {
+	return p.completePromptArgument(ctx, promptName, argument)
+}
+
+func (p *funcCompletionProvider) CompleteResourceArgument(ctx context.Context, uri string, argument mcp.CompleteArgument) (*mcp.Completion, error) {
+	return p.completeResourceArgument(ctx, uri, argument)
+}
+
+func TestMCPServer_Complete(t *testing.T) {
+	t.Run("Capability not enabled", func(t *testing.T) {
+		message := `{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "completion/complete",
+			"params": {
+				"ref": {
+					"type": "ref/prompt",
+					"name": "code_review"
+				},
+				"argument": {
+					"name": "language",
+					"value": "py"
+				}
+			}
+		}`
+
+		server := NewMCPServer("test-server", "1.0.0")
+		response := server.HandleMessage(context.Background(), []byte(message))
+		assert.Equal(t, mcp.JSONRPCError{
+			JSONRPC: mcp.JSONRPC_VERSION,
+			ID:      mcp.NewRequestId(float64(1)),
+			Error:   mcp.NewJSONRPCErrorDetails(mcp.METHOD_NOT_FOUND, "completions not supported", nil),
+		}, response)
+	})
+
+	t.Run("Invalid ref type", func(t *testing.T) {
+		invalidRefTypeMessage := `{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "completion/complete",
+			"params": {
+				"ref": {
+					"type": "ref/invalid",
+					"name": "unknown"
+				},
+				"argument": {
+					"name": "language",
+					"value": "py"
+				}
+			}
+		}`
+
+		server := NewMCPServer("test-server", "1.0.0", WithCompletions())
+		response := server.HandleMessage(context.Background(), []byte(invalidRefTypeMessage))
+		assert.Equal(t, mcp.JSONRPCError{
+			JSONRPC: mcp.JSONRPC_VERSION,
+			ID:      mcp.NewRequestId(float64(1)),
+			Error:   mcp.NewJSONRPCErrorDetails(mcp.INVALID_REQUEST, "unparsable completion/complete request: unknown reference type: ref/invalid", nil),
+		}, response)
+	})
+
+	t.Run("Prompt reference", func(t *testing.T) {
+		message := `{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "completion/complete",
+			"params": {
+				"ref": {
+					"type": "ref/prompt",
+					"name": "code_review"
+				},
+				"argument": {
+					"name": "language",
+					"value": "py"
+				}
+			}
+		}`
+		server := NewMCPServer("test-server", "1.0.0",
+			WithCompletions(),
+			WithCompletionProvider(&funcCompletionProvider{
+				completePromptArgument: func(ctx context.Context, promptName string, argument mcp.CompleteArgument) (*mcp.Completion, error) {
+					return &mcp.Completion{
+						Values: []string{"python", "pytorch", "pyside"},
+					}, nil
+				},
+			}),
+		)
+		response := server.HandleMessage(context.Background(), []byte(message))
+		assert.Equal(t, mcp.JSONRPCResponse{
+			JSONRPC: mcp.JSONRPC_VERSION,
+			ID:      mcp.NewRequestId(float64(1)),
+			Result: mcp.CompleteResult{
+				Completion: mcp.Completion{
+					Values: []string{"python", "pytorch", "pyside"},
+				},
+			},
+		}, response)
+	})
+
+	t.Run("Resource reference", func(t *testing.T) {
+		message := `{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "completion/complete",
+			"params": {
+				"ref": {
+					"type": "ref/resource",
+					"uri": "language://{language}/code_review"
+				},
+				"argument": {
+					"name": "language",
+					"value": "ja"
+				}
+			}
+		}`
+		server := NewMCPServer("test-server", "1.0.0",
+			WithCompletions(),
+			WithCompletionProvider(&funcCompletionProvider{
+				completeResourceArgument: func(ctx context.Context, uri string, argument mcp.CompleteArgument) (*mcp.Completion, error) {
+					return &mcp.Completion{
+						Values:  []string{"java", "javascript", "jai", "jakt", "janet"},
+						Total:   10,
+						HasMore: true,
+					}, nil
+				},
+			}),
+		)
+		response := server.HandleMessage(context.Background(), []byte(message))
+		assert.Equal(t, mcp.JSONRPCResponse{
+			JSONRPC: mcp.JSONRPC_VERSION,
+			ID:      mcp.NewRequestId(float64(1)),
+			Result: mcp.CompleteResult{
+				Completion: mcp.Completion{
+					Values:  []string{"java", "javascript", "jai", "jakt", "janet"},
+					Total:   10,
+					HasMore: true,
+				},
+			},
+		}, response)
+	})
+}

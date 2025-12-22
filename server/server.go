@@ -1558,7 +1558,7 @@ func (s *MCPServer) handleComplete(
 		return nil, &requestError{
 			id:   id,
 			code: mcp.INVALID_PARAMS,
-			err:  fmt.Errorf("unknown reference type: %T", ref),
+			err:  fmt.Errorf("unknown reference type: %v", ref),
 		}
 	}
 	if err != nil {
