@@ -175,7 +175,8 @@ type MCPServer struct {
 	resourceHandlerMiddlewares []ResourceHandlerMiddleware
 	toolFilters                []ToolFilterFunc
 	notificationHandlers       map[string]NotificationHandlerFunc
-	completionProvider         CompletionProvider
+	promptCompletionProvider   PromptCompletionProvider
+	resourceCompletionProvider ResourceCompletionProvider
 	capabilities               serverCapabilities
 	paginationLimit            *int
 	sessions                   sync.Map
@@ -237,10 +238,17 @@ func WithResourceCapabilities(subscribe, listChanged bool) ServerOption {
 	}
 }
 
-// WithCompletionProvider sets a custom completion provider
-func WithCompletionProvider(provider CompletionProvider) ServerOption {
+// WithPromptCompletionProvider sets a custom prompt completion provider
+func WithPromptCompletionProvider(provider PromptCompletionProvider) ServerOption {
 	return func(s *MCPServer) {
-		s.completionProvider = provider
+		s.promptCompletionProvider = provider
+	}
+}
+
+// WithResourceCompletionProvider sets a custom resource completion provider
+func WithResourceCompletionProvider(provider ResourceCompletionProvider) ServerOption {
+	return func(s *MCPServer) {
+		s.resourceCompletionProvider = provider
 	}
 }
 
@@ -408,7 +416,8 @@ func NewMCPServer(
 		version:                    version,
 		notificationHandlers:       make(map[string]NotificationHandlerFunc),
 		tasks:                      make(map[string]*taskEntry),
-		completionProvider:         &DefaultCompletionProvider{},
+		promptCompletionProvider:   &DefaultPromptCompletionProvider{},
+		resourceCompletionProvider: &DefaultResourceCompletionProvider{},
 		capabilities: serverCapabilities{
 			tools:     nil,
 			resources: nil,
@@ -1551,9 +1560,9 @@ func (s *MCPServer) handleComplete(
 	var err error
 	switch ref := request.Params.Ref.(type) {
 	case mcp.PromptReference:
-		completion, err = s.completionProvider.CompletePromptArgument(ctx, ref.Name, request.Params.Argument)
+		completion, err = s.promptCompletionProvider.CompletePromptArgument(ctx, ref.Name, request.Params.Argument)
 	case mcp.ResourceReference:
-		completion, err = s.completionProvider.CompleteResourceArgument(ctx, ref.URI, request.Params.Argument)
+		completion, err = s.resourceCompletionProvider.CompleteResourceArgument(ctx, ref.URI, request.Params.Argument)
 	default:
 		return nil, &requestError{
 			id:   id,
