@@ -8,18 +8,18 @@ import (
 
 type PromptCompletionProvider interface {
 	// CompletePromptArgument provides completions for a prompt argument
-	CompletePromptArgument(ctx context.Context, promptName string, argument mcp.CompleteArgument) (*mcp.Completion, error)
+	CompletePromptArgument(ctx context.Context, promptName string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error)
 }
 
 type ResourceCompletionProvider interface {
 	// CompleteResourceArgument provides completions for a resource template argument
-	CompleteResourceArgument(ctx context.Context, uri string, argument mcp.CompleteArgument) (*mcp.Completion, error)
+	CompleteResourceArgument(ctx context.Context, uri string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error)
 }
 
 // DefaultCompletionProvider returns no completions (fallback)
 type DefaultPromptCompletionProvider struct{}
 
-func (p *DefaultPromptCompletionProvider) CompletePromptArgument(ctx context.Context, promptName string, argument mcp.CompleteArgument) (*mcp.Completion, error) {
+func (p *DefaultPromptCompletionProvider) CompletePromptArgument(ctx context.Context, promptName string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error) {
 	return &mcp.Completion{
 		Values: []string{},
 	}, nil
@@ -28,7 +28,7 @@ func (p *DefaultPromptCompletionProvider) CompletePromptArgument(ctx context.Con
 // DefaultResourceCompletionProvider returns no completions (fallback)
 type DefaultResourceCompletionProvider struct{}
 
-func (p *DefaultResourceCompletionProvider) CompleteResourceArgument(ctx context.Context, uri string, argument mcp.CompleteArgument) (*mcp.Completion, error) {
+func (p *DefaultResourceCompletionProvider) CompleteResourceArgument(ctx context.Context, uri string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error) {
 	return &mcp.Completion{
 		Values: []string{},
 	}, nil

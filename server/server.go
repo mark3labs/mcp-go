@@ -1569,9 +1569,19 @@ func (s *MCPServer) handleComplete(
 	var err error
 	switch ref := request.Params.Ref.(type) {
 	case mcp.PromptReference:
-		completion, err = s.promptCompletionProvider.CompletePromptArgument(ctx, ref.Name, request.Params.Argument)
+		completion, err = s.promptCompletionProvider.CompletePromptArgument(
+			ctx,
+			ref.Name,
+			request.Params.Argument,
+			request.Params.Context,
+		)
 	case mcp.ResourceReference:
-		completion, err = s.resourceCompletionProvider.CompleteResourceArgument(ctx, ref.URI, request.Params.Argument)
+		completion, err = s.resourceCompletionProvider.CompleteResourceArgument(
+			ctx,
+			ref.URI,
+			request.Params.Argument,
+			request.Params.Context,
+		)
 	default:
 		return nil, &requestError{
 			id:   id,

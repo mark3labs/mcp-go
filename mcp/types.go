@@ -1166,7 +1166,7 @@ type CompleteRequest struct {
 type CompleteParams struct {
 	Ref      any              `json:"ref"` // Can be PromptReference or ResourceReference
 	Argument CompleteArgument `json:"argument"`
-	Context  *CompleteContext `json:"context,omitempty"`
+	Context  CompleteContext  `json:"context"`
 }
 
 func (p *CompleteParams) UnmarshalJSON(data []byte) error {

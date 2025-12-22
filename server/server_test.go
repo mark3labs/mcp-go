@@ -2867,17 +2867,16 @@ func TestMCPServer_ListTools(t *testing.T) {
 	})
 }
 
-type funcCompletionProvider struct {
-	completePromptArgument   func(ctx context.Context, promptName string, argument mcp.CompleteArgument) (*mcp.Completion, error)
-	completeResourceArgument func(ctx context.Context, uri string, argument mcp.CompleteArgument) (*mcp.Completion, error)
+type promptCompletionProviderFunc func(ctx context.Context, promptName string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error)
+
+func (fn promptCompletionProviderFunc) CompletePromptArgument(ctx context.Context, promptName string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error) {
+	return fn(ctx, promptName, argument, context)
 }
 
-func (p *funcCompletionProvider) CompletePromptArgument(ctx context.Context, promptName string, argument mcp.CompleteArgument) (*mcp.Completion, error) {
-	return p.completePromptArgument(ctx, promptName, argument)
-}
+type resourceCompletionProviderFunc func(ctx context.Context, uri string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error)
 
-func (p *funcCompletionProvider) CompleteResourceArgument(ctx context.Context, uri string, argument mcp.CompleteArgument) (*mcp.Completion, error) {
-	return p.completeResourceArgument(ctx, uri, argument)
+func (fn resourceCompletionProviderFunc) CompleteResourceArgument(ctx context.Context, uri string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error) {
+	return fn(ctx, uri, argument, context)
 }
 
 func TestMCPServer_Complete(t *testing.T) {
@@ -3014,13 +3013,20 @@ func TestMCPServer_Complete(t *testing.T) {
 			}`
 			server := NewMCPServer("test-server", "1.0.0",
 				WithCompletions(),
-				WithPromptCompletionProvider(&funcCompletionProvider{
-					completePromptArgument: func(ctx context.Context, promptName string, argument mcp.CompleteArgument) (*mcp.Completion, error) {
+				WithPromptCompletionProvider(
+					promptCompletionProviderFunc(func(
+						ctx context.Context,
+						promptName string,
+						argument mcp.CompleteArgument,
+						context mcp.CompleteContext,
+					) (*mcp.Completion, error) {
+						assert.Equal(t, "code_review", promptName)
+						assert.Equal(t, "py", argument.Value)
 						return &mcp.Completion{
 							Values: []string{"python", "pytorch", "pyside"},
 						}, nil
-					},
-				}),
+					}),
+				),
 			)
 			response := server.HandleMessage(context.Background(), []byte(message))
 			assert.Equal(t, mcp.JSONRPCResponse{
@@ -3042,25 +3048,40 @@ func TestMCPServer_Complete(t *testing.T) {
 				"params": {
 					"ref": {
 						"type": "ref/resource",
-						"uri": "language://{language}/code_review"
+						"uri": "action://{language}/{ide}/code_review"
 					},
 					"argument": {
-						"name": "language",
-						"value": "ja"
+						"name": "ide",
+						"value": "c"
+					},
+					"context": {
+						"arguments": {
+							"language": "javascript"
+						}
 					}
 				}
 			}`
 			server := NewMCPServer("test-server", "1.0.0",
 				WithCompletions(),
-				WithResourceCompletionProvider(&funcCompletionProvider{
-					completeResourceArgument: func(ctx context.Context, uri string, argument mcp.CompleteArgument) (*mcp.Completion, error) {
+				WithResourceCompletionProvider(
+					resourceCompletionProviderFunc(func(
+						ctx context.Context,
+						uri string,
+						argument mcp.CompleteArgument,
+						context mcp.CompleteContext,
+					) (*mcp.Completion, error) {
+						assert.Equal(t, "action://{language}/{ide}/code_review", uri)
+						assert.Equal(t, "c", argument.Value)
+						assert.Equal(t, map[string]string{
+							"language": "javascript",
+						}, context.Arguments)
 						return &mcp.Completion{
-							Values:  []string{"java", "javascript", "jai", "jakt", "janet"},
+							Values:  []string{"cursor", "code"},
 							Total:   10,
 							HasMore: true,
 						}, nil
-					},
-				}),
+					}),
+				),
 			)
 			response := server.HandleMessage(context.Background(), []byte(message))
 			assert.Equal(t, mcp.JSONRPCResponse{
@@ -3068,7 +3089,7 @@ func TestMCPServer_Complete(t *testing.T) {
 				ID:      mcp.NewRequestId(float64(1)),
 				Result: mcp.CompleteResult{
 					Completion: mcp.Completion{
-						Values:  []string{"java", "javascript", "jai", "jakt", "janet"},
+						Values:  []string{"cursor", "code"},
 						Total:   10,
 						HasMore: true,
 					},
