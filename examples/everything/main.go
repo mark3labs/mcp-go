@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -69,6 +70,9 @@ func NewMCPServer() *server.MCPServer {
 		server.WithToolCapabilities(true),
 		server.WithLogging(),
 		server.WithHooks(hooks),
+		server.WithCompletions(),
+		server.WithPromptCompletionProvider(&promptCompletionProvider{}),
+		server.WithResourceCompletionProvider(&resourceCompletionProvider{}),
 	)
 
 	mcpServer.AddResource(mcp.NewResource("test://static/resource",
@@ -501,11 +505,78 @@ func handleGetTinyImageTool(
 	}, nil
 }
 
+var styles = []string{"formal", "casual", "technical", "creative"}
+
 func handleNotification(
 	ctx context.Context,
 	notification mcp.JSONRPCNotification,
 ) {
 	log.Printf("Received notification: %s", notification.Method)
+}
+
+type promptCompletionProvider struct{}
+
+func (p *promptCompletionProvider) CompletePromptArgument(ctx context.Context, promptName string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error) {
+	switch promptName {
+	case string(COMPLEX):
+		if argument.Name == "style" {
+			var suggestions []string
+			for _, style := range styles {
+				if argument.Value == "" || strings.HasPrefix(style, argument.Value) {
+					suggestions = append(suggestions, style)
+				}
+			}
+			return &mcp.Completion{
+				Values: suggestions,
+			}, nil
+		}
+		fallthrough
+	default:
+		return &mcp.Completion{
+			Values: []string{},
+		}, nil
+	}
+}
+
+type resourceCompletionProvider struct{}
+
+// CompleteResourceArgument here is implemented to return suggestions for "test://dynamic/resource/{id}" template, specifically for the "id" argument.
+func (p *resourceCompletionProvider) CompleteResourceArgument(ctx context.Context, uri string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error) {
+	if uri == "test://dynamic/resource/{id}" && argument.Name == "id" {
+		if len(argument.Value) == 0 {
+			return &mcp.Completion{
+				Values:  getIdSuggestions(0),
+				Total:   maxId,
+				HasMore: true,
+			}, nil
+		}
+
+		// If the input is not a number, return empty suggestion.
+		intArgVal, err := strconv.Atoi(argument.Value)
+		if err != nil {
+			return &mcp.Completion{
+				Values: []string{},
+			}, nil
+		}
+
+		digits := len(argument.Value)
+
+		// If the input is out of range, return empty suggestion.
+		if !isIdInRange(intArgVal) {
+			return &mcp.Completion{
+				Values: []string{},
+			}, nil
+		}
+
+		return &mcp.Completion{
+			Values:  getIdSuggestions(intArgVal),
+			Total:   getTotalIds(digits),
+			HasMore: hasMoreIds(digits),
+		}, nil
+	}
+	return &mcp.Completion{
+		Values: []string{},
+	}, nil
 }
 
 func main() {
