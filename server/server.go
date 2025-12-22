@@ -419,10 +419,15 @@ func NewMCPServer(
 		promptCompletionProvider:   &DefaultPromptCompletionProvider{},
 		resourceCompletionProvider: &DefaultResourceCompletionProvider{},
 		capabilities: serverCapabilities{
-			tools:     nil,
-			resources: nil,
-			prompts:   nil,
-			logging:   nil,
+			tools:       nil,
+			resources:   nil,
+			prompts:     nil,
+			logging:     nil,
+			sampling:    nil,
+			elicitation: nil,
+			roots:       nil,
+			tasks:       nil,
+			completions: nil,
 		},
 	}
 
@@ -792,6 +797,10 @@ func (s *MCPServer) handleInitialize(
 		}
 
 		capabilities.Tasks = tasksCapability
+	}
+
+	if s.capabilities.completions != nil && *s.capabilities.completions {
+		capabilities.Completions = &struct{}{}
 	}
 
 	result := mcp.InitializeResult{
