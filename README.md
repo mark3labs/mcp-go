@@ -778,26 +778,14 @@ You need `go` installed and the `goimports` tool available. The generator runs
 ### Auto-completions
 
 When users are filling in argument values for a specific prompt (identified by name) or resource template (identified by URI), servers can provide contextual suggestions.
+To enable completion support, use the `server.WithCompletions()` option when creating your server.
 
-#### Enabling Completions
+#### Completion Providers
 
-To enable completion support, use the `server.WithCompletions()` option when creating your server:
+You can provide completion logic for both prompt arguments and resource template arguments by implementing the respective interfaces and passing them to the server as options.
 
-```go
-mcpServer := server.NewMCPServer(
-    "my-server",
-    "1.0.0",
-    server.WithCompletions(),
-)
-```
-
-#### Custom Completion Providers
-
-You can provide custom completion logic for both prompt arguments and resource template arguments by implementing the respective interfaces and passing them to the server.
-
-##### Prompt Argument Completions
-
-Implement the `PromptCompletionProvider` interface to provide completions for prompt arguments:
+<details>
+<summary>Show Completion Provider Examples</summary>
 
 ```go
 type MyPromptCompletionProvider struct{}
@@ -829,20 +817,6 @@ func (p *MyPromptCompletionProvider) CompletePromptArgument(
     return &mcp.Completion{Values: []string{}}, nil
 }
 
-// Register the provider
-mcpServer := server.NewMCPServer(
-    "my-server",
-    "1.0.0",
-    server.WithCompletions(),
-    server.WithPromptCompletionProvider(&MyPromptCompletionProvider{}),
-)
-```
-
-##### Resource Template Argument Completions
-
-Implement the `ResourceCompletionProvider` interface to provide completions for resource template arguments:
-
-```go
 type MyResourceCompletionProvider struct{}
 
 func (p *MyResourceCompletionProvider) CompleteResourceArgument(
@@ -873,13 +847,19 @@ mcpServer := server.NewMCPServer(
     "my-server",
     "1.0.0",
     server.WithCompletions(),
+    server.WithPromptCompletionProvider(&MyPromptCompletionProvider{}),
     server.WithResourceCompletionProvider(&MyResourceCompletionProvider{}),
 )
 ```
 
+</details>
+
 #### Completion Context
 
-For prompts or resource templates with multiple arguments, the `CompleteContext` parameter provides access to previously completed arguments. This allows you to provide contextual suggestions based on earlier choices:
+For prompts or resource templates with multiple arguments, the `CompleteContext` parameter provides access to previously completed arguments. This allows you to provide contextual suggestions based on earlier choices.
+
+<details>
+<summary>Show Completion Context Example</summary>
 
 ```go
 func (p *MyProvider) CompleteResourceArgument(
@@ -897,6 +877,8 @@ func (p *MyProvider) CompleteResourceArgument(
     return &mcp.Completion{Values: []string{}}, nil
 }
 ```
+
+</details>
 
 #### Response Constraints
 
