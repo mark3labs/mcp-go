@@ -635,10 +635,11 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 
 // ToolArgumentsSchema represents a JSON Schema for tool arguments.
 type ToolArgumentsSchema struct {
-	Defs       map[string]any `json:"$defs,omitempty"`
-	Type       string         `json:"type"`
-	Properties map[string]any `json:"properties,omitempty"`
-	Required   []string       `json:"required,omitempty"`
+	Defs                 map[string]any `json:"$defs,omitempty"`
+	Type                 string         `json:"type"`
+	Properties           map[string]any `json:"properties,omitempty"`
+	Required             []string       `json:"required,omitempty"`
+	AdditionalProperties any            `json:"additionalProperties,omitempty"`
 }
 
 type ToolInputSchema ToolArgumentsSchema // For retro-compatibility
@@ -660,6 +661,10 @@ func (tis ToolArgumentsSchema) MarshalJSON() ([]byte, error) {
 
 	if len(tis.Required) > 0 {
 		m["required"] = tis.Required
+	}
+
+	if tis.AdditionalProperties != nil {
+		m["additionalProperties"] = tis.AdditionalProperties
 	}
 
 	return json.Marshal(m)
@@ -916,6 +921,15 @@ func WithIdempotentHintAnnotation(value bool) ToolOption {
 func WithOpenWorldHintAnnotation(value bool) ToolOption {
 	return func(t *Tool) {
 		t.Annotations.OpenWorldHint = &value
+	}
+}
+
+// WithSchemaAdditionalProperties sets the additionalProperties field on the tool's input schema.
+// It accepts false (disallow extra properties), true (allow any), or a schema map
+// to validate additional properties against.
+func WithSchemaAdditionalProperties(schema any) ToolOption {
+	return func(t *Tool) {
+		t.InputSchema.AdditionalProperties = schema
 	}
 }
 

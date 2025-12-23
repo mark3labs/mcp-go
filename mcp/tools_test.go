@@ -1693,3 +1693,75 @@ func TestWithToolIcons(t *testing.T) {
 
 	assert.Equal(t, icons, tool.Icons)
 }
+
+func TestToolArgumentsSchema_UnmarshalWithAdditionalPropertiesFalse(t *testing.T) {
+	jsonData := `{
+		"type": "object",
+		"properties": {
+			"name": {"type": "string"}
+		},
+		"additionalProperties": false
+	}`
+
+	var schema ToolArgumentsSchema
+	err := json.Unmarshal([]byte(jsonData), &schema)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "object", schema.Type)
+	assert.Contains(t, schema.Properties, "name")
+	assert.Equal(t, false, schema.AdditionalProperties)
+}
+
+func TestToolArgumentsSchema_UnmarshalWithAdditionalPropertiesSchema(t *testing.T) {
+	jsonData := `{
+		"type": "object",
+		"properties": {
+			"name": {"type": "string"}
+		},
+		"additionalProperties": {"type": "string"}
+	}`
+
+	var schema ToolArgumentsSchema
+	err := json.Unmarshal([]byte(jsonData), &schema)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "object", schema.Type)
+	additionalProps, ok := schema.AdditionalProperties.(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "string", additionalProps["type"])
+}
+
+func TestToolArgumentsSchema_MarshalWithAdditionalProperties(t *testing.T) {
+	schema := ToolArgumentsSchema{
+		Type:                 "object",
+		AdditionalProperties: false,
+	}
+
+	data, err := json.Marshal(schema)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), `"additionalProperties":false`)
+}
+
+func TestToolArgumentsSchema_MarshalOmitsNilAdditionalProperties(t *testing.T) {
+	schema := ToolArgumentsSchema{
+		Type:                 "object",
+		AdditionalProperties: nil,
+	}
+
+	data, err := json.Marshal(schema)
+	assert.NoError(t, err)
+	assert.NotContains(t, string(data), "additionalProperties")
+}
+
+func TestWithSchemaAdditionalProperties(t *testing.T) {
+	tool := NewTool(
+		"strict-tool",
+		WithSchemaAdditionalProperties(false),
+	)
+
+	assert.Equal(t, false, tool.InputSchema.AdditionalProperties)
+
+	data, err := json.Marshal(tool)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), `"additionalProperties":false`)
+}
