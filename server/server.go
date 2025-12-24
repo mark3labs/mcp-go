@@ -1585,7 +1585,7 @@ func (s *MCPServer) handleComplete(
 	default:
 		return nil, &requestError{
 			id:   id,
-			code: mcp.INVALID_PARAMS,
+			code: mcp.INVALID_REQUEST,
 			err:  fmt.Errorf("unknown reference type: %v", ref),
 		}
 	}
@@ -1595,6 +1595,12 @@ func (s *MCPServer) handleComplete(
 			code: mcp.INTERNAL_ERROR,
 			err:  err,
 		}
+	}
+
+	// Defensive nil check: default providers always return non-nil completions,
+	// but custom providers might erroneously return nil. Treat as empty result.
+	if completion == nil {
+		return &mcp.CompleteResult{}, nil
 	}
 
 	return &mcp.CompleteResult{
