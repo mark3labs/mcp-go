@@ -185,7 +185,7 @@ server.ServeStdio(s)
 ```go
 // Client example - uses functionality
 client := client.NewStdioClient("database-server")
-tools, _ := client.ListTools(ctx)
+tools, _ := client.ListTools(ctx, mcp.ListToolsRequest{})
 result, _ := client.CallTool(ctx, queryRequest)
 ```
 

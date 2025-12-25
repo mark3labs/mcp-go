@@ -53,7 +53,7 @@ func main() {
 
 func demonstrateClientOperations(ctx context.Context, c client.Client) error {
     // List available tools
-    tools, err := c.ListTools(ctx)
+    tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
         return fmt.Errorf("failed to list tools: %w", err)
     }
@@ -64,7 +64,7 @@ func demonstrateClientOperations(ctx context.Context, c client.Client) error {
     }
 
     // List available resources
-    resources, err := c.ListResources(ctx)
+    resources, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
     if err != nil {
         return fmt.Errorf("failed to list resources: %w", err)
     }
@@ -328,7 +328,7 @@ func NewLLMApplication(mcpAddress string) (*LLMApplication, error) {
 
 func (app *LLMApplication) ProcessUserQuery(ctx context.Context, query string) (string, error) {
     // Get available tools for the LLM
-    tools, err := app.mcpClient.ListTools(ctx)
+    tools, err := app.mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
         return "", err
     }
@@ -425,7 +425,7 @@ func (msc *MultiServerClient) GetAllTools(ctx context.Context) (map[string][]mcp
     allTools := make(map[string][]mcp.Tool)
 
     for serverName, c := range msc.clients {
-        tools, err := c.ListTools(ctx)
+        tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
         if err != nil {
             return nil, fmt.Errorf("failed to get tools from %s: %w", serverName, err)
         }

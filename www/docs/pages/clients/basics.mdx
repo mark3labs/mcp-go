@@ -156,7 +156,7 @@ func demonstrateClientLifecycle() error {
 
 func performClientOperations(ctx context.Context, c client.Client) error {
     // List available tools
-    tools, err := c.ListTools(ctx)
+    tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
         return err
     }
@@ -413,7 +413,7 @@ func reconnectClient(c client.Client) error {
 }
 
 func suggestAlternativeTools(ctx context.Context, c client.Client) {
-    tools, err := c.ListTools(ctx)
+    tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
         log.Printf("Failed to list tools: %v", err)
         return
@@ -426,7 +426,7 @@ func suggestAlternativeTools(ctx context.Context, c client.Client) {
 }
 
 func showToolSchema(ctx context.Context, c client.Client, toolName string) {
-    tools, err := c.ListTools(ctx)
+    tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
         log.Printf("Failed to list tools: %v", err)
         return
@@ -632,7 +632,7 @@ func (chm *ClientHealthMonitor) checkHealth(ctx context.Context) {
     defer cancel()
 
     // Try to list tools as a health check
-    _, err := chm.client.ListTools(ctx)
+    _, err := chm.client.ListTools(ctx, mcp.ListToolsRequest{})
     
     chm.mutex.Lock()
     chm.healthy = (err == nil)

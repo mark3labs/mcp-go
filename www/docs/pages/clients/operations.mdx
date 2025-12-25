@@ -27,7 +27,7 @@ import (
 
 func listResources(ctx context.Context, c client.Client) error {
     // List all available resources
-    resources, err := c.ListResources(ctx)
+    resources, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
     if err != nil {
         return fmt.Errorf("failed to list resources: %w", err)
     }
@@ -52,7 +52,7 @@ func listResources(ctx context.Context, c client.Client) error {
 
 ```go
 func listResourcesByType(ctx context.Context, c client.Client, mimeType string) ([]mcp.Resource, error) {
-    resources, err := c.ListResources(ctx)
+    resources, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
     if err != nil {
         return nil, err
     }
@@ -68,7 +68,7 @@ func listResourcesByType(ctx context.Context, c client.Client, mimeType string) 
 }
 
 func listResourcesByPattern(ctx context.Context, c client.Client, pattern string) ([]mcp.Resource, error) {
-    resources, err := c.ListResources(ctx)
+    resources, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
     if err != nil {
         return nil, err
     }
@@ -130,7 +130,7 @@ func readResource(ctx context.Context, c client.Client, uri string) (*mcp.ReadRe
 
 func demonstrateResourceReading(ctx context.Context, c client.Client) {
     // List resources first
-    resources, err := c.ListResources(ctx)
+   resources, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
     if err != nil {
         log.Printf("Failed to list resources: %v", err)
         return
@@ -324,7 +324,7 @@ func callTool(ctx context.Context, c client.Client, name string, args map[string
 
 func demonstrateToolCalling(ctx context.Context, c client.Client) {
     // List available tools
-    tools, err := c.ListTools(ctx)
+    tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
         log.Printf("Failed to list tools: %v", err)
         return
@@ -427,7 +427,7 @@ func validateValue(value interface{}, schema map[string]any) error {
 
 func callToolWithValidation(ctx context.Context, c client.Client, toolName string, args map[string]interface{}) (*mcp.CallToolResult, error) {
     // Get tool schema
-    tools, err := c.ListTools(ctx)
+    tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
         return nil, fmt.Errorf("failed to list tools: %w", err)
     }
@@ -551,7 +551,7 @@ func getPrompt(ctx context.Context, c client.Client, name string, args map[strin
 
 func demonstratePromptUsage(ctx context.Context, c client.Client) {
     // List available prompts
-    prompts, err := c.ListPrompts(ctx)
+    prompts, err := c.ListPrompts(ctx, mcp.ListPromptsRequest{})
     if err != nil {
         log.Printf("Failed to list prompts: %v", err)
         return
