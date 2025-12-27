@@ -58,7 +58,7 @@ const (
 	// MethodElicitationCreate requests additional information from the user during interactions.
 	// https://modelcontextprotocol.io/docs/concepts/elicitation
 	MethodElicitationCreate MCPMethod = "elicitation/create"
-	
+
 	// MethodNotificationElicitationComplete notifies when a URL mode elicitation completes.
 	MethodNotificationElicitationComplete MCPMethod = "notifications/elicitation/complete"
 
@@ -132,11 +132,12 @@ func (t *URITemplate) UnmarshalJSON(data []byte) error {
 type JSONRPCMessage any
 
 // LATEST_PROTOCOL_VERSION is the most recent version of the MCP protocol.
-const LATEST_PROTOCOL_VERSION = "2025-06-18"
+const LATEST_PROTOCOL_VERSION = "2025-11-25"
 
 // ValidProtocolVersions lists all known valid MCP protocol versions.
 var ValidProtocolVersions = []string{
 	LATEST_PROTOCOL_VERSION,
+	"2025-06-18",
 	"2025-03-26",
 	"2024-11-05",
 }
@@ -1369,8 +1370,8 @@ type CreateTaskResult struct {
 // GetTaskRequest retrieves the current status of a task.
 type GetTaskRequest struct {
 	Request
-	Header http.Header     `json:"-"`
-	Params GetTaskParams   `json:"params"`
+	Header http.Header   `json:"-"`
+	Params GetTaskParams `json:"params"`
 }
 
 type GetTaskParams struct {
@@ -1398,8 +1399,8 @@ type ListTasksResult struct {
 // TaskResultRequest retrieves the result of a completed task.
 type TaskResultRequest struct {
 	Request
-	Header http.Header        `json:"-"`
-	Params TaskResultParams   `json:"params"`
+	Header http.Header      `json:"-"`
+	Params TaskResultParams `json:"params"`
 }
 
 type TaskResultParams struct {
@@ -1417,8 +1418,8 @@ type TaskResultResult struct {
 // CancelTaskRequest cancels an in-progress task.
 type CancelTaskRequest struct {
 	Request
-	Header http.Header       `json:"-"`
-	Params CancelTaskParams  `json:"params"`
+	Header http.Header      `json:"-"`
+	Params CancelTaskParams `json:"params"`
 }
 
 type CancelTaskParams struct {
@@ -1526,4 +1527,3 @@ func NewElicitationCompleteNotification(elicitationID string) JSONRPCNotificatio
 		},
 	}
 }
-
