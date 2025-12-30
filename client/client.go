@@ -267,7 +267,7 @@ func (c *Client) ListResourcesByPage(
 	ctx context.Context,
 	request mcp.ListResourcesRequest,
 ) (*mcp.ListResourcesResult, error) {
-	result, err := listByPage[mcp.ListResourcesResult](ctx, c, request.PaginatedRequest, "resources/list")
+	result, err := listByPage[mcp.ListResourcesResult](ctx, c, request.PaginatedRequest, request.Header, "resources/list")
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +303,7 @@ func (c *Client) ListResourceTemplatesByPage(
 	ctx context.Context,
 	request mcp.ListResourceTemplatesRequest,
 ) (*mcp.ListResourceTemplatesResult, error) {
-	result, err := listByPage[mcp.ListResourceTemplatesResult](ctx, c, request.PaginatedRequest, "resources/templates/list")
+	result, err := listByPage[mcp.ListResourceTemplatesResult](ctx, c, request.PaginatedRequest, request.Header, "resources/templates/list")
 	if err != nil {
 		return nil, err
 	}
@@ -367,7 +367,7 @@ func (c *Client) ListPromptsByPage(
 	ctx context.Context,
 	request mcp.ListPromptsRequest,
 ) (*mcp.ListPromptsResult, error) {
-	result, err := listByPage[mcp.ListPromptsResult](ctx, c, request.PaginatedRequest, "prompts/list")
+	result, err := listByPage[mcp.ListPromptsResult](ctx, c, request.PaginatedRequest, request.Header, "prompts/list")
 	if err != nil {
 		return nil, err
 	}
@@ -415,7 +415,7 @@ func (c *Client) ListToolsByPage(
 	ctx context.Context,
 	request mcp.ListToolsRequest,
 ) (*mcp.ListToolsResult, error) {
-	result, err := listByPage[mcp.ListToolsResult](ctx, c, request.PaginatedRequest, "tools/list")
+	result, err := listByPage[mcp.ListToolsResult](ctx, c, request.PaginatedRequest, request.Header, "tools/list")
 	if err != nil {
 		return nil, err
 	}
