@@ -668,9 +668,10 @@ func listByPage[T any](
 	ctx context.Context,
 	client *Client,
 	request mcp.PaginatedRequest,
+	header http.Header,
 	method string,
 ) (*T, error) {
-	response, err := client.sendRequest(ctx, method, request.Params, nil)
+	response, err := client.sendRequest(ctx, method, request.Params, header)
 	if err != nil {
 		return nil, err
 	}
