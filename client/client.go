@@ -213,6 +213,11 @@ func (c *Client) Initialize(
 		Capabilities:    capabilities,
 	}
 
+	// By default, use client supported lastest protocol version if version not specified
+	if params.ProtocolVersion == "" {
+		params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	}
+
 	response, err := c.sendRequest(ctx, "initialize", params, request.Header)
 	if err != nil {
 		return nil, err
