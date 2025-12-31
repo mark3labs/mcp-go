@@ -129,11 +129,11 @@ type StreamableHTTP struct {
 	requestHandler RequestHandler
 	requestMu      sync.RWMutex
 
-	closed chan struct{}
+	closed    chan struct{}
+	closeOnce sync.Once
 
 	// OAuth support
 	oauthHandler *OAuthHandler
-	wg           sync.WaitGroup
 }
 
 // NewStreamableHTTP creates a new Streamable HTTP transport with the given server URL.
@@ -198,21 +198,14 @@ func (c *StreamableHTTP) Start(ctx context.Context) error {
 
 // Close closes the all the HTTP connections to the server.
 func (c *StreamableHTTP) Close() error {
-	select {
-	case <-c.closed:
-		return nil
-	default:
-	}
-	// Cancel all in-flight requests
-	close(c.closed)
+	c.closeOnce.Do(func() {
+		// Cancel all in-flight requests
+		close(c.closed)
 
-	sessionId := c.sessionID.Load().(string)
-	if sessionId != "" {
-		c.sessionID.Store("")
-		c.wg.Add(1)
-		// notify server session closed
-		go func() {
-			defer c.wg.Done()
+		sessionId := c.sessionID.Load().(string)
+		if sessionId != "" {
+			c.sessionID.Store("")
+			// notify server session closed
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.serverURL.String(), nil)
@@ -238,9 +231,8 @@ func (c *StreamableHTTP) Close() error {
 				return
 			}
 			res.Body.Close()
-		}()
-	}
-	c.wg.Wait()
+		}
+	})
 	return nil
 }
 
