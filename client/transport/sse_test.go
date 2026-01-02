@@ -1263,7 +1263,10 @@ func TestSSE_SendRequest_Timeout(t *testing.T) {
 		duration := time.Since(startTime)
 
 		require.Error(t, err, "Expected timeout error")
-		require.Contains(t, err.Error(), "timeout", "Error should mention timeout")
+		errMsg := err.Error()
+		require.True(t,
+			strings.Contains(errMsg, "timeout") || strings.Contains(errMsg, "deadline exceeded"),
+			"Error should mention timeout or deadline, got: %v", err)
 		expectedTimeout := 2 * time.Second
 		require.GreaterOrEqual(t, duration, expectedTimeout*7/10) // 70% of expected
 		require.LessOrEqual(t, duration, expectedTimeout*13/10)   // 130% of expected
