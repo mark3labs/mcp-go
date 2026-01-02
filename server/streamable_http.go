@@ -345,7 +345,7 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		sessionID = r.Header.Get(HeaderKeySessionID)
 		isTerminated, err := sessionIdManager.Validate(sessionID)
 		if err != nil {
-			http.Error(w, "Invalid session ID", http.StatusBadRequest)
+			http.Error(w, "Invalid session ID", http.StatusNotFound)
 			return
 		}
 		if isTerminated {
@@ -734,7 +734,7 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w http.ResponseWriter, r *
 	sessionIdManager := s.sessionIdManagerResolver.ResolveSessionIdManager(r)
 	isTerminated, err := sessionIdManager.Validate(sessionID)
 	if err != nil {
-		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		http.Error(w, "Invalid session ID", http.StatusNotFound)
 		return err
 	}
 	if isTerminated {

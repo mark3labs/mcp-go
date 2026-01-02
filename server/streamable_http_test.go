@@ -255,8 +255,8 @@ func TestStreamableHTTP_POST_SendAndReceive(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != 400 {
-			t.Errorf("Expected status 400, got %d", resp.StatusCode)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("Expected status 404, got %d", resp.StatusCode)
 		}
 	})
 
@@ -1458,8 +1458,8 @@ func TestStreamableHTTP_SessionValidation(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("Expected status 400, got %d", resp.StatusCode)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("Expected status 404, got %d", resp.StatusCode)
 		}
 
 		body, _ := io.ReadAll(resp.Body)
