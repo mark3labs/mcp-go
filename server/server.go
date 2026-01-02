@@ -175,6 +175,8 @@ type MCPServer struct {
 	resourceHandlerMiddlewares []ResourceHandlerMiddleware
 	toolFilters                []ToolFilterFunc
 	notificationHandlers       map[string]NotificationHandlerFunc
+	promptCompletionProvider   PromptCompletionProvider
+	resourceCompletionProvider ResourceCompletionProvider
 	capabilities               serverCapabilities
 	paginationLimit            *int
 	sessions                   sync.Map
@@ -199,6 +201,7 @@ type serverCapabilities struct {
 	elicitation *bool
 	roots       *bool
 	tasks       *taskCapabilities
+	completions *bool
 }
 
 // resourceCapabilities defines the supported resource-related features
@@ -219,9 +222,9 @@ type toolCapabilities struct {
 
 // taskCapabilities defines the supported task-related features
 type taskCapabilities struct {
-	list           bool
-	cancel         bool
-	toolCallTasks  bool
+	list          bool
+	cancel        bool
+	toolCallTasks bool
 }
 
 // WithResourceCapabilities configures resource-related server capabilities
@@ -232,6 +235,20 @@ func WithResourceCapabilities(subscribe, listChanged bool) ServerOption {
 			subscribe:   subscribe,
 			listChanged: listChanged,
 		}
+	}
+}
+
+// WithPromptCompletionProvider sets a custom prompt completion provider
+func WithPromptCompletionProvider(provider PromptCompletionProvider) ServerOption {
+	return func(s *MCPServer) {
+		s.promptCompletionProvider = provider
+	}
+}
+
+// WithResourceCompletionProvider sets a custom resource completion provider
+func WithResourceCompletionProvider(provider ResourceCompletionProvider) ServerOption {
+	return func(s *MCPServer) {
+		s.resourceCompletionProvider = provider
 	}
 }
 
@@ -375,6 +392,13 @@ func WithInstructions(instructions string) ServerOption {
 	}
 }
 
+// WithCompletions enables the completion capability
+func WithCompletions() ServerOption {
+	return func(s *MCPServer) {
+		s.capabilities.completions = mcp.ToBoolPtr(true)
+	}
+}
+
 // NewMCPServer creates a new MCP server instance with the given name, version and options
 func NewMCPServer(
 	name, version string,
@@ -392,11 +416,18 @@ func NewMCPServer(
 		version:                    version,
 		notificationHandlers:       make(map[string]NotificationHandlerFunc),
 		tasks:                      make(map[string]*taskEntry),
+		promptCompletionProvider:   &DefaultPromptCompletionProvider{},
+		resourceCompletionProvider: &DefaultResourceCompletionProvider{},
 		capabilities: serverCapabilities{
-			tools:     nil,
-			resources: nil,
-			prompts:   nil,
-			logging:   nil,
+			tools:       nil,
+			resources:   nil,
+			prompts:     nil,
+			logging:     nil,
+			sampling:    nil,
+			elicitation: nil,
+			roots:       nil,
+			tasks:       nil,
+			completions: nil,
 		},
 	}
 
@@ -766,6 +797,10 @@ func (s *MCPServer) handleInitialize(
 		}
 
 		capabilities.Tasks = tasksCapability
+	}
+
+	if s.capabilities.completions != nil && *s.capabilities.completions {
+		capabilities.Completions = &struct{}{}
 	}
 
 	result := mcp.InitializeResult{
@@ -1528,6 +1563,54 @@ func (s *MCPServer) handleCancelTask(
 
 	result := mcp.NewCancelTaskResult(task)
 	return &result, nil
+}
+
+func (s *MCPServer) handleComplete(
+	ctx context.Context,
+	id any,
+	request mcp.CompleteRequest,
+) (*mcp.CompleteResult, *requestError) {
+	var completion *mcp.Completion
+	var err error
+	switch ref := request.Params.Ref.(type) {
+	case mcp.PromptReference:
+		completion, err = s.promptCompletionProvider.CompletePromptArgument(
+			ctx,
+			ref.Name,
+			request.Params.Argument,
+			request.Params.Context,
+		)
+	case mcp.ResourceReference:
+		completion, err = s.resourceCompletionProvider.CompleteResourceArgument(
+			ctx,
+			ref.URI,
+			request.Params.Argument,
+			request.Params.Context,
+		)
+	default:
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_REQUEST,
+			err:  fmt.Errorf("unknown reference type: %v", ref),
+		}
+	}
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INTERNAL_ERROR,
+			err:  err,
+		}
+	}
+
+	// Defensive nil check: default providers always return non-nil completions,
+	// but custom providers might erroneously return nil. Treat as empty result.
+	if completion == nil {
+		return &mcp.CompleteResult{}, nil
+	}
+
+	return &mcp.CompleteResult{
+		Completion: *completion,
+	}, nil
 }
 
 //
