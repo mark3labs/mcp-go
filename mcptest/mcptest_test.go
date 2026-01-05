@@ -352,3 +352,55 @@ func TestServerWithResourceTemplate(t *testing.T) {
 		t.Errorf("Got %q, want %q", textContent.Text, want)
 	}
 }
+
+func TestListToolsWithHeader(t *testing.T) {
+	hooks := &server.Hooks{}
+	hooks.AddAfterListTools(func(ctx context.Context, id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
+		value := message.Header.Get("X-Test-Header")
+		if value != "test-header-value" {
+			t.Fatalf("Expected value is test-header-value, got %s", value)
+		}
+	})
+
+	// Create MCP server with capabilities
+	mcpServer := server.NewMCPServer(
+		"test-server",
+		"1.0.0",
+		server.WithToolCapabilities(true),
+		server.WithHooks(hooks),
+	)
+
+	testServer := server.NewTestStreamableHTTPServer(mcpServer)
+	defer testServer.Close()
+
+	initRequest := mcp.InitializeRequest{
+		Params: mcp.InitializeParams{
+			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+			ClientInfo: mcp.Implementation{
+				Name:    "test-client",
+				Version: "1.0.0",
+			},
+		},
+	}
+
+	client, err := client.NewStreamableHttpClient(testServer.URL)
+	if err != nil {
+		t.Fatalf("Create client failed %v", err)
+		return
+	}
+	ctx := context.Background()
+	if err := client.Start(ctx); err != nil {
+		t.Fatalf("Failed to start client: %v", err)
+		return
+	}
+
+	// Initialize
+	_, err = client.Initialize(ctx, initRequest)
+	if err != nil {
+		t.Fatalf("Failed to initialize: %v\n", err)
+	}
+
+	req := mcp.ListToolsRequest{Header: http.Header{"X-Test-Header": {"test-header-value"}}}
+	client.ListTools(context.Background(), req)
+}
+
