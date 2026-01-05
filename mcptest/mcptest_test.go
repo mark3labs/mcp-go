@@ -411,3 +411,44 @@ func TestListToolsWithHeader(t *testing.T) {
 		t.Fatalf("Expected value is %s, got %s", expectedHeaderValue, gotHeaderValue)
 	}
 }
+
+func TestSimulateClientInfo(t *testing.T) {
+	ctx := context.Background()
+
+	srv := mcptest.NewUnstartedServer(t)
+	defer srv.Close()
+	srv.AddTool(mcp.NewTool("whoami", mcp.WithDescription("Says hello to client.")),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			clientName := ""
+			if clientSession := server.ClientSessionFromContext(ctx); clientSession != nil {
+				if sessionWithClientInfo, ok := clientSession.(server.SessionWithClientInfo); ok {
+					clientName = sessionWithClientInfo.GetClientInfo().Name
+				}
+			}
+			return mcp.NewToolResultText(fmt.Sprintf("Hello, %s!", clientName)), nil
+		})
+	srv.SetClientInfo(mcp.Implementation{
+		Name: "test-client",
+	})
+	srv.Start(context.TODO())
+
+	client := srv.Client()
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "whoami"
+
+	result, err := client.CallTool(ctx, req)
+	if err != nil {
+		t.Fatal("CallTool:", err)
+	}
+
+	got, err := resultToString(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := "Hello, test-client!"
+	if got != want {
+		t.Errorf("Got %q, want %q", got, want)
+	}
+}
