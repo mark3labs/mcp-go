@@ -197,7 +197,7 @@ server.ServeStdio(s)
 ```go
 // Client example - uses functionality
 client := client.NewStdioClient("database-server")
-tools, _ := client.ListTools(ctx)
+tools, _ := client.ListTools(ctx, mcp.ListToolsRequest{})
 result, _ := client.CallTool(ctx, queryRequest)
 ```
 
@@ -1426,7 +1426,7 @@ func demonstrateClientLifecycle() error {
 
 func performClientOperations(ctx context.Context, c client.Client) error {
     // List available tools
-    tools, err := c.ListTools(ctx)
+    tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
         return err
     }
@@ -1683,7 +1683,7 @@ func reconnectClient(c client.Client) error {
 }
 
 func suggestAlternativeTools(ctx context.Context, c client.Client) {
-    tools, err := c.ListTools(ctx)
+    tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
         log.Printf("Failed to list tools: %v", err)
         return
@@ -1696,7 +1696,7 @@ func suggestAlternativeTools(ctx context.Context, c client.Client) {
 }
 
 func showToolSchema(ctx context.Context, c client.Client, toolName string) {
-    tools, err := c.ListTools(ctx)
+    tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
         log.Printf("Failed to list tools: %v", err)
         return
@@ -1902,7 +1902,7 @@ func (chm *ClientHealthMonitor) checkHealth(ctx context.Context) {
     defer cancel()
 
     // Try to list tools as a health check
-    _, err := chm.client.ListTools(ctx)
+    _, err := chm.client.ListTools(ctx, mcp.ListToolsRequest{})
     
     chm.mutex.Lock()
     chm.healthy = (err == nil)
@@ -2073,7 +2073,7 @@ func main() {
 
 func demonstrateClientOperations(ctx context.Context, c client.Client) error {
     // List available tools
-    tools, err := c.ListTools(ctx)
+    tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
         return fmt.Errorf("failed to list tools: %w", err)
     }
@@ -2084,7 +2084,7 @@ func demonstrateClientOperations(ctx context.Context, c client.Client) error {
     }
 
     // List available resources
-    resources, err := c.ListResources(ctx)
+    resources, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
     if err != nil {
         return fmt.Errorf("failed to list resources: %w", err)
     }
@@ -2356,7 +2356,7 @@ func NewLLMApplication(mcpAddress string) (*LLMApplication, error) {
 
 func (app *LLMApplication) ProcessUserQuery(ctx context.Context, query string) (string, error) {
     // Get available tools for the LLM
-    tools, err := app.mcpClient.ListTools(ctx)
+    tools, err := app.mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
         return "", err
     }
@@ -2453,7 +2453,7 @@ func (msc *MultiServerClient) GetAllTools(ctx context.Context) (map[string][]mcp
     allTools := make(map[string][]mcp.Tool)
 
     for serverName, c := range msc.clients {
-        tools, err := c.ListTools(ctx)
+        tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
         if err != nil {
             return nil, fmt.Errorf("failed to get tools from %s: %w", serverName, err)
         }
@@ -2502,7 +2502,7 @@ import (
 
 func listResources(ctx context.Context, c client.Client) error {
     // List all available resources
-    resources, err := c.ListResources(ctx)
+    resources, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
     if err != nil {
         return fmt.Errorf("failed to list resources: %w", err)
     }
@@ -2527,7 +2527,7 @@ func listResources(ctx context.Context, c client.Client) error {
 
 ```go
 func listResourcesByType(ctx context.Context, c client.Client, mimeType string) ([]mcp.Resource, error) {
-    resources, err := c.ListResources(ctx)
+    resources, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
     if err != nil {
         return nil, err
     }
@@ -2543,7 +2543,7 @@ func listResourcesByType(ctx context.Context, c client.Client, mimeType string) 
 }
 
 func listResourcesByPattern(ctx context.Context, c client.Client, pattern string) ([]mcp.Resource, error) {
-    resources, err := c.ListResources(ctx)
+    resources, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
     if err != nil {
         return nil, err
     }
@@ -2605,7 +2605,7 @@ func readResource(ctx context.Context, c client.Client, uri string) (*mcp.ReadRe
 
 func demonstrateResourceReading(ctx context.Context, c client.Client) {
     // List resources first
-    resources, err := c.ListResources(ctx)
+   resources, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
     if err != nil {
         log.Printf("Failed to list resources: %v", err)
         return
@@ -2799,7 +2799,7 @@ func callTool(ctx context.Context, c client.Client, name string, args map[string
 
 func demonstrateToolCalling(ctx context.Context, c client.Client) {
     // List available tools
-    tools, err := c.ListTools(ctx)
+    tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
         log.Printf("Failed to list tools: %v", err)
         return
@@ -2902,7 +2902,7 @@ func validateValue(value interface{}, schema map[string]any) error {
 
 func callToolWithValidation(ctx context.Context, c client.Client, toolName string, args map[string]interface{}) (*mcp.CallToolResult, error) {
     // Get tool schema
-    tools, err := c.ListTools(ctx)
+    tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
         return nil, fmt.Errorf("failed to list tools: %w", err)
     }
@@ -3026,7 +3026,7 @@ func getPrompt(ctx context.Context, c client.Client, name string, args map[strin
 
 func demonstratePromptUsage(ctx context.Context, c client.Client) {
     // List available prompts
-    prompts, err := c.ListPrompts(ctx)
+    prompts, err := c.ListPrompts(ctx, mcp.ListPromptsRequest{})
     if err != nil {
         log.Printf("Failed to list prompts: %v", err)
         return
@@ -3495,7 +3495,7 @@ func createStdioClient() {
     }
 
     // Use the client
-    tools, err := c.ListTools(ctx, listToolsRequest)
+    tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
         log.Fatal(err)
     }
@@ -3739,7 +3739,7 @@ func createStreamableHTTPClient() {
     }
 
     // Use client
-    tools, err := c.ListTools(ctx)
+    tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
         log.Fatal(err)
     }
@@ -3883,7 +3883,7 @@ func createStreamableHTTPClientWithSession() {
 
     ctx := context.Background()
     // Use client...
-    _, err := c.ListTools(ctx)
+    _, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     // If the session is terminated, you must reinitialize the client
     if errors.Is(err, transport.ErrSessionTerminated) {
         c.Initialize(ctx) // Reinitialize if session is terminated
@@ -3929,7 +3929,7 @@ func createSSEClient() {
     }()
 
     // Use client for regular operations
-    tools, err := c.ListTools(ctx)
+    tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
         log.Fatal(err)
     }
