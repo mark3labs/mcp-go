@@ -356,12 +356,12 @@ func TestServerWithResourceTemplate(t *testing.T) {
 }
 
 func TestListToolsWithHeader(t *testing.T) {
+	expectedHeaderValue := "test-header-value"
+	gotHeaderValue := ""
+
 	hooks := &server.Hooks{}
 	hooks.AddAfterListTools(func(ctx context.Context, id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
-		value := message.Header.Get("X-Test-Header")
-		if value != "test-header-value" {
-			t.Fatalf("Expected value is test-header-value, got %s", value)
-		}
+		gotHeaderValue = message.Header.Get("X-Test-Header")
 	})
 
 	// Create MCP server with capabilities
@@ -402,7 +402,14 @@ func TestListToolsWithHeader(t *testing.T) {
 		t.Fatalf("Failed to initialize: %v\n", err)
 	}
 
-	req := mcp.ListToolsRequest{Header: http.Header{"X-Test-Header": {"test-header-value"}}}
-	client.ListTools(context.Background(), req)
+	req := mcp.ListToolsRequest{Header: http.Header{"X-Test-Header": {expectedHeaderValue}}}
+	_, err = client.ListTools(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Failed to ListTools: %v\n", err)
+	}
+	if expectedHeaderValue != gotHeaderValue {
+		t.Fatalf("Expected value is %s, got %s", expectedHeaderValue, gotHeaderValue)
+	}
 }
+
 
