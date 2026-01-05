@@ -430,7 +430,10 @@ func TestSimulateClientInfo(t *testing.T) {
 	srv.SetClientInfo(mcp.Implementation{
 		Name: "test-client",
 	})
-	srv.Start(context.TODO())
+	err := srv.Start(ctx)
+	if err != nil {
+		t.Fatal("Start:", err)
+	}
 
 	client := srv.Client()
 
