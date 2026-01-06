@@ -403,7 +403,7 @@ func TestListToolsWithHeader(t *testing.T) {
 	}
 
 	req := mcp.ListToolsRequest{Header: http.Header{"X-Test-Header": {expectedHeaderValue}}}
-	_, err = client.ListTools(context.Background(), req)
+	_, err = client.ListToolsByPage(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Failed to ListTools: %v\n", err)
 	}
@@ -411,5 +411,3 @@ func TestListToolsWithHeader(t *testing.T) {
 		t.Fatalf("Expected value is %s, got %s", expectedHeaderValue, gotHeaderValue)
 	}
 }
-
-
