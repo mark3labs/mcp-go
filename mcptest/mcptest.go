@@ -24,6 +24,7 @@ type Server struct {
 	prompts           []server.ServerPrompt
 	resources         []server.ServerResource
 	resourceTemplates []server.ServerResourceTemplate
+	clientInfo        mcp.Implementation
 
 	cancel func()
 
@@ -120,6 +121,11 @@ func (s *Server) AddResourceTemplates(templates ...server.ServerResourceTemplate
 	s.resourceTemplates = append(s.resourceTemplates, templates...)
 }
 
+// SetClientInfo sets the client info for the test client.
+func (s *Server) SetClientInfo(info mcp.Implementation) {
+	s.clientInfo = info
+}
+
 // Start starts the server in a goroutine. Make sure to defer Close() after Start().
 // When using NewServer(), the returned server is already started.
 func (s *Server) Start(ctx context.Context) error {
@@ -157,6 +163,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	var initReq mcp.InitializeRequest
 	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initReq.Params.ClientInfo = s.clientInfo
 	if _, err := s.client.Initialize(ctx, initReq); err != nil {
 		return fmt.Errorf("client.Initialize(): %w", err)
 	}
