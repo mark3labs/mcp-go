@@ -7,7 +7,7 @@ import (
 )
 
 type PromptCompletionProvider interface {
-	// CompletePromptArgument provides completions for a prompt argument
+	// CompletePromptArgument provides completions for a prompt argument. Just checking
 	CompletePromptArgument(ctx context.Context, promptName string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error)
 }
 
