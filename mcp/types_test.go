@@ -172,7 +172,7 @@ func TestResourceContentsMetaField(t *testing.T) {
 			}`,
 			expectedType: "text",
 			expectedMeta: map[string]any{
-				"mcpui.dev/ui-preferred-frame-size": []interface{}{"800px", "600px"},
+				"mcpui.dev/ui-preferred-frame-size": []any{"800px", "600px"},
 				"mcpui.dev/ui-initial-render-data": map[string]any{
 					"test": "value",
 				},

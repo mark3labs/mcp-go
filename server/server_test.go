@@ -2477,7 +2477,7 @@ func TestMCPServer_GetTool(t *testing.T) {
 		server := NewMCPServer("test-server", "1.0.0")
 
 		// Add some tools for concurrent access testing
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			server.AddTool(mcp.Tool{
 				Name:        fmt.Sprintf("tool-%d", i),
 				Description: fmt.Sprintf("Tool %d", i),
@@ -2489,7 +2489,7 @@ func TestMCPServer_GetTool(t *testing.T) {
 		var wg sync.WaitGroup
 
 		// Test concurrent reads
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			wg.Add(1)
 			go func(id int) {
 				defer wg.Done()
@@ -2762,7 +2762,7 @@ func TestMCPServer_ListTools(t *testing.T) {
 		server := NewMCPServer("test-server", "1.0.0")
 
 		// Pre-add some tools to test concurrent reads
-		for i := 0; i < 50; i++ {
+		for i := range 50 {
 			server.AddTool(mcp.Tool{
 				Name:        fmt.Sprintf("pre-tool-%d", i),
 				Description: fmt.Sprintf("Pre-added tool %d", i),
@@ -2774,7 +2774,7 @@ func TestMCPServer_ListTools(t *testing.T) {
 		var wg sync.WaitGroup
 
 		// Test concurrent reads (no race conditions in test logic)
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			wg.Add(1)
 			go func(id int) {
 				defer wg.Done()

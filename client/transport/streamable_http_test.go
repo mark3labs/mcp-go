@@ -357,7 +357,7 @@ func TestStreamableHTTP(t *testing.T) {
 		responses := make([]*JSONRPCResponse, numRequests)
 		errors := make([]error, numRequests)
 
-		for i := 0; i < numRequests; i++ {
+		for i := range numRequests {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
@@ -386,7 +386,7 @@ func TestStreamableHTTP(t *testing.T) {
 		wg.Wait()
 
 		// Check results
-		for i := 0; i < numRequests; i++ {
+		for i := range numRequests {
 			if errors[i] != nil {
 				t.Errorf("Request %d failed: %v", i, errors[i])
 				continue

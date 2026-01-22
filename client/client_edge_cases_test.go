@@ -97,7 +97,7 @@ func TestClient_NotificationHandlers(t *testing.T) {
 		var handlerCalls int
 
 		// Register multiple handlers
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			handlerID := i
 			client.OnNotification(func(notification mcp.JSONRPCNotification) {
 				callOrder = append(callOrder, handlerID)

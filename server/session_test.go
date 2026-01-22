@@ -78,9 +78,7 @@ func (f *sessionTestClientWithTools) GetSessionTools() map[string]ServerTool {
 	}
 
 	toolsCopy := make(map[string]ServerTool, len(f.sessionTools))
-	for k, v := range f.sessionTools {
-		toolsCopy[k] = v
-	}
+	maps.Copy(toolsCopy, f.sessionTools)
 	return toolsCopy
 }
 
@@ -95,9 +93,7 @@ func (f *sessionTestClientWithTools) SetSessionTools(tools map[string]ServerTool
 	}
 
 	toolsCopy := make(map[string]ServerTool, len(tools))
-	for k, v := range tools {
-		toolsCopy[k] = v
-	}
+	maps.Copy(toolsCopy, tools)
 	f.sessionTools = toolsCopy
 }
 

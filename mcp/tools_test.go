@@ -661,7 +661,7 @@ func TestToolWithInputSchema(t *testing.T) {
 	assert.NotNil(t, inputSchema)
 
 	// Verify required list exists
-	schemaMap, ok := inputSchema.(map[string]interface{})
+	schemaMap, ok := inputSchema.(map[string]any)
 	assert.True(t, ok)
 	requiredList, exists := schemaMap["required"]
 	assert.True(t, exists)
@@ -670,7 +670,7 @@ func TestToolWithInputSchema(t *testing.T) {
 	// Verify properties exist
 	properties, exists := schemaMap["properties"]
 	assert.True(t, exists)
-	propertiesMap, ok := properties.(map[string]interface{})
+	propertiesMap, ok := properties.(map[string]any)
 	assert.True(t, ok)
 
 	// Verify specific properties

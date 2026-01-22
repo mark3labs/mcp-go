@@ -547,10 +547,10 @@ func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, hand
 				continue
 			}
 
-			if strings.HasPrefix(line, "event:") {
-				event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-			} else if strings.HasPrefix(line, "data:") {
-				data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			if eventStr, ok := strings.CutPrefix(line, "event:"); ok {
+				event = strings.TrimSpace(eventStr)
+			} else if dataStr, ok := strings.CutPrefix(line, "data:"); ok {
+				data = strings.TrimSpace(dataStr)
 			}
 		}
 	}

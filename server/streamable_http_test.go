@@ -43,7 +43,7 @@ func addSSETool(mcpServer *MCPServer) {
 	}, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		// Send notification to client
 		server := ServerFromContext(ctx)
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			_ = server.SendNotificationToClient(ctx, "test/notification", map[string]any{
 				"value": i,
 			})
@@ -131,7 +131,6 @@ func TestStreamableHTTP_POST_SendAndReceive(t *testing.T) {
 	var sessionID string
 
 	t.Run("initialize", func(t *testing.T) {
-
 		// Send initialize request
 		resp, err := postJSON(server.URL, initRequest)
 		if err != nil {
@@ -261,7 +260,6 @@ func TestStreamableHTTP_POST_SendAndReceive(t *testing.T) {
 	})
 
 	t.Run("response with sse", func(t *testing.T) {
-
 		callToolRequest := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      123,
@@ -305,7 +303,7 @@ func TestStreamableHTTP_POST_SendAndReceive(t *testing.T) {
 		if count := strings.Count(string(responseBody), "test/notification"); count != 10 {
 			t.Errorf("Expected 10 test/notification, got %d", count)
 		}
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			if !strings.Contains(string(responseBody), fmt.Sprintf("{\"value\":%d}", i)) {
 				t.Errorf("Expected test/notification with value %d, got %s", i, string(responseBody))
 			}
@@ -324,7 +322,6 @@ func TestStreamableHTTP_POST_SendAndReceive_stateless(t *testing.T) {
 	server := NewTestStreamableHTTPServer(mcpServer, WithStateLess(true))
 
 	t.Run("initialize", func(t *testing.T) {
-
 		// Send initialize request
 		resp, err := postJSON(server.URL, initRequest)
 		if err != nil {
@@ -604,7 +601,7 @@ func TestStreamableHttpResourceGet(t *testing.T) {
 			if st, ok := session.(SessionWithResources); ok {
 				if _, ok := st.GetSessionResources()["file://test_resource"]; !ok {
 					st.SetSessionResources(map[string]ServerResource{
-						"file://test_resource": ServerResource{
+						"file://test_resource": {
 							Resource: mcp.Resource{
 								URI:         "file://test_resource",
 								Name:        "test_resource",
@@ -719,11 +716,9 @@ func TestStreamableHttpResourceGet(t *testing.T) {
 	if cmap["uri"] != "file://test_resource" {
 		t.Errorf("Expected content URI file://test_resource, got %v", cmap["uri"])
 	}
-
 }
 
 func TestStreamableHTTP_SessionWithTools(t *testing.T) {
-
 	t.Run("SessionWithTools implementation", func(t *testing.T) {
 		// Create hooks to track sessions
 		hooks := &Hooks{}
@@ -806,7 +801,7 @@ func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 
 		// Test concurrent access
 		var wg sync.WaitGroup
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			wg.Add(2)
 			go func(i int) {
 				defer wg.Done()
@@ -854,7 +849,6 @@ func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 }
 
 func TestStreamableHTTP_SessionWithResources(t *testing.T) {
-
 	t.Run("SessionWithResources implementation", func(t *testing.T) {
 		hooks := &Hooks{}
 		sessionChan := make(chan *streamableHttpSession, 1)
@@ -940,7 +934,7 @@ func TestStreamableHTTP_SessionWithResources(t *testing.T) {
 
 		// Test concurrent access
 		var wg sync.WaitGroup
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			wg.Add(2)
 			go func(i int) {
 				defer wg.Done()
@@ -1089,7 +1083,7 @@ func TestStreamableHTTPServer_WithOptions(t *testing.T) {
 		}
 
 		// Apply options multiple times and verify consistency
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			server := NewStreamableHTTPServer(mcpServer, options...)
 
 			if server.endpointPath != endpointPath {
@@ -1696,7 +1690,7 @@ func TestInsecureStatefulSessionIdManager(t *testing.T) {
 		var wg sync.WaitGroup
 		sessionIDs := make([]string, 100)
 
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			wg.Add(1)
 			go func(index int) {
 				defer wg.Done()
@@ -2205,8 +2199,7 @@ func TestStreamableHTTP_SendNotificationToSpecificClient(t *testing.T) {
 			// Parse SSE format
 			lines := strings.Split(bodyStr, "\n")
 			for _, line := range lines {
-				if strings.HasPrefix(line, "data: ") {
-					jsonData := strings.TrimPrefix(line, "data: ")
+				if jsonData, ok := strings.CutPrefix(line, "data: "); ok {
 					if err := json.Unmarshal([]byte(jsonData), &toolResponse); err == nil {
 						break
 					}
@@ -2541,7 +2534,7 @@ func TestStreamableHTTP_DrainNotifications(t *testing.T) {
 			// Send notifications in rapid succession (no delays)
 			// The concurrent goroutine (line 394-434 in streamable_http.go) may not process all of them
 			// before we hit the drain loop at line 448-468
-			for i := 0; i < 10; i++ {
+			for i := range 10 {
 				_ = server.SendNotificationToClient(ctx, "test/drain", map[string]any{
 					"index": i,
 				})

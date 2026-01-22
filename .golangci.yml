@@ -1,6 +1,11 @@
 version: "2"
 linters:
+  enable:
+    - modernize
   exclusions:
     presets:
       - std-error-handling
-
+    rules:
+      # Exclude examples directory from modernize.stringsbuilder linter.
+      - path: ^examples/
+        text: "stringsbuilder:"
