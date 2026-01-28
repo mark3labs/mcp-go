@@ -44,23 +44,16 @@ func compileTestServer(outputPath string) error {
 
 func TestStdio(t *testing.T) {
 	// Create a temporary file for the mock server
-	tempFile, err := os.CreateTemp("", "mockstdio_server")
+	tempFile, err := os.CreateTemp(t.TempDir(), "mockstdio_server")
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 	tempFile.Close()
-	mockServerPath := tempFile.Name()
-
-	// Add .exe suffix on Windows
-	if runtime.GOOS == "windows" {
-		os.Remove(mockServerPath) // Remove the empty file first
-		mockServerPath += ".exe"
-	}
+	mockServerPath := tempFile.Name() + ".exe"
 
 	if compileErr := compileTestServer(mockServerPath); compileErr != nil {
 		t.Fatalf("Failed to compile mock server: %v", compileErr)
 	}
-	defer os.Remove(mockServerPath)
 
 	// Create a new Stdio transport
 	stdio := NewStdio(mockServerPath, nil)
@@ -425,7 +418,7 @@ func TestStdioErrors(t *testing.T) {
 
 	t.Run("RequestBeforeStart", func(t *testing.T) {
 		// Create a temporary file for the mock server
-		tempFile, err := os.CreateTemp("", "mockstdio_server")
+		tempFile, err := os.CreateTemp(t.TempDir(), "mockstdio_server")
 		if err != nil {
 			t.Fatalf("Failed to create temp file: %v", err)
 		}
@@ -441,7 +434,6 @@ func TestStdioErrors(t *testing.T) {
 		if compileErr := compileTestServer(mockServerPath); compileErr != nil {
 			t.Fatalf("Failed to compile mock server: %v", compileErr)
 		}
-		defer os.Remove(mockServerPath)
 
 		uninitiatedStdio := NewStdio(mockServerPath, nil)
 
@@ -464,23 +456,16 @@ func TestStdioErrors(t *testing.T) {
 
 	t.Run("RequestAfterClose", func(t *testing.T) {
 		// Create a temporary file for the mock server
-		tempFile, err := os.CreateTemp("", "mockstdio_server")
+		tempFile, err := os.CreateTemp(t.TempDir(), "mockstdio_server")
 		if err != nil {
 			t.Fatalf("Failed to create temp file: %v", err)
 		}
 		tempFile.Close()
-		mockServerPath := tempFile.Name()
-
-		// Add .exe suffix on Windows
-		if runtime.GOOS == "windows" {
-			os.Remove(mockServerPath) // Remove the empty file first
-			mockServerPath += ".exe"
-		}
+		mockServerPath := tempFile.Name() + ".exe"
 
 		if compileErr := compileTestServer(mockServerPath); compileErr != nil {
 			t.Fatalf("Failed to compile mock server: %v", compileErr)
 		}
-		defer os.Remove(mockServerPath)
 
 		// Create a new Stdio transport
 		stdio := NewStdio(mockServerPath, nil)
@@ -705,22 +690,16 @@ func TestStdio_NewStdioWithOptions_AppliesOptions(t *testing.T) {
 }
 
 func TestStdio_LargeMessages(t *testing.T) {
-	tempFile, err := os.CreateTemp("", "mockstdio_server")
+	tempFile, err := os.CreateTemp(t.TempDir(), "mockstdio_server")
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 	tempFile.Close()
-	mockServerPath := tempFile.Name()
-
-	if runtime.GOOS == "windows" {
-		os.Remove(mockServerPath)
-		mockServerPath += ".exe"
-	}
+	mockServerPath := tempFile.Name() + ".exe"
 
 	if compileErr := compileTestServer(mockServerPath); compileErr != nil {
 		t.Fatalf("Failed to compile mock server: %v", compileErr)
 	}
-	defer os.Remove(mockServerPath)
 
 	stdio := NewStdio(mockServerPath, nil)
 
