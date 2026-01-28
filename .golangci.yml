@@ -2,6 +2,12 @@ version: "2"
 linters:
   enable:
     - modernize
+    - usetesting
+  settings:
+    usetesting:
+      context-background: true
+      context-todo: true
+      os-temp-dir: true
   exclusions:
     presets:
       - std-error-handling
