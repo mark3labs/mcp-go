@@ -871,3 +871,425 @@ func TestMCPServer_HandleListToolsIncludesTaskTools(t *testing.T) {
 		assert.Len(t, result.Tools, 0)
 	})
 }
+
+// TestTaskAugmentedToolCall_TracerBullet is a comprehensive end-to-end integration test
+// that validates the complete flow of task-augmented tool calls. This "tracer bullet" test
+// ensures that:
+// 1. A task-augmented tool can be registered with the server
+// 2. Calling the tool with task params returns CreateTaskResult immediately
+// 3. The tool executes asynchronously in the background
+// 4. Task status can be polled via tasks/get
+// 5. Task result can be retrieved via tasks/result
+// 6. The result includes proper CallToolResult content and related-task metadata
+func TestTaskAugmentedToolCall_TracerBullet(t *testing.T) {
+	// 1. Create server with full task capabilities
+	server := NewMCPServer(
+		"test-server",
+		"1.0.0",
+		WithTaskCapabilities(true, true, true),
+	)
+
+	ctx := context.Background()
+
+	// Initialize the server
+	initResponse := server.HandleMessage(ctx, []byte(`{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "initialize",
+		"params": {
+			"protocolVersion": "2025-11-05",
+			"capabilities": {},
+			"clientInfo": {
+				"name": "test-client",
+				"version": "1.0.0"
+			}
+		}
+	}`))
+
+	resp, ok := initResponse.(mcp.JSONRPCResponse)
+	require.True(t, ok, "Expected JSONRPCResponse, got %T", initResponse)
+	require.NotNil(t, resp.Result, "Initialize should succeed")
+
+	// 2. Register a task-augmented tool that simulates a long-running operation
+	tool := mcp.NewTool(
+		"slow_operation",
+		mcp.WithDescription("A slow operation that processes data asynchronously"),
+		mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		mcp.WithString("input", mcp.Required()),
+	)
+
+	// Track execution state
+	executionStarted := make(chan struct{})
+	executionCompleted := make(chan struct{})
+
+	err := server.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		close(executionStarted)
+
+		// Simulate slow processing
+		input := req.GetString("input", "")
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+			// Processing complete
+		}
+
+		close(executionCompleted)
+
+		// Return the actual tool result
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.NewTextContent(fmt.Sprintf("Processed: %s", input)),
+			},
+			IsError: false,
+		}, nil
+	})
+	require.NoError(t, err, "AddTaskTool should succeed")
+
+	// 3. Call the tool with task augmentation
+	callResponse := server.HandleMessage(ctx, []byte(`{
+		"jsonrpc": "2.0",
+		"id": 2,
+		"method": "tools/call",
+		"params": {
+			"name": "slow_operation",
+			"arguments": {
+				"input": "test data"
+			},
+			"task": {
+				"ttl": 300
+			}
+		}
+	}`))
+
+	callResp, ok := callResponse.(mcp.JSONRPCResponse)
+	require.True(t, ok, "Expected JSONRPCResponse, got %T", callResponse)
+
+	// 4. Verify CreateTaskResult is returned immediately (before execution completes)
+	select {
+	case <-executionCompleted:
+		t.Fatal("Tool should not have completed yet - CreateTaskResult should be returned immediately")
+	default:
+		// Good - execution hasn't finished yet
+	}
+
+	// Extract the task ID from the response
+	callResult, ok := callResp.Result.(mcp.CallToolResult)
+	require.True(t, ok, "Expected CallToolResult, got %T", callResp.Result)
+	require.NotNil(t, callResult.Meta, "Meta should contain task info")
+	require.NotNil(t, callResult.Meta.AdditionalFields, "AdditionalFields should contain task")
+
+	// Task is stored as mcp.Task struct in AdditionalFields
+	task, ok := callResult.Meta.AdditionalFields["task"].(mcp.Task)
+	require.True(t, ok, "Task data should be present, got: %T", callResult.Meta.AdditionalFields["task"])
+
+	taskID := task.TaskId
+	require.NotEmpty(t, taskID, "Task ID should not be empty")
+
+	// Verify task status is "working"
+	assert.Equal(t, mcp.TaskStatusWorking, task.Status, "Initial task status should be 'working'")
+
+	// 5. Poll task status via tasks/get
+	// Wait for execution to start
+	select {
+	case <-executionStarted:
+		// Good - execution has started
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Tool execution should have started")
+	}
+
+	// Get task while it's still working
+	getResponse := server.HandleMessage(ctx, []byte(fmt.Sprintf(`{
+		"jsonrpc": "2.0",
+		"id": 3,
+		"method": "tasks/get",
+		"params": {
+			"taskId": "%s"
+		}
+	}`, taskID)))
+
+	getResp, ok := getResponse.(mcp.JSONRPCResponse)
+	require.True(t, ok, "Expected JSONRPCResponse, got %T", getResponse)
+
+	getResult, ok := getResp.Result.(mcp.GetTaskResult)
+	require.True(t, ok, "Expected GetTaskResult, got %T", getResp.Result)
+	assert.Equal(t, taskID, getResult.TaskId, "Task ID should match")
+	// Status could be "working" or "completed" depending on timing
+
+	// 6. Wait for execution to complete
+	select {
+	case <-executionCompleted:
+		// Good - execution completed
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Tool execution should have completed")
+	}
+
+	// 7. Retrieve the task result via tasks/result
+	resultResponse := server.HandleMessage(ctx, []byte(fmt.Sprintf(`{
+		"jsonrpc": "2.0",
+		"id": 4,
+		"method": "tasks/result",
+		"params": {
+			"taskId": "%s"
+		}
+	}`, taskID)))
+
+	resultResp, ok := resultResponse.(mcp.JSONRPCResponse)
+	require.True(t, ok, "Expected JSONRPCResponse, got %T", resultResponse)
+
+	taskResultResult, ok := resultResp.Result.(mcp.TaskResultResult)
+	require.True(t, ok, "Expected TaskResultResult, got %T", resultResp.Result)
+
+	// 8. Verify the result contains the actual CallToolResult content
+	require.NotEmpty(t, taskResultResult.Content, "Result should contain content")
+
+	textContent, ok := taskResultResult.Content[0].(mcp.TextContent)
+	require.True(t, ok, "Expected TextContent, got %T", taskResultResult.Content[0])
+	assert.Equal(t, "Processed: test data", textContent.Text, "Content should match expected output")
+	assert.False(t, taskResultResult.IsError, "Result should not be an error")
+
+	// 9. Verify related-task metadata is present
+	require.NotNil(t, taskResultResult.Meta, "Meta should be present")
+	require.NotNil(t, taskResultResult.Meta.AdditionalFields, "AdditionalFields should be present")
+
+	relatedTask, ok := taskResultResult.Meta.AdditionalFields["io.modelcontextprotocol/related-task"].(map[string]any)
+	require.True(t, ok, "Related task metadata should be present")
+
+	relatedTaskID, ok := relatedTask["taskId"].(string)
+	require.True(t, ok, "Related task ID should be present")
+	assert.Equal(t, taskID, relatedTaskID, "Related task ID should match original task ID")
+
+	// 10. Verify final task status via tasks/get
+	finalGetResponse := server.HandleMessage(ctx, []byte(fmt.Sprintf(`{
+		"jsonrpc": "2.0",
+		"id": 5,
+		"method": "tasks/get",
+		"params": {
+			"taskId": "%s"
+		}
+	}`, taskID)))
+
+	finalGetResp, ok := finalGetResponse.(mcp.JSONRPCResponse)
+	require.True(t, ok, "Expected JSONRPCResponse, got %T", finalGetResponse)
+
+	finalGetResult, ok := finalGetResp.Result.(mcp.GetTaskResult)
+	require.True(t, ok, "Expected GetTaskResult, got %T", finalGetResp.Result)
+	assert.Equal(t, mcp.TaskStatusCompleted, finalGetResult.Status, "Final task status should be 'completed'")
+}
+
+// TestTaskAugmentedToolCall_ErrorHandling tests error scenarios in the tracer bullet flow
+func TestTaskAugmentedToolCall_ErrorHandling(t *testing.T) {
+	t.Run("tool handler error marks task as failed", func(t *testing.T) {
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		ctx := context.Background()
+
+		// Initialize
+		initResponse := server.HandleMessage(ctx, []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "initialize",
+			"params": {
+				"protocolVersion": "2025-11-05",
+				"capabilities": {},
+				"clientInfo": {"name": "test", "version": "1.0.0"}
+			}
+		}`))
+		require.IsType(t, mcp.JSONRPCResponse{}, initResponse)
+
+		// Register a task tool that fails
+		tool := mcp.NewTool(
+			"failing_operation",
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+
+		err := server.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return nil, fmt.Errorf("simulated failure")
+		})
+		require.NoError(t, err)
+
+		// Call the tool
+		callResponse := server.HandleMessage(ctx, []byte(`{
+			"jsonrpc": "2.0",
+			"id": 2,
+			"method": "tools/call",
+			"params": {
+				"name": "failing_operation",
+				"task": {}
+			}
+		}`))
+
+		callResp := callResponse.(mcp.JSONRPCResponse)
+
+		// Extract task ID
+		callResult := callResp.Result.(mcp.CallToolResult)
+		task := callResult.Meta.AdditionalFields["task"].(mcp.Task)
+		taskID := task.TaskId
+
+		// Wait a bit for async execution
+		time.Sleep(50 * time.Millisecond)
+
+		// Check task status - should be failed
+		getResponse := server.HandleMessage(ctx, []byte(fmt.Sprintf(`{
+			"jsonrpc": "2.0",
+			"id": 3,
+			"method": "tasks/get",
+			"params": {"taskId": "%s"}
+		}`, taskID)))
+
+		getResp := getResponse.(mcp.JSONRPCResponse)
+		getResult := getResp.Result.(mcp.GetTaskResult)
+		assert.Equal(t, mcp.TaskStatusFailed, getResult.Status)
+		assert.NotEmpty(t, getResult.StatusMessage)
+		assert.Contains(t, getResult.StatusMessage, "simulated failure")
+	})
+
+	t.Run("calling tool without task params when required returns error", func(t *testing.T) {
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		ctx := context.Background()
+
+		// Initialize
+		server.HandleMessage(ctx, []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "initialize",
+			"params": {
+				"protocolVersion": "2025-11-05",
+				"capabilities": {},
+				"clientInfo": {"name": "test", "version": "1.0.0"}
+			}
+		}`))
+
+		// Register a task tool with TaskSupportRequired
+		tool := mcp.NewTool(
+			"required_task_tool",
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+
+		err := server.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+		require.NoError(t, err)
+
+		// Call the tool WITHOUT task params
+		callResponse := server.HandleMessage(ctx, []byte(`{
+			"jsonrpc": "2.0",
+			"id": 2,
+			"method": "tools/call",
+			"params": {
+				"name": "required_task_tool"
+			}
+		}`))
+
+		// Current implementation: returns INVALID_PARAMS because regular tool not found
+		// (task tools are only in s.taskTools map, not s.tools map)
+		// After TAS-16 is implemented: should validate task support mode and return a more specific error
+		callErrResp, ok := callResponse.(mcp.JSONRPCError)
+		require.True(t, ok, "Expected error response")
+		assert.Equal(t, mcp.INVALID_PARAMS, callErrResp.Error.Code)
+	})
+
+	t.Run("task cancellation propagates to handler", func(t *testing.T) {
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		ctx := context.Background()
+
+		// Initialize
+		server.HandleMessage(ctx, []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "initialize",
+			"params": {
+				"protocolVersion": "2025-11-05",
+				"capabilities": {},
+				"clientInfo": {"name": "test", "version": "1.0.0"}
+			}
+		}`))
+
+		// Register a long-running task tool
+		handlerStarted := make(chan struct{})
+		contextCancelled := make(chan struct{})
+
+		tool := mcp.NewTool(
+			"long_operation",
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+
+		err := server.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			close(handlerStarted)
+
+			// Wait for context cancellation
+			<-ctx.Done()
+			close(contextCancelled)
+
+			return nil, ctx.Err()
+		})
+		require.NoError(t, err)
+
+		// Call the tool
+		callResponse := server.HandleMessage(ctx, []byte(`{
+			"jsonrpc": "2.0",
+			"id": 2,
+			"method": "tools/call",
+			"params": {
+				"name": "long_operation",
+				"task": {}
+			}
+		}`))
+
+		callResp := callResponse.(mcp.JSONRPCResponse)
+		callResult := callResp.Result.(mcp.CallToolResult)
+		task := callResult.Meta.AdditionalFields["task"].(mcp.Task)
+		taskID := task.TaskId
+
+		// Wait for handler to start
+		<-handlerStarted
+
+		// Cancel the task
+		cancelResponse := server.HandleMessage(ctx, []byte(fmt.Sprintf(`{
+			"jsonrpc": "2.0",
+			"id": 3,
+			"method": "tasks/cancel",
+			"params": {"taskId": "%s", "reason": "test cancellation"}
+		}`, taskID)))
+
+		_, ok := cancelResponse.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected successful cancel response")
+
+		// Wait for context cancellation
+		select {
+		case <-contextCancelled:
+			// Good - context was cancelled
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("Context should have been cancelled")
+		}
+
+		// Verify task status is cancelled
+		time.Sleep(10 * time.Millisecond) // Give completeTask time to run
+
+		getResponse := server.HandleMessage(ctx, []byte(fmt.Sprintf(`{
+			"jsonrpc": "2.0",
+			"id": 4,
+			"method": "tasks/get",
+			"params": {"taskId": "%s"}
+		}`, taskID)))
+
+		getResp := getResponse.(mcp.JSONRPCResponse)
+		getResult := getResp.Result.(mcp.GetTaskResult)
+		assert.Equal(t, mcp.TaskStatusCancelled, getResult.Status)
+	})
+}
