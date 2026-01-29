@@ -1400,6 +1400,16 @@ func (s *MCPServer) handleToolCall(
 		}
 	}
 
+	// Validate task support - if tool requires task augmentation but called without task params
+	if tool.Tool.Execution != nil && tool.Tool.Execution.TaskSupport == mcp.TaskSupportRequired {
+		// Tool requires task augmentation but was called without task params
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  fmt.Errorf("tool '%s' requires task augmentation (must be called with task parameter)", request.Params.Name),
+		}
+	}
+
 	finalHandler := tool.Handler
 
 	s.toolMiddlewareMu.RLock()
