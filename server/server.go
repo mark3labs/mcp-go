@@ -1489,16 +1489,34 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 }
 
 // executeTaskTool runs the task tool handler asynchronously.
-// This will be fully implemented in TAS-10.
+// It creates a cancellable context, executes the handler, and stores the result.
 func (s *MCPServer) executeTaskTool(
 	ctx context.Context,
 	entry *taskEntry,
 	taskTool ServerTaskTool,
 	request mcp.CallToolRequest,
 ) {
-	// TODO: Implement in TAS-10
-	// For now, immediately fail the task
-	s.completeTask(entry, nil, fmt.Errorf("executeTaskTool not yet implemented"))
+	// Create cancellable context for this task
+	taskCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Store cancel function in entry so tasks/cancel can use it
+	s.tasksMu.Lock()
+	entry.cancelFunc = cancel
+	s.tasksMu.Unlock()
+
+	// Execute the handler
+	result, err := taskTool.Handler(taskCtx, request)
+
+	if err != nil {
+		// Handler returned an error - mark task as failed
+		s.completeTask(entry, nil, err)
+		return
+	}
+
+	// Store the CreateTaskResult as the task result
+	// This will be returned by tasks/result
+	s.completeTask(entry, result, nil)
 }
 
 func (s *MCPServer) handleNotification(

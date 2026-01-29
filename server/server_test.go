@@ -3425,13 +3425,16 @@ func TestMCPServer_HandleTaskAugmentedToolCall_AsyncExecution(t *testing.T) {
 		WithTaskCapabilities(true, true, true),
 	)
 
+	var handlerCalledMu sync.Mutex
 	handlerCalled := false
 	tool := mcp.NewTool("slow_tool",
 		mcp.WithDescription("A slow tool"),
 		mcp.WithTaskSupport(mcp.TaskSupportRequired),
 	)
 	err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+		handlerCalledMu.Lock()
 		handlerCalled = true
+		handlerCalledMu.Unlock()
 		return &mcp.CreateTaskResult{}, nil
 	})
 	require.NoError(t, err)
@@ -3453,8 +3456,10 @@ func TestMCPServer_HandleTaskAugmentedToolCall_AsyncExecution(t *testing.T) {
 	assert.Nil(t, reqErr)
 
 	// Handler should not be called yet (it runs async)
-	// Note: executeTaskTool stub completes immediately, but handler is not called
-	assert.False(t, handlerCalled, "handler should not be called during synchronous return")
+	handlerCalledMu.Lock()
+	calledBeforeWait := handlerCalled
+	handlerCalledMu.Unlock()
+	assert.False(t, calledBeforeWait, "handler should not be called during synchronous return")
 
 	// Extract task and wait for completion
 	taskField := result.Meta.AdditionalFields["task"]
@@ -3463,13 +3468,239 @@ func TestMCPServer_HandleTaskAugmentedToolCall_AsyncExecution(t *testing.T) {
 	// Wait a bit for async execution to complete
 	time.Sleep(50 * time.Millisecond)
 
-	// Verify task completed (stub implementation marks it as failed)
+	// Verify task completed successfully
 	server.tasksMu.RLock()
 	entry := server.tasks[task.TaskId]
 	completed := entry.completed
 	status := entry.task.Status
+	hasResult := entry.result != nil
 	server.tasksMu.RUnlock()
 
-	assert.True(t, completed, "task should be completed by stub")
-	assert.Equal(t, mcp.TaskStatusFailed, status, "stub marks task as failed")
+	handlerCalledMu.Lock()
+	calledAfterWait := handlerCalled
+	handlerCalledMu.Unlock()
+
+	assert.True(t, completed, "task should be completed")
+	assert.Equal(t, mcp.TaskStatusCompleted, status, "task should be marked as completed")
+	assert.True(t, hasResult, "task should have a result")
+	assert.True(t, calledAfterWait, "handler should have been called")
+}
+
+func TestMCPServer_ExecuteTaskTool(t *testing.T) {
+	t.Run("successful execution stores result", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		expectedResult := &mcp.CreateTaskResult{
+			Task: mcp.NewTask("result-task"),
+		}
+
+		tool := mcp.NewTool("test_tool",
+			mcp.WithDescription("A test tool"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+		err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			return expectedResult, nil
+		})
+		require.NoError(t, err)
+
+		// Create a task entry
+		entry := server.createTask(context.Background(), "test-task-123", nil, nil)
+
+		// Get the task tool
+		server.toolsMu.RLock()
+		taskTool := server.taskTools["test_tool"]
+		server.toolsMu.RUnlock()
+
+		request := mcp.CallToolRequest{
+			Request: mcp.Request{
+				Method: string(mcp.MethodToolsCall),
+			},
+			Params: mcp.CallToolParams{
+				Name: "test_tool",
+			},
+		}
+
+		// Execute the task tool
+		server.executeTaskTool(context.Background(), entry, taskTool, request)
+
+		// Verify result is stored
+		server.tasksMu.RLock()
+		defer server.tasksMu.RUnlock()
+
+		assert.True(t, entry.completed)
+		assert.Equal(t, mcp.TaskStatusCompleted, entry.task.Status)
+		assert.NotNil(t, entry.result)
+		assert.Nil(t, entry.resultErr)
+
+		// Verify the actual result
+		result, ok := entry.result.(*mcp.CreateTaskResult)
+		assert.True(t, ok)
+		assert.Equal(t, expectedResult, result)
+	})
+
+	t.Run("handler error marks task as failed", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		expectedErr := fmt.Errorf("handler failed")
+
+		tool := mcp.NewTool("failing_tool",
+			mcp.WithDescription("A failing tool"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+		err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			return nil, expectedErr
+		})
+		require.NoError(t, err)
+
+		// Create a task entry
+		entry := server.createTask(context.Background(), "test-task-456", nil, nil)
+
+		// Get the task tool
+		server.toolsMu.RLock()
+		taskTool := server.taskTools["failing_tool"]
+		server.toolsMu.RUnlock()
+
+		request := mcp.CallToolRequest{
+			Request: mcp.Request{
+				Method: string(mcp.MethodToolsCall),
+			},
+			Params: mcp.CallToolParams{
+				Name: "failing_tool",
+			},
+		}
+
+		// Execute the task tool
+		server.executeTaskTool(context.Background(), entry, taskTool, request)
+
+		// Verify task is marked as failed
+		server.tasksMu.RLock()
+		defer server.tasksMu.RUnlock()
+
+		assert.True(t, entry.completed)
+		assert.Equal(t, mcp.TaskStatusFailed, entry.task.Status)
+		assert.Equal(t, expectedErr.Error(), entry.task.StatusMessage)
+		assert.Nil(t, entry.result)
+		assert.Equal(t, expectedErr, entry.resultErr)
+	})
+
+	t.Run("context cancellation is handled", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		ctxCancelled := false
+
+		tool := mcp.NewTool("cancellable_tool",
+			mcp.WithDescription("A cancellable tool"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+		err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			// Simulate some work and check for cancellation
+			select {
+			case <-time.After(100 * time.Millisecond):
+				return &mcp.CreateTaskResult{}, nil
+			case <-ctx.Done():
+				ctxCancelled = true
+				return nil, ctx.Err()
+			}
+		})
+		require.NoError(t, err)
+
+		// Create a task entry
+		entry := server.createTask(context.Background(), "test-task-789", nil, nil)
+
+		// Get the task tool
+		server.toolsMu.RLock()
+		taskTool := server.taskTools["cancellable_tool"]
+		server.toolsMu.RUnlock()
+
+		request := mcp.CallToolRequest{
+			Request: mcp.Request{
+				Method: string(mcp.MethodToolsCall),
+			},
+			Params: mcp.CallToolParams{
+				Name: "cancellable_tool",
+			},
+		}
+
+		// Start execution in a goroutine
+		go server.executeTaskTool(context.Background(), entry, taskTool, request)
+
+		// Wait for cancel function to be set
+		time.Sleep(10 * time.Millisecond)
+
+		// Cancel the task
+		server.tasksMu.Lock()
+		cancelFunc := entry.cancelFunc
+		server.tasksMu.Unlock()
+
+		require.NotNil(t, cancelFunc, "cancel function should be set")
+		cancelFunc()
+
+		// Wait for completion
+		time.Sleep(50 * time.Millisecond)
+
+		// Verify task was cancelled
+		server.tasksMu.RLock()
+		defer server.tasksMu.RUnlock()
+
+		assert.True(t, ctxCancelled, "context should have been cancelled")
+		assert.True(t, entry.completed)
+		assert.Equal(t, mcp.TaskStatusFailed, entry.task.Status)
+	})
+
+	t.Run("cancel function is set before handler execution", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		var cancelFuncSet bool
+
+		tool := mcp.NewTool("check_cancel_tool",
+			mcp.WithDescription("Tool that checks cancel function"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+		err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			// Check if cancel function was set before handler was called
+			return &mcp.CreateTaskResult{}, nil
+		})
+		require.NoError(t, err)
+
+		// Create a task entry
+		entry := server.createTask(context.Background(), "test-task-999", nil, nil)
+
+		// Get the task tool
+		server.toolsMu.RLock()
+		taskTool := server.taskTools["check_cancel_tool"]
+		server.toolsMu.RUnlock()
+
+		request := mcp.CallToolRequest{
+			Request: mcp.Request{
+				Method: string(mcp.MethodToolsCall),
+			},
+			Params: mcp.CallToolParams{
+				Name: "check_cancel_tool",
+			},
+		}
+
+		// Execute in goroutine and immediately check cancel function
+		go server.executeTaskTool(context.Background(), entry, taskTool, request)
+
+		// Wait a tiny bit for the goroutine to start
+		time.Sleep(5 * time.Millisecond)
+
+		// Check that cancel function is set
+		server.tasksMu.RLock()
+		cancelFuncSet = entry.cancelFunc != nil
+		server.tasksMu.RUnlock()
+
+		assert.True(t, cancelFuncSet, "cancel function should be set early in execution")
+
+		// Wait for completion
+		time.Sleep(50 * time.Millisecond)
+	})
 }
