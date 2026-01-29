@@ -3154,9 +3154,11 @@ func TestMCPServer_TaskSupportValidation(t *testing.T) {
 			}
 		}`))
 
-		// Should succeed (note: will return CallToolResult since we haven't implemented task-augmented execution yet)
-		_, ok := response.(mcp.JSONRPCResponse)
-		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+		// Should return error indicating task execution not implemented yet (TAS-9)
+		errorResp, ok := response.(mcp.JSONRPCError)
+		require.True(t, ok, "Expected JSONRPCError response, got: %T", response)
+		assert.Equal(t, mcp.INTERNAL_ERROR, errorResp.Error.Code)
+		assert.Contains(t, errorResp.Error.Message, "task-augmented tool execution not yet implemented")
 	})
 
 	t.Run("tool with TaskSupportOptional works without task param", func(t *testing.T) {
@@ -3214,9 +3216,11 @@ func TestMCPServer_TaskSupportValidation(t *testing.T) {
 			}
 		}`))
 
-		// Should succeed
-		_, ok := response.(mcp.JSONRPCResponse)
-		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+		// Should return error indicating task execution not implemented yet (TAS-9)
+		errorResp, ok := response.(mcp.JSONRPCError)
+		require.True(t, ok, "Expected JSONRPCError response, got: %T", response)
+		assert.Equal(t, mcp.INTERNAL_ERROR, errorResp.Error.Code)
+		assert.Contains(t, errorResp.Error.Message, "task-augmented tool execution not yet implemented")
 	})
 
 	t.Run("tool with TaskSupportForbidden works without task param", func(t *testing.T) {
@@ -3299,6 +3303,170 @@ func TestMCPServer_TaskSupportValidation(t *testing.T) {
 		}`))
 
 		// Should succeed
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+		result, ok := resp.Result.(mcp.CallToolResult)
+		require.True(t, ok, "Expected CallToolResult, got: %T", resp.Result)
+		assert.Len(t, result.Content, 1)
+	})
+}
+
+func TestMCPServer_HybridModeDetection(t *testing.T) {
+	t.Run("TaskSupportOptional without task param executes synchronously", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a tool with TaskSupportOptional
+		tool := mcp.NewTool("hybrid_tool",
+			mcp.WithDescription("A tool with optional task augmentation"),
+			mcp.WithTaskSupport(mcp.TaskSupportOptional),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("sync result"), nil
+		})
+
+		// Call without task param - should execute synchronously
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "hybrid_tool"
+			}
+		}`))
+
+		// Should succeed with immediate CallToolResult
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+		result, ok := resp.Result.(mcp.CallToolResult)
+		require.True(t, ok, "Expected CallToolResult, got: %T", resp.Result)
+		assert.Len(t, result.Content, 1)
+		textContent, ok := result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "sync result", textContent.Text)
+	})
+
+	t.Run("TaskSupportOptional with task param routes to task execution", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a tool with TaskSupportOptional
+		tool := mcp.NewTool("hybrid_tool",
+			mcp.WithDescription("A tool with optional task augmentation"),
+			mcp.WithTaskSupport(mcp.TaskSupportOptional),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("should not see this"), nil
+		})
+
+		// Call with task param - should attempt task execution
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "hybrid_tool",
+				"task": {
+					"ttl": 3600
+				}
+			}
+		}`))
+
+		// Should return error indicating task execution not implemented yet
+		errorResp, ok := response.(mcp.JSONRPCError)
+		require.True(t, ok, "Expected JSONRPCError response, got: %T", response)
+		assert.Equal(t, mcp.INTERNAL_ERROR, errorResp.Error.Code)
+		assert.Contains(t, errorResp.Error.Message, "task-augmented tool execution not yet implemented")
+	})
+
+	t.Run("TaskSupportRequired with task param routes to task execution", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a tool with TaskSupportRequired
+		tool := mcp.NewTool("task_only_tool",
+			mcp.WithDescription("A tool that requires task augmentation"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("should not see this"), nil
+		})
+
+		// Call with task param - should attempt task execution
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "task_only_tool",
+				"task": {
+					"ttl": 3600
+				}
+			}
+		}`))
+
+		// Should return error indicating task execution not implemented yet
+		errorResp, ok := response.(mcp.JSONRPCError)
+		require.True(t, ok, "Expected JSONRPCError response, got: %T", response)
+		assert.Equal(t, mcp.INTERNAL_ERROR, errorResp.Error.Code)
+		assert.Contains(t, errorResp.Error.Message, "task-augmented tool execution not yet implemented")
+	})
+
+	t.Run("TaskSupportForbidden with task param executes synchronously", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a regular tool (TaskSupportForbidden)
+		tool := mcp.NewTool("regular_tool",
+			mcp.WithDescription("A regular tool"),
+			mcp.WithTaskSupport(mcp.TaskSupportForbidden),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("sync result"), nil
+		})
+
+		// Call with task param - should still execute synchronously (task param ignored)
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "regular_tool",
+				"task": {
+					"ttl": 3600
+				}
+			}
+		}`))
+
+		// Should succeed with immediate CallToolResult
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+		result, ok := resp.Result.(mcp.CallToolResult)
+		require.True(t, ok, "Expected CallToolResult, got: %T", resp.Result)
+		assert.Len(t, result.Content, 1)
+	})
+
+	t.Run("tool without Execution field with task param executes synchronously", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a tool without Execution configuration
+		tool := mcp.NewTool("simple_tool",
+			mcp.WithDescription("A simple tool"),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("sync result"), nil
+		})
+
+		// Call with task param - should still execute synchronously (no task support)
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "simple_tool",
+				"task": {
+					"ttl": 3600
+				}
+			}
+		}`))
+
+		// Should succeed with immediate CallToolResult
 		resp, ok := response.(mcp.JSONRPCResponse)
 		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
 		result, ok := resp.Result.(mcp.CallToolResult)

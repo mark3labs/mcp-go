@@ -1394,6 +1394,23 @@ func (s *MCPServer) handleToolCall(
 		}
 	}
 
+	// Check if this should be executed as a task (hybrid mode support)
+	// Tools with TaskSupportOptional or TaskSupportRequired can be executed as tasks
+	shouldExecuteAsTask := request.Params.Task != nil &&
+		tool.Tool.Execution != nil &&
+		(tool.Tool.Execution.TaskSupport == mcp.TaskSupportOptional ||
+			tool.Tool.Execution.TaskSupport == mcp.TaskSupportRequired)
+
+	if shouldExecuteAsTask {
+		// TODO(TAS-9): Implement task-augmented execution
+		// This will call handleTaskAugmentedToolCall() once implemented
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INTERNAL_ERROR,
+			err:  fmt.Errorf("task-augmented tool execution not yet implemented"),
+		}
+	}
+
 	finalHandler := tool.Handler
 
 	s.toolMiddlewareMu.RLock()
