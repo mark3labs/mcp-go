@@ -13,12 +13,41 @@ import (
 
 // NewTaskServer creates an MCP server with task-augmented tools
 func NewTaskServer() *server.MCPServer {
+	// Set up task lifecycle hooks for observability
+	hooks := &server.Hooks{}
+
+	// Track when tasks are created
+	hooks.AddOnTaskCreated(func(ctx context.Context, task mcp.Task) {
+		log.Printf("📝 Task created: %s (status: %s)", task.TaskId, task.Status)
+	})
+
+	// Track status transitions
+	hooks.AddOnTaskStatusChanged(func(ctx context.Context, task mcp.Task, oldStatus mcp.TaskStatus) {
+		log.Printf("🔄 Task %s: %s → %s", task.TaskId, oldStatus, task.Status)
+	})
+
+	// Track completions (success, failure, or cancellation)
+	hooks.AddOnTaskCompleted(func(ctx context.Context, task mcp.Task, err error) {
+		createdAt, _ := time.Parse(time.RFC3339, task.CreatedAt)
+		duration := time.Since(createdAt)
+
+		if err != nil {
+			log.Printf("❌ Task %s failed after %v: %v", task.TaskId, duration.Round(time.Millisecond), err)
+		} else if task.Status == mcp.TaskStatusCancelled {
+			log.Printf("🚫 Task %s cancelled after %v", task.TaskId, duration.Round(time.Millisecond))
+		} else {
+			log.Printf("✅ Task %s completed in %v", task.TaskId, duration.Round(time.Millisecond))
+		}
+	})
+
 	// Create server with task capabilities enabled
 	mcpServer := server.NewMCPServer(
 		"example-servers/task-tool",
 		"1.0.0",
 		// Enable task capabilities: list, cancel, and tool call tasks
 		server.WithTaskCapabilities(true, true, true),
+		// Add hooks for observability
+		server.WithHooks(hooks),
 	)
 
 	// Example 1: Task-Required Tool

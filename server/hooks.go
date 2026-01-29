@@ -138,6 +138,10 @@ type Hooks struct {
 	OnAfterTaskResult             []OnAfterTaskResultFunc
 	OnBeforeCancelTask            []OnBeforeCancelTaskFunc
 	OnAfterCancelTask             []OnAfterCancelTaskFunc
+	// Task lifecycle hooks (non-protocol hooks)
+	OnTaskCreated       []OnTaskCreatedFunc
+	OnTaskStatusChanged []OnTaskStatusChangedFunc
+	OnTaskCompleted     []OnTaskCompletedFunc
 }
 
 func (c *Hooks) AddBeforeAny(hook BeforeAnyHookFunc) {
@@ -656,5 +660,65 @@ func (c *Hooks) afterCancelTask(ctx context.Context, id any, message *mcp.Cancel
 	}
 	for _, hook := range c.OnAfterCancelTask {
 		hook(ctx, id, message, result)
+	}
+}
+
+// Task lifecycle hooks (non-protocol hooks for internal task events)
+
+// OnTaskCreatedFunc is a hook that will be called when a new task is created.
+// This is triggered when a task-augmented tool is called and a task entry is created.
+type OnTaskCreatedFunc func(ctx context.Context, task mcp.Task)
+
+// OnTaskStatusChangedFunc is a hook that will be called when a task's status changes.
+// This is triggered when a task transitions from one status to another (e.g., working -> completed).
+type OnTaskStatusChangedFunc func(ctx context.Context, task mcp.Task, oldStatus mcp.TaskStatus)
+
+// OnTaskCompletedFunc is a hook that will be called when a task reaches a terminal status.
+// This includes completed, failed, and cancelled statuses. The error parameter will be non-nil
+// for failed tasks, and nil for completed or cancelled tasks.
+type OnTaskCompletedFunc func(ctx context.Context, task mcp.Task, err error)
+
+// AddOnTaskCreated registers a hook to be called when a new task is created.
+func (c *Hooks) AddOnTaskCreated(hook OnTaskCreatedFunc) {
+	c.OnTaskCreated = append(c.OnTaskCreated, hook)
+}
+
+// onTaskCreated calls all registered task created hooks.
+func (c *Hooks) onTaskCreated(ctx context.Context, task mcp.Task) {
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnTaskCreated {
+		hook(ctx, task)
+	}
+}
+
+// AddOnTaskStatusChanged registers a hook to be called when a task's status changes.
+func (c *Hooks) AddOnTaskStatusChanged(hook OnTaskStatusChangedFunc) {
+	c.OnTaskStatusChanged = append(c.OnTaskStatusChanged, hook)
+}
+
+// onTaskStatusChanged calls all registered task status changed hooks.
+func (c *Hooks) onTaskStatusChanged(ctx context.Context, task mcp.Task, oldStatus mcp.TaskStatus) {
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnTaskStatusChanged {
+		hook(ctx, task, oldStatus)
+	}
+}
+
+// AddOnTaskCompleted registers a hook to be called when a task reaches a terminal status.
+func (c *Hooks) AddOnTaskCompleted(hook OnTaskCompletedFunc) {
+	c.OnTaskCompleted = append(c.OnTaskCompleted, hook)
+}
+
+// onTaskCompleted calls all registered task completed hooks.
+func (c *Hooks) onTaskCompleted(ctx context.Context, task mcp.Task, err error) {
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnTaskCompleted {
+		hook(ctx, task, err)
 	}
 }

@@ -1821,6 +1821,11 @@ func (s *MCPServer) createTask(ctx context.Context, taskID string, ttl *int64, p
 	s.tasks[taskID] = entry
 	s.tasksMu.Unlock()
 
+	// Call task created hook
+	if s.hooks != nil {
+		s.hooks.onTaskCreated(ctx, task)
+	}
+
 	// Start TTL cleanup if specified
 	if ttl != nil && *ttl > 0 {
 		go s.scheduleTaskCleanup(taskID, *ttl)
@@ -1916,12 +1921,15 @@ func (s *MCPServer) listTasks(ctx context.Context) []mcp.Task {
 // completeTask marks a task as completed with the given result.
 func (s *MCPServer) completeTask(entry *taskEntry, result any, err error) {
 	s.tasksMu.Lock()
-	defer s.tasksMu.Unlock()
 
 	// Guard against double completion
 	if entry.completed {
+		s.tasksMu.Unlock()
 		return
 	}
+
+	// Store old status for hook
+	oldStatus := entry.task.Status
 
 	if err != nil {
 		entry.task.Status = mcp.TaskStatusFailed
@@ -1939,8 +1947,20 @@ func (s *MCPServer) completeTask(entry *taskEntry, result any, err error) {
 	entry.completed = true
 	close(entry.done)
 
-	// Send status notification (must be after unlock to avoid deadlock)
-	go s.sendTaskStatusNotification(entry.task)
+	// Make a copy of task for hooks (to avoid race conditions)
+	taskCopy := entry.task
+	s.tasksMu.Unlock()
+
+	// Call hooks (after unlock to avoid deadlock)
+	if s.hooks != nil {
+		// Create a background context for hooks since the original context may be cancelled
+		ctx := context.Background()
+		s.hooks.onTaskStatusChanged(ctx, taskCopy, oldStatus)
+		s.hooks.onTaskCompleted(ctx, taskCopy, err)
+	}
+
+	// Send status notification
+	go s.sendTaskStatusNotification(taskCopy)
 }
 
 // cancelTask cancels a running task.
@@ -1951,12 +1971,15 @@ func (s *MCPServer) cancelTask(ctx context.Context, taskID string) error {
 	}
 
 	s.tasksMu.Lock()
-	defer s.tasksMu.Unlock()
 
 	// Don't allow cancelling already completed tasks
 	if entry.completed {
+		s.tasksMu.Unlock()
 		return fmt.Errorf("cannot cancel task in terminal status: %s", entry.task.Status)
 	}
+
+	// Store old status for hook
+	oldStatus := entry.task.Status
 
 	// Cancel the context if available
 	if entry.cancelFunc != nil {
@@ -1973,8 +1996,20 @@ func (s *MCPServer) cancelTask(ctx context.Context, taskID string) error {
 	entry.completed = true
 	close(entry.done)
 
-	// Send status notification (must be after unlock to avoid deadlock)
-	go s.sendTaskStatusNotification(entry.task)
+	// Make a copy of task for hooks (to avoid race conditions)
+	taskCopy := entry.task
+	s.tasksMu.Unlock()
+
+	// Call hooks (after unlock to avoid deadlock)
+	if s.hooks != nil {
+		// Use background context for hooks since the original context may be cancelled
+		hookCtx := context.Background()
+		s.hooks.onTaskStatusChanged(hookCtx, taskCopy, oldStatus)
+		s.hooks.onTaskCompleted(hookCtx, taskCopy, nil)
+	}
+
+	// Send status notification
+	go s.sendTaskStatusNotification(taskCopy)
 
 	return nil
 }

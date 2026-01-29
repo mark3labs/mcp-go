@@ -612,6 +612,64 @@ Tasks have the following lifecycle:
 
 Tasks are automatically cleaned up after their TTL expires (default: 300 seconds).
 
+#### Task Observability Hooks
+
+Monitor task lifecycle events for metrics, logging, or debugging:
+
+```go
+hooks := &server.Hooks{}
+
+// Track when tasks are created
+hooks.AddOnTaskCreated(func(ctx context.Context, task mcp.Task) {
+    log.Printf("Task created: %s (status: %s)", task.TaskId, task.Status)
+    metrics.IncrCounter("tasks_created_total")
+})
+
+// Track status transitions
+hooks.AddOnTaskStatusChanged(func(ctx context.Context, task mcp.Task, oldStatus mcp.TaskStatus) {
+    log.Printf("Task %s: %s → %s", task.TaskId, oldStatus, task.Status)
+    metrics.IncrCounter("task_status_changes_total", map[string]string{
+        "from": string(oldStatus),
+        "to":   string(task.Status),
+    })
+})
+
+// Track completions (success, failure, or cancellation)
+hooks.AddOnTaskCompleted(func(ctx context.Context, task mcp.Task, err error) {
+    duration := time.Since(parseTime(task.CreatedAt))
+    
+    if err != nil {
+        log.Printf("Task %s failed after %v: %v", task.TaskId, duration, err)
+        metrics.RecordDuration("task_duration_seconds", duration, map[string]string{"status": "failed"})
+    } else if task.Status == mcp.TaskStatusCancelled {
+        log.Printf("Task %s cancelled after %v", task.TaskId, duration)
+        metrics.RecordDuration("task_duration_seconds", duration, map[string]string{"status": "cancelled"})
+    } else {
+        log.Printf("Task %s completed in %v", task.TaskId, duration)
+        metrics.RecordDuration("task_duration_seconds", duration, map[string]string{"status": "completed"})
+    }
+})
+
+// Create server with hooks
+s := server.NewMCPServer(
+    "Task Server",
+    "1.0.0",
+    server.WithTaskCapabilities(true, true, true),
+    server.WithHooks(hooks),
+)
+```
+
+**Available Task Hooks:**
+- `OnTaskCreated`: Called when a new task is created (status: working)
+- `OnTaskStatusChanged`: Called when task status changes (e.g., working → completed)
+- `OnTaskCompleted`: Called when task reaches terminal status (completed/failed/cancelled)
+
+**Hook Characteristics:**
+- Hooks receive a **background context** (independent of task execution context)
+- Multiple hooks can be registered for each event type
+- Hooks are called **after** state changes are applied
+- Hook execution does not block task processing
+
 For a complete working example, see [`examples/task_tool/main.go`](examples/task_tool/main.go).
 
 </details>
