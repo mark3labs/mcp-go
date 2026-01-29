@@ -1412,6 +1412,11 @@ type Task struct {
 	PollInterval *int64 `json:"pollInterval,omitempty"`
 }
 
+// GetName returns the task ID, implementing the Named interface for pagination.
+func (t Task) GetName() string {
+	return t.TaskId
+}
+
 // TaskParams represents the task metadata included when augmenting a request.
 type TaskParams struct {
 	// Requested duration in milliseconds to retain task from creation.

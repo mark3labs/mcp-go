@@ -1462,15 +1462,37 @@ func (s *MCPServer) handleGetTask(
 // handleListTasks handles tasks/list requests to list all tasks.
 func (s *MCPServer) handleListTasks(
 	ctx context.Context,
-	_ any,
+	id any,
 	request mcp.ListTasksRequest,
 ) (*mcp.ListTasksResult, *requestError) {
 	tasks := s.listTasks(ctx)
 
-	// Note: Pagination support for tasks can be added here if needed
-	// using s.paginationLimit
+	// Sort tasks by TaskId for consistent pagination
+	sort.Slice(tasks, func(i, j int) bool {
+		return tasks[i].TaskId < tasks[j].TaskId
+	})
 
-	result := mcp.NewListTasksResult(tasks)
+	// Apply pagination
+	tasksToReturn, nextCursor, err := listByPagination(
+		ctx,
+		s,
+		request.Params.Cursor,
+		tasks,
+	)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  err,
+		}
+	}
+
+	result := mcp.ListTasksResult{
+		Tasks: tasksToReturn,
+		PaginatedResult: mcp.PaginatedResult{
+			NextCursor: nextCursor,
+		},
+	}
 	return &result, nil
 }
 

@@ -541,3 +541,157 @@ func TestMCPServer_TaskJSONMarshaling(t *testing.T) {
 	assert.Equal(t, task.Status, unmarshaled.Status)
 	assert.Equal(t, task.StatusMessage, unmarshaled.StatusMessage)
 }
+
+func TestMCPServer_TaskListPagination(t *testing.T) {
+	server := NewMCPServer(
+		"test-server",
+		"1.0.0",
+		WithTaskCapabilities(true, true, true),
+		WithPaginationLimit(2), // Limit to 2 tasks per page
+	)
+
+	ctx := context.Background()
+
+	// Create multiple tasks with predictable IDs
+	ttl := int64(60000)
+	pollInterval := int64(1000)
+	server.createTask(ctx, "task-alpha", &ttl, &pollInterval)
+	server.createTask(ctx, "task-beta", &ttl, &pollInterval)
+	server.createTask(ctx, "task-gamma", &ttl, &pollInterval)
+	server.createTask(ctx, "task-delta", &ttl, &pollInterval)
+
+	t.Run("first page", func(t *testing.T) {
+		// List first page (no cursor)
+		response := server.HandleMessage(ctx, []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tasks/list"
+		}`))
+
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got %T", response)
+
+		result, ok := resp.Result.(mcp.ListTasksResult)
+		require.True(t, ok, "Expected ListTasksResult, got %T", resp.Result)
+
+		// Should get first 2 tasks (sorted by TaskId)
+		assert.Len(t, result.Tasks, 2)
+		assert.Equal(t, "task-alpha", result.Tasks[0].TaskId)
+		assert.Equal(t, "task-beta", result.Tasks[1].TaskId)
+
+		// Should have nextCursor since there are more tasks
+		assert.NotEmpty(t, result.NextCursor)
+	})
+
+	t.Run("second page", func(t *testing.T) {
+		// Get first page to get cursor
+		response := server.HandleMessage(ctx, []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tasks/list"
+		}`))
+
+		resp := response.(mcp.JSONRPCResponse)
+		firstPage := resp.Result.(mcp.ListTasksResult)
+		cursor := firstPage.NextCursor
+
+		// List second page with cursor
+		requestJSON := `{
+			"jsonrpc": "2.0",
+			"id": 2,
+			"method": "tasks/list",
+			"params": {
+				"cursor": "` + string(cursor) + `"
+			}
+		}`
+
+		response = server.HandleMessage(ctx, []byte(requestJSON))
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got %T", response)
+
+		result, ok := resp.Result.(mcp.ListTasksResult)
+		require.True(t, ok, "Expected ListTasksResult, got %T", resp.Result)
+
+		// Should get next 2 tasks
+		assert.Len(t, result.Tasks, 2)
+		assert.Equal(t, "task-delta", result.Tasks[0].TaskId)
+		assert.Equal(t, "task-gamma", result.Tasks[1].TaskId)
+
+		// Should have nextCursor even though this is the last page (client will fetch empty third page)
+		assert.NotEmpty(t, result.NextCursor)
+
+		// Fetch third page to confirm it's empty
+		requestJSON3 := `{
+			"jsonrpc": "2.0",
+			"id": 3,
+			"method": "tasks/list",
+			"params": {
+				"cursor": "` + string(result.NextCursor) + `"
+			}
+		}`
+
+		response = server.HandleMessage(ctx, []byte(requestJSON3))
+		resp, ok = response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got %T", response)
+
+		result, ok = resp.Result.(mcp.ListTasksResult)
+		require.True(t, ok, "Expected ListTasksResult, got %T", resp.Result)
+
+		// Third page should be empty with no cursor
+		assert.Empty(t, result.Tasks)
+		assert.Empty(t, result.NextCursor)
+	})
+
+	t.Run("without pagination limit", func(t *testing.T) {
+		// Server without pagination limit
+		serverNoPagination := NewMCPServer(
+			"test-server-no-pagination",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		// Create tasks
+		serverNoPagination.createTask(ctx, "task-1", &ttl, &pollInterval)
+		serverNoPagination.createTask(ctx, "task-2", &ttl, &pollInterval)
+		serverNoPagination.createTask(ctx, "task-3", &ttl, &pollInterval)
+
+		// List all tasks
+		response := serverNoPagination.HandleMessage(ctx, []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tasks/list"
+		}`))
+
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got %T", response)
+
+		result, ok := resp.Result.(mcp.ListTasksResult)
+		require.True(t, ok, "Expected ListTasksResult, got %T", resp.Result)
+
+		// Should get all tasks
+		assert.Len(t, result.Tasks, 3)
+		// Should not have nextCursor
+		assert.Empty(t, result.NextCursor)
+	})
+
+	t.Run("invalid cursor", func(t *testing.T) {
+		// Try to list with invalid cursor
+		response := server.HandleMessage(ctx, []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tasks/list",
+			"params": {
+				"cursor": "invalid-cursor"
+			}
+		}`))
+
+		errResp, ok := response.(mcp.JSONRPCError)
+		require.True(t, ok, "Expected JSONRPCError, got %T", response)
+		assert.Equal(t, mcp.INVALID_PARAMS, errResp.Error.Code)
+	})
+}
+
+func TestTask_GetName(t *testing.T) {
+	task := mcp.NewTask("test-task-id")
+	assert.Equal(t, "test-task-id", task.GetName())
+}
