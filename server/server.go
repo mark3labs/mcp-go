@@ -1849,6 +1849,9 @@ func (s *MCPServer) completeTask(entry *taskEntry, result any, err error) {
 	// Mark as completed and signal
 	entry.completed = true
 	close(entry.done)
+
+	// Send status notification (must be after unlock to avoid deadlock)
+	go s.sendTaskStatusNotification(entry.task)
 }
 
 // cancelTask cancels a running task.
@@ -1878,7 +1881,21 @@ func (s *MCPServer) cancelTask(ctx context.Context, taskID string) error {
 	entry.completed = true
 	close(entry.done)
 
+	// Send status notification (must be after unlock to avoid deadlock)
+	go s.sendTaskStatusNotification(entry.task)
+
 	return nil
+}
+
+// sendTaskStatusNotification sends a notification when a task's status changes.
+// This is called when tasks complete, fail, or are cancelled.
+func (s *MCPServer) sendTaskStatusNotification(task mcp.Task) {
+	// Send notification with task embedded in params
+	params := map[string]any{
+		"task": task,
+	}
+
+	s.SendNotificationToAllClients(mcp.MethodNotificationTasksStatus, params)
 }
 
 // scheduleTaskCleanup schedules a task for cleanup after its TTL expires.

@@ -1785,3 +1785,353 @@ func TestMCPServer_OptionalTaskTools(t *testing.T) {
 		assert.Equal(t, mcp.TaskSupportOptional, listedTool.Execution.TaskSupport)
 	})
 }
+
+// testSession implements ClientSession for testing task status notifications
+type testSession struct {
+	sessionID           string
+	notificationChannel chan mcp.JSONRPCNotification
+	initialized         bool
+}
+
+func newTestSession(sessionID string) *testSession {
+	return &testSession{
+		sessionID:           sessionID,
+		notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+		initialized:         true,
+	}
+}
+
+func (t *testSession) SessionID() string {
+	return t.sessionID
+}
+
+func (t *testSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
+	return t.notificationChannel
+}
+
+func (t *testSession) Initialize() {
+	t.initialized = true
+}
+
+func (t *testSession) Initialized() bool {
+	return t.initialized
+}
+
+func TestMCPServer_TaskStatusNotifications(t *testing.T) {
+	t.Run("notification sent when task completes successfully", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		// Create a test session to capture notifications
+		session := newTestSession("test-session-1")
+		ctx := server.WithContext(context.Background(), session)
+
+		// Register the session so it receives notifications
+		server.sessions.Store(session.SessionID(), session)
+
+		// Add a task-augmented tool that completes successfully
+		tool := mcp.NewTool("success_tool",
+			mcp.WithDescription("Tool that succeeds"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+		err := server.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					mcp.NewTextContent("success"),
+				},
+			}, nil
+		})
+		require.NoError(t, err)
+
+		// Call the tool
+		request := mcp.CallToolRequest{
+			Request: mcp.Request{
+				Method: string(mcp.MethodToolsCall),
+			},
+			Params: mcp.CallToolParams{
+				Name: "success_tool",
+				Task: &mcp.TaskParams{},
+			},
+		}
+
+		result, reqErr := server.handleToolCall(ctx, 1, request)
+		require.Nil(t, reqErr)
+		require.NotNil(t, result)
+
+		// Extract task ID from the result
+		meta := result.Meta
+		require.NotNil(t, meta)
+		taskData, ok := meta.AdditionalFields["task"]
+		require.True(t, ok)
+		task, ok := taskData.(mcp.Task)
+		require.True(t, ok)
+		taskID := task.TaskId
+
+		// Wait for task to complete
+		time.Sleep(50 * time.Millisecond)
+
+		// Drain any notifications and look for task status notification
+		var foundTaskNotification bool
+		timeout := time.After(100 * time.Millisecond)
+		for !foundTaskNotification {
+			select {
+			case notification := <-session.notificationChannel:
+				if notification.Method == string(mcp.MethodNotificationTasksStatus) {
+					foundTaskNotification = true
+
+					// Verify the notification params
+					params, ok := notification.Params.AdditionalFields["task"]
+					require.True(t, ok, "Notification should contain task data")
+
+					// Convert to map and check fields
+					taskNotif, ok := params.(mcp.Task)
+					require.True(t, ok, "Task should be of type mcp.Task")
+					assert.Equal(t, taskID, taskNotif.TaskId)
+					assert.Equal(t, mcp.TaskStatusCompleted, taskNotif.Status)
+				}
+			case <-timeout:
+				if !foundTaskNotification {
+					t.Fatal("Expected task status notification but none received")
+				}
+			}
+		}
+	})
+
+	t.Run("notification sent when task fails", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		session := newTestSession("test-session-2")
+		ctx := server.WithContext(context.Background(), session)
+
+		// Register the session so it receives notifications
+		server.sessions.Store(session.SessionID(), session)
+
+		// Add a task-augmented tool that fails
+		tool := mcp.NewTool("failing_tool",
+			mcp.WithDescription("Tool that fails"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+		expectedErr := fmt.Errorf("intentional failure")
+		err := server.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return nil, expectedErr
+		})
+		require.NoError(t, err)
+
+		// Call the tool
+		request := mcp.CallToolRequest{
+			Request: mcp.Request{
+				Method: string(mcp.MethodToolsCall),
+			},
+			Params: mcp.CallToolParams{
+				Name: "failing_tool",
+				Task: &mcp.TaskParams{},
+			},
+		}
+
+		result, reqErr := server.handleToolCall(ctx, 1, request)
+		require.Nil(t, reqErr)
+		require.NotNil(t, result)
+
+		// Extract task ID
+		meta := result.Meta
+		require.NotNil(t, meta)
+		taskData, ok := meta.AdditionalFields["task"]
+		require.True(t, ok)
+		task, ok := taskData.(mcp.Task)
+		require.True(t, ok)
+		taskID := task.TaskId
+
+		// Wait for task to fail
+		time.Sleep(50 * time.Millisecond)
+
+		// Drain any notifications and look for task status notification
+		var foundTaskNotification bool
+		timeout := time.After(100 * time.Millisecond)
+		for !foundTaskNotification {
+			select {
+			case notification := <-session.notificationChannel:
+				if notification.Method == string(mcp.MethodNotificationTasksStatus) {
+					foundTaskNotification = true
+
+					// Verify the notification params
+					params, ok := notification.Params.AdditionalFields["task"]
+					require.True(t, ok, "Notification should contain task data")
+
+					taskNotif, ok := params.(mcp.Task)
+					require.True(t, ok, "Task should be of type mcp.Task")
+					assert.Equal(t, taskID, taskNotif.TaskId)
+					assert.Equal(t, mcp.TaskStatusFailed, taskNotif.Status)
+					assert.Contains(t, taskNotif.StatusMessage, "intentional failure")
+				}
+			case <-timeout:
+				if !foundTaskNotification {
+					t.Fatal("Expected task status notification but none received")
+				}
+			}
+		}
+	})
+
+	t.Run("notification sent when task is cancelled", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		session := newTestSession("test-session-3")
+		ctx := server.WithContext(context.Background(), session)
+
+		// Register the session so it receives notifications
+		server.sessions.Store(session.SessionID(), session)
+
+		// Add a task-augmented tool that takes a long time
+		tool := mcp.NewTool("long_running_tool",
+			mcp.WithDescription("Tool that runs for a long time"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+		err := server.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			select {
+			case <-time.After(5 * time.Second):
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{
+						mcp.NewTextContent("completed"),
+					},
+				}, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		})
+		require.NoError(t, err)
+
+		// Call the tool
+		request := mcp.CallToolRequest{
+			Request: mcp.Request{
+				Method: string(mcp.MethodToolsCall),
+			},
+			Params: mcp.CallToolParams{
+				Name: "long_running_tool",
+				Task: &mcp.TaskParams{},
+			},
+		}
+
+		result, reqErr := server.handleToolCall(ctx, 1, request)
+		require.Nil(t, reqErr)
+		require.NotNil(t, result)
+
+		// Extract task ID
+		meta := result.Meta
+		require.NotNil(t, meta)
+		taskData, ok := meta.AdditionalFields["task"]
+		require.True(t, ok)
+		task, ok := taskData.(mcp.Task)
+		require.True(t, ok)
+		taskID := task.TaskId
+
+		// Wait a bit for task to start
+		time.Sleep(20 * time.Millisecond)
+
+		// Cancel the task
+		cancelErr := server.cancelTask(ctx, taskID)
+		require.NoError(t, cancelErr)
+
+		// Drain any notifications and look for task status notification
+		var foundTaskNotification bool
+		timeout := time.After(100 * time.Millisecond)
+		for !foundTaskNotification {
+			select {
+			case notification := <-session.notificationChannel:
+				if notification.Method == string(mcp.MethodNotificationTasksStatus) {
+					foundTaskNotification = true
+
+					// Verify the notification params
+					params, ok := notification.Params.AdditionalFields["task"]
+					require.True(t, ok, "Notification should contain task data")
+
+					taskNotif, ok := params.(mcp.Task)
+					require.True(t, ok, "Task should be of type mcp.Task")
+					assert.Equal(t, taskID, taskNotif.TaskId)
+					assert.Equal(t, mcp.TaskStatusCancelled, taskNotif.Status)
+					assert.Contains(t, taskNotif.StatusMessage, "cancelled")
+				}
+			case <-timeout:
+				if !foundTaskNotification {
+					t.Fatal("Expected task status notification but none received")
+				}
+			}
+		}
+	})
+
+	t.Run("notifications sent to all clients", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		// Create two test sessions
+		session1 := newTestSession("test-session-4a")
+		session2 := newTestSession("test-session-4b")
+		ctx := server.WithContext(context.Background(), session1)
+
+		// Register both sessions
+		server.sessions.Store(session1.SessionID(), session1)
+		server.sessions.Store(session2.SessionID(), session2)
+
+		// Add a task-augmented tool
+		tool := mcp.NewTool("broadcast_tool",
+			mcp.WithDescription("Tool for testing broadcast"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+		err := server.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					mcp.NewTextContent("done"),
+				},
+			}, nil
+		})
+		require.NoError(t, err)
+
+		// Call the tool
+		request := mcp.CallToolRequest{
+			Request: mcp.Request{
+				Method: string(mcp.MethodToolsCall),
+			},
+			Params: mcp.CallToolParams{
+				Name: "broadcast_tool",
+				Task: &mcp.TaskParams{},
+			},
+		}
+
+		result, reqErr := server.handleToolCall(ctx, 1, request)
+		require.Nil(t, reqErr)
+		require.NotNil(t, result)
+
+		// Wait for task to complete
+		time.Sleep(50 * time.Millisecond)
+
+		// Both sessions should receive the notification - drain all notifications
+		taskNotificationCount := 0
+		timeout := time.After(150 * time.Millisecond)
+
+	drainLoop:
+		for {
+			select {
+			case notification := <-session1.notificationChannel:
+				if notification.Method == string(mcp.MethodNotificationTasksStatus) {
+					taskNotificationCount++
+				}
+			case notification := <-session2.notificationChannel:
+				if notification.Method == string(mcp.MethodNotificationTasksStatus) {
+					taskNotificationCount++
+				}
+			case <-timeout:
+				break drainLoop
+			}
+
+			if taskNotificationCount >= 2 {
+				break drainLoop
+			}
+		}
+
+		assert.Equal(t, 2, taskNotificationCount, "Both sessions should receive the task status notification")
+	})
+}
