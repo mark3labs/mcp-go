@@ -3156,8 +3156,8 @@ func TestMCPServer_HandleToolCall_DetectsTaskAugmentation(t *testing.T) {
 		{
 			name: "task-augmented tool without task params works as regular tool",
 			setupServer: func(s *MCPServer) {
-				// This tests that a task tool can still be called without task params
-				// until we implement the full validation logic
+				// This tests that an optional task tool can be called without task params
+				// and executes synchronously
 				tool := mcp.NewTool("task_tool",
 					mcp.WithDescription("A task tool"),
 					mcp.WithTaskSupport(mcp.TaskSupportOptional),
@@ -3170,8 +3170,8 @@ func TestMCPServer_HandleToolCall_DetectsTaskAugmentation(t *testing.T) {
 			toolName:          "task_tool",
 			taskParams:        nil,
 			expectRouteToTask: false,
-			expectError:       true, // Tool not found in regular tools map
-			errorCode:         mcp.INVALID_PARAMS,
+			expectError:       false, // Optional task tools can be called without task params
+			errorCode:         0,
 		},
 	}
 

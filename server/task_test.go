@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -1523,5 +1524,264 @@ func TestMCPServer_ValidateTaskSupportRequired(t *testing.T) {
 		require.Len(t, callResult.Content, 1)
 		textContent := callResult.Content[0].(mcp.TextContent)
 		assert.Equal(t, "Forbidden tool executed", textContent.Text)
+	})
+}
+
+// TestMCPServer_OptionalTaskTools tests that tools with TaskSupportOptional
+// can be called both with and without task parameters (hybrid mode).
+func TestMCPServer_OptionalTaskTools(t *testing.T) {
+	t.Run("optional task tool called synchronously without task params", func(t *testing.T) {
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		ctx := context.Background()
+
+		// Initialize
+		server.HandleMessage(ctx, []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "initialize",
+			"params": {
+				"protocolVersion": "2025-11-05",
+				"capabilities": {},
+				"clientInfo": {"name": "test", "version": "1.0.0"}
+			}
+		}`))
+
+		// Register an optional task tool
+		tool := mcp.NewTool(
+			"optional_tool",
+			mcp.WithTaskSupport(mcp.TaskSupportOptional),
+		)
+
+		err := server.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					mcp.NewTextContent("Optional tool executed synchronously"),
+				},
+			}, nil
+		})
+		require.NoError(t, err)
+
+		// Call the tool WITHOUT task params - should execute synchronously
+		callResponse := server.HandleMessage(ctx, []byte(`{
+			"jsonrpc": "2.0",
+			"id": 2,
+			"method": "tools/call",
+			"params": {
+				"name": "optional_tool"
+			}
+		}`))
+
+		// Should succeed and return result directly (not a task)
+		callResp, ok := callResponse.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected success response, got %T", callResponse)
+
+		callResult := callResp.Result.(mcp.CallToolResult)
+		require.Len(t, callResult.Content, 1)
+		textContent := callResult.Content[0].(mcp.TextContent)
+		assert.Equal(t, "Optional tool executed synchronously", textContent.Text)
+
+		// Verify no task was created (no task in meta)
+		if callResult.Meta != nil && callResult.Meta.AdditionalFields != nil {
+			_, hasTask := callResult.Meta.AdditionalFields["task"]
+			assert.False(t, hasTask, "Should not have task in meta for synchronous call")
+		}
+	})
+
+	t.Run("optional task tool called asynchronously with task params", func(t *testing.T) {
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		ctx := context.Background()
+
+		// Initialize
+		server.HandleMessage(ctx, []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "initialize",
+			"params": {
+				"protocolVersion": "2025-11-05",
+				"capabilities": {},
+				"clientInfo": {"name": "test", "version": "1.0.0"}
+			}
+		}`))
+
+		// Register an optional task tool
+		tool := mcp.NewTool(
+			"optional_tool_async",
+			mcp.WithTaskSupport(mcp.TaskSupportOptional),
+		)
+
+		handlerCalled := false
+		var mu sync.Mutex
+
+		err := server.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			mu.Lock()
+			handlerCalled = true
+			mu.Unlock()
+			// Simulate some work
+			time.Sleep(50 * time.Millisecond)
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					mcp.NewTextContent("Optional tool executed asynchronously"),
+				},
+			}, nil
+		})
+		require.NoError(t, err)
+
+		// Call the tool WITH task params - should execute asynchronously
+		callResponse := server.HandleMessage(ctx, []byte(`{
+			"jsonrpc": "2.0",
+			"id": 2,
+			"method": "tools/call",
+			"params": {
+				"name": "optional_tool_async",
+				"task": {}
+			}
+		}`))
+
+		// Should succeed and return task creation result immediately
+		callResp, ok := callResponse.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected success response, got %T", callResponse)
+
+		callResult := callResp.Result.(mcp.CallToolResult)
+		task, ok := callResult.Meta.AdditionalFields["task"].(mcp.Task)
+		require.True(t, ok, "Expected task in meta")
+		assert.NotEmpty(t, task.TaskId)
+		assert.Equal(t, mcp.TaskStatusWorking, task.Status)
+
+		// Wait for task to complete
+		time.Sleep(100 * time.Millisecond)
+
+		// Verify handler was called
+		mu.Lock()
+		assert.True(t, handlerCalled, "Handler should have been called")
+		mu.Unlock()
+
+		// Retrieve task result
+		resultResponse := server.HandleMessage(ctx, []byte(fmt.Sprintf(`{
+			"jsonrpc": "2.0",
+			"id": 3,
+			"method": "tasks/result",
+			"params": {
+				"taskId": "%s"
+			}
+		}`, task.TaskId)))
+
+		resultResp, ok := resultResponse.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected success response, got %T", resultResponse)
+
+		taskResult := resultResp.Result.(mcp.TaskResultResult)
+		require.Len(t, taskResult.Content, 1)
+		textContent := taskResult.Content[0].(mcp.TextContent)
+		assert.Equal(t, "Optional tool executed asynchronously", textContent.Text)
+	})
+
+	t.Run("optional task tool error handling in sync mode", func(t *testing.T) {
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		ctx := context.Background()
+
+		// Initialize
+		server.HandleMessage(ctx, []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "initialize",
+			"params": {
+				"protocolVersion": "2025-11-05",
+				"capabilities": {},
+				"clientInfo": {"name": "test", "version": "1.0.0"}
+			}
+		}`))
+
+		// Register an optional task tool that returns an error
+		tool := mcp.NewTool(
+			"optional_tool_error",
+			mcp.WithTaskSupport(mcp.TaskSupportOptional),
+		)
+
+		err := server.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return nil, fmt.Errorf("simulated error")
+		})
+		require.NoError(t, err)
+
+		// Call the tool WITHOUT task params - should execute synchronously and return error
+		callResponse := server.HandleMessage(ctx, []byte(`{
+			"jsonrpc": "2.0",
+			"id": 2,
+			"method": "tools/call",
+			"params": {
+				"name": "optional_tool_error"
+			}
+		}`))
+
+		// Should return error
+		callErrResp, ok := callResponse.(mcp.JSONRPCError)
+		require.True(t, ok, "Expected error response, got %T", callResponse)
+		assert.Equal(t, mcp.INTERNAL_ERROR, callErrResp.Error.Code)
+		assert.Contains(t, callErrResp.Error.Message, "simulated error")
+	})
+
+	t.Run("optional task tool listed with correct execution field", func(t *testing.T) {
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		ctx := context.Background()
+
+		// Initialize
+		server.HandleMessage(ctx, []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "initialize",
+			"params": {
+				"protocolVersion": "2025-11-05",
+				"capabilities": {},
+				"clientInfo": {"name": "test", "version": "1.0.0"}
+			}
+		}`))
+
+		// Register an optional task tool
+		tool := mcp.NewTool(
+			"optional_tool_list",
+			mcp.WithDescription("An optional task tool"),
+			mcp.WithTaskSupport(mcp.TaskSupportOptional),
+		)
+
+		err := server.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+		require.NoError(t, err)
+
+		// List tools
+		listResponse := server.HandleMessage(ctx, []byte(`{
+			"jsonrpc": "2.0",
+			"id": 2,
+			"method": "tools/list"
+		}`))
+
+		listResp, ok := listResponse.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected success response, got %T", listResponse)
+
+		listResult := listResp.Result.(mcp.ListToolsResult)
+		require.Len(t, listResult.Tools, 1)
+
+		listedTool := listResult.Tools[0]
+		assert.Equal(t, "optional_tool_list", listedTool.Name)
+		require.NotNil(t, listedTool.Execution, "Should have execution field")
+		assert.Equal(t, mcp.TaskSupportOptional, listedTool.Execution.TaskSupport)
 	})
 }

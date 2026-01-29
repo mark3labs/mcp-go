@@ -1392,6 +1392,26 @@ func (s *MCPServer) handleToolCall(
 		s.toolsMu.RUnlock()
 	}
 
+	// If still not found, check if it's an optional task tool being called synchronously
+	if !ok {
+		s.toolsMu.RLock()
+		taskTool, isTaskTool := s.taskTools[request.Params.Name]
+		s.toolsMu.RUnlock()
+
+		if isTaskTool && taskTool.Tool.Execution != nil && taskTool.Tool.Execution.TaskSupport == mcp.TaskSupportOptional {
+			// This is an optional task tool being called without task params - execute synchronously
+			result, err := taskTool.Handler(ctx, request)
+			if err != nil {
+				return nil, &requestError{
+					id:   id,
+					code: mcp.INTERNAL_ERROR,
+					err:  err,
+				}
+			}
+			return result, nil
+		}
+	}
+
 	if !ok {
 		return nil, &requestError{
 			id:   id,
