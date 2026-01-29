@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -532,6 +533,13 @@ func TestMCPServer_TaskJSONMarshaling(t *testing.T) {
 	data, err := json.Marshal(task)
 	require.NoError(t, err)
 
+	// Verify JSON contains lastUpdatedAt field
+	var jsonMap map[string]any
+	err = json.Unmarshal(data, &jsonMap)
+	require.NoError(t, err)
+	assert.Contains(t, jsonMap, "lastUpdatedAt", "JSON should contain lastUpdatedAt field")
+	assert.Contains(t, jsonMap, "createdAt", "JSON should contain createdAt field")
+
 	// Unmarshal back
 	var unmarshaled mcp.Task
 	err = json.Unmarshal(data, &unmarshaled)
@@ -540,6 +548,8 @@ func TestMCPServer_TaskJSONMarshaling(t *testing.T) {
 	assert.Equal(t, task.TaskId, unmarshaled.TaskId)
 	assert.Equal(t, task.Status, unmarshaled.Status)
 	assert.Equal(t, task.StatusMessage, unmarshaled.StatusMessage)
+	assert.Equal(t, task.CreatedAt, unmarshaled.CreatedAt)
+	assert.Equal(t, task.LastUpdatedAt, unmarshaled.LastUpdatedAt)
 }
 
 func TestMCPServer_TaskListPagination(t *testing.T) {
@@ -694,4 +704,113 @@ func TestMCPServer_TaskListPagination(t *testing.T) {
 func TestTask_GetName(t *testing.T) {
 	task := mcp.NewTask("test-task-id")
 	assert.Equal(t, "test-task-id", task.GetName())
+}
+
+func TestMCPServer_TaskLastUpdatedAt(t *testing.T) {
+	server := NewMCPServer(
+		"test-server",
+		"1.0.0",
+		WithTaskCapabilities(true, true, true),
+	)
+
+	ctx := context.Background()
+
+	t.Run("task creation sets initial lastUpdatedAt", func(t *testing.T) {
+		ttl := int64(60000)
+		pollInterval := int64(1000)
+		entry := server.createTask(ctx, "task-initial", &ttl, &pollInterval)
+
+		require.NotNil(t, entry)
+		assert.NotEmpty(t, entry.task.CreatedAt, "CreatedAt should be set")
+		assert.NotEmpty(t, entry.task.LastUpdatedAt, "LastUpdatedAt should be set")
+		assert.Equal(t, entry.task.CreatedAt, entry.task.LastUpdatedAt, "Initial lastUpdatedAt should equal createdAt")
+	})
+
+	t.Run("completeTask updates lastUpdatedAt", func(t *testing.T) {
+		ttl := int64(60000)
+		pollInterval := int64(1000)
+		entry := server.createTask(ctx, "task-complete", &ttl, &pollInterval)
+
+		initialLastUpdatedAt := entry.task.LastUpdatedAt
+		createdAt := entry.task.CreatedAt
+
+		// Sleep to ensure timestamp will be different (RFC3339 has second precision)
+		time.Sleep(1100 * time.Millisecond)
+
+		// Complete the task
+		result := map[string]string{"result": "success"}
+		server.completeTask(entry, result, nil)
+
+		assert.Equal(t, mcp.TaskStatusCompleted, entry.task.Status)
+		assert.NotEmpty(t, entry.task.LastUpdatedAt, "LastUpdatedAt should still be set")
+		assert.NotEqual(t, initialLastUpdatedAt, entry.task.LastUpdatedAt, "LastUpdatedAt should be updated")
+		assert.Equal(t, createdAt, entry.task.CreatedAt, "CreatedAt should not change")
+	})
+
+	t.Run("completeTask with error updates lastUpdatedAt", func(t *testing.T) {
+		ttl := int64(60000)
+		pollInterval := int64(1000)
+		entry := server.createTask(ctx, "task-error", &ttl, &pollInterval)
+
+		initialLastUpdatedAt := entry.task.LastUpdatedAt
+		createdAt := entry.task.CreatedAt
+
+		// Sleep to ensure timestamp will be different (RFC3339 has second precision)
+		time.Sleep(1100 * time.Millisecond)
+
+		// Complete the task with error
+		testErr := fmt.Errorf("test error")
+		server.completeTask(entry, nil, testErr)
+
+		assert.Equal(t, mcp.TaskStatusFailed, entry.task.Status)
+		assert.NotEmpty(t, entry.task.LastUpdatedAt, "LastUpdatedAt should still be set")
+		assert.NotEqual(t, initialLastUpdatedAt, entry.task.LastUpdatedAt, "LastUpdatedAt should be updated")
+		assert.Equal(t, createdAt, entry.task.CreatedAt, "CreatedAt should not change")
+	})
+
+	t.Run("cancelTask updates lastUpdatedAt", func(t *testing.T) {
+		ttl := int64(60000)
+		pollInterval := int64(1000)
+		entry := server.createTask(ctx, "task-cancel", &ttl, &pollInterval)
+
+		initialLastUpdatedAt := entry.task.LastUpdatedAt
+		createdAt := entry.task.CreatedAt
+
+		// Sleep to ensure timestamp will be different (RFC3339 has second precision)
+		time.Sleep(1100 * time.Millisecond)
+
+		// Cancel the task
+		err := server.cancelTask(ctx, "task-cancel")
+		require.NoError(t, err)
+
+		assert.Equal(t, mcp.TaskStatusCancelled, entry.task.Status)
+		assert.NotEmpty(t, entry.task.LastUpdatedAt, "LastUpdatedAt should still be set")
+		assert.NotEqual(t, initialLastUpdatedAt, entry.task.LastUpdatedAt, "LastUpdatedAt should be updated")
+		assert.Equal(t, createdAt, entry.task.CreatedAt, "CreatedAt should not change")
+	})
+
+	t.Run("lastUpdatedAt is included in task responses", func(t *testing.T) {
+		ttl := int64(60000)
+		pollInterval := int64(1000)
+		server.createTask(ctx, "task-response", &ttl, &pollInterval)
+
+		// Get task via handler
+		response := server.HandleMessage(ctx, []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tasks/get",
+			"params": {
+				"taskId": "task-response"
+			}
+		}`))
+
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got %T", response)
+
+		result, ok := resp.Result.(mcp.GetTaskResult)
+		require.True(t, ok, "Expected GetTaskResult, got %T", resp.Result)
+
+		assert.NotEmpty(t, result.LastUpdatedAt, "LastUpdatedAt should be in response")
+		assert.NotEmpty(t, result.CreatedAt, "CreatedAt should be in response")
+	})
 }

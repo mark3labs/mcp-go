@@ -1405,6 +1405,8 @@ type Task struct {
 	StatusMessage string `json:"statusMessage,omitempty"`
 	// ISO 8601 timestamp when the task was created.
 	CreatedAt string `json:"createdAt"`
+	// ISO 8601 timestamp when the task was last updated.
+	LastUpdatedAt string `json:"lastUpdatedAt"`
 	// Time in milliseconds from creation before task may be deleted.
 	// If null, the task has no expiration.
 	TTL *int64 `json:"ttl"`
