@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -1443,24 +1444,105 @@ func (s *MCPServer) handleToolCall(
 }
 
 // handleTaskAugmentedToolCall handles tool calls that are executed as tasks.
-// This is a stub implementation that will be completed in TAS-9.
+// It creates a task entry, starts async execution, and returns CreateTaskResult immediately.
 func (s *MCPServer) handleTaskAugmentedToolCall(
 	ctx context.Context,
 	id any,
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, *requestError) {
-	// TODO(TAS-9): Implement full task-augmented tool call handling
-	// This should:
-	// 1. Look up the task tool handler
-	// 2. Validate task support (optional/required)
-	// 3. Create task entry
-	// 4. Start async execution goroutine
-	// 5. Return CreateTaskResult immediately
-	return nil, &requestError{
-		id:   id,
-		code: mcp.INTERNAL_ERROR,
-		err:  fmt.Errorf("task-augmented tool execution not yet implemented"),
+	// Look up the tool - check both taskTools and regular tools
+	s.toolsMu.RLock()
+	taskTool, isTaskTool := s.taskTools[request.Params.Name]
+	regularTool, isRegularTool := s.tools[request.Params.Name]
+	s.toolsMu.RUnlock()
+
+	// Determine which tool to use and validate task support
+	var toolToUse ServerTaskTool
+	var hasTaskHandler bool
+
+	if isTaskTool {
+		// Tool is registered as a task tool
+		toolToUse = taskTool
+		hasTaskHandler = true
+	} else if isRegularTool {
+		// Tool is a regular tool with task support
+		// Validate that it actually supports task augmentation
+		if regularTool.Tool.Execution == nil ||
+			(regularTool.Tool.Execution.TaskSupport != mcp.TaskSupportOptional &&
+				regularTool.Tool.Execution.TaskSupport != mcp.TaskSupportRequired) {
+			return nil, &requestError{
+				id:   id,
+				code: mcp.METHOD_NOT_FOUND,
+				err:  fmt.Errorf("tool '%s' does not support task augmentation", request.Params.Name),
+			}
+		}
+
+		// Create a wrapper that converts ToolHandlerFunc to TaskToolHandlerFunc
+		// The wrapper executes the regular handler and wraps the result
+		toolToUse = ServerTaskTool{
+			Tool: regularTool.Tool,
+			Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				// Execute the regular tool handler
+				result, err := regularTool.Handler(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				// Wrap the result in CreateTaskResult
+				// The actual CallToolResult will be stored and returned later
+				return &mcp.CreateTaskResult{
+					Result: mcp.Result{
+						Meta: result.Meta,
+					},
+				}, nil
+			},
+		}
+		hasTaskHandler = false
+	} else {
+		// Tool not found in either map
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  fmt.Errorf("tool '%s' not found", request.Params.Name),
+		}
 	}
+
+	// Generate task ID (UUID v4)
+	taskID := uuid.New().String()
+
+	// Extract TTL from task params
+	var ttl *int64
+	if request.Params.Task != nil {
+		ttl = request.Params.Task.TTL
+	}
+
+	// Create task entry (pollInterval is nil - server doesn't set a default)
+	entry := s.createTask(ctx, taskID, ttl, nil)
+
+	// Execute tool asynchronously
+	// For regular tools being used as tasks, we need different execution logic
+	if hasTaskHandler {
+		go s.executeTaskTool(ctx, entry, toolToUse, request)
+	} else {
+		// Execute regular tool wrapped as a task
+		go s.executeRegularToolAsTask(ctx, entry, regularTool, request)
+	}
+
+	// Return CreateTaskResult immediately
+	// The result is wrapped in CallToolResult's _meta field per MCP spec
+	// Make a copy of the task to avoid data races with background goroutine
+	s.tasksMu.RLock()
+	taskCopy := entry.task
+	s.tasksMu.RUnlock()
+
+	return &mcp.CallToolResult{
+		Result: mcp.Result{
+			Meta: &mcp.Meta{
+				AdditionalFields: map[string]any{
+					"task": taskCopy,
+				},
+			},
+		},
+	}, nil
 }
 
 // executeTaskTool executes a task tool handler asynchronously.
@@ -1492,6 +1574,37 @@ func (s *MCPServer) executeTaskTool(
 
 	// Task succeeded - store the CreateTaskResult
 	// Note: The actual result will be retrieved later via tasks/result
+	s.completeTask(entry, result, nil)
+}
+
+// executeRegularToolAsTask executes a regular tool handler asynchronously as a task.
+// This is used for hybrid mode where a tool with TaskSupportOptional is called with task params.
+func (s *MCPServer) executeRegularToolAsTask(
+	ctx context.Context,
+	entry *taskEntry,
+	regularTool ServerTool,
+	request mcp.CallToolRequest,
+) {
+	// Create cancellable context for this task execution
+	taskCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Store cancel func in entry so it can be cancelled via tasks/cancel
+	s.tasksMu.Lock()
+	entry.cancelFunc = cancel
+	s.tasksMu.Unlock()
+
+	// Execute the regular tool handler
+	result, err := regularTool.Handler(taskCtx, request)
+
+	if err != nil {
+		// Task failed - complete with error
+		s.completeTask(entry, nil, err)
+		return
+	}
+
+	// Task succeeded - store the CallToolResult directly
+	// When retrieved via tasks/result, this will be returned to the client
 	s.completeTask(entry, result, nil)
 }
 
