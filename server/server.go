@@ -54,6 +54,11 @@ type PromptHandlerFunc func(ctx context.Context, request mcp.GetPromptRequest) (
 // ToolHandlerFunc handles tool calls with given arguments.
 type ToolHandlerFunc func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
 
+// TaskToolHandlerFunc handles tool calls that execute asynchronously.
+// It returns immediately with task creation info; the actual result is
+// retrieved later via tasks/result.
+type TaskToolHandlerFunc func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error)
+
 // ToolHandlerMiddleware is a middleware function that wraps a ToolHandlerFunc.
 type ToolHandlerMiddleware func(ToolHandlerFunc) ToolHandlerFunc
 
@@ -219,9 +224,9 @@ type toolCapabilities struct {
 
 // taskCapabilities defines the supported task-related features
 type taskCapabilities struct {
-	list           bool
-	cancel         bool
-	toolCallTasks  bool
+	list          bool
+	cancel        bool
+	toolCallTasks bool
 }
 
 // WithResourceCapabilities configures resource-related server capabilities

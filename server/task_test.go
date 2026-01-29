@@ -541,3 +541,33 @@ func TestMCPServer_TaskJSONMarshaling(t *testing.T) {
 	assert.Equal(t, task.Status, unmarshaled.Status)
 	assert.Equal(t, task.StatusMessage, unmarshaled.StatusMessage)
 }
+
+// TestTaskToolHandlerFunc_TypeDefinition verifies that TaskToolHandlerFunc
+// type is correctly defined and can be used.
+func TestTaskToolHandlerFunc_TypeDefinition(t *testing.T) {
+	// Define a simple task tool handler
+	var handler TaskToolHandlerFunc = func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+		// Create a simple task result
+		task := mcp.NewTask("test-task-id")
+		return &mcp.CreateTaskResult{
+			Task: task,
+		}, nil
+	}
+
+	// Verify the handler can be called
+	ctx := context.Background()
+	request := mcp.CallToolRequest{
+		Request: mcp.Request{
+			Method: string(mcp.MethodToolsCall),
+		},
+		Params: mcp.CallToolParams{
+			Name: "test-tool",
+		},
+	}
+
+	result, err := handler(ctx, request)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "test-task-id", result.Task.TaskId)
+	assert.Equal(t, mcp.TaskStatusWorking, result.Task.Status)
+}
