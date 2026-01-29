@@ -74,6 +74,12 @@ type ServerTool struct {
 	Handler ToolHandlerFunc
 }
 
+// ServerTaskTool combines a Tool with its TaskToolHandlerFunc.
+type ServerTaskTool struct {
+	Tool    mcp.Tool
+	Handler TaskToolHandlerFunc
+}
+
 // ServerPrompt combines a Prompt with its handler function.
 type ServerPrompt struct {
 	Prompt  mcp.Prompt
@@ -176,6 +182,7 @@ type MCPServer struct {
 	prompts                    map[string]mcp.Prompt
 	promptHandlers             map[string]PromptHandlerFunc
 	tools                      map[string]ServerTool
+	taskTools                  map[string]ServerTaskTool
 	toolHandlerMiddlewares     []ToolHandlerMiddleware
 	resourceHandlerMiddlewares []ResourceHandlerMiddleware
 	toolFilters                []ToolFilterFunc
@@ -391,6 +398,7 @@ func NewMCPServer(
 		prompts:                    make(map[string]mcp.Prompt),
 		promptHandlers:             make(map[string]PromptHandlerFunc),
 		tools:                      make(map[string]ServerTool),
+		taskTools:                  make(map[string]ServerTaskTool),
 		toolHandlerMiddlewares:     make([]ToolHandlerMiddleware, 0),
 		resourceHandlerMiddlewares: make([]ResourceHandlerMiddleware, 0),
 		name:                       name,

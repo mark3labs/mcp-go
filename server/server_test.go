@@ -25,6 +25,13 @@ func TestMCPServer_NewMCPServer(t *testing.T) {
 	assert.Equal(t, "1.0.0", server.version)
 }
 
+func TestMCPServer_InitializesTaskTools(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0")
+	assert.NotNil(t, server)
+	assert.NotNil(t, server.taskTools)
+	assert.Equal(t, 0, len(server.taskTools))
+}
+
 func TestMCPServer_Capabilities(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -2865,4 +2872,40 @@ func TestMCPServer_ListTools(t *testing.T) {
 		assert.Len(t, tools3, 1)
 		assert.Contains(t, tools3, "test-tool")
 	})
+}
+
+func TestServerTaskTool_TypeDefinition(t *testing.T) {
+	// Create a test tool
+	tool := mcp.NewTool("test_task_tool",
+		mcp.WithDescription("A test task tool"),
+	)
+
+	// Create a test handler
+	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+		return &mcp.CreateTaskResult{}, nil
+	}
+
+	// Create ServerTaskTool
+	serverTaskTool := ServerTaskTool{
+		Tool:    tool,
+		Handler: handler,
+	}
+
+	// Verify fields are set correctly
+	assert.Equal(t, "test_task_tool", serverTaskTool.Tool.Name)
+	assert.NotNil(t, serverTaskTool.Handler)
+
+	// Verify handler can be called
+	ctx := context.Background()
+	request := mcp.CallToolRequest{
+		Request: mcp.Request{
+			Method: string(mcp.MethodToolsCall),
+		},
+		Params: mcp.CallToolParams{
+			Name: "test_task_tool",
+		},
+	}
+	result, err := serverTaskTool.Handler(ctx, request)
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
 }
