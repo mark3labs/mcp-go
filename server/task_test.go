@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -94,7 +95,108 @@ func TestMCPServer_TaskCapabilities(t *testing.T) {
 				assert.Nil(t, result.Capabilities.Tasks)
 			}
 		})
+
+		t.Run("pagination_via_json_rpc_protocol", func(t *testing.T) {
+			// Test pagination through HandleMessage to ensure protocol integration works
+			limit := 2
+			server := NewMCPServer(
+				"test-server",
+				"1.0.0",
+				WithTaskCapabilities(true, true, true),
+				WithPaginationLimit(limit),
+			)
+
+			// Initialize server
+			server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "initialize",
+			"params": {
+				"protocolVersion": "2025-06-18",
+				"capabilities": {},
+				"clientInfo": {
+					"name": "test-client",
+					"version": "1.0.0"
+				}
+			}
+		}`))
+
+			// Add task tool
+			tool := mcp.NewTool("test_tool",
+				mcp.WithTaskSupport(mcp.TaskSupportRequired),
+			)
+			err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{mcp.NewTextContent("Done")},
+				}, nil
+			})
+			require.NoError(t, err)
+
+			// Create 5 tasks via JSON-RPC
+			for i := 0; i < 5; i++ {
+				server.HandleMessage(context.Background(), []byte(`{
+				"jsonrpc": "2.0",
+				"id": `+fmt.Sprintf("%d", i+2)+`,
+				"method": "tools/call",
+				"params": {
+					"name": "test_tool",
+					"task": {}
+				}
+			}`))
+			}
+
+			time.Sleep(100 * time.Millisecond)
+
+			// Page 1: List tasks without cursor
+			response1 := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 100,
+			"method": "tasks/list"
+		}`))
+
+			resp1, ok := response1.(mcp.JSONRPCResponse)
+			require.True(t, ok)
+			result1, ok := resp1.Result.(mcp.ListTasksResult)
+			require.True(t, ok)
+			assert.Len(t, result1.Tasks, limit)
+			assert.NotEmpty(t, result1.NextCursor)
+
+			// Page 2: List tasks with cursor
+			response2 := server.HandleMessage(context.Background(), []byte(fmt.Sprintf(`{
+			"jsonrpc": "2.0",
+			"id": 101,
+			"method": "tasks/list",
+			"params": {
+				"cursor": "%s"
+			}
+		}`, result1.NextCursor)))
+
+			resp2, ok := response2.(mcp.JSONRPCResponse)
+			require.True(t, ok)
+			result2, ok := resp2.Result.(mcp.ListTasksResult)
+			require.True(t, ok)
+			assert.Len(t, result2.Tasks, limit)
+			assert.NotEmpty(t, result2.NextCursor)
+
+			// Page 3: List remaining tasks
+			response3 := server.HandleMessage(context.Background(), []byte(fmt.Sprintf(`{
+			"jsonrpc": "2.0",
+			"id": 102,
+			"method": "tasks/list",
+			"params": {
+				"cursor": "%s"
+			}
+		}`, result2.NextCursor)))
+
+			resp3, ok := response3.(mcp.JSONRPCResponse)
+			require.True(t, ok)
+			result3, ok := resp3.Result.(mcp.ListTasksResult)
+			require.True(t, ok)
+			assert.Len(t, result3.Tasks, 1) // 5 total, 2 per page = 2+2+1
+			assert.Empty(t, result3.NextCursor)
+		})
 	}
+
 }
 
 func TestMCPServer_TaskLifecycle(t *testing.T) {
@@ -2984,5 +3086,480 @@ func TestMCPServer_TaskContextCancellation(t *testing.T) {
 		getResult := getResp.Result.(mcp.GetTaskResult)
 		// Should be either cancelled or failed
 		assert.Contains(t, []mcp.TaskStatus{mcp.TaskStatusCancelled, mcp.TaskStatusFailed}, getResult.Status)
+	})
+}
+
+// TestMCPServer_TaskListPagination tests pagination functionality for tasks/list.
+func TestMCPServer_TaskListPagination(t *testing.T) {
+	t.Run("basic_pagination_with_multiple_pages", func(t *testing.T) {
+		limit := 3
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+			WithPaginationLimit(limit),
+		)
+
+		// Add a task tool
+		tool := mcp.NewTool("test_tool",
+			mcp.WithDescription("Test tool for pagination"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+
+		err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			time.Sleep(50 * time.Millisecond)
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.NewTextContent("Task completed")},
+			}, nil
+		})
+		require.NoError(t, err)
+
+		// Create 7 tasks (more than 2 pages)
+		ctx := context.Background()
+		for i := 0; i < 7; i++ {
+			request := mcp.CallToolRequest{
+				Request: mcp.Request{
+					Method: string(mcp.MethodToolsCall),
+				},
+				Params: mcp.CallToolParams{
+					Name: "test_tool",
+					Task: &mcp.TaskParams{},
+				},
+			}
+			_, reqErr := server.handleToolCall(ctx, nil, request)
+			require.Nil(t, reqErr)
+		}
+
+		// Wait for tasks to be created
+		time.Sleep(100 * time.Millisecond)
+
+		// Page 1: Should return 3 tasks with nextCursor
+		listReq1 := mcp.ListTasksRequest{}
+		listResult1, listErr1 := server.handleListTasks(ctx, nil, listReq1)
+		require.Nil(t, listErr1)
+		require.NotNil(t, listResult1)
+		assert.Len(t, listResult1.Tasks, limit, "First page should have exactly 3 tasks")
+		assert.NotEmpty(t, listResult1.NextCursor, "Should have nextCursor for next page")
+
+		// Store first page task IDs
+		firstPageIDs := make(map[string]bool)
+		for _, task := range listResult1.Tasks {
+			firstPageIDs[task.TaskId] = true
+		}
+
+		// Page 2: Should return 3 more tasks with nextCursor
+		listReq2 := mcp.ListTasksRequest{
+			PaginatedRequest: mcp.PaginatedRequest{
+				Params: mcp.PaginatedParams{
+					Cursor: listResult1.NextCursor,
+				},
+			},
+		}
+		listResult2, listErr2 := server.handleListTasks(ctx, nil, listReq2)
+		require.Nil(t, listErr2)
+		require.NotNil(t, listResult2)
+		assert.Len(t, listResult2.Tasks, limit, "Second page should have exactly 3 tasks")
+		assert.NotEmpty(t, listResult2.NextCursor, "Should have nextCursor for next page")
+
+		// Verify no overlap with first page
+		for _, task := range listResult2.Tasks {
+			assert.False(t, firstPageIDs[task.TaskId], "Second page should not contain tasks from first page")
+		}
+
+		// Page 3: Should return 1 task with no nextCursor
+		listReq3 := mcp.ListTasksRequest{
+			PaginatedRequest: mcp.PaginatedRequest{
+				Params: mcp.PaginatedParams{
+					Cursor: listResult2.NextCursor,
+				},
+			},
+		}
+		listResult3, listErr3 := server.handleListTasks(ctx, nil, listReq3)
+		require.Nil(t, listErr3)
+		require.NotNil(t, listResult3)
+		assert.Len(t, listResult3.Tasks, 1, "Third page should have 1 remaining task")
+		assert.Empty(t, listResult3.NextCursor, "Should not have nextCursor on last page")
+	})
+
+	t.Run("pagination_with_exactly_page_size_items", func(t *testing.T) {
+		limit := 5
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+			WithPaginationLimit(limit),
+		)
+
+		// Add a task tool
+		tool := mcp.NewTool("test_tool",
+			mcp.WithDescription("Test tool"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+
+		err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.NewTextContent("Done")},
+			}, nil
+		})
+		require.NoError(t, err)
+
+		// Create exactly 5 tasks
+		ctx := context.Background()
+		for i := 0; i < limit; i++ {
+			request := mcp.CallToolRequest{
+				Request: mcp.Request{
+					Method: string(mcp.MethodToolsCall),
+				},
+				Params: mcp.CallToolParams{
+					Name: "test_tool",
+					Task: &mcp.TaskParams{},
+				},
+			}
+			_, reqErr := server.handleToolCall(ctx, nil, request)
+			require.Nil(t, reqErr)
+		}
+
+		time.Sleep(50 * time.Millisecond)
+
+		// First page should return all tasks with cursor
+		listReq1 := mcp.ListTasksRequest{}
+		listResult1, listErr1 := server.handleListTasks(ctx, nil, listReq1)
+		require.Nil(t, listErr1)
+		require.NotNil(t, listResult1)
+		assert.Len(t, listResult1.Tasks, limit)
+		assert.NotEmpty(t, listResult1.NextCursor, "Cursor should be set when exactly at limit")
+
+		// Second page should be empty
+		listReq2 := mcp.ListTasksRequest{
+			PaginatedRequest: mcp.PaginatedRequest{
+				Params: mcp.PaginatedParams{
+					Cursor: listResult1.NextCursor,
+				},
+			},
+		}
+		listResult2, listErr2 := server.handleListTasks(ctx, nil, listReq2)
+		require.Nil(t, listErr2)
+		require.NotNil(t, listResult2)
+		assert.Empty(t, listResult2.Tasks)
+		assert.Empty(t, listResult2.NextCursor)
+	})
+
+	t.Run("empty_task_list_pagination", func(t *testing.T) {
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+			WithPaginationLimit(10),
+		)
+
+		ctx := context.Background()
+		listReq := mcp.ListTasksRequest{}
+		listResult, listErr := server.handleListTasks(ctx, nil, listReq)
+
+		require.Nil(t, listErr)
+		require.NotNil(t, listResult)
+		assert.Empty(t, listResult.Tasks)
+		assert.Empty(t, listResult.NextCursor)
+	})
+
+	t.Run("malformed_cursor_returns_error", func(t *testing.T) {
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+			WithPaginationLimit(5),
+		)
+
+		ctx := context.Background()
+		listReq := mcp.ListTasksRequest{
+			PaginatedRequest: mcp.PaginatedRequest{
+				Params: mcp.PaginatedParams{
+					Cursor: mcp.Cursor("not-valid-base64!!!"),
+				},
+			},
+		}
+		listResult, listErr := server.handleListTasks(ctx, nil, listReq)
+
+		require.NotNil(t, listErr)
+		require.Nil(t, listResult)
+		assert.Equal(t, mcp.INVALID_PARAMS, listErr.code)
+	})
+
+	t.Run("cursor_beyond_list_returns_empty", func(t *testing.T) {
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+			WithPaginationLimit(5),
+		)
+
+		// Add a task tool
+		tool := mcp.NewTool("test_tool",
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+
+		err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+		require.NoError(t, err)
+
+		// Create 3 tasks
+		ctx := context.Background()
+		for i := 0; i < 3; i++ {
+			request := mcp.CallToolRequest{
+				Request: mcp.Request{
+					Method: string(mcp.MethodToolsCall),
+				},
+				Params: mcp.CallToolParams{
+					Name: "test_tool",
+					Task: &mcp.TaskParams{},
+				},
+			}
+			_, reqErr := server.handleToolCall(ctx, nil, request)
+			require.Nil(t, reqErr)
+		}
+
+		time.Sleep(50 * time.Millisecond)
+
+		// Create a cursor that points beyond the list (using a TaskID that's lexicographically after all real IDs)
+		beyondCursor := mcp.Cursor(base64.StdEncoding.EncodeToString([]byte("zzzzzzz-9999-9999-9999-zzzzzzzzzzzz")))
+
+		listReq := mcp.ListTasksRequest{
+			PaginatedRequest: mcp.PaginatedRequest{
+				Params: mcp.PaginatedParams{
+					Cursor: beyondCursor,
+				},
+			},
+		}
+		listResult, listErr := server.handleListTasks(ctx, nil, listReq)
+
+		require.Nil(t, listErr)
+		require.NotNil(t, listResult)
+		assert.Empty(t, listResult.Tasks)
+		assert.Empty(t, listResult.NextCursor)
+	})
+
+	t.Run("pagination_without_limit_returns_all_tasks", func(t *testing.T) {
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+			// No pagination limit set
+		)
+
+		// Add a task tool
+		tool := mcp.NewTool("test_tool",
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+
+		err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+		require.NoError(t, err)
+
+		// Create 10 tasks
+		ctx := context.Background()
+		for i := 0; i < 10; i++ {
+			request := mcp.CallToolRequest{
+				Request: mcp.Request{
+					Method: string(mcp.MethodToolsCall),
+				},
+				Params: mcp.CallToolParams{
+					Name: "test_tool",
+					Task: &mcp.TaskParams{},
+				},
+			}
+			_, reqErr := server.handleToolCall(ctx, nil, request)
+			require.Nil(t, reqErr)
+		}
+
+		time.Sleep(100 * time.Millisecond)
+
+		listReq := mcp.ListTasksRequest{}
+		listResult, listErr := server.handleListTasks(ctx, nil, listReq)
+
+		require.Nil(t, listErr)
+		require.NotNil(t, listResult)
+		assert.Len(t, listResult.Tasks, 10, "Should return all tasks when no pagination limit set")
+		assert.Empty(t, listResult.NextCursor, "Should not have nextCursor when returning all items")
+	})
+
+	t.Run("tasks_sorted_by_taskid_for_consistent_pagination", func(t *testing.T) {
+		limit := 3
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+			WithPaginationLimit(limit),
+		)
+
+		// Add a task tool
+		tool := mcp.NewTool("test_tool",
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+
+		err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+		require.NoError(t, err)
+
+		// Create multiple tasks
+		ctx := context.Background()
+		for i := 0; i < 8; i++ {
+			request := mcp.CallToolRequest{
+				Request: mcp.Request{
+					Method: string(mcp.MethodToolsCall),
+				},
+				Params: mcp.CallToolParams{
+					Name: "test_tool",
+					Task: &mcp.TaskParams{},
+				},
+			}
+			_, reqErr := server.handleToolCall(ctx, nil, request)
+			require.Nil(t, reqErr)
+		}
+
+		time.Sleep(100 * time.Millisecond)
+
+		// Collect all tasks across multiple pages
+		var allTasks []mcp.Task
+		var cursor mcp.Cursor
+
+		for {
+			listReq := mcp.ListTasksRequest{
+				PaginatedRequest: mcp.PaginatedRequest{
+					Params: mcp.PaginatedParams{
+						Cursor: cursor,
+					},
+				},
+			}
+			listResult, listErr := server.handleListTasks(ctx, nil, listReq)
+			require.Nil(t, listErr)
+			require.NotNil(t, listResult)
+
+			allTasks = append(allTasks, listResult.Tasks...)
+
+			if listResult.NextCursor == "" {
+				break
+			}
+			cursor = listResult.NextCursor
+		}
+
+		// Verify all tasks are sorted by TaskId
+		for i := 1; i < len(allTasks); i++ {
+			assert.True(t, allTasks[i-1].TaskId < allTasks[i].TaskId,
+				"Tasks should be sorted by TaskId: %s should come before %s",
+				allTasks[i-1].TaskId, allTasks[i].TaskId)
+		}
+
+		// Verify we got all 8 tasks
+		assert.Len(t, allTasks, 8)
+
+		// Verify no duplicates
+		seenIDs := make(map[string]bool)
+		for _, task := range allTasks {
+			assert.False(t, seenIDs[task.TaskId], "Each task should appear only once")
+			seenIDs[task.TaskId] = true
+		}
+	})
+
+	t.Run("pagination_via_json_rpc_protocol", func(t *testing.T) {
+		// Test pagination through HandleMessage to ensure protocol integration works
+		limit := 2
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+			WithPaginationLimit(limit),
+		)
+
+		// Initialize server
+		server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "initialize",
+			"params": {
+				"protocolVersion": "2025-06-18",
+				"capabilities": {},
+				"clientInfo": {
+					"name": "test-client",
+					"version": "1.0.0"
+				}
+			}
+		}`))
+
+		// Add task tool
+		tool := mcp.NewTool("test_tool",
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+		err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.NewTextContent("Done")},
+			}, nil
+		})
+		require.NoError(t, err)
+
+		// Create 5 tasks via JSON-RPC
+		for i := 0; i < 5; i++ {
+			server.HandleMessage(context.Background(), []byte(`{
+				"jsonrpc": "2.0",
+				"id": `+fmt.Sprintf("%d", i+2)+`,
+				"method": "tools/call",
+				"params": {
+					"name": "test_tool",
+					"task": {}
+				}
+			}`))
+		}
+
+		time.Sleep(100 * time.Millisecond)
+
+		// Page 1: List tasks without cursor
+		response1 := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 100,
+			"method": "tasks/list"
+		}`))
+
+		resp1, ok := response1.(mcp.JSONRPCResponse)
+		require.True(t, ok)
+		result1, ok := resp1.Result.(mcp.ListTasksResult)
+		require.True(t, ok)
+		assert.Len(t, result1.Tasks, limit)
+		assert.NotEmpty(t, result1.NextCursor)
+
+		// Page 2: List tasks with cursor
+		response2 := server.HandleMessage(context.Background(), []byte(fmt.Sprintf(`{
+			"jsonrpc": "2.0",
+			"id": 101,
+			"method": "tasks/list",
+			"params": {
+				"cursor": "%s"
+			}
+		}`, result1.NextCursor)))
+
+		resp2, ok := response2.(mcp.JSONRPCResponse)
+		require.True(t, ok)
+		result2, ok := resp2.Result.(mcp.ListTasksResult)
+		require.True(t, ok)
+		assert.Len(t, result2.Tasks, limit)
+		assert.NotEmpty(t, result2.NextCursor)
+
+		// Page 3: List remaining tasks
+		response3 := server.HandleMessage(context.Background(), []byte(fmt.Sprintf(`{
+			"jsonrpc": "2.0",
+			"id": 102,
+			"method": "tasks/list",
+			"params": {
+				"cursor": "%s"
+			}
+		}`, result2.NextCursor)))
+
+		resp3, ok := response3.(mcp.JSONRPCResponse)
+		require.True(t, ok)
+		result3, ok := resp3.Result.(mcp.ListTasksResult)
+		require.True(t, ok)
+		assert.Len(t, result3.Tasks, 1) // 5 total, 2 per page = 2+2+1
+		assert.Empty(t, result3.NextCursor)
 	})
 }
