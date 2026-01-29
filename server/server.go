@@ -54,6 +54,11 @@ type PromptHandlerFunc func(ctx context.Context, request mcp.GetPromptRequest) (
 // ToolHandlerFunc handles tool calls with given arguments.
 type ToolHandlerFunc func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
 
+// TaskToolHandlerFunc handles tool calls that execute asynchronously.
+// It returns immediately with task creation info; the actual result is
+// retrieved later via tasks/result.
+type TaskToolHandlerFunc func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error)
+
 // ToolHandlerMiddleware is a middleware function that wraps a ToolHandlerFunc.
 type ToolHandlerMiddleware func(ToolHandlerFunc) ToolHandlerFunc
 
@@ -67,6 +72,12 @@ type ToolFilterFunc func(ctx context.Context, tools []mcp.Tool) []mcp.Tool
 type ServerTool struct {
 	Tool    mcp.Tool
 	Handler ToolHandlerFunc
+}
+
+// ServerTaskTool combines a Tool with its TaskToolHandlerFunc.
+type ServerTaskTool struct {
+	Tool    mcp.Tool
+	Handler TaskToolHandlerFunc
 }
 
 // ServerPrompt combines a Prompt with its handler function.
@@ -171,6 +182,7 @@ type MCPServer struct {
 	prompts                    map[string]mcp.Prompt
 	promptHandlers             map[string]PromptHandlerFunc
 	tools                      map[string]ServerTool
+	taskTools                  map[string]ServerTaskTool
 	toolHandlerMiddlewares     []ToolHandlerMiddleware
 	resourceHandlerMiddlewares []ResourceHandlerMiddleware
 	toolFilters                []ToolFilterFunc
@@ -410,6 +422,7 @@ func NewMCPServer(
 		prompts:                    make(map[string]mcp.Prompt),
 		promptHandlers:             make(map[string]PromptHandlerFunc),
 		tools:                      make(map[string]ServerTool),
+		taskTools:                  make(map[string]ServerTaskTool),
 		toolHandlerMiddlewares:     make([]ToolHandlerMiddleware, 0),
 		resourceHandlerMiddlewares: make([]ResourceHandlerMiddleware, 0),
 		name:                       name,

@@ -3474,3 +3474,50 @@ func TestMCPServer_HybridModeDetection(t *testing.T) {
 		assert.Len(t, result.Content, 1)
 	})
 }
+
+func TestServerTaskTool_TypeDefinitions(t *testing.T) {
+	t.Run("TaskToolHandlerFunc type exists", func(t *testing.T) {
+		// Verify that TaskToolHandlerFunc type can be created
+		var handler TaskToolHandlerFunc = func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			return &mcp.CreateTaskResult{
+				Task: mcp.Task{
+					TaskId: "test-task",
+					Status: mcp.TaskStatusWorking,
+				},
+			}, nil
+		}
+		assert.NotNil(t, handler)
+	})
+
+	t.Run("ServerTaskTool type exists and can be created", func(t *testing.T) {
+		tool := mcp.NewTool("test-task-tool",
+			mcp.WithDescription("A test task tool"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+
+		handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			return &mcp.CreateTaskResult{
+				Task: mcp.Task{
+					TaskId: "test-task",
+					Status: mcp.TaskStatusWorking,
+				},
+			}, nil
+		}
+
+		serverTaskTool := ServerTaskTool{
+			Tool:    tool,
+			Handler: handler,
+		}
+
+		assert.Equal(t, "test-task-tool", serverTaskTool.Tool.Name)
+		assert.NotNil(t, serverTaskTool.Handler)
+		assert.Equal(t, mcp.TaskSupportRequired, serverTaskTool.Tool.Execution.TaskSupport)
+	})
+
+	t.Run("taskTools map is initialized in NewMCPServer", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+		assert.NotNil(t, server)
+		assert.NotNil(t, server.taskTools)
+		assert.Equal(t, 0, len(server.taskTools))
+	})
+}
