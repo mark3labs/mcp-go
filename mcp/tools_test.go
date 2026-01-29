@@ -1765,3 +1765,37 @@ func TestWithSchemaAdditionalProperties(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Contains(t, string(data), `"additionalProperties":false`)
 }
+
+// TestToolInputSchema_MarshalJSON_EmptyProperties verifies that ToolInputSchema
+// inherits the MarshalJSON method from ToolArgumentsSchema, ensuring that
+// the 'properties' field is included in JSON output even when empty.
+// This fixes issue #694.
+func TestToolInputSchema_MarshalJSON_EmptyProperties(t *testing.T) {
+	schema := ToolInputSchema{
+		Type:       "object",
+		Properties: map[string]any{}, // empty but not nil
+	}
+
+	b, err := json.Marshal(schema)
+	assert.NoError(t, err)
+
+	result := string(b)
+	// Ensure 'properties' field is present in JSON output
+	assert.Contains(t, result, `"properties"`, "Expected properties field in JSON output")
+	// Verify the full expected output
+	assert.Contains(t, result, `"properties":{}`, "Expected empty properties object in JSON output")
+}
+
+// TestToolOutputSchema_MarshalJSON_EmptyProperties verifies the same for ToolOutputSchema.
+func TestToolOutputSchema_MarshalJSON_EmptyProperties(t *testing.T) {
+	schema := ToolOutputSchema{
+		Type:       "object",
+		Properties: map[string]any{}, // empty but not nil
+	}
+
+	b, err := json.Marshal(schema)
+	assert.NoError(t, err)
+
+	result := string(b)
+	assert.Contains(t, result, `"properties":{}`, "Expected empty properties object in JSON output")
+}
