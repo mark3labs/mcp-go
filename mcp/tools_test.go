@@ -1981,3 +1981,168 @@ func TestWithTaskSupport_PreservesExistingExecution(t *testing.T) {
 	// Verify TaskSupport was updated
 	assert.Equal(t, TaskSupportRequired, tool.Execution.TaskSupport)
 }
+
+// TestCallToolRequest_WithTaskParams tests that CallToolRequest properly unmarshals task params
+func TestCallToolRequest_WithTaskParams(t *testing.T) {
+	tests := []struct {
+		name     string
+		jsonData string
+		expected CallToolRequest
+		wantErr  bool
+	}{
+		{
+			name: "request with task params",
+			jsonData: `{
+				"method": "tools/call",
+				"params": {
+					"name": "test-tool",
+					"arguments": {
+						"input": "test"
+					},
+					"task": {
+						"ttl": 300
+					}
+				}
+			}`,
+			expected: CallToolRequest{
+				Request: Request{
+					Method: "tools/call",
+				},
+				Params: CallToolParams{
+					Name: "test-tool",
+					Arguments: map[string]any{
+						"input": "test",
+					},
+					Task: &TaskParams{
+						TTL: ToInt64Ptr(300),
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "request without task params",
+			jsonData: `{
+				"method": "tools/call",
+				"params": {
+					"name": "test-tool",
+					"arguments": {
+						"input": "test"
+					}
+				}
+			}`,
+			expected: CallToolRequest{
+				Request: Request{
+					Method: "tools/call",
+				},
+				Params: CallToolParams{
+					Name: "test-tool",
+					Arguments: map[string]any{
+						"input": "test",
+					},
+					Task: nil,
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "request with null task params",
+			jsonData: `{
+				"method": "tools/call",
+				"params": {
+					"name": "test-tool",
+					"arguments": {
+						"input": "test"
+					},
+					"task": null
+				}
+			}`,
+			expected: CallToolRequest{
+				Request: Request{
+					Method: "tools/call",
+				},
+				Params: CallToolParams{
+					Name: "test-tool",
+					Arguments: map[string]any{
+						"input": "test",
+					},
+					Task: nil,
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result CallToolRequest
+			err := json.Unmarshal([]byte(tt.jsonData), &result)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+
+			// Compare method
+			assert.Equal(t, tt.expected.Method, result.Method)
+
+			// Compare tool name
+			assert.Equal(t, tt.expected.Params.Name, result.Params.Name)
+
+			// Compare arguments
+			expectedArgs, _ := tt.expected.Params.Arguments.(map[string]any)
+			resultArgs := result.GetArguments()
+			assert.Equal(t, expectedArgs, resultArgs)
+
+			// Compare task params
+			if tt.expected.Params.Task != nil {
+				assert.NotNil(t, result.Params.Task, "Task params should not be nil")
+				assert.Equal(t, tt.expected.Params.Task.TTL, result.Params.Task.TTL)
+			} else {
+				assert.Nil(t, result.Params.Task, "Task params should be nil")
+			}
+		})
+	}
+}
+
+// TestCallToolRequest_WithTaskParams_RoundTrip tests that marshaling and unmarshaling preserves task params
+func TestCallToolRequest_WithTaskParams_RoundTrip(t *testing.T) {
+	original := CallToolRequest{
+		Request: Request{
+			Method: "tools/call",
+		},
+		Params: CallToolParams{
+			Name: "async-tool",
+			Arguments: map[string]any{
+				"operation": "process",
+				"count":     42,
+			},
+			Task: &TaskParams{
+				TTL: ToInt64Ptr(600),
+			},
+		},
+	}
+
+	// Marshal to JSON
+	data, err := json.Marshal(original)
+	assert.NoError(t, err)
+
+	// Unmarshal back
+	var unmarshaled CallToolRequest
+	err = json.Unmarshal(data, &unmarshaled)
+	assert.NoError(t, err)
+
+	// Verify all fields are preserved
+	assert.Equal(t, original.Method, unmarshaled.Method)
+	assert.Equal(t, original.Params.Name, unmarshaled.Params.Name)
+
+	// Compare arguments
+	assert.Equal(t, "process", unmarshaled.GetString("operation", ""))
+	assert.Equal(t, 42, unmarshaled.GetInt("count", 0))
+
+	// Compare task params
+	assert.NotNil(t, unmarshaled.Params.Task)
+	assert.Equal(t, original.Params.Task.TTL, unmarshaled.Params.Task.TTL)
+}

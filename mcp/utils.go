@@ -965,6 +965,11 @@ func ToBoolPtr(b bool) *bool {
 	return &b
 }
 
+// ToInt64Ptr returns a pointer to the given int64 value
+func ToInt64Ptr(i int64) *int64 {
+	return &i
+}
+
 // GetTextFromContent extracts text from a Content interface that might be a TextContent struct
 // or a map[string]any that was unmarshaled from JSON. This is useful when dealing with content
 // that comes from different transport layers that may handle JSON differently.
