@@ -1765,3 +1765,110 @@ func TestWithSchemaAdditionalProperties(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Contains(t, string(data), `"additionalProperties":false`)
 }
+
+// TestToolExecutionMarshaling tests that the Execution field is properly marshaled in JSON output
+func TestToolExecutionMarshaling(t *testing.T) {
+	tests := []struct {
+		name            string
+		tool            Tool
+		expectExecution bool
+		expectedSupport TaskSupport
+	}{
+		{
+			name: "tool with task support forbidden",
+			tool: Tool{
+				Name:        "forbidden-tool",
+				Description: "A tool that forbids task augmentation",
+				InputSchema: ToolInputSchema{
+					Type:       "object",
+					Properties: map[string]any{},
+				},
+				Execution: &ToolExecution{
+					TaskSupport: TaskSupportForbidden,
+				},
+			},
+			expectExecution: true,
+			expectedSupport: TaskSupportForbidden,
+		},
+		{
+			name: "tool with task support optional",
+			tool: Tool{
+				Name:        "optional-tool",
+				Description: "A tool that optionally supports task augmentation",
+				InputSchema: ToolInputSchema{
+					Type:       "object",
+					Properties: map[string]any{},
+				},
+				Execution: &ToolExecution{
+					TaskSupport: TaskSupportOptional,
+				},
+			},
+			expectExecution: true,
+			expectedSupport: TaskSupportOptional,
+		},
+		{
+			name: "tool with task support required",
+			tool: Tool{
+				Name:        "required-tool",
+				Description: "A tool that requires task augmentation",
+				InputSchema: ToolInputSchema{
+					Type:       "object",
+					Properties: map[string]any{},
+				},
+				Execution: &ToolExecution{
+					TaskSupport: TaskSupportRequired,
+				},
+			},
+			expectExecution: true,
+			expectedSupport: TaskSupportRequired,
+		},
+		{
+			name: "tool without execution field",
+			tool: Tool{
+				Name:        "no-execution-tool",
+				Description: "A tool without execution configuration",
+				InputSchema: ToolInputSchema{
+					Type:       "object",
+					Properties: map[string]any{},
+				},
+				Execution: nil,
+			},
+			expectExecution: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Marshal the tool to JSON
+			data, err := json.Marshal(tt.tool)
+			assert.NoError(t, err)
+
+			// Unmarshal to map for comparison
+			var result map[string]any
+			err = json.Unmarshal(data, &result)
+			assert.NoError(t, err)
+
+			if tt.expectExecution {
+				// Check if execution field is present
+				assert.Contains(t, result, "execution", "Tool should include execution field")
+
+				execution, ok := result["execution"].(map[string]any)
+				assert.True(t, ok, "Execution field should be a map")
+
+				taskSupport, ok := execution["taskSupport"].(string)
+				assert.True(t, ok, "taskSupport should be a string")
+				assert.Equal(t, string(tt.expectedSupport), taskSupport, "taskSupport value should match")
+			} else {
+				// Check that execution field is not present
+				assert.NotContains(t, result, "execution", "Tool without Execution should not include execution field")
+			}
+		})
+	}
+}
+
+// TestTaskSupportConstants verifies the TaskSupport constants have the correct values
+func TestTaskSupportConstants(t *testing.T) {
+	assert.Equal(t, TaskSupport("forbidden"), TaskSupportForbidden)
+	assert.Equal(t, TaskSupport("optional"), TaskSupportOptional)
+	assert.Equal(t, TaskSupport("required"), TaskSupportRequired)
+}

@@ -553,6 +553,24 @@ type ToolListChangedNotification struct {
 	Notification
 }
 
+// TaskSupport indicates how a tool supports task augmentation.
+type TaskSupport string
+
+const (
+	// TaskSupportForbidden means the tool cannot be invoked as a task (default).
+	TaskSupportForbidden TaskSupport = "forbidden"
+	// TaskSupportOptional means the tool can be invoked as a task or normally.
+	TaskSupportOptional TaskSupport = "optional"
+	// TaskSupportRequired means the tool must be invoked as a task.
+	TaskSupportRequired TaskSupport = "required"
+)
+
+// ToolExecution describes execution behavior for a tool.
+type ToolExecution struct {
+	// TaskSupport indicates whether the tool supports task augmentation.
+	TaskSupport TaskSupport `json:"taskSupport,omitempty"`
+}
+
 // Tool represents the definition for a tool the client can call.
 type Tool struct {
 	// Meta is a metadata object that is reserved by MCP for storing additional information.
@@ -575,6 +593,8 @@ type Tool struct {
 	DeferLoading bool `json:"defer_loading,omitempty"`
 	// Icons provides visual identifiers for the tool
 	Icons []Icon `json:"icons,omitempty"`
+	// Execution describes execution behavior for the tool
+	Execution *ToolExecution `json:"execution,omitempty"`
 }
 
 // GetName returns the name of the tool.
@@ -628,6 +648,10 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 
 	if t.Icons != nil {
 		m["icons"] = t.Icons
+	}
+
+	if t.Execution != nil {
+		m["execution"] = t.Execution
 	}
 
 	return json.Marshal(m)
