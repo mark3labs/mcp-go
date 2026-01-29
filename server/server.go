@@ -1497,14 +1497,24 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 	// Create task entry (pollInterval will be nil for now, can be added later if needed)
 	entry := s.createTask(ctx, taskID, ttl, nil)
 
+	// Create cancellable context for this task before starting the goroutine
+	// This ensures the cancel function is available immediately
+	taskCtx, cancel := context.WithCancel(ctx)
+
+	// Store cancel function in entry before starting goroutine
+	// This prevents race conditions where cancelTask is called before the goroutine sets it
+	s.tasksMu.Lock()
+	entry.cancelFunc = cancel
+	s.tasksMu.Unlock()
+
 	// Make a copy of the task for the return value before starting async execution
 	// This avoids race conditions where the async goroutine modifies the task
 	s.tasksMu.RLock()
 	taskCopy := entry.task
 	s.tasksMu.RUnlock()
 
-	// Execute tool asynchronously (will be implemented in TAS-10)
-	go s.executeTaskTool(ctx, entry, taskTool, request)
+	// Execute tool asynchronously
+	go s.executeTaskTool(taskCtx, entry, taskTool, request)
 
 	// Return task creation result immediately
 	// Note: The protocol expects this wrapped in CallToolResult's meta field
@@ -1520,24 +1530,17 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 }
 
 // executeTaskTool runs the task tool handler asynchronously.
-// It creates a cancellable context, executes the handler, and stores the result.
+// It receives a cancellable context (with cancel function already stored in entry),
+// executes the handler, and stores the result.
 func (s *MCPServer) executeTaskTool(
 	ctx context.Context,
 	entry *taskEntry,
 	taskTool ServerTaskTool,
 	request mcp.CallToolRequest,
 ) {
-	// Create cancellable context for this task
-	taskCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	// Store cancel function in entry so tasks/cancel can use it
-	s.tasksMu.Lock()
-	entry.cancelFunc = cancel
-	s.tasksMu.Unlock()
-
 	// Execute the handler - it returns the actual CallToolResult
-	result, err := taskTool.Handler(taskCtx, request)
+	// The context is already cancellable and the cancel function is stored in entry
+	result, err := taskTool.Handler(ctx, request)
 
 	if err != nil {
 		// Handler returned an error - mark task as failed

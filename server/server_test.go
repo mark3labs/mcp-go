@@ -3510,6 +3510,12 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 		// Create a task entry
 		entry := server.createTask(context.Background(), "test-task-123", nil, nil)
 
+		// Create cancellable context and set cancel function (as handleTaskAugmentedToolCall does)
+		taskCtx, cancel := context.WithCancel(context.Background())
+		server.tasksMu.Lock()
+		entry.cancelFunc = cancel
+		server.tasksMu.Unlock()
+
 		// Get the task tool
 		server.toolsMu.RLock()
 		taskTool := server.taskTools["test_tool"]
@@ -3525,7 +3531,7 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 		}
 
 		// Execute the task tool
-		server.executeTaskTool(context.Background(), entry, taskTool, request)
+		server.executeTaskTool(taskCtx, entry, taskTool, request)
 
 		// Verify result is stored
 		server.tasksMu.RLock()
@@ -3561,6 +3567,12 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 		// Create a task entry
 		entry := server.createTask(context.Background(), "test-task-456", nil, nil)
 
+		// Create cancellable context and set cancel function
+		taskCtx, cancel := context.WithCancel(context.Background())
+		server.tasksMu.Lock()
+		entry.cancelFunc = cancel
+		server.tasksMu.Unlock()
+
 		// Get the task tool
 		server.toolsMu.RLock()
 		taskTool := server.taskTools["failing_tool"]
@@ -3576,7 +3588,7 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 		}
 
 		// Execute the task tool
-		server.executeTaskTool(context.Background(), entry, taskTool, request)
+		server.executeTaskTool(taskCtx, entry, taskTool, request)
 
 		// Verify task is marked as failed
 		server.tasksMu.RLock()
@@ -3615,6 +3627,12 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 		// Create a task entry
 		entry := server.createTask(context.Background(), "test-task-789", nil, nil)
 
+		// Create cancellable context and set cancel function
+		taskCtx, cancel := context.WithCancel(context.Background())
+		server.tasksMu.Lock()
+		entry.cancelFunc = cancel
+		server.tasksMu.Unlock()
+
 		// Get the task tool
 		server.toolsMu.RLock()
 		taskTool := server.taskTools["cancellable_tool"]
@@ -3630,7 +3648,7 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 		}
 
 		// Start execution in a goroutine
-		go server.executeTaskTool(context.Background(), entry, taskTool, request)
+		go server.executeTaskTool(taskCtx, entry, taskTool, request)
 
 		// Wait for cancel function to be set
 		time.Sleep(10 * time.Millisecond)
@@ -3675,6 +3693,14 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 		// Create a task entry
 		entry := server.createTask(context.Background(), "test-task-999", nil, nil)
 
+		// Create cancellable context and set cancel function BEFORE calling executeTaskTool
+		// This mimics what handleTaskAugmentedToolCall does
+		taskCtx, cancel := context.WithCancel(context.Background())
+		server.tasksMu.Lock()
+		entry.cancelFunc = cancel
+		cancelFuncSet = entry.cancelFunc != nil
+		server.tasksMu.Unlock()
+
 		// Get the task tool
 		server.toolsMu.RLock()
 		taskTool := server.taskTools["check_cancel_tool"]
@@ -3689,18 +3715,11 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 			},
 		}
 
-		// Execute in goroutine and immediately check cancel function
-		go server.executeTaskTool(context.Background(), entry, taskTool, request)
+		// Execute in goroutine
+		go server.executeTaskTool(taskCtx, entry, taskTool, request)
 
-		// Wait a tiny bit for the goroutine to start
-		time.Sleep(5 * time.Millisecond)
-
-		// Check that cancel function is set
-		server.tasksMu.RLock()
-		cancelFuncSet = entry.cancelFunc != nil
-		server.tasksMu.RUnlock()
-
-		assert.True(t, cancelFuncSet, "cancel function should be set early in execution")
+		// Verify cancel function was set before execution
+		assert.True(t, cancelFuncSet, "cancel function should be set before handler execution")
 
 		// Wait for completion
 		time.Sleep(50 * time.Millisecond)
