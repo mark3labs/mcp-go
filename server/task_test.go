@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -405,7 +406,12 @@ func TestMCPServer_TaskResultWaitForCompletion(t *testing.T) {
 	// Start goroutine to complete task after delay
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		server.completeTask(entry, "delayed result", nil)
+		result := &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.NewTextContent("delayed result"),
+			},
+		}
+		server.completeTask(entry, result, nil)
 	}()
 
 	// Request task result - should block until completion
@@ -465,6 +471,120 @@ func TestMCPServer_CompleteTaskWithError(t *testing.T) {
 	assert.Equal(t, mcp.TaskStatusFailed, entry.task.Status)
 	assert.NotEmpty(t, entry.task.StatusMessage)
 	assert.Equal(t, testErr, entry.resultErr)
+}
+
+func TestMCPServer_HandleTaskResult_ReturnsToolResult(t *testing.T) {
+	t.Run("returns CallToolResult with related-task metadata", func(t *testing.T) {
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		ctx := context.Background()
+
+		// Create a task
+		entry := server.createTask(ctx, "task-123", nil, nil)
+
+		// Complete task with a CallToolResult
+		expectedResult := &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.NewTextContent("Tool execution completed"),
+			},
+			IsError: false,
+		}
+		server.completeTask(entry, expectedResult, nil)
+
+		// Call handleTaskResult
+		result, err := server.handleTaskResult(ctx, 1, mcp.TaskResultRequest{
+			Request: mcp.Request{Method: string(mcp.MethodTasksResult)},
+			Params:  mcp.TaskResultParams{TaskId: "task-123"},
+		})
+
+		// Verify result
+		require.Nil(t, err)
+		require.NotNil(t, result)
+
+		// Check that the result contains the tool content
+		require.Len(t, result.Content, 1)
+		assert.Equal(t, "Tool execution completed", result.Content[0].(mcp.TextContent).Text)
+		assert.False(t, result.IsError)
+
+		// Check that related-task metadata is present
+		require.NotNil(t, result.Meta)
+		require.NotNil(t, result.Meta.AdditionalFields)
+		relatedTask, ok := result.Meta.AdditionalFields["io.modelcontextprotocol/related-task"].(map[string]any)
+		require.True(t, ok, "Expected related-task metadata")
+		assert.Equal(t, "task-123", relatedTask["taskId"])
+	})
+
+	t.Run("waits for task completion before returning", func(t *testing.T) {
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		ctx := context.Background()
+
+		// Create a task
+		entry := server.createTask(ctx, "task-456", nil, nil)
+
+		// Complete task after delay
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			result := &mcp.CallToolResult{
+				Content: []mcp.Content{
+					mcp.NewTextContent("Async result"),
+				},
+			}
+			server.completeTask(entry, result, nil)
+		}()
+
+		// Call handleTaskResult - should block
+		start := time.Now()
+		result, err := server.handleTaskResult(ctx, 1, mcp.TaskResultRequest{
+			Request: mcp.Request{Method: string(mcp.MethodTasksResult)},
+			Params:  mcp.TaskResultParams{TaskId: "task-456"},
+		})
+		elapsed := time.Since(start)
+
+		// Verify it waited
+		assert.GreaterOrEqual(t, elapsed.Milliseconds(), int64(90))
+
+		// Verify result
+		require.Nil(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.Content, 1)
+		assert.Equal(t, "Async result", result.Content[0].(mcp.TextContent).Text)
+	})
+
+	t.Run("returns error if task failed", func(t *testing.T) {
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		ctx := context.Background()
+
+		// Create and fail a task
+		entry := server.createTask(ctx, "task-789", nil, nil)
+		testErr := fmt.Errorf("task execution failed")
+		server.completeTask(entry, nil, testErr)
+
+		// Call handleTaskResult
+		result, err := server.handleTaskResult(ctx, 1, mcp.TaskResultRequest{
+			Request: mcp.Request{Method: string(mcp.MethodTasksResult)},
+			Params:  mcp.TaskResultParams{TaskId: "task-789"},
+		})
+
+		// Should return error
+		require.NotNil(t, err)
+		require.Nil(t, result)
+		assert.Equal(t, mcp.INTERNAL_ERROR, err.code)
+		assert.Contains(t, err.err.Error(), "task execution failed")
+	})
 }
 
 func TestTask_HelperFunctions(t *testing.T) {
@@ -546,11 +666,12 @@ func TestMCPServer_TaskJSONMarshaling(t *testing.T) {
 // type is correctly defined and can be used.
 func TestTaskToolHandlerFunc_TypeDefinition(t *testing.T) {
 	// Define a simple task tool handler
-	var handler TaskToolHandlerFunc = func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-		// Create a simple task result
-		task := mcp.NewTask("test-task-id")
-		return &mcp.CreateTaskResult{
-			Task: task,
+	var handler TaskToolHandlerFunc = func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		// Return a simple tool result with content
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.NewTextContent("Task completed successfully"),
+			},
 		}, nil
 	}
 
@@ -568,8 +689,8 @@ func TestTaskToolHandlerFunc_TypeDefinition(t *testing.T) {
 	result, err := handler(ctx, request)
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	assert.Equal(t, "test-task-id", result.Task.TaskId)
-	assert.Equal(t, mcp.TaskStatusWorking, result.Task.Status)
+	require.Len(t, result.Content, 1)
+	assert.Equal(t, "Task completed successfully", result.Content[0].(mcp.TextContent).Text)
 }
 
 // TestMCPServer_HandleListToolsIncludesTaskTools verifies that tools/list
@@ -622,8 +743,8 @@ func TestMCPServer_HandleListToolsIncludesTaskTools(t *testing.T) {
 			mcp.WithDescription("A task tool"),
 			mcp.WithTaskSupport(mcp.TaskSupportRequired),
 		)
-		err := server.AddTaskTool(taskTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-			return &mcp.CreateTaskResult{}, nil
+		err := server.AddTaskTool(taskTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
 		})
 		require.NoError(t, err)
 
@@ -674,8 +795,8 @@ func TestMCPServer_HandleListToolsIncludesTaskTools(t *testing.T) {
 			mcp.WithDescription("First task tool"),
 			mcp.WithTaskSupport(mcp.TaskSupportRequired),
 		)
-		err := server.AddTaskTool(taskTool1, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-			return &mcp.CreateTaskResult{}, nil
+		err := server.AddTaskTool(taskTool1, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
 		})
 		require.NoError(t, err)
 
@@ -683,8 +804,8 @@ func TestMCPServer_HandleListToolsIncludesTaskTools(t *testing.T) {
 			mcp.WithDescription("Second task tool"),
 			mcp.WithTaskSupport(mcp.TaskSupportOptional),
 		)
-		err = server.AddTaskTool(taskTool2, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-			return &mcp.CreateTaskResult{}, nil
+		err = server.AddTaskTool(taskTool2, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
 		})
 		require.NoError(t, err)
 

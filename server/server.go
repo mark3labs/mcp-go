@@ -56,9 +56,10 @@ type PromptHandlerFunc func(ctx context.Context, request mcp.GetPromptRequest) (
 type ToolHandlerFunc func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
 
 // TaskToolHandlerFunc handles tool calls that execute asynchronously.
-// It returns immediately with task creation info; the actual result is
-// retrieved later via tasks/result.
-type TaskToolHandlerFunc func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error)
+// The handler performs the actual work and returns a CallToolResult, which is
+// stored and later retrieved via tasks/result. The server infrastructure handles
+// creating and returning the CreateTaskResult immediately to the client.
+type TaskToolHandlerFunc func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
 
 // ToolHandlerMiddleware is a middleware function that wraps a ToolHandlerFunc.
 type ToolHandlerMiddleware func(ToolHandlerFunc) ToolHandlerFunc
@@ -1505,7 +1506,7 @@ func (s *MCPServer) executeTaskTool(
 	entry.cancelFunc = cancel
 	s.tasksMu.Unlock()
 
-	// Execute the handler
+	// Execute the handler - it returns the actual CallToolResult
 	result, err := taskTool.Handler(taskCtx, request)
 
 	if err != nil {
@@ -1514,7 +1515,7 @@ func (s *MCPServer) executeTaskTool(
 		return
 	}
 
-	// Store the CreateTaskResult as the task result
+	// Store the CallToolResult as the task result
 	// This will be returned by tasks/result
 	s.completeTask(entry, result, nil)
 }
@@ -1626,9 +1627,10 @@ func (s *MCPServer) handleTaskResult(
 		}
 	}
 
-	// Read result error under lock
+	// Read result and error under lock
 	s.tasksMu.RLock()
 	resultErr := entry.resultErr
+	storedResult := entry.result
 	s.tasksMu.RUnlock()
 
 	// Return error if task failed
@@ -1640,10 +1642,32 @@ func (s *MCPServer) handleTaskResult(
 		}
 	}
 
-	// The result structure varies by original request type
-	// For now, return the raw result wrapped in TaskResultResult
+	// The stored result should be a CallToolResult from task-augmented tool execution
+	// Extract and return it with related-task metadata
+	callToolResult, ok := storedResult.(*mcp.CallToolResult)
+	if !ok || callToolResult == nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INTERNAL_ERROR,
+			err:  fmt.Errorf("invalid task result type"),
+		}
+	}
+
+	// Return the result with related-task metadata
+	// TaskResultResult has the same fields as CallToolResult for task-augmented tools
 	result := &mcp.TaskResultResult{
-		Result: mcp.Result{},
+		Result: mcp.Result{
+			Meta: &mcp.Meta{
+				AdditionalFields: map[string]any{
+					"io.modelcontextprotocol/related-task": map[string]any{
+						"taskId": request.Params.TaskId,
+					},
+				},
+			},
+		},
+		Content:           callToolResult.Content,
+		StructuredContent: callToolResult.StructuredContent,
+		IsError:           callToolResult.IsError,
 	}
 
 	return result, nil

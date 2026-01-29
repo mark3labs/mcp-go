@@ -2881,8 +2881,8 @@ func TestServerTaskTool_TypeDefinition(t *testing.T) {
 	)
 
 	// Create a test handler
-	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-		return &mcp.CreateTaskResult{}, nil
+	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{}, nil
 	}
 
 	// Create ServerTaskTool
@@ -2956,8 +2956,8 @@ func TestMCPServer_AddTaskTool(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			server := NewMCPServer("test", "1.0.0")
 
-			handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-				return &mcp.CreateTaskResult{}, nil
+			handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return &mcp.CallToolResult{}, nil
 			}
 
 			err := server.AddTaskTool(tt.tool, handler)
@@ -3014,8 +3014,8 @@ func TestMCPServer_AddTaskTool_NotificationSent(t *testing.T) {
 				mcp.WithTaskSupport(mcp.TaskSupportRequired),
 			)
 
-			handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-				return &mcp.CreateTaskResult{}, nil
+			handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return &mcp.CallToolResult{}, nil
 			}
 
 			err := server.AddTaskTool(tool, handler)
@@ -3051,8 +3051,8 @@ func TestMCPServer_AddTaskTool_ImplicitCapabilitiesRegistration(t *testing.T) {
 		mcp.WithTaskSupport(mcp.TaskSupportRequired),
 	)
 
-	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-		return &mcp.CreateTaskResult{}, nil
+	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{}, nil
 	}
 
 	err := server.AddTaskTool(tool, handler)
@@ -3066,8 +3066,8 @@ func TestMCPServer_AddTaskTool_ImplicitCapabilitiesRegistration(t *testing.T) {
 func TestMCPServer_AddTaskTool_MultipleTools(t *testing.T) {
 	server := NewMCPServer("test", "1.0.0")
 
-	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-		return &mcp.CreateTaskResult{}, nil
+	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{}, nil
 	}
 
 	// Add multiple task tools
@@ -3162,8 +3162,8 @@ func TestMCPServer_HandleToolCall_DetectsTaskAugmentation(t *testing.T) {
 					mcp.WithDescription("A task tool"),
 					mcp.WithTaskSupport(mcp.TaskSupportOptional),
 				)
-				err := s.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-					return &mcp.CreateTaskResult{}, nil
+				err := s.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return &mcp.CallToolResult{}, nil
 				})
 				require.NoError(t, err)
 			},
@@ -3287,8 +3287,8 @@ func TestMCPServer_HandleTaskAugmentedToolCall_Implementation(t *testing.T) {
 					mcp.WithDescription("A task tool"),
 					mcp.WithTaskSupport(mcp.TaskSupportRequired),
 				)
-				err := s.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-					return &mcp.CreateTaskResult{}, nil
+				err := s.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return &mcp.CallToolResult{}, nil
 				})
 				require.NoError(t, err)
 			},
@@ -3305,8 +3305,8 @@ func TestMCPServer_HandleTaskAugmentedToolCall_Implementation(t *testing.T) {
 					mcp.WithDescription("A task tool"),
 					mcp.WithTaskSupport(mcp.TaskSupportOptional),
 				)
-				err := s.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-					return &mcp.CreateTaskResult{}, nil
+				err := s.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return &mcp.CallToolResult{}, nil
 				})
 				require.NoError(t, err)
 			},
@@ -3372,8 +3372,8 @@ func TestMCPServer_HandleTaskAugmentedToolCall_TaskCreation(t *testing.T) {
 		mcp.WithDescription("An async tool"),
 		mcp.WithTaskSupport(mcp.TaskSupportRequired),
 	)
-	err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-		return &mcp.CreateTaskResult{}, nil
+	err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{}, nil
 	})
 	require.NoError(t, err)
 
@@ -3431,11 +3431,11 @@ func TestMCPServer_HandleTaskAugmentedToolCall_AsyncExecution(t *testing.T) {
 		mcp.WithDescription("A slow tool"),
 		mcp.WithTaskSupport(mcp.TaskSupportRequired),
 	)
-	err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+	err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		handlerCalledMu.Lock()
 		handlerCalled = true
 		handlerCalledMu.Unlock()
-		return &mcp.CreateTaskResult{}, nil
+		return &mcp.CallToolResult{}, nil
 	})
 	require.NoError(t, err)
 
@@ -3492,15 +3492,17 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 			WithTaskCapabilities(true, true, true),
 		)
 
-		expectedResult := &mcp.CreateTaskResult{
-			Task: mcp.NewTask("result-task"),
+		expectedResult := &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.NewTextContent("Operation completed"),
+			},
 		}
 
 		tool := mcp.NewTool("test_tool",
 			mcp.WithDescription("A test tool"),
 			mcp.WithTaskSupport(mcp.TaskSupportRequired),
 		)
-		err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+		err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return expectedResult, nil
 		})
 		require.NoError(t, err)
@@ -3535,7 +3537,7 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 		assert.Nil(t, entry.resultErr)
 
 		// Verify the actual result
-		result, ok := entry.result.(*mcp.CreateTaskResult)
+		result, ok := entry.result.(*mcp.CallToolResult)
 		assert.True(t, ok)
 		assert.Equal(t, expectedResult, result)
 	})
@@ -3551,7 +3553,7 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 			mcp.WithDescription("A failing tool"),
 			mcp.WithTaskSupport(mcp.TaskSupportRequired),
 		)
-		err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+		err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return nil, expectedErr
 		})
 		require.NoError(t, err)
@@ -3598,11 +3600,11 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 			mcp.WithDescription("A cancellable tool"),
 			mcp.WithTaskSupport(mcp.TaskSupportRequired),
 		)
-		err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+		err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			// Simulate some work and check for cancellation
 			select {
 			case <-time.After(100 * time.Millisecond):
-				return &mcp.CreateTaskResult{}, nil
+				return &mcp.CallToolResult{}, nil
 			case <-ctx.Done():
 				ctxCancelled = true
 				return nil, ctx.Err()
@@ -3664,9 +3666,9 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 			mcp.WithDescription("Tool that checks cancel function"),
 			mcp.WithTaskSupport(mcp.TaskSupportRequired),
 		)
-		err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+		err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			// Check if cancel function was set before handler was called
-			return &mcp.CreateTaskResult{}, nil
+			return &mcp.CallToolResult{}, nil
 		})
 		require.NoError(t, err)
 
