@@ -3098,3 +3098,211 @@ func TestMCPServer_Complete(t *testing.T) {
 		})
 	})
 }
+
+func TestMCPServer_TaskSupportValidation(t *testing.T) {
+	t.Run("tool with TaskSupportRequired fails without task param", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a tool with TaskSupportRequired
+		tool := mcp.NewTool("required_task_tool",
+			mcp.WithDescription("A tool that requires task augmentation"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("success"), nil
+		})
+
+		// Try to call the tool without task param
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "required_task_tool"
+			}
+		}`))
+
+		// Should return an error
+		errorResp, ok := response.(mcp.JSONRPCError)
+		require.True(t, ok, "Expected JSONRPCError response, got: %T", response)
+		assert.Equal(t, mcp.METHOD_NOT_FOUND, errorResp.Error.Code)
+		assert.Contains(t, errorResp.Error.Message, "requires task augmentation")
+	})
+
+	t.Run("tool with TaskSupportRequired succeeds with task param", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a tool with TaskSupportRequired
+		tool := mcp.NewTool("required_task_tool",
+			mcp.WithDescription("A tool that requires task augmentation"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("success"), nil
+		})
+
+		// Create request with task param
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "required_task_tool",
+				"task": {
+					"ttl": 3600
+				}
+			}
+		}`))
+
+		// Should succeed (note: will return CallToolResult since we haven't implemented task-augmented execution yet)
+		_, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+	})
+
+	t.Run("tool with TaskSupportOptional works without task param", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a tool with TaskSupportOptional
+		tool := mcp.NewTool("optional_task_tool",
+			mcp.WithDescription("A tool with optional task augmentation"),
+			mcp.WithTaskSupport(mcp.TaskSupportOptional),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("success"), nil
+		})
+
+		// Call without task param
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "optional_task_tool"
+			}
+		}`))
+
+		// Should succeed
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+		result, ok := resp.Result.(mcp.CallToolResult)
+		require.True(t, ok, "Expected CallToolResult, got: %T", resp.Result)
+		assert.Len(t, result.Content, 1)
+	})
+
+	t.Run("tool with TaskSupportOptional works with task param", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a tool with TaskSupportOptional
+		tool := mcp.NewTool("optional_task_tool",
+			mcp.WithDescription("A tool with optional task augmentation"),
+			mcp.WithTaskSupport(mcp.TaskSupportOptional),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("success"), nil
+		})
+
+		// Call with task param
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "optional_task_tool",
+				"task": {
+					"ttl": 3600
+				}
+			}
+		}`))
+
+		// Should succeed
+		_, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+	})
+
+	t.Run("tool with TaskSupportForbidden works without task param", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a regular tool (default TaskSupportForbidden)
+		tool := mcp.NewTool("regular_tool",
+			mcp.WithDescription("A regular tool"),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("success"), nil
+		})
+
+		// Call without task param
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "regular_tool"
+			}
+		}`))
+
+		// Should succeed
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+		result, ok := resp.Result.(mcp.CallToolResult)
+		require.True(t, ok, "Expected CallToolResult, got: %T", resp.Result)
+		assert.Len(t, result.Content, 1)
+	})
+
+	t.Run("tool with TaskSupportForbidden works with task param", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a regular tool (default TaskSupportForbidden)
+		tool := mcp.NewTool("regular_tool",
+			mcp.WithDescription("A regular tool"),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("success"), nil
+		})
+
+		// Call with task param (should still work, just ignores the task param for now)
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "regular_tool",
+				"task": {
+					"ttl": 3600
+				}
+			}
+		}`))
+
+		// Should succeed (for now - task param is just ignored)
+		_, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+	})
+
+	t.Run("tool without Execution field works normally", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a tool without any task support configuration
+		tool := mcp.NewTool("simple_tool",
+			mcp.WithDescription("A simple tool"),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("success"), nil
+		})
+
+		// Call without task param
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "simple_tool"
+			}
+		}`))
+
+		// Should succeed
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+		result, ok := resp.Result.(mcp.CallToolResult)
+		require.True(t, ok, "Expected CallToolResult, got: %T", resp.Result)
+		assert.Len(t, result.Content, 1)
+	})
+}

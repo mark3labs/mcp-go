@@ -1383,6 +1383,17 @@ func (s *MCPServer) handleToolCall(
 		}
 	}
 
+	// Validate task support requirements
+	if tool.Tool.Execution != nil && tool.Tool.Execution.TaskSupport == mcp.TaskSupportRequired {
+		if request.Params.Task == nil {
+			return nil, &requestError{
+				id:   id,
+				code: mcp.METHOD_NOT_FOUND,
+				err:  fmt.Errorf("tool '%s' requires task augmentation", request.Params.Name),
+			}
+		}
+	}
+
 	finalHandler := tool.Handler
 
 	s.toolMiddlewareMu.RLock()
