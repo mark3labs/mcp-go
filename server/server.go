@@ -1402,13 +1402,8 @@ func (s *MCPServer) handleToolCall(
 			tool.Tool.Execution.TaskSupport == mcp.TaskSupportRequired)
 
 	if shouldExecuteAsTask {
-		// TODO(TAS-9): Implement task-augmented execution
-		// This will call handleTaskAugmentedToolCall() once implemented
-		return nil, &requestError{
-			id:   id,
-			code: mcp.INTERNAL_ERROR,
-			err:  fmt.Errorf("task-augmented tool execution not yet implemented"),
-		}
+		// Route to task-augmented execution handler
+		return s.handleTaskAugmentedToolCall(ctx, id, request)
 	}
 
 	finalHandler := tool.Handler
@@ -1432,6 +1427,27 @@ func (s *MCPServer) handleToolCall(
 	}
 
 	return result, nil
+}
+
+// handleTaskAugmentedToolCall handles tool calls that are executed as tasks.
+// This is a stub implementation that will be completed in TAS-9.
+func (s *MCPServer) handleTaskAugmentedToolCall(
+	ctx context.Context,
+	id any,
+	request mcp.CallToolRequest,
+) (*mcp.CallToolResult, *requestError) {
+	// TODO(TAS-9): Implement full task-augmented tool call handling
+	// This should:
+	// 1. Look up the task tool handler
+	// 2. Validate task support (optional/required)
+	// 3. Create task entry
+	// 4. Start async execution goroutine
+	// 5. Return CreateTaskResult immediately
+	return nil, &requestError{
+		id:   id,
+		code: mcp.INTERNAL_ERROR,
+		err:  fmt.Errorf("task-augmented tool execution not yet implemented"),
+	}
 }
 
 func (s *MCPServer) handleNotification(
