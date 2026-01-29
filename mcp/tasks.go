@@ -118,6 +118,40 @@ func NewTaskStatusNotification(task Task) TaskStatusNotification {
 }
 
 //
+// Related Task Metadata
+//
+
+// RelatedTaskMetaKey is the standard metadata key for associating a message with a task.
+// This follows the MCP specification for task-related metadata.
+const RelatedTaskMetaKey = "io.modelcontextprotocol/related-task"
+
+// RelatedTaskMeta creates the metadata map for associating a message with a task.
+// This is used to link responses, notifications, or results to their originating task.
+func RelatedTaskMeta(taskID string) map[string]any {
+	return map[string]any{
+		"taskId": taskID,
+	}
+}
+
+// WithRelatedTask creates a Meta object with the related task ID set.
+// This is a convenience function for adding task association metadata to responses.
+//
+// Example:
+//
+//	result := &mcp.CallToolResult{
+//	    Result: mcp.Result{
+//	        Meta: mcp.WithRelatedTask(taskID),
+//	    },
+//	}
+func WithRelatedTask(taskID string) *Meta {
+	return &Meta{
+		AdditionalFields: map[string]any{
+			RelatedTaskMetaKey: RelatedTaskMeta(taskID),
+		},
+	}
+}
+
+//
 // Task Capability Helper Functions
 //
 
