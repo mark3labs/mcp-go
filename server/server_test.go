@@ -3201,8 +3201,8 @@ func TestMCPServer_HandleToolCall_DetectsTaskAugmentation(t *testing.T) {
 					assert.Equal(t, tt.errorCode, err.code)
 				}
 				if tt.expectRouteToTask {
-					// Verify it was routed to task handler (stub returns specific error)
-					assert.Contains(t, err.err.Error(), "not yet implemented")
+					// Verify it was routed to task handler (now returns proper error)
+					assert.Contains(t, err.err.Error(), "does not support task augmentation")
 				}
 			} else {
 				assert.NotNil(t, result)
@@ -3232,32 +3232,244 @@ func TestMCPServer_HandleToolCall_TaskParamsPreserved(t *testing.T) {
 	// Call handleToolCall - should route to task handler
 	result, err := server.handleToolCall(context.Background(), "test-id", request)
 
-	// Verify task handler was called (stub returns error with specific message)
+	// Verify task handler was called (returns error since tool doesn't exist)
 	assert.Nil(t, result)
 	assert.NotNil(t, err)
-	assert.Equal(t, mcp.METHOD_NOT_FOUND, err.code)
-	assert.Contains(t, err.err.Error(), "not yet implemented")
+	assert.Equal(t, mcp.INVALID_PARAMS, err.code)
+	assert.Contains(t, err.err.Error(), "not found")
 }
 
-func TestMCPServer_HandleTaskAugmentedToolCall_StubBehavior(t *testing.T) {
-	// Test the stub implementation directly
-	server := NewMCPServer("test-server", "1.0.0")
+func TestMCPServer_HandleTaskAugmentedToolCall_Implementation(t *testing.T) {
+	tests := []struct {
+		name          string
+		setupServer   func(*MCPServer)
+		toolName      string
+		taskParams    *mcp.TaskParams
+		expectError   bool
+		errorCode     int
+		errorContains string
+	}{
+		{
+			name: "tool not found returns INVALID_PARAMS error",
+			setupServer: func(s *MCPServer) {
+				// Don't add any tools
+			},
+			toolName: "nonexistent_tool",
+			taskParams: &mcp.TaskParams{
+				TTL: func() *int64 { v := int64(300); return &v }(),
+			},
+			expectError:   true,
+			errorCode:     mcp.INVALID_PARAMS,
+			errorContains: "not found",
+		},
+		{
+			name: "regular tool without task support returns METHOD_NOT_FOUND",
+			setupServer: func(s *MCPServer) {
+				tool := mcp.NewTool("regular_tool",
+					mcp.WithDescription("A regular tool"),
+				)
+				s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return mcp.NewToolResultText("success"), nil
+				})
+			},
+			toolName: "regular_tool",
+			taskParams: &mcp.TaskParams{
+				TTL: func() *int64 { v := int64(300); return &v }(),
+			},
+			expectError:   true,
+			errorCode:     mcp.METHOD_NOT_FOUND,
+			errorContains: "does not support task augmentation",
+		},
+		{
+			name: "task tool returns CreateTaskResult immediately",
+			setupServer: func(s *MCPServer) {
+				tool := mcp.NewTool("task_tool",
+					mcp.WithDescription("A task tool"),
+					mcp.WithTaskSupport(mcp.TaskSupportRequired),
+				)
+				err := s.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+					return &mcp.CreateTaskResult{}, nil
+				})
+				require.NoError(t, err)
+			},
+			toolName: "task_tool",
+			taskParams: &mcp.TaskParams{
+				TTL: func() *int64 { v := int64(300); return &v }(),
+			},
+			expectError: false,
+		},
+		{
+			name: "task tool without TTL creates task successfully",
+			setupServer: func(s *MCPServer) {
+				tool := mcp.NewTool("task_tool",
+					mcp.WithDescription("A task tool"),
+					mcp.WithTaskSupport(mcp.TaskSupportOptional),
+				)
+				err := s.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+					return &mcp.CreateTaskResult{}, nil
+				})
+				require.NoError(t, err)
+			},
+			toolName:    "task_tool",
+			taskParams:  &mcp.TaskParams{}, // No TTL
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewMCPServer("test-server", "1.0.0",
+				WithTaskCapabilities(true, true, true),
+			)
+			tt.setupServer(server)
+
+			request := mcp.CallToolRequest{
+				Request: mcp.Request{
+					Method: string(mcp.MethodToolsCall),
+				},
+				Params: mcp.CallToolParams{
+					Name: tt.toolName,
+					Task: tt.taskParams,
+				},
+			}
+
+			result, err := server.handleTaskAugmentedToolCall(context.Background(), "test-id", request)
+
+			if tt.expectError {
+				assert.Nil(t, result)
+				assert.NotNil(t, err)
+				assert.Equal(t, tt.errorCode, err.code)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.err.Error(), tt.errorContains)
+				}
+			} else {
+				assert.NotNil(t, result)
+				assert.Nil(t, err)
+
+				// Verify result structure
+				assert.NotNil(t, result.Meta)
+				assert.NotNil(t, result.Meta.AdditionalFields)
+				taskField, ok := result.Meta.AdditionalFields["task"]
+				assert.True(t, ok, "task field should be present in meta")
+
+				// Verify task is a Task type
+				task, ok := taskField.(mcp.Task)
+				assert.True(t, ok, "task field should be of type mcp.Task")
+				assert.NotEmpty(t, task.TaskId, "task ID should be generated")
+				assert.Equal(t, mcp.TaskStatusWorking, task.Status, "task should start in working status")
+			}
+		})
+	}
+}
+
+func TestMCPServer_HandleTaskAugmentedToolCall_TaskCreation(t *testing.T) {
+	// Test that task is properly created and stored
+	server := NewMCPServer("test-server", "1.0.0",
+		WithTaskCapabilities(true, true, true),
+	)
+
+	tool := mcp.NewTool("async_tool",
+		mcp.WithDescription("An async tool"),
+		mcp.WithTaskSupport(mcp.TaskSupportRequired),
+	)
+	err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+		return &mcp.CreateTaskResult{}, nil
+	})
+	require.NoError(t, err)
+
+	ttl := int64(500)
+	request := mcp.CallToolRequest{
+		Request: mcp.Request{
+			Method: string(mcp.MethodToolsCall),
+		},
+		Params: mcp.CallToolParams{
+			Name: "async_tool",
+			Task: &mcp.TaskParams{
+				TTL: &ttl,
+			},
+		},
+	}
+
+	result, reqErr := server.handleTaskAugmentedToolCall(context.Background(), "test-id", request)
+
+	assert.NotNil(t, result)
+	assert.Nil(t, reqErr)
+
+	// Extract task ID from result
+	taskField := result.Meta.AdditionalFields["task"]
+	task, ok := taskField.(mcp.Task)
+	require.True(t, ok)
+
+	// Verify task is stored in server
+	server.tasksMu.RLock()
+	entry, exists := server.tasks[task.TaskId]
+	if exists {
+		// Read task fields while holding the lock to avoid race
+		taskID := entry.task.TaskId
+		status := entry.task.Status
+		server.tasksMu.RUnlock()
+
+		assert.True(t, exists, "task should be stored in server")
+		assert.NotNil(t, entry)
+		assert.Equal(t, task.TaskId, taskID)
+		assert.Equal(t, mcp.TaskStatusWorking, status)
+	} else {
+		server.tasksMu.RUnlock()
+		assert.True(t, exists, "task should be stored in server")
+	}
+}
+
+func TestMCPServer_HandleTaskAugmentedToolCall_AsyncExecution(t *testing.T) {
+	// Test that executeTaskTool is called asynchronously
+	server := NewMCPServer("test-server", "1.0.0",
+		WithTaskCapabilities(true, true, true),
+	)
+
+	handlerCalled := false
+	tool := mcp.NewTool("slow_tool",
+		mcp.WithDescription("A slow tool"),
+		mcp.WithTaskSupport(mcp.TaskSupportRequired),
+	)
+	err := server.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+		handlerCalled = true
+		return &mcp.CreateTaskResult{}, nil
+	})
+	require.NoError(t, err)
 
 	request := mcp.CallToolRequest{
 		Request: mcp.Request{
 			Method: string(mcp.MethodToolsCall),
 		},
 		Params: mcp.CallToolParams{
-			Name: "test_tool",
+			Name: "slow_tool",
 			Task: &mcp.TaskParams{},
 		},
 	}
 
-	result, err := server.handleTaskAugmentedToolCall(context.Background(), "test-id", request)
+	result, reqErr := server.handleTaskAugmentedToolCall(context.Background(), "test-id", request)
 
-	// Verify stub behavior
-	assert.Nil(t, result)
-	assert.NotNil(t, err)
-	assert.Equal(t, mcp.METHOD_NOT_FOUND, err.code)
-	assert.Contains(t, err.err.Error(), "not yet implemented")
+	// Should return immediately with task created
+	assert.NotNil(t, result)
+	assert.Nil(t, reqErr)
+
+	// Handler should not be called yet (it runs async)
+	// Note: executeTaskTool stub completes immediately, but handler is not called
+	assert.False(t, handlerCalled, "handler should not be called during synchronous return")
+
+	// Extract task and wait for completion
+	taskField := result.Meta.AdditionalFields["task"]
+	task := taskField.(mcp.Task)
+
+	// Wait a bit for async execution to complete
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify task completed (stub implementation marks it as failed)
+	server.tasksMu.RLock()
+	entry := server.tasks[task.TaskId]
+	completed := entry.completed
+	status := entry.task.Status
+	server.tasksMu.RUnlock()
+
+	assert.True(t, completed, "task should be completed by stub")
+	assert.Equal(t, mcp.TaskStatusFailed, status, "stub marks task as failed")
 }

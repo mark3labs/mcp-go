@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -1428,12 +1429,76 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 	id any,
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, *requestError) {
-	// TODO: Implement in TAS-9
-	return nil, &requestError{
-		id:   id,
-		code: mcp.METHOD_NOT_FOUND,
-		err:  fmt.Errorf("task-augmented tool calls not yet implemented"),
+	// Find task tool
+	s.toolsMu.RLock()
+	taskTool, isTaskTool := s.taskTools[request.Params.Name]
+	_, isRegularTool := s.tools[request.Params.Name]
+	s.toolsMu.RUnlock()
+
+	// Validate tool exists
+	if !isTaskTool && !isRegularTool {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  ErrToolNotFound,
+		}
 	}
+
+	// Check if tool supports task augmentation
+	if !isTaskTool {
+		// Tool exists but doesn't support tasks
+		return nil, &requestError{
+			id:   id,
+			code: mcp.METHOD_NOT_FOUND,
+			err:  fmt.Errorf("tool '%s' does not support task augmentation", request.Params.Name),
+		}
+	}
+
+	// Generate task ID (user can optionally provide their own later)
+	taskID := uuid.New().String()
+
+	// Extract TTL from task params
+	var ttl *int64
+	if request.Params.Task.TTL != nil {
+		ttl = request.Params.Task.TTL
+	}
+
+	// Create task entry (pollInterval will be nil for now, can be added later if needed)
+	entry := s.createTask(ctx, taskID, ttl, nil)
+
+	// Make a copy of the task for the return value before starting async execution
+	// This avoids race conditions where the async goroutine modifies the task
+	s.tasksMu.RLock()
+	taskCopy := entry.task
+	s.tasksMu.RUnlock()
+
+	// Execute tool asynchronously (will be implemented in TAS-10)
+	go s.executeTaskTool(ctx, entry, taskTool, request)
+
+	// Return task creation result immediately
+	// Note: The protocol expects this wrapped in CallToolResult's meta field
+	return &mcp.CallToolResult{
+		Result: mcp.Result{
+			Meta: &mcp.Meta{
+				AdditionalFields: map[string]any{
+					"task": taskCopy,
+				},
+			},
+		},
+	}, nil
+}
+
+// executeTaskTool runs the task tool handler asynchronously.
+// This will be fully implemented in TAS-10.
+func (s *MCPServer) executeTaskTool(
+	ctx context.Context,
+	entry *taskEntry,
+	taskTool ServerTaskTool,
+	request mcp.CallToolRequest,
+) {
+	// TODO: Implement in TAS-10
+	// For now, immediately fail the task
+	s.completeTask(entry, nil, fmt.Errorf("executeTaskTool not yet implemented"))
 }
 
 func (s *MCPServer) handleNotification(
