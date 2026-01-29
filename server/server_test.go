@@ -3508,7 +3508,8 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create a task entry
-		entry := server.createTask(context.Background(), "test-task-123", nil, nil)
+		entry, err := server.createTask(context.Background(), "test-task-123", nil, nil)
+		require.NoError(t, err)
 
 		// Create cancellable context and set cancel function (as handleTaskAugmentedToolCall does)
 		taskCtx, cancel := context.WithCancel(context.Background())
@@ -3565,7 +3566,8 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create a task entry
-		entry := server.createTask(context.Background(), "test-task-456", nil, nil)
+		entry, err := server.createTask(context.Background(), "test-task-456", nil, nil)
+		require.NoError(t, err)
 
 		// Create cancellable context and set cancel function
 		taskCtx, cancel := context.WithCancel(context.Background())
@@ -3625,7 +3627,8 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create a task entry
-		entry := server.createTask(context.Background(), "test-task-789", nil, nil)
+		entry, err := server.createTask(context.Background(), "test-task-789", nil, nil)
+		require.NoError(t, err)
 
 		// Create cancellable context and set cancel function
 		taskCtx, cancel := context.WithCancel(context.Background())
@@ -3691,7 +3694,8 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create a task entry
-		entry := server.createTask(context.Background(), "test-task-999", nil, nil)
+		entry, err := server.createTask(context.Background(), "test-task-999", nil, nil)
+		require.NoError(t, err)
 
 		// Create cancellable context and set cancel function BEFORE calling executeTaskTool
 		// This mimics what handleTaskAugmentedToolCall does

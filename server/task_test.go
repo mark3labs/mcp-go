@@ -211,7 +211,8 @@ func TestMCPServer_TaskLifecycle(t *testing.T) {
 	// Create a task
 	ttl := int64(60000)
 	pollInterval := int64(1000)
-	entry := server.createTask(ctx, "task-123", &ttl, &pollInterval)
+	entry, err := server.createTask(ctx, "task-123", &ttl, &pollInterval)
+	require.NoError(t, err)
 
 	require.NotNil(t, entry)
 	assert.Equal(t, "task-123", entry.task.TaskId)
@@ -253,7 +254,8 @@ func TestMCPServer_HandleGetTask(t *testing.T) {
 	// Create a task
 	ttl := int64(60000)
 	pollInterval := int64(1000)
-	server.createTask(ctx, "task-456", &ttl, &pollInterval)
+	_, err := server.createTask(ctx, "task-456", &ttl, &pollInterval)
+	require.NoError(t, err)
 
 	// Get task via handler
 	response := server.HandleMessage(ctx, []byte(`{
@@ -308,9 +310,12 @@ func TestMCPServer_HandleListTasks(t *testing.T) {
 	// Create multiple tasks
 	ttl := int64(60000)
 	pollInterval := int64(1000)
-	server.createTask(ctx, "task-1", &ttl, &pollInterval)
-	server.createTask(ctx, "task-2", &ttl, &pollInterval)
-	server.createTask(ctx, "task-3", &ttl, &pollInterval)
+	_, err := server.createTask(ctx, "task-1", &ttl, &pollInterval)
+	require.NoError(t, err)
+	_, err = server.createTask(ctx, "task-2", &ttl, &pollInterval)
+	require.NoError(t, err)
+	_, err = server.createTask(ctx, "task-3", &ttl, &pollInterval)
+	require.NoError(t, err)
 
 	// List tasks
 	response := server.HandleMessage(ctx, []byte(`{
@@ -344,7 +349,8 @@ func TestMCPServer_HandleCancelTask(t *testing.T) {
 	// Create a task
 	ttl := int64(60000)
 	pollInterval := int64(1000)
-	entry := server.createTask(ctx, "task-789", &ttl, &pollInterval)
+	entry, err := server.createTask(ctx, "task-789", &ttl, &pollInterval)
+	require.NoError(t, err)
 
 	// Verify initial status
 	assert.Equal(t, mcp.TaskStatusWorking, entry.task.Status)
@@ -381,7 +387,8 @@ func TestMCPServer_HandleCancelTerminalTask(t *testing.T) {
 	// Create and complete a task
 	ttl := int64(60000)
 	pollInterval := int64(1000)
-	entry := server.createTask(ctx, "task-completed", &ttl, &pollInterval)
+	entry, err := server.createTask(ctx, "task-completed", &ttl, &pollInterval)
+	require.NoError(t, err)
 	server.completeTask(entry, "result", nil)
 
 	// Try to cancel completed task
@@ -458,10 +465,11 @@ func TestMCPServer_TaskTTLCleanup(t *testing.T) {
 	// Create a task with very short TTL
 	ttl := int64(100) // 100ms
 	pollInterval := int64(50)
-	server.createTask(ctx, "task-ttl", &ttl, &pollInterval)
+	_, err := server.createTask(ctx, "task-ttl", &ttl, &pollInterval)
+	require.NoError(t, err)
 
 	// Task should exist initially
-	_, _, err := server.getTask(ctx, "task-ttl")
+	_, _, err = server.getTask(ctx, "task-ttl")
 	require.NoError(t, err)
 
 	// Wait for TTL to expire
@@ -504,7 +512,8 @@ func TestMCPServer_TaskResultWaitForCompletion(t *testing.T) {
 	// Create a task
 	ttl := int64(60000)
 	pollInterval := int64(1000)
-	entry := server.createTask(ctx, "task-wait", &ttl, &pollInterval)
+	entry, err := server.createTask(ctx, "task-wait", &ttl, &pollInterval)
+	require.NoError(t, err)
 
 	// Start goroutine to complete task after delay
 	go func() {
@@ -565,7 +574,8 @@ func TestMCPServer_CompleteTaskWithError(t *testing.T) {
 	// Create a task
 	ttl := int64(60000)
 	pollInterval := int64(1000)
-	entry := server.createTask(ctx, "task-error", &ttl, &pollInterval)
+	entry, err := server.createTask(ctx, "task-error", &ttl, &pollInterval)
+	require.NoError(t, err)
 
 	// Complete with error
 	testErr := assert.AnError
@@ -587,7 +597,8 @@ func TestMCPServer_HandleTaskResult_ReturnsToolResult(t *testing.T) {
 		ctx := context.Background()
 
 		// Create a task
-		entry := server.createTask(ctx, "task-123", nil, nil)
+		entry, err := server.createTask(ctx, "task-123", nil, nil)
+		require.NoError(t, err)
 
 		// Complete task with a CallToolResult
 		expectedResult := &mcp.CallToolResult{
@@ -631,7 +642,8 @@ func TestMCPServer_HandleTaskResult_ReturnsToolResult(t *testing.T) {
 		ctx := context.Background()
 
 		// Create a task
-		entry := server.createTask(ctx, "task-456", nil, nil)
+		entry, err := server.createTask(ctx, "task-456", nil, nil)
+		require.NoError(t, err)
 
 		// Complete task after delay
 		go func() {
@@ -672,21 +684,22 @@ func TestMCPServer_HandleTaskResult_ReturnsToolResult(t *testing.T) {
 		ctx := context.Background()
 
 		// Create and fail a task
-		entry := server.createTask(ctx, "task-789", nil, nil)
+		entry, err := server.createTask(ctx, "task-789", nil, nil)
+		require.NoError(t, err)
 		testErr := fmt.Errorf("task execution failed")
 		server.completeTask(entry, nil, testErr)
 
 		// Call handleTaskResult
-		result, err := server.handleTaskResult(ctx, 1, mcp.TaskResultRequest{
+		result, reqErr := server.handleTaskResult(ctx, 1, mcp.TaskResultRequest{
 			Request: mcp.Request{Method: string(mcp.MethodTasksResult)},
 			Params:  mcp.TaskResultParams{TaskId: "task-789"},
 		})
 
 		// Should return error
-		require.NotNil(t, err)
+		require.NotNil(t, reqErr)
 		require.Nil(t, result)
-		assert.Equal(t, mcp.INTERNAL_ERROR, err.code)
-		assert.Contains(t, err.err.Error(), "task execution failed")
+		assert.Equal(t, mcp.INTERNAL_ERROR, reqErr.code)
+		assert.Contains(t, reqErr.err.Error(), "task execution failed")
 	})
 }
 

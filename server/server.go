@@ -191,6 +191,7 @@ type MCPServer struct {
 	notificationHandlers       map[string]NotificationHandlerFunc
 	capabilities               serverCapabilities
 	paginationLimit            *int
+	maxConcurrentTasks         *int
 	sessions                   sync.Map
 	hooks                      *Hooks
 	tasks                      map[string]*taskEntry
@@ -200,6 +201,15 @@ type MCPServer struct {
 func WithPaginationLimit(limit int) ServerOption {
 	return func(s *MCPServer) {
 		s.paginationLimit = &limit
+	}
+}
+
+// WithMaxConcurrentTasks sets the maximum number of concurrent non-terminal tasks allowed per session.
+// A value of 0 or negative means no limit. Terminal tasks (completed, failed, cancelled) do not count
+// toward this limit. If the limit is exceeded, task creation will fail with RESOURCE_EXHAUSTED error.
+func WithMaxConcurrentTasks(max int) ServerOption {
+	return func(s *MCPServer) {
+		s.maxConcurrentTasks = &max
 	}
 }
 
@@ -1501,7 +1511,15 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 	}
 
 	// Create task entry (pollInterval will be nil for now, can be added later if needed)
-	entry := s.createTask(ctx, taskID, ttl, nil)
+	entry, err := s.createTask(ctx, taskID, ttl, nil)
+	if err != nil {
+		// Handle concurrent task limit exceeded
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INTERNAL_ERROR,
+			err:  err,
+		}
+	}
 
 	// Create cancellable context for this task before starting the goroutine
 	// This ensures the cancel function is available immediately
@@ -1772,7 +1790,18 @@ func (s *MCPServer) handleCancelTask(
 //
 
 // createTask creates a new task entry and returns it.
-func (s *MCPServer) createTask(ctx context.Context, taskID string, ttl *int64, pollInterval *int64) *taskEntry {
+// Returns an error if the maximum concurrent tasks limit is exceeded.
+func (s *MCPServer) createTask(ctx context.Context, taskID string, ttl *int64, pollInterval *int64) (*taskEntry, error) {
+	// Check concurrent task limit if configured
+	if s.maxConcurrentTasks != nil && *s.maxConcurrentTasks > 0 {
+		sessionID := getSessionID(ctx)
+		activeCount := s.countActiveTasks(sessionID)
+
+		if activeCount >= *s.maxConcurrentTasks {
+			return nil, ErrMaxConcurrentTasksExceeded
+		}
+	}
+
 	opts := []mcp.TaskOption{}
 	if ttl != nil {
 		opts = append(opts, mcp.WithTaskTTL(*ttl))
@@ -1797,7 +1826,29 @@ func (s *MCPServer) createTask(ctx context.Context, taskID string, ttl *int64, p
 		go s.scheduleTaskCleanup(taskID, *ttl)
 	}
 
-	return entry
+	return entry, nil
+}
+
+// countActiveTasks returns the number of non-terminal tasks for the given session.
+// Terminal tasks (completed, failed, cancelled) are not counted.
+func (s *MCPServer) countActiveTasks(sessionID string) int {
+	s.tasksMu.RLock()
+	defer s.tasksMu.RUnlock()
+
+	count := 0
+	for _, entry := range s.tasks {
+		// Only count tasks for this session
+		if sessionID != "" && entry.sessionID != "" && entry.sessionID != sessionID {
+			continue
+		}
+
+		// Only count non-terminal tasks
+		if !entry.task.Status.IsTerminal() {
+			count++
+		}
+	}
+
+	return count
 }
 
 // getTask retrieves a task by ID, checking session isolation if applicable.

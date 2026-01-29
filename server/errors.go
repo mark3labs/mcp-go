@@ -12,6 +12,9 @@ var (
 	ErrPromptNotFound   = errors.New("prompt not found")
 	ErrToolNotFound     = errors.New("tool not found")
 
+	// Task-related errors
+	ErrMaxConcurrentTasksExceeded = errors.New("maximum concurrent tasks limit exceeded")
+
 	// Session-related errors
 	ErrSessionNotFound                        = errors.New("session not found")
 	ErrSessionExists                          = errors.New("session already exists")
