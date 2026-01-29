@@ -651,6 +651,29 @@ func (s *MCPServer) SetTools(tools ...ServerTool) {
 	s.AddTools(tools...)
 }
 
+// AddTaskTool registers a task-augmented tool and its handler.
+// The tool's Execution.TaskSupport must be "optional" or "required".
+// Task-augmented tools execute asynchronously and return results via tasks/result.
+func (s *MCPServer) AddTaskTool(tool mcp.Tool, handler TaskToolHandlerFunc) error {
+	// Validate task support is configured
+	if tool.Execution == nil || tool.Execution.TaskSupport == mcp.TaskSupportForbidden {
+		return fmt.Errorf("task tool '%s' must have TaskSupport set to 'optional' or 'required'", tool.Name)
+	}
+
+	s.implicitlyRegisterToolCapabilities()
+
+	s.toolsMu.Lock()
+	s.taskTools[tool.Name] = ServerTaskTool{Tool: tool, Handler: handler}
+	s.toolsMu.Unlock()
+
+	// When the list of available tools changes, servers that declared the listChanged capability SHOULD send a notification.
+	if s.capabilities.tools != nil && s.capabilities.tools.listChanged {
+		s.SendNotificationToAllClients(mcp.MethodNotificationToolsListChanged, nil)
+	}
+
+	return nil
+}
+
 // GetTool retrieves the specified tool
 func (s *MCPServer) GetTool(toolName string) *ServerTool {
 	s.toolsMu.RLock()

@@ -2909,3 +2909,186 @@ func TestServerTaskTool_TypeDefinition(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 }
+
+func TestMCPServer_AddTaskTool(t *testing.T) {
+	tests := []struct {
+		name          string
+		tool          mcp.Tool
+		shouldError   bool
+		errorContains string
+	}{
+		{
+			name: "valid task tool with optional support",
+			tool: mcp.NewTool("test_optional_task_tool",
+				mcp.WithDescription("A task tool with optional support"),
+				mcp.WithTaskSupport(mcp.TaskSupportOptional),
+			),
+			shouldError: false,
+		},
+		{
+			name: "valid task tool with required support",
+			tool: mcp.NewTool("test_required_task_tool",
+				mcp.WithDescription("A task tool with required support"),
+				mcp.WithTaskSupport(mcp.TaskSupportRequired),
+			),
+			shouldError: false,
+		},
+		{
+			name: "invalid task tool with forbidden support",
+			tool: mcp.NewTool("test_forbidden_task_tool",
+				mcp.WithDescription("A task tool with forbidden support"),
+				mcp.WithTaskSupport(mcp.TaskSupportForbidden),
+			),
+			shouldError:   true,
+			errorContains: "must have TaskSupport set to 'optional' or 'required'",
+		},
+		{
+			name: "invalid task tool with no execution field",
+			tool: mcp.NewTool("test_no_execution_task_tool",
+				mcp.WithDescription("A task tool with no execution field"),
+			),
+			shouldError:   true,
+			errorContains: "must have TaskSupport set to 'optional' or 'required'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewMCPServer("test", "1.0.0")
+
+			handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				return &mcp.CreateTaskResult{}, nil
+			}
+
+			err := server.AddTaskTool(tt.tool, handler)
+
+			if tt.shouldError {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errorContains)
+			} else {
+				assert.NoError(t, err)
+				// Verify tool was added to taskTools map
+				server.toolsMu.RLock()
+				_, exists := server.taskTools[tt.tool.Name]
+				server.toolsMu.RUnlock()
+				assert.True(t, exists, "task tool should be added to taskTools map")
+			}
+		})
+	}
+}
+
+func TestMCPServer_AddTaskTool_NotificationSent(t *testing.T) {
+	tests := []struct {
+		name                  string
+		withActiveSession     bool
+		expectedNotifications int
+	}{
+		{
+			name:                  "no notification without active session",
+			withActiveSession:     false,
+			expectedNotifications: 0,
+		},
+		{
+			name:                  "notification sent with active session",
+			withActiveSession:     true,
+			expectedNotifications: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewMCPServer("test", "1.0.0")
+			notificationChannel := make(chan mcp.JSONRPCNotification, 10)
+
+			if tt.withActiveSession {
+				err := server.RegisterSession(context.TODO(), &fakeSession{
+					sessionID:           "test-session",
+					notificationChannel: notificationChannel,
+					initialized:         true,
+				})
+				require.NoError(t, err)
+			}
+
+			tool := mcp.NewTool("test_task_tool",
+				mcp.WithDescription("A test task tool"),
+				mcp.WithTaskSupport(mcp.TaskSupportRequired),
+			)
+
+			handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				return &mcp.CreateTaskResult{}, nil
+			}
+
+			err := server.AddTaskTool(tool, handler)
+			assert.NoError(t, err)
+
+			// Check notifications
+			var notifications []mcp.JSONRPCNotification
+			for {
+				select {
+				case notification := <-notificationChannel:
+					notifications = append(notifications, notification)
+				case <-time.After(100 * time.Millisecond):
+					goto done
+				}
+			}
+		done:
+			assert.Len(t, notifications, tt.expectedNotifications)
+			if tt.expectedNotifications > 0 {
+				assert.Equal(t, mcp.MethodNotificationToolsListChanged, notifications[0].Method)
+			}
+		})
+	}
+}
+
+func TestMCPServer_AddTaskTool_ImplicitCapabilitiesRegistration(t *testing.T) {
+	server := NewMCPServer("test", "1.0.0")
+
+	// Verify capabilities are nil initially
+	assert.Nil(t, server.capabilities.tools)
+
+	tool := mcp.NewTool("test_task_tool",
+		mcp.WithDescription("A test task tool"),
+		mcp.WithTaskSupport(mcp.TaskSupportRequired),
+	)
+
+	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+		return &mcp.CreateTaskResult{}, nil
+	}
+
+	err := server.AddTaskTool(tool, handler)
+	assert.NoError(t, err)
+
+	// Verify capabilities are registered
+	assert.NotNil(t, server.capabilities.tools)
+	assert.True(t, server.capabilities.tools.listChanged)
+}
+
+func TestMCPServer_AddTaskTool_MultipleTools(t *testing.T) {
+	server := NewMCPServer("test", "1.0.0")
+
+	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+		return &mcp.CreateTaskResult{}, nil
+	}
+
+	// Add multiple task tools
+	tool1 := mcp.NewTool("task_tool_1",
+		mcp.WithTaskSupport(mcp.TaskSupportOptional),
+	)
+	tool2 := mcp.NewTool("task_tool_2",
+		mcp.WithTaskSupport(mcp.TaskSupportRequired),
+	)
+
+	err1 := server.AddTaskTool(tool1, handler)
+	err2 := server.AddTaskTool(tool2, handler)
+
+	assert.NoError(t, err1)
+	assert.NoError(t, err2)
+
+	// Verify both tools were added
+	server.toolsMu.RLock()
+	defer server.toolsMu.RUnlock()
+
+	assert.Len(t, server.taskTools, 2)
+	assert.Contains(t, server.taskTools, "task_tool_1")
+	assert.Contains(t, server.taskTools, "task_tool_2")
+}
