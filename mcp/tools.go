@@ -842,6 +842,18 @@ func WithToolIcons(icons ...Icon) ToolOption {
 	}
 }
 
+// WithTaskSupport sets the task support mode for the tool.
+// It configures whether the tool can be invoked as a task (asynchronously).
+// Valid values are TaskSupportForbidden (default), TaskSupportOptional, or TaskSupportRequired.
+func WithTaskSupport(support TaskSupport) ToolOption {
+	return func(t *Tool) {
+		if t.Execution == nil {
+			t.Execution = &ToolExecution{}
+		}
+		t.Execution.TaskSupport = support
+	}
+}
+
 // WithRawInputSchema sets a raw JSON schema for the tool's input.
 // Use this when you need full control over the schema or when working with
 // complex schemas that can't be generated from Go types. The jsonschema library

@@ -1872,3 +1872,112 @@ func TestTaskSupportConstants(t *testing.T) {
 	assert.Equal(t, TaskSupport("optional"), TaskSupportOptional)
 	assert.Equal(t, TaskSupport("required"), TaskSupportRequired)
 }
+
+// TestWithTaskSupport tests the WithTaskSupport option for configuring tool task support
+func TestWithTaskSupport(t *testing.T) {
+	tests := []struct {
+		name            string
+		taskSupport     TaskSupport
+		expectedSupport TaskSupport
+	}{
+		{
+			name:            "task support forbidden",
+			taskSupport:     TaskSupportForbidden,
+			expectedSupport: TaskSupportForbidden,
+		},
+		{
+			name:            "task support optional",
+			taskSupport:     TaskSupportOptional,
+			expectedSupport: TaskSupportOptional,
+		},
+		{
+			name:            "task support required",
+			taskSupport:     TaskSupportRequired,
+			expectedSupport: TaskSupportRequired,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a tool with task support
+			tool := NewTool("test-tool",
+				WithDescription("A test tool"),
+				WithTaskSupport(tt.taskSupport),
+			)
+
+			// Verify the Execution field is set
+			assert.NotNil(t, tool.Execution, "Execution should not be nil")
+			assert.Equal(t, tt.expectedSupport, tool.Execution.TaskSupport, "TaskSupport should match")
+
+			// Marshal to JSON and verify structure
+			data, err := json.Marshal(tool)
+			assert.NoError(t, err)
+
+			var result map[string]any
+			err = json.Unmarshal(data, &result)
+			assert.NoError(t, err)
+
+			// Verify execution field is present in JSON
+			assert.Contains(t, result, "execution", "Tool should include execution field in JSON")
+
+			execution, ok := result["execution"].(map[string]any)
+			assert.True(t, ok, "Execution field should be a map")
+
+			taskSupport, ok := execution["taskSupport"].(string)
+			assert.True(t, ok, "taskSupport should be a string")
+			assert.Equal(t, string(tt.expectedSupport), taskSupport, "taskSupport value should match in JSON")
+		})
+	}
+}
+
+// TestWithTaskSupport_InitializesExecution tests that WithTaskSupport creates Execution if nil
+func TestWithTaskSupport_InitializesExecution(t *testing.T) {
+	// Create a tool without any execution configuration
+	tool := Tool{
+		Name:        "test-tool",
+		Description: "A test tool",
+		InputSchema: ToolInputSchema{
+			Type:       "object",
+			Properties: map[string]any{},
+		},
+		Execution: nil,
+	}
+
+	// Verify Execution is nil
+	assert.Nil(t, tool.Execution)
+
+	// Apply WithTaskSupport option
+	option := WithTaskSupport(TaskSupportOptional)
+	option(&tool)
+
+	// Verify Execution is now initialized
+	assert.NotNil(t, tool.Execution, "WithTaskSupport should initialize Execution if nil")
+	assert.Equal(t, TaskSupportOptional, tool.Execution.TaskSupport)
+}
+
+// TestWithTaskSupport_PreservesExistingExecution tests that WithTaskSupport doesn't overwrite existing Execution
+func TestWithTaskSupport_PreservesExistingExecution(t *testing.T) {
+	// Create a tool with existing Execution
+	existingExecution := &ToolExecution{
+		TaskSupport: TaskSupportForbidden,
+	}
+
+	tool := Tool{
+		Name:        "test-tool",
+		Description: "A test tool",
+		InputSchema: ToolInputSchema{
+			Type:       "object",
+			Properties: map[string]any{},
+		},
+		Execution: existingExecution,
+	}
+
+	// Apply WithTaskSupport option
+	option := WithTaskSupport(TaskSupportRequired)
+	option(&tool)
+
+	// Verify Execution is the same instance (pointer equality)
+	assert.Same(t, existingExecution, tool.Execution, "WithTaskSupport should preserve existing Execution instance")
+	// Verify TaskSupport was updated
+	assert.Equal(t, TaskSupportRequired, tool.Execution.TaskSupport)
+}
