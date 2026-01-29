@@ -1361,6 +1361,11 @@ func (s *MCPServer) handleToolCall(
 	id any,
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, *requestError) {
+	// Check if this is a task-augmented request
+	if request.Params.Task != nil {
+		return s.handleTaskAugmentedToolCall(ctx, id, request)
+	}
+
 	// First check session-specific tools
 	var tool ServerTool
 	var ok bool
@@ -1414,6 +1419,21 @@ func (s *MCPServer) handleToolCall(
 	}
 
 	return result, nil
+}
+
+// handleTaskAugmentedToolCall handles tool calls with task augmentation.
+// It routes the request to task-augmented tools that execute asynchronously.
+func (s *MCPServer) handleTaskAugmentedToolCall(
+	ctx context.Context,
+	id any,
+	request mcp.CallToolRequest,
+) (*mcp.CallToolResult, *requestError) {
+	// TODO: Implement in TAS-9
+	return nil, &requestError{
+		id:   id,
+		code: mcp.METHOD_NOT_FOUND,
+		err:  fmt.Errorf("task-augmented tool calls not yet implemented"),
+	}
 }
 
 func (s *MCPServer) handleNotification(

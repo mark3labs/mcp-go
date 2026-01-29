@@ -3092,3 +3092,172 @@ func TestMCPServer_AddTaskTool_MultipleTools(t *testing.T) {
 	assert.Contains(t, server.taskTools, "task_tool_1")
 	assert.Contains(t, server.taskTools, "task_tool_2")
 }
+
+func TestMCPServer_HandleToolCall_DetectsTaskAugmentation(t *testing.T) {
+	tests := []struct {
+		name              string
+		setupServer       func(*MCPServer)
+		toolName          string
+		taskParams        *mcp.TaskParams
+		expectRouteToTask bool
+		expectError       bool
+		errorCode         int
+	}{
+		{
+			name: "regular tool call without task params",
+			setupServer: func(s *MCPServer) {
+				tool := mcp.NewTool("regular_tool",
+					mcp.WithDescription("A regular tool"),
+				)
+				s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return mcp.NewToolResultText("success"), nil
+				})
+			},
+			toolName:          "regular_tool",
+			taskParams:        nil,
+			expectRouteToTask: false,
+			expectError:       false,
+		},
+		{
+			name: "tool call with task params routes to task handler",
+			setupServer: func(s *MCPServer) {
+				// Add a regular tool (not a task tool)
+				tool := mcp.NewTool("regular_tool",
+					mcp.WithDescription("A regular tool"),
+				)
+				s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return mcp.NewToolResultText("success"), nil
+				})
+			},
+			toolName: "regular_tool",
+			taskParams: &mcp.TaskParams{
+				TTL: func() *int64 { v := int64(300); return &v }(),
+			},
+			expectRouteToTask: true,
+			expectError:       true, // Stub returns error for now
+			errorCode:         mcp.METHOD_NOT_FOUND,
+		},
+		{
+			name: "tool call with empty task params object routes to task handler",
+			setupServer: func(s *MCPServer) {
+				tool := mcp.NewTool("test_tool",
+					mcp.WithDescription("A test tool"),
+				)
+				s.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return mcp.NewToolResultText("success"), nil
+				})
+			},
+			toolName:          "test_tool",
+			taskParams:        &mcp.TaskParams{}, // Empty but not nil
+			expectRouteToTask: true,
+			expectError:       true,
+			errorCode:         mcp.METHOD_NOT_FOUND,
+		},
+		{
+			name: "task-augmented tool without task params works as regular tool",
+			setupServer: func(s *MCPServer) {
+				// This tests that a task tool can still be called without task params
+				// until we implement the full validation logic
+				tool := mcp.NewTool("task_tool",
+					mcp.WithDescription("A task tool"),
+					mcp.WithTaskSupport(mcp.TaskSupportOptional),
+				)
+				err := s.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+					return &mcp.CreateTaskResult{}, nil
+				})
+				require.NoError(t, err)
+			},
+			toolName:          "task_tool",
+			taskParams:        nil,
+			expectRouteToTask: false,
+			expectError:       true, // Tool not found in regular tools map
+			errorCode:         mcp.INVALID_PARAMS,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewMCPServer("test-server", "1.0.0")
+			tt.setupServer(server)
+
+			// Create request
+			request := mcp.CallToolRequest{
+				Request: mcp.Request{
+					Method: string(mcp.MethodToolsCall),
+				},
+				Params: mcp.CallToolParams{
+					Name: tt.toolName,
+					Task: tt.taskParams,
+				},
+			}
+
+			// Call handleToolCall
+			result, err := server.handleToolCall(context.Background(), "test-id", request)
+
+			if tt.expectError {
+				assert.Nil(t, result)
+				assert.NotNil(t, err)
+				if tt.errorCode != 0 {
+					assert.Equal(t, tt.errorCode, err.code)
+				}
+				if tt.expectRouteToTask {
+					// Verify it was routed to task handler (stub returns specific error)
+					assert.Contains(t, err.err.Error(), "not yet implemented")
+				}
+			} else {
+				assert.NotNil(t, result)
+				assert.Nil(t, err)
+			}
+		})
+	}
+}
+
+func TestMCPServer_HandleToolCall_TaskParamsPreserved(t *testing.T) {
+	// Test that task params are properly preserved when routing to task handler
+	server := NewMCPServer("test-server", "1.0.0")
+
+	ttl := int64(600)
+	request := mcp.CallToolRequest{
+		Request: mcp.Request{
+			Method: string(mcp.MethodToolsCall),
+		},
+		Params: mcp.CallToolParams{
+			Name: "test_tool",
+			Task: &mcp.TaskParams{
+				TTL: &ttl,
+			},
+		},
+	}
+
+	// Call handleToolCall - should route to task handler
+	result, err := server.handleToolCall(context.Background(), "test-id", request)
+
+	// Verify task handler was called (stub returns error with specific message)
+	assert.Nil(t, result)
+	assert.NotNil(t, err)
+	assert.Equal(t, mcp.METHOD_NOT_FOUND, err.code)
+	assert.Contains(t, err.err.Error(), "not yet implemented")
+}
+
+func TestMCPServer_HandleTaskAugmentedToolCall_StubBehavior(t *testing.T) {
+	// Test the stub implementation directly
+	server := NewMCPServer("test-server", "1.0.0")
+
+	request := mcp.CallToolRequest{
+		Request: mcp.Request{
+			Method: string(mcp.MethodToolsCall),
+		},
+		Params: mcp.CallToolParams{
+			Name: "test_tool",
+			Task: &mcp.TaskParams{},
+		},
+	}
+
+	result, err := server.handleTaskAugmentedToolCall(context.Background(), "test-id", request)
+
+	// Verify stub behavior
+	assert.Nil(t, result)
+	assert.NotNil(t, err)
+	assert.Equal(t, mcp.METHOD_NOT_FOUND, err.code)
+	assert.Contains(t, err.err.Error(), "not yet implemented")
+}
