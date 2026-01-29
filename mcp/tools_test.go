@@ -1693,3 +1693,125 @@ func TestWithToolIcons(t *testing.T) {
 
 	assert.Equal(t, icons, tool.Icons)
 }
+
+func TestToolExecution_MarshalJSON(t *testing.T) {
+	tests := []struct {
+		name           string
+		tool           Tool
+		expectedFields map[string]any
+	}{
+		{
+			name: "tool with task support forbidden",
+			tool: Tool{
+				Name:        "test-tool",
+				Description: "A test tool",
+				InputSchema: ToolInputSchema{
+					Type:       "object",
+					Properties: map[string]any{},
+				},
+				Execution: &ToolExecution{
+					TaskSupport: TaskSupportForbidden,
+				},
+			},
+			expectedFields: map[string]any{
+				"name":        "test-tool",
+				"description": "A test tool",
+				"execution": map[string]any{
+					"taskSupport": "forbidden",
+				},
+			},
+		},
+		{
+			name: "tool with task support optional",
+			tool: Tool{
+				Name:        "optional-tool",
+				Description: "A tool with optional task support",
+				InputSchema: ToolInputSchema{
+					Type:       "object",
+					Properties: map[string]any{},
+				},
+				Execution: &ToolExecution{
+					TaskSupport: TaskSupportOptional,
+				},
+			},
+			expectedFields: map[string]any{
+				"name":        "optional-tool",
+				"description": "A tool with optional task support",
+				"execution": map[string]any{
+					"taskSupport": "optional",
+				},
+			},
+		},
+		{
+			name: "tool with task support required",
+			tool: Tool{
+				Name:        "required-tool",
+				Description: "A tool with required task support",
+				InputSchema: ToolInputSchema{
+					Type:       "object",
+					Properties: map[string]any{},
+				},
+				Execution: &ToolExecution{
+					TaskSupport: TaskSupportRequired,
+				},
+			},
+			expectedFields: map[string]any{
+				"name":        "required-tool",
+				"description": "A tool with required task support",
+				"execution": map[string]any{
+					"taskSupport": "required",
+				},
+			},
+		},
+		{
+			name: "tool without execution field",
+			tool: Tool{
+				Name:        "no-exec-tool",
+				Description: "A tool without execution",
+				InputSchema: ToolInputSchema{
+					Type:       "object",
+					Properties: map[string]any{},
+				},
+			},
+			expectedFields: map[string]any{
+				"name":        "no-exec-tool",
+				"description": "A tool without execution",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Marshal the tool
+			data, err := json.Marshal(tt.tool)
+			assert.NoError(t, err)
+
+			// Unmarshal to a map for easier field verification
+			var result map[string]any
+			err = json.Unmarshal(data, &result)
+			assert.NoError(t, err)
+
+			// Check expected fields
+			for key, expectedValue := range tt.expectedFields {
+				assert.Contains(t, result, key)
+				if key == "execution" {
+					// Deep comparison for execution object
+					execMap, ok := result[key].(map[string]any)
+					assert.True(t, ok, "execution should be a map")
+					expectedExec, ok := expectedValue.(map[string]any)
+					assert.True(t, ok)
+					for execKey, execVal := range expectedExec {
+						assert.Equal(t, execVal, execMap[execKey])
+					}
+				} else {
+					assert.Equal(t, expectedValue, result[key])
+				}
+			}
+
+			// Verify execution field is NOT present when nil
+			if tt.tool.Execution == nil {
+				assert.NotContains(t, result, "execution")
+			}
+		})
+	}
+}
