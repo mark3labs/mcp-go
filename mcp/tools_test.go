@@ -1815,3 +1815,121 @@ func TestToolExecution_MarshalJSON(t *testing.T) {
 		})
 	}
 }
+
+// TestWithTaskSupport verifies that the WithTaskSupport option correctly
+// configures a tool's execution behavior for task augmentation.
+func TestWithTaskSupport(t *testing.T) {
+	tests := []struct {
+		name           string
+		taskSupport    TaskSupport
+		expectedJSON   string
+		expectedStruct *ToolExecution
+	}{
+		{
+			name:         "task support forbidden",
+			taskSupport:  TaskSupportForbidden,
+			expectedJSON: `"taskSupport":"forbidden"`,
+			expectedStruct: &ToolExecution{
+				TaskSupport: TaskSupportForbidden,
+			},
+		},
+		{
+			name:         "task support optional",
+			taskSupport:  TaskSupportOptional,
+			expectedJSON: `"taskSupport":"optional"`,
+			expectedStruct: &ToolExecution{
+				TaskSupport: TaskSupportOptional,
+			},
+		},
+		{
+			name:         "task support required",
+			taskSupport:  TaskSupportRequired,
+			expectedJSON: `"taskSupport":"required"`,
+			expectedStruct: &ToolExecution{
+				TaskSupport: TaskSupportRequired,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create tool with WithTaskSupport option
+			tool := NewTool("test-tool",
+				WithDescription("Test tool for task support"),
+				WithTaskSupport(tt.taskSupport),
+			)
+
+			// Verify the Execution field was set correctly
+			assert.NotNil(t, tool.Execution)
+			assert.Equal(t, tt.expectedStruct.TaskSupport, tool.Execution.TaskSupport)
+
+			// Marshal to JSON
+			data, err := json.Marshal(tool)
+			assert.NoError(t, err)
+
+			// Verify JSON contains expected taskSupport value
+			assert.Contains(t, string(data), tt.expectedJSON)
+
+			// Unmarshal and verify structure
+			var result map[string]any
+			err = json.Unmarshal(data, &result)
+			assert.NoError(t, err)
+
+			execMap, ok := result["execution"].(map[string]any)
+			assert.True(t, ok, "execution should be present and be a map")
+			assert.Equal(t, string(tt.taskSupport), execMap["taskSupport"])
+		})
+	}
+}
+
+// TestWithTaskSupport_MultipleOptions verifies that WithTaskSupport works correctly
+// when combined with other tool options.
+func TestWithTaskSupport_MultipleOptions(t *testing.T) {
+	tool := NewTool("multi-option-tool",
+		WithDescription("A tool with multiple options"),
+		WithString("input", Description("Test input"), Required()),
+		WithTaskSupport(TaskSupportOptional),
+		WithDeferLoading(true),
+	)
+
+	// Verify all options were applied
+	assert.Equal(t, "multi-option-tool", tool.Name)
+	assert.Equal(t, "A tool with multiple options", tool.Description)
+	assert.True(t, tool.DeferLoading)
+	assert.NotNil(t, tool.Execution)
+	assert.Equal(t, TaskSupportOptional, tool.Execution.TaskSupport)
+	assert.Contains(t, tool.InputSchema.Properties, "input")
+	assert.Contains(t, tool.InputSchema.Required, "input")
+
+	// Marshal and verify JSON
+	data, err := json.Marshal(tool)
+	assert.NoError(t, err)
+
+	var result map[string]any
+	err = json.Unmarshal(data, &result)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "multi-option-tool", result["name"])
+	assert.Equal(t, "A tool with multiple options", result["description"])
+	assert.Equal(t, true, result["defer_loading"])
+
+	execMap, ok := result["execution"].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "optional", execMap["taskSupport"])
+}
+
+// TestWithTaskSupport_CreatesExecutionIfNil verifies that WithTaskSupport
+// creates the Execution field if it doesn't exist.
+func TestWithTaskSupport_CreatesExecutionIfNil(t *testing.T) {
+	tool := NewTool("test-tool")
+
+	// Initially, Execution should be nil
+	assert.Nil(t, tool.Execution)
+
+	// Apply WithTaskSupport
+	WithTaskSupport(TaskSupportRequired)(&tool)
+
+	// Now Execution should be created and set
+	assert.NotNil(t, tool.Execution)
+	assert.Equal(t, TaskSupportRequired, tool.Execution.TaskSupport)
+}

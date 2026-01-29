@@ -800,6 +800,23 @@ func WithDeferLoading(deferLoading bool) ToolOption {
 	}
 }
 
+// WithTaskSupport sets the task support mode for the tool.
+// It configures whether the tool can be invoked as a task (asynchronously)
+// with deferred result retrieval.
+//
+// Valid values:
+//   - TaskSupportForbidden: Tool cannot be invoked as a task (default)
+//   - TaskSupportOptional: Tool can be invoked as a task or normally
+//   - TaskSupportRequired: Tool must be invoked as a task
+func WithTaskSupport(support TaskSupport) ToolOption {
+	return func(t *Tool) {
+		if t.Execution == nil {
+			t.Execution = &ToolExecution{}
+		}
+		t.Execution.TaskSupport = support
+	}
+}
+
 // WithInputSchema creates a ToolOption that sets the input schema for a tool.
 // It accepts any Go type, usually a struct, and automatically generates a JSON schema from it.
 func WithInputSchema[T any]() ToolOption {
