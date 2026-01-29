@@ -58,9 +58,10 @@ type CallToolRequest struct {
 }
 
 type CallToolParams struct {
-	Name      string `json:"name"`
-	Arguments any    `json:"arguments,omitempty"`
-	Meta      *Meta  `json:"_meta,omitempty"`
+	Name      string      `json:"name"`
+	Arguments any         `json:"arguments,omitempty"`
+	Meta      *Meta       `json:"_meta,omitempty"`
+	Task      *TaskParams `json:"task,omitempty"`
 }
 
 // GetArguments returns the Arguments as map[string]any for backward compatibility
