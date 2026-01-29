@@ -571,3 +571,182 @@ func TestTaskToolHandlerFunc_TypeDefinition(t *testing.T) {
 	assert.Equal(t, "test-task-id", result.Task.TaskId)
 	assert.Equal(t, mcp.TaskStatusWorking, result.Task.Status)
 }
+
+// TestMCPServer_HandleListToolsIncludesTaskTools verifies that tools/list
+// includes both regular tools and task-augmented tools.
+func TestMCPServer_HandleListToolsIncludesTaskTools(t *testing.T) {
+	t.Run("Only regular tools", func(t *testing.T) {
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithToolCapabilities(true),
+			WithTaskCapabilities(true, true, true),
+		)
+
+		// Add a regular tool
+		regularTool := mcp.NewTool("regular-tool",
+			mcp.WithDescription("A regular tool"),
+		)
+		server.AddTool(regularTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+
+		// List tools
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/list"
+		}`))
+
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got %T", response)
+
+		result, ok := resp.Result.(mcp.ListToolsResult)
+		require.True(t, ok, "Expected ListToolsResult, got %T", resp.Result)
+
+		assert.Len(t, result.Tools, 1)
+		assert.Equal(t, "regular-tool", result.Tools[0].Name)
+		assert.Nil(t, result.Tools[0].Execution, "Regular tool should not have execution field")
+	})
+
+	t.Run("Only task tools", func(t *testing.T) {
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithToolCapabilities(true),
+			WithTaskCapabilities(true, true, true),
+		)
+
+		// Add a task-augmented tool
+		taskTool := mcp.NewTool("task-tool",
+			mcp.WithDescription("A task tool"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+		err := server.AddTaskTool(taskTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			return &mcp.CreateTaskResult{}, nil
+		})
+		require.NoError(t, err)
+
+		// List tools
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/list"
+		}`))
+
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got %T", response)
+
+		result, ok := resp.Result.(mcp.ListToolsResult)
+		require.True(t, ok, "Expected ListToolsResult, got %T", resp.Result)
+
+		assert.Len(t, result.Tools, 1)
+		assert.Equal(t, "task-tool", result.Tools[0].Name)
+		require.NotNil(t, result.Tools[0].Execution, "Task tool should have execution field")
+		assert.Equal(t, mcp.TaskSupportRequired, result.Tools[0].Execution.TaskSupport)
+	})
+
+	t.Run("Mixed regular and task tools", func(t *testing.T) {
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithToolCapabilities(true),
+			WithTaskCapabilities(true, true, true),
+		)
+
+		// Add regular tools
+		regularTool1 := mcp.NewTool("regular-tool-1",
+			mcp.WithDescription("First regular tool"),
+		)
+		server.AddTool(regularTool1, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+
+		regularTool2 := mcp.NewTool("regular-tool-2",
+			mcp.WithDescription("Second regular tool"),
+		)
+		server.AddTool(regularTool2, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+
+		// Add task-augmented tools
+		taskTool1 := mcp.NewTool("task-tool-1",
+			mcp.WithDescription("First task tool"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+		err := server.AddTaskTool(taskTool1, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			return &mcp.CreateTaskResult{}, nil
+		})
+		require.NoError(t, err)
+
+		taskTool2 := mcp.NewTool("task-tool-2",
+			mcp.WithDescription("Second task tool"),
+			mcp.WithTaskSupport(mcp.TaskSupportOptional),
+		)
+		err = server.AddTaskTool(taskTool2, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			return &mcp.CreateTaskResult{}, nil
+		})
+		require.NoError(t, err)
+
+		// List tools
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/list"
+		}`))
+
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got %T", response)
+
+		result, ok := resp.Result.(mcp.ListToolsResult)
+		require.True(t, ok, "Expected ListToolsResult, got %T", resp.Result)
+
+		// Should have all 4 tools
+		assert.Len(t, result.Tools, 4)
+
+		// Verify tools are sorted by name
+		toolNames := make([]string, len(result.Tools))
+		for i, tool := range result.Tools {
+			toolNames[i] = tool.Name
+		}
+		assert.Equal(t, []string{"regular-tool-1", "regular-tool-2", "task-tool-1", "task-tool-2"}, toolNames)
+
+		// Verify execution fields
+		for _, tool := range result.Tools {
+			switch tool.Name {
+			case "regular-tool-1", "regular-tool-2":
+				assert.Nil(t, tool.Execution, "Regular tool %s should not have execution field", tool.Name)
+			case "task-tool-1":
+				require.NotNil(t, tool.Execution, "Task tool %s should have execution field", tool.Name)
+				assert.Equal(t, mcp.TaskSupportRequired, tool.Execution.TaskSupport)
+			case "task-tool-2":
+				require.NotNil(t, tool.Execution, "Task tool %s should have execution field", tool.Name)
+				assert.Equal(t, mcp.TaskSupportOptional, tool.Execution.TaskSupport)
+			}
+		}
+	})
+
+	t.Run("Empty tools list", func(t *testing.T) {
+		server := NewMCPServer(
+			"test-server",
+			"1.0.0",
+			WithToolCapabilities(true),
+			WithTaskCapabilities(true, true, true),
+		)
+
+		// List tools without adding any
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/list"
+		}`))
+
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got %T", response)
+
+		result, ok := resp.Result.(mcp.ListToolsResult)
+		require.True(t, ok, "Expected ListToolsResult, got %T", resp.Result)
+
+		assert.Len(t, result.Tools, 0)
+	})
+}

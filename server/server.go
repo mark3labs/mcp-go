@@ -1264,11 +1264,14 @@ func (s *MCPServer) handleListTools(
 ) (*mcp.ListToolsResult, *requestError) {
 	// Get the base tools from the server
 	s.toolsMu.RLock()
-	tools := make([]mcp.Tool, 0, len(s.tools))
+	tools := make([]mcp.Tool, 0, len(s.tools)+len(s.taskTools))
 
-	// Get all tool names for consistent ordering
-	toolNames := make([]string, 0, len(s.tools))
+	// Get all tool names for consistent ordering (both regular and task tools)
+	toolNames := make([]string, 0, len(s.tools)+len(s.taskTools))
 	for name := range s.tools {
+		toolNames = append(toolNames, name)
+	}
+	for name := range s.taskTools {
 		toolNames = append(toolNames, name)
 	}
 
@@ -1277,7 +1280,13 @@ func (s *MCPServer) handleListTools(
 
 	// Add tools in sorted order
 	for _, name := range toolNames {
-		tools = append(tools, s.tools[name].Tool)
+		// Check if it's a regular tool first
+		if serverTool, ok := s.tools[name]; ok {
+			tools = append(tools, serverTool.Tool)
+		} else if taskTool, ok := s.taskTools[name]; ok {
+			// Otherwise it's a task tool
+			tools = append(tools, taskTool.Tool)
+		}
 	}
 	s.toolsMu.RUnlock()
 
