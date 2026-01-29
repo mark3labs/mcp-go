@@ -16,10 +16,12 @@ type TaskOption func(*Task)
 // The task will be configured based on the provided options.
 // Options are applied in order, allowing for flexible task configuration.
 func NewTask(taskId string, opts ...TaskOption) Task {
+	now := time.Now().UTC().Format(time.RFC3339)
 	task := Task{
-		TaskId:    taskId,
-		Status:    TaskStatusWorking,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		TaskId:        taskId,
+		Status:        TaskStatusWorking,
+		CreatedAt:     now,
+		LastUpdatedAt: now,
 	}
 
 	for _, opt := range opts {
@@ -63,6 +65,14 @@ func WithTaskPollInterval(intervalMs int64) TaskOption {
 func WithTaskCreatedAt(createdAt string) TaskOption {
 	return func(t *Task) {
 		t.CreatedAt = createdAt
+	}
+}
+
+// WithTaskLastUpdatedAt sets a specific last updated timestamp for the task.
+// By default, NewTask uses the current time.
+func WithTaskLastUpdatedAt(lastUpdatedAt string) TaskOption {
+	return func(t *Task) {
+		t.LastUpdatedAt = lastUpdatedAt
 	}
 }
 

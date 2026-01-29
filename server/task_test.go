@@ -2135,3 +2135,304 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 		assert.Equal(t, 2, taskNotificationCount, "Both sessions should receive the task status notification")
 	})
 }
+
+func TestMCPServer_LastUpdatedAtFieldUpdates(t *testing.T) {
+	t.Run("task_created_with_lastUpdatedAt_set", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+		ctx := context.Background()
+
+		// Add a task tool
+		tool := mcp.NewTool("test_tool",
+			mcp.WithDescription("A test tool"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+
+		err := server.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			time.Sleep(50 * time.Millisecond)
+			return mcp.NewToolResultText("success"), nil
+		})
+		require.NoError(t, err)
+
+		// Call the tool with task params
+		request := mcp.CallToolRequest{
+			Request: mcp.Request{
+				Method: string(mcp.MethodToolsCall),
+			},
+			Params: mcp.CallToolParams{
+				Name: "test_tool",
+				Task: &mcp.TaskParams{},
+			},
+		}
+
+		result, reqErr := server.handleToolCall(ctx, nil, request)
+		require.Nil(t, reqErr)
+		require.NotNil(t, result)
+
+		// Extract task from result
+		taskMap, ok := result.Meta.AdditionalFields["task"].(mcp.Task)
+		require.True(t, ok, "task should be in meta")
+
+		// Verify LastUpdatedAt is set and equals CreatedAt initially
+		assert.NotEmpty(t, taskMap.LastUpdatedAt, "LastUpdatedAt should be set")
+		assert.NotEmpty(t, taskMap.CreatedAt, "CreatedAt should be set")
+		assert.Equal(t, taskMap.CreatedAt, taskMap.LastUpdatedAt, "LastUpdatedAt should equal CreatedAt on creation")
+
+		// Verify it's a valid ISO 8601 timestamp
+		_, err = time.Parse(time.RFC3339, taskMap.LastUpdatedAt)
+		assert.NoError(t, err, "LastUpdatedAt should be valid ISO 8601 timestamp")
+	})
+
+	t.Run("lastUpdatedAt_updated_on_completion", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+		ctx := context.Background()
+
+		// Track when the task is created
+		var creationTime time.Time
+
+		// Add a task tool that takes some time
+		tool := mcp.NewTool("slow_tool",
+			mcp.WithDescription("A slow test tool"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+
+		err := server.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			time.Sleep(100 * time.Millisecond) // Ensure some time passes
+			return mcp.NewToolResultText("success"), nil
+		})
+		require.NoError(t, err)
+
+		// Call the tool with task params
+		request := mcp.CallToolRequest{
+			Request: mcp.Request{
+				Method: string(mcp.MethodToolsCall),
+			},
+			Params: mcp.CallToolParams{
+				Name: "slow_tool",
+				Task: &mcp.TaskParams{},
+			},
+		}
+
+		result, reqErr := server.handleToolCall(ctx, nil, request)
+		require.Nil(t, reqErr)
+		require.NotNil(t, result)
+
+		// Extract task from result
+		taskMap, ok := result.Meta.AdditionalFields["task"].(mcp.Task)
+		require.True(t, ok)
+
+		taskID := taskMap.TaskId
+		creationTime, _ = time.Parse(time.RFC3339, taskMap.CreatedAt)
+		initialLastUpdated, _ := time.Parse(time.RFC3339, taskMap.LastUpdatedAt)
+
+		// Wait for task to complete
+		time.Sleep(150 * time.Millisecond)
+
+		// Get the task to check status
+		getReq := mcp.GetTaskRequest{
+			Params: mcp.GetTaskParams{
+				TaskId: taskID,
+			},
+		}
+
+		getResult, getErr := server.handleGetTask(ctx, nil, getReq)
+		require.Nil(t, getErr)
+		require.NotNil(t, getResult)
+
+		// Verify LastUpdatedAt was updated after completion
+		completedLastUpdated, err := time.Parse(time.RFC3339, getResult.LastUpdatedAt)
+		require.NoError(t, err)
+
+		assert.True(t, completedLastUpdated.After(initialLastUpdated) || completedLastUpdated.Equal(initialLastUpdated),
+			"LastUpdatedAt should be updated (or same if very fast) after completion")
+
+		assert.True(t, completedLastUpdated.After(creationTime) || completedLastUpdated.Equal(creationTime),
+			"LastUpdatedAt should be at or after CreatedAt")
+
+		assert.Equal(t, mcp.TaskStatusCompleted, getResult.Status, "Task should be completed")
+	})
+
+	t.Run("lastUpdatedAt_updated_on_failure", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+		ctx := context.Background()
+
+		// Add a task tool that fails
+		tool := mcp.NewTool("failing_tool",
+			mcp.WithDescription("A failing test tool"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+
+		err := server.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			time.Sleep(50 * time.Millisecond)
+			return nil, fmt.Errorf("task failed")
+		})
+		require.NoError(t, err)
+
+		// Call the tool
+		request := mcp.CallToolRequest{
+			Request: mcp.Request{
+				Method: string(mcp.MethodToolsCall),
+			},
+			Params: mcp.CallToolParams{
+				Name: "failing_tool",
+				Task: &mcp.TaskParams{},
+			},
+		}
+
+		result, reqErr := server.handleToolCall(ctx, nil, request)
+		require.Nil(t, reqErr)
+
+		taskMap, ok := result.Meta.AdditionalFields["task"].(mcp.Task)
+		require.True(t, ok)
+		taskID := taskMap.TaskId
+
+		// Wait for task to fail
+		time.Sleep(100 * time.Millisecond)
+
+		// Get the task
+		getReq := mcp.GetTaskRequest{
+			Params: mcp.GetTaskParams{
+				TaskId: taskID,
+			},
+		}
+
+		getResult, getErr := server.handleGetTask(ctx, nil, getReq)
+		require.Nil(t, getErr)
+
+		// Verify LastUpdatedAt is set and task is failed
+		assert.NotEmpty(t, getResult.LastUpdatedAt)
+		assert.Equal(t, mcp.TaskStatusFailed, getResult.Status)
+
+		// Parse timestamps
+		createdAt, err1 := time.Parse(time.RFC3339, getResult.CreatedAt)
+		lastUpdatedAt, err2 := time.Parse(time.RFC3339, getResult.LastUpdatedAt)
+		require.NoError(t, err1)
+		require.NoError(t, err2)
+
+		assert.True(t, lastUpdatedAt.After(createdAt) || lastUpdatedAt.Equal(createdAt),
+			"LastUpdatedAt should be at or after CreatedAt on failure")
+	})
+
+	t.Run("lastUpdatedAt_updated_on_cancellation", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+		ctx := context.Background()
+
+		// Add a long-running task tool
+		tool := mcp.NewTool("long_tool",
+			mcp.WithDescription("A long-running test tool"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+
+		err := server.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			// Simulate long work
+			select {
+			case <-time.After(5 * time.Second):
+				return mcp.NewToolResultText("success"), nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		})
+		require.NoError(t, err)
+
+		// Call the tool
+		request := mcp.CallToolRequest{
+			Request: mcp.Request{
+				Method: string(mcp.MethodToolsCall),
+			},
+			Params: mcp.CallToolParams{
+				Name: "long_tool",
+				Task: &mcp.TaskParams{},
+			},
+		}
+
+		result, reqErr := server.handleToolCall(ctx, nil, request)
+		require.Nil(t, reqErr)
+
+		taskMap, ok := result.Meta.AdditionalFields["task"].(mcp.Task)
+		require.True(t, ok)
+		taskID := taskMap.TaskId
+		initialCreatedAt := taskMap.CreatedAt
+
+		// Wait a bit then cancel
+		time.Sleep(100 * time.Millisecond)
+
+		// Cancel the task
+		cancelReq := mcp.CancelTaskRequest{
+			Params: mcp.CancelTaskParams{
+				TaskId: taskID,
+			},
+		}
+
+		cancelResult, cancelErr := server.handleCancelTask(ctx, nil, cancelReq)
+		require.Nil(t, cancelErr)
+		require.NotNil(t, cancelResult)
+
+		// Verify LastUpdatedAt was updated
+		assert.NotEmpty(t, cancelResult.LastUpdatedAt)
+		assert.Equal(t, mcp.TaskStatusCancelled, cancelResult.Status)
+
+		// Parse timestamps
+		createdAt, err1 := time.Parse(time.RFC3339, initialCreatedAt)
+		lastUpdatedAt, err2 := time.Parse(time.RFC3339, cancelResult.LastUpdatedAt)
+		require.NoError(t, err1)
+		require.NoError(t, err2)
+
+		assert.True(t, lastUpdatedAt.After(createdAt) || lastUpdatedAt.Equal(createdAt),
+			"LastUpdatedAt should be at or after CreatedAt on cancellation")
+	})
+
+	t.Run("lastUpdatedAt_in_tasks_list", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+		ctx := context.Background()
+
+		// Add a task tool
+		tool := mcp.NewTool("list_test_tool",
+			mcp.WithDescription("A test tool for list"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+
+		err := server.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			time.Sleep(50 * time.Millisecond)
+			return mcp.NewToolResultText("success"), nil
+		})
+		require.NoError(t, err)
+
+		// Create a task
+		request := mcp.CallToolRequest{
+			Request: mcp.Request{
+				Method: string(mcp.MethodToolsCall),
+			},
+			Params: mcp.CallToolParams{
+				Name: "list_test_tool",
+				Task: &mcp.TaskParams{},
+			},
+		}
+
+		_, reqErr := server.handleToolCall(ctx, nil, request)
+		require.Nil(t, reqErr)
+
+		// Wait for completion
+		time.Sleep(100 * time.Millisecond)
+
+		// List tasks
+		listReq := mcp.ListTasksRequest{}
+		listResult, listErr := server.handleListTasks(ctx, nil, listReq)
+		require.Nil(t, listErr)
+		require.NotNil(t, listResult)
+		require.Greater(t, len(listResult.Tasks), 0, "Should have at least one task")
+
+		// Verify all tasks have LastUpdatedAt set
+		for _, task := range listResult.Tasks {
+			assert.NotEmpty(t, task.LastUpdatedAt, "Each task should have LastUpdatedAt")
+			assert.NotEmpty(t, task.CreatedAt, "Each task should have CreatedAt")
+
+			// Verify valid timestamps
+			createdAt, err1 := time.Parse(time.RFC3339, task.CreatedAt)
+			lastUpdatedAt, err2 := time.Parse(time.RFC3339, task.LastUpdatedAt)
+			assert.NoError(t, err1, "CreatedAt should be valid ISO 8601")
+			assert.NoError(t, err2, "LastUpdatedAt should be valid ISO 8601")
+
+			assert.True(t, lastUpdatedAt.After(createdAt) || lastUpdatedAt.Equal(createdAt),
+				"LastUpdatedAt should be at or after CreatedAt")
+		}
+	})
+}

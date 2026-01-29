@@ -1846,6 +1846,9 @@ func (s *MCPServer) completeTask(entry *taskEntry, result any, err error) {
 		entry.result = result
 	}
 
+	// Update the lastUpdatedAt timestamp
+	entry.task.LastUpdatedAt = time.Now().UTC().Format(time.RFC3339)
+
 	// Mark as completed and signal
 	entry.completed = true
 	close(entry.done)
@@ -1876,6 +1879,9 @@ func (s *MCPServer) cancelTask(ctx context.Context, taskID string) error {
 
 	entry.task.Status = mcp.TaskStatusCancelled
 	entry.task.StatusMessage = "Task cancelled by request"
+
+	// Update the lastUpdatedAt timestamp
+	entry.task.LastUpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
 	// Mark as completed and signal
 	entry.completed = true
