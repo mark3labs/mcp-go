@@ -814,3 +814,279 @@ func TestMCPServer_TaskLastUpdatedAt(t *testing.T) {
 		assert.NotEmpty(t, result.CreatedAt, "CreatedAt should be in response")
 	})
 }
+
+// fakeSess is a test helper for simulating client sessions
+type fakeSess struct {
+	sessionID  string
+	notifyChan chan mcp.JSONRPCNotification
+}
+
+func (f fakeSess) SessionID() string {
+	return f.sessionID
+}
+
+func (f fakeSess) NotificationChannel() chan<- mcp.JSONRPCNotification {
+	return f.notifyChan
+}
+
+func (f fakeSess) Initialize() {
+}
+
+func (f fakeSess) Initialized() bool {
+	return true
+}
+
+var _ ClientSession = fakeSess{}
+
+func TestMCPServer_TaskStatusNotifications(t *testing.T) {
+	server := NewMCPServer("test", "1.0.0",
+		WithTaskCapabilities(true, true, true),
+	)
+
+	// Create a session to receive notifications
+	ctx := context.Background()
+	notifyChan := make(chan mcp.JSONRPCNotification, 10)
+	session := fakeSess{
+		sessionID:  "test-session",
+		notifyChan: notifyChan,
+	}
+	err := server.RegisterSession(ctx, session)
+	require.NoError(t, err)
+
+	t.Run("task completion sends notification", func(t *testing.T) {
+		// Create a task
+		ttl := int64(60000)
+		pollInterval := int64(5000)
+		entry := server.createTask(ctx, "task-notify-complete", &ttl, &pollInterval)
+
+		// Clear any initial notifications
+		for len(notifyChan) > 0 {
+			<-notifyChan
+		}
+
+		// Complete the task
+		result := &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.NewTextContent("test result"),
+			},
+		}
+		server.completeTask(entry, result, nil)
+
+		// Check for notification
+		select {
+		case notification := <-notifyChan:
+			assert.Equal(t, mcp.MethodNotificationTasksStatus, notification.Method)
+
+			// Verify notification params contain task data
+			params := notification.Params.AdditionalFields
+			require.NotNil(t, params, "Expected params to be set")
+
+			assert.Equal(t, "task-notify-complete", params["taskId"])
+			assert.Equal(t, mcp.TaskStatusCompleted, params["status"])
+			assert.NotEmpty(t, params["createdAt"])
+			assert.NotEmpty(t, params["lastUpdatedAt"])
+			assert.Equal(t, int64(60000), params["ttl"])
+			assert.Equal(t, int64(5000), params["pollInterval"])
+
+		case <-time.After(1 * time.Second):
+			t.Fatal("Expected task status notification but none received")
+		}
+	})
+
+	t.Run("task failure sends notification with error message", func(t *testing.T) {
+		// Create a task
+		entry := server.createTask(ctx, "task-notify-fail", nil, nil)
+
+		// Clear any initial notifications
+		for len(notifyChan) > 0 {
+			<-notifyChan
+		}
+
+		// Fail the task
+		testErr := fmt.Errorf("test error")
+		server.completeTask(entry, nil, testErr)
+
+		// Check for notification
+		select {
+		case notification := <-notifyChan:
+			assert.Equal(t, mcp.MethodNotificationTasksStatus, notification.Method)
+
+			params := notification.Params.AdditionalFields
+			require.NotNil(t, params, "Expected params to be set")
+
+			assert.Equal(t, "task-notify-fail", params["taskId"])
+			assert.Equal(t, mcp.TaskStatusFailed, params["status"])
+			assert.Equal(t, "test error", params["statusMessage"])
+
+		case <-time.After(1 * time.Second):
+			t.Fatal("Expected task status notification but none received")
+		}
+	})
+
+	t.Run("task cancellation sends notification", func(t *testing.T) {
+		// Create a task
+		_ = server.createTask(ctx, "task-notify-cancel", nil, nil)
+
+		// Clear any initial notifications
+		for len(notifyChan) > 0 {
+			<-notifyChan
+		}
+
+		// Cancel the task
+		err := server.cancelTask(ctx, "task-notify-cancel")
+		require.NoError(t, err)
+
+		// Check for notification
+		select {
+		case notification := <-notifyChan:
+			assert.Equal(t, mcp.MethodNotificationTasksStatus, notification.Method)
+
+			params := notification.Params.AdditionalFields
+			require.NotNil(t, params, "Expected params to be set")
+
+			assert.Equal(t, "task-notify-cancel", params["taskId"])
+			assert.Equal(t, mcp.TaskStatusCancelled, params["status"])
+			assert.Equal(t, "Task cancelled by request", params["statusMessage"])
+
+		case <-time.After(1 * time.Second):
+			t.Fatal("Expected task status notification but none received")
+		}
+	})
+
+	t.Run("notification includes optional fields when present", func(t *testing.T) {
+		// Create a task with TTL and pollInterval
+		ttl := int64(30000)
+		pollInterval := int64(2000)
+		entry := server.createTask(ctx, "task-notify-fields", &ttl, &pollInterval)
+
+		// Clear any initial notifications
+		for len(notifyChan) > 0 {
+			<-notifyChan
+		}
+
+		// Complete the task
+		server.completeTask(entry, "result", nil)
+
+		// Check for notification
+		select {
+		case notification := <-notifyChan:
+			params := notification.Params.AdditionalFields
+			require.NotNil(t, params)
+
+			assert.Equal(t, int64(30000), params["ttl"])
+			assert.Equal(t, int64(2000), params["pollInterval"])
+
+		case <-time.After(1 * time.Second):
+			t.Fatal("Expected task status notification but none received")
+		}
+	})
+
+	t.Run("notification omits optional fields when nil", func(t *testing.T) {
+		// Create a task without TTL and pollInterval
+		entry := server.createTask(ctx, "task-notify-no-fields", nil, nil)
+
+		// Clear any initial notifications
+		for len(notifyChan) > 0 {
+			<-notifyChan
+		}
+
+		// Complete the task
+		server.completeTask(entry, "result", nil)
+
+		// Check for notification
+		select {
+		case notification := <-notifyChan:
+			params := notification.Params.AdditionalFields
+			require.NotNil(t, params)
+
+			_, hasTTL := params["ttl"]
+			assert.False(t, hasTTL, "ttl should not be present when nil")
+
+			_, hasPollInterval := params["pollInterval"]
+			assert.False(t, hasPollInterval, "pollInterval should not be present when nil")
+
+		case <-time.After(1 * time.Second):
+			t.Fatal("Expected task status notification but none received")
+		}
+	})
+
+	t.Run("multiple clients receive notifications", func(t *testing.T) {
+		// Create two additional sessions
+		notifyChan1 := make(chan mcp.JSONRPCNotification, 10)
+		session1 := fakeSess{
+			sessionID:  "test-session-1",
+			notifyChan: notifyChan1,
+		}
+		err := server.RegisterSession(ctx, session1)
+		require.NoError(t, err)
+
+		notifyChan2 := make(chan mcp.JSONRPCNotification, 10)
+		session2 := fakeSess{
+			sessionID:  "test-session-2",
+			notifyChan: notifyChan2,
+		}
+		err = server.RegisterSession(ctx, session2)
+		require.NoError(t, err)
+
+		// Create a task
+		entry := server.createTask(ctx, "task-notify-multi", nil, nil)
+
+		// Clear any initial notifications
+		for len(notifyChan1) > 0 {
+			<-notifyChan1
+		}
+		for len(notifyChan2) > 0 {
+			<-notifyChan2
+		}
+
+		// Complete the task
+		server.completeTask(entry, "result", nil)
+
+		// Both sessions should receive notification
+		select {
+		case notification := <-notifyChan1:
+			assert.Equal(t, mcp.MethodNotificationTasksStatus, notification.Method)
+		case <-time.After(1 * time.Second):
+			t.Fatal("Expected notification on session1")
+		}
+
+		select {
+		case notification := <-notifyChan2:
+			assert.Equal(t, mcp.MethodNotificationTasksStatus, notification.Method)
+		case <-time.After(1 * time.Second):
+			t.Fatal("Expected notification on session2")
+		}
+	})
+
+	t.Run("notification not sent on double completion", func(t *testing.T) {
+		// Create a task
+		entry := server.createTask(ctx, "task-notify-double", nil, nil)
+
+		// Clear any initial notifications
+		for len(notifyChan) > 0 {
+			<-notifyChan
+		}
+
+		// Complete the task once
+		server.completeTask(entry, "result", nil)
+
+		// Wait for and consume first notification
+		select {
+		case <-notifyChan:
+			// First notification received as expected
+		case <-time.After(1 * time.Second):
+			t.Fatal("Expected first notification")
+		}
+
+		// Try to complete again (should be ignored due to guard)
+		server.completeTask(entry, "result2", nil)
+
+		// Should not receive a second notification
+		select {
+		case <-notifyChan:
+			t.Fatal("Should not receive notification on double completion")
+		case <-time.After(100 * time.Millisecond):
+			// Expected - no notification
+		}
+	})
+}

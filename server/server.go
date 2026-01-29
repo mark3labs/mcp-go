@@ -1766,6 +1766,9 @@ func (s *MCPServer) completeTask(entry *taskEntry, result any, err error) {
 	// Mark as completed and signal
 	entry.completed = true
 	close(entry.done)
+
+	// Send task status notification
+	s.sendTaskStatusNotification(entry.task)
 }
 
 // cancelTask cancels a running task.
@@ -1797,6 +1800,9 @@ func (s *MCPServer) cancelTask(ctx context.Context, taskID string) error {
 	entry.completed = true
 	close(entry.done)
 
+	// Send task status notification
+	s.sendTaskStatusNotification(entry.task)
+
 	return nil
 }
 
@@ -1807,6 +1813,29 @@ func (s *MCPServer) scheduleTaskCleanup(taskID string, ttlMs int64) {
 	s.tasksMu.Lock()
 	delete(s.tasks, taskID)
 	s.tasksMu.Unlock()
+}
+
+// sendTaskStatusNotification sends a notification when a task's status changes.
+func (s *MCPServer) sendTaskStatusNotification(task mcp.Task) {
+	// Convert task to map[string]any for notification params
+	taskMap := map[string]any{
+		"taskId":        task.TaskId,
+		"status":        task.Status,
+		"createdAt":     task.CreatedAt,
+		"lastUpdatedAt": task.LastUpdatedAt,
+	}
+
+	if task.StatusMessage != "" {
+		taskMap["statusMessage"] = task.StatusMessage
+	}
+	if task.TTL != nil {
+		taskMap["ttl"] = *task.TTL
+	}
+	if task.PollInterval != nil {
+		taskMap["pollInterval"] = *task.PollInterval
+	}
+
+	s.SendNotificationToAllClients(mcp.MethodNotificationTasksStatus, taskMap)
 }
 
 // getSessionID extracts the session ID from the context.
