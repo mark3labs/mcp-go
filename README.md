@@ -90,6 +90,7 @@ MCP Go handles all the complex protocol details and server management, so you ca
   - [Server](#server)
   - [Resources](#resources)
   - [Tools](#tools)
+  - [Tasks](#tasks)
   - [Prompts](#prompts)
 - [Examples](#examples)
 - [Extras](#extras)
@@ -205,7 +206,6 @@ The [Model Context Protocol (MCP)](https://modelcontextprotocol.io) lets you bui
 
 
 ## Core Concepts
-
 
 ### Server
 
@@ -422,6 +422,197 @@ Each tool should:
 - Handle errors gracefully 
 - Return structured responses
 - Use appropriate result types
+
+</details>
+
+### Tasks
+
+<details>
+<summary>Show Task Examples</summary>
+
+Tasks enable long-running, asynchronous operations in MCP. Instead of blocking while a tool executes, task-augmented tools return immediately with a task ID, allowing clients to poll for status and retrieve results when ready.
+
+#### Task Support Modes
+
+Tools can specify their task support level using `mcp.WithTaskSupport()`:
+
+- **`TaskSupportForbidden`** (default): Tool cannot be invoked as a task
+- **`TaskSupportOptional`**: Tool can be called synchronously OR asynchronously
+- **`TaskSupportRequired`**: Tool MUST be invoked as a task
+
+#### Creating Task-Augmented Tools
+
+First, enable task capabilities when creating your server:
+
+```go
+s := server.NewMCPServer(
+    "Task Server",
+    "1.0.0",
+    // Enable: list tasks, cancel tasks, and tool call tasks
+    server.WithTaskCapabilities(true, true, true),
+)
+```
+
+Then use `AddTaskTool` instead of `AddTool`:
+
+```go
+// Example 1: Required task tool (must be called asynchronously)
+batchTool := mcp.NewTool("process_batch",
+    mcp.WithDescription("Process a batch of items asynchronously"),
+    mcp.WithTaskSupport(mcp.TaskSupportRequired),
+    mcp.WithArray("items",
+        mcp.WithStringItems(),
+        mcp.Required(),
+    ),
+)
+
+s.AddTaskTool(batchTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    items := request.GetStringSlice("items", nil)
+    results := []string{}
+    
+    for i, item := range items {
+        // Check for cancellation
+        select {
+        case <-ctx.Done():
+            return nil, fmt.Errorf("cancelled at item %d: %w", i, ctx.Err())
+        default:
+            // Process item
+            time.Sleep(100 * time.Millisecond)
+            results = append(results, fmt.Sprintf("Processed: %s", item))
+        }
+    }
+    
+    return mcp.NewToolResultText(fmt.Sprintf("Completed %d items", len(results))), nil
+})
+```
+
+```go
+// Example 2: Optional task tool (supports both sync and async)
+computeTool := mcp.NewTool("compute_fibonacci",
+    mcp.WithDescription("Compute Fibonacci numbers (sync or async)"),
+    mcp.WithTaskSupport(mcp.TaskSupportOptional),
+    mcp.WithNumber("n", mcp.Required()),
+)
+
+s.AddTaskTool(computeTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    n := int(request.GetFloat("n", 0))
+    
+    // Check context periodically during long computation
+    result := fibonacci(ctx, n)
+    
+    return mcp.NewToolResultText(fmt.Sprintf("Fibonacci(%d) = %d", n, result)), nil
+})
+```
+
+#### Client Workflow
+
+When a client calls a task-augmented tool, the workflow is:
+
+1. **Call the tool** with `task` parameters:
+   ```json
+   {
+     "method": "tools/call",
+     "params": {
+       "name": "process_batch",
+       "arguments": {"items": ["a", "b", "c"]},
+       "task": {"ttl": 300}
+     }
+   }
+   ```
+
+2. **Receive task ID** immediately:
+   ```json
+   {
+     "task": {
+       "taskId": "task-123",
+       "status": "pending",
+       "ttl": 300
+     }
+   }
+   ```
+
+3. **Poll for status** using `tasks/get`:
+   ```json
+   {
+     "method": "tasks/get",
+     "params": {"taskId": "task-123"}
+   }
+   ```
+   
+   Response while running:
+   ```json
+   {
+     "task": {
+       "taskId": "task-123",
+       "status": "running",
+       "ttl": 300
+     }
+   }
+   ```
+
+4. **Retrieve result** when status is `completed`:
+   ```json
+   {
+     "method": "tasks/result",
+     "params": {"taskId": "task-123"}
+   }
+   ```
+   
+   Response:
+   ```json
+   {
+     "content": [
+       {"type": "text", "text": "Completed 3 items"}
+     ]
+   }
+   ```
+
+5. **Cancel if needed** using `tasks/cancel`:
+   ```json
+   {
+     "method": "tasks/cancel",
+     "params": {"taskId": "task-123"}
+   }
+   ```
+
+#### Context Cancellation
+
+Task handlers automatically receive a cancellable context. The context is cancelled when:
+- Client explicitly cancels the task via `tasks/cancel`
+- Client disconnects
+- Server shuts down
+
+Always check `ctx.Done()` during long operations:
+
+```go
+s.AddTaskTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    for i := 0; i < 1000; i++ {
+        select {
+        case <-ctx.Done():
+            // Task was cancelled
+            return nil, ctx.Err()
+        default:
+            // Continue processing
+            processItem(i)
+        }
+    }
+    return mcp.NewToolResultText("Done"), nil
+})
+```
+
+#### Task Lifecycle
+
+Tasks have the following lifecycle:
+
+- **`pending`**: Task created but not yet started
+- **`running`**: Task is actively executing
+- **`completed`**: Task finished successfully (result available)
+- **`failed`**: Task encountered an error
+- **`cancelled`**: Task was cancelled before completion
+
+Tasks are automatically cleaned up after their TTL expires (default: 300 seconds).
+
+For a complete working example, see [`examples/task_tool/main.go`](examples/task_tool/main.go).
 
 </details>
 
