@@ -370,7 +370,13 @@ func WithRoots() ServerOption {
 	}
 }
 
-// WithTaskCapabilities configures task-related server capabilities
+// WithTaskCapabilities configures task-related server capabilities.
+// It enables support for long-running, asynchronous operations with status polling.
+//
+// Parameters:
+//   - list: Enables tasks/list endpoint to retrieve all tasks
+//   - cancel: Enables tasks/cancel endpoint to cancel running tasks
+//   - toolCallTasks: Enables task augmentation for tool calls via tools/call
 func WithTaskCapabilities(list, cancel, toolCallTasks bool) ServerOption {
 	return func(s *MCPServer) {
 		// Always create a non-nil capability object
