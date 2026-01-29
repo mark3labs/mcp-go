@@ -149,3 +149,28 @@ func NewTasksCapabilityWithToolsOnly() *TasksCapability {
 		},
 	}
 }
+
+//
+// Related Task Metadata Functions
+//
+
+// RelatedTaskMetaKey is the metadata key for associating a message with a task.
+const RelatedTaskMetaKey = "io.modelcontextprotocol/related-task"
+
+// RelatedTaskMeta creates the metadata for associating a message with a task.
+// The returned map contains a "taskId" field with the provided task ID.
+func RelatedTaskMeta(taskID string) map[string]any {
+	return map[string]any{
+		"taskId": taskID,
+	}
+}
+
+// WithRelatedTask returns a Meta with the related task ID set.
+// This is useful for associating task results with their originating task.
+func WithRelatedTask(taskID string) *Meta {
+	return &Meta{
+		AdditionalFields: map[string]any{
+			RelatedTaskMetaKey: RelatedTaskMeta(taskID),
+		},
+	}
+}
