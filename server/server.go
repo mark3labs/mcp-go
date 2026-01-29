@@ -1463,6 +1463,38 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 	}
 }
 
+// executeTaskTool executes a task tool handler asynchronously.
+// It creates a cancellable context, stores the cancel function for potential cancellation,
+// and executes the handler in the background, storing the result when complete.
+func (s *MCPServer) executeTaskTool(
+	ctx context.Context,
+	entry *taskEntry,
+	taskTool ServerTaskTool,
+	request mcp.CallToolRequest,
+) {
+	// Create cancellable context for this task execution
+	taskCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Store cancel func in entry so it can be cancelled via tasks/cancel
+	s.tasksMu.Lock()
+	entry.cancelFunc = cancel
+	s.tasksMu.Unlock()
+
+	// Execute the task tool handler
+	result, err := taskTool.Handler(taskCtx, request)
+
+	if err != nil {
+		// Task failed - complete with error
+		s.completeTask(entry, nil, err)
+		return
+	}
+
+	// Task succeeded - store the CreateTaskResult
+	// Note: The actual result will be retrieved later via tasks/result
+	s.completeTask(entry, result, nil)
+}
+
 func (s *MCPServer) handleNotification(
 	ctx context.Context,
 	notification mcp.JSONRPCNotification,
