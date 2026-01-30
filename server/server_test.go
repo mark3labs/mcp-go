@@ -3198,6 +3198,193 @@ func TestMCPServer_AddTaskTool(t *testing.T) {
 	})
 }
 
+func TestMCPServer_ToolNameCollisionValidation(t *testing.T) {
+	t.Run("panic when adding regular tool with same name as task tool", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// First, add a task tool
+		taskTool := mcp.Tool{
+			Name:        "duplicate-name",
+			Description: "Task tool",
+			Execution: &mcp.ToolExecution{
+				TaskSupport: mcp.TaskSupportRequired,
+			},
+		}
+		server.AddTaskTool(taskTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			return &mcp.CreateTaskResult{}, nil
+		})
+
+		// Attempt to add a regular tool with the same name
+		regularTool := mcp.Tool{
+			Name:        "duplicate-name",
+			Description: "Regular tool",
+		}
+
+		// Should panic
+		assert.Panics(t, func() {
+			server.AddTool(regularTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return &mcp.CallToolResult{}, nil
+			})
+		}, "Expected panic when adding regular tool with same name as task tool")
+
+		// Verify only the task tool exists
+		server.toolsMu.RLock()
+		_, taskExists := server.taskTools["duplicate-name"]
+		_, regularExists := server.tools["duplicate-name"]
+		server.toolsMu.RUnlock()
+
+		assert.True(t, taskExists, "Task tool should still exist")
+		assert.False(t, regularExists, "Regular tool should not have been added")
+	})
+
+	t.Run("panic when adding task tool with same name as regular tool", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// First, add a regular tool
+		regularTool := mcp.Tool{
+			Name:        "duplicate-name",
+			Description: "Regular tool",
+		}
+		server.AddTool(regularTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+
+		// Attempt to add a task tool with the same name
+		taskTool := mcp.Tool{
+			Name:        "duplicate-name",
+			Description: "Task tool",
+			Execution: &mcp.ToolExecution{
+				TaskSupport: mcp.TaskSupportRequired,
+			},
+		}
+
+		// Should panic
+		assert.Panics(t, func() {
+			server.AddTaskTool(taskTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				return &mcp.CreateTaskResult{}, nil
+			})
+		}, "Expected panic when adding task tool with same name as regular tool")
+
+		// Verify only the regular tool exists
+		server.toolsMu.RLock()
+		_, regularExists := server.tools["duplicate-name"]
+		_, taskExists := server.taskTools["duplicate-name"]
+		server.toolsMu.RUnlock()
+
+		assert.True(t, regularExists, "Regular tool should still exist")
+		assert.False(t, taskExists, "Task tool should not have been added")
+	})
+
+	t.Run("panic when adding multiple tools with collision via AddTools", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add a task tool first
+		server.AddTaskTool(
+			mcp.Tool{Name: "collision-tool", Description: "Task tool"},
+			func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				return &mcp.CreateTaskResult{}, nil
+			},
+		)
+
+		// Attempt to add multiple regular tools, one with collision
+		tools := []ServerTool{
+			{
+				Tool: mcp.Tool{Name: "ok-tool", Description: "No collision"},
+				Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return &mcp.CallToolResult{}, nil
+				},
+			},
+			{
+				Tool: mcp.Tool{Name: "collision-tool", Description: "Colliding tool"},
+				Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return &mcp.CallToolResult{}, nil
+				},
+			},
+		}
+
+		// Should panic
+		assert.Panics(t, func() {
+			server.AddTools(tools...)
+		}, "Expected panic when adding tools with collision")
+	})
+
+	t.Run("panic when adding multiple task tools with collision via AddTaskTools", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add a regular tool first
+		server.AddTool(
+			mcp.Tool{Name: "collision-tool", Description: "Regular tool"},
+			func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return &mcp.CallToolResult{}, nil
+			},
+		)
+
+		// Attempt to add multiple task tools, one with collision
+		taskTools := []ServerTaskTool{
+			{
+				Tool: mcp.Tool{
+					Name:        "ok-task-tool",
+					Description: "No collision",
+					Execution:   &mcp.ToolExecution{TaskSupport: mcp.TaskSupportRequired},
+				},
+				Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+					return &mcp.CreateTaskResult{}, nil
+				},
+			},
+			{
+				Tool: mcp.Tool{
+					Name:        "collision-tool",
+					Description: "Colliding task tool",
+					Execution:   &mcp.ToolExecution{TaskSupport: mcp.TaskSupportRequired},
+				},
+				Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+					return &mcp.CreateTaskResult{}, nil
+				},
+			},
+		}
+
+		// Should panic
+		assert.Panics(t, func() {
+			server.AddTaskTools(taskTools...)
+		}, "Expected panic when adding task tools with collision")
+	})
+
+	t.Run("no collision when tools have different names", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add a regular tool
+		server.AddTool(
+			mcp.Tool{Name: "regular-tool", Description: "Regular tool"},
+			func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return &mcp.CallToolResult{}, nil
+			},
+		)
+
+		// Add a task tool with different name - should not panic
+		assert.NotPanics(t, func() {
+			server.AddTaskTool(
+				mcp.Tool{
+					Name:        "task-tool",
+					Description: "Task tool",
+					Execution:   &mcp.ToolExecution{TaskSupport: mcp.TaskSupportRequired},
+				},
+				func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+					return &mcp.CreateTaskResult{}, nil
+				},
+			)
+		}, "Should not panic when tools have different names")
+
+		// Verify both tools exist
+		server.toolsMu.RLock()
+		_, regularExists := server.tools["regular-tool"]
+		_, taskExists := server.taskTools["task-tool"]
+		server.toolsMu.RUnlock()
+
+		assert.True(t, regularExists)
+		assert.True(t, taskExists)
+	})
+}
+
 type promptCompletionProviderFunc func(ctx context.Context, promptName string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error)
 
 func (fn promptCompletionProviderFunc) CompletePromptArgument(ctx context.Context, promptName string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error) {

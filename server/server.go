@@ -693,7 +693,13 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 
 	s.toolsMu.Lock()
 	for _, entry := range tools {
-		s.tools[entry.Tool.Name] = entry
+		name := entry.Tool.Name
+		// Check for collision with task tools
+		if _, exists := s.taskTools[name]; exists {
+			s.toolsMu.Unlock()
+			panic(fmt.Sprintf("tool name '%s' already registered as task tool", name))
+		}
+		s.tools[name] = entry
 	}
 	s.toolsMu.Unlock()
 
@@ -710,7 +716,13 @@ func (s *MCPServer) AddTaskTools(taskTools ...ServerTaskTool) {
 
 	s.toolsMu.Lock()
 	for _, entry := range taskTools {
-		s.taskTools[entry.Tool.Name] = entry
+		name := entry.Tool.Name
+		// Check for collision with regular tools
+		if _, exists := s.tools[name]; exists {
+			s.toolsMu.Unlock()
+			panic(fmt.Sprintf("task tool name '%s' already registered as regular tool", name))
+		}
+		s.taskTools[name] = entry
 	}
 	s.toolsMu.Unlock()
 
@@ -2036,20 +2048,7 @@ func (s *MCPServer) handleComplete(
 // createTask creates a new task entry and returns it.
 // Returns an error if the max concurrent tasks limit is exceeded.
 func (s *MCPServer) createTask(ctx context.Context, taskID string, toolName string, ttl *int64, pollInterval *int64) (*taskEntry, error) {
-	s.tasksMu.Lock()
-
-	// Check concurrent task limit
-	if s.maxConcurrentTasks != nil && *s.maxConcurrentTasks > 0 {
-		if s.activeTasks >= *s.maxConcurrentTasks {
-			s.tasksMu.Unlock()
-			return nil, fmt.Errorf("max concurrent tasks limit reached (%d)", *s.maxConcurrentTasks)
-		}
-	}
-
-	// Increment active task counter
-	s.activeTasks++
-	s.tasksMu.Unlock()
-
+	// Build task entry first (no lock needed)
 	opts := []mcp.TaskOption{}
 	if ttl != nil {
 		opts = append(opts, mcp.WithTaskTTL(*ttl))
@@ -2068,9 +2067,20 @@ func (s *MCPServer) createTask(ctx context.Context, taskID string, toolName stri
 		done:      make(chan struct{}),
 	}
 
+	// Single critical section for check + increment + insert
 	s.tasksMu.Lock()
+	defer s.tasksMu.Unlock()
+
+	// Check concurrent task limit
+	if s.maxConcurrentTasks != nil && *s.maxConcurrentTasks > 0 {
+		if s.activeTasks >= *s.maxConcurrentTasks {
+			return nil, fmt.Errorf("max concurrent tasks limit reached (%d)", *s.maxConcurrentTasks)
+		}
+	}
+
+	// Increment active task counter and insert task atomically
+	s.activeTasks++
 	s.tasks[taskID] = entry
-	s.tasksMu.Unlock()
 
 	// Fire task created hook
 	if s.taskHooks != nil {
