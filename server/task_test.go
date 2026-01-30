@@ -1247,10 +1247,10 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 			t.Fatal("Task did not complete after cancellation")
 		}
 
-		// Verify task failed with context error
+		// Verify task was cancelled (not failed) when context error is returned
 		server.tasksMu.RLock()
-		assert.Equal(t, mcp.TaskStatusFailed, entry.task.Status)
-		assert.NotNil(t, entry.resultErr)
+		assert.Equal(t, mcp.TaskStatusCancelled, entry.task.Status)
+		assert.Contains(t, entry.task.StatusMessage, "context canceled")
 		assert.True(t, entry.completed)
 		server.tasksMu.RUnlock()
 	})
@@ -1418,4 +1418,288 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 		}
 		server.tasksMu.RUnlock()
 	})
+}
+
+func TestMCPServer_HandleTaskResult(t *testing.T) {
+	t.Run("returns tool result with related task metadata", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+		ctx := context.Background()
+
+		// Create a task and complete it with a CallToolResult
+		taskID := "test-task-result"
+		entry := server.createTask(ctx, taskID, nil, nil)
+
+		expectedContent := []mcp.Content{
+			mcp.NewTextContent("Tool execution completed successfully"),
+		}
+		expectedStructuredContent := map[string]any{
+			"status": "success",
+			"count":  42,
+		}
+
+		toolResult := &mcp.CallToolResult{
+			Content:           expectedContent,
+			StructuredContent: expectedStructuredContent,
+			IsError:           false,
+		}
+
+		// Complete the task with the tool result
+		server.completeTask(entry, toolResult, nil)
+
+		// Call handleTaskResult
+		request := mcp.TaskResultRequest{
+			Params: mcp.TaskResultParams{
+				TaskId: taskID,
+			},
+		}
+
+		result, err := server.handleTaskResult(ctx, 1, request)
+		require.Nil(t, err, "handleTaskResult should not return error")
+		require.NotNil(t, result, "Result should not be nil")
+
+		// Verify the result contains the tool result fields
+		assert.Equal(t, expectedContent, result.Content)
+		assert.Equal(t, expectedStructuredContent, result.StructuredContent)
+		assert.False(t, result.IsError)
+
+		// Verify related task metadata is present
+		require.NotNil(t, result.Meta, "Meta should not be nil")
+		require.NotNil(t, result.Meta.AdditionalFields, "AdditionalFields should not be nil")
+
+		relatedTask, ok := result.Meta.AdditionalFields[mcp.RelatedTaskMetaKey]
+		require.True(t, ok, "RelatedTaskMetaKey should exist in meta")
+
+		relatedTaskMap, ok := relatedTask.(map[string]any)
+		require.True(t, ok, "Related task should be a map")
+		assert.Equal(t, taskID, relatedTaskMap["taskId"])
+	})
+
+	t.Run("returns error when task failed", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+		ctx := context.Background()
+
+		// Create a task and complete it with an error
+		taskID := "test-task-error"
+		entry := server.createTask(ctx, taskID, nil, nil)
+
+		expectedErr := fmt.Errorf("tool execution failed")
+		server.completeTask(entry, nil, expectedErr)
+
+		// Call handleTaskResult
+		request := mcp.TaskResultRequest{
+			Params: mcp.TaskResultParams{
+				TaskId: taskID,
+			},
+		}
+
+		result, err := server.handleTaskResult(ctx, 1, request)
+		require.Nil(t, result, "Result should be nil on error")
+		require.NotNil(t, err, "Error should not be nil")
+		assert.Equal(t, mcp.INTERNAL_ERROR, err.code)
+		assert.Equal(t, expectedErr, err.err)
+	})
+
+	t.Run("waits for task completion before returning result", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+		ctx := context.Background()
+
+		// Create a task but don't complete it yet
+		taskID := "test-task-wait"
+		entry := server.createTask(ctx, taskID, nil, nil)
+
+		// Start a goroutine to complete the task after a delay
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			toolResult := &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.NewTextContent("Delayed result")},
+			}
+			server.completeTask(entry, toolResult, nil)
+		}()
+
+		// Call handleTaskResult - should wait for completion
+		request := mcp.TaskResultRequest{
+			Params: mcp.TaskResultParams{
+				TaskId: taskID,
+			},
+		}
+
+		start := time.Now()
+		result, err := server.handleTaskResult(ctx, 1, request)
+		elapsed := time.Since(start)
+
+		require.Nil(t, err, "handleTaskResult should not return error")
+		require.NotNil(t, result, "Result should not be nil")
+
+		// Verify it waited for completion
+		assert.GreaterOrEqual(t, elapsed.Milliseconds(), int64(40))
+		assert.Equal(t, "Delayed result", result.Content[0].(mcp.TextContent).Text)
+	})
+
+	t.Run("merges original result meta with related task meta", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+		ctx := context.Background()
+
+		// Create a task and complete it with a result that has meta
+		taskID := "test-task-meta-merge"
+		entry := server.createTask(ctx, taskID, nil, nil)
+
+		toolResult := &mcp.CallToolResult{
+			Content: []mcp.Content{mcp.NewTextContent("Result with meta")},
+			Result: mcp.Result{
+				Meta: &mcp.Meta{
+					AdditionalFields: map[string]any{
+						"custom-field":  "custom-value",
+						"another-field": 123,
+					},
+				},
+			},
+		}
+
+		server.completeTask(entry, toolResult, nil)
+
+		// Call handleTaskResult
+		request := mcp.TaskResultRequest{
+			Params: mcp.TaskResultParams{
+				TaskId: taskID,
+			},
+		}
+
+		result, err := server.handleTaskResult(ctx, 1, request)
+		require.Nil(t, err, "handleTaskResult should not return error")
+		require.NotNil(t, result, "Result should not be nil")
+
+		// Verify both related task meta and custom fields are present
+		require.NotNil(t, result.Meta, "Meta should not be nil")
+		require.NotNil(t, result.Meta.AdditionalFields, "AdditionalFields should not be nil")
+
+		// Check related task meta
+		relatedTask, ok := result.Meta.AdditionalFields[mcp.RelatedTaskMetaKey]
+		require.True(t, ok, "RelatedTaskMetaKey should exist in meta")
+		relatedTaskMap, ok := relatedTask.(map[string]any)
+		require.True(t, ok, "Related task should be a map")
+		assert.Equal(t, taskID, relatedTaskMap["taskId"])
+
+		// Check custom fields were preserved
+		assert.Equal(t, "custom-value", result.Meta.AdditionalFields["custom-field"])
+		assert.Equal(t, 123, result.Meta.AdditionalFields["another-field"])
+	})
+
+	t.Run("returns error for non-existent task", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+		ctx := context.Background()
+
+		// Call handleTaskResult with non-existent task ID
+		request := mcp.TaskResultRequest{
+			Params: mcp.TaskResultParams{
+				TaskId: "non-existent-task",
+			},
+		}
+
+		result, err := server.handleTaskResult(ctx, 1, request)
+		require.Nil(t, result, "Result should be nil on error")
+		require.NotNil(t, err, "Error should not be nil")
+		assert.Equal(t, mcp.INVALID_PARAMS, err.code)
+	})
+}
+
+// TestTaskResultEndToEnd tests the complete flow of task-augmented tool call and result retrieval
+func TestTaskResultEndToEnd(t *testing.T) {
+	server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+	ctx := context.Background()
+
+	// Register a tool with TaskSupportRequired
+	tool := mcp.NewTool("long_operation",
+		mcp.WithDescription("A long running operation"),
+		mcp.WithTaskSupport(mcp.TaskSupportRequired),
+	)
+
+	server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		// Simulate a long operation
+		time.Sleep(50 * time.Millisecond)
+
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.NewTextContent("Operation completed successfully"),
+			},
+			StructuredContent: map[string]any{
+				"status": "success",
+				"data":   "result data",
+			},
+		}, nil
+	})
+
+	// Step 1: Call the tool with task augmentation
+	callRequest := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "long_operation",
+			Task: &mcp.TaskParams{},
+		},
+	}
+
+	callResult, callErr := server.handleToolCall(ctx, 1, callRequest)
+	require.Nil(t, callErr, "Tool call should succeed")
+	require.NotNil(t, callResult, "Call result should not be nil")
+
+	// Extract task ID from result meta
+	require.NotNil(t, callResult.Meta, "Meta should not be nil")
+	require.NotNil(t, callResult.Meta.AdditionalFields, "AdditionalFields should not be nil")
+
+	taskData, ok := callResult.Meta.AdditionalFields["task"]
+	require.True(t, ok, "Task should be in meta")
+
+	taskMap, ok := taskData.(mcp.Task)
+	require.True(t, ok, "Task should be a Task type")
+
+	taskID := taskMap.TaskId
+	require.NotEmpty(t, taskID, "Task ID should not be empty")
+
+	// Step 2: Wait for task to complete (poll tasks/get)
+	var taskStatus mcp.TaskStatus
+	for range 20 {
+		task, _, err := server.getTask(ctx, taskID)
+		require.NoError(t, err, "getTask should succeed")
+
+		taskStatus = task.Status
+		if taskStatus.IsTerminal() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	assert.Equal(t, mcp.TaskStatusCompleted, taskStatus, "Task should be completed")
+
+	// Step 3: Retrieve the result via tasks/result
+	resultRequest := mcp.TaskResultRequest{
+		Params: mcp.TaskResultParams{
+			TaskId: taskID,
+		},
+	}
+
+	result, resultErr := server.handleTaskResult(ctx, 2, resultRequest)
+	require.Nil(t, resultErr, "Task result request should succeed")
+	require.NotNil(t, result, "Result should not be nil")
+
+	// Step 4: Verify the result matches the original tool result
+	require.Len(t, result.Content, 1, "Should have one content item")
+	textContent, ok := result.Content[0].(mcp.TextContent)
+	require.True(t, ok, "Content should be TextContent")
+	assert.Equal(t, "Operation completed successfully", textContent.Text)
+
+	// Verify structured content
+	require.NotNil(t, result.StructuredContent, "Structured content should not be nil")
+	structuredMap, ok := result.StructuredContent.(map[string]any)
+	require.True(t, ok, "Structured content should be a map")
+	assert.Equal(t, "success", structuredMap["status"])
+	assert.Equal(t, "result data", structuredMap["data"])
+
+	// Step 5: Verify related task metadata
+	require.NotNil(t, result.Meta, "Meta should not be nil")
+	require.NotNil(t, result.Meta.AdditionalFields, "AdditionalFields should not be nil")
+
+	relatedTask, ok := result.Meta.AdditionalFields[mcp.RelatedTaskMetaKey]
+	require.True(t, ok, "RelatedTaskMetaKey should exist")
+
+	relatedTaskMap, ok := relatedTask.(map[string]any)
+	require.True(t, ok, "Related task should be a map")
+	assert.Equal(t, taskID, relatedTaskMap["taskId"], "Related task ID should match")
 }

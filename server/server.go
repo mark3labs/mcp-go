@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -1608,6 +1609,32 @@ func (s *MCPServer) executeTaskTool(
 	result, err := taskTool.Handler(taskCtx, request)
 
 	if err != nil {
+		// If the error is due to context cancellation, don't mark as failed.
+		// The cancelTask method will handle setting the proper status.
+		// However, if cancelTask hasn't been called yet, we should still mark it.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			// Check if task was already cancelled via tasks/cancel
+			s.tasksMu.Lock()
+			alreadyCancelled := entry.task.Status == mcp.TaskStatusCancelled
+			s.tasksMu.Unlock()
+
+			if !alreadyCancelled {
+				// Handler detected cancellation before tasks/cancel was called
+				// Mark as cancelled with the context error message
+				s.tasksMu.Lock()
+				if !entry.completed {
+					entry.task.Status = mcp.TaskStatusCancelled
+					entry.task.StatusMessage = err.Error()
+					entry.task.LastUpdatedAt = time.Now().UTC().Format(time.RFC3339)
+					entry.completed = true
+					close(entry.done)
+					s.sendTaskStatusNotification(entry.task)
+				}
+				s.tasksMu.Unlock()
+			}
+			return
+		}
+
 		// Task failed - complete with error
 		s.completeTask(entry, nil, err)
 		return
@@ -1639,6 +1666,32 @@ func (s *MCPServer) executeRegularToolAsTask(
 	result, err := regularTool.Handler(taskCtx, request)
 
 	if err != nil {
+		// If the error is due to context cancellation, don't mark as failed.
+		// The cancelTask method will handle setting the proper status.
+		// However, if cancelTask hasn't been called yet, we should still mark it.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			// Check if task was already cancelled via tasks/cancel
+			s.tasksMu.Lock()
+			alreadyCancelled := entry.task.Status == mcp.TaskStatusCancelled
+			s.tasksMu.Unlock()
+
+			if !alreadyCancelled {
+				// Handler detected cancellation before tasks/cancel was called
+				// Mark as cancelled with the context error message
+				s.tasksMu.Lock()
+				if !entry.completed {
+					entry.task.Status = mcp.TaskStatusCancelled
+					entry.task.StatusMessage = err.Error()
+					entry.task.LastUpdatedAt = time.Now().UTC().Format(time.RFC3339)
+					entry.completed = true
+					close(entry.done)
+					s.sendTaskStatusNotification(entry.task)
+				}
+				s.tasksMu.Unlock()
+			}
+			return
+		}
+
 		// Task failed - complete with error
 		s.completeTask(entry, nil, err)
 		return

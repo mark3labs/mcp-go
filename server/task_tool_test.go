@@ -479,6 +479,76 @@ func TestTaskToolTracerBullet(t *testing.T) {
 		assert.Equal(t, expectedErr, resultErr.err)
 	})
 
+	t.Run("task tool handler returns context.Canceled before tasks/cancel called", func(t *testing.T) {
+		// This test verifies that if a handler detects context cancellation
+		// (e.g., from parent context timeout) and returns ctx.Err() before
+		// tasks/cancel is explicitly called, the task is still marked as cancelled
+		// rather than failed.
+
+		// Step 1: Create server
+		server := NewMCPServer(
+			"test-handler-cancellation",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		// Step 2: Create a parent context that we'll cancel
+		parentCtx, cancelParent := context.WithCancel(context.Background())
+		defer cancelParent()
+
+		// Step 3: Register a task tool that respects context cancellation
+		handlerStarted := make(chan struct{})
+
+		selfCancelTool := mcp.NewTool("self_cancel_operation",
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+
+		server.AddTaskTool(selfCancelTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			close(handlerStarted)
+			// Wait for context cancellation
+			<-ctx.Done()
+			// Return the context error
+			return nil, ctx.Err()
+		})
+
+		// Step 4: Call tool with task augmentation
+		callRequest := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Name: "self_cancel_operation",
+				Task: &mcp.TaskParams{},
+			},
+		}
+
+		callResult, callErr := server.handleToolCall(parentCtx, 1, callRequest)
+		require.Nil(t, callErr)
+		require.NotNil(t, callResult)
+
+		taskData := callResult.Meta.AdditionalFields["task"].(mcp.Task)
+		taskID := taskData.TaskId
+
+		// Wait for handler to start
+		<-handlerStarted
+
+		// Step 5: Cancel the parent context (simulating external cancellation)
+		cancelParent()
+
+		// Step 6: Wait for task to complete
+		var finalTask mcp.Task
+		for range 20 {
+			task, _, err := server.getTask(context.Background(), taskID)
+			require.NoError(t, err)
+			finalTask = task
+			if task.Status.IsTerminal() {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+
+		// Step 7: Verify task status is cancelled (not failed)
+		assert.Equal(t, mcp.TaskStatusCancelled, finalTask.Status)
+		assert.Contains(t, finalTask.StatusMessage, "context canceled")
+	})
+
 	t.Run("multiple concurrent task tools", func(t *testing.T) {
 		// Step 1: Create server
 		server := NewMCPServer(
