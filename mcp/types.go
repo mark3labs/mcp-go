@@ -1473,11 +1473,13 @@ type TaskResultParams struct {
 }
 
 // TaskResultResult contains the actual operation result.
-// The structure depends on the original request type.
+// For task-augmented tool calls, this embeds the CallToolResult fields.
 type TaskResultResult struct {
 	Result
-	// The actual result varies by request type (e.g., CallToolResult for tools/call).
-	// This will be handled by the specific implementation.
+	// Tool call result fields (for task-augmented tool calls)
+	Content           []Content `json:"content,omitempty"`
+	StructuredContent any       `json:"structuredContent,omitempty"`
+	IsError           bool      `json:"isError,omitempty"`
 }
 
 // CancelTaskRequest cancels an in-progress task.
