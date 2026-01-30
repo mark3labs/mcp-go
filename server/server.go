@@ -1415,6 +1415,18 @@ func (s *MCPServer) handleToolCall(
 	if !ok {
 		s.toolsMu.RLock()
 		tool, ok = s.tools[request.Params.Name]
+		// If not in regular tools, check task tools
+		if !ok {
+			if taskTool, taskOk := s.taskTools[request.Params.Name]; taskOk {
+				// Convert ServerTaskTool to ServerTool for validation
+				// The tool metadata is the same, we just need it for checking task support
+				tool = ServerTool{
+					Tool:    taskTool.Tool,
+					Handler: nil, // Handler will be used from taskTool in handleTaskAugmentedToolCall
+				}
+				ok = true
+			}
+		}
 		s.toolsMu.RUnlock()
 	}
 
