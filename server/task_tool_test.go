@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -56,11 +57,14 @@ func TestTaskToolTracerBullet(t *testing.T) {
 		)
 
 		// Handler that simulates long-running work
+		var mu sync.Mutex
 		handlerCalled := false
 		var receivedData string
 		server.AddTaskTool(longRunningTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			mu.Lock()
 			handlerCalled = true
 			receivedData = request.GetString("data", "")
+			mu.Unlock()
 			delayMs := request.GetFloat("delay_ms", 100)
 
 			// Simulate processing time
@@ -109,7 +113,9 @@ func TestTaskToolTracerBullet(t *testing.T) {
 		assert.NotNil(t, errNoTask, "Should return error")
 		assert.Equal(t, mcp.METHOD_NOT_FOUND, errNoTask.code)
 		assert.Contains(t, errNoTask.err.Error(), "requires task augmentation")
+		mu.Lock()
 		assert.False(t, handlerCalled, "Handler should not be called without task param")
+		mu.Unlock()
 
 		// Step 5: Call tool WITH task augmentation - should succeed
 		callRequest := mcp.CallToolRequest{
@@ -176,8 +182,10 @@ func TestTaskToolTracerBullet(t *testing.T) {
 		}
 
 		assert.Equal(t, mcp.TaskStatusCompleted, taskStatus, "Task should complete successfully")
+		mu.Lock()
 		assert.True(t, handlerCalled, "Handler should have been called")
 		assert.Equal(t, "test-data-123", receivedData, "Handler should receive correct data")
+		mu.Unlock()
 
 		// Step 9: Verify task status notification was sent
 		var statusNotification mcp.JSONRPCNotification
