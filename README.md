@@ -312,7 +312,7 @@ Tools let LLMs take actions through your server. Unlike resources, tools are exp
 
 #### Task-Augmented Tools
 
-Task-augmented tools execute asynchronously and return results via polling. This is useful for long-running operations that would otherwise block or timeout. Task tools support three modes:
+Task-augmented tools execute asynchronously and return results via polling. This is useful for long-running operations that would otherwise block or time out. Task tools support three modes:
 
 - **TaskSupportForbidden** (default): The tool cannot be invoked as a task
 - **TaskSupportOptional**: The tool can be invoked as a task or synchronously

@@ -184,16 +184,24 @@ func TestTaskToolTracerBullet(t *testing.T) {
 
 		// Step 9: Verify task status notification was sent
 		var statusNotification mcp.JSONRPCNotification
-		select {
-		case statusNotification = <-notifyChan:
-			assert.Equal(t, mcp.MethodNotificationTasksStatus, statusNotification.Method)
-			params := statusNotification.Params.AdditionalFields
-			require.NotNil(t, params)
-			assert.Equal(t, taskID, params["taskId"])
-			assert.Equal(t, mcp.TaskStatusCompleted, params["status"])
-		case <-time.After(2 * time.Second):
-			t.Fatal("Did not receive task status notification")
+		timeout := time.After(2 * time.Second)
+		for {
+			select {
+			case statusNotification = <-notifyChan:
+				params := statusNotification.Params.AdditionalFields
+				if params == nil {
+					continue
+				}
+				if params["taskId"] == taskID && params["status"] == mcp.TaskStatusCompleted {
+					assert.Equal(t, mcp.MethodNotificationTasksStatus, statusNotification.Method)
+					goto notificationReceived
+				}
+				// Ignore non-matching or working notifications
+			case <-timeout:
+				t.Fatal("Did not receive task status completed notification")
+			}
 		}
+	notificationReceived:
 
 		// Step 10: Retrieve result via tasks/result
 		resultRequest := mcp.TaskResultRequest{
