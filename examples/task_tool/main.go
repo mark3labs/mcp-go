@@ -60,6 +60,24 @@ func main() {
 
 // NewTaskToolServer creates a new MCP server with task-augmented tool examples.
 func NewTaskToolServer() *server.MCPServer {
+	// Set up task observability hooks
+	taskHooks := &server.TaskHooks{}
+	taskHooks.AddOnTaskCreated(func(ctx context.Context, metrics server.TaskMetrics) {
+		log.Printf("[METRICS] Task created: %s (tool: %s)", metrics.TaskID, metrics.ToolName)
+	})
+	taskHooks.AddOnTaskCompleted(func(ctx context.Context, metrics server.TaskMetrics) {
+		log.Printf("[METRICS] Task completed: %s (tool: %s, duration: %v)",
+			metrics.TaskID, metrics.ToolName, metrics.Duration)
+	})
+	taskHooks.AddOnTaskFailed(func(ctx context.Context, metrics server.TaskMetrics) {
+		log.Printf("[METRICS] Task failed: %s (tool: %s, duration: %v, error: %v)",
+			metrics.TaskID, metrics.ToolName, metrics.Duration, metrics.Error)
+	})
+	taskHooks.AddOnTaskCancelled(func(ctx context.Context, metrics server.TaskMetrics) {
+		log.Printf("[METRICS] Task cancelled: %s (tool: %s, duration: %v)",
+			metrics.TaskID, metrics.ToolName, metrics.Duration)
+	})
+
 	// Create server with task capabilities enabled
 	// listTasks: allows clients to list all tasks
 	// cancel: allows clients to cancel running tasks
@@ -69,6 +87,7 @@ func NewTaskToolServer() *server.MCPServer {
 		"1.0.0",
 		server.WithTaskCapabilities(true, true, true),
 		server.WithToolCapabilities(true),
+		server.WithTaskHooks(taskHooks),
 		server.WithLogging(),
 	)
 

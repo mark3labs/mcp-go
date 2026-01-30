@@ -34,6 +34,8 @@ type resourceTemplateEntry struct {
 type taskEntry struct {
 	task       mcp.Task
 	sessionID  string
+	toolName   string             // Name of the tool that created this task
+	createdAt  time.Time          // When the task was created (for metrics)
 	result     any                // The actual result once completed
 	resultErr  error              // Error if task failed
 	cancelFunc context.CancelFunc // Function to cancel the task
@@ -195,6 +197,7 @@ type MCPServer struct {
 	paginationLimit            *int
 	sessions                   sync.Map
 	hooks                      *Hooks
+	taskHooks                  *TaskHooks
 	tasks                      map[string]*taskEntry
 }
 
@@ -343,6 +346,15 @@ func WithRecovery() ServerOption {
 func WithHooks(hooks *Hooks) ServerOption {
 	return func(s *MCPServer) {
 		s.hooks = hooks
+	}
+}
+
+// WithTaskHooks allows adding hooks for task lifecycle events.
+// Use these hooks to monitor task execution, track metrics, and observe
+// task-augmented tool behavior.
+func WithTaskHooks(taskHooks *TaskHooks) ServerOption {
+	return func(s *MCPServer) {
+		s.taskHooks = taskHooks
 	}
 }
 
@@ -1558,7 +1570,7 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 	}
 
 	// Create task entry (pollInterval is nil - server doesn't set a default)
-	entry := s.createTask(ctx, taskID, ttl, nil)
+	entry := s.createTask(ctx, taskID, request.Params.Name, ttl, nil)
 
 	// Execute tool asynchronously
 	// For regular tools being used as tasks, we need different execution logic
@@ -1621,14 +1633,32 @@ func (s *MCPServer) executeTaskTool(
 			if !alreadyCancelled {
 				// Handler detected cancellation before tasks/cancel was called
 				// Mark as cancelled with the context error message
+				cancelledAt := time.Now()
+				duration := cancelledAt.Sub(entry.createdAt)
+
 				s.tasksMu.Lock()
 				if !entry.completed {
 					entry.task.Status = mcp.TaskStatusCancelled
 					entry.task.StatusMessage = err.Error()
-					entry.task.LastUpdatedAt = time.Now().UTC().Format(time.RFC3339)
+					entry.task.LastUpdatedAt = cancelledAt.UTC().Format(time.RFC3339)
 					entry.completed = true
 					close(entry.done)
 					s.sendTaskStatusNotification(entry.task)
+
+					// Fire task cancellation hook
+					if s.taskHooks != nil {
+						metrics := TaskMetrics{
+							TaskID:        entry.task.TaskId,
+							ToolName:      entry.toolName,
+							Status:        entry.task.Status,
+							StatusMessage: entry.task.StatusMessage,
+							CreatedAt:     entry.createdAt,
+							CompletedAt:   &cancelledAt,
+							Duration:      duration,
+							SessionID:     entry.sessionID,
+						}
+						s.taskHooks.taskCancelled(ctx, metrics)
+					}
 				}
 				s.tasksMu.Unlock()
 			}
@@ -1678,14 +1708,32 @@ func (s *MCPServer) executeRegularToolAsTask(
 			if !alreadyCancelled {
 				// Handler detected cancellation before tasks/cancel was called
 				// Mark as cancelled with the context error message
+				cancelledAt := time.Now()
+				duration := cancelledAt.Sub(entry.createdAt)
+
 				s.tasksMu.Lock()
 				if !entry.completed {
 					entry.task.Status = mcp.TaskStatusCancelled
 					entry.task.StatusMessage = err.Error()
-					entry.task.LastUpdatedAt = time.Now().UTC().Format(time.RFC3339)
+					entry.task.LastUpdatedAt = cancelledAt.UTC().Format(time.RFC3339)
 					entry.completed = true
 					close(entry.done)
 					s.sendTaskStatusNotification(entry.task)
+
+					// Fire task cancellation hook
+					if s.taskHooks != nil {
+						metrics := TaskMetrics{
+							TaskID:        entry.task.TaskId,
+							ToolName:      entry.toolName,
+							Status:        entry.task.Status,
+							StatusMessage: entry.task.StatusMessage,
+							CreatedAt:     entry.createdAt,
+							CompletedAt:   &cancelledAt,
+							Duration:      duration,
+							SessionID:     entry.sessionID,
+						}
+						s.taskHooks.taskCancelled(ctx, metrics)
+					}
 				}
 				s.tasksMu.Unlock()
 			}
@@ -1960,7 +2008,7 @@ func (s *MCPServer) handleComplete(
 //
 
 // createTask creates a new task entry and returns it.
-func (s *MCPServer) createTask(ctx context.Context, taskID string, ttl *int64, pollInterval *int64) *taskEntry {
+func (s *MCPServer) createTask(ctx context.Context, taskID string, toolName string, ttl *int64, pollInterval *int64) *taskEntry {
 	opts := []mcp.TaskOption{}
 	if ttl != nil {
 		opts = append(opts, mcp.WithTaskTTL(*ttl))
@@ -1969,16 +2017,31 @@ func (s *MCPServer) createTask(ctx context.Context, taskID string, ttl *int64, p
 		opts = append(opts, mcp.WithTaskPollInterval(*pollInterval))
 	}
 	task := mcp.NewTask(taskID, opts...)
+	createdAt := time.Now()
 
 	entry := &taskEntry{
 		task:      task,
 		sessionID: getSessionID(ctx),
+		toolName:  toolName,
+		createdAt: createdAt,
 		done:      make(chan struct{}),
 	}
 
 	s.tasksMu.Lock()
 	s.tasks[taskID] = entry
 	s.tasksMu.Unlock()
+
+	// Fire task created hook
+	if s.taskHooks != nil {
+		metrics := TaskMetrics{
+			TaskID:    taskID,
+			ToolName:  toolName,
+			Status:    task.Status,
+			CreatedAt: createdAt,
+			SessionID: getSessionID(ctx),
+		}
+		s.taskHooks.taskCreated(ctx, metrics)
+	}
 
 	// Start TTL cleanup if specified
 	if ttl != nil && *ttl > 0 {
@@ -2060,6 +2123,9 @@ func (s *MCPServer) completeTask(entry *taskEntry, result any, err error) {
 		return
 	}
 
+	completedAt := time.Now()
+	duration := completedAt.Sub(entry.createdAt)
+
 	if err != nil {
 		entry.task.Status = mcp.TaskStatusFailed
 		entry.task.StatusMessage = err.Error()
@@ -2070,7 +2136,7 @@ func (s *MCPServer) completeTask(entry *taskEntry, result any, err error) {
 	}
 
 	// Update the lastUpdatedAt timestamp
-	entry.task.LastUpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	entry.task.LastUpdatedAt = completedAt.UTC().Format(time.RFC3339)
 
 	// Mark as completed and signal
 	entry.completed = true
@@ -2078,6 +2144,27 @@ func (s *MCPServer) completeTask(entry *taskEntry, result any, err error) {
 
 	// Send task status notification
 	s.sendTaskStatusNotification(entry.task)
+
+	// Fire task hooks
+	if s.taskHooks != nil {
+		metrics := TaskMetrics{
+			TaskID:        entry.task.TaskId,
+			ToolName:      entry.toolName,
+			Status:        entry.task.Status,
+			StatusMessage: entry.task.StatusMessage,
+			CreatedAt:     entry.createdAt,
+			CompletedAt:   &completedAt,
+			Duration:      duration,
+			SessionID:     entry.sessionID,
+			Error:         err,
+		}
+
+		if err != nil {
+			s.taskHooks.taskFailed(context.Background(), metrics)
+		} else {
+			s.taskHooks.taskCompleted(context.Background(), metrics)
+		}
+	}
 }
 
 // cancelTask cancels a running task.
@@ -2100,10 +2187,13 @@ func (s *MCPServer) cancelTask(ctx context.Context, taskID string) error {
 		entry.cancelFunc()
 	}
 
+	cancelledAt := time.Now()
+	duration := cancelledAt.Sub(entry.createdAt)
+
 	entry.task.Status = mcp.TaskStatusCancelled
 	entry.task.StatusMessage = "Task cancelled by request"
 	// Update the lastUpdatedAt timestamp
-	entry.task.LastUpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	entry.task.LastUpdatedAt = cancelledAt.UTC().Format(time.RFC3339)
 
 	// Mark as completed and signal
 	entry.completed = true
@@ -2111,6 +2201,21 @@ func (s *MCPServer) cancelTask(ctx context.Context, taskID string) error {
 
 	// Send task status notification
 	s.sendTaskStatusNotification(entry.task)
+
+	// Fire task cancellation hook
+	if s.taskHooks != nil {
+		metrics := TaskMetrics{
+			TaskID:        entry.task.TaskId,
+			ToolName:      entry.toolName,
+			Status:        entry.task.Status,
+			StatusMessage: entry.task.StatusMessage,
+			CreatedAt:     entry.createdAt,
+			CompletedAt:   &cancelledAt,
+			Duration:      duration,
+			SessionID:     entry.sessionID,
+		}
+		s.taskHooks.taskCancelled(ctx, metrics)
+	}
 
 	return nil
 }
