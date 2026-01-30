@@ -642,8 +642,13 @@ type ToolArgumentsSchema struct {
 	AdditionalProperties any            `json:"additionalProperties,omitempty"`
 }
 
-type ToolInputSchema ToolArgumentsSchema // For retro-compatibility
-type ToolOutputSchema ToolArgumentsSchema
+// ToolInputSchema is an alias for ToolArgumentsSchema for backwards compatibility.
+// Using a type alias ensures it inherits all methods including MarshalJSON.
+type ToolInputSchema = ToolArgumentsSchema
+
+// ToolOutputSchema is an alias for ToolArgumentsSchema representing tool output schemas.
+// Using a type alias ensures it inherits all methods including MarshalJSON.
+type ToolOutputSchema = ToolArgumentsSchema
 
 // MarshalJSON implements the json.Marshaler interface for ToolInputSchema.
 func (tis ToolArgumentsSchema) MarshalJSON() ([]byte, error) {
