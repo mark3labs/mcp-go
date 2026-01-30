@@ -2883,27 +2883,22 @@ func TestMCPServer_HandleListTools_IncludesTaskTools(t *testing.T) {
 			}, nil
 		})
 
-		// Add task tools (directly to taskTools map for testing)
-		server.toolsMu.Lock()
-		server.taskTools["task-tool"] = ServerTaskTool{
-			Tool: mcp.Tool{
-				Name:        "task-tool",
-				Description: "A task-augmented tool",
-				InputSchema: mcp.ToolInputSchema{Type: "object"},
-				Execution: &mcp.ToolExecution{
-					TaskSupport: mcp.TaskSupportRequired,
+		// Add task tool using AddTaskTool
+		server.AddTaskTool(mcp.Tool{
+			Name:        "task-tool",
+			Description: "A task-augmented tool",
+			InputSchema: mcp.ToolInputSchema{Type: "object"},
+			Execution: &mcp.ToolExecution{
+				TaskSupport: mcp.TaskSupportRequired,
+			},
+		}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			return &mcp.CreateTaskResult{
+				Task: mcp.Task{
+					TaskId: "task-1",
+					Status: mcp.TaskStatusWorking,
 				},
-			},
-			Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-				return &mcp.CreateTaskResult{
-					Task: mcp.Task{
-						TaskId: "task-1",
-						Status: mcp.TaskStatusWorking,
-					},
-				}, nil
-			},
-		}
-		server.toolsMu.Unlock()
+			}, nil
+		})
 
 		// Create a list tools request
 		request := mcp.ListToolsRequest{}
@@ -2928,45 +2923,45 @@ func TestMCPServer_HandleListTools_IncludesTaskTools(t *testing.T) {
 	t.Run("list with only task tools", func(t *testing.T) {
 		server := NewMCPServer("test-server", "1.0.0")
 
-		// Add only task tools
-		server.toolsMu.Lock()
-		server.taskTools["task-tool-1"] = ServerTaskTool{
-			Tool: mcp.Tool{
-				Name:        "task-tool-1",
-				Description: "First task tool",
-				InputSchema: mcp.ToolInputSchema{Type: "object"},
-				Execution: &mcp.ToolExecution{
-					TaskSupport: mcp.TaskSupportRequired,
+		// Add only task tools using AddTaskTools
+		server.AddTaskTools(
+			ServerTaskTool{
+				Tool: mcp.Tool{
+					Name:        "task-tool-1",
+					Description: "First task tool",
+					InputSchema: mcp.ToolInputSchema{Type: "object"},
+					Execution: &mcp.ToolExecution{
+						TaskSupport: mcp.TaskSupportRequired,
+					},
+				},
+				Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+					return &mcp.CreateTaskResult{
+						Task: mcp.Task{
+							TaskId: "task-1",
+							Status: mcp.TaskStatusWorking,
+						},
+					}, nil
 				},
 			},
-			Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-				return &mcp.CreateTaskResult{
-					Task: mcp.Task{
-						TaskId: "task-1",
-						Status: mcp.TaskStatusWorking,
+			ServerTaskTool{
+				Tool: mcp.Tool{
+					Name:        "task-tool-2",
+					Description: "Second task tool",
+					InputSchema: mcp.ToolInputSchema{Type: "object"},
+					Execution: &mcp.ToolExecution{
+						TaskSupport: mcp.TaskSupportOptional,
 					},
-				}, nil
-			},
-		}
-		server.taskTools["task-tool-2"] = ServerTaskTool{
-			Tool: mcp.Tool{
-				Name:        "task-tool-2",
-				Description: "Second task tool",
-				InputSchema: mcp.ToolInputSchema{Type: "object"},
-				Execution: &mcp.ToolExecution{
-					TaskSupport: mcp.TaskSupportOptional,
+				},
+				Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+					return &mcp.CreateTaskResult{
+						Task: mcp.Task{
+							TaskId: "task-2",
+							Status: mcp.TaskStatusWorking,
+						},
+					}, nil
 				},
 			},
-			Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-				return &mcp.CreateTaskResult{
-					Task: mcp.Task{
-						TaskId: "task-2",
-						Status: mcp.TaskStatusWorking,
-					},
-				}, nil
-			},
-		}
-		server.toolsMu.Unlock()
+		)
 
 		// Create a list tools request
 		request := mcp.ListToolsRequest{}
@@ -3011,26 +3006,21 @@ func TestMCPServer_HandleListTools_IncludesTaskTools(t *testing.T) {
 			return &mcp.CallToolResult{}, nil
 		})
 
-		server.toolsMu.Lock()
-		server.taskTools["alpha-task"] = ServerTaskTool{
-			Tool: mcp.Tool{
-				Name:        "alpha-task",
-				Description: "First alphabetically",
-				InputSchema: mcp.ToolInputSchema{Type: "object"},
-				Execution: &mcp.ToolExecution{
-					TaskSupport: mcp.TaskSupportRequired,
+		server.AddTaskTool(mcp.Tool{
+			Name:        "alpha-task",
+			Description: "First alphabetically",
+			InputSchema: mcp.ToolInputSchema{Type: "object"},
+			Execution: &mcp.ToolExecution{
+				TaskSupport: mcp.TaskSupportRequired,
+			},
+		}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			return &mcp.CreateTaskResult{
+				Task: mcp.Task{
+					TaskId: "task-alpha",
+					Status: mcp.TaskStatusWorking,
 				},
-			},
-			Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-				return &mcp.CreateTaskResult{
-					Task: mcp.Task{
-						TaskId: "task-alpha",
-						Status: mcp.TaskStatusWorking,
-					},
-				}, nil
-			},
-		}
-		server.toolsMu.Unlock()
+			}, nil
+		})
 
 		server.AddTool(mcp.Tool{
 			Name:        "middle-tool",
@@ -3053,6 +3043,158 @@ func TestMCPServer_HandleListTools_IncludesTaskTools(t *testing.T) {
 		assert.Equal(t, "alpha-task", result.Tools[0].Name)
 		assert.Equal(t, "middle-tool", result.Tools[1].Name)
 		assert.Equal(t, "zebra-tool", result.Tools[2].Name)
+	})
+}
+
+func TestMCPServer_AddTaskTool(t *testing.T) {
+	t.Run("add single task tool", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Create a task tool
+		tool := mcp.Tool{
+			Name:        "async-tool",
+			Description: "A task-augmented tool",
+			InputSchema: mcp.ToolInputSchema{Type: "object"},
+			Execution: &mcp.ToolExecution{
+				TaskSupport: mcp.TaskSupportRequired,
+			},
+		}
+
+		handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			return &mcp.CreateTaskResult{
+				Task: mcp.Task{
+					TaskId: "test-task",
+					Status: mcp.TaskStatusWorking,
+				},
+			}, nil
+		}
+
+		// Add the task tool using AddTaskTool
+		server.AddTaskTool(tool, handler)
+
+		// Verify the tool is registered
+		server.toolsMu.RLock()
+		registeredTool, exists := server.taskTools["async-tool"]
+		server.toolsMu.RUnlock()
+
+		assert.True(t, exists)
+		assert.Equal(t, "async-tool", registeredTool.Tool.Name)
+		assert.Equal(t, "A task-augmented tool", registeredTool.Tool.Description)
+		assert.NotNil(t, registeredTool.Tool.Execution)
+		assert.Equal(t, mcp.TaskSupportRequired, registeredTool.Tool.Execution.TaskSupport)
+		assert.NotNil(t, registeredTool.Handler)
+	})
+
+	t.Run("add multiple task tools", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Create task tools
+		tool1 := ServerTaskTool{
+			Tool: mcp.Tool{
+				Name:        "task-tool-1",
+				Description: "First task tool",
+				InputSchema: mcp.ToolInputSchema{Type: "object"},
+				Execution: &mcp.ToolExecution{
+					TaskSupport: mcp.TaskSupportRequired,
+				},
+			},
+			Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				return &mcp.CreateTaskResult{}, nil
+			},
+		}
+
+		tool2 := ServerTaskTool{
+			Tool: mcp.Tool{
+				Name:        "task-tool-2",
+				Description: "Second task tool",
+				InputSchema: mcp.ToolInputSchema{Type: "object"},
+				Execution: &mcp.ToolExecution{
+					TaskSupport: mcp.TaskSupportOptional,
+				},
+			},
+			Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				return &mcp.CreateTaskResult{}, nil
+			},
+		}
+
+		// Add multiple task tools using AddTaskTools
+		server.AddTaskTools(tool1, tool2)
+
+		// Verify both tools are registered
+		server.toolsMu.RLock()
+		registeredTool1, exists1 := server.taskTools["task-tool-1"]
+		registeredTool2, exists2 := server.taskTools["task-tool-2"]
+		totalCount := len(server.taskTools)
+		server.toolsMu.RUnlock()
+
+		assert.True(t, exists1)
+		assert.True(t, exists2)
+		assert.Equal(t, 2, totalCount)
+		assert.Equal(t, "task-tool-1", registeredTool1.Tool.Name)
+		assert.Equal(t, "task-tool-2", registeredTool2.Tool.Name)
+	})
+
+	t.Run("task tools appear in list_tools", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add a task tool
+		server.AddTaskTool(
+			mcp.Tool{
+				Name:        "my-async-tool",
+				Description: "Async operation",
+				InputSchema: mcp.ToolInputSchema{Type: "object"},
+				Execution: &mcp.ToolExecution{
+					TaskSupport: mcp.TaskSupportRequired,
+				},
+			},
+			func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				return &mcp.CreateTaskResult{}, nil
+			},
+		)
+
+		// List tools
+		result, err := server.handleListTools(context.Background(), 1, mcp.ListToolsRequest{})
+
+		// Verify the task tool appears in the list
+		require.Nil(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, result.Tools, 1)
+		assert.Equal(t, "my-async-tool", result.Tools[0].Name)
+		assert.NotNil(t, result.Tools[0].Execution)
+		assert.Equal(t, mcp.TaskSupportRequired, result.Tools[0].Execution.TaskSupport)
+	})
+
+	t.Run("implicit tool capabilities registration", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Capabilities should be nil initially
+		server.capabilitiesMu.RLock()
+		initialTools := server.capabilities.tools
+		server.capabilitiesMu.RUnlock()
+		assert.Nil(t, initialTools)
+
+		// Add a task tool
+		server.AddTaskTool(
+			mcp.Tool{
+				Name:        "test-tool",
+				Description: "Test tool",
+				InputSchema: mcp.ToolInputSchema{Type: "object"},
+				Execution: &mcp.ToolExecution{
+					TaskSupport: mcp.TaskSupportRequired,
+				},
+			},
+			func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				return &mcp.CreateTaskResult{}, nil
+			},
+		)
+
+		// Tool capabilities should now be registered with listChanged=true
+		server.capabilitiesMu.RLock()
+		toolsCapabilities := server.capabilities.tools
+		server.capabilitiesMu.RUnlock()
+
+		assert.NotNil(t, toolsCapabilities)
+		assert.True(t, toolsCapabilities.listChanged)
 	})
 }
 

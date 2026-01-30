@@ -619,6 +619,11 @@ func (s *MCPServer) AddTool(tool mcp.Tool, handler ToolHandlerFunc) {
 	s.AddTools(ServerTool{Tool: tool, Handler: handler})
 }
 
+// AddTaskTool registers a new task tool and its handler
+func (s *MCPServer) AddTaskTool(tool mcp.Tool, handler TaskToolHandlerFunc) {
+	s.AddTaskTools(ServerTaskTool{Tool: tool, Handler: handler})
+}
+
 // Register tool capabilities due to a tool being added.  Default to
 // listChanged: true, but don't change the value if we've already explicitly
 // registered tools.listChanged false.
@@ -665,6 +670,23 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 	s.toolsMu.Lock()
 	for _, entry := range tools {
 		s.tools[entry.Tool.Name] = entry
+	}
+	s.toolsMu.Unlock()
+
+	// When the list of available tools changes, servers that declared the listChanged capability SHOULD send a notification.
+	if s.capabilities.tools.listChanged {
+		// Send notification to all initialized sessions
+		s.SendNotificationToAllClients(mcp.MethodNotificationToolsListChanged, nil)
+	}
+}
+
+// AddTaskTools registers multiple task tools at once
+func (s *MCPServer) AddTaskTools(taskTools ...ServerTaskTool) {
+	s.implicitlyRegisterToolCapabilities()
+
+	s.toolsMu.Lock()
+	for _, entry := range taskTools {
+		s.taskTools[entry.Tool.Name] = entry
 	}
 	s.toolsMu.Unlock()
 
