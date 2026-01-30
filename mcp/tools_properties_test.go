@@ -228,6 +228,29 @@ func TestToolInputSchemaMarshalJSON(t *testing.T) {
 	assert.Contains(t, result, "$defs")
 }
 
+// TestToolInputSchemaMarshalJSONEmptyProperties is a regression test for issue #694.
+// ToolInputSchema must inherit the MarshalJSON method from ToolArgumentsSchema
+// to ensure empty properties are serialized as {} rather than omitted.
+// See: https://github.com/mark3labs/mcp-go/issues/694
+func TestToolInputSchemaMarshalJSONEmptyProperties(t *testing.T) {
+	schema := ToolInputSchema{
+		Type:       "object",
+		Properties: map[string]any{}, // empty but not nil
+	}
+
+	data, err := json.Marshal(schema)
+	require.NoError(t, err)
+
+	var result map[string]any
+	err = json.Unmarshal(data, &result)
+	require.NoError(t, err)
+
+	assert.Equal(t, "object", result["type"])
+	// The key assertion: empty properties must be present as {}
+	assert.Contains(t, result, "properties", "empty properties should be serialized as {} not omitted")
+	assert.Equal(t, map[string]any{}, result["properties"])
+}
+
 func TestWithStringWithAllOptions(t *testing.T) {
 	tool := NewTool("test",
 		WithString("name",
