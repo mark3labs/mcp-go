@@ -199,8 +199,9 @@ type MCPServer struct {
 	hooks                      *Hooks
 	taskHooks                  *TaskHooks
 	tasks                      map[string]*taskEntry
-	maxConcurrentTasks         *int // Optional limit on concurrent running tasks
-	activeTasks                int  // Current count of running (non-terminal) tasks
+	expiredTasks               map[string]time.Time // Tracks recently expired task IDs with expiration timestamp
+	maxConcurrentTasks         *int                 // Optional limit on concurrent running tasks
+	activeTasks                int                  // Current count of running (non-terminal) tasks
 }
 
 // WithPaginationLimit sets the pagination limit for the server.
@@ -454,6 +455,7 @@ func NewMCPServer(
 		version:                    version,
 		notificationHandlers:       make(map[string]NotificationHandlerFunc),
 		tasks:                      make(map[string]*taskEntry),
+		expiredTasks:               make(map[string]time.Time),
 		promptCompletionProvider:   &DefaultPromptCompletionProvider{},
 		resourceCompletionProvider: &DefaultResourceCompletionProvider{},
 		capabilities: serverCapabilities{
@@ -2082,6 +2084,11 @@ func (s *MCPServer) getTask(ctx context.Context, taskID string) (mcp.Task, chan 
 	s.tasksMu.RLock()
 	entry, exists := s.tasks[taskID]
 	if !exists {
+		// Check if this task was recently expired
+		if _, wasExpired := s.expiredTasks[taskID]; wasExpired {
+			s.tasksMu.RUnlock()
+			return mcp.Task{}, nil, fmt.Errorf("task has expired")
+		}
 		s.tasksMu.RUnlock()
 		return mcp.Task{}, nil, fmt.Errorf("task not found")
 	}
@@ -2105,11 +2112,16 @@ func (s *MCPServer) getTask(ctx context.Context, taskID string) (mcp.Task, chan 
 func (s *MCPServer) getTaskEntry(ctx context.Context, taskID string) (*taskEntry, error) {
 	s.tasksMu.RLock()
 	entry, exists := s.tasks[taskID]
-	s.tasksMu.RUnlock()
-
 	if !exists {
+		// Check if this task was recently expired
+		if _, wasExpired := s.expiredTasks[taskID]; wasExpired {
+			s.tasksMu.RUnlock()
+			return nil, fmt.Errorf("task has expired")
+		}
+		s.tasksMu.RUnlock()
 		return nil, fmt.Errorf("task not found")
 	}
+	s.tasksMu.RUnlock()
 
 	// Verify session isolation
 	sessionID := getSessionID(ctx)
@@ -2257,7 +2269,19 @@ func (s *MCPServer) scheduleTaskCleanup(taskID string, ttlMs int64) {
 
 	s.tasksMu.Lock()
 	delete(s.tasks, taskID)
+	// Record that this task expired for better error messages
+	// Keep the tombstone for 5 minutes to allow clients to distinguish
+	// between "not found" and "expired"
+	s.expiredTasks[taskID] = time.Now()
 	s.tasksMu.Unlock()
+
+	// Clean up the tombstone after 5 minutes
+	go func() {
+		time.Sleep(5 * time.Minute)
+		s.tasksMu.Lock()
+		delete(s.expiredTasks, taskID)
+		s.tasksMu.Unlock()
+	}()
 }
 
 // sendTaskStatusNotification sends a notification when a task's status changes.

@@ -176,3 +176,33 @@ func WithRelatedTask(taskID string) *Meta {
 		},
 	}
 }
+
+//
+// Model Immediate Response Metadata Functions
+//
+
+// ModelImmediateResponseMetaKey is the metadata key for providing an immediate response to the model.
+// Servers can use this optional key in the _meta field of CreateTaskResult to provide
+// a string that should be passed as an immediate tool result to the model while the task
+// continues executing asynchronously in the background.
+const ModelImmediateResponseMetaKey = "io.modelcontextprotocol/model-immediate-response"
+
+// WithModelImmediateResponse creates Meta with an immediate response message for the model.
+// This allows the model to continue processing while the task executes asynchronously.
+// The message parameter is a human-readable string that will be shown to the model.
+//
+// Example:
+//
+//	return &mcp.CreateTaskResult{
+//	    Task: task,
+//	    Result: mcp.Result{
+//	        Meta: mcp.WithModelImmediateResponse("Processing your request. This may take a few minutes."),
+//	    },
+//	}
+func WithModelImmediateResponse(message string) *Meta {
+	return &Meta{
+		AdditionalFields: map[string]any{
+			ModelImmediateResponseMetaKey: message,
+		},
+	}
+}

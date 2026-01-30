@@ -629,3 +629,43 @@ func TestTaskToolTracerBullet(t *testing.T) {
 func ptrInt64(i int64) *int64 {
 	return &i
 }
+
+func TestTaskTool_ModelImmediateResponse(t *testing.T) {
+	// Test that the SDK provides helper functions for model immediate response
+	// Note: The current SDK architecture calls task handlers asynchronously,
+	// so immediate response metadata would need to be set server-side before
+	// the handler is called. This test verifies the helper functions work correctly.
+
+	t.Run("helper function creates correct metadata structure", func(t *testing.T) {
+		message := "Processing your request. This may take a few minutes."
+		meta := mcp.WithModelImmediateResponse(message)
+
+		require.NotNil(t, meta)
+		require.NotNil(t, meta.AdditionalFields)
+
+		immediateResponse, ok := meta.AdditionalFields[mcp.ModelImmediateResponseMetaKey]
+		assert.True(t, ok, "Metadata should contain model immediate response key")
+
+		responseMsg, ok := immediateResponse.(string)
+		assert.True(t, ok, "Immediate response should be a string")
+		assert.Equal(t, message, responseMsg)
+	})
+
+	t.Run("CreateTaskResult can include immediate response", func(t *testing.T) {
+		task := mcp.NewTask("task-123")
+		message := "Your request is being processed."
+
+		result := mcp.CreateTaskResult{
+			Task: task,
+			Result: mcp.Result{
+				Meta: mcp.WithModelImmediateResponse(message),
+			},
+		}
+
+		assert.NotNil(t, result.Meta)
+		assert.NotNil(t, result.Meta.AdditionalFields)
+
+		immediateResponse := result.Meta.AdditionalFields[mcp.ModelImmediateResponseMetaKey]
+		assert.Equal(t, message, immediateResponse)
+	})
+}

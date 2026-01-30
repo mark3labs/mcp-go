@@ -372,10 +372,65 @@ func TestMCPServer_TaskTTLCleanup(t *testing.T) {
 	// Wait for TTL to expire
 	time.Sleep(150 * time.Millisecond)
 
-	// Task should be cleaned up
+	// Task should be cleaned up and return "expired" error
 	_, _, err = server.getTask(ctx, "task-ttl")
 	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "task has expired")
+
+	// A task that never existed should return "not found" error
+	_, _, err = server.getTask(ctx, "never-existed")
+	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "task not found")
+}
+
+func TestMCPServer_TaskExpiredVsNotFoundErrors(t *testing.T) {
+	server := NewMCPServer(
+		"test-server",
+		"1.0.0",
+		WithTaskCapabilities(true, true, true),
+	)
+
+	ctx := context.Background()
+
+	t.Run("expired task returns 'task has expired' error", func(t *testing.T) {
+		ttl := int64(50) // 50ms
+		_, err := server.createTask(ctx, "task-expired", "test-tool", &ttl, nil)
+		require.NoError(t, err)
+
+		// Wait for TTL to expire
+		time.Sleep(100 * time.Millisecond)
+
+		// All task operations should return "expired" error
+		_, _, err = server.getTask(ctx, "task-expired")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "task has expired")
+
+		_, err = server.getTaskEntry(ctx, "task-expired")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "task has expired")
+
+		err = server.cancelTask(ctx, "task-expired")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "task has expired")
+	})
+
+	t.Run("non-existent task returns 'task not found' error", func(t *testing.T) {
+		// Task that never existed
+		_, _, err := server.getTask(ctx, "never-existed")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "task not found")
+		assert.NotContains(t, err.Error(), "expired")
+
+		_, err = server.getTaskEntry(ctx, "never-existed")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "task not found")
+		assert.NotContains(t, err.Error(), "expired")
+
+		err = server.cancelTask(ctx, "never-existed")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "task not found")
+		assert.NotContains(t, err.Error(), "expired")
+	})
 }
 
 func TestMCPServer_TaskStatusIsTerminal(t *testing.T) {

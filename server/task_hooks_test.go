@@ -15,12 +15,14 @@ import (
 func TestTaskHooks_TaskCreated(t *testing.T) {
 	var mu sync.Mutex
 	var capturedMetrics []TaskMetrics
+	done := make(chan struct{})
 
 	hooks := &TaskHooks{}
 	hooks.AddOnTaskCreated(func(ctx context.Context, metrics TaskMetrics) {
 		mu.Lock()
 		defer mu.Unlock()
 		capturedMetrics = append(capturedMetrics, metrics)
+		close(done)
 	})
 
 	server := NewMCPServer("test-server", "1.0.0", WithTaskHooks(hooks))
@@ -30,8 +32,12 @@ func TestTaskHooks_TaskCreated(t *testing.T) {
 	_, err := server.createTask(ctx, "test-task-1", "test-tool", nil, nil)
 	require.NoError(t, err)
 
-	// Give hook time to execute
-	time.Sleep(10 * time.Millisecond)
+	// Wait for hook to execute with timeout
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timeout waiting for OnTaskCreated hook")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -46,12 +52,14 @@ func TestTaskHooks_TaskCreated(t *testing.T) {
 func TestTaskHooks_TaskCompleted(t *testing.T) {
 	var mu sync.Mutex
 	var completedMetrics []TaskMetrics
+	done := make(chan struct{})
 
 	hooks := &TaskHooks{}
 	hooks.AddOnTaskCompleted(func(ctx context.Context, metrics TaskMetrics) {
 		mu.Lock()
 		defer mu.Unlock()
 		completedMetrics = append(completedMetrics, metrics)
+		close(done)
 	})
 
 	server := NewMCPServer("test-server", "1.0.0", WithTaskHooks(hooks))
@@ -64,8 +72,12 @@ func TestTaskHooks_TaskCompleted(t *testing.T) {
 	// Complete the task successfully
 	server.completeTask(entry, "result", nil)
 
-	// Give hook time to execute
-	time.Sleep(10 * time.Millisecond)
+	// Wait for hook to execute with timeout
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timeout waiting for OnTaskCompleted hook")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -82,12 +94,14 @@ func TestTaskHooks_TaskCompleted(t *testing.T) {
 func TestTaskHooks_TaskFailed(t *testing.T) {
 	var mu sync.Mutex
 	var failedMetrics []TaskMetrics
+	done := make(chan struct{})
 
 	hooks := &TaskHooks{}
 	hooks.AddOnTaskFailed(func(ctx context.Context, metrics TaskMetrics) {
 		mu.Lock()
 		defer mu.Unlock()
 		failedMetrics = append(failedMetrics, metrics)
+		close(done)
 	})
 
 	server := NewMCPServer("test-server", "1.0.0", WithTaskHooks(hooks))
@@ -101,8 +115,12 @@ func TestTaskHooks_TaskFailed(t *testing.T) {
 	testErr := errors.New("task failed")
 	server.completeTask(entry, nil, testErr)
 
-	// Give hook time to execute
-	time.Sleep(10 * time.Millisecond)
+	// Wait for hook to execute with timeout
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timeout waiting for OnTaskFailed hook")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -120,12 +138,14 @@ func TestTaskHooks_TaskFailed(t *testing.T) {
 func TestTaskHooks_TaskCancelled(t *testing.T) {
 	var mu sync.Mutex
 	var cancelledMetrics []TaskMetrics
+	done := make(chan struct{})
 
 	hooks := &TaskHooks{}
 	hooks.AddOnTaskCancelled(func(ctx context.Context, metrics TaskMetrics) {
 		mu.Lock()
 		defer mu.Unlock()
 		cancelledMetrics = append(cancelledMetrics, metrics)
+		close(done)
 	})
 
 	server := NewMCPServer("test-server", "1.0.0", WithTaskHooks(hooks))
@@ -145,8 +165,12 @@ func TestTaskHooks_TaskCancelled(t *testing.T) {
 	err = server.cancelTask(cancelCtx, "test-task-4")
 	require.NoError(t, err)
 
-	// Give hook time to execute
-	time.Sleep(10 * time.Millisecond)
+	// Wait for hook to execute with timeout
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timeout waiting for OnTaskCancelled hook")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -162,12 +186,16 @@ func TestTaskHooks_TaskCancelled(t *testing.T) {
 func TestTaskHooks_TaskStatusChanged(t *testing.T) {
 	var mu sync.Mutex
 	var statusChanges []TaskMetrics
+	done := make(chan struct{})
 
 	hooks := &TaskHooks{}
 	hooks.AddOnTaskStatusChanged(func(ctx context.Context, metrics TaskMetrics) {
 		mu.Lock()
 		defer mu.Unlock()
 		statusChanges = append(statusChanges, metrics)
+		if len(statusChanges) == 2 {
+			close(done)
+		}
 	})
 
 	server := NewMCPServer("test-server", "1.0.0", WithTaskHooks(hooks))
@@ -177,14 +205,15 @@ func TestTaskHooks_TaskStatusChanged(t *testing.T) {
 	entry, err := server.createTask(ctx, "test-task-5", "test-tool", nil, nil)
 	require.NoError(t, err)
 
-	// Give hook time to execute
-	time.Sleep(10 * time.Millisecond)
-
 	// Complete the task (status change 2: completed)
 	server.completeTask(entry, "result", nil)
 
-	// Give hook time to execute
-	time.Sleep(10 * time.Millisecond)
+	// Wait for both hooks to execute with timeout
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timeout waiting for OnTaskStatusChanged hooks")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -200,22 +229,27 @@ func TestTaskHooks_MultipleHooks(t *testing.T) {
 	createdCount := 0
 	completedCount := 0
 	statusChangeCount := 0
+	var wg sync.WaitGroup
+	wg.Add(4) // 1 created + 1 completed + 2 status changes
 
 	hooks := &TaskHooks{}
 	hooks.AddOnTaskCreated(func(ctx context.Context, metrics TaskMetrics) {
 		mu.Lock()
 		defer mu.Unlock()
 		createdCount++
+		wg.Done()
 	})
 	hooks.AddOnTaskCompleted(func(ctx context.Context, metrics TaskMetrics) {
 		mu.Lock()
 		defer mu.Unlock()
 		completedCount++
+		wg.Done()
 	})
 	hooks.AddOnTaskStatusChanged(func(ctx context.Context, metrics TaskMetrics) {
 		mu.Lock()
 		defer mu.Unlock()
 		statusChangeCount++
+		wg.Done()
 	})
 
 	server := NewMCPServer("test-server", "1.0.0", WithTaskHooks(hooks))
@@ -226,8 +260,18 @@ func TestTaskHooks_MultipleHooks(t *testing.T) {
 	require.NoError(t, err)
 	server.completeTask(entry, "result", nil)
 
-	// Give hooks time to execute
-	time.Sleep(10 * time.Millisecond)
+	// Wait for all hooks to execute with timeout
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timeout waiting for hooks")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -254,6 +298,7 @@ func TestTaskHooks_NilHooks(t *testing.T) {
 func TestTaskHooks_IntegrationWithTaskTool(t *testing.T) {
 	var mu sync.Mutex
 	var allMetrics []TaskMetrics
+	done := make(chan struct{})
 
 	hooks := &TaskHooks{}
 	// Capture all events
@@ -266,6 +311,7 @@ func TestTaskHooks_IntegrationWithTaskTool(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		allMetrics = append(allMetrics, metrics)
+		close(done)
 	})
 
 	server := NewMCPServer("test-server", "1.0.0",
@@ -299,8 +345,12 @@ func TestTaskHooks_IntegrationWithTaskTool(t *testing.T) {
 	require.Nil(t, reqErr)
 	require.NotNil(t, result)
 
-	// Wait for async execution to complete
-	time.Sleep(50 * time.Millisecond)
+	// Wait for async execution to complete with timeout
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timeout waiting for task completion")
+	}
 
 	mu.Lock()
 	defer mu.Unlock()
