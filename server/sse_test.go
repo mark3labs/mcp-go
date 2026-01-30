@@ -1447,7 +1447,7 @@ func TestSSEServer(t *testing.T) {
 	t.Run("Headers are passed through to tool requests", func(t *testing.T) {
 		hooks := &Hooks{}
 		headerVerified := make(chan struct{})
-		hooks.AddAfterCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest, result *mcp.CallToolResult) {
+		hooks.AddAfterCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest, result any) {
 			if message.Params.Name == "verify-headers" {
 				select {
 				case <-headerVerified:
@@ -1521,7 +1521,7 @@ func TestSSEServer(t *testing.T) {
 	t.Run("Headers are not nil when no headers are set", func(t *testing.T) {
 		hooks := &Hooks{}
 		headersChecked := make(chan struct{})
-		hooks.AddAfterCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest, result *mcp.CallToolResult) {
+		hooks.AddAfterCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest, result any) {
 			if message.Params.Name == "check-headers-not-nil" {
 				select {
 				case <-headersChecked:

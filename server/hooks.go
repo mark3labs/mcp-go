@@ -89,7 +89,7 @@ type OnBeforeListToolsFunc func(ctx context.Context, id any, message *mcp.ListTo
 type OnAfterListToolsFunc func(ctx context.Context, id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult)
 
 type OnBeforeCallToolFunc func(ctx context.Context, id any, message *mcp.CallToolRequest)
-type OnAfterCallToolFunc func(ctx context.Context, id any, message *mcp.CallToolRequest, result *mcp.CallToolResult)
+type OnAfterCallToolFunc func(ctx context.Context, id any, message *mcp.CallToolRequest, result any)
 
 type OnBeforeGetTaskFunc func(ctx context.Context, id any, message *mcp.GetTaskRequest)
 type OnAfterGetTaskFunc func(ctx context.Context, id any, message *mcp.GetTaskRequest, result *mcp.GetTaskResult)
@@ -546,7 +546,7 @@ func (c *Hooks) beforeCallTool(ctx context.Context, id any, message *mcp.CallToo
 	}
 }
 
-func (c *Hooks) afterCallTool(ctx context.Context, id any, message *mcp.CallToolRequest, result *mcp.CallToolResult) {
+func (c *Hooks) afterCallTool(ctx context.Context, id any, message *mcp.CallToolRequest, result any) {
 	c.onSuccess(ctx, id, mcp.MethodToolsCall, message, result)
 	if c == nil {
 		return

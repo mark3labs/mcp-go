@@ -1429,7 +1429,7 @@ func (s *MCPServer) handleToolCall(
 	ctx context.Context,
 	id any,
 	request mcp.CallToolRequest,
-) (*mcp.CallToolResult, *requestError) {
+) (any, *requestError) {
 	// First check session-specific tools
 	var tool ServerTool
 	var ok bool
@@ -1526,7 +1526,7 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 	ctx context.Context,
 	id any,
 	request mcp.CallToolRequest,
-) (*mcp.CallToolResult, *requestError) {
+) (*mcp.CreateTaskResult, *requestError) {
 	// Look up the tool - check both taskTools and regular tools
 	s.toolsMu.RLock()
 	taskTool, isTaskTool := s.taskTools[request.Params.Name]
@@ -1611,21 +1611,14 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 		go s.executeRegularToolAsTask(ctx, entry, regularTool, request)
 	}
 
-	// Return CreateTaskResult immediately
-	// The result is wrapped in CallToolResult's _meta field per MCP spec
+	// Return CreateTaskResult immediately with task as top-level field
 	// Make a copy of the task to avoid data races with background goroutine
 	s.tasksMu.RLock()
 	taskCopy := entry.task
 	s.tasksMu.RUnlock()
 
-	return &mcp.CallToolResult{
-		Result: mcp.Result{
-			Meta: &mcp.Meta{
-				AdditionalFields: map[string]any{
-					"task": taskCopy,
-				},
-			},
-		},
+	return &mcp.CreateTaskResult{
+		Task: taskCopy,
 	}, nil
 }
 

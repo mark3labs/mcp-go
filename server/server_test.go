@@ -3672,19 +3672,16 @@ func TestMCPServer_TaskSupportValidation(t *testing.T) {
 			}
 		}`))
 
-		// Should return CreateTaskResult wrapped in CallToolResult (TAS-9 implemented)
+		// Should return CreateTaskResult with task as direct field (spec-compliant)
 		successResp, ok := response.(mcp.JSONRPCResponse)
 		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
 
-		result, ok := successResp.Result.(mcp.CallToolResult)
-		require.True(t, ok, "Expected mcp.CallToolResult, got: %T", successResp.Result)
+		result, ok := successResp.Result.(*mcp.CreateTaskResult)
+		require.True(t, ok, "Expected *mcp.CreateTaskResult, got: %T", successResp.Result)
 
-		// Verify task was created
-		require.NotNil(t, result.Meta)
-		require.NotNil(t, result.Meta.AdditionalFields)
-		task, ok := result.Meta.AdditionalFields["task"].(mcp.Task)
-		require.True(t, ok, "Expected task in _meta")
-		assert.NotEmpty(t, task.TaskId)
+		// Verify task was created with correct structure
+		require.NotNil(t, result.Task, "Task field should not be nil")
+		assert.NotEmpty(t, result.Task.TaskId)
 	})
 
 	t.Run("tool with TaskSupportOptional works without task param", func(t *testing.T) {
@@ -3712,7 +3709,7 @@ func TestMCPServer_TaskSupportValidation(t *testing.T) {
 		// Should succeed
 		resp, ok := response.(mcp.JSONRPCResponse)
 		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
-		result, ok := resp.Result.(mcp.CallToolResult)
+		result, ok := resp.Result.(*mcp.CallToolResult)
 		require.True(t, ok, "Expected CallToolResult, got: %T", resp.Result)
 		assert.Len(t, result.Content, 1)
 	})
@@ -3742,19 +3739,16 @@ func TestMCPServer_TaskSupportValidation(t *testing.T) {
 			}
 		}`))
 
-		// Should return CreateTaskResult wrapped in CallToolResult (TAS-9 implemented)
+		// Should return CreateTaskResult with task as direct field (spec-compliant)
 		successResp, ok := response.(mcp.JSONRPCResponse)
 		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
 
-		result, ok := successResp.Result.(mcp.CallToolResult)
-		require.True(t, ok, "Expected mcp.CallToolResult, got: %T", successResp.Result)
+		result, ok := successResp.Result.(*mcp.CreateTaskResult)
+		require.True(t, ok, "Expected *mcp.CreateTaskResult, got: %T", successResp.Result)
 
-		// Verify task was created
-		require.NotNil(t, result.Meta)
-		require.NotNil(t, result.Meta.AdditionalFields)
-		task, ok := result.Meta.AdditionalFields["task"].(mcp.Task)
-		require.True(t, ok, "Expected task in _meta")
-		assert.NotEmpty(t, task.TaskId)
+		// Verify task was created with correct structure
+		require.NotNil(t, result.Task, "Task field should not be nil")
+		assert.NotEmpty(t, result.Task.TaskId)
 	})
 
 	t.Run("tool with TaskSupportForbidden works without task param", func(t *testing.T) {
@@ -3781,7 +3775,7 @@ func TestMCPServer_TaskSupportValidation(t *testing.T) {
 		// Should succeed
 		resp, ok := response.(mcp.JSONRPCResponse)
 		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
-		result, ok := resp.Result.(mcp.CallToolResult)
+		result, ok := resp.Result.(*mcp.CallToolResult)
 		require.True(t, ok, "Expected CallToolResult, got: %T", resp.Result)
 		assert.Len(t, result.Content, 1)
 	})
@@ -3839,7 +3833,7 @@ func TestMCPServer_TaskSupportValidation(t *testing.T) {
 		// Should succeed
 		resp, ok := response.(mcp.JSONRPCResponse)
 		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
-		result, ok := resp.Result.(mcp.CallToolResult)
+		result, ok := resp.Result.(*mcp.CallToolResult)
 		require.True(t, ok, "Expected CallToolResult, got: %T", resp.Result)
 		assert.Len(t, result.Content, 1)
 	})
@@ -3871,8 +3865,8 @@ func TestMCPServer_HybridModeDetection(t *testing.T) {
 		// Should succeed with immediate CallToolResult
 		resp, ok := response.(mcp.JSONRPCResponse)
 		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
-		result, ok := resp.Result.(mcp.CallToolResult)
-		require.True(t, ok, "Expected CallToolResult, got: %T", resp.Result)
+		result, ok := resp.Result.(*mcp.CallToolResult)
+		require.True(t, ok, "Expected *CallToolResult for sync execution, got: %T", resp.Result)
 		assert.Len(t, result.Content, 1)
 		textContent, ok := result.Content[0].(mcp.TextContent)
 		require.True(t, ok)
@@ -3904,29 +3898,21 @@ func TestMCPServer_HybridModeDetection(t *testing.T) {
 			}
 		}`))
 
-		// Should return CreateTaskResult wrapped in CallToolResult
+		// Should return CreateTaskResult with task as direct field (spec-compliant)
 		successResp, ok := response.(mcp.JSONRPCResponse)
 		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
 
-		// Response should have CallToolResult with _meta.task field
-		result, ok := successResp.Result.(mcp.CallToolResult)
-		require.True(t, ok, "Expected result to be mcp.CallToolResult, got: %T", successResp.Result)
+		// Response should have CreateTaskResult with task field
+		result, ok := successResp.Result.(*mcp.CreateTaskResult)
+		require.True(t, ok, "Expected result to be *mcp.CreateTaskResult, got: %T", successResp.Result)
 
-		// Verify _meta field exists and contains task
-		require.NotNil(t, result.Meta, "Expected _meta field in result")
-		require.NotNil(t, result.Meta.AdditionalFields, "Expected additional fields in _meta")
-
-		taskData, ok := result.Meta.AdditionalFields["task"]
-		require.True(t, ok, "Expected task field in _meta")
-
-		// Task should be a mcp.Task struct
-		task, ok := taskData.(mcp.Task)
-		require.True(t, ok, "Expected task to be mcp.Task, got: %T", taskData)
+		// Verify task field exists
+		require.NotNil(t, result.Task, "Expected task field in result")
 
 		// Verify task has required fields
-		assert.NotEmpty(t, task.TaskId, "Expected taskId in task")
-		assert.Equal(t, mcp.TaskStatusWorking, task.Status, "Expected status to be working")
-		assert.NotEmpty(t, task.CreatedAt, "Expected createdAt in task")
+		assert.NotEmpty(t, result.Task.TaskId, "Expected taskId in task")
+		assert.Equal(t, mcp.TaskStatusWorking, result.Task.Status, "Expected status to be working")
+		assert.NotEmpty(t, result.Task.CreatedAt, "Expected createdAt in task")
 	})
 
 	t.Run("TaskSupportRequired with task param routes to task execution", func(t *testing.T) {
@@ -3954,29 +3940,21 @@ func TestMCPServer_HybridModeDetection(t *testing.T) {
 			}
 		}`))
 
-		// Should return CreateTaskResult wrapped in CallToolResult
+		// Should return CreateTaskResult with task as direct field (spec-compliant)
 		successResp, ok := response.(mcp.JSONRPCResponse)
 		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
 
-		// Response should have CallToolResult with _meta.task field
-		result, ok := successResp.Result.(mcp.CallToolResult)
-		require.True(t, ok, "Expected result to be mcp.CallToolResult, got: %T", successResp.Result)
+		// Response should have CreateTaskResult with task field
+		result, ok := successResp.Result.(*mcp.CreateTaskResult)
+		require.True(t, ok, "Expected result to be *mcp.CreateTaskResult, got: %T", successResp.Result)
 
-		// Verify _meta field exists and contains task
-		require.NotNil(t, result.Meta, "Expected _meta field in result")
-		require.NotNil(t, result.Meta.AdditionalFields, "Expected additional fields in _meta")
-
-		taskData, ok := result.Meta.AdditionalFields["task"]
-		require.True(t, ok, "Expected task field in _meta")
-
-		// Task should be a mcp.Task struct
-		task, ok := taskData.(mcp.Task)
-		require.True(t, ok, "Expected task to be mcp.Task, got: %T", taskData)
+		// Verify task field exists
+		require.NotNil(t, result.Task, "Expected task field in result")
 
 		// Verify task has required fields
-		assert.NotEmpty(t, task.TaskId, "Expected taskId in task")
-		assert.Equal(t, mcp.TaskStatusWorking, task.Status, "Expected status to be working")
-		assert.NotEmpty(t, task.CreatedAt, "Expected createdAt in task")
+		assert.NotEmpty(t, result.Task.TaskId, "Expected taskId in task")
+		assert.Equal(t, mcp.TaskStatusWorking, result.Task.Status, "Expected status to be working")
+		assert.NotEmpty(t, result.Task.CreatedAt, "Expected createdAt in task")
 	})
 
 	t.Run("TaskSupportForbidden with task param executes synchronously", func(t *testing.T) {
@@ -4007,7 +3985,7 @@ func TestMCPServer_HybridModeDetection(t *testing.T) {
 		// Should succeed with immediate CallToolResult
 		resp, ok := response.(mcp.JSONRPCResponse)
 		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
-		result, ok := resp.Result.(mcp.CallToolResult)
+		result, ok := resp.Result.(*mcp.CallToolResult)
 		require.True(t, ok, "Expected CallToolResult, got: %T", resp.Result)
 		assert.Len(t, result.Content, 1)
 	})
@@ -4039,7 +4017,7 @@ func TestMCPServer_HybridModeDetection(t *testing.T) {
 		// Should succeed with immediate CallToolResult
 		resp, ok := response.(mcp.JSONRPCResponse)
 		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
-		result, ok := resp.Result.(mcp.CallToolResult)
+		result, ok := resp.Result.(*mcp.CallToolResult)
 		require.True(t, ok, "Expected CallToolResult, got: %T", resp.Result)
 		assert.Len(t, result.Content, 1)
 	})

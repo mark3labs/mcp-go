@@ -143,24 +143,19 @@ func TestTaskToolTracerBullet(t *testing.T) {
 		require.NotNil(t, callResult, "Call result should not be nil")
 
 		// Step 6: Verify CreateTaskResult is returned with task metadata
-		require.NotNil(t, callResult.Meta, "Meta should not be nil")
-		require.NotNil(t, callResult.Meta.AdditionalFields, "AdditionalFields should not be nil")
+		createTaskResult, ok := callResult.(*mcp.CreateTaskResult)
+		require.True(t, ok, "Result should be CreateTaskResult for task-augmented call")
+		require.NotNil(t, createTaskResult.Task, "Task field should not be nil")
 
-		taskData, ok := callResult.Meta.AdditionalFields["task"]
-		require.True(t, ok, "Task should be in meta")
-
-		taskMap, ok := taskData.(mcp.Task)
-		require.True(t, ok, "Task should be a Task type")
-
-		taskID := taskMap.TaskId
+		taskID := createTaskResult.Task.TaskId
 		require.NotEmpty(t, taskID, "Task ID should not be empty")
-		assert.Equal(t, mcp.TaskStatusWorking, taskMap.Status)
-		assert.NotEmpty(t, taskMap.CreatedAt)
-		assert.NotEmpty(t, taskMap.LastUpdatedAt)
+		assert.Equal(t, mcp.TaskStatusWorking, createTaskResult.Task.Status)
+		assert.NotEmpty(t, createTaskResult.Task.CreatedAt)
+		assert.NotEmpty(t, createTaskResult.Task.LastUpdatedAt)
 
 		// Verify TTL is set
-		require.NotNil(t, taskMap.TTL)
-		assert.Equal(t, int64(60000), *taskMap.TTL)
+		require.NotNil(t, createTaskResult.Task.TTL)
+		assert.Equal(t, int64(60000), *createTaskResult.Task.TTL)
 
 		// Step 7: Verify task is in working state and can be retrieved
 		task, _, getErr := server.getTask(sessionCtx, taskID)
@@ -264,15 +259,19 @@ func TestTaskToolTracerBullet(t *testing.T) {
 		require.Nil(t, syncErr, "Sync call should succeed")
 		require.NotNil(t, syncResult, "Sync result should not be nil")
 
-		// Verify result is returned directly (not a task)
-		require.Len(t, syncResult.Content, 1)
-		textContent, ok := syncResult.Content[0].(mcp.TextContent)
+		// Verify result is CallToolResult (not CreateTaskResult)
+		callToolResult, ok := syncResult.(*mcp.CallToolResult)
+		require.True(t, ok, "Result should be CallToolResult for sync execution")
+
+		// Verify result content is returned directly (not a task)
+		require.Len(t, callToolResult.Content, 1)
+		textContent, ok := callToolResult.Content[0].(mcp.TextContent)
 		require.True(t, ok)
 		assert.Equal(t, "Processed: sync-test", textContent.Text)
 
 		// Should NOT have task metadata
-		if syncResult.Meta != nil && syncResult.Meta.AdditionalFields != nil {
-			_, hasTask := syncResult.Meta.AdditionalFields["task"]
+		if callToolResult.Meta != nil && callToolResult.Meta.AdditionalFields != nil {
+			_, hasTask := callToolResult.Meta.AdditionalFields["task"]
 			assert.False(t, hasTask, "Sync execution should not have task metadata")
 		}
 	})
@@ -320,16 +319,12 @@ func TestTaskToolTracerBullet(t *testing.T) {
 		require.Nil(t, asyncErr, "Async call should succeed")
 		require.NotNil(t, asyncResult, "Async result should not be nil")
 
-		// Verify task metadata is present
-		require.NotNil(t, asyncResult.Meta)
-		require.NotNil(t, asyncResult.Meta.AdditionalFields)
+		// Verify task result is returned
+		createTaskResult, ok := asyncResult.(*mcp.CreateTaskResult)
+		require.True(t, ok, "Result should be CreateTaskResult for task-augmented call")
+		require.NotNil(t, createTaskResult.Task, "Task field should not be nil")
 
-		taskData, ok := asyncResult.Meta.AdditionalFields["task"]
-		require.True(t, ok, "Task should be in meta")
-
-		taskMap, ok := taskData.(mcp.Task)
-		require.True(t, ok)
-		taskID := taskMap.TaskId
+		taskID := createTaskResult.Task.TaskId
 		require.NotEmpty(t, taskID)
 
 		// Wait for completion
@@ -397,8 +392,8 @@ func TestTaskToolTracerBullet(t *testing.T) {
 		require.Nil(t, callErr)
 		require.NotNil(t, callResult)
 
-		taskData := callResult.Meta.AdditionalFields["task"].(mcp.Task)
-		taskID := taskData.TaskId
+		createTaskResult := callResult.(*mcp.CreateTaskResult)
+		taskID := createTaskResult.Task.TaskId
 
 		// Wait for task to start
 		<-started
@@ -454,8 +449,8 @@ func TestTaskToolTracerBullet(t *testing.T) {
 		require.Nil(t, callErr)
 		require.NotNil(t, callResult)
 
-		taskData := callResult.Meta.AdditionalFields["task"].(mcp.Task)
-		taskID := taskData.TaskId
+		createTaskResult := callResult.(*mcp.CreateTaskResult)
+		taskID := createTaskResult.Task.TaskId
 
 		// Wait for task to complete (should fail)
 		var taskObj mcp.Task
@@ -531,8 +526,8 @@ func TestTaskToolTracerBullet(t *testing.T) {
 		require.Nil(t, callErr)
 		require.NotNil(t, callResult)
 
-		taskData := callResult.Meta.AdditionalFields["task"].(mcp.Task)
-		taskID := taskData.TaskId
+		createTaskResult := callResult.(*mcp.CreateTaskResult)
+		taskID := createTaskResult.Task.TaskId
 
 		// Wait for handler to start
 		<-handlerStarted
@@ -600,8 +595,8 @@ func TestTaskToolTracerBullet(t *testing.T) {
 			require.Nil(t, callErr)
 			require.NotNil(t, callResult)
 
-			taskData := callResult.Meta.AdditionalFields["task"].(mcp.Task)
-			taskIDs[i] = taskData.TaskId
+			createTaskResult := callResult.(*mcp.CreateTaskResult)
+			taskIDs[i] = createTaskResult.Task.TaskId
 		}
 
 		// Step 4: Wait for all tasks to complete

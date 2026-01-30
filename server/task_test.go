@@ -1680,17 +1680,12 @@ func TestTaskResultEndToEnd(t *testing.T) {
 	require.Nil(t, callErr, "Tool call should succeed")
 	require.NotNil(t, callResult, "Call result should not be nil")
 
-	// Extract task ID from result meta
-	require.NotNil(t, callResult.Meta, "Meta should not be nil")
-	require.NotNil(t, callResult.Meta.AdditionalFields, "AdditionalFields should not be nil")
+	// Extract task ID from CreateTaskResult
+	createTaskResult, ok := callResult.(*mcp.CreateTaskResult)
+	require.True(t, ok, "Result should be CreateTaskResult for task-augmented call")
+	require.NotNil(t, createTaskResult.Task, "Task field should not be nil")
 
-	taskData, ok := callResult.Meta.AdditionalFields["task"]
-	require.True(t, ok, "Task should be in meta")
-
-	taskMap, ok := taskData.(mcp.Task)
-	require.True(t, ok, "Task should be a Task type")
-
-	taskID := taskMap.TaskId
+	taskID := createTaskResult.Task.TaskId
 	require.NotEmpty(t, taskID, "Task ID should not be empty")
 
 	// Step 2: Wait for task to complete (poll tasks/get)

@@ -54,7 +54,7 @@ func NewMCPServer() *server.MCPServer {
 	hooks.AddAfterInitialize(func(ctx context.Context, id any, message *mcp.InitializeRequest, result *mcp.InitializeResult) {
 		fmt.Printf("afterInitialize: %v, %v, %v\n", id, message, result)
 	})
-	hooks.AddAfterCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest, result *mcp.CallToolResult) {
+	hooks.AddAfterCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest, result any) {
 		fmt.Printf("afterCallTool: %v, %v, %v\n", id, message, result)
 	})
 	hooks.AddBeforeCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest) {

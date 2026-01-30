@@ -10,6 +10,7 @@ type MCPRequestType struct {
 	GroupHookName  string
 	UnmarshalError string
 	HandlerFunc    string
+	ResultIsAny    bool // If true, result type is 'any' instead of '*mcp.ResultType'
 }
 
 var MCPRequestTypes = []MCPRequestType{
@@ -107,6 +108,7 @@ var MCPRequestTypes = []MCPRequestType{
 		HookName:       "CallTool",
 		UnmarshalError: "invalid call tool request",
 		HandlerFunc:    "handleToolCall",
+		ResultIsAny:    true, // Returns 'any' to support both CallToolResult and CreateTaskResult
 	}, {
 		MethodName:     "MethodTasksGet",
 		ParamType:      "GetTaskRequest",

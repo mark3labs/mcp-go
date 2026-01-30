@@ -305,7 +305,7 @@ func (s *MCPServer) HandleMessage(
 		return createResponse(baseMessage.ID, *result)
 	case mcp.MethodToolsCall:
 		var request mcp.CallToolRequest
-		var result *mcp.CallToolResult
+		var result any
 		if s.capabilities.tools == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
@@ -328,7 +328,7 @@ func (s *MCPServer) HandleMessage(
 			return err.ToJSONRPCError()
 		}
 		s.hooks.afterCallTool(ctx, baseMessage.ID, &request, result)
-		return createResponse(baseMessage.ID, *result)
+		return createResponse(baseMessage.ID, result)
 	case mcp.MethodTasksGet:
 		var request mcp.GetTaskRequest
 		var result *mcp.GetTaskResult
