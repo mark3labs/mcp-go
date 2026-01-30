@@ -2867,6 +2867,195 @@ func TestMCPServer_ListTools(t *testing.T) {
 	})
 }
 
+func TestMCPServer_HandleListTools_IncludesTaskTools(t *testing.T) {
+	t.Run("list includes both regular and task tools", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add regular tools
+		regularTool := mcp.Tool{
+			Name:        "regular-tool",
+			Description: "A regular tool",
+			InputSchema: mcp.ToolInputSchema{Type: "object"},
+		}
+		server.AddTool(regularTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: "regular"}},
+			}, nil
+		})
+
+		// Add task tools (directly to taskTools map for testing)
+		server.toolsMu.Lock()
+		server.taskTools["task-tool"] = ServerTaskTool{
+			Tool: mcp.Tool{
+				Name:        "task-tool",
+				Description: "A task-augmented tool",
+				InputSchema: mcp.ToolInputSchema{Type: "object"},
+				Execution: &mcp.ToolExecution{
+					TaskSupport: mcp.TaskSupportRequired,
+				},
+			},
+			Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				return &mcp.CreateTaskResult{
+					Task: mcp.Task{
+						TaskId: "task-1",
+						Status: mcp.TaskStatusWorking,
+					},
+				}, nil
+			},
+		}
+		server.toolsMu.Unlock()
+
+		// Create a list tools request
+		request := mcp.ListToolsRequest{}
+
+		// Call handleListTools
+		result, err := server.handleListTools(context.Background(), 1, request)
+
+		// Verify both tools are included
+		require.Nil(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, result.Tools, 2)
+
+		// Verify tools are sorted by name
+		assert.Equal(t, "regular-tool", result.Tools[0].Name)
+		assert.Equal(t, "task-tool", result.Tools[1].Name)
+
+		// Verify task tool has execution metadata
+		assert.NotNil(t, result.Tools[1].Execution)
+		assert.Equal(t, mcp.TaskSupportRequired, result.Tools[1].Execution.TaskSupport)
+	})
+
+	t.Run("list with only task tools", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add only task tools
+		server.toolsMu.Lock()
+		server.taskTools["task-tool-1"] = ServerTaskTool{
+			Tool: mcp.Tool{
+				Name:        "task-tool-1",
+				Description: "First task tool",
+				InputSchema: mcp.ToolInputSchema{Type: "object"},
+				Execution: &mcp.ToolExecution{
+					TaskSupport: mcp.TaskSupportRequired,
+				},
+			},
+			Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				return &mcp.CreateTaskResult{
+					Task: mcp.Task{
+						TaskId: "task-1",
+						Status: mcp.TaskStatusWorking,
+					},
+				}, nil
+			},
+		}
+		server.taskTools["task-tool-2"] = ServerTaskTool{
+			Tool: mcp.Tool{
+				Name:        "task-tool-2",
+				Description: "Second task tool",
+				InputSchema: mcp.ToolInputSchema{Type: "object"},
+				Execution: &mcp.ToolExecution{
+					TaskSupport: mcp.TaskSupportOptional,
+				},
+			},
+			Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				return &mcp.CreateTaskResult{
+					Task: mcp.Task{
+						TaskId: "task-2",
+						Status: mcp.TaskStatusWorking,
+					},
+				}, nil
+			},
+		}
+		server.toolsMu.Unlock()
+
+		// Create a list tools request
+		request := mcp.ListToolsRequest{}
+
+		// Call handleListTools
+		result, err := server.handleListTools(context.Background(), 1, request)
+
+		// Verify both task tools are included
+		require.Nil(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, result.Tools, 2)
+
+		// Verify correct ordering
+		assert.Equal(t, "task-tool-1", result.Tools[0].Name)
+		assert.Equal(t, "task-tool-2", result.Tools[1].Name)
+	})
+
+	t.Run("empty list when no tools", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Create a list tools request
+		request := mcp.ListToolsRequest{}
+
+		// Call handleListTools
+		result, err := server.handleListTools(context.Background(), 1, request)
+
+		// Verify empty list
+		require.Nil(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, result.Tools, 0)
+	})
+
+	t.Run("sorted alphabetically with mixed tools", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add tools in non-alphabetical order
+		server.AddTool(mcp.Tool{
+			Name:        "zebra-tool",
+			Description: "Last alphabetically",
+			InputSchema: mcp.ToolInputSchema{Type: "object"},
+		}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+
+		server.toolsMu.Lock()
+		server.taskTools["alpha-task"] = ServerTaskTool{
+			Tool: mcp.Tool{
+				Name:        "alpha-task",
+				Description: "First alphabetically",
+				InputSchema: mcp.ToolInputSchema{Type: "object"},
+				Execution: &mcp.ToolExecution{
+					TaskSupport: mcp.TaskSupportRequired,
+				},
+			},
+			Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				return &mcp.CreateTaskResult{
+					Task: mcp.Task{
+						TaskId: "task-alpha",
+						Status: mcp.TaskStatusWorking,
+					},
+				}, nil
+			},
+		}
+		server.toolsMu.Unlock()
+
+		server.AddTool(mcp.Tool{
+			Name:        "middle-tool",
+			Description: "Middle alphabetically",
+			InputSchema: mcp.ToolInputSchema{Type: "object"},
+		}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+
+		// Create a list tools request
+		request := mcp.ListToolsRequest{}
+
+		// Call handleListTools
+		result, err := server.handleListTools(context.Background(), 1, request)
+
+		// Verify correct alphabetical ordering
+		require.Nil(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, result.Tools, 3)
+		assert.Equal(t, "alpha-task", result.Tools[0].Name)
+		assert.Equal(t, "middle-tool", result.Tools[1].Name)
+		assert.Equal(t, "zebra-tool", result.Tools[2].Name)
+	})
+}
+
 type promptCompletionProviderFunc func(ctx context.Context, promptName string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error)
 
 func (fn promptCompletionProviderFunc) CompletePromptArgument(ctx context.Context, promptName string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error) {

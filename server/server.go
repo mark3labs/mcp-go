@@ -1275,13 +1275,16 @@ func (s *MCPServer) handleListTools(
 	id any,
 	request mcp.ListToolsRequest,
 ) (*mcp.ListToolsResult, *requestError) {
-	// Get the base tools from the server
+	// Get the base tools from the server (both regular and task tools)
 	s.toolsMu.RLock()
-	tools := make([]mcp.Tool, 0, len(s.tools))
+	tools := make([]mcp.Tool, 0, len(s.tools)+len(s.taskTools))
 
 	// Get all tool names for consistent ordering
-	toolNames := make([]string, 0, len(s.tools))
+	toolNames := make([]string, 0, len(s.tools)+len(s.taskTools))
 	for name := range s.tools {
+		toolNames = append(toolNames, name)
+	}
+	for name := range s.taskTools {
 		toolNames = append(toolNames, name)
 	}
 
@@ -1290,7 +1293,11 @@ func (s *MCPServer) handleListTools(
 
 	// Add tools in sorted order
 	for _, name := range toolNames {
-		tools = append(tools, s.tools[name].Tool)
+		if tool, ok := s.tools[name]; ok {
+			tools = append(tools, tool.Tool)
+		} else if taskTool, ok := s.taskTools[name]; ok {
+			tools = append(tools, taskTool.Tool)
+		}
 	}
 	s.toolsMu.RUnlock()
 
@@ -1737,9 +1744,11 @@ func (s *MCPServer) handleTaskResult(
 		}
 	}
 
-	// Read result error under lock
+	// Read result and error under lock
 	s.tasksMu.RLock()
+	storedResult := entry.result
 	resultErr := entry.resultErr
+	taskID := entry.task.TaskId
 	s.tasksMu.RUnlock()
 
 	// Return error if task failed
@@ -1751,10 +1760,32 @@ func (s *MCPServer) handleTaskResult(
 		}
 	}
 
-	// The result structure varies by original request type
-	// For now, return the raw result wrapped in TaskResultResult
+	// Extract the CallToolResult and populate TaskResultResult
 	result := &mcp.TaskResultResult{
-		Result: mcp.Result{},
+		Result: mcp.Result{
+			Meta: mcp.WithRelatedTask(taskID),
+		},
+	}
+
+	// If the stored result is a CallToolResult, extract its fields
+	if callToolResult, ok := storedResult.(*mcp.CallToolResult); ok {
+		result.Content = callToolResult.Content
+		result.StructuredContent = callToolResult.StructuredContent
+		result.IsError = callToolResult.IsError
+
+		// Merge any meta from the original result with the related task meta
+		if callToolResult.Meta != nil {
+			if result.Meta.AdditionalFields == nil {
+				result.Meta.AdditionalFields = make(map[string]any)
+			}
+			// Copy over any additional fields from the original result
+			for k, v := range callToolResult.Meta.AdditionalFields {
+				// Don't overwrite the related task meta
+				if k != mcp.RelatedTaskMetaKey {
+					result.Meta.AdditionalFields[k] = v
+				}
+			}
+		}
 	}
 
 	return result, nil
