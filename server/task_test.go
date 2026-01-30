@@ -108,7 +108,8 @@ func TestMCPServer_TaskLifecycle(t *testing.T) {
 	// Create a task
 	ttl := int64(60000)
 	pollInterval := int64(1000)
-	entry := server.createTask(ctx, "task-123", &ttl, &pollInterval)
+	entry, err := server.createTask(ctx, "task-123", "test-tool", &ttl, &pollInterval)
+	require.NoError(t, err)
 
 	require.NotNil(t, entry)
 	assert.Equal(t, "task-123", entry.task.TaskId)
@@ -150,7 +151,8 @@ func TestMCPServer_HandleGetTask(t *testing.T) {
 	// Create a task
 	ttl := int64(60000)
 	pollInterval := int64(1000)
-	server.createTask(ctx, "task-456", &ttl, &pollInterval)
+	_, err := server.createTask(ctx, "task-456", "test-tool", &ttl, &pollInterval)
+	require.NoError(t, err)
 
 	// Get task via handler
 	response := server.HandleMessage(ctx, []byte(`{
@@ -205,9 +207,12 @@ func TestMCPServer_HandleListTasks(t *testing.T) {
 	// Create multiple tasks
 	ttl := int64(60000)
 	pollInterval := int64(1000)
-	server.createTask(ctx, "task-1", &ttl, &pollInterval)
-	server.createTask(ctx, "task-2", &ttl, &pollInterval)
-	server.createTask(ctx, "task-3", &ttl, &pollInterval)
+	_, err := server.createTask(ctx, "task-1", "test-tool", &ttl, &pollInterval)
+	require.NoError(t, err)
+	_, err = server.createTask(ctx, "task-2", "test-tool", &ttl, &pollInterval)
+	require.NoError(t, err)
+	_, err = server.createTask(ctx, "task-3", "test-tool", &ttl, &pollInterval)
+	require.NoError(t, err)
 
 	// List tasks
 	response := server.HandleMessage(ctx, []byte(`{
@@ -241,7 +246,8 @@ func TestMCPServer_HandleCancelTask(t *testing.T) {
 	// Create a task
 	ttl := int64(60000)
 	pollInterval := int64(1000)
-	entry := server.createTask(ctx, "task-789", &ttl, &pollInterval)
+	entry, err := server.createTask(ctx, "task-789", "test-tool", &ttl, &pollInterval)
+	require.NoError(t, err)
 
 	// Verify initial status
 	assert.Equal(t, mcp.TaskStatusWorking, entry.task.Status)
@@ -278,7 +284,8 @@ func TestMCPServer_HandleCancelTerminalTask(t *testing.T) {
 	// Create and complete a task
 	ttl := int64(60000)
 	pollInterval := int64(1000)
-	entry := server.createTask(ctx, "task-completed", &ttl, &pollInterval)
+	entry, err := server.createTask(ctx, "task-completed", "test-tool", &ttl, &pollInterval)
+	require.NoError(t, err)
 	server.completeTask(entry, "result", nil)
 
 	// Try to cancel completed task
@@ -355,11 +362,12 @@ func TestMCPServer_TaskTTLCleanup(t *testing.T) {
 	// Create a task with very short TTL
 	ttl := int64(100) // 100ms
 	pollInterval := int64(50)
-	server.createTask(ctx, "task-ttl", &ttl, &pollInterval)
+	_, err := server.createTask(ctx, "task-ttl", "test-tool", &ttl, &pollInterval)
+	require.NoError(t, err)
 
 	// Task should exist initially
-	_, _, err := server.getTask(ctx, "task-ttl")
-	require.NoError(t, err)
+	_, _, getErr := server.getTask(ctx, "task-ttl")
+	require.NoError(t, getErr)
 
 	// Wait for TTL to expire
 	time.Sleep(150 * time.Millisecond)
@@ -401,7 +409,8 @@ func TestMCPServer_TaskResultWaitForCompletion(t *testing.T) {
 	// Create a task
 	ttl := int64(60000)
 	pollInterval := int64(1000)
-	entry := server.createTask(ctx, "task-wait", &ttl, &pollInterval)
+	entry, err := server.createTask(ctx, "task-wait", "test-tool", &ttl, &pollInterval)
+	require.NoError(t, err)
 
 	// Start goroutine to complete task after delay
 	go func() {
@@ -457,7 +466,8 @@ func TestMCPServer_CompleteTaskWithError(t *testing.T) {
 	// Create a task
 	ttl := int64(60000)
 	pollInterval := int64(1000)
-	entry := server.createTask(ctx, "task-error", &ttl, &pollInterval)
+	entry, err := server.createTask(ctx, "task-error", "test-tool", &ttl, &pollInterval)
+	require.NoError(t, err)
 
 	// Complete with error
 	testErr := assert.AnError
@@ -565,10 +575,14 @@ func TestMCPServer_TaskListPagination(t *testing.T) {
 	// Create multiple tasks with predictable IDs
 	ttl := int64(60000)
 	pollInterval := int64(1000)
-	server.createTask(ctx, "task-alpha", &ttl, &pollInterval)
-	server.createTask(ctx, "task-beta", &ttl, &pollInterval)
-	server.createTask(ctx, "task-gamma", &ttl, &pollInterval)
-	server.createTask(ctx, "task-delta", &ttl, &pollInterval)
+	_, err := server.createTask(ctx, "task-alpha", "test-tool", &ttl, &pollInterval)
+	require.NoError(t, err)
+	_, err = server.createTask(ctx, "task-beta", "test-tool", &ttl, &pollInterval)
+	require.NoError(t, err)
+	_, err = server.createTask(ctx, "task-gamma", "test-tool", &ttl, &pollInterval)
+	require.NoError(t, err)
+	_, err = server.createTask(ctx, "task-delta", "test-tool", &ttl, &pollInterval)
+	require.NoError(t, err)
 
 	t.Run("first page", func(t *testing.T) {
 		// List first page (no cursor)
@@ -661,9 +675,12 @@ func TestMCPServer_TaskListPagination(t *testing.T) {
 		)
 
 		// Create tasks
-		serverNoPagination.createTask(ctx, "task-1", &ttl, &pollInterval)
-		serverNoPagination.createTask(ctx, "task-2", &ttl, &pollInterval)
-		serverNoPagination.createTask(ctx, "task-3", &ttl, &pollInterval)
+		_, err := serverNoPagination.createTask(ctx, "task-1", "test-tool", &ttl, &pollInterval)
+		require.NoError(t, err)
+		_, err = serverNoPagination.createTask(ctx, "task-2", "test-tool", &ttl, &pollInterval)
+		require.NoError(t, err)
+		_, err = serverNoPagination.createTask(ctx, "task-3", "test-tool", &ttl, &pollInterval)
+		require.NoError(t, err)
 
 		// List all tasks
 		response := serverNoPagination.HandleMessage(ctx, []byte(`{
@@ -718,7 +735,8 @@ func TestMCPServer_TaskLastUpdatedAt(t *testing.T) {
 	t.Run("task creation sets initial lastUpdatedAt", func(t *testing.T) {
 		ttl := int64(60000)
 		pollInterval := int64(1000)
-		entry := server.createTask(ctx, "task-initial", &ttl, &pollInterval)
+		entry, err := server.createTask(ctx, "task-initial", "test-tool", &ttl, &pollInterval)
+		require.NoError(t, err)
 
 		require.NotNil(t, entry)
 		assert.NotEmpty(t, entry.task.CreatedAt, "CreatedAt should be set")
@@ -729,7 +747,8 @@ func TestMCPServer_TaskLastUpdatedAt(t *testing.T) {
 	t.Run("completeTask updates lastUpdatedAt", func(t *testing.T) {
 		ttl := int64(60000)
 		pollInterval := int64(1000)
-		entry := server.createTask(ctx, "task-complete", &ttl, &pollInterval)
+		entry, err := server.createTask(ctx, "task-complete", "test-tool", &ttl, &pollInterval)
+		require.NoError(t, err)
 
 		initialLastUpdatedAt := entry.task.LastUpdatedAt
 		createdAt := entry.task.CreatedAt
@@ -750,7 +769,8 @@ func TestMCPServer_TaskLastUpdatedAt(t *testing.T) {
 	t.Run("completeTask with error updates lastUpdatedAt", func(t *testing.T) {
 		ttl := int64(60000)
 		pollInterval := int64(1000)
-		entry := server.createTask(ctx, "task-error", &ttl, &pollInterval)
+		entry, err := server.createTask(ctx, "task-error", "test-tool", &ttl, &pollInterval)
+		require.NoError(t, err)
 
 		initialLastUpdatedAt := entry.task.LastUpdatedAt
 		createdAt := entry.task.CreatedAt
@@ -771,7 +791,8 @@ func TestMCPServer_TaskLastUpdatedAt(t *testing.T) {
 	t.Run("cancelTask updates lastUpdatedAt", func(t *testing.T) {
 		ttl := int64(60000)
 		pollInterval := int64(1000)
-		entry := server.createTask(ctx, "task-cancel", &ttl, &pollInterval)
+		entry, err := server.createTask(ctx, "task-cancel", "test-tool", &ttl, &pollInterval)
+		require.NoError(t, err)
 
 		initialLastUpdatedAt := entry.task.LastUpdatedAt
 		createdAt := entry.task.CreatedAt
@@ -780,8 +801,8 @@ func TestMCPServer_TaskLastUpdatedAt(t *testing.T) {
 		time.Sleep(1100 * time.Millisecond)
 
 		// Cancel the task
-		err := server.cancelTask(ctx, "task-cancel")
-		require.NoError(t, err)
+		cancelErr := server.cancelTask(ctx, "task-cancel")
+		require.NoError(t, cancelErr)
 
 		assert.Equal(t, mcp.TaskStatusCancelled, entry.task.Status)
 		assert.NotEmpty(t, entry.task.LastUpdatedAt, "LastUpdatedAt should still be set")
@@ -792,7 +813,8 @@ func TestMCPServer_TaskLastUpdatedAt(t *testing.T) {
 	t.Run("lastUpdatedAt is included in task responses", func(t *testing.T) {
 		ttl := int64(60000)
 		pollInterval := int64(1000)
-		server.createTask(ctx, "task-response", &ttl, &pollInterval)
+		_, err := server.createTask(ctx, "task-response", "test-tool", &ttl, &pollInterval)
+		require.NoError(t, err)
 
 		// Get task via handler
 		response := server.HandleMessage(ctx, []byte(`{
@@ -857,7 +879,8 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 		// Create a task
 		ttl := int64(60000)
 		pollInterval := int64(5000)
-		entry := server.createTask(ctx, "task-notify-complete", &ttl, &pollInterval)
+		entry, err := server.createTask(ctx, "task-notify-complete", "test-tool", &ttl, &pollInterval)
+		require.NoError(t, err)
 
 		// Clear any initial notifications
 		for len(notifyChan) > 0 {
@@ -895,7 +918,8 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 
 	t.Run("task failure sends notification with error message", func(t *testing.T) {
 		// Create a task
-		entry := server.createTask(ctx, "task-notify-fail", nil, nil)
+		entry, err := server.createTask(ctx, "task-notify-fail", "test-tool", nil, nil)
+		require.NoError(t, err)
 
 		// Clear any initial notifications
 		for len(notifyChan) > 0 {
@@ -925,7 +949,8 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 
 	t.Run("task cancellation sends notification", func(t *testing.T) {
 		// Create a task
-		_ = server.createTask(ctx, "task-notify-cancel", nil, nil)
+		_, err := server.createTask(ctx, "task-notify-cancel", "test-tool", nil, nil)
+		require.NoError(t, err)
 
 		// Clear any initial notifications
 		for len(notifyChan) > 0 {
@@ -933,8 +958,8 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 		}
 
 		// Cancel the task
-		err := server.cancelTask(ctx, "task-notify-cancel")
-		require.NoError(t, err)
+		cancelErr := server.cancelTask(ctx, "task-notify-cancel")
+		require.NoError(t, cancelErr)
 
 		// Check for notification
 		select {
@@ -957,7 +982,8 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 		// Create a task with TTL and pollInterval
 		ttl := int64(30000)
 		pollInterval := int64(2000)
-		entry := server.createTask(ctx, "task-notify-fields", &ttl, &pollInterval)
+		entry, err := server.createTask(ctx, "task-notify-fields", "test-tool", &ttl, &pollInterval)
+		require.NoError(t, err)
 
 		// Clear any initial notifications
 		for len(notifyChan) > 0 {
@@ -983,7 +1009,8 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 
 	t.Run("notification omits optional fields when nil", func(t *testing.T) {
 		// Create a task without TTL and pollInterval
-		entry := server.createTask(ctx, "task-notify-no-fields", nil, nil)
+		entry, err := server.createTask(ctx, "task-notify-no-fields", "test-tool", nil, nil)
+		require.NoError(t, err)
 
 		// Clear any initial notifications
 		for len(notifyChan) > 0 {
@@ -1029,7 +1056,8 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create a task
-		entry := server.createTask(ctx, "task-notify-multi", nil, nil)
+		entry, err := server.createTask(ctx, "task-notify-multi", "test-tool", nil, nil)
+		require.NoError(t, err)
 
 		// Clear any initial notifications
 		for len(notifyChan1) > 0 {
@@ -1060,7 +1088,8 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 
 	t.Run("notification not sent on double completion", func(t *testing.T) {
 		// Create a task
-		entry := server.createTask(ctx, "task-notify-double", nil, nil)
+		entry, err := server.createTask(ctx, "task-notify-double", "test-tool", nil, nil)
+		require.NoError(t, err)
 
 		// Clear any initial notifications
 		for len(notifyChan) > 0 {
@@ -1109,7 +1138,8 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 		}
 
 		// Create a task entry
-		entry := server.createTask(ctx, "test-task-1", nil, nil)
+		entry, err := server.createTask(ctx, "test-task-1", "test-tool", nil, nil)
+		require.NoError(t, err)
 
 		// Execute the task tool
 		request := mcp.CallToolRequest{
@@ -1155,7 +1185,8 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 		}
 
 		// Create a task entry
-		entry := server.createTask(ctx, "test-task-2", nil, nil)
+		entry, err := server.createTask(ctx, "test-task-2", "test-tool", nil, nil)
+		require.NoError(t, err)
 
 		// Execute the task tool
 		request := mcp.CallToolRequest{
@@ -1207,7 +1238,8 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 		}
 
 		// Create a task entry
-		entry := server.createTask(ctx, "test-task-3", nil, nil)
+		entry, err := server.createTask(ctx, "test-task-3", "test-tool", nil, nil)
+		require.NoError(t, err)
 
 		// Execute the task tool
 		request := mcp.CallToolRequest{
@@ -1278,7 +1310,8 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 		}
 
 		// Create a task entry
-		entry := server.createTask(ctx, "test-task-4", nil, nil)
+		entry, err := server.createTask(ctx, "test-task-4", "test-tool", nil, nil)
+		require.NoError(t, err)
 
 		// Execute the task tool
 		request := mcp.CallToolRequest{
@@ -1332,7 +1365,8 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 		}
 
 		// Create a task entry
-		entry := server.createTask(sessionCtx, "test-task-5", nil, nil)
+		entry, err := server.createTask(sessionCtx, "test-task-5", "test-tool", nil, nil)
+		require.NoError(t, err)
 
 		// Execute the task tool
 		request := mcp.CallToolRequest{
@@ -1387,7 +1421,9 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 			}
 
 			// Create a task entry
-			entries[i] = server.createTask(ctx, taskID, nil, nil)
+			var err error
+			entries[i], err = server.createTask(ctx, taskID, "test-tool", nil, nil)
+			require.NoError(t, err)
 
 			// Execute the task tool
 			request := mcp.CallToolRequest{
@@ -1427,7 +1463,8 @@ func TestMCPServer_HandleTaskResult(t *testing.T) {
 
 		// Create a task and complete it with a CallToolResult
 		taskID := "test-task-result"
-		entry := server.createTask(ctx, taskID, nil, nil)
+		entry, err := server.createTask(ctx, taskID, "test-tool", nil, nil)
+		require.NoError(t, err)
 
 		expectedContent := []mcp.Content{
 			mcp.NewTextContent("Tool execution completed successfully"),
@@ -1480,7 +1517,8 @@ func TestMCPServer_HandleTaskResult(t *testing.T) {
 
 		// Create a task and complete it with an error
 		taskID := "test-task-error"
-		entry := server.createTask(ctx, taskID, nil, nil)
+		entry, err := server.createTask(ctx, taskID, "test-tool", nil, nil)
+		require.NoError(t, err)
 
 		expectedErr := fmt.Errorf("tool execution failed")
 		server.completeTask(entry, nil, expectedErr)
@@ -1492,11 +1530,11 @@ func TestMCPServer_HandleTaskResult(t *testing.T) {
 			},
 		}
 
-		result, err := server.handleTaskResult(ctx, 1, request)
+		result, reqErr := server.handleTaskResult(ctx, 1, request)
 		require.Nil(t, result, "Result should be nil on error")
-		require.NotNil(t, err, "Error should not be nil")
-		assert.Equal(t, mcp.INTERNAL_ERROR, err.code)
-		assert.Equal(t, expectedErr, err.err)
+		require.NotNil(t, reqErr, "Error should not be nil")
+		assert.Equal(t, mcp.INTERNAL_ERROR, reqErr.code)
+		assert.Equal(t, expectedErr, reqErr.err)
 	})
 
 	t.Run("waits for task completion before returning result", func(t *testing.T) {
@@ -1505,7 +1543,8 @@ func TestMCPServer_HandleTaskResult(t *testing.T) {
 
 		// Create a task but don't complete it yet
 		taskID := "test-task-wait"
-		entry := server.createTask(ctx, taskID, nil, nil)
+		entry, err := server.createTask(ctx, taskID, "test-tool", nil, nil)
+		require.NoError(t, err)
 
 		// Start a goroutine to complete the task after a delay
 		go func() {
@@ -1541,7 +1580,8 @@ func TestMCPServer_HandleTaskResult(t *testing.T) {
 
 		// Create a task and complete it with a result that has meta
 		taskID := "test-task-meta-merge"
-		entry := server.createTask(ctx, taskID, nil, nil)
+		entry, err := server.createTask(ctx, taskID, "test-tool", nil, nil)
+		require.NoError(t, err)
 
 		toolResult := &mcp.CallToolResult{
 			Content: []mcp.Content{mcp.NewTextContent("Result with meta")},

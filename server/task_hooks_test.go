@@ -27,7 +27,8 @@ func TestTaskHooks_TaskCreated(t *testing.T) {
 
 	// Create a task
 	ctx := context.Background()
-	_ = server.createTask(ctx, "test-task-1", "test-tool", nil, nil)
+	_, err := server.createTask(ctx, "test-task-1", "test-tool", nil, nil)
+	require.NoError(t, err)
 
 	// Give hook time to execute
 	time.Sleep(10 * time.Millisecond)
@@ -57,7 +58,8 @@ func TestTaskHooks_TaskCompleted(t *testing.T) {
 
 	// Create and complete a task
 	ctx := context.Background()
-	entry := server.createTask(ctx, "test-task-2", "test-tool", nil, nil)
+	entry, err := server.createTask(ctx, "test-task-2", "test-tool", nil, nil)
+	require.NoError(t, err)
 
 	// Complete the task successfully
 	server.completeTask(entry, "result", nil)
@@ -92,7 +94,8 @@ func TestTaskHooks_TaskFailed(t *testing.T) {
 
 	// Create and fail a task
 	ctx := context.Background()
-	entry := server.createTask(ctx, "test-task-3", "test-tool", nil, nil)
+	entry, err := server.createTask(ctx, "test-task-3", "test-tool", nil, nil)
+	require.NoError(t, err)
 
 	// Fail the task
 	testErr := errors.New("task failed")
@@ -129,7 +132,8 @@ func TestTaskHooks_TaskCancelled(t *testing.T) {
 
 	// Create a task
 	ctx := context.Background()
-	entry := server.createTask(ctx, "test-task-4", "test-tool", nil, nil)
+	entry, err := server.createTask(ctx, "test-task-4", "test-tool", nil, nil)
+	require.NoError(t, err)
 
 	// Add cancel function
 	cancelCtx, cancel := context.WithCancel(ctx)
@@ -138,7 +142,7 @@ func TestTaskHooks_TaskCancelled(t *testing.T) {
 	server.tasksMu.Unlock()
 
 	// Cancel the task
-	err := server.cancelTask(cancelCtx, "test-task-4")
+	err = server.cancelTask(cancelCtx, "test-task-4")
 	require.NoError(t, err)
 
 	// Give hook time to execute
@@ -170,7 +174,8 @@ func TestTaskHooks_TaskStatusChanged(t *testing.T) {
 
 	// Create a task (status change 1: working)
 	ctx := context.Background()
-	entry := server.createTask(ctx, "test-task-5", "test-tool", nil, nil)
+	entry, err := server.createTask(ctx, "test-task-5", "test-tool", nil, nil)
+	require.NoError(t, err)
 
 	// Give hook time to execute
 	time.Sleep(10 * time.Millisecond)
@@ -217,7 +222,8 @@ func TestTaskHooks_MultipleHooks(t *testing.T) {
 
 	// Create and complete a task
 	ctx := context.Background()
-	entry := server.createTask(ctx, "test-task-6", "test-tool", nil, nil)
+	entry, err := server.createTask(ctx, "test-task-6", "test-tool", nil, nil)
+	require.NoError(t, err)
 	server.completeTask(entry, "result", nil)
 
 	// Give hooks time to execute
@@ -236,7 +242,8 @@ func TestTaskHooks_NilHooks(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0")
 
 	ctx := context.Background()
-	entry := server.createTask(ctx, "test-task-7", "test-tool", nil, nil)
+	entry, err := server.createTask(ctx, "test-task-7", "test-tool", nil, nil)
+	require.NoError(t, err)
 
 	// These should not panic
 	assert.NotPanics(t, func() {

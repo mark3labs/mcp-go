@@ -199,6 +199,8 @@ type MCPServer struct {
 	hooks                      *Hooks
 	taskHooks                  *TaskHooks
 	tasks                      map[string]*taskEntry
+	maxConcurrentTasks         *int // Optional limit on concurrent running tasks
+	activeTasks                int  // Current count of running (non-terminal) tasks
 }
 
 // WithPaginationLimit sets the pagination limit for the server.
@@ -355,6 +357,15 @@ func WithHooks(hooks *Hooks) ServerOption {
 func WithTaskHooks(taskHooks *TaskHooks) ServerOption {
 	return func(s *MCPServer) {
 		s.taskHooks = taskHooks
+	}
+}
+
+// WithMaxConcurrentTasks sets a limit on the maximum number of concurrent running tasks.
+// When this limit is reached, attempts to create new tasks will fail with an error.
+// If not set (or set to 0), there is no limit on concurrent tasks.
+func WithMaxConcurrentTasks(limit int) ServerOption {
+	return func(s *MCPServer) {
+		s.maxConcurrentTasks = &limit
 	}
 }
 
@@ -1570,7 +1581,14 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 	}
 
 	// Create task entry (pollInterval is nil - server doesn't set a default)
-	entry := s.createTask(ctx, taskID, request.Params.Name, ttl, nil)
+	entry, err := s.createTask(ctx, taskID, request.Params.Name, ttl, nil)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INTERNAL_ERROR,
+			err:  err,
+		}
+	}
 
 	// Execute tool asynchronously
 	// For regular tools being used as tasks, we need different execution logic
@@ -1643,6 +1661,10 @@ func (s *MCPServer) executeTaskTool(
 					entry.task.LastUpdatedAt = cancelledAt.UTC().Format(time.RFC3339)
 					entry.completed = true
 					close(entry.done)
+
+					// Decrement active tasks counter
+					s.activeTasks--
+
 					s.sendTaskStatusNotification(entry.task)
 
 					// Fire task cancellation hook
@@ -1718,6 +1740,10 @@ func (s *MCPServer) executeRegularToolAsTask(
 					entry.task.LastUpdatedAt = cancelledAt.UTC().Format(time.RFC3339)
 					entry.completed = true
 					close(entry.done)
+
+					// Decrement active tasks counter
+					s.activeTasks--
+
 					s.sendTaskStatusNotification(entry.task)
 
 					// Fire task cancellation hook
@@ -2008,7 +2034,22 @@ func (s *MCPServer) handleComplete(
 //
 
 // createTask creates a new task entry and returns it.
-func (s *MCPServer) createTask(ctx context.Context, taskID string, toolName string, ttl *int64, pollInterval *int64) *taskEntry {
+// Returns an error if the max concurrent tasks limit is exceeded.
+func (s *MCPServer) createTask(ctx context.Context, taskID string, toolName string, ttl *int64, pollInterval *int64) (*taskEntry, error) {
+	s.tasksMu.Lock()
+
+	// Check concurrent task limit
+	if s.maxConcurrentTasks != nil && *s.maxConcurrentTasks > 0 {
+		if s.activeTasks >= *s.maxConcurrentTasks {
+			s.tasksMu.Unlock()
+			return nil, fmt.Errorf("max concurrent tasks limit reached (%d)", *s.maxConcurrentTasks)
+		}
+	}
+
+	// Increment active task counter
+	s.activeTasks++
+	s.tasksMu.Unlock()
+
 	opts := []mcp.TaskOption{}
 	if ttl != nil {
 		opts = append(opts, mcp.WithTaskTTL(*ttl))
@@ -2048,7 +2089,7 @@ func (s *MCPServer) createTask(ctx context.Context, taskID string, toolName stri
 		go s.scheduleTaskCleanup(taskID, *ttl)
 	}
 
-	return entry
+	return entry, nil
 }
 
 // getTask retrieves a task by ID, checking session isolation if applicable.
@@ -2142,6 +2183,9 @@ func (s *MCPServer) completeTask(entry *taskEntry, result any, err error) {
 	entry.completed = true
 	close(entry.done)
 
+	// Decrement active tasks counter
+	s.activeTasks--
+
 	// Send task status notification
 	s.sendTaskStatusNotification(entry.task)
 
@@ -2198,6 +2242,9 @@ func (s *MCPServer) cancelTask(ctx context.Context, taskID string) error {
 	// Mark as completed and signal
 	entry.completed = true
 	close(entry.done)
+
+	// Decrement active tasks counter
+	s.activeTasks--
 
 	// Send task status notification
 	s.sendTaskStatusNotification(entry.task)

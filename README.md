@@ -363,6 +363,7 @@ s := server.NewMCPServer(
         true, // cancel: allows clients to cancel running tasks
         true, // toolCallTasks: enables task augmentation for tools
     ),
+    server.WithMaxConcurrentTasks(10), // Optional: limit concurrent running tasks
 )
 ```
 
@@ -398,6 +399,21 @@ s.AddTaskTool(analyzeTool, func(ctx context.Context, request mcp.CallToolRequest
 // When called without task param: executes handler and returns immediately
 // When called with task param: executes handler asynchronously
 ```
+
+##### Limiting Concurrent Tasks
+
+To prevent resource exhaustion, you can limit the number of concurrent running tasks:
+
+```go
+s := server.NewMCPServer(
+    "Task Server",
+    "1.0.0",
+    server.WithTaskCapabilities(true, true, true),
+    server.WithMaxConcurrentTasks(10), // Allow up to 10 concurrent running tasks
+)
+```
+
+When the limit is reached, new task creation requests will fail with an error. Completed, failed, or cancelled tasks don't count toward the limit - only tasks in "working" status. If `WithMaxConcurrentTasks` is not specified or set to 0, there is no limit on concurrent tasks.
 
 For traditional synchronous tools that execute and return results immediately:
 

@@ -88,6 +88,7 @@ func NewTaskToolServer() *server.MCPServer {
 		server.WithTaskCapabilities(true, true, true),
 		server.WithToolCapabilities(true),
 		server.WithTaskHooks(taskHooks),
+		server.WithMaxConcurrentTasks(10), // Limit to 10 concurrent tasks
 		server.WithLogging(),
 	)
 
