@@ -1381,6 +1381,9 @@ const (
 	// TaskStatusWorking indicates the request is currently being processed.
 	TaskStatusWorking TaskStatus = "working"
 	// TaskStatusInputRequired indicates the receiver needs input from the requestor.
+	// NOTE: This status is defined by the spec but not yet implemented in this SDK.
+	// The input_required flow requires integration with elicitation which is planned
+	// for a future release.
 	TaskStatusInputRequired TaskStatus = "input_required"
 	// TaskStatusCompleted indicates the request completed successfully.
 	TaskStatusCompleted TaskStatus = "completed"

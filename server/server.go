@@ -1554,25 +1554,6 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 			}
 		}
 
-		// Create a wrapper that converts ToolHandlerFunc to TaskToolHandlerFunc
-		// The wrapper executes the regular handler and wraps the result
-		toolToUse = ServerTaskTool{
-			Tool: regularTool.Tool,
-			Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-				// Execute the regular tool handler
-				result, err := regularTool.Handler(ctx, req)
-				if err != nil {
-					return nil, err
-				}
-				// Wrap the result in CreateTaskResult
-				// The actual CallToolResult will be stored and returned later
-				return &mcp.CreateTaskResult{
-					Result: mcp.Result{
-						Meta: result.Meta,
-					},
-				}, nil
-			},
-		}
 		hasTaskHandler = false
 	} else {
 		// Tool not found in either map
