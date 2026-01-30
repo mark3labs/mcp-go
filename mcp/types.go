@@ -67,19 +67,19 @@ const (
 	MethodListRoots MCPMethod = "roots/list"
 
 	// MethodTasksGet retrieves the current status of a task.
-	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
 	MethodTasksGet MCPMethod = "tasks/get"
 
 	// MethodTasksList lists all tasks for the current session.
-	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
 	MethodTasksList MCPMethod = "tasks/list"
 
 	// MethodTasksResult retrieves the result of a completed task.
-	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
 	MethodTasksResult MCPMethod = "tasks/result"
 
 	// MethodTasksCancel cancels an in-progress task.
-	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
 	MethodTasksCancel MCPMethod = "tasks/cancel"
 
 	// MethodNotificationResourcesListChanged notifies when the list of available resources changes.
@@ -101,7 +101,7 @@ const (
 	MethodNotificationRootsListChanged = "notifications/roots/list_changed"
 
 	// MethodNotificationTasksStatus notifies when a task's status changes.
-	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
 	MethodNotificationTasksStatus = "notifications/tasks/status"
 
 	// MethodCompletionComplete returns completion suggestions for a given argument
