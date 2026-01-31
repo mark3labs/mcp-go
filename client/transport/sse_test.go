@@ -539,14 +539,14 @@ func TestSSE(t *testing.T) {
 		}
 	})
 
-	t.Run("NO_ERROR_WithoutConnectionLostHandler", func(t *testing.T) {
-		// Test that NO_ERROR without connection lost handler maintains backward compatibility
-		// When no connection lost handler is set, NO_ERROR should be treated as a regular error
+	t.Run("WithoutConnectionLostHandler", func(t *testing.T) {
+		// Test that ERROR without connection lost handler maintains backward compatibility
+		// When no connection lost handler is set, ERROR should be treated as a regular error
 
-		// Create a mock Reader that simulates NO_ERROR
+		// Create a mock Reader that simulates ERROR
 		mockReader := &mockReaderWithError{
 			data: []byte("event: endpoint\ndata: /message\n\n"),
-			err:  errors.New("connection closed: NO_ERROR"),
+			err:  errors.New("context deadline exceeded (Client.Timeout or context cancellation while reading body)"),
 		}
 
 		// Create SSE transport
@@ -571,23 +571,22 @@ func TestSSE(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 
 		// The test passes if readSSE completes without panicking or hanging
-		// In backward compatibility mode, NO_ERROR should be treated as a regular error
-		t.Log("Backward compatibility test passed: NO_ERROR handled as regular error when no handler is set")
+		// In backward compatibility mode, ERROR should be treated as a regular error
+		t.Log("Backward compatibility test passed: ERROR handled as regular error when no handler is set")
 	})
 
-	t.Run("NO_ERROR_ConnectionLost", func(t *testing.T) {
-		// Test that NO_ERROR in HTTP/2 connection loss is properly handled
-		// This test verifies that when a connection is lost in a way that produces
-		// an error message containing "NO_ERROR", the connection lost handler is called
+	t.Run("WithConnectionLost", func(t *testing.T) {
+		// Test error handling on connection loss
+		// Verify the connection loss handler is triggered by an error message
 
 		var connectionLostCalled bool
 		var connectionLostError error
 		var mu sync.Mutex
 
-		// Create a mock Reader that simulates connection loss with NO_ERROR
+		// Create a mock Reader that simulates connection loss with ERROR
 		mockReader := &mockReaderWithError{
 			data: []byte("event: endpoint\ndata: /message\n\n"),
-			err:  errors.New("http2: stream closed with error code NO_ERROR"),
+			err:  errors.New("context deadline exceeded (Client.Timeout or context cancellation while reading body)"),
 		}
 
 		// Create SSE transport
@@ -607,7 +606,7 @@ func TestSSE(t *testing.T) {
 			connectionLostError = err
 		})
 
-		// Directly test the readSSE method with our mock reader that simulates NO_ERROR
+		// Directly test the readSSE method with our mock reader that simulates ERROR
 		go trans.readSSE(mockReader)
 
 		// Wait for connection lost handler to be called
@@ -618,136 +617,20 @@ func TestSSE(t *testing.T) {
 		for {
 			select {
 			case <-timeout:
-				t.Fatal("Connection lost handler was not called within timeout for NO_ERROR connection loss")
+				t.Fatal("Connection lost handler was not called within timeout for connection loss")
 			case <-ticker.C:
 				mu.Lock()
 				called := connectionLostCalled
 				err := connectionLostError
 				mu.Unlock()
-
 				if called {
 					if err == nil {
 						t.Fatal("Expected connection lost error, got nil")
 					}
-
-					// Verify that the error contains "NO_ERROR" string
-					if !strings.Contains(err.Error(), "NO_ERROR") {
-						t.Errorf("Expected error to contain 'NO_ERROR', got: %v", err)
-					}
-
-					t.Logf("Connection lost handler called with NO_ERROR: %v", err)
+					t.Logf("Connection lost handler called with error: %v", err)
 					return
 				}
 			}
-		}
-	})
-
-	t.Run("NO_ERROR_Handling", func(t *testing.T) {
-		// Test specific NO_ERROR string handling in readSSE method
-		// This tests the code path at line 209 where NO_ERROR is checked
-
-		// Create a mock Reader that simulates an error containing "NO_ERROR"
-		mockReader := &mockReaderWithError{
-			data: []byte("event: endpoint\ndata: /message\n\n"),
-			err:  errors.New("connection closed: NO_ERROR"),
-		}
-
-		// Create SSE transport
-		url, closeF := startMockSSEEchoServer()
-		defer closeF()
-
-		trans, err := NewSSE(url)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		var connectionLostCalled bool
-		var connectionLostError error
-		var mu sync.Mutex
-
-		// Set connection lost handler to verify it's called for NO_ERROR
-		trans.SetConnectionLostHandler(func(err error) {
-			mu.Lock()
-			defer mu.Unlock()
-			connectionLostCalled = true
-			connectionLostError = err
-		})
-
-		// Directly test the readSSE method with our mock reader
-		go trans.readSSE(mockReader)
-
-		// Wait for connection lost handler to be called
-		timeout := time.After(1 * time.Second)
-		ticker := time.NewTicker(10 * time.Millisecond)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-timeout:
-				t.Fatal("Connection lost handler was not called within timeout for NO_ERROR")
-			case <-ticker.C:
-				mu.Lock()
-				called := connectionLostCalled
-				err := connectionLostError
-				mu.Unlock()
-
-				if called {
-					if err == nil {
-						t.Fatal("Expected connection lost error with NO_ERROR, got nil")
-					}
-
-					// Verify that the error contains "NO_ERROR" string
-					if !strings.Contains(err.Error(), "NO_ERROR") {
-						t.Errorf("Expected error to contain 'NO_ERROR', got: %v", err)
-					}
-
-					t.Logf("Successfully handled NO_ERROR: %v", err)
-					return
-				}
-			}
-		}
-	})
-
-	t.Run("RegularError_DoesNotTriggerConnectionLost", func(t *testing.T) {
-		// Test that regular errors (not containing NO_ERROR) do not trigger connection lost handler
-
-		// Create a mock Reader that simulates a regular error
-		mockReader := &mockReaderWithError{
-			data: []byte("event: endpoint\ndata: /message\n\n"),
-			err:  errors.New("regular connection error"),
-		}
-
-		// Create SSE transport
-		url, closeF := startMockSSEEchoServer()
-		defer closeF()
-
-		trans, err := NewSSE(url)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		var connectionLostCalled bool
-		var mu sync.Mutex
-
-		// Set connection lost handler - this should NOT be called for regular errors
-		trans.SetConnectionLostHandler(func(err error) {
-			mu.Lock()
-			defer mu.Unlock()
-			connectionLostCalled = true
-		})
-
-		// Directly test the readSSE method with our mock reader
-		go trans.readSSE(mockReader)
-
-		// Wait and verify connection lost handler is NOT called
-		time.Sleep(200 * time.Millisecond)
-
-		mu.Lock()
-		called := connectionLostCalled
-		mu.Unlock()
-
-		if called {
-			t.Error("Connection lost handler should not be called for regular errors")
 		}
 	})
 }

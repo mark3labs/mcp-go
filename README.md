@@ -539,7 +539,7 @@ For examples, see the [`examples/`](examples/) directory.
 
 ### Transports
 
-MCP-Go supports stdio, SSE and streamable-HTTP transport layers. For SSE transport, you can use `SetConnectionLostHandler()` to detect and handle HTTP/2 idle timeout disconnections (NO_ERROR) for implementing reconnection logic.
+MCP-Go supports stdio, SSE and streamable-HTTP transport layers. For SSE transport, you can use `SetConnectionLostHandler()` to detect and handle disconnections for implementing reconnection logic.
 
 ### Session Management
 
