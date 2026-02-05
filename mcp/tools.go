@@ -709,10 +709,6 @@ func toolArgumentsSchemaMarshalJSON(tis ToolArgumentsSchema) ([]byte, error) {
 		m["$defs"] = tis.Defs
 	}
 
-	if tis.AdditionalProperties != nil {
-		m["additionalProperties"] = tis.AdditionalProperties
-	}
-
 	// Marshal Properties to '{}' rather than `nil` when its length equals zero
 	if tis.Properties != nil {
 		m["properties"] = tis.Properties
@@ -720,11 +716,15 @@ func toolArgumentsSchemaMarshalJSON(tis ToolArgumentsSchema) ([]byte, error) {
 		m["properties"] = map[string]any{}
 	}
 
-	// Marshal Properties to '[]' rather than `nil` when its length equals zero
+	// Marshal Required to '[]' rather than `nil` when its length equals zero
 	if len(tis.Required) > 0 {
 		m["required"] = tis.Required
 	} else {
 		m["required"] = []string{}
+	}
+
+	if tis.AdditionalProperties != nil {
+		m["additionalProperties"] = tis.AdditionalProperties
 	}
 
 	return json.Marshal(m)
