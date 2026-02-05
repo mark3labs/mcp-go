@@ -1766,6 +1766,90 @@ func TestWithSchemaAdditionalProperties(t *testing.T) {
 	assert.Contains(t, string(data), `"additionalProperties":false`)
 }
 
+func TestToolInputSchema_MarshalWithEmptyPropertiesAndRequired(t *testing.T) {
+	schema := ToolInputSchema{
+		Type: "object",
+	}
+	data, err := json.Marshal(schema)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), `"properties":{}`)
+	assert.Contains(t, string(data), `"required":[]`)
+
+	schema = ToolInputSchema{
+		Type:       "object",
+		Properties: nil,
+		Required:   nil,
+	}
+	data, err = json.Marshal(schema)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), `"properties":{}`)
+	assert.Contains(t, string(data), `"required":[]`)
+
+	schema = ToolInputSchema{
+		Type:       "object",
+		Properties: map[string]any{},
+		Required:   []string{},
+	}
+	data, err = json.Marshal(schema)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), `"properties":{}`)
+	assert.Contains(t, string(data), `"required":[]`)
+
+	schema = ToolInputSchema{
+		Type: "object",
+		Properties: map[string]any{
+			"query": "notEmpty=true",
+		},
+		Required: []string{"query"},
+	}
+	data, err = json.Marshal(schema)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), `"properties":{"query":"notEmpty=true"}`)
+	assert.Contains(t, string(data), `"required":["query"]`)
+}
+
+func TestToolOutputSchema_MarshalWithEmptyPropertiesAndRequired(t *testing.T) {
+	schemaOutput := ToolOutputSchema{
+		Type: "object",
+	}
+	data, err := json.Marshal(schemaOutput)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), `"properties":{}`)
+	assert.Contains(t, string(data), `"required":[]`)
+
+	schemaOutput = ToolOutputSchema{
+		Type:       "object",
+		Properties: nil,
+		Required:   nil,
+	}
+	data, err = json.Marshal(schemaOutput)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), `"properties":{}`)
+	assert.Contains(t, string(data), `"required":[]`)
+
+	schemaOutput = ToolOutputSchema{
+		Type:       "object",
+		Properties: map[string]any{},
+		Required:   []string{},
+	}
+	data, err = json.Marshal(schemaOutput)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), `"properties":{}`)
+	assert.Contains(t, string(data), `"required":[]`)
+
+	schemaOutput = ToolOutputSchema{
+		Type: "object",
+		Properties: map[string]any{
+			"query": "notEmpty=true",
+		},
+		Required: []string{"query"},
+	}
+	data, err = json.Marshal(schemaOutput)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), `"properties":{"query":"notEmpty=true"}`)
+	assert.Contains(t, string(data), `"required":["query"]`)
+}
+
 // TestToolExecutionMarshaling tests that the Execution field is properly marshaled in JSON output
 func TestToolExecutionMarshaling(t *testing.T) {
 	tests := []struct {

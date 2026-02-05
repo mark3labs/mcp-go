@@ -213,7 +213,7 @@ func (c *Client) Initialize(
 		Capabilities:    capabilities,
 	}
 
-	// By default, use client supported lastest protocol version if version not specified
+	// By default, use client supported latest protocol version if version not specified
 	if params.ProtocolVersion == "" {
 		params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
 	}

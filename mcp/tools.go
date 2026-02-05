@@ -671,7 +671,37 @@ type ToolInputSchema ToolArgumentsSchema // For retro-compatibility
 type ToolOutputSchema ToolArgumentsSchema
 
 // MarshalJSON implements the json.Marshaler interface for ToolInputSchema.
+func (tis ToolInputSchema) MarshalJSON() ([]byte, error) {
+	return toolArgumentsSchemaMarshalJSON(ToolArgumentsSchema(tis))
+}
+
+// MarshalJSON implements the json.Marshaler interface for ToolOutputSchema.
+func (tis ToolOutputSchema) MarshalJSON() ([]byte, error) {
+	return toolArgumentsSchemaMarshalJSON(ToolArgumentsSchema(tis))
+}
+
+// MarshalJSON implements the json.Marshaler interface for ToolArgumentsSchema.
 func (tis ToolArgumentsSchema) MarshalJSON() ([]byte, error) {
+	return toolArgumentsSchemaMarshalJSON(tis)
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface for ToolInputSchema.
+func (tis *ToolInputSchema) UnmarshalJSON(data []byte) error {
+	return toolArgumentsSchemaUnmarshalJSON(data, (*ToolArgumentsSchema)(tis))
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface for ToolOutputSchema.
+func (tis *ToolOutputSchema) UnmarshalJSON(data []byte) error {
+	return toolArgumentsSchemaUnmarshalJSON(data, (*ToolArgumentsSchema)(tis))
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface for ToolOutputSchema.
+func (tis *ToolArgumentsSchema) UnmarshalJSON(data []byte) error {
+	return toolArgumentsSchemaUnmarshalJSON(data, tis)
+}
+
+// It handls the fields stored in ToolArgumentsSchema when json.Marshaler been called
+func toolArgumentsSchemaMarshalJSON(tis ToolArgumentsSchema) ([]byte, error) {
 	m := make(map[string]any)
 	m["type"] = tis.Type
 
@@ -679,26 +709,30 @@ func (tis ToolArgumentsSchema) MarshalJSON() ([]byte, error) {
 		m["$defs"] = tis.Defs
 	}
 
+	if tis.AdditionalProperties != nil {
+		m["additionalProperties"] = tis.AdditionalProperties
+	}
+
 	// Marshal Properties to '{}' rather than `nil` when its length equals zero
 	if tis.Properties != nil {
 		m["properties"] = tis.Properties
+	} else {
+		m["properties"] = map[string]any{}
 	}
 
+	// Marshal Properties to '[]' rather than `nil` when its length equals zero
 	if len(tis.Required) > 0 {
 		m["required"] = tis.Required
-	}
-
-	if tis.AdditionalProperties != nil {
-		m["additionalProperties"] = tis.AdditionalProperties
+	} else {
+		m["required"] = []string{}
 	}
 
 	return json.Marshal(m)
 }
 
-// UnmarshalJSON implements the json.Unmarshaler interface for ToolArgumentsSchema.
 // It handles both "$defs" (JSON Schema 2019-09+) and "definitions" (JSON Schema draft-07)
 // by reading either field and storing it in the Defs field.
-func (tis *ToolArgumentsSchema) UnmarshalJSON(data []byte) error {
+func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) error {
 	// Use a temporary type to avoid infinite recursion
 	type Alias ToolArgumentsSchema
 	aux := &struct {
