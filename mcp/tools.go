@@ -695,12 +695,12 @@ func (tis *ToolOutputSchema) UnmarshalJSON(data []byte) error {
 	return toolArgumentsSchemaUnmarshalJSON(data, (*ToolArgumentsSchema)(tis))
 }
 
-// UnmarshalJSON implements the json.Unmarshaler interface for ToolOutputSchema.
+// UnmarshalJSON implements the json.Unmarshaler interface for ToolArgumentsSchema.
 func (tis *ToolArgumentsSchema) UnmarshalJSON(data []byte) error {
 	return toolArgumentsSchemaUnmarshalJSON(data, tis)
 }
 
-// It handls the fields stored in ToolArgumentsSchema when json.Marshaler been called
+// toolArgumentsSchemaMarshalJSON handles the fields stored in ToolArgumentsSchema when json.Marshaler is called
 func toolArgumentsSchemaMarshalJSON(tis ToolArgumentsSchema) ([]byte, error) {
 	m := make(map[string]any)
 	m["type"] = tis.Type
