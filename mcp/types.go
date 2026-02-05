@@ -58,7 +58,7 @@ const (
 	// MethodElicitationCreate requests additional information from the user during interactions.
 	// https://modelcontextprotocol.io/docs/concepts/elicitation
 	MethodElicitationCreate MCPMethod = "elicitation/create"
-	
+
 	// MethodNotificationElicitationComplete notifies when a URL mode elicitation completes.
 	MethodNotificationElicitationComplete MCPMethod = "notifications/elicitation/complete"
 
@@ -67,19 +67,19 @@ const (
 	MethodListRoots MCPMethod = "roots/list"
 
 	// MethodTasksGet retrieves the current status of a task.
-	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
 	MethodTasksGet MCPMethod = "tasks/get"
 
 	// MethodTasksList lists all tasks for the current session.
-	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
 	MethodTasksList MCPMethod = "tasks/list"
 
 	// MethodTasksResult retrieves the result of a completed task.
-	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
 	MethodTasksResult MCPMethod = "tasks/result"
 
 	// MethodTasksCancel cancels an in-progress task.
-	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
 	MethodTasksCancel MCPMethod = "tasks/cancel"
 
 	// MethodNotificationResourcesListChanged notifies when the list of available resources changes.
@@ -101,8 +101,12 @@ const (
 	MethodNotificationRootsListChanged = "notifications/roots/list_changed"
 
 	// MethodNotificationTasksStatus notifies when a task's status changes.
-	// https://modelcontextprotocol.io/specification/draft/basic/utilities/tasks
+	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
 	MethodNotificationTasksStatus = "notifications/tasks/status"
+
+	// MethodCompletionComplete returns completion suggestions for a given argument
+	// https://modelcontextprotocol.io/specification/2025-11-25/server/utilities/completion
+	MethodCompletionComplete MCPMethod = "completion/complete"
 )
 
 type URITemplate struct {
@@ -132,11 +136,12 @@ func (t *URITemplate) UnmarshalJSON(data []byte) error {
 type JSONRPCMessage any
 
 // LATEST_PROTOCOL_VERSION is the most recent version of the MCP protocol.
-const LATEST_PROTOCOL_VERSION = "2025-06-18"
+const LATEST_PROTOCOL_VERSION = "2025-11-25"
 
 // ValidProtocolVersions lists all known valid MCP protocol versions.
 var ValidProtocolVersions = []string{
 	LATEST_PROTOCOL_VERSION,
+	"2025-06-18",
 	"2025-03-26",
 	"2024-11-05",
 }
@@ -555,6 +560,8 @@ type ServerCapabilities struct {
 	Roots *struct{} `json:"roots,omitempty"`
 	// Present if the server supports task-based execution.
 	Tasks *TasksCapability `json:"tasks,omitempty"`
+	// Present if the server supports completions requests to the client.
+	Completions *struct{} `json:"completions,omitempty"`
 }
 
 // Icon represents a visual identifier for MCP entities.
@@ -1201,29 +1208,81 @@ type CompleteRequest struct {
 	Header http.Header    `json:"-"`
 }
 
+// CompleteParams are the parameters for a completion/complete request
 type CompleteParams struct {
-	Ref      any `json:"ref"` // Can be PromptReference or ResourceReference
-	Argument struct {
-		// The name of the argument
-		Name string `json:"name"`
-		// The value of the argument to use for completion matching.
-		Value string `json:"value"`
-	} `json:"argument"`
+	Ref      any              `json:"ref"` // Can be PromptReference or ResourceReference
+	Argument CompleteArgument `json:"argument"`
+	Context  CompleteContext  `json:"context"`
+}
+
+func (p *CompleteParams) UnmarshalJSON(data []byte) error {
+	// Use a temporary type to avoid infinite recursion on UnmarshalJSON
+	type Alias CompleteParams
+	aux := &struct {
+		// Use RawMessage to delay unmarshalling until after the type is known
+		Ref json.RawMessage `json:"ref"`
+		*Alias
+	}{
+		Alias: (*Alias)(p),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	// Use a temporary "type peek" struct to determine the type
+	var typePeek struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(aux.Ref, &typePeek); err != nil {
+		return err
+	}
+	switch typePeek.Type {
+	case "ref/prompt":
+		var prompt PromptReference
+		if err := json.Unmarshal(aux.Ref, &prompt); err != nil {
+			return err
+		}
+		p.Ref = prompt
+	case "ref/resource":
+		var resource ResourceReference
+		if err := json.Unmarshal(aux.Ref, &resource); err != nil {
+			return err
+		}
+		p.Ref = resource
+	default:
+		return fmt.Errorf("unknown reference type: %s", typePeek.Type)
+	}
+	return nil
 }
 
 // CompleteResult is the server's response to a completion/complete request
 type CompleteResult struct {
 	Result
-	Completion struct {
-		// An array of completion values. Must not exceed 100 items.
-		Values []string `json:"values"`
-		// The total number of completion options available. This can exceed the
-		// number of values actually sent in the response.
-		Total int `json:"total,omitempty"`
-		// Indicates whether there are additional completion options beyond those
-		// provided in the current response, even if the exact total is unknown.
-		HasMore bool `json:"hasMore,omitempty"`
-	} `json:"completion"`
+	Completion Completion `json:"completion"`
+}
+
+// CompleteArgument is an argument to a completion request
+type CompleteArgument struct {
+	// The name of the argument
+	Name string `json:"name"`
+	// The value of the argument to use for completion matching.
+	Value string `json:"value"`
+}
+
+// CompleteContext is the context about already-resolved arguments
+type CompleteContext struct {
+	Arguments map[string]string `json:"arguments"`
+}
+
+// Completion is the server's response to a completion/complete request
+type Completion struct {
+	// An array of completion values. Must not exceed 100 items.
+	Values []string `json:"values"`
+	// The total number of completion options available. This can exceed the
+	// number of values actually sent in the response.
+	Total int `json:"total,omitempty"`
+	// Indicates whether there are additional completion options beyond those
+	// provided in the current response, even if the exact total is unknown.
+	HasMore bool `json:"hasMore,omitempty"`
 }
 
 // ResourceReference is a reference to a resource or resource template definition.
@@ -1322,6 +1381,9 @@ const (
 	// TaskStatusWorking indicates the request is currently being processed.
 	TaskStatusWorking TaskStatus = "working"
 	// TaskStatusInputRequired indicates the receiver needs input from the requestor.
+	// NOTE: This status is defined by the spec but not yet implemented in this SDK.
+	// The input_required flow requires integration with elicitation which is planned
+	// for a future release.
 	TaskStatusInputRequired TaskStatus = "input_required"
 	// TaskStatusCompleted indicates the request completed successfully.
 	TaskStatusCompleted TaskStatus = "completed"
@@ -1346,11 +1408,18 @@ type Task struct {
 	StatusMessage string `json:"statusMessage,omitempty"`
 	// ISO 8601 timestamp when the task was created.
 	CreatedAt string `json:"createdAt"`
+	// ISO 8601 timestamp when the task was last updated.
+	LastUpdatedAt string `json:"lastUpdatedAt"`
 	// Time in milliseconds from creation before task may be deleted.
 	// If null, the task has no expiration.
 	TTL *int64 `json:"ttl"`
 	// Suggested time in milliseconds between status checks.
 	PollInterval *int64 `json:"pollInterval,omitempty"`
+}
+
+// GetName returns the task ID, implementing the Named interface for pagination.
+func (t Task) GetName() string {
+	return t.TaskId
 }
 
 // TaskParams represents the task metadata included when augmenting a request.
@@ -1369,8 +1438,8 @@ type CreateTaskResult struct {
 // GetTaskRequest retrieves the current status of a task.
 type GetTaskRequest struct {
 	Request
-	Header http.Header     `json:"-"`
-	Params GetTaskParams   `json:"params"`
+	Header http.Header   `json:"-"`
+	Params GetTaskParams `json:"params"`
 }
 
 type GetTaskParams struct {
@@ -1398,8 +1467,8 @@ type ListTasksResult struct {
 // TaskResultRequest retrieves the result of a completed task.
 type TaskResultRequest struct {
 	Request
-	Header http.Header        `json:"-"`
-	Params TaskResultParams   `json:"params"`
+	Header http.Header      `json:"-"`
+	Params TaskResultParams `json:"params"`
 }
 
 type TaskResultParams struct {
@@ -1407,18 +1476,20 @@ type TaskResultParams struct {
 }
 
 // TaskResultResult contains the actual operation result.
-// The structure depends on the original request type.
+// For task-augmented tool calls, this embeds the CallToolResult fields.
 type TaskResultResult struct {
 	Result
-	// The actual result varies by request type (e.g., CallToolResult for tools/call).
-	// This will be handled by the specific implementation.
+	// Tool call result fields (for task-augmented tool calls)
+	Content           []Content `json:"content,omitempty"`
+	StructuredContent any       `json:"structuredContent,omitempty"`
+	IsError           bool      `json:"isError,omitempty"`
 }
 
 // CancelTaskRequest cancels an in-progress task.
 type CancelTaskRequest struct {
 	Request
-	Header http.Header       `json:"-"`
-	Params CancelTaskParams  `json:"params"`
+	Header http.Header      `json:"-"`
+	Params CancelTaskParams `json:"params"`
 }
 
 type CancelTaskParams struct {
@@ -1526,4 +1597,3 @@ func NewElicitationCompleteNotification(elicitationID string) JSONRPCNotificatio
 		},
 	}
 }
-

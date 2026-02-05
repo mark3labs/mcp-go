@@ -28,7 +28,6 @@ var (
 
 	// ErrResourceNotFound indicates a requested resource was not found (code: RESOURCE_NOT_FOUND).
 	ErrResourceNotFound = errors.New("resource not found")
-
 )
 
 // URLElicitationRequiredError is returned when the server requires URL elicitation to proceed.

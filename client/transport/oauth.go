@@ -427,7 +427,6 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		// Use the first authorization server
 		authServerURL := protectedResource.AuthorizationServers[0]
 
-
 		// Try OAuth Authorization Server Metadata first
 		h.fetchMetadataFromURL(ctx, authServerURL+"/.well-known/oauth-authorization-server")
 		if h.serverMetadata != nil {

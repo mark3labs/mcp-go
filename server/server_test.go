@@ -2477,7 +2477,7 @@ func TestMCPServer_GetTool(t *testing.T) {
 		server := NewMCPServer("test-server", "1.0.0")
 
 		// Add some tools for concurrent access testing
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			server.AddTool(mcp.Tool{
 				Name:        fmt.Sprintf("tool-%d", i),
 				Description: fmt.Sprintf("Tool %d", i),
@@ -2489,7 +2489,7 @@ func TestMCPServer_GetTool(t *testing.T) {
 		var wg sync.WaitGroup
 
 		// Test concurrent reads
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			wg.Add(1)
 			go func(id int) {
 				defer wg.Done()
@@ -2762,7 +2762,7 @@ func TestMCPServer_ListTools(t *testing.T) {
 		server := NewMCPServer("test-server", "1.0.0")
 
 		// Pre-add some tools to test concurrent reads
-		for i := 0; i < 50; i++ {
+		for i := range 50 {
 			server.AddTool(mcp.Tool{
 				Name:        fmt.Sprintf("pre-tool-%d", i),
 				Description: fmt.Sprintf("Pre-added tool %d", i),
@@ -2774,7 +2774,7 @@ func TestMCPServer_ListTools(t *testing.T) {
 		var wg sync.WaitGroup
 
 		// Test concurrent reads (no race conditions in test logic)
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			wg.Add(1)
 			go func(id int) {
 				defer wg.Done()
@@ -2864,5 +2864,1208 @@ func TestMCPServer_ListTools(t *testing.T) {
 		assert.NotNil(t, tools3)
 		assert.Len(t, tools3, 1)
 		assert.Contains(t, tools3, "test-tool")
+	})
+}
+
+func TestMCPServer_HandleListTools_IncludesTaskTools(t *testing.T) {
+	t.Run("list includes both regular and task tools", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add regular tools
+		regularTool := mcp.Tool{
+			Name:        "regular-tool",
+			Description: "A regular tool",
+			InputSchema: mcp.ToolInputSchema{Type: "object"},
+		}
+		server.AddTool(regularTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.TextContent{Type: "text", Text: "regular"}},
+			}, nil
+		})
+
+		// Add task tool using AddTaskTool
+		server.AddTaskTool(mcp.Tool{
+			Name:        "task-tool",
+			Description: "A task-augmented tool",
+			InputSchema: mcp.ToolInputSchema{Type: "object"},
+			Execution: &mcp.ToolExecution{
+				TaskSupport: mcp.TaskSupportRequired,
+			},
+		}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			return &mcp.CreateTaskResult{
+				Task: mcp.Task{
+					TaskId: "task-1",
+					Status: mcp.TaskStatusWorking,
+				},
+			}, nil
+		})
+
+		// Create a list tools request
+		request := mcp.ListToolsRequest{}
+
+		// Call handleListTools
+		result, err := server.handleListTools(context.Background(), 1, request)
+
+		// Verify both tools are included
+		require.Nil(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, result.Tools, 2)
+
+		// Verify tools are sorted by name
+		assert.Equal(t, "regular-tool", result.Tools[0].Name)
+		assert.Equal(t, "task-tool", result.Tools[1].Name)
+
+		// Verify task tool has execution metadata
+		assert.NotNil(t, result.Tools[1].Execution)
+		assert.Equal(t, mcp.TaskSupportRequired, result.Tools[1].Execution.TaskSupport)
+	})
+
+	t.Run("list with only task tools", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add only task tools using AddTaskTools
+		server.AddTaskTools(
+			ServerTaskTool{
+				Tool: mcp.Tool{
+					Name:        "task-tool-1",
+					Description: "First task tool",
+					InputSchema: mcp.ToolInputSchema{Type: "object"},
+					Execution: &mcp.ToolExecution{
+						TaskSupport: mcp.TaskSupportRequired,
+					},
+				},
+				Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+					return &mcp.CreateTaskResult{
+						Task: mcp.Task{
+							TaskId: "task-1",
+							Status: mcp.TaskStatusWorking,
+						},
+					}, nil
+				},
+			},
+			ServerTaskTool{
+				Tool: mcp.Tool{
+					Name:        "task-tool-2",
+					Description: "Second task tool",
+					InputSchema: mcp.ToolInputSchema{Type: "object"},
+					Execution: &mcp.ToolExecution{
+						TaskSupport: mcp.TaskSupportOptional,
+					},
+				},
+				Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+					return &mcp.CreateTaskResult{
+						Task: mcp.Task{
+							TaskId: "task-2",
+							Status: mcp.TaskStatusWorking,
+						},
+					}, nil
+				},
+			},
+		)
+
+		// Create a list tools request
+		request := mcp.ListToolsRequest{}
+
+		// Call handleListTools
+		result, err := server.handleListTools(context.Background(), 1, request)
+
+		// Verify both task tools are included
+		require.Nil(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, result.Tools, 2)
+
+		// Verify correct ordering
+		assert.Equal(t, "task-tool-1", result.Tools[0].Name)
+		assert.Equal(t, "task-tool-2", result.Tools[1].Name)
+	})
+
+	t.Run("empty list when no tools", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Create a list tools request
+		request := mcp.ListToolsRequest{}
+
+		// Call handleListTools
+		result, err := server.handleListTools(context.Background(), 1, request)
+
+		// Verify empty list
+		require.Nil(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, result.Tools, 0)
+	})
+
+	t.Run("sorted alphabetically with mixed tools", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add tools in non-alphabetical order
+		server.AddTool(mcp.Tool{
+			Name:        "zebra-tool",
+			Description: "Last alphabetically",
+			InputSchema: mcp.ToolInputSchema{Type: "object"},
+		}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+
+		server.AddTaskTool(mcp.Tool{
+			Name:        "alpha-task",
+			Description: "First alphabetically",
+			InputSchema: mcp.ToolInputSchema{Type: "object"},
+			Execution: &mcp.ToolExecution{
+				TaskSupport: mcp.TaskSupportRequired,
+			},
+		}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			return &mcp.CreateTaskResult{
+				Task: mcp.Task{
+					TaskId: "task-alpha",
+					Status: mcp.TaskStatusWorking,
+				},
+			}, nil
+		})
+
+		server.AddTool(mcp.Tool{
+			Name:        "middle-tool",
+			Description: "Middle alphabetically",
+			InputSchema: mcp.ToolInputSchema{Type: "object"},
+		}, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+
+		// Create a list tools request
+		request := mcp.ListToolsRequest{}
+
+		// Call handleListTools
+		result, err := server.handleListTools(context.Background(), 1, request)
+
+		// Verify correct alphabetical ordering
+		require.Nil(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, result.Tools, 3)
+		assert.Equal(t, "alpha-task", result.Tools[0].Name)
+		assert.Equal(t, "middle-tool", result.Tools[1].Name)
+		assert.Equal(t, "zebra-tool", result.Tools[2].Name)
+	})
+}
+
+func TestMCPServer_AddTaskTool(t *testing.T) {
+	t.Run("add single task tool", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Create a task tool
+		tool := mcp.Tool{
+			Name:        "async-tool",
+			Description: "A task-augmented tool",
+			InputSchema: mcp.ToolInputSchema{Type: "object"},
+			Execution: &mcp.ToolExecution{
+				TaskSupport: mcp.TaskSupportRequired,
+			},
+		}
+
+		handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			return &mcp.CreateTaskResult{
+				Task: mcp.Task{
+					TaskId: "test-task",
+					Status: mcp.TaskStatusWorking,
+				},
+			}, nil
+		}
+
+		// Add the task tool using AddTaskTool
+		server.AddTaskTool(tool, handler)
+
+		// Verify the tool is registered
+		server.toolsMu.RLock()
+		registeredTool, exists := server.taskTools["async-tool"]
+		server.toolsMu.RUnlock()
+
+		assert.True(t, exists)
+		assert.Equal(t, "async-tool", registeredTool.Tool.Name)
+		assert.Equal(t, "A task-augmented tool", registeredTool.Tool.Description)
+		assert.NotNil(t, registeredTool.Tool.Execution)
+		assert.Equal(t, mcp.TaskSupportRequired, registeredTool.Tool.Execution.TaskSupport)
+		assert.NotNil(t, registeredTool.Handler)
+	})
+
+	t.Run("add multiple task tools", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Create task tools
+		tool1 := ServerTaskTool{
+			Tool: mcp.Tool{
+				Name:        "task-tool-1",
+				Description: "First task tool",
+				InputSchema: mcp.ToolInputSchema{Type: "object"},
+				Execution: &mcp.ToolExecution{
+					TaskSupport: mcp.TaskSupportRequired,
+				},
+			},
+			Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				return &mcp.CreateTaskResult{}, nil
+			},
+		}
+
+		tool2 := ServerTaskTool{
+			Tool: mcp.Tool{
+				Name:        "task-tool-2",
+				Description: "Second task tool",
+				InputSchema: mcp.ToolInputSchema{Type: "object"},
+				Execution: &mcp.ToolExecution{
+					TaskSupport: mcp.TaskSupportOptional,
+				},
+			},
+			Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				return &mcp.CreateTaskResult{}, nil
+			},
+		}
+
+		// Add multiple task tools using AddTaskTools
+		server.AddTaskTools(tool1, tool2)
+
+		// Verify both tools are registered
+		server.toolsMu.RLock()
+		registeredTool1, exists1 := server.taskTools["task-tool-1"]
+		registeredTool2, exists2 := server.taskTools["task-tool-2"]
+		totalCount := len(server.taskTools)
+		server.toolsMu.RUnlock()
+
+		assert.True(t, exists1)
+		assert.True(t, exists2)
+		assert.Equal(t, 2, totalCount)
+		assert.Equal(t, "task-tool-1", registeredTool1.Tool.Name)
+		assert.Equal(t, "task-tool-2", registeredTool2.Tool.Name)
+	})
+
+	t.Run("task tools appear in list_tools", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add a task tool
+		server.AddTaskTool(
+			mcp.Tool{
+				Name:        "my-async-tool",
+				Description: "Async operation",
+				InputSchema: mcp.ToolInputSchema{Type: "object"},
+				Execution: &mcp.ToolExecution{
+					TaskSupport: mcp.TaskSupportRequired,
+				},
+			},
+			func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				return &mcp.CreateTaskResult{}, nil
+			},
+		)
+
+		// List tools
+		result, err := server.handleListTools(context.Background(), 1, mcp.ListToolsRequest{})
+
+		// Verify the task tool appears in the list
+		require.Nil(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, result.Tools, 1)
+		assert.Equal(t, "my-async-tool", result.Tools[0].Name)
+		assert.NotNil(t, result.Tools[0].Execution)
+		assert.Equal(t, mcp.TaskSupportRequired, result.Tools[0].Execution.TaskSupport)
+	})
+
+	t.Run("implicit tool capabilities registration", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Capabilities should be nil initially
+		server.capabilitiesMu.RLock()
+		initialTools := server.capabilities.tools
+		server.capabilitiesMu.RUnlock()
+		assert.Nil(t, initialTools)
+
+		// Add a task tool
+		server.AddTaskTool(
+			mcp.Tool{
+				Name:        "test-tool",
+				Description: "Test tool",
+				InputSchema: mcp.ToolInputSchema{Type: "object"},
+				Execution: &mcp.ToolExecution{
+					TaskSupport: mcp.TaskSupportRequired,
+				},
+			},
+			func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				return &mcp.CreateTaskResult{}, nil
+			},
+		)
+
+		// Tool capabilities should now be registered with listChanged=true
+		server.capabilitiesMu.RLock()
+		toolsCapabilities := server.capabilities.tools
+		server.capabilitiesMu.RUnlock()
+
+		assert.NotNil(t, toolsCapabilities)
+		assert.True(t, toolsCapabilities.listChanged)
+	})
+}
+
+func TestMCPServer_ToolNameCollisionValidation(t *testing.T) {
+	t.Run("panic when adding regular tool with same name as task tool", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// First, add a task tool
+		taskTool := mcp.Tool{
+			Name:        "duplicate-name",
+			Description: "Task tool",
+			Execution: &mcp.ToolExecution{
+				TaskSupport: mcp.TaskSupportRequired,
+			},
+		}
+		server.AddTaskTool(taskTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			return &mcp.CreateTaskResult{}, nil
+		})
+
+		// Attempt to add a regular tool with the same name
+		regularTool := mcp.Tool{
+			Name:        "duplicate-name",
+			Description: "Regular tool",
+		}
+
+		// Should panic
+		assert.Panics(t, func() {
+			server.AddTool(regularTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return &mcp.CallToolResult{}, nil
+			})
+		}, "Expected panic when adding regular tool with same name as task tool")
+
+		// Verify only the task tool exists
+		server.toolsMu.RLock()
+		_, taskExists := server.taskTools["duplicate-name"]
+		_, regularExists := server.tools["duplicate-name"]
+		server.toolsMu.RUnlock()
+
+		assert.True(t, taskExists, "Task tool should still exist")
+		assert.False(t, regularExists, "Regular tool should not have been added")
+	})
+
+	t.Run("panic when adding task tool with same name as regular tool", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// First, add a regular tool
+		regularTool := mcp.Tool{
+			Name:        "duplicate-name",
+			Description: "Regular tool",
+		}
+		server.AddTool(regularTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{}, nil
+		})
+
+		// Attempt to add a task tool with the same name
+		taskTool := mcp.Tool{
+			Name:        "duplicate-name",
+			Description: "Task tool",
+			Execution: &mcp.ToolExecution{
+				TaskSupport: mcp.TaskSupportRequired,
+			},
+		}
+
+		// Should panic
+		assert.Panics(t, func() {
+			server.AddTaskTool(taskTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				return &mcp.CreateTaskResult{}, nil
+			})
+		}, "Expected panic when adding task tool with same name as regular tool")
+
+		// Verify only the regular tool exists
+		server.toolsMu.RLock()
+		_, regularExists := server.tools["duplicate-name"]
+		_, taskExists := server.taskTools["duplicate-name"]
+		server.toolsMu.RUnlock()
+
+		assert.True(t, regularExists, "Regular tool should still exist")
+		assert.False(t, taskExists, "Task tool should not have been added")
+	})
+
+	t.Run("panic when adding multiple tools with collision via AddTools", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add a task tool first
+		server.AddTaskTool(
+			mcp.Tool{Name: "collision-tool", Description: "Task tool"},
+			func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				return &mcp.CreateTaskResult{}, nil
+			},
+		)
+
+		// Attempt to add multiple regular tools, one with collision
+		tools := []ServerTool{
+			{
+				Tool: mcp.Tool{Name: "ok-tool", Description: "No collision"},
+				Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return &mcp.CallToolResult{}, nil
+				},
+			},
+			{
+				Tool: mcp.Tool{Name: "collision-tool", Description: "Colliding tool"},
+				Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return &mcp.CallToolResult{}, nil
+				},
+			},
+		}
+
+		// Should panic
+		assert.Panics(t, func() {
+			server.AddTools(tools...)
+		}, "Expected panic when adding tools with collision")
+	})
+
+	t.Run("panic when adding multiple task tools with collision via AddTaskTools", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add a regular tool first
+		server.AddTool(
+			mcp.Tool{Name: "collision-tool", Description: "Regular tool"},
+			func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return &mcp.CallToolResult{}, nil
+			},
+		)
+
+		// Attempt to add multiple task tools, one with collision
+		taskTools := []ServerTaskTool{
+			{
+				Tool: mcp.Tool{
+					Name:        "ok-task-tool",
+					Description: "No collision",
+					Execution:   &mcp.ToolExecution{TaskSupport: mcp.TaskSupportRequired},
+				},
+				Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+					return &mcp.CreateTaskResult{}, nil
+				},
+			},
+			{
+				Tool: mcp.Tool{
+					Name:        "collision-tool",
+					Description: "Colliding task tool",
+					Execution:   &mcp.ToolExecution{TaskSupport: mcp.TaskSupportRequired},
+				},
+				Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+					return &mcp.CreateTaskResult{}, nil
+				},
+			},
+		}
+
+		// Should panic
+		assert.Panics(t, func() {
+			server.AddTaskTools(taskTools...)
+		}, "Expected panic when adding task tools with collision")
+	})
+
+	t.Run("no collision when tools have different names", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Add a regular tool
+		server.AddTool(
+			mcp.Tool{Name: "regular-tool", Description: "Regular tool"},
+			func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return &mcp.CallToolResult{}, nil
+			},
+		)
+
+		// Add a task tool with different name - should not panic
+		assert.NotPanics(t, func() {
+			server.AddTaskTool(
+				mcp.Tool{
+					Name:        "task-tool",
+					Description: "Task tool",
+					Execution:   &mcp.ToolExecution{TaskSupport: mcp.TaskSupportRequired},
+				},
+				func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+					return &mcp.CreateTaskResult{}, nil
+				},
+			)
+		}, "Should not panic when tools have different names")
+
+		// Verify both tools exist
+		server.toolsMu.RLock()
+		_, regularExists := server.tools["regular-tool"]
+		_, taskExists := server.taskTools["task-tool"]
+		server.toolsMu.RUnlock()
+
+		assert.True(t, regularExists)
+		assert.True(t, taskExists)
+	})
+}
+
+type promptCompletionProviderFunc func(ctx context.Context, promptName string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error)
+
+func (fn promptCompletionProviderFunc) CompletePromptArgument(ctx context.Context, promptName string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error) {
+	return fn(ctx, promptName, argument, context)
+}
+
+type resourceCompletionProviderFunc func(ctx context.Context, uri string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error)
+
+func (fn resourceCompletionProviderFunc) CompleteResourceArgument(ctx context.Context, uri string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error) {
+	return fn(ctx, uri, argument, context)
+}
+
+func TestMCPServer_Complete(t *testing.T) {
+	t.Run("Capability not enabled", func(t *testing.T) {
+		message := `{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "completion/complete",
+			"params": {
+				"ref": {
+					"type": "ref/prompt",
+					"name": "code_review"
+				},
+				"argument": {
+					"name": "language",
+					"value": "py"
+				}
+			}
+		}`
+
+		server := NewMCPServer("test-server", "1.0.0")
+		response := server.HandleMessage(context.Background(), []byte(message))
+		assert.Equal(t, mcp.JSONRPCError{
+			JSONRPC: mcp.JSONRPC_VERSION,
+			ID:      mcp.NewRequestId(float64(1)),
+			Error:   mcp.NewJSONRPCErrorDetails(mcp.METHOD_NOT_FOUND, "completions not supported", nil),
+		}, response)
+	})
+
+	t.Run("Invalid ref type", func(t *testing.T) {
+		invalidRefTypeMessage := `{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "completion/complete",
+			"params": {
+				"ref": {
+					"type": "ref/invalid",
+					"name": "unknown"
+				},
+				"argument": {
+					"name": "language",
+					"value": "py"
+				}
+			}
+		}`
+
+		server := NewMCPServer("test-server", "1.0.0", WithCompletions())
+		response := server.HandleMessage(context.Background(), []byte(invalidRefTypeMessage))
+		assert.Equal(t, mcp.JSONRPCError{
+			JSONRPC: mcp.JSONRPC_VERSION,
+			ID:      mcp.NewRequestId(float64(1)),
+			Error:   mcp.NewJSONRPCErrorDetails(mcp.INVALID_REQUEST, "unparsable completion/complete request: unknown reference type: ref/invalid", nil),
+		}, response)
+	})
+
+	t.Run("Default completion providers", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithCompletions(),
+		)
+
+		t.Run("Prompt reference", func(t *testing.T) {
+			promptMessage := `{
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "completion/complete",
+				"params": {
+					"ref": {
+						"type": "ref/prompt",
+						"name": "code_review"
+					},
+					"argument": {
+						"name": "language",
+						"value": "py"
+					}
+				}
+			}`
+			response := server.HandleMessage(context.Background(), []byte(promptMessage))
+			assert.Equal(t, mcp.JSONRPCResponse{
+				JSONRPC: mcp.JSONRPC_VERSION,
+				ID:      mcp.NewRequestId(float64(1)),
+				Result: mcp.CompleteResult{
+					Completion: mcp.Completion{
+						Values: []string{},
+					},
+				},
+			}, response)
+		})
+
+		t.Run("Resource reference", func(t *testing.T) {
+			resourceMessage := `{
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "completion/complete",
+				"params": {
+					"ref": {
+						"type": "ref/resource",
+						"uri": "language://{language}/code_review"
+					},
+					"argument": {
+						"name": "language",
+						"value": "ja"
+					}
+				}
+			}`
+			response := server.HandleMessage(context.Background(), []byte(resourceMessage))
+			assert.Equal(t, mcp.JSONRPCResponse{
+				JSONRPC: mcp.JSONRPC_VERSION,
+				ID:      mcp.NewRequestId(float64(1)),
+				Result: mcp.CompleteResult{
+					Completion: mcp.Completion{
+						Values: []string{},
+					},
+				},
+			}, response)
+		})
+	})
+
+	t.Run("Custom completion providers", func(t *testing.T) {
+		t.Run("Prompt reference", func(t *testing.T) {
+			message := `{
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "completion/complete",
+				"params": {
+					"ref": {
+						"type": "ref/prompt",
+						"name": "code_review"
+					},
+					"argument": {
+						"name": "language",
+						"value": "py"
+					}
+				}
+			}`
+			server := NewMCPServer("test-server", "1.0.0",
+				WithCompletions(),
+				WithPromptCompletionProvider(
+					promptCompletionProviderFunc(func(
+						ctx context.Context,
+						promptName string,
+						argument mcp.CompleteArgument,
+						context mcp.CompleteContext,
+					) (*mcp.Completion, error) {
+						assert.Equal(t, "code_review", promptName)
+						assert.Equal(t, "py", argument.Value)
+						return &mcp.Completion{
+							Values: []string{"python", "pytorch", "pyside"},
+						}, nil
+					}),
+				),
+			)
+			response := server.HandleMessage(context.Background(), []byte(message))
+			assert.Equal(t, mcp.JSONRPCResponse{
+				JSONRPC: mcp.JSONRPC_VERSION,
+				ID:      mcp.NewRequestId(float64(1)),
+				Result: mcp.CompleteResult{
+					Completion: mcp.Completion{
+						Values: []string{"python", "pytorch", "pyside"},
+					},
+				},
+			}, response)
+		})
+
+		t.Run("Resource reference", func(t *testing.T) {
+			message := `{
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "completion/complete",
+				"params": {
+					"ref": {
+						"type": "ref/resource",
+						"uri": "action://{language}/{ide}/code_review"
+					},
+					"argument": {
+						"name": "ide",
+						"value": "c"
+					},
+					"context": {
+						"arguments": {
+							"language": "javascript"
+						}
+					}
+				}
+			}`
+			server := NewMCPServer("test-server", "1.0.0",
+				WithCompletions(),
+				WithResourceCompletionProvider(
+					resourceCompletionProviderFunc(func(
+						ctx context.Context,
+						uri string,
+						argument mcp.CompleteArgument,
+						context mcp.CompleteContext,
+					) (*mcp.Completion, error) {
+						assert.Equal(t, "action://{language}/{ide}/code_review", uri)
+						assert.Equal(t, "c", argument.Value)
+						assert.Equal(t, map[string]string{
+							"language": "javascript",
+						}, context.Arguments)
+						return &mcp.Completion{
+							Values:  []string{"cursor", "code"},
+							Total:   10,
+							HasMore: true,
+						}, nil
+					}),
+				),
+			)
+			response := server.HandleMessage(context.Background(), []byte(message))
+			assert.Equal(t, mcp.JSONRPCResponse{
+				JSONRPC: mcp.JSONRPC_VERSION,
+				ID:      mcp.NewRequestId(float64(1)),
+				Result: mcp.CompleteResult{
+					Completion: mcp.Completion{
+						Values:  []string{"cursor", "code"},
+						Total:   10,
+						HasMore: true,
+					},
+				},
+			}, response)
+		})
+	})
+}
+
+func TestMCPServer_TaskSupportValidation(t *testing.T) {
+	t.Run("tool with TaskSupportRequired fails without task param", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a tool with TaskSupportRequired
+		tool := mcp.NewTool("required_task_tool",
+			mcp.WithDescription("A tool that requires task augmentation"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("success"), nil
+		})
+
+		// Try to call the tool without task param
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "required_task_tool"
+			}
+		}`))
+
+		// Should return an error
+		errorResp, ok := response.(mcp.JSONRPCError)
+		require.True(t, ok, "Expected JSONRPCError response, got: %T", response)
+		assert.Equal(t, mcp.METHOD_NOT_FOUND, errorResp.Error.Code)
+		assert.Contains(t, errorResp.Error.Message, "requires task augmentation")
+	})
+
+	t.Run("tool with TaskSupportRequired succeeds with task param", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a tool with TaskSupportRequired
+		tool := mcp.NewTool("required_task_tool",
+			mcp.WithDescription("A tool that requires task augmentation"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("success"), nil
+		})
+
+		// Create request with task param
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "required_task_tool",
+				"task": {
+					"ttl": 3600
+				}
+			}
+		}`))
+
+		// Should return CreateTaskResult with task as direct field (spec-compliant)
+		successResp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+
+		result, ok := successResp.Result.(*mcp.CreateTaskResult)
+		require.True(t, ok, "Expected *mcp.CreateTaskResult, got: %T", successResp.Result)
+
+		// Verify task was created with correct structure
+		require.NotNil(t, result.Task, "Task field should not be nil")
+		assert.NotEmpty(t, result.Task.TaskId)
+	})
+
+	t.Run("tool with TaskSupportOptional works without task param", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a tool with TaskSupportOptional
+		tool := mcp.NewTool("optional_task_tool",
+			mcp.WithDescription("A tool with optional task augmentation"),
+			mcp.WithTaskSupport(mcp.TaskSupportOptional),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("success"), nil
+		})
+
+		// Call without task param
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "optional_task_tool"
+			}
+		}`))
+
+		// Should succeed
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+		result, ok := resp.Result.(*mcp.CallToolResult)
+		require.True(t, ok, "Expected CallToolResult, got: %T", resp.Result)
+		assert.Len(t, result.Content, 1)
+	})
+
+	t.Run("tool with TaskSupportOptional works with task param", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a tool with TaskSupportOptional
+		tool := mcp.NewTool("optional_task_tool",
+			mcp.WithDescription("A tool with optional task augmentation"),
+			mcp.WithTaskSupport(mcp.TaskSupportOptional),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("success"), nil
+		})
+
+		// Call with task param
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "optional_task_tool",
+				"task": {
+					"ttl": 3600
+				}
+			}
+		}`))
+
+		// Should return CreateTaskResult with task as direct field (spec-compliant)
+		successResp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+
+		result, ok := successResp.Result.(*mcp.CreateTaskResult)
+		require.True(t, ok, "Expected *mcp.CreateTaskResult, got: %T", successResp.Result)
+
+		// Verify task was created with correct structure
+		require.NotNil(t, result.Task, "Task field should not be nil")
+		assert.NotEmpty(t, result.Task.TaskId)
+	})
+
+	t.Run("tool with TaskSupportForbidden works without task param", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a regular tool (default TaskSupportForbidden)
+		tool := mcp.NewTool("regular_tool",
+			mcp.WithDescription("A regular tool"),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("success"), nil
+		})
+
+		// Call without task param
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "regular_tool"
+			}
+		}`))
+
+		// Should succeed
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+		result, ok := resp.Result.(*mcp.CallToolResult)
+		require.True(t, ok, "Expected CallToolResult, got: %T", resp.Result)
+		assert.Len(t, result.Content, 1)
+	})
+
+	t.Run("tool with TaskSupportForbidden works with task param", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a regular tool (default TaskSupportForbidden)
+		tool := mcp.NewTool("regular_tool",
+			mcp.WithDescription("A regular tool"),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("success"), nil
+		})
+
+		// Call with task param (should still work, just ignores the task param for now)
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "regular_tool",
+				"task": {
+					"ttl": 3600
+				}
+			}
+		}`))
+
+		// Should succeed (for now - task param is just ignored)
+		_, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+	})
+
+	t.Run("tool without Execution field works normally", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a tool without any task support configuration
+		tool := mcp.NewTool("simple_tool",
+			mcp.WithDescription("A simple tool"),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("success"), nil
+		})
+
+		// Call without task param
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "simple_tool"
+			}
+		}`))
+
+		// Should succeed
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+		result, ok := resp.Result.(*mcp.CallToolResult)
+		require.True(t, ok, "Expected CallToolResult, got: %T", resp.Result)
+		assert.Len(t, result.Content, 1)
+	})
+}
+
+func TestMCPServer_HybridModeDetection(t *testing.T) {
+	t.Run("TaskSupportOptional without task param executes synchronously", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a tool with TaskSupportOptional
+		tool := mcp.NewTool("hybrid_tool",
+			mcp.WithDescription("A tool with optional task augmentation"),
+			mcp.WithTaskSupport(mcp.TaskSupportOptional),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("sync result"), nil
+		})
+
+		// Call without task param - should execute synchronously
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "hybrid_tool"
+			}
+		}`))
+
+		// Should succeed with immediate CallToolResult
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+		result, ok := resp.Result.(*mcp.CallToolResult)
+		require.True(t, ok, "Expected *CallToolResult for sync execution, got: %T", resp.Result)
+		assert.Len(t, result.Content, 1)
+		textContent, ok := result.Content[0].(mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "sync result", textContent.Text)
+	})
+
+	t.Run("TaskSupportOptional with task param routes to task execution", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a tool with TaskSupportOptional
+		tool := mcp.NewTool("hybrid_tool",
+			mcp.WithDescription("A tool with optional task augmentation"),
+			mcp.WithTaskSupport(mcp.TaskSupportOptional),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("should not see this"), nil
+		})
+
+		// Call with task param - should execute as task
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "hybrid_tool",
+				"task": {
+					"ttl": 3600
+				}
+			}
+		}`))
+
+		// Should return CreateTaskResult with task as direct field (spec-compliant)
+		successResp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+
+		// Response should have CreateTaskResult with task field
+		result, ok := successResp.Result.(*mcp.CreateTaskResult)
+		require.True(t, ok, "Expected result to be *mcp.CreateTaskResult, got: %T", successResp.Result)
+
+		// Verify task field exists
+		require.NotNil(t, result.Task, "Expected task field in result")
+
+		// Verify task has required fields
+		assert.NotEmpty(t, result.Task.TaskId, "Expected taskId in task")
+		assert.Equal(t, mcp.TaskStatusWorking, result.Task.Status, "Expected status to be working")
+		assert.NotEmpty(t, result.Task.CreatedAt, "Expected createdAt in task")
+	})
+
+	t.Run("TaskSupportRequired with task param routes to task execution", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a tool with TaskSupportRequired
+		tool := mcp.NewTool("task_only_tool",
+			mcp.WithDescription("A tool that requires task augmentation"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("should not see this"), nil
+		})
+
+		// Call with task param - should execute as task
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "task_only_tool",
+				"task": {
+					"ttl": 3600
+				}
+			}
+		}`))
+
+		// Should return CreateTaskResult with task as direct field (spec-compliant)
+		successResp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+
+		// Response should have CreateTaskResult with task field
+		result, ok := successResp.Result.(*mcp.CreateTaskResult)
+		require.True(t, ok, "Expected result to be *mcp.CreateTaskResult, got: %T", successResp.Result)
+
+		// Verify task field exists
+		require.NotNil(t, result.Task, "Expected task field in result")
+
+		// Verify task has required fields
+		assert.NotEmpty(t, result.Task.TaskId, "Expected taskId in task")
+		assert.Equal(t, mcp.TaskStatusWorking, result.Task.Status, "Expected status to be working")
+		assert.NotEmpty(t, result.Task.CreatedAt, "Expected createdAt in task")
+	})
+
+	t.Run("TaskSupportForbidden with task param executes synchronously", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a regular tool (TaskSupportForbidden)
+		tool := mcp.NewTool("regular_tool",
+			mcp.WithDescription("A regular tool"),
+			mcp.WithTaskSupport(mcp.TaskSupportForbidden),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("sync result"), nil
+		})
+
+		// Call with task param - should still execute synchronously (task param ignored)
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "regular_tool",
+				"task": {
+					"ttl": 3600
+				}
+			}
+		}`))
+
+		// Should succeed with immediate CallToolResult
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+		result, ok := resp.Result.(*mcp.CallToolResult)
+		require.True(t, ok, "Expected CallToolResult, got: %T", resp.Result)
+		assert.Len(t, result.Content, 1)
+	})
+
+	t.Run("tool without Execution field with task param executes synchronously", func(t *testing.T) {
+		server := NewMCPServer("test", "1.0.0")
+
+		// Add a tool without Execution configuration
+		tool := mcp.NewTool("simple_tool",
+			mcp.WithDescription("A simple tool"),
+		)
+		server.AddTool(tool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("sync result"), nil
+		})
+
+		// Call with task param - should still execute synchronously (no task support)
+		response := server.HandleMessage(context.Background(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "simple_tool",
+				"task": {
+					"ttl": 3600
+				}
+			}
+		}`))
+
+		// Should succeed with immediate CallToolResult
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "Expected JSONRPCResponse, got: %T", response)
+		result, ok := resp.Result.(*mcp.CallToolResult)
+		require.True(t, ok, "Expected CallToolResult, got: %T", resp.Result)
+		assert.Len(t, result.Content, 1)
+	})
+}
+
+func TestServerTaskTool_TypeDefinitions(t *testing.T) {
+	t.Run("TaskToolHandlerFunc type exists", func(t *testing.T) {
+		// Verify that TaskToolHandlerFunc type can be created
+		var handler TaskToolHandlerFunc = func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			return &mcp.CreateTaskResult{
+				Task: mcp.Task{
+					TaskId: "test-task",
+					Status: mcp.TaskStatusWorking,
+				},
+			}, nil
+		}
+		assert.NotNil(t, handler)
+	})
+
+	t.Run("ServerTaskTool type exists and can be created", func(t *testing.T) {
+		tool := mcp.NewTool("test-task-tool",
+			mcp.WithDescription("A test task tool"),
+			mcp.WithTaskSupport(mcp.TaskSupportRequired),
+		)
+
+		handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			return &mcp.CreateTaskResult{
+				Task: mcp.Task{
+					TaskId: "test-task",
+					Status: mcp.TaskStatusWorking,
+				},
+			}, nil
+		}
+
+		serverTaskTool := ServerTaskTool{
+			Tool:    tool,
+			Handler: handler,
+		}
+
+		assert.Equal(t, "test-task-tool", serverTaskTool.Tool.Name)
+		assert.NotNil(t, serverTaskTool.Handler)
+		assert.Equal(t, mcp.TaskSupportRequired, serverTaskTool.Tool.Execution.TaskSupport)
+	})
+
+	t.Run("taskTools map is initialized in NewMCPServer", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+		assert.NotNil(t, server)
+		assert.NotNil(t, server.taskTools)
+		assert.Equal(t, 0, len(server.taskTools))
 	})
 }

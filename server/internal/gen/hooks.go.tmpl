@@ -66,7 +66,7 @@ type OnRequestInitializationFunc func(ctx context.Context, id any, message any) 
 
 {{range .}}
 type OnBefore{{.HookName}}Func func(ctx context.Context, id any, message *mcp.{{.ParamType}})
-type OnAfter{{.HookName}}Func func(ctx context.Context, id any, message *mcp.{{.ParamType}}, result *mcp.{{.ResultType}})
+{{ if .ResultIsAny }}type OnAfter{{.HookName}}Func func(ctx context.Context, id any, message *mcp.{{.ParamType}}, result any){{ else }}type OnAfter{{.HookName}}Func func(ctx context.Context, id any, message *mcp.{{.ParamType}}, result *mcp.{{.ResultType}}){{ end }}
 {{end}}
 
 type Hooks struct {
@@ -241,7 +241,11 @@ func (c *Hooks) before{{.HookName}}(ctx context.Context, id any, message *mcp.{{
 	}
 }
 
+{{ if .ResultIsAny -}}
+func (c *Hooks) after{{.HookName}}(ctx context.Context, id any, message *mcp.{{.ParamType}}, result any) {
+{{- else -}}
 func (c *Hooks) after{{.HookName}}(ctx context.Context, id any, message *mcp.{{.ParamType}}, result *mcp.{{.ResultType}}) {
+{{- end }}
 	c.onSuccess(ctx, id, mcp.{{.MethodName}}, message, result)
 	if c == nil {
 		return

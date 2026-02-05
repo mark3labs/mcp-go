@@ -661,7 +661,7 @@ func TestToolWithInputSchema(t *testing.T) {
 	assert.NotNil(t, inputSchema)
 
 	// Verify required list exists
-	schemaMap, ok := inputSchema.(map[string]interface{})
+	schemaMap, ok := inputSchema.(map[string]any)
 	assert.True(t, ok)
 	requiredList, exists := schemaMap["required"]
 	assert.True(t, exists)
@@ -670,7 +670,7 @@ func TestToolWithInputSchema(t *testing.T) {
 	// Verify properties exist
 	properties, exists := schemaMap["properties"]
 	assert.True(t, exists)
-	propertiesMap, ok := properties.(map[string]interface{})
+	propertiesMap, ok := properties.(map[string]any)
 	assert.True(t, ok)
 
 	// Verify specific properties
@@ -1692,4 +1692,457 @@ func TestWithToolIcons(t *testing.T) {
 	opt(&tool)
 
 	assert.Equal(t, icons, tool.Icons)
+}
+
+func TestToolArgumentsSchema_UnmarshalWithAdditionalPropertiesFalse(t *testing.T) {
+	jsonData := `{
+		"type": "object",
+		"properties": {
+			"name": {"type": "string"}
+		},
+		"additionalProperties": false
+	}`
+
+	var schema ToolArgumentsSchema
+	err := json.Unmarshal([]byte(jsonData), &schema)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "object", schema.Type)
+	assert.Contains(t, schema.Properties, "name")
+	assert.Equal(t, false, schema.AdditionalProperties)
+}
+
+func TestToolArgumentsSchema_UnmarshalWithAdditionalPropertiesSchema(t *testing.T) {
+	jsonData := `{
+		"type": "object",
+		"properties": {
+			"name": {"type": "string"}
+		},
+		"additionalProperties": {"type": "string"}
+	}`
+
+	var schema ToolArgumentsSchema
+	err := json.Unmarshal([]byte(jsonData), &schema)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "object", schema.Type)
+	additionalProps, ok := schema.AdditionalProperties.(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "string", additionalProps["type"])
+}
+
+func TestToolArgumentsSchema_MarshalWithAdditionalProperties(t *testing.T) {
+	schema := ToolArgumentsSchema{
+		Type:                 "object",
+		AdditionalProperties: false,
+	}
+
+	data, err := json.Marshal(schema)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), `"additionalProperties":false`)
+}
+
+func TestToolArgumentsSchema_MarshalOmitsNilAdditionalProperties(t *testing.T) {
+	schema := ToolArgumentsSchema{
+		Type:                 "object",
+		AdditionalProperties: nil,
+	}
+
+	data, err := json.Marshal(schema)
+	assert.NoError(t, err)
+	assert.NotContains(t, string(data), "additionalProperties")
+}
+
+func TestWithSchemaAdditionalProperties(t *testing.T) {
+	tool := NewTool(
+		"strict-tool",
+		WithSchemaAdditionalProperties(false),
+	)
+
+	assert.Equal(t, false, tool.InputSchema.AdditionalProperties)
+
+	data, err := json.Marshal(tool)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), `"additionalProperties":false`)
+}
+
+// TestToolExecutionMarshaling tests that the Execution field is properly marshaled in JSON output
+func TestToolExecutionMarshaling(t *testing.T) {
+	tests := []struct {
+		name            string
+		tool            Tool
+		expectExecution bool
+		expectedSupport TaskSupport
+	}{
+		{
+			name: "tool with task support forbidden",
+			tool: Tool{
+				Name:        "forbidden-tool",
+				Description: "A tool that forbids task augmentation",
+				InputSchema: ToolInputSchema{
+					Type:       "object",
+					Properties: map[string]any{},
+				},
+				Execution: &ToolExecution{
+					TaskSupport: TaskSupportForbidden,
+				},
+			},
+			expectExecution: true,
+			expectedSupport: TaskSupportForbidden,
+		},
+		{
+			name: "tool with task support optional",
+			tool: Tool{
+				Name:        "optional-tool",
+				Description: "A tool that optionally supports task augmentation",
+				InputSchema: ToolInputSchema{
+					Type:       "object",
+					Properties: map[string]any{},
+				},
+				Execution: &ToolExecution{
+					TaskSupport: TaskSupportOptional,
+				},
+			},
+			expectExecution: true,
+			expectedSupport: TaskSupportOptional,
+		},
+		{
+			name: "tool with task support required",
+			tool: Tool{
+				Name:        "required-tool",
+				Description: "A tool that requires task augmentation",
+				InputSchema: ToolInputSchema{
+					Type:       "object",
+					Properties: map[string]any{},
+				},
+				Execution: &ToolExecution{
+					TaskSupport: TaskSupportRequired,
+				},
+			},
+			expectExecution: true,
+			expectedSupport: TaskSupportRequired,
+		},
+		{
+			name: "tool without execution field",
+			tool: Tool{
+				Name:        "no-execution-tool",
+				Description: "A tool without execution configuration",
+				InputSchema: ToolInputSchema{
+					Type:       "object",
+					Properties: map[string]any{},
+				},
+				Execution: nil,
+			},
+			expectExecution: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Marshal the tool to JSON
+			data, err := json.Marshal(tt.tool)
+			assert.NoError(t, err)
+
+			// Unmarshal to map for comparison
+			var result map[string]any
+			err = json.Unmarshal(data, &result)
+			assert.NoError(t, err)
+
+			if tt.expectExecution {
+				// Check if execution field is present
+				assert.Contains(t, result, "execution", "Tool should include execution field")
+
+				execution, ok := result["execution"].(map[string]any)
+				assert.True(t, ok, "Execution field should be a map")
+
+				taskSupport, ok := execution["taskSupport"].(string)
+				assert.True(t, ok, "taskSupport should be a string")
+				assert.Equal(t, string(tt.expectedSupport), taskSupport, "taskSupport value should match")
+			} else {
+				// Check that execution field is not present
+				assert.NotContains(t, result, "execution", "Tool without Execution should not include execution field")
+			}
+		})
+	}
+}
+
+// TestTaskSupportConstants verifies the TaskSupport constants have the correct values
+func TestTaskSupportConstants(t *testing.T) {
+	assert.Equal(t, TaskSupport("forbidden"), TaskSupportForbidden)
+	assert.Equal(t, TaskSupport("optional"), TaskSupportOptional)
+	assert.Equal(t, TaskSupport("required"), TaskSupportRequired)
+}
+
+// TestWithTaskSupport tests the WithTaskSupport option for configuring tool task support
+func TestWithTaskSupport(t *testing.T) {
+	tests := []struct {
+		name            string
+		taskSupport     TaskSupport
+		expectedSupport TaskSupport
+	}{
+		{
+			name:            "task support forbidden",
+			taskSupport:     TaskSupportForbidden,
+			expectedSupport: TaskSupportForbidden,
+		},
+		{
+			name:            "task support optional",
+			taskSupport:     TaskSupportOptional,
+			expectedSupport: TaskSupportOptional,
+		},
+		{
+			name:            "task support required",
+			taskSupport:     TaskSupportRequired,
+			expectedSupport: TaskSupportRequired,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a tool with task support
+			tool := NewTool("test-tool",
+				WithDescription("A test tool"),
+				WithTaskSupport(tt.taskSupport),
+			)
+
+			// Verify the Execution field is set
+			assert.NotNil(t, tool.Execution, "Execution should not be nil")
+			assert.Equal(t, tt.expectedSupport, tool.Execution.TaskSupport, "TaskSupport should match")
+
+			// Marshal to JSON and verify structure
+			data, err := json.Marshal(tool)
+			assert.NoError(t, err)
+
+			var result map[string]any
+			err = json.Unmarshal(data, &result)
+			assert.NoError(t, err)
+
+			// Verify execution field is present in JSON
+			assert.Contains(t, result, "execution", "Tool should include execution field in JSON")
+
+			execution, ok := result["execution"].(map[string]any)
+			assert.True(t, ok, "Execution field should be a map")
+
+			taskSupport, ok := execution["taskSupport"].(string)
+			assert.True(t, ok, "taskSupport should be a string")
+			assert.Equal(t, string(tt.expectedSupport), taskSupport, "taskSupport value should match in JSON")
+		})
+	}
+}
+
+// TestWithTaskSupport_InitializesExecution tests that WithTaskSupport creates Execution if nil
+func TestWithTaskSupport_InitializesExecution(t *testing.T) {
+	// Create a tool without any execution configuration
+	tool := Tool{
+		Name:        "test-tool",
+		Description: "A test tool",
+		InputSchema: ToolInputSchema{
+			Type:       "object",
+			Properties: map[string]any{},
+		},
+		Execution: nil,
+	}
+
+	// Verify Execution is nil
+	assert.Nil(t, tool.Execution)
+
+	// Apply WithTaskSupport option
+	option := WithTaskSupport(TaskSupportOptional)
+	option(&tool)
+
+	// Verify Execution is now initialized
+	assert.NotNil(t, tool.Execution, "WithTaskSupport should initialize Execution if nil")
+	assert.Equal(t, TaskSupportOptional, tool.Execution.TaskSupport)
+}
+
+// TestWithTaskSupport_PreservesExistingExecution tests that WithTaskSupport doesn't overwrite existing Execution
+func TestWithTaskSupport_PreservesExistingExecution(t *testing.T) {
+	// Create a tool with existing Execution
+	existingExecution := &ToolExecution{
+		TaskSupport: TaskSupportForbidden,
+	}
+
+	tool := Tool{
+		Name:        "test-tool",
+		Description: "A test tool",
+		InputSchema: ToolInputSchema{
+			Type:       "object",
+			Properties: map[string]any{},
+		},
+		Execution: existingExecution,
+	}
+
+	// Apply WithTaskSupport option
+	option := WithTaskSupport(TaskSupportRequired)
+	option(&tool)
+
+	// Verify Execution is the same instance (pointer equality)
+	assert.Same(t, existingExecution, tool.Execution, "WithTaskSupport should preserve existing Execution instance")
+	// Verify TaskSupport was updated
+	assert.Equal(t, TaskSupportRequired, tool.Execution.TaskSupport)
+}
+
+// TestCallToolRequest_WithTaskParams tests that CallToolRequest properly unmarshals task params
+func TestCallToolRequest_WithTaskParams(t *testing.T) {
+	tests := []struct {
+		name     string
+		jsonData string
+		expected CallToolRequest
+		wantErr  bool
+	}{
+		{
+			name: "request with task params",
+			jsonData: `{
+				"method": "tools/call",
+				"params": {
+					"name": "test-tool",
+					"arguments": {
+						"input": "test"
+					},
+					"task": {
+						"ttl": 300
+					}
+				}
+			}`,
+			expected: CallToolRequest{
+				Request: Request{
+					Method: "tools/call",
+				},
+				Params: CallToolParams{
+					Name: "test-tool",
+					Arguments: map[string]any{
+						"input": "test",
+					},
+					Task: &TaskParams{
+						TTL: ToInt64Ptr(300),
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "request without task params",
+			jsonData: `{
+				"method": "tools/call",
+				"params": {
+					"name": "test-tool",
+					"arguments": {
+						"input": "test"
+					}
+				}
+			}`,
+			expected: CallToolRequest{
+				Request: Request{
+					Method: "tools/call",
+				},
+				Params: CallToolParams{
+					Name: "test-tool",
+					Arguments: map[string]any{
+						"input": "test",
+					},
+					Task: nil,
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "request with null task params",
+			jsonData: `{
+				"method": "tools/call",
+				"params": {
+					"name": "test-tool",
+					"arguments": {
+						"input": "test"
+					},
+					"task": null
+				}
+			}`,
+			expected: CallToolRequest{
+				Request: Request{
+					Method: "tools/call",
+				},
+				Params: CallToolParams{
+					Name: "test-tool",
+					Arguments: map[string]any{
+						"input": "test",
+					},
+					Task: nil,
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result CallToolRequest
+			err := json.Unmarshal([]byte(tt.jsonData), &result)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+
+			// Compare method
+			assert.Equal(t, tt.expected.Method, result.Method)
+
+			// Compare tool name
+			assert.Equal(t, tt.expected.Params.Name, result.Params.Name)
+
+			// Compare arguments
+			expectedArgs, _ := tt.expected.Params.Arguments.(map[string]any)
+			resultArgs := result.GetArguments()
+			assert.Equal(t, expectedArgs, resultArgs)
+
+			// Compare task params
+			if tt.expected.Params.Task != nil {
+				assert.NotNil(t, result.Params.Task, "Task params should not be nil")
+				assert.Equal(t, tt.expected.Params.Task.TTL, result.Params.Task.TTL)
+			} else {
+				assert.Nil(t, result.Params.Task, "Task params should be nil")
+			}
+		})
+	}
+}
+
+// TestCallToolRequest_WithTaskParams_RoundTrip tests that marshaling and unmarshaling preserves task params
+func TestCallToolRequest_WithTaskParams_RoundTrip(t *testing.T) {
+	original := CallToolRequest{
+		Request: Request{
+			Method: "tools/call",
+		},
+		Params: CallToolParams{
+			Name: "async-tool",
+			Arguments: map[string]any{
+				"operation": "process",
+				"count":     42,
+			},
+			Task: &TaskParams{
+				TTL: ToInt64Ptr(600),
+			},
+		},
+	}
+
+	// Marshal to JSON
+	data, err := json.Marshal(original)
+	assert.NoError(t, err)
+
+	// Unmarshal back
+	var unmarshaled CallToolRequest
+	err = json.Unmarshal(data, &unmarshaled)
+	assert.NoError(t, err)
+
+	// Verify all fields are preserved
+	assert.Equal(t, original.Method, unmarshaled.Method)
+	assert.Equal(t, original.Params.Name, unmarshaled.Params.Name)
+
+	// Compare arguments
+	assert.Equal(t, "process", unmarshaled.GetString("operation", ""))
+	assert.Equal(t, 42, unmarshaled.GetInt("count", 0))
+
+	// Compare task params
+	assert.NotNil(t, unmarshaled.Params.Task)
+	assert.Equal(t, original.Params.Task.TTL, unmarshaled.Params.Task.TTL)
 }

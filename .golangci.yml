@@ -1,6 +1,17 @@
 version: "2"
 linters:
+  enable:
+    - modernize
+    - usetesting
+  settings:
+    usetesting:
+      context-background: true
+      context-todo: true
+      os-temp-dir: true
   exclusions:
     presets:
       - std-error-handling
-
+    rules:
+      # Exclude examples directory from modernize.stringsbuilder linter.
+      - path: ^examples/
+        text: "stringsbuilder:"

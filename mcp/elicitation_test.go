@@ -57,10 +57,10 @@ func TestElicitationParamsSerialization(t *testing.T) {
 			var decoded ElicitationParams
 			err = json.Unmarshal(data, &decoded)
 			require.NoError(t, err)
-			
+
 			assert.Equal(t, tt.params.Message, decoded.Message)
 			assert.Equal(t, tt.params.Mode, decoded.Mode)
-			
+
 			if tt.params.Mode == ElicitationModeURL {
 				assert.Equal(t, tt.params.ElicitationID, decoded.ElicitationID)
 				assert.Equal(t, tt.params.URL, decoded.URL)

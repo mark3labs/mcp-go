@@ -84,7 +84,7 @@ func (s *MCPServer) HandleMessage(
 	{{- range .}}
 	case mcp.{{.MethodName}}:
 		var request mcp.{{.ParamType}}
-		var result *mcp.{{.ResultType}}
+		{{ if .ResultIsAny }}var result any{{ else }}var result *mcp.{{.ResultType}}{{ end }}
 		{{ if .Group }}if s.capabilities.{{.Group}} == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
@@ -107,7 +107,7 @@ func (s *MCPServer) HandleMessage(
 			return err.ToJSONRPCError()
 		}
 		s.hooks.after{{.HookName}}(ctx, baseMessage.ID, &request, result)
-		return createResponse(baseMessage.ID, *result)
+		{{ if .ResultIsAny }}return createResponse(baseMessage.ID, result){{ else }}return createResponse(baseMessage.ID, *result){{ end }}
 	{{- end }}
 	default:
 		return createErrorResponse(

@@ -89,7 +89,7 @@ type OnBeforeListToolsFunc func(ctx context.Context, id any, message *mcp.ListTo
 type OnAfterListToolsFunc func(ctx context.Context, id any, message *mcp.ListToolsRequest, result *mcp.ListToolsResult)
 
 type OnBeforeCallToolFunc func(ctx context.Context, id any, message *mcp.CallToolRequest)
-type OnAfterCallToolFunc func(ctx context.Context, id any, message *mcp.CallToolRequest, result *mcp.CallToolResult)
+type OnAfterCallToolFunc func(ctx context.Context, id any, message *mcp.CallToolRequest, result any)
 
 type OnBeforeGetTaskFunc func(ctx context.Context, id any, message *mcp.GetTaskRequest)
 type OnAfterGetTaskFunc func(ctx context.Context, id any, message *mcp.GetTaskRequest, result *mcp.GetTaskResult)
@@ -102,6 +102,9 @@ type OnAfterTaskResultFunc func(ctx context.Context, id any, message *mcp.TaskRe
 
 type OnBeforeCancelTaskFunc func(ctx context.Context, id any, message *mcp.CancelTaskRequest)
 type OnAfterCancelTaskFunc func(ctx context.Context, id any, message *mcp.CancelTaskRequest, result *mcp.CancelTaskResult)
+
+type OnBeforeCompleteFunc func(ctx context.Context, id any, message *mcp.CompleteRequest)
+type OnAfterCompleteFunc func(ctx context.Context, id any, message *mcp.CompleteRequest, result *mcp.CompleteResult)
 
 type Hooks struct {
 	OnRegisterSession             []OnRegisterSessionHookFunc
@@ -138,6 +141,8 @@ type Hooks struct {
 	OnAfterTaskResult             []OnAfterTaskResultFunc
 	OnBeforeCancelTask            []OnBeforeCancelTaskFunc
 	OnAfterCancelTask             []OnAfterCancelTaskFunc
+	OnBeforeComplete              []OnBeforeCompleteFunc
+	OnAfterComplete               []OnAfterCompleteFunc
 }
 
 func (c *Hooks) AddBeforeAny(hook BeforeAnyHookFunc) {
@@ -541,7 +546,7 @@ func (c *Hooks) beforeCallTool(ctx context.Context, id any, message *mcp.CallToo
 	}
 }
 
-func (c *Hooks) afterCallTool(ctx context.Context, id any, message *mcp.CallToolRequest, result *mcp.CallToolResult) {
+func (c *Hooks) afterCallTool(ctx context.Context, id any, message *mcp.CallToolRequest, result any) {
 	c.onSuccess(ctx, id, mcp.MethodToolsCall, message, result)
 	if c == nil {
 		return
@@ -655,6 +660,33 @@ func (c *Hooks) afterCancelTask(ctx context.Context, id any, message *mcp.Cancel
 		return
 	}
 	for _, hook := range c.OnAfterCancelTask {
+		hook(ctx, id, message, result)
+	}
+}
+func (c *Hooks) AddBeforeComplete(hook OnBeforeCompleteFunc) {
+	c.OnBeforeComplete = append(c.OnBeforeComplete, hook)
+}
+
+func (c *Hooks) AddAfterComplete(hook OnAfterCompleteFunc) {
+	c.OnAfterComplete = append(c.OnAfterComplete, hook)
+}
+
+func (c *Hooks) beforeComplete(ctx context.Context, id any, message *mcp.CompleteRequest) {
+	c.beforeAny(ctx, id, mcp.MethodCompletionComplete, message)
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnBeforeComplete {
+		hook(ctx, id, message)
+	}
+}
+
+func (c *Hooks) afterComplete(ctx context.Context, id any, message *mcp.CompleteRequest, result *mcp.CompleteResult) {
+	c.onSuccess(ctx, id, mcp.MethodCompletionComplete, message, result)
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnAfterComplete {
 		hook(ctx, id, message, result)
 	}
 }

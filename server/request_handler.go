@@ -305,7 +305,7 @@ func (s *MCPServer) HandleMessage(
 		return createResponse(baseMessage.ID, *result)
 	case mcp.MethodToolsCall:
 		var request mcp.CallToolRequest
-		var result *mcp.CallToolResult
+		var result any
 		if s.capabilities.tools == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
@@ -328,7 +328,7 @@ func (s *MCPServer) HandleMessage(
 			return err.ToJSONRPCError()
 		}
 		s.hooks.afterCallTool(ctx, baseMessage.ID, &request, result)
-		return createResponse(baseMessage.ID, *result)
+		return createResponse(baseMessage.ID, result)
 	case mcp.MethodTasksGet:
 		var request mcp.GetTaskRequest
 		var result *mcp.GetTaskResult
@@ -432,6 +432,32 @@ func (s *MCPServer) HandleMessage(
 			return err.ToJSONRPCError()
 		}
 		s.hooks.afterCancelTask(ctx, baseMessage.ID, &request, result)
+		return createResponse(baseMessage.ID, *result)
+	case mcp.MethodCompletionComplete:
+		var request mcp.CompleteRequest
+		var result *mcp.CompleteResult
+		if s.capabilities.completions == nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.METHOD_NOT_FOUND,
+				err:  fmt.Errorf("completions %w", ErrUnsupported),
+			}
+		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.INVALID_REQUEST,
+				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
+			}
+		} else {
+			request.Header = headers
+			s.hooks.beforeComplete(ctx, baseMessage.ID, &request)
+			result, err = s.handleComplete(ctx, baseMessage.ID, request)
+		}
+		if err != nil {
+			s.hooks.onError(ctx, baseMessage.ID, baseMessage.Method, &request, err)
+			return err.ToJSONRPCError()
+		}
+		s.hooks.afterComplete(ctx, baseMessage.ID, &request, result)
 		return createResponse(baseMessage.ID, *result)
 	default:
 		return createErrorResponse(

@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 	"os"
-	"runtime"
 	"testing"
 	"time"
 
@@ -15,22 +14,16 @@ import (
 // where using transport.NewStdioWithOptions directly followed by client.Start()
 // would fail with "stdio client not started" error
 func TestDirectTransportCreation(t *testing.T) {
-	tempFile, err := os.CreateTemp("", "mockstdio_server")
+	tempFile, err := os.CreateTemp(t.TempDir(), "mockstdio_server")
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 	tempFile.Close()
-	mockServerPath := tempFile.Name()
-
-	if runtime.GOOS == "windows" {
-		os.Remove(mockServerPath)
-		mockServerPath += ".exe"
-	}
+	mockServerPath := tempFile.Name() + ".exe"
 
 	if compileErr := compileTestServer(mockServerPath); compileErr != nil {
 		t.Fatalf("Failed to compile mock server: %v", compileErr)
 	}
-	defer os.Remove(mockServerPath)
 
 	// This is the pattern from issue #583 that was broken
 	tport := transport.NewStdioWithOptions(mockServerPath, nil, nil)
@@ -68,22 +61,16 @@ func TestDirectTransportCreation(t *testing.T) {
 
 // TestNewStdioMCPClientWithOptions tests that the old pattern still works
 func TestNewStdioMCPClientWithOptions(t *testing.T) {
-	tempFile, err := os.CreateTemp("", "mockstdio_server")
+	tempFile, err := os.CreateTemp(t.TempDir(), "mockstdio_server")
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 	tempFile.Close()
-	mockServerPath := tempFile.Name()
-
-	if runtime.GOOS == "windows" {
-		os.Remove(mockServerPath)
-		mockServerPath += ".exe"
-	}
+	mockServerPath := tempFile.Name() + ".exe"
 
 	if compileErr := compileTestServer(mockServerPath); compileErr != nil {
 		t.Fatalf("Failed to compile mock server: %v", compileErr)
 	}
-	defer os.Remove(mockServerPath)
 
 	// This pattern was already working
 	cli, err := NewStdioMCPClientWithOptions(mockServerPath, nil, nil)
@@ -123,22 +110,16 @@ func TestNewStdioMCPClientWithOptions(t *testing.T) {
 
 // TestMultipleClientStartCalls tests that calling client.Start() multiple times is safe
 func TestMultipleClientStartCalls(t *testing.T) {
-	tempFile, err := os.CreateTemp("", "mockstdio_server")
+	tempFile, err := os.CreateTemp(t.TempDir(), "mockstdio_server")
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 	tempFile.Close()
-	mockServerPath := tempFile.Name()
-
-	if runtime.GOOS == "windows" {
-		os.Remove(mockServerPath)
-		mockServerPath += ".exe"
-	}
+	mockServerPath := tempFile.Name() + ".exe"
 
 	if compileErr := compileTestServer(mockServerPath); compileErr != nil {
 		t.Fatalf("Failed to compile mock server: %v", compileErr)
 	}
-	defer os.Remove(mockServerPath)
 
 	tport := transport.NewStdioWithOptions(mockServerPath, nil, nil)
 	cli := NewClient(tport)

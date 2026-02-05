@@ -83,11 +83,11 @@ func TestMCPServer_ConcurrentOperations(t *testing.T) {
 		operationsPerGoroutine := 50
 
 		// Concurrent add operations
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			wg.Add(1)
 			go func(id int) {
 				defer wg.Done()
-				for j := 0; j < operationsPerGoroutine; j++ {
+				for j := range operationsPerGoroutine {
 					toolName := fmt.Sprintf("tool-%d-%d", id, j)
 					server.AddTool(mcp.NewTool(toolName), nil)
 				}
@@ -102,11 +102,11 @@ func TestMCPServer_ConcurrentOperations(t *testing.T) {
 
 		// Concurrent delete operations
 		wg = sync.WaitGroup{}
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			wg.Add(1)
 			go func(id int) {
 				defer wg.Done()
-				for j := 0; j < operationsPerGoroutine; j++ {
+				for j := range operationsPerGoroutine {
 					toolName := fmt.Sprintf("tool-%d-%d", id, j)
 					server.DeleteTools(toolName)
 				}
@@ -128,11 +128,11 @@ func TestMCPServer_ConcurrentOperations(t *testing.T) {
 		operationsPerGoroutine := 50
 
 		// Concurrent add operations
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			wg.Add(1)
 			go func(id int) {
 				defer wg.Done()
-				for j := 0; j < operationsPerGoroutine; j++ {
+				for j := range operationsPerGoroutine {
 					uri := fmt.Sprintf("test://resource-%d-%d", id, j)
 					server.AddResource(
 						mcp.Resource{URI: uri, Name: uri},
@@ -148,11 +148,11 @@ func TestMCPServer_ConcurrentOperations(t *testing.T) {
 
 		// Concurrent delete operations
 		wg = sync.WaitGroup{}
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			wg.Add(1)
 			go func(id int) {
 				defer wg.Done()
-				for j := 0; j < operationsPerGoroutine; j++ {
+				for j := range operationsPerGoroutine {
 					uri := fmt.Sprintf("test://resource-%d-%d", id, j)
 					server.DeleteResources(uri)
 				}
@@ -170,11 +170,11 @@ func TestMCPServer_ConcurrentOperations(t *testing.T) {
 		operationsPerGoroutine := 50
 
 		// Concurrent add operations
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			wg.Add(1)
 			go func(id int) {
 				defer wg.Done()
-				for j := 0; j < operationsPerGoroutine; j++ {
+				for j := range operationsPerGoroutine {
 					promptName := fmt.Sprintf("prompt-%d-%d", id, j)
 					server.AddPrompt(
 						mcp.Prompt{Name: promptName, Description: promptName},
@@ -188,11 +188,11 @@ func TestMCPServer_ConcurrentOperations(t *testing.T) {
 
 		// Concurrent delete operations
 		wg = sync.WaitGroup{}
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			wg.Add(1)
 			go func(id int) {
 				defer wg.Done()
-				for j := 0; j < operationsPerGoroutine; j++ {
+				for j := range operationsPerGoroutine {
 					promptName := fmt.Sprintf("prompt-%d-%d", id, j)
 					server.DeletePrompts(promptName)
 				}
@@ -212,7 +212,7 @@ func TestMCPServer_PaginationEdgeCases(t *testing.T) {
 		)
 
 		// Add some resources
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			uri := fmt.Sprintf("test://resource-%d", i)
 			server.AddResource(
 				mcp.Resource{URI: uri, Name: fmt.Sprintf("Resource %d", i)},
@@ -241,21 +241,21 @@ func TestMCPServer_PaginationEdgeCases(t *testing.T) {
 		)
 
 		// Add 3 tools
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			server.AddTool(mcp.NewTool(fmt.Sprintf("tool-%d", i)), nil)
 		}
 
 		// Create cursor that points beyond the list
 		beyondCursor := base64.StdEncoding.EncodeToString([]byte("tool-99"))
 
-		response := server.HandleMessage(context.Background(), []byte(fmt.Sprintf(`{
+		response := server.HandleMessage(context.Background(), fmt.Appendf(nil, `{
 			"jsonrpc": "2.0",
 			"id": 1,
 			"method": "tools/list",
 			"params": {
 				"cursor": "%s"
 			}
-		}`, beyondCursor)))
+		}`, beyondCursor))
 
 		resp, ok := response.(mcp.JSONRPCResponse)
 		require.True(t, ok)
@@ -276,7 +276,7 @@ func TestMCPServer_PaginationEdgeCases(t *testing.T) {
 		)
 
 		// Add exactly paginationLimit prompts
-		for i := 0; i < limit; i++ {
+		for i := range limit {
 			server.AddPrompt(
 				mcp.Prompt{Name: fmt.Sprintf("prompt-%d", i), Description: "Test"},
 				nil,
@@ -300,14 +300,14 @@ func TestMCPServer_PaginationEdgeCases(t *testing.T) {
 		assert.NotEmpty(t, result.NextCursor, "Cursor should be set when exactly at limit")
 
 		// Request next page - should be empty
-		response = server.HandleMessage(context.Background(), []byte(fmt.Sprintf(`{
+		response = server.HandleMessage(context.Background(), fmt.Appendf(nil, `{
 			"jsonrpc": "2.0",
 			"id": 2,
 			"method": "prompts/list",
 			"params": {
 				"cursor": "%s"
 			}
-		}`, result.NextCursor)))
+		}`, result.NextCursor))
 
 		resp, ok = response.(mcp.JSONRPCResponse)
 		require.True(t, ok)
@@ -349,7 +349,7 @@ func TestMCPServer_SessionUnregistrationDuringNotification(t *testing.T) {
 	// Create multiple sessions
 	numSessions := 10
 	sessions := make([]*sessionTestClient, numSessions)
-	for i := 0; i < numSessions; i++ {
+	for i := range numSessions {
 		sessions[i] = &sessionTestClient{
 			sessionID:           fmt.Sprintf("session-%d", i),
 			notificationChannel: make(chan mcp.JSONRPCNotification, 10),
@@ -383,7 +383,7 @@ func TestMCPServer_SessionUnregistrationDuringNotification(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < numSessions; i++ {
+		for i := range numSessions {
 			time.Sleep(5 * time.Millisecond)
 			server.UnregisterSession(context.Background(), sessions[i].SessionID())
 		}
@@ -808,7 +808,7 @@ func TestMCPServer_ConcurrentCapabilityChecks(t *testing.T) {
 	}()
 
 	// Goroutines that check capabilities
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -842,7 +842,7 @@ func TestMCPServer_PaginationCursorStability(t *testing.T) {
 	)
 
 	// Add initial tools
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		server.AddTool(mcp.NewTool(fmt.Sprintf("tool-%02d", i)), nil)
 	}
 
@@ -868,14 +868,14 @@ func TestMCPServer_PaginationCursorStability(t *testing.T) {
 	server.DeleteTools("tool-05")
 
 	// Get second page with original cursor
-	response = server.HandleMessage(context.Background(), []byte(fmt.Sprintf(`{
+	response = server.HandleMessage(context.Background(), fmt.Appendf(nil, `{
 		"jsonrpc": "2.0",
 		"id": 2,
 		"method": "tools/list",
 		"params": {
 			"cursor": "%s"
 		}
-	}`, cursor)))
+	}`, cursor))
 
 	resp, ok = response.(mcp.JSONRPCResponse)
 	require.True(t, ok)

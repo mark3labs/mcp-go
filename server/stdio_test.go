@@ -283,7 +283,7 @@ func TestStdioServer(t *testing.T) {
 		mcpServer := NewMCPServer("test", "1.0.0")
 
 		// Add multiple tools that simulate work and track concurrent execution
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			toolName := fmt.Sprintf("test_tool_%d", i)
 			mcpServer.AddTool(
 				mcp.NewTool(toolName),
@@ -348,7 +348,7 @@ func TestStdioServer(t *testing.T) {
 		responseChan := make(chan string, 10)
 
 		// Send 10 concurrent tool calls
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			wg.Add(1)
 			go func(id int) {
 				defer wg.Done()
@@ -371,7 +371,7 @@ func TestStdioServer(t *testing.T) {
 
 		// Read all responses
 		go func() {
-			for i := 0; i < 10; i++ {
+			for range 10 {
 				if scanner.Scan() {
 					responseChan <- scanner.Text()
 				}
@@ -422,7 +422,7 @@ func TestStdioServer(t *testing.T) {
 		}
 
 		// Verify tools were called
-		callCount.Range(func(key, value interface{}) bool {
+		callCount.Range(func(key, value any) bool {
 			toolName := key.(string)
 			count := value.(int)
 			if count == 0 {

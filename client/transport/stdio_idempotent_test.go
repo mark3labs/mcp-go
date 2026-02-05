@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"runtime"
 	"testing"
 	"time"
 
@@ -13,22 +12,16 @@ import (
 
 // TestStdio_StartIdempotency tests that calling Start() multiple times is safe
 func TestStdio_StartIdempotency(t *testing.T) {
-	tempFile, err := os.CreateTemp("", "mockstdio_server")
+	tempFile, err := os.CreateTemp(t.TempDir(), "mockstdio_server")
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 	tempFile.Close()
-	mockServerPath := tempFile.Name()
-
-	if runtime.GOOS == "windows" {
-		os.Remove(mockServerPath)
-		mockServerPath += ".exe"
-	}
+	mockServerPath := tempFile.Name() + ".exe"
 
 	if compileErr := compileTestServer(mockServerPath); compileErr != nil {
 		t.Fatalf("Failed to compile mock server: %v", compileErr)
 	}
-	defer os.Remove(mockServerPath)
 
 	stdio := NewStdio(mockServerPath, nil)
 
@@ -96,22 +89,16 @@ func TestStdio_StartFailureReset(t *testing.T) {
 
 // TestStdio_StartWithOptions_Idempotent tests idempotency with custom options
 func TestStdio_StartWithOptions_Idempotent(t *testing.T) {
-	tempFile, err := os.CreateTemp("", "mockstdio_server")
+	tempFile, err := os.CreateTemp(t.TempDir(), "mockstdio_server")
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
 	tempFile.Close()
-	mockServerPath := tempFile.Name()
-
-	if runtime.GOOS == "windows" {
-		os.Remove(mockServerPath)
-		mockServerPath += ".exe"
-	}
+	mockServerPath := tempFile.Name() + ".exe"
 
 	if compileErr := compileTestServer(mockServerPath); compileErr != nil {
 		t.Fatalf("Failed to compile mock server: %v", compileErr)
 	}
-	defer os.Remove(mockServerPath)
 
 	cmdFuncCallCount := 0
 	cmdFunc := func(ctx context.Context, command string, env []string, args []string) (*exec.Cmd, error) {

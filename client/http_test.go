@@ -15,7 +15,7 @@ import (
 
 func TestHTTPClient(t *testing.T) {
 	hooks := &server.Hooks{}
-	hooks.AddAfterCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest, result *mcp.CallToolResult) {
+	hooks.AddAfterCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest, result any) {
 		clientSession := server.ClientSessionFromContext(ctx)
 		// wait until all the notifications are handled
 		for len(clientSession.NotificationChannel()) > 0 {

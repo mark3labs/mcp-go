@@ -353,7 +353,7 @@ func NewToolResultImage(text, imageData, mimeType string) *CallToolResult {
 }
 
 // NewToolResultAudio creates a new CallToolResult with both text and audio content
-func NewToolResultAudio(text, imageData, mimeType string) *CallToolResult {
+func NewToolResultAudio(text, audioData, mimeType string) *CallToolResult {
 	return &CallToolResult{
 		Content: []Content{
 			TextContent{
@@ -362,7 +362,7 @@ func NewToolResultAudio(text, imageData, mimeType string) *CallToolResult {
 			},
 			AudioContent{
 				Type:     ContentTypeAudio,
-				Data:     imageData,
+				Data:     audioData,
 				MIMEType: mimeType,
 			},
 		},
@@ -963,6 +963,11 @@ func ParseStringMap(request CallToolRequest, key string, defaultValue map[string
 // ToBoolPtr returns a pointer to the given boolean value
 func ToBoolPtr(b bool) *bool {
 	return &b
+}
+
+// ToInt64Ptr returns a pointer to the given int64 value
+func ToInt64Ptr(i int64) *int64 {
+	return &i
 }
 
 // GetTextFromContent extracts text from a Content interface that might be a TextContent struct

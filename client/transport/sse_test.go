@@ -319,7 +319,7 @@ func TestSSE(t *testing.T) {
 		responses := make([]*JSONRPCResponse, numRequests)
 		errors := make([]error, numRequests)
 
-		for i := 0; i < numRequests; i++ {
+		for i := range numRequests {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
@@ -348,7 +348,7 @@ func TestSSE(t *testing.T) {
 		wg.Wait()
 
 		// Check results
-		for i := 0; i < numRequests; i++ {
+		for i := range numRequests {
 			if errors[i] != nil {
 				t.Errorf("Request %d failed: %v", i, errors[i])
 				continue
@@ -1263,7 +1263,10 @@ func TestSSE_SendRequest_Timeout(t *testing.T) {
 		duration := time.Since(startTime)
 
 		require.Error(t, err, "Expected timeout error")
-		require.Contains(t, err.Error(), "timeout", "Error should mention timeout")
+		errMsg := err.Error()
+		require.True(t,
+			strings.Contains(errMsg, "timeout") || strings.Contains(errMsg, "deadline exceeded"),
+			"Error should mention timeout or deadline, got: %v", err)
 		expectedTimeout := 2 * time.Second
 		require.GreaterOrEqual(t, duration, expectedTimeout*7/10) // 70% of expected
 		require.LessOrEqual(t, duration, expectedTimeout*13/10)   // 130% of expected

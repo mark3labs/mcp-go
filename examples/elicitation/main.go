@@ -248,20 +248,20 @@ func main() {
 			if session == nil {
 				return nil, fmt.Errorf("no active session")
 			}
-			
+
 			// Generate unique elicitation ID
 			elicitationID := uuid.New().String()
-			
+
 			// Create URL with elicitation ID for tracking
 			// In a real application, you would store the ID and associate it with the user session
 			url := fmt.Sprintf("https://myserver.com/set-api-key?elicitationId=%s", elicitationID)
 
 			// Request URL mode elicitation
 			result, err := mcpServer.RequestURLElicitation(
-				ctx, 
-				session, 
-				elicitationID, 
-				url, 
+				ctx,
+				session,
+				elicitationID,
+				url,
 				"Please authenticate in your browser to continue.",
 			)
 			if err != nil {
@@ -281,14 +281,14 @@ func main() {
 					// Log error but continue
 					fmt.Fprintf(os.Stderr, "Failed to send completion notification: %v\n", err)
 				}
-				
+
 				return &mcp.CallToolResult{
 					Content: []mcp.Content{
 						mcp.NewTextContent("Authentication flow initiated. User accepted URL open request."),
 					},
 				}, nil
 			}
-			
+
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{
 					mcp.NewTextContent(fmt.Sprintf("User declined authentication: %s", result.Action)),
@@ -311,7 +311,7 @@ func main() {
 			if !isAuthorized {
 				// When a request needs authorization that hasn't been set up
 				elicitationID := uuid.New().String()
-				
+
 				// Return a special error that tells the client to start elicitation
 				return nil, mcp.URLElicitationRequiredError{
 					Elicitations: []mcp.ElicitationParams{

@@ -582,7 +582,7 @@ func TestSessionResourcesConcurrency(t *testing.T) {
 
 	// Goroutine 1: Add resources
 	go func() {
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			uri := fmt.Sprintf("test://resource%d", i)
 			err := server.AddSessionResource(
 				session.SessionID(),
@@ -603,7 +603,7 @@ func TestSessionResourcesConcurrency(t *testing.T) {
 	// Goroutine 2: Delete resources
 	go func() {
 		time.Sleep(10 * time.Millisecond) // Let some adds happen first
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			uri := fmt.Sprintf("test://resource%d", i*2)
 			err := server.DeleteSessionResources(session.SessionID(), uri)
 			if err != nil {
@@ -615,7 +615,7 @@ func TestSessionResourcesConcurrency(t *testing.T) {
 
 	// Goroutine 3: Add and delete same resource repeatedly
 	go func() {
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			// Add
 			err := server.AddSessionResource(
 				session.SessionID(),
@@ -639,7 +639,7 @@ func TestSessionResourcesConcurrency(t *testing.T) {
 	}()
 
 	// Wait for all goroutines to complete
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		<-done
 	}
 

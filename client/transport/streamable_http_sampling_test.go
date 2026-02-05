@@ -408,7 +408,7 @@ func TestStreamableHTTP_ConcurrentSamplingRequests(t *testing.T) {
 	go client.handleIncomingRequest(ctx, request2)
 
 	// Wait for both responses to complete
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case <-responseComplete:
 			// Response received

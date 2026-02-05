@@ -121,7 +121,7 @@ func TestSSEServer(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(numSessions)
 
-		for i := 0; i < numSessions; i++ {
+		for i := range numSessions {
 			go func(sessionNum int) {
 				defer wg.Done()
 
@@ -725,10 +725,10 @@ func TestSSEServer(t *testing.T) {
 			WithSSEEndpoint(sseEndpoint),
 			WithHTTPServer(srv),
 		}
-		for i := 0; i < 100; i++ {
+		for range 100 {
 
 			var options []SSEOption
-			for i2 := 0; i2 < 100; i2++ {
+			for range 100 {
 				index := rand.Intn(len(rands))
 				options = append(options, rands[index])
 			}
@@ -1205,7 +1205,7 @@ func TestSSEServer(t *testing.T) {
 
 		// Test concurrent access
 		var wg sync.WaitGroup
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			wg.Add(2)
 			go func(i int) {
 				defer wg.Done()
@@ -1447,7 +1447,7 @@ func TestSSEServer(t *testing.T) {
 	t.Run("Headers are passed through to tool requests", func(t *testing.T) {
 		hooks := &Hooks{}
 		headerVerified := make(chan struct{})
-		hooks.AddAfterCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest, result *mcp.CallToolResult) {
+		hooks.AddAfterCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest, result any) {
 			if message.Params.Name == "verify-headers" {
 				select {
 				case <-headerVerified:
@@ -1521,7 +1521,7 @@ func TestSSEServer(t *testing.T) {
 	t.Run("Headers are not nil when no headers are set", func(t *testing.T) {
 		hooks := &Hooks{}
 		headersChecked := make(chan struct{})
-		hooks.AddAfterCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest, result *mcp.CallToolResult) {
+		hooks.AddAfterCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest, result any) {
 			if message.Params.Name == "check-headers-not-nil" {
 				select {
 				case <-headersChecked:

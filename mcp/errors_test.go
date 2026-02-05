@@ -191,13 +191,13 @@ func TestURLElicitationRequiredError(t *testing.T) {
 	jsonRPCError := err.JSONRPCError()
 	require.Equal(t, URL_ELICITATION_REQUIRED, jsonRPCError.Error.Code)
 	require.Equal(t, expectedMsg, jsonRPCError.Error.Message)
-	
+
 	dataMap, ok := jsonRPCError.Error.Data.(map[string]any)
 	require.True(t, ok, "Expected Data to be map[string]any")
-	
+
 	elicitations, ok := dataMap["elicitations"].([]ElicitationParams)
 	require.True(t, ok, "Expected elicitations in Data")
-	
+
 	require.Equal(t, 1, len(elicitations))
 	require.Equal(t, "123", elicitations[0].ElicitationID)
 }

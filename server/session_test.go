@@ -78,9 +78,7 @@ func (f *sessionTestClientWithTools) GetSessionTools() map[string]ServerTool {
 	}
 
 	toolsCopy := make(map[string]ServerTool, len(f.sessionTools))
-	for k, v := range f.sessionTools {
-		toolsCopy[k] = v
-	}
+	maps.Copy(toolsCopy, f.sessionTools)
 	return toolsCopy
 }
 
@@ -95,9 +93,7 @@ func (f *sessionTestClientWithTools) SetSessionTools(tools map[string]ServerTool
 	}
 
 	toolsCopy := make(map[string]ServerTool, len(tools))
-	for k, v := range tools {
-		toolsCopy[k] = v
-	}
+	maps.Copy(toolsCopy, tools)
 	f.sessionTools = toolsCopy
 }
 
@@ -846,10 +842,13 @@ func TestMCPServer_CallSessionTool(t *testing.T) {
 	resp, ok := response.(mcp.JSONRPCResponse)
 	assert.True(t, ok)
 
-	callToolResult, ok := resp.Result.(mcp.CallToolResult)
-	assert.True(t, ok)
+	// Result is a *CallToolResult, need to type-assert
+	callToolResult, ok := resp.Result.(*mcp.CallToolResult)
+	assert.True(t, ok, "Result should be *CallToolResult for sync tool call")
+	require.NotNil(t, callToolResult)
 
 	// Since we specify a tool with the same name for current session, the expected text should be "session result"
+	require.NotEmpty(t, callToolResult.Content, "Content should not be empty")
 	if text := callToolResult.Content[0].(mcp.TextContent).Text; text != "session result" {
 		t.Errorf("Expected result 'session result', got %q", text)
 	}

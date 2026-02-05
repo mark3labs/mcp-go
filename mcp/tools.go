@@ -58,9 +58,10 @@ type CallToolRequest struct {
 }
 
 type CallToolParams struct {
-	Name      string `json:"name"`
-	Arguments any    `json:"arguments,omitempty"`
-	Meta      *Meta  `json:"_meta,omitempty"`
+	Name      string      `json:"name"`
+	Arguments any         `json:"arguments,omitempty"`
+	Meta      *Meta       `json:"_meta,omitempty"`
+	Task      *TaskParams `json:"task,omitempty"`
 }
 
 // GetArguments returns the Arguments as map[string]any for backward compatibility
@@ -553,6 +554,24 @@ type ToolListChangedNotification struct {
 	Notification
 }
 
+// TaskSupport indicates how a tool supports task augmentation.
+type TaskSupport string
+
+const (
+	// TaskSupportForbidden means the tool cannot be invoked as a task (default).
+	TaskSupportForbidden TaskSupport = "forbidden"
+	// TaskSupportOptional means the tool can be invoked as a task or normally.
+	TaskSupportOptional TaskSupport = "optional"
+	// TaskSupportRequired means the tool must be invoked as a task.
+	TaskSupportRequired TaskSupport = "required"
+)
+
+// ToolExecution describes execution behavior for a tool.
+type ToolExecution struct {
+	// TaskSupport indicates whether the tool supports task augmentation.
+	TaskSupport TaskSupport `json:"taskSupport,omitempty"`
+}
+
 // Tool represents the definition for a tool the client can call.
 type Tool struct {
 	// Meta is a metadata object that is reserved by MCP for storing additional information.
@@ -575,6 +594,8 @@ type Tool struct {
 	DeferLoading bool `json:"defer_loading,omitempty"`
 	// Icons provides visual identifiers for the tool
 	Icons []Icon `json:"icons,omitempty"`
+	// Execution describes execution behavior for the tool
+	Execution *ToolExecution `json:"execution,omitempty"`
 }
 
 // GetName returns the name of the tool.
@@ -630,15 +651,20 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 		m["icons"] = t.Icons
 	}
 
+	if t.Execution != nil {
+		m["execution"] = t.Execution
+	}
+
 	return json.Marshal(m)
 }
 
 // ToolArgumentsSchema represents a JSON Schema for tool arguments.
 type ToolArgumentsSchema struct {
-	Defs       map[string]any `json:"$defs,omitempty"`
-	Type       string         `json:"type"`
-	Properties map[string]any `json:"properties,omitempty"`
-	Required   []string       `json:"required,omitempty"`
+	Defs                 map[string]any `json:"$defs,omitempty"`
+	Type                 string         `json:"type"`
+	Properties           map[string]any `json:"properties,omitempty"`
+	Required             []string       `json:"required,omitempty"`
+	AdditionalProperties any            `json:"additionalProperties,omitempty"`
 }
 
 type ToolInputSchema ToolArgumentsSchema // For retro-compatibility
@@ -660,6 +686,10 @@ func (tis ToolArgumentsSchema) MarshalJSON() ([]byte, error) {
 
 	if len(tis.Required) > 0 {
 		m["required"] = tis.Required
+	}
+
+	if tis.AdditionalProperties != nil {
+		m["additionalProperties"] = tis.AdditionalProperties
 	}
 
 	return json.Marshal(m)
@@ -813,6 +843,18 @@ func WithToolIcons(icons ...Icon) ToolOption {
 	}
 }
 
+// WithTaskSupport sets the task support mode for the tool.
+// It configures whether the tool can be invoked as a task (asynchronously).
+// Valid values are TaskSupportForbidden (default), TaskSupportOptional, or TaskSupportRequired.
+func WithTaskSupport(support TaskSupport) ToolOption {
+	return func(t *Tool) {
+		if t.Execution == nil {
+			t.Execution = &ToolExecution{}
+		}
+		t.Execution.TaskSupport = support
+	}
+}
+
 // WithRawInputSchema sets a raw JSON schema for the tool's input.
 // Use this when you need full control over the schema or when working with
 // complex schemas that can't be generated from Go types. The jsonschema library
@@ -916,6 +958,15 @@ func WithIdempotentHintAnnotation(value bool) ToolOption {
 func WithOpenWorldHintAnnotation(value bool) ToolOption {
 	return func(t *Tool) {
 		t.Annotations.OpenWorldHint = &value
+	}
+}
+
+// WithSchemaAdditionalProperties sets the additionalProperties field on the tool's input schema.
+// It accepts false (disallow extra properties), true (allow any), or a schema map
+// to validate additional properties against.
+func WithSchemaAdditionalProperties(schema any) ToolOption {
+	return func(t *Tool) {
+		t.InputSchema.AdditionalProperties = schema
 	}
 }
 

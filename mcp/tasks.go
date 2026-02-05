@@ -16,10 +16,12 @@ type TaskOption func(*Task)
 // The task will be configured based on the provided options.
 // Options are applied in order, allowing for flexible task configuration.
 func NewTask(taskId string, opts ...TaskOption) Task {
+	now := time.Now().UTC().Format(time.RFC3339)
 	task := Task{
-		TaskId:    taskId,
-		Status:    TaskStatusWorking,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		TaskId:        taskId,
+		Status:        TaskStatusWorking,
+		CreatedAt:     now,
+		LastUpdatedAt: now,
 	}
 
 	for _, opt := range opts {
@@ -146,6 +148,61 @@ func NewTasksCapabilityWithToolsOnly() *TasksCapability {
 			}{
 				Call: &struct{}{},
 			},
+		},
+	}
+}
+
+//
+// Related Task Metadata Functions
+//
+
+// RelatedTaskMetaKey is the metadata key for associating a message with a task.
+const RelatedTaskMetaKey = "io.modelcontextprotocol/related-task"
+
+// RelatedTaskMeta creates the metadata for associating a message with a task.
+// The returned map contains a "taskId" field with the provided task ID.
+func RelatedTaskMeta(taskID string) map[string]any {
+	return map[string]any{
+		"taskId": taskID,
+	}
+}
+
+// WithRelatedTask returns a Meta with the related task ID set.
+// This is useful for associating task results with their originating task.
+func WithRelatedTask(taskID string) *Meta {
+	return &Meta{
+		AdditionalFields: map[string]any{
+			RelatedTaskMetaKey: RelatedTaskMeta(taskID),
+		},
+	}
+}
+
+//
+// Model Immediate Response Metadata Functions
+//
+
+// ModelImmediateResponseMetaKey is the metadata key for providing an immediate response to the model.
+// Servers can use this optional key in the _meta field of CreateTaskResult to provide
+// a string that should be passed as an immediate tool result to the model while the task
+// continues executing asynchronously in the background.
+const ModelImmediateResponseMetaKey = "io.modelcontextprotocol/model-immediate-response"
+
+// WithModelImmediateResponse creates Meta with an immediate response message for the model.
+// This allows the model to continue processing while the task executes asynchronously.
+// The message parameter is a human-readable string that will be shown to the model.
+//
+// Example:
+//
+//	return &mcp.CreateTaskResult{
+//	    Task: task,
+//	    Result: mcp.Result{
+//	        Meta: mcp.WithModelImmediateResponse("Processing your request. This may take a few minutes."),
+//	    },
+//	}
+func WithModelImmediateResponse(message string) *Meta {
+	return &Meta{
+		AdditionalFields: map[string]any{
+			ModelImmediateResponseMetaKey: message,
 		},
 	}
 }
