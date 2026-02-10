@@ -531,12 +531,12 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 	}
 
 	sessionID := r.Header.Get(HeaderKeySessionID)
-	// the specification didn't say we should validate the session id
-
+	// The MCP specification doesn't require validating session ID for GET requests.
+	// If no session ID is provided by the client, generate one using the configured SessionIdManager
+	// so that custom session id generators are honored consistently across POST/GET flows.
 	if sessionID == "" {
-		// It's a stateless server,
-		// but the MCP server requires a unique ID for registering, so we use a random one
-		sessionID = uuid.New().String()
+		sessionIdManager := s.sessionIdManagerResolver.ResolveSessionIdManager(r)
+		sessionID = sessionIdManager.Generate()
 	}
 
 	// Get or create session atomically to prevent TOCTOU races
