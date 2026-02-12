@@ -430,6 +430,10 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to create session ID", http.StatusInternalServerError)
 		return
 	}
+	if sessionID == "" {
+		http.Error(w, "Failed to create session ID", http.StatusInternalServerError)
+		return
+	}
 
 	session := &sseSession{
 		done:                make(chan struct{}),
