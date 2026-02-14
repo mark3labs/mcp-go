@@ -573,7 +573,7 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusNoContent {
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
 			if c.oauthHandler != nil {
