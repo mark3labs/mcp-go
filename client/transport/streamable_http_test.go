@@ -988,6 +988,36 @@ func TestStreamableHTTP_SendNotification_Unauthorized_StaticToken(t *testing.T) 
 	}
 }
 
+// TestStreamableHTTP_SendNotification_Accepts204NoContent verifies that SendNotification
+// treats HTTP 204 No Content as a success response per RFC 7231.
+// See: https://github.com/mark3labs/mcp-go/issues/700
+func TestStreamableHTTP_SendNotification_Accepts204NoContent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	transport, err := NewStreamableHTTP(server.URL)
+	if err != nil {
+		t.Fatalf("Failed to create StreamableHTTP: %v", err)
+	}
+
+	if err := transport.Start(context.Background()); err != nil {
+		t.Fatalf("Failed to start transport: %v", err)
+	}
+
+	err = transport.SendNotification(context.Background(), mcp.JSONRPCNotification{
+		JSONRPC: "2.0",
+		Notification: mcp.Notification{
+			Method: "notifications/initialized",
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("SendNotification should accept 204 No Content, got error: %v", err)
+	}
+}
+
 // TestStreamableHTTPHostOverride tests Host header override for StreamableHTTP transport
 func TestStreamableHTTPHostOverride(t *testing.T) {
 	// Create a test server that captures the Host header
