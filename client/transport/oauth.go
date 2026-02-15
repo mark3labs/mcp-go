@@ -32,6 +32,10 @@ type OAuthConfig struct {
 	// AuthServerMetadataURL is the URL to the OAuth server metadata
 	// If empty, the client will attempt to discover it from the base URL
 	AuthServerMetadataURL string
+	// ProtectedResourceMetadataURL is an explicit URL for the OAuth Protected
+	// Resource metadata endpoint. If set, it is used directly instead of
+	// constructing the well-known URL from the base URL.
+	ProtectedResourceMetadataURL string
 	// PKCEEnabled enables PKCE for the OAuth flow (recommended for public clients)
 	PKCEEnabled bool
 	// HTTPClient is an optional HTTP client to use for requests.
@@ -145,7 +149,13 @@ type OAuthHandler struct {
 	metadataOnce     sync.Once
 	baseURL          string
 
-	mu            sync.RWMutex // Protects expectedState
+	// protectedResourceMetadataURL is discovered at runtime from the
+	// WWW-Authenticate header (RFC 9728 Section 5.1). It is separate from
+	// config.ProtectedResourceMetadataURL which is set explicitly by the caller.
+	// Protected by mu.
+	protectedResourceMetadataURL string
+
+	mu            sync.RWMutex // Protects expectedState and protectedResourceMetadataURL
 	expectedState string       // Expected state value for CSRF protection
 }
 
@@ -310,6 +320,61 @@ func (h *OAuthHandler) SetBaseURL(baseURL string) {
 	h.baseURL = baseURL
 }
 
+// SetProtectedResourceMetadataURL stores a PRM URL discovered at runtime
+// (e.g. from the WWW-Authenticate header in a 401 response per RFC 9728).
+func (h *OAuthHandler) SetProtectedResourceMetadataURL(metadataURL string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.protectedResourceMetadataURL = metadataURL
+}
+
+// buildWellKnownURL constructs a well-known URL per RFC 8414 Section 3.
+// It inserts the well-known suffix between the host and the path:
+//
+//	https://example.com/path  + "oauth-protected-resource"
+//	→ https://example.com/.well-known/oauth-protected-resource/path
+func buildWellKnownURL(baseURL, wellKnownSuffix string) (string, error) {
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse base URL: %w", err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("invalid base URL: missing scheme or host in %q", baseURL)
+	}
+
+	path := strings.TrimRight(parsed.Path, "/")
+	wellKnown := "/.well-known/" + wellKnownSuffix
+	if path != "" {
+		wellKnown += path
+	}
+
+	parsed.Path = wellKnown
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String(), nil
+}
+
+// extractResourceMetadataURL parses the resource_metadata parameter from a
+// WWW-Authenticate header value per RFC 9728 Section 5.1.
+// Returns the URL or an empty string if not found.
+func extractResourceMetadataURL(wwwAuthenticate string) string {
+	if wwwAuthenticate == "" {
+		return ""
+	}
+	// RFC 7235 treats auth-param names as case-insensitive
+	const param = `resource_metadata="`
+	_, after, found := strings.Cut(strings.ToLower(wwwAuthenticate), param)
+	if !found {
+		return ""
+	}
+	// Extract the value from the original string to preserve URL casing
+	value, _, found := strings.Cut(wwwAuthenticate[len(wwwAuthenticate)-len(after):], `"`)
+	if !found {
+		return ""
+	}
+	return value
+}
+
 // GetExpectedState returns the expected state value (for testing purposes)
 func (h *OAuthHandler) GetExpectedState() string {
 	h.mu.RLock()
@@ -372,8 +437,25 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 			return
 		}
 
+		// Determine the protected resource metadata URL. Priority:
+		// 1. Explicit config value
+		// 2. Runtime-discovered value (from WWW-Authenticate header)
+		// 3. Construct from base URL per RFC 8414
+		protectedResourceURL := h.config.ProtectedResourceMetadataURL
+		if protectedResourceURL == "" {
+			h.mu.RLock()
+			protectedResourceURL = h.protectedResourceMetadataURL
+			h.mu.RUnlock()
+		}
+		if protectedResourceURL == "" {
+			protectedResourceURL, err = buildWellKnownURL(baseURL, "oauth-protected-resource")
+			if err != nil {
+				h.metadataFetchErr = fmt.Errorf("failed to build protected resource URL: %w", err)
+				return
+			}
+		}
+
 		// Try to fetch the OAuth Protected Resource metadata
-		protectedResourceURL := baseURL + "/.well-known/oauth-protected-resource"
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, protectedResourceURL, nil)
 		if err != nil {
 			h.metadataFetchErr = fmt.Errorf("failed to create protected resource request: %w", err)
@@ -392,14 +474,19 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 
 		// If we can't get the protected resource metadata, try OAuth Authorization Server discovery
 		if resp.StatusCode != http.StatusOK {
-			h.fetchMetadataFromURL(ctx, baseURL+"/.well-known/oauth-authorization-server")
+			authServerWellKnown, wkErr := buildWellKnownURL(baseURL, "oauth-authorization-server")
+			if wkErr != nil {
+				h.metadataFetchErr = fmt.Errorf("failed to build auth server URL: %w", wkErr)
+				return
+			}
+			h.fetchMetadataFromURL(ctx, authServerWellKnown)
 			if h.serverMetadata != nil {
 				return
 			}
 			// If that also fails, fall back to default endpoints
-			metadata, err := h.getDefaultEndpoints(baseURL)
-			if err != nil {
-				h.metadataFetchErr = fmt.Errorf("failed to get default endpoints: %w", err)
+			metadata, defErr := h.getDefaultEndpoints(baseURL)
+			if defErr != nil {
+				h.metadataFetchErr = fmt.Errorf("failed to get default endpoints: %w", defErr)
 				return
 			}
 			h.serverMetadata = metadata
@@ -415,9 +502,9 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 
 		// If no authorization servers are specified, fall back to default endpoints
 		if len(protectedResource.AuthorizationServers) == 0 {
-			metadata, err := h.getDefaultEndpoints(baseURL)
-			if err != nil {
-				h.metadataFetchErr = fmt.Errorf("failed to get default endpoints: %w", err)
+			metadata, defErr := h.getDefaultEndpoints(baseURL)
+			if defErr != nil {
+				h.metadataFetchErr = fmt.Errorf("failed to get default endpoints: %w", defErr)
 				return
 			}
 			h.serverMetadata = metadata
@@ -427,22 +514,32 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		// Use the first authorization server
 		authServerURL := protectedResource.AuthorizationServers[0]
 
-		// Try OAuth Authorization Server Metadata first
-		h.fetchMetadataFromURL(ctx, authServerURL+"/.well-known/oauth-authorization-server")
+		// Try OAuth Authorization Server Metadata first (RFC 8414)
+		authServerWellKnown, wkErr := buildWellKnownURL(authServerURL, "oauth-authorization-server")
+		if wkErr != nil {
+			h.metadataFetchErr = fmt.Errorf("failed to build auth server well-known URL: %w", wkErr)
+			return
+		}
+		h.fetchMetadataFromURL(ctx, authServerWellKnown)
 		if h.serverMetadata != nil {
 			return
 		}
 
 		// If OAuth Authorization Server Metadata discovery fails, try OpenID Connect discovery
-		h.fetchMetadataFromURL(ctx, authServerURL+"/.well-known/openid-configuration")
+		oidcWellKnown, wkErr := buildWellKnownURL(authServerURL, "openid-configuration")
+		if wkErr != nil {
+			h.metadataFetchErr = fmt.Errorf("failed to build OIDC well-known URL: %w", wkErr)
+			return
+		}
+		h.fetchMetadataFromURL(ctx, oidcWellKnown)
 		if h.serverMetadata != nil {
 			return
 		}
 
 		// If both discovery methods fail, use default endpoints based on the authorization server URL
-		metadata, err := h.getDefaultEndpoints(authServerURL)
-		if err != nil {
-			h.metadataFetchErr = fmt.Errorf("failed to get default endpoints: %w", err)
+		metadata, defErr := h.getDefaultEndpoints(authServerURL)
+		if defErr != nil {
+			h.metadataFetchErr = fmt.Errorf("failed to get default endpoints: %w", defErr)
 			return
 		}
 		h.serverMetadata = metadata

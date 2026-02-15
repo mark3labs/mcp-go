@@ -218,3 +218,64 @@ func TestStreamableHTTP_IsOAuthEnabled(t *testing.T) {
 		t.Errorf("Expected IsOAuthEnabled() to return true")
 	}
 }
+
+func TestStreamableHTTP_401_WWWAuthenticate_ExtractsMetadataURL(t *testing.T) {
+	metadataURL := "https://resource.example.com/.well-known/oauth-protected-resource"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+metadataURL+`"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	tokenStore := NewMemoryTokenStore()
+	_ = tokenStore.SaveToken(context.Background(), &Token{
+		AccessToken: "stale-token",
+		TokenType:   "Bearer",
+		ExpiresAt:   time.Now().Add(1 * time.Hour),
+	})
+
+	transport, err := NewStreamableHTTP(server.URL, WithHTTPOAuth(OAuthConfig{
+		ClientID:   "test-client",
+		TokenStore: tokenStore,
+	}))
+	if err != nil {
+		t.Fatalf("Failed to create transport: %v", err)
+	}
+
+	_, err = transport.SendRequest(context.Background(), JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(1),
+		Method:  "test",
+	})
+
+	var oauthErr *OAuthAuthorizationRequiredError
+	if !errors.As(err, &oauthErr) {
+		t.Fatalf("Expected OAuthAuthorizationRequiredError, got %T: %v", err, err)
+	}
+
+	if oauthErr.Handler.protectedResourceMetadataURL != metadataURL {
+		t.Errorf("Expected protectedResourceMetadataURL %q, got %q",
+			metadataURL, oauthErr.Handler.protectedResourceMetadataURL)
+	}
+}
+
+func TestStreamableHTTP_BaseURL_IncludesPath(t *testing.T) {
+	transport, err := NewStreamableHTTP(
+		"https://server.smithery.ai/googledrive",
+		WithHTTPOAuth(OAuthConfig{ClientID: "test"}),
+	)
+	if err != nil {
+		t.Fatalf("Failed to create transport: %v", err)
+	}
+
+	handler := transport.GetOAuthHandler()
+	if handler == nil {
+		t.Fatal("Expected OAuth handler to be set")
+	}
+
+	expected := "https://server.smithery.ai/googledrive"
+	if handler.baseURL != expected {
+		t.Errorf("Expected base URL %q, got %q", expected, handler.baseURL)
+	}
+}

@@ -239,3 +239,62 @@ func TestSSE_IsOAuthEnabled(t *testing.T) {
 		t.Errorf("Expected IsOAuthEnabled() to return true")
 	}
 }
+
+func TestSSE_401_WWWAuthenticate_ExtractsMetadataURL(t *testing.T) {
+	metadataURL := "https://resource.example.com/.well-known/oauth-protected-resource"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+metadataURL+`"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	tokenStore := NewMemoryTokenStore()
+	_ = tokenStore.SaveToken(context.Background(), &Token{
+		AccessToken: "stale-token",
+		TokenType:   "Bearer",
+		ExpiresAt:   time.Now().Add(1 * time.Hour),
+	})
+
+	transport, err := NewSSE(server.URL, WithOAuth(OAuthConfig{
+		ClientID:   "test-client",
+		TokenStore: tokenStore,
+	}))
+	if err != nil {
+		t.Fatalf("Failed to create SSE: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = transport.Start(ctx)
+
+	var oauthErr *OAuthAuthorizationRequiredError
+	if !errors.As(err, &oauthErr) {
+		t.Fatalf("Expected OAuthAuthorizationRequiredError, got %T: %v", err, err)
+	}
+
+	if oauthErr.Handler.protectedResourceMetadataURL != metadataURL {
+		t.Errorf("Expected protectedResourceMetadataURL %q, got %q",
+			metadataURL, oauthErr.Handler.protectedResourceMetadataURL)
+	}
+}
+
+func TestSSE_BaseURL_IncludesPath(t *testing.T) {
+	transport, err := NewSSE(
+		"https://server.smithery.ai/googledrive",
+		WithOAuth(OAuthConfig{ClientID: "test"}),
+	)
+	if err != nil {
+		t.Fatalf("Failed to create SSE: %v", err)
+	}
+
+	handler := transport.GetOAuthHandler()
+	if handler == nil {
+		t.Fatal("Expected OAuth handler to be set")
+	}
+
+	expected := "https://server.smithery.ai/googledrive"
+	if handler.baseURL != expected {
+		t.Errorf("Expected base URL %q, got %q", expected, handler.baseURL)
+	}
+}
