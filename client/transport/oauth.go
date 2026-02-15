@@ -152,9 +152,10 @@ type OAuthHandler struct {
 	// protectedResourceMetadataURL is discovered at runtime from the
 	// WWW-Authenticate header (RFC 9728 Section 5.1). It is separate from
 	// config.ProtectedResourceMetadataURL which is set explicitly by the caller.
+	// Protected by mu.
 	protectedResourceMetadataURL string
 
-	mu            sync.RWMutex // Protects expectedState
+	mu            sync.RWMutex // Protects expectedState and protectedResourceMetadataURL
 	expectedState string       // Expected state value for CSRF protection
 }
 
@@ -322,6 +323,8 @@ func (h *OAuthHandler) SetBaseURL(baseURL string) {
 // SetProtectedResourceMetadataURL stores a PRM URL discovered at runtime
 // (e.g. from the WWW-Authenticate header in a 401 response per RFC 9728).
 func (h *OAuthHandler) SetProtectedResourceMetadataURL(metadataURL string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.protectedResourceMetadataURL = metadataURL
 }
 
@@ -438,7 +441,9 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		// 3. Construct from base URL per RFC 8414
 		protectedResourceURL := h.config.ProtectedResourceMetadataURL
 		if protectedResourceURL == "" {
+			h.mu.RLock()
 			protectedResourceURL = h.protectedResourceMetadataURL
+			h.mu.RUnlock()
 		}
 		if protectedResourceURL == "" {
 			protectedResourceURL, err = buildWellKnownURL(baseURL, "oauth-protected-resource")
