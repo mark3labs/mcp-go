@@ -361,12 +361,14 @@ func extractResourceMetadataURL(wwwAuthenticate string) string {
 	if wwwAuthenticate == "" {
 		return ""
 	}
+	// RFC 7235 treats auth-param names as case-insensitive
 	const param = `resource_metadata="`
-	_, after, found := strings.Cut(wwwAuthenticate, param)
+	_, after, found := strings.Cut(strings.ToLower(wwwAuthenticate), param)
 	if !found {
 		return ""
 	}
-	value, _, found := strings.Cut(after, `"`)
+	// Extract the value from the original string to preserve URL casing
+	value, _, found := strings.Cut(wwwAuthenticate[len(wwwAuthenticate)-len(after):], `"`)
 	if !found {
 		return ""
 	}

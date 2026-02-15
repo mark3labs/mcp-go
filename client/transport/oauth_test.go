@@ -1478,6 +1478,11 @@ func TestExtractResourceMetadataURL(t *testing.T) {
 			wwwAuthenticate: `Bearer resource_metadata="https://example.com`,
 			want:            "",
 		},
+		{
+			name:            "mixed case param name",
+			wwwAuthenticate: `Bearer Resource_Metadata="https://resource.example.com/.well-known/oauth-protected-resource"`,
+			want:            "https://resource.example.com/.well-known/oauth-protected-resource",
+		},
 	}
 
 	for _, tt := range tests {
