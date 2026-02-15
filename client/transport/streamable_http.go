@@ -162,8 +162,9 @@ func NewStreamableHTTP(serverURL string, options ...StreamableHTTPCOption) (*Str
 
 	// If OAuth is configured, set the base URL for metadata discovery
 	if smc.oauthHandler != nil {
-		// Extract base URL from server URL for metadata discovery
-		baseURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
+		// Include path so that well-known URLs are constructed correctly
+		// per RFC 8414 for servers deployed at sub-paths.
+		baseURL := fmt.Sprintf("%s://%s%s", parsedURL.Scheme, parsedURL.Host, strings.TrimRight(parsedURL.Path, "/"))
 		smc.oauthHandler.SetBaseURL(baseURL)
 	}
 
@@ -297,6 +298,9 @@ func (c *StreamableHTTP) SendRequest(
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
 			if c.oauthHandler != nil {
+				if metadataURL := extractResourceMetadataURL(resp.Header.Get("WWW-Authenticate")); metadataURL != "" {
+					c.oauthHandler.SetProtectedResourceMetadataURL(metadataURL)
+				}
 				return nil, &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
 				}
@@ -577,6 +581,9 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
 			if c.oauthHandler != nil {
+				if metadataURL := extractResourceMetadataURL(resp.Header.Get("WWW-Authenticate")); metadataURL != "" {
+					c.oauthHandler.SetProtectedResourceMetadataURL(metadataURL)
+				}
 				return &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
 				}

@@ -1381,3 +1381,226 @@ func TestOAuthHandler_RefreshToken_ProperHTTP400Error(t *testing.T) {
 	_, getErr := tokenStore.GetToken(ctx)
 	assert.ErrorIs(t, getErr, ErrNoToken, "No token should be saved after HTTP 400 error")
 }
+
+func TestBuildWellKnownURL(t *testing.T) {
+	tests := []struct {
+		name       string
+		baseURL    string
+		suffix     string
+		want       string
+		wantErr    bool
+	}{
+		{
+			name:    "no path",
+			baseURL: "https://example.com",
+			suffix:  "oauth-protected-resource",
+			want:    "https://example.com/.well-known/oauth-protected-resource",
+		},
+		{
+			name:    "with single path segment",
+			baseURL: "https://server.smithery.ai/googledrive",
+			suffix:  "oauth-protected-resource",
+			want:    "https://server.smithery.ai/.well-known/oauth-protected-resource/googledrive",
+		},
+		{
+			name:    "trailing slash normalized",
+			baseURL: "https://example.com/path/",
+			suffix:  "oauth-protected-resource",
+			want:    "https://example.com/.well-known/oauth-protected-resource/path",
+		},
+		{
+			name:    "deep path",
+			baseURL: "https://example.com/a/b/c",
+			suffix:  "oauth-authorization-server",
+			want:    "https://example.com/.well-known/oauth-authorization-server/a/b/c",
+		},
+		{
+			name:    "openid-configuration suffix",
+			baseURL: "https://auth.example.com/tenant1",
+			suffix:  "openid-configuration",
+			want:    "https://auth.example.com/.well-known/openid-configuration/tenant1",
+		},
+		{
+			name:    "no path with auth server suffix",
+			baseURL: "https://auth.example.com",
+			suffix:  "oauth-authorization-server",
+			want:    "https://auth.example.com/.well-known/oauth-authorization-server",
+		},
+		{
+			name:    "missing scheme",
+			baseURL: "example.com/path",
+			suffix:  "oauth-protected-resource",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildWellKnownURL(tt.baseURL, tt.suffix)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestExtractResourceMetadataURL(t *testing.T) {
+	tests := []struct {
+		name            string
+		wwwAuthenticate string
+		want            string
+	}{
+		{
+			name:            "standard header",
+			wwwAuthenticate: `Bearer resource_metadata="https://resource.example.com/.well-known/oauth-protected-resource"`,
+			want:            "https://resource.example.com/.well-known/oauth-protected-resource",
+		},
+		{
+			name:            "multiple parameters",
+			wwwAuthenticate: `Bearer realm="example", resource_metadata="https://rs.example.com/.well-known/oauth-protected-resource", error="insufficient_scope"`,
+			want:            "https://rs.example.com/.well-known/oauth-protected-resource",
+		},
+		{
+			name:            "no resource_metadata",
+			wwwAuthenticate: `Bearer realm="example", error="invalid_token"`,
+			want:            "",
+		},
+		{
+			name:            "empty header",
+			wwwAuthenticate: "",
+			want:            "",
+		},
+		{
+			name:            "malformed - no closing quote",
+			wwwAuthenticate: `Bearer resource_metadata="https://example.com`,
+			want:            "",
+		},
+		{
+			name:            "mixed case param name",
+			wwwAuthenticate: `Bearer Resource_Metadata="https://resource.example.com/.well-known/oauth-protected-resource"`,
+			want:            "https://resource.example.com/.well-known/oauth-protected-resource",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractResourceMetadataURL(tt.wwwAuthenticate)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestGetServerMetadata_WithPathBasedURL(t *testing.T) {
+	// Mock server that serves PRM at the RFC 8414 path-inserted URL
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource/googledrive":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				Resource:             server.URL + "/googledrive",
+				AuthorizationServers: []string{server.URL},
+			})
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(AuthServerMetadata{
+				Issuer:                server.URL,
+				AuthorizationEndpoint: server.URL + "/authorize",
+				TokenEndpoint:         server.URL + "/token",
+				RegistrationEndpoint:  server.URL + "/register",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:   "test-client",
+		TokenStore: NewMemoryTokenStore(),
+	})
+	handler.SetBaseURL(server.URL + "/googledrive")
+
+	metadata, err := handler.GetServerMetadata(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, server.URL, metadata.Issuer)
+	assert.Equal(t, server.URL+"/authorize", metadata.AuthorizationEndpoint)
+	assert.Equal(t, server.URL+"/token", metadata.TokenEndpoint)
+}
+
+func TestGetServerMetadata_WithProtectedResourceMetadataURL(t *testing.T) {
+	// Server that serves PRM at a custom URL
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/custom/prm":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				Resource:             server.URL + "/api",
+				AuthorizationServers: []string{server.URL},
+			})
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(AuthServerMetadata{
+				Issuer:                server.URL,
+				AuthorizationEndpoint: server.URL + "/authorize",
+				TokenEndpoint:         server.URL + "/token",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:                     "test-client",
+		TokenStore:                   NewMemoryTokenStore(),
+		ProtectedResourceMetadataURL: server.URL + "/custom/prm",
+	})
+	handler.SetBaseURL(server.URL + "/api")
+
+	metadata, err := handler.GetServerMetadata(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, server.URL, metadata.Issuer)
+	assert.Equal(t, server.URL+"/authorize", metadata.AuthorizationEndpoint)
+}
+
+func TestGetServerMetadata_WithDiscoveredMetadataURL(t *testing.T) {
+	// Server that serves PRM at a runtime-discovered URL
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/discovered/prm":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				Resource:             server.URL + "/api",
+				AuthorizationServers: []string{server.URL},
+			})
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(AuthServerMetadata{
+				Issuer:                server.URL,
+				AuthorizationEndpoint: server.URL + "/authorize",
+				TokenEndpoint:         server.URL + "/token",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:   "test-client",
+		TokenStore: NewMemoryTokenStore(),
+	})
+	handler.SetBaseURL(server.URL + "/api")
+	handler.SetProtectedResourceMetadataURL(server.URL + "/discovered/prm")
+
+	metadata, err := handler.GetServerMetadata(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, server.URL, metadata.Issuer)
+	assert.Equal(t, server.URL+"/authorize", metadata.AuthorizationEndpoint)
+}
