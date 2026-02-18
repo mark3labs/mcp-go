@@ -662,7 +662,7 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 type ToolArgumentsSchema struct {
 	Defs                 map[string]any `json:"$defs,omitempty"`
 	Type                 string         `json:"type"`
-	Properties           map[string]any `json:"properties,omitempty"`
+	Properties           map[string]any `json:"properties"` // certain models (currently verified: GPT-5x-Codex) requires this to be present, even if empty
 	Required             []string       `json:"required,omitempty"`
 	AdditionalProperties any            `json:"additionalProperties,omitempty"`
 }

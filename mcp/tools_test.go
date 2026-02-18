@@ -1742,6 +1742,18 @@ func TestToolArgumentsSchema_MarshalWithAdditionalProperties(t *testing.T) {
 	assert.Contains(t, string(data), `"additionalProperties":false`)
 }
 
+func TestToolArgumentsSchema_EmptyProperties(t *testing.T) {
+	schema := ToolArgumentsSchema{
+		Type:                 "object",
+		AdditionalProperties: nil,
+	}
+
+	data, err := json.Marshal(schema)
+	assert.NoError(t, err)
+	assert.Contains(t, string(data), `"properties":{}`)
+
+}
+
 func TestToolArgumentsSchema_MarshalOmitsNilAdditionalProperties(t *testing.T) {
 	schema := ToolArgumentsSchema{
 		Type:                 "object",
