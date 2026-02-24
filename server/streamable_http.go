@@ -943,6 +943,8 @@ func (s *StreamableHTTPServer) sweepExpiredSessions() {
 		}
 
 		s.logger.Infof("Sweeping expired session: %s", sessionID)
+		sessionIdManager := s.sessionIdManagerResolver.ResolveSessionIdManager(nil)
+		_, _ = sessionIdManager.Terminate(sessionID)
 		s.cleanupSessionState(context.Background(), sessionID)
 		return true
 	})

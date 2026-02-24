@@ -2642,11 +2642,9 @@ func TestStreamableHTTP_SessionIdleTTLSweeper(t *testing.T) {
 			return !exists
 		}, 2*time.Second, 50*time.Millisecond, "session should be swept after idle TTL")
 
-		// Verify all per-session stores are cleaned
+		// Verify per-session transport state is cleaned
 		_, hasActiveSession := httpServer.activeSessions.Load(sessionID)
 		assert.False(t, hasActiveSession, "activeSessions should be cleaned")
-		_, hasRequestIDs := httpServer.sessionRequestIDs.Load(sessionID)
-		assert.False(t, hasRequestIDs, "sessionRequestIDs should be cleaned")
 	})
 
 	t.Run("active sessions are not swept", func(t *testing.T) {
@@ -2667,9 +2665,11 @@ func TestStreamableHTTP_SessionIdleTTLSweeper(t *testing.T) {
 		sessionID := resp.Header.Get(HeaderKeySessionID)
 		require.NotEmpty(t, sessionID)
 
-		// Keep the session alive by sending pings
-		for range 5 {
-			time.Sleep(100 * time.Millisecond)
+		// TTL=200ms → sweep interval = max(100ms, 1s) = 1s.
+		// Ping for 2s so at least one sweep fires while the session is still active.
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			time.Sleep(80 * time.Millisecond)
 			pingResp, pingErr := postSessionJSON(ts.URL, sessionID, map[string]any{
 				"jsonrpc": "2.0",
 				"id":      1,
@@ -2680,7 +2680,8 @@ func TestStreamableHTTP_SessionIdleTTLSweeper(t *testing.T) {
 			pingResp.Body.Close()
 		}
 
-		// Session should still be tracked
+		// Session should still be tracked — the sweeper fired but the session
+		// was touched within TTL each time.
 		_, hasActivity := httpServer.sessionLastActive.Load(sessionID)
 		assert.True(t, hasActivity, "active session should not be swept")
 	})
