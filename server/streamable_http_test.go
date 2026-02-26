@@ -2636,6 +2636,9 @@ func TestStreamableHTTP_SessionIdleTTLSweeper(t *testing.T) {
 		_, hasActivity := httpServer.sessionLastActive.Load(sessionID)
 		assert.True(t, hasActivity, "session should be tracked after initialize")
 
+		// Populate sessionTools so we can verify cleanup is not vacuously true
+		httpServer.sessionTools.set(sessionID, map[string]ServerTool{"test": {}})
+
 		// Wait for the sweeper to clean the expired session
 		assert.Eventually(t, func() bool {
 			_, exists := httpServer.sessionLastActive.Load(sessionID)
@@ -2645,6 +2648,8 @@ func TestStreamableHTTP_SessionIdleTTLSweeper(t *testing.T) {
 		// Verify per-session transport state is cleaned
 		_, hasActiveSession := httpServer.activeSessions.Load(sessionID)
 		assert.False(t, hasActiveSession, "activeSessions should be cleaned")
+		tools := httpServer.sessionTools.get(sessionID)
+		assert.Empty(t, tools, "sessionTools should be cleaned")
 	})
 
 	t.Run("active sessions are not swept", func(t *testing.T) {
