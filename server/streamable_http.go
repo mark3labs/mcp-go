@@ -194,6 +194,7 @@ type StreamableHTTPServer struct {
 	endpointPath             string
 	contextFunc              HTTPContextFunc
 	sessionIdManagerResolver SessionIdManagerResolver
+	sessionIdManager         SessionIdManager // for non-request contexts (sweeper)
 	listenHeartbeatInterval  time.Duration
 	logger                   util.Logger
 	sessionLogLevels         *sessionLogLevelsStore
@@ -223,6 +224,13 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 	// Apply all options
 	for _, opt := range opts {
 		opt(s)
+	}
+
+	// Cache the session ID manager for use in non-request contexts (sweeper).
+	// DefaultSessionIdManagerResolver always returns the same manager,
+	// so resolving it once at startup is semantically identical.
+	if r, ok := s.sessionIdManagerResolver.(*DefaultSessionIdManagerResolver); ok {
+		s.sessionIdManager = r.manager
 	}
 
 	if s.sessionIdleTTL > 0 {
@@ -943,8 +951,11 @@ func (s *StreamableHTTPServer) sweepExpiredSessions() {
 		}
 
 		s.logger.Infof("Sweeping expired session: %s", sessionID)
-		sessionIdManager := s.sessionIdManagerResolver.ResolveSessionIdManager(nil)
-		_, _ = sessionIdManager.Terminate(sessionID)
+		mgr := s.sessionIdManager
+		if mgr == nil {
+			mgr = s.sessionIdManagerResolver.ResolveSessionIdManager(nil)
+		}
+		_, _ = mgr.Terminate(sessionID)
 		s.cleanupSessionState(context.Background(), sessionID)
 		return true
 	})
@@ -1393,7 +1404,9 @@ var _ SessionWithRoots = (*streamableHttpSession)(nil)
 
 // --- session id manager ---
 
-// SessionIdManagerResolver resolves a SessionIdManager based on the HTTP request
+// SessionIdManagerResolver resolves a SessionIdManager based on the HTTP request.
+// Implementations must handle a nil r, which may be passed from non-request
+// contexts such as the session idle TTL sweeper.
 type SessionIdManagerResolver interface {
 	ResolveSessionIdManager(r *http.Request) SessionIdManager
 }
