@@ -2020,28 +2020,49 @@ func TestMCPServer_WithHooks(t *testing.T) {
 	)
 }
 
+// TestMCPServer_GetHooks verifies GetHooks returns nil when no hooks are
+// configured and returns the same pointer passed to WithHooks when set.
 func TestMCPServer_GetHooks(t *testing.T) {
-	// No hooks configured — should return nil
-	s := NewMCPServer("test", "1.0.0")
-	if s.GetHooks() != nil {
-		t.Error("Expected nil hooks for server without hooks configured")
-	}
-
-	// With hooks configured — should return the same pointer
 	hooks := &Hooks{}
 	hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, message any) {})
-	s2 := NewMCPServer("test", "1.0.0", WithHooks(hooks))
-	got := s2.GetHooks()
-	if got != hooks {
-		t.Error("Expected GetHooks to return the same pointer passed to WithHooks")
+
+	tests := []struct {
+		name      string
+		server    *MCPServer
+		wantHooks *Hooks
+		wantLen   int
+	}{
+		{
+			name:      "no hooks configured returns nil",
+			server:    NewMCPServer("test", "1.0.0"),
+			wantHooks: nil,
+			wantLen:   0,
+		},
+		{
+			name:      "with hooks configured returns same pointer",
+			server:    NewMCPServer("test", "1.0.0", WithHooks(hooks)),
+			wantHooks: hooks,
+			wantLen:   1,
+		},
 	}
-	if len(got.OnBeforeAny) != 1 {
-		t.Error("Expected hooks to preserve registered callbacks")
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.server.GetHooks()
+			if tc.wantHooks == nil {
+				assert.Nil(t, got)
+				return
+			}
+			require.Same(t, tc.wantHooks, got)
+			assert.Len(t, got.OnBeforeAny, tc.wantLen)
+		})
 	}
 }
 
+// TestMCPServer_GetHooks_Composable verifies that third-party libraries can
+// append hooks via GetHooks without replacing existing registrations, and that
+// all composed hooks execute in registration order.
 func TestMCPServer_GetHooks_Composable(t *testing.T) {
-	// Verify third-party libraries can append hooks without replacing existing ones
 	hooks := &Hooks{}
 	var callOrder []string
 
@@ -2057,10 +2078,21 @@ func TestMCPServer_GetHooks_Composable(t *testing.T) {
 		callOrder = append(callOrder, "third-party")
 	})
 
-	// Both hooks should be present
-	if len(existing.OnBeforeAny) != 2 {
-		t.Errorf("Expected 2 BeforeAny hooks, got %d", len(existing.OnBeforeAny))
-	}
+	assert.Len(t, existing.OnBeforeAny, 2)
+
+	// Trigger hooks via a ping request
+	_ = s.HandleMessage(context.Background(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "initialize"
+	}`))
+	_ = s.HandleMessage(context.Background(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 2,
+		"method": "ping"
+	}`))
+
+	assert.Equal(t, []string{"original", "third-party", "original", "third-party"}, callOrder)
 }
 
 func TestMCPServer_SessionHooks(t *testing.T) {
