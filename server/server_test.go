@@ -2020,6 +2020,49 @@ func TestMCPServer_WithHooks(t *testing.T) {
 	)
 }
 
+func TestMCPServer_GetHooks(t *testing.T) {
+	// No hooks configured — should return nil
+	s := NewMCPServer("test", "1.0.0")
+	if s.GetHooks() != nil {
+		t.Error("Expected nil hooks for server without hooks configured")
+	}
+
+	// With hooks configured — should return the same pointer
+	hooks := &Hooks{}
+	hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, message any) {})
+	s2 := NewMCPServer("test", "1.0.0", WithHooks(hooks))
+	got := s2.GetHooks()
+	if got != hooks {
+		t.Error("Expected GetHooks to return the same pointer passed to WithHooks")
+	}
+	if len(got.OnBeforeAny) != 1 {
+		t.Error("Expected hooks to preserve registered callbacks")
+	}
+}
+
+func TestMCPServer_GetHooks_Composable(t *testing.T) {
+	// Verify third-party libraries can append hooks without replacing existing ones
+	hooks := &Hooks{}
+	var callOrder []string
+
+	hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, message any) {
+		callOrder = append(callOrder, "original")
+	})
+
+	s := NewMCPServer("test", "1.0.0", WithHooks(hooks))
+
+	// Simulate a third-party library getting hooks and appending
+	existing := s.GetHooks()
+	existing.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, message any) {
+		callOrder = append(callOrder, "third-party")
+	})
+
+	// Both hooks should be present
+	if len(existing.OnBeforeAny) != 2 {
+		t.Errorf("Expected 2 BeforeAny hooks, got %d", len(existing.OnBeforeAny))
+	}
+}
+
 func TestMCPServer_SessionHooks(t *testing.T) {
 	var (
 		registerCalled   bool

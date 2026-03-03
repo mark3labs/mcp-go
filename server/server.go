@@ -352,6 +352,13 @@ func WithHooks(hooks *Hooks) ServerOption {
 	}
 }
 
+// GetHooks returns the server's current Hooks instance, or nil if no hooks
+// have been configured. The returned pointer can be used to add additional
+// hooks via the Add* methods without replacing existing hook registrations.
+func (s *MCPServer) GetHooks() *Hooks {
+	return s.hooks
+}
+
 // WithTaskHooks allows adding hooks for task lifecycle events.
 // Use these hooks to monitor task execution, track metrics, and observe
 // task-augmented tool behavior.
