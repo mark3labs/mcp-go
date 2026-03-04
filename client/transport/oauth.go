@@ -34,6 +34,10 @@ type OAuthConfig struct {
 	// AuthServerMetadataURL is the URL to the OAuth server metadata
 	// If empty, the client will attempt to discover it from the base URL
 	AuthServerMetadataURL string
+	// ProtectedResourceMetadataURL is the URL to the OAuth protected resource metadata
+	// per RFC9728. If set, this URL will be used to discover the authorization server.
+	// This is typically extracted from the WWW-Authenticate header's resource_metadata parameter.
+	ProtectedResourceMetadataURL string
 	// PKCEEnabled enables PKCE for the OAuth flow (recommended for public clients)
 	PKCEEnabled bool
 	// HTTPClient is an optional HTTP client to use for requests.
@@ -367,18 +371,25 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 			return
 		}
 
-		// Try to discover the authorization server via OAuth Protected Resource
-		// as per RFC 9728 (https://datatracker.ietf.org/doc/html/rfc9728)
+		// Always extract base URL for fallback scenarios
 		baseURL, err := h.extractBaseURL()
 		if err != nil {
 			h.metadataFetchErr = fmt.Errorf("failed to extract base URL: %w", err)
 			return
 		}
 
-		protectedResourceURL, err := buildWellKnownURL(baseURL, "oauth-protected-resource")
-		if err != nil {
-			h.metadataFetchErr = fmt.Errorf("failed to build protected resource URL: %w", err)
-			return
+		// Determine the protected resource metadata URL with priority:
+		// 1. Explicit config (ProtectedResourceMetadataURL from RFC9728 WWW-Authenticate header)
+		// 2. Constructed from base URL
+		var protectedResourceURL string
+		if h.config.ProtectedResourceMetadataURL != "" {
+			protectedResourceURL = h.config.ProtectedResourceMetadataURL
+		} else {
+			protectedResourceURL, err = buildWellKnownURL(baseURL, "oauth-protected-resource")
+			if err != nil {
+				h.metadataFetchErr = fmt.Errorf("failed to build protected resource URL: %w", err)
+				return
+			}
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, protectedResourceURL, nil)
 		if err != nil {
