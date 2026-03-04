@@ -261,6 +261,54 @@ func TestSSE_WithOAuth_PreservesPathInBaseURL(t *testing.T) {
 	}
 }
 
+func TestSSE_OAuthMetadataFeedback(t *testing.T) {
+	// Verify that after a 401 with resource_metadata, the OAuthHandler's
+	// ProtectedResourceMetadataURL has been updated
+	const expectedMetadataURL = "https://auth.example.com/.well-known/oauth-protected-resource"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+expectedMetadataURL+`"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	tokenStore := NewMemoryTokenStore()
+	_ = tokenStore.SaveToken(context.Background(), &Token{
+		AccessToken: "test-token",
+		TokenType:   "Bearer",
+		ExpiresAt:   time.Now().Add(1 * time.Hour),
+	})
+
+	oauthConfig := OAuthConfig{
+		ClientID:   "test-client",
+		TokenStore: tokenStore,
+	}
+
+	transport, err := NewSSE(server.URL, WithOAuth(oauthConfig))
+	if err != nil {
+		t.Fatalf("Failed to create SSE: %v", err)
+	}
+
+	// Start SSE which will trigger 401
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = transport.Start(ctx)
+
+	if err == nil {
+		t.Fatal("Expected error, got nil")
+	}
+
+	var oauthErr *OAuthAuthorizationRequiredError
+	if !errors.As(err, &oauthErr) {
+		t.Fatalf("Expected OAuthAuthorizationRequiredError, got %T: %v", err, err)
+	}
+
+	// Verify the OAuthHandler was updated with the discovered URL
+	if got := transport.GetOAuthHandler().config.ProtectedResourceMetadataURL; got != expectedMetadataURL {
+		t.Errorf("Expected OAuthHandler.config.ProtectedResourceMetadataURL to be %q, got %q", expectedMetadataURL, got)
+	}
+}
+
 func TestSSE_OAuthMetadataDiscovery(t *testing.T) {
 	// Test that we correctly extract resource_metadata URL from WWW-Authenticate header per RFC9728
 	const expectedMetadataURL = "https://auth.example.com/.well-known/oauth-protected-resource"

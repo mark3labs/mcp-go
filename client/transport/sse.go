@@ -214,6 +214,11 @@ func (c *SSE) Start(ctx context.Context) error {
 			// Extract discovered metadata URL per RFC9728
 			metadataURL := extractResourceMetadataURL(resp.Header.Get("WWW-Authenticate"))
 
+			// Feed discovered URL back to OAuthHandler so next auth attempt uses it
+			if metadataURL != "" && c.oauthHandler != nil {
+				c.oauthHandler.SetProtectedResourceMetadataURL(metadataURL)
+			}
+
 			// If OAuth handler exists, return OAuth-specific error
 			if c.oauthHandler != nil {
 				return &OAuthAuthorizationRequiredError{
@@ -505,6 +510,11 @@ func (c *SSE) SendRequest(
 			// Extract discovered metadata URL per RFC9728
 			metadataURL := extractResourceMetadataURL(resp.Header.Get("WWW-Authenticate"))
 
+			// Feed discovered URL back to OAuthHandler so next auth attempt uses it
+			if metadataURL != "" && c.oauthHandler != nil {
+				c.oauthHandler.SetProtectedResourceMetadataURL(metadataURL)
+			}
+
 			// If OAuth handler exists, return OAuth-specific error
 			if c.oauthHandler != nil {
 				return nil, &OAuthAuthorizationRequiredError{
@@ -666,6 +676,11 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 		if resp.StatusCode == http.StatusUnauthorized {
 			// Extract discovered metadata URL per RFC9728
 			metadataURL := extractResourceMetadataURL(resp.Header.Get("WWW-Authenticate"))
+
+			// Feed discovered URL back to OAuthHandler so next auth attempt uses it
+			if metadataURL != "" && c.oauthHandler != nil {
+				c.oauthHandler.SetProtectedResourceMetadataURL(metadataURL)
+			}
 
 			// If OAuth handler exists, return OAuth-specific error
 			if c.oauthHandler != nil {
