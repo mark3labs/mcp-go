@@ -265,11 +265,11 @@ func parseAuthParams(header string) map[string]string {
 	}
 
 	// Skip the auth-scheme (first token before space)
-	spaceIdx := strings.IndexByte(header, ' ')
-	if spaceIdx == -1 {
+	_, rest, found := strings.Cut(header, " ")
+	if !found {
 		return params // auth-scheme only, no params
 	}
-	rest := strings.TrimSpace(header[spaceIdx+1:])
+	rest = strings.TrimSpace(rest)
 
 	for rest != "" {
 		rest = strings.TrimSpace(rest)

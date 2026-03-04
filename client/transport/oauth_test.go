@@ -1430,12 +1430,12 @@ func TestOAuthHandler_SetProtectedResourceMetadataURL(t *testing.T) {
 	metadataServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/.well-known/oauth-protected-resource":
-			json.NewEncoder(w).Encode(OAuthProtectedResource{
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
 				Resource:             "https://resource.example.com",
 				AuthorizationServers: []string{"https://auth1.example.com"},
 			})
 		case "/updated/.well-known/oauth-protected-resource":
-			json.NewEncoder(w).Encode(OAuthProtectedResource{
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
 				Resource:             "https://resource.example.com",
 				AuthorizationServers: []string{"https://auth2.example.com"},
 			})
