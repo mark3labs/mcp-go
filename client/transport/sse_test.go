@@ -827,13 +827,13 @@ func TestSSE_Start_Unauthorized_StaticToken(t *testing.T) {
 		t.Fatalf("Expected error, got nil")
 	}
 
-	if !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("Expected ErrUnauthorized, got %T: %v", err, err)
+	if !errors.Is(err, ErrAuthorizationRequired) {
+		t.Fatalf("Expected ErrAuthorizationRequired, got %T: %v", err, err)
 	}
 
 	// Verify error message
-	if !strings.Contains(err.Error(), "401") {
-		t.Errorf("Expected error message to contain '401', got: %v", err)
+	if !strings.Contains(err.Error(), "authorization required") {
+		t.Errorf("Expected error message to contain 'authorization required', got: %v", err)
 	}
 }
 
@@ -891,8 +891,8 @@ func TestSSE_SendRequest_Unauthorized_StaticToken(t *testing.T) {
 		t.Fatalf("Expected error, got nil")
 	}
 
-	if !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("Expected ErrUnauthorized, got %T: %v", err, err)
+	if !errors.Is(err, ErrAuthorizationRequired) {
+		t.Fatalf("Expected ErrAuthorizationRequired, got %T: %v", err, err)
 	}
 
 	// Clean up
@@ -954,8 +954,8 @@ func TestSSE_SendNotification_Unauthorized_StaticToken(t *testing.T) {
 		t.Fatalf("Expected error, got nil")
 	}
 
-	if !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("Expected ErrUnauthorized, got %T: %v", err, err)
+	if !errors.Is(err, ErrAuthorizationRequired) {
+		t.Fatalf("Expected ErrAuthorizationRequired, got %T: %v", err, err)
 	}
 
 	// Clean up

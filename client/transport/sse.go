@@ -163,6 +163,9 @@ func (c *SSE) Start(ctx context.Context) error {
 			if err.Error() == "no valid token available, authorization required" {
 				return &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
+					AuthorizationRequiredError: AuthorizationRequiredError{
+						ResourceMetadataURL: "", // No response available in this code path
+					},
 				}
 			}
 			return fmt.Errorf("failed to get authorization header: %w", err)
@@ -179,12 +182,23 @@ func (c *SSE) Start(ctx context.Context) error {
 		resp.Body.Close()
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
+			// Extract discovered metadata URL per RFC9728
+			metadataURL := extractResourceMetadataURL(resp.Header.Get("WWW-Authenticate"))
+
+			// If OAuth handler exists, return OAuth-specific error
 			if c.oauthHandler != nil {
 				return &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
+					AuthorizationRequiredError: AuthorizationRequiredError{
+						ResourceMetadataURL: metadataURL,
+					},
 				}
 			}
-			return ErrUnauthorized
+
+			// No OAuth handler, return base authorization error
+			return &AuthorizationRequiredError{
+				ResourceMetadataURL: metadataURL,
+			}
 		}
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
@@ -407,6 +421,9 @@ func (c *SSE) SendRequest(
 			if err.Error() == "no valid token available, authorization required" {
 				return nil, &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
+					AuthorizationRequiredError: AuthorizationRequiredError{
+						ResourceMetadataURL: "", // No response available in this code path
+					},
 				}
 			}
 			return nil, fmt.Errorf("failed to get authorization header: %w", err)
@@ -456,12 +473,23 @@ func (c *SSE) SendRequest(
 
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
+			// Extract discovered metadata URL per RFC9728
+			metadataURL := extractResourceMetadataURL(resp.Header.Get("WWW-Authenticate"))
+
+			// If OAuth handler exists, return OAuth-specific error
 			if c.oauthHandler != nil {
 				return nil, &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
+					AuthorizationRequiredError: AuthorizationRequiredError{
+						ResourceMetadataURL: metadataURL,
+					},
 				}
 			}
-			return nil, ErrUnauthorized
+
+			// No OAuth handler, return base authorization error
+			return nil, &AuthorizationRequiredError{
+				ResourceMetadataURL: metadataURL,
+			}
 		}
 
 		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, body)
@@ -577,6 +605,9 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 			if errors.Is(err, ErrOAuthAuthorizationRequired) {
 				return &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
+					AuthorizationRequiredError: AuthorizationRequiredError{
+						ResourceMetadataURL: "", // No response available in this code path
+					},
 				}
 			}
 			return fmt.Errorf("failed to get authorization header: %w", err)
@@ -604,14 +635,26 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
+			// Extract discovered metadata URL per RFC9728
+			metadataURL := extractResourceMetadataURL(resp.Header.Get("WWW-Authenticate"))
+
+			// If OAuth handler exists, return OAuth-specific error
 			if c.oauthHandler != nil {
 				return &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
+					AuthorizationRequiredError: AuthorizationRequiredError{
+						ResourceMetadataURL: metadataURL,
+					},
 				}
 			}
-			return ErrUnauthorized
+
+			// No OAuth handler, return base authorization error
+			return &AuthorizationRequiredError{
+				ResourceMetadataURL: metadataURL,
+			}
 		}
 
+		// Handle other error responses
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf(
 			"notification failed with status %d: %s",
