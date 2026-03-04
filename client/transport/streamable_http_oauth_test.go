@@ -284,8 +284,89 @@ func TestStreamableHTTP_OAuthMetadataDiscovery(t *testing.T) {
 	}
 }
 
+func TestParseAuthParams(t *testing.T) {
+	testCases := []struct {
+		name     string
+		header   string
+		expected map[string]string
+	}{
+		{
+			name:   "Basic key=value",
+			header: `Bearer resource_metadata="https://example.com"`,
+			expected: map[string]string{
+				"resource_metadata": "https://example.com",
+			},
+		},
+		{
+			name:   "Multiple params",
+			header: `Bearer realm="example", resource_metadata="https://example.com/metadata", scope="read write"`,
+			expected: map[string]string{
+				"realm":             "example",
+				"resource_metadata": "https://example.com/metadata",
+				"scope":             "read write",
+			},
+		},
+		{
+			name:   "Unquoted token values",
+			header: `Bearer realm=example, error=invalid_token`,
+			expected: map[string]string{
+				"realm": "example",
+				"error": "invalid_token",
+			},
+		},
+		{
+			name:   "Escaped quotes in values",
+			header: `Bearer realm="say \"hello\""`,
+			expected: map[string]string{
+				"realm": `say "hello"`,
+			},
+		},
+		{
+			name:     "Missing auth-scheme",
+			header:   "",
+			expected: map[string]string{},
+		},
+		{
+			name:     "Auth-scheme only",
+			header:   "Bearer",
+			expected: map[string]string{},
+		},
+		{
+			name:   "Extra whitespace",
+			header: `Bearer   realm="example"  ,  scope="read"`,
+			expected: map[string]string{
+				"realm": "example",
+				"scope": "read",
+			},
+		},
+		{
+			name:   "DPoP scheme",
+			header: `DPoP resource_metadata="https://dpop.example.com/.well-known/oauth-protected-resource"`,
+			expected: map[string]string{
+				"resource_metadata": "https://dpop.example.com/.well-known/oauth-protected-resource",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := parseAuthParams(tc.header)
+			if len(result) != len(tc.expected) {
+				t.Errorf("Expected %d params, got %d: %v", len(tc.expected), len(result), result)
+				return
+			}
+			for k, v := range tc.expected {
+				if got, ok := result[k]; !ok {
+					t.Errorf("Missing key %q", k)
+				} else if got != v {
+					t.Errorf("Key %q: expected %q, got %q", k, v, got)
+				}
+			}
+		})
+	}
+}
+
 func TestExtractResourceMetadataURL(t *testing.T) {
-	// Test the extractResourceMetadataURL helper function
 	testCases := []struct {
 		name        string
 		wwwAuth     string
@@ -314,12 +395,17 @@ func TestExtractResourceMetadataURL(t *testing.T) {
 		{
 			name:        "Malformed resource_metadata (no closing quote)",
 			wwwAuth:     `Bearer resource_metadata="https://example.com/metadata`,
-			expectedURL: "",
+			expectedURL: "https://example.com/metadata",
 		},
 		{
 			name:        "DPoP scheme with resource_metadata",
 			wwwAuth:     `DPoP resource_metadata="https://dpop.example.com/.well-known/oauth-protected-resource"`,
 			expectedURL: "https://dpop.example.com/.well-known/oauth-protected-resource",
+		},
+		{
+			name:        "Whitespace around equals",
+			wwwAuth:     `Bearer resource_metadata="https://example.com/meta"`,
+			expectedURL: "https://example.com/meta",
 		},
 	}
 
@@ -330,5 +416,50 @@ func TestExtractResourceMetadataURL(t *testing.T) {
 				t.Errorf("Expected %q, got %q", tc.expectedURL, result)
 			}
 		})
+	}
+}
+
+func TestStreamableHTTP_OAuthMetadataFeedback(t *testing.T) {
+	// Verify that after a 401 with resource_metadata, the OAuthHandler's
+	// ProtectedResourceMetadataURL has been updated
+	const expectedMetadataURL = "https://auth.example.com/.well-known/oauth-protected-resource"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+expectedMetadataURL+`"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	tokenStore := NewMemoryTokenStore()
+	_ = tokenStore.SaveToken(context.Background(), &Token{
+		AccessToken: "test-token",
+		TokenType:   "Bearer",
+		ExpiresAt:   time.Now().Add(1 * time.Hour),
+	})
+
+	oauthConfig := OAuthConfig{
+		ClientID:   "test-client",
+		TokenStore: tokenStore,
+	}
+
+	transport, err := NewStreamableHTTP(server.URL, WithHTTPOAuth(oauthConfig))
+	if err != nil {
+		t.Fatalf("Failed to create StreamableHTTP: %v", err)
+	}
+
+	// Send request that triggers 401
+	_, err = transport.SendRequest(context.Background(), JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(1),
+		Method:  "test",
+	})
+
+	if err == nil {
+		t.Fatal("Expected error, got nil")
+	}
+
+	// Verify the OAuthHandler was updated with the discovered URL
+	if got := transport.GetOAuthHandler().config.ProtectedResourceMetadataURL; got != expectedMetadataURL {
+		t.Errorf("Expected OAuthHandler.config.ProtectedResourceMetadataURL to be %q, got %q", expectedMetadataURL, got)
 	}
 }

@@ -247,25 +247,100 @@ var ErrOAuthAuthorizationRequired = errors.New("no valid token available, author
 // ErrAuthorizationRequired is a sentinel error for authorization required (401)
 var ErrAuthorizationRequired = errors.New("authorization required")
 
+// parseAuthParams parses the auth-params from a WWW-Authenticate header value
+// per RFC 7235. It skips the auth-scheme (first token) and returns a map of
+// key=value pairs. Values may be tokens or quoted-strings (with backslash
+// escaping per RFC 7230 §3.2.6).
+func parseAuthParams(header string) map[string]string {
+	params := make(map[string]string)
+
+	// Skip leading whitespace
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return params
+	}
+
+	// Skip the auth-scheme (first token before space)
+	spaceIdx := strings.IndexByte(header, ' ')
+	if spaceIdx == -1 {
+		return params // auth-scheme only, no params
+	}
+	rest := strings.TrimSpace(header[spaceIdx+1:])
+
+	for rest != "" {
+		rest = strings.TrimSpace(rest)
+		if rest == "" {
+			break
+		}
+
+		// Parse key
+		eqIdx := strings.IndexByte(rest, '=')
+		if eqIdx == -1 {
+			break
+		}
+		key := strings.TrimSpace(rest[:eqIdx])
+		rest = rest[eqIdx+1:]
+
+		// Parse value: quoted-string or token
+		var value string
+		if len(rest) > 0 && rest[0] == '"' {
+			value, rest = parseQuotedString(rest)
+		} else {
+			// Token value: ends at comma, space, or end of string
+			end := strings.IndexAny(rest, ", \t")
+			if end == -1 {
+				value = rest
+				rest = ""
+			} else {
+				value = rest[:end]
+				rest = rest[end:]
+			}
+		}
+
+		params[key] = value
+
+		// Skip comma separator
+		rest = strings.TrimSpace(rest)
+		if len(rest) > 0 && rest[0] == ',' {
+			rest = rest[1:]
+		}
+	}
+
+	return params
+}
+
+// parseQuotedString parses a quoted-string value per RFC 7230 §3.2.6.
+// Input must start with a double-quote. Returns the unescaped value and
+// the remaining unparsed input after the closing quote.
+func parseQuotedString(s string) (value, rest string) {
+	if len(s) == 0 || s[0] != '"' {
+		return "", s
+	}
+	s = s[1:] // skip opening quote
+
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			if i+1 < len(s) {
+				b.WriteByte(s[i+1])
+				i++ // skip escaped char
+			}
+		case '"':
+			return b.String(), s[i+1:]
+		default:
+			b.WriteByte(s[i])
+		}
+	}
+	// No closing quote found; return what we have
+	return b.String(), ""
+}
+
 // extractResourceMetadataURL extracts the resource_metadata parameter from a WWW-Authenticate header
 // per RFC9728 Section 5.1. Returns empty string if not found.
 // Example: Bearer resource_metadata="https://resource.example.com/.well-known/oauth-protected-resource"
 func extractResourceMetadataURL(wwwAuthHeader string) string {
-	// Parse: Bearer resource_metadata="https://..." ...
-	const prefix = "resource_metadata=\""
-
-	idx := strings.Index(wwwAuthHeader, prefix)
-	if idx == -1 {
-		return ""
-	}
-
-	start := idx + len(prefix)
-	end := strings.Index(wwwAuthHeader[start:], "\"")
-	if end == -1 {
-		return ""
-	}
-
-	return wwwAuthHeader[start : start+end]
+	return parseAuthParams(wwwAuthHeader)["resource_metadata"]
 }
 
 // AuthorizationRequiredError is returned when a 401 Unauthorized response is received.
@@ -338,6 +413,11 @@ func (c *StreamableHTTP) SendRequest(
 		if resp.StatusCode == http.StatusUnauthorized {
 			// Extract discovered metadata URL per RFC9728
 			metadataURL := extractResourceMetadataURL(resp.Header.Get("WWW-Authenticate"))
+
+			// Feed discovered URL back to OAuthHandler so next auth attempt uses it
+			if metadataURL != "" && c.oauthHandler != nil {
+				c.oauthHandler.SetProtectedResourceMetadataURL(metadataURL)
+			}
 
 			// If OAuth handler exists, return OAuth-specific error
 			if c.oauthHandler != nil {
@@ -633,6 +713,11 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	case http.StatusUnauthorized:
 		// Extract discovered metadata URL per RFC9728
 		metadataURL := extractResourceMetadataURL(resp.Header.Get("WWW-Authenticate"))
+
+		// Feed discovered URL back to OAuthHandler so next auth attempt uses it
+		if metadataURL != "" && c.oauthHandler != nil {
+			c.oauthHandler.SetProtectedResourceMetadataURL(metadataURL)
+		}
 
 		// If OAuth handler exists, return OAuth-specific error
 		if c.oauthHandler != nil {

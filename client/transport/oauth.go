@@ -304,6 +304,17 @@ func extractOAuthError(body []byte, statusCode int, context string) error {
 	return fmt.Errorf("%s with status %d: %s", context, statusCode, body)
 }
 
+// SetProtectedResourceMetadataURL updates the protected resource metadata URL
+// and resets the cached server metadata so it will be re-discovered on the next call.
+// This is used when a 401 response includes a resource_metadata parameter in the
+// WWW-Authenticate header per RFC 9728.
+func (h *OAuthHandler) SetProtectedResourceMetadataURL(u string) {
+	h.config.ProtectedResourceMetadataURL = u
+	h.serverMetadata = nil
+	h.metadataFetchErr = nil
+	h.metadataOnce = sync.Once{}
+}
+
 // GetClientSecret returns the client secret
 func (h *OAuthHandler) GetClientSecret() string {
 	return h.config.ClientSecret
