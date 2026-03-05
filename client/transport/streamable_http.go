@@ -433,6 +433,7 @@ func (c *StreamableHTTP) sendHTTP(
 func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCloser, ignoreResponse bool) (*JSONRPCResponse, error) {
 	// Create a channel for this specific request
 	responseChan := make(chan *JSONRPCResponse, 1)
+	errChan := make(chan error, 1)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -446,7 +447,12 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 			// Try to unmarshal as a response first
 			var message JSONRPCResponse
 			if err := json.Unmarshal([]byte(data), &message); err != nil {
-				c.logger.Infof("failed to unmarshal message (non-fatal): %v", err, "message", data)
+				c.logger.Infof("failed to unmarshal message: %v", err, "message", data)
+				select {
+				case errChan <- fmt.Errorf("received non-JSON-RPC SSE data: %w", err):
+				default:
+				}
+				cancel()
 				return
 			}
 
@@ -491,6 +497,8 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 			return nil, fmt.Errorf("unexpected nil response")
 		}
 		return response, nil
+	case err := <-errChan:
+		return nil, err
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
