@@ -428,40 +428,61 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	done := make(chan struct{})
 
 	ctx = context.WithValue(ctx, requestHeader, r.Header)
+
+	// writeSSEToResponse writes an SSE event to the POST response stream, upgrading
+	// the response to text/event-stream on first use. This enables delivery of
+	// server-initiated requests (elicitation, sampling, roots) on the same POST
+	// connection that triggered them, per MCP spec recommendation.
+	writeSSEToResponse := func(data any) {
+		mu.Lock()
+		defer mu.Unlock()
+		select {
+		case <-done:
+			return
+		default:
+		}
+		defer func() {
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+		}()
+		if !upgradedHeader {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Connection", "keep-alive")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.WriteHeader(http.StatusOK)
+			upgradedHeader = true
+		}
+		if err := writeSSEEvent(w, data); err != nil {
+			s.logger.Errorf("Failed to write SSE event: %v", err)
+		}
+	}
+
 	go func() {
 		for {
 			select {
 			case nt := <-session.notificationChannel:
-				func() {
-					mu.Lock()
-					defer mu.Unlock()
-					// if the done chan is closed, as the request is terminated, just return
-					select {
-					case <-done:
-						return
-					default:
-					}
-					defer func() {
-						flusher, ok := w.(http.Flusher)
-						if ok {
-							flusher.Flush()
-						}
-					}()
-
-					// if there's notifications, upgradedHeader to SSE response
-					if !upgradedHeader {
-						w.Header().Set("Content-Type", "text/event-stream")
-						w.Header().Set("Connection", "keep-alive")
-						w.Header().Set("Cache-Control", "no-cache")
-						w.WriteHeader(http.StatusOK)
-						upgradedHeader = true
-					}
-					err := writeSSEEvent(w, nt)
-					if err != nil {
-						s.logger.Errorf("Failed to write SSE event: %v", err)
-						return
-					}
-				}()
+				writeSSEToResponse(&nt)
+			case samplingReq := <-session.samplingRequestChan:
+				writeSSEToResponse(mcp.JSONRPCRequest{
+					JSONRPC: "2.0",
+					ID:      mcp.NewRequestId(samplingReq.requestID),
+					Request: mcp.Request{Method: string(mcp.MethodSamplingCreateMessage)},
+					Params:  samplingReq.request.CreateMessageParams,
+				})
+			case elicitationReq := <-session.elicitationRequestChan:
+				writeSSEToResponse(mcp.JSONRPCRequest{
+					JSONRPC: "2.0",
+					ID:      mcp.NewRequestId(elicitationReq.requestID),
+					Request: mcp.Request{Method: string(mcp.MethodElicitationCreate)},
+					Params:  elicitationReq.request.Params,
+				})
+			case rootsReq := <-session.rootsRequestChan:
+				writeSSEToResponse(mcp.JSONRPCRequest{
+					JSONRPC: "2.0",
+					ID:      mcp.NewRequestId(rootsReq.requestID),
+					Request: mcp.Request{Method: string(mcp.MethodListRoots)},
+				})
 			case <-done:
 				return
 			case <-ctx.Done():
