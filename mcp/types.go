@@ -585,9 +585,11 @@ type Icon struct {
 
 // Implementation describes the name and version of an MCP implementation.
 type Implementation struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-	Title   string `json:"title,omitempty"`
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	WebsiteURL  string `json:"websiteUrl,omitempty"`
 	// Icons provides visual identifiers for the implementation
 	Icons []Icon `json:"icons,omitempty"`
 }
