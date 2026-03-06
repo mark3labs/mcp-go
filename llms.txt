@@ -12,6 +12,11 @@
 - [Building MCP Clients](/clients): Learn how to build MCP clients that connect to and interact with MCP servers. This section covers client creation, operations, and transport-specific implementations.
 - [Client Operations](/clients/operations): Learn how to use MCP clients to interact with servers through tools, resources, prompts, and subscriptions.
 - [Client Transports](/clients/transports): Learn about transport-specific client implementations and how to choose the right transport for your use case.
+- [StreamableHTTP Transport](/transports/http): StreamableHTTP transport provides traditional request/response communication for MCP servers, perfect for REST-like interactions, stateless clients, and integration with existing web infrastructure.
+- [Transport Options](/transports): MCP-Go supports multiple transport methods to fit different deployment scenarios and integration patterns. Choose the right transport based on your use case, performance requirements, and client capabilities.
+- [In-Process Transport](/transports/inprocess): In-process transport enables direct integration of MCP servers within the same process, eliminating network overhead and providing seamless integration for embedded scenarios.
+- [SSE Transport](/transports/sse): Server-Sent Events (SSE) transport enables real-time, web-friendly communication between MCP clients and servers. Perfect for web applications that need live updates and multi-client support.
+- [STDIO Transport](/transports/stdio): STDIO (Standard Input/Output) transport is the most common MCP transport method, perfect for command-line tools, desktop applications, and local integrations.
 - [Sampling](/servers/advanced-sampling): Learn how to implement MCP servers that can request LLM completions from clients using the sampling capability.
 - [Advanced Server Features](/servers/advanced): Icons provide visual identifiers for servers, tools, resources, and prompts. All icon URIs must use HTTPS or data URI schemes for security.
 - [Server Basics](/servers/basics): Learn how to create, configure, and start MCP servers with different transport options.
@@ -19,8 +24,3 @@
 - [Implementing Prompts](/servers/prompts): Prompts are reusable interaction templates that help structure conversations between users and LLMs. They provide context, instructions, and can include dynamic content from resources.
 - [Implementing Resources](/servers/resources): Resources expose data to LLMs in a read-only manner. Think of them as GET endpoints that provide access to files, databases, APIs, or any other data source.
 - [Implementing Tools](/servers/tools): Tools provide functionality that LLMs can invoke to take actions or perform computations. Think of them as function calls that extend the LLM's capabilities.
-- [StreamableHTTP Transport](/transports/http): StreamableHTTP transport provides traditional request/response communication for MCP servers, perfect for REST-like interactions, stateless clients, and integration with existing web infrastructure.
-- [Transport Options](/transports): MCP-Go supports multiple transport methods to fit different deployment scenarios and integration patterns. Choose the right transport based on your use case, performance requirements, and client capabilities.
-- [In-Process Transport](/transports/inprocess): In-process transport enables direct integration of MCP servers within the same process, eliminating network overhead and providing seamless integration for embedded scenarios.
-- [SSE Transport](/transports/sse): Server-Sent Events (SSE) transport enables real-time, web-friendly communication between MCP clients and servers. Perfect for web applications that need live updates and multi-client support.
-- [STDIO Transport](/transports/stdio): STDIO (Standard Input/Output) transport is the most common MCP transport method, perfect for command-line tools, desktop applications, and local integrations.
