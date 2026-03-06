@@ -4525,6 +4525,2894 @@ func (myCustomLogger) Errorf(format string, args ...any) {
 ```
 
 
+## StreamableHTTP Transport
+
+StreamableHTTP transport provides traditional request/response communication for MCP servers, perfect for REST-like interactions, stateless clients, and integration with existing web infrastructure.
+
+### Use Cases
+
+StreamableHTTP transport excels in scenarios requiring:
+
+* **Web services**: Traditional REST API patterns
+* **Stateless interactions**: Each request is independent
+* **Load balancing**: Distribute requests across multiple servers
+* **Caching**: Leverage HTTP caching mechanisms
+* **Integration**: Work with existing HTTP infrastructure
+* **Public APIs**: Expose MCP functionality as web APIs
+
+**Example applications:**
+
+* Microservice architectures
+* Public API endpoints
+* Integration with API gateways
+* Cached data services
+* Rate-limited services
+* Multi-tenant applications
+
+### Implementation
+
+#### Basic StreamableHTTP Server
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "net/http"
+    "strings"
+    "time"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func main() {
+    s := server.NewMCPServer("StreamableHTTP API Server", "1.0.0",
+        server.WithToolCapabilities(true),
+        server.WithResourceCapabilities(true, true),
+    )
+
+    // Add RESTful tools
+    s.AddTool(
+        mcp.NewTool("get_user",
+            mcp.WithDescription("Get user information"),
+            mcp.WithString("user_id", mcp.Required()),
+        ),
+        handleGetUser,
+    )
+
+    s.AddTool(
+        mcp.NewTool("create_user",
+            mcp.WithDescription("Create a new user"),
+            mcp.WithString("name", mcp.Required()),
+            mcp.WithString("email", mcp.Required()),
+            mcp.WithNumber("age", mcp.Min(0)),
+        ),
+        handleCreateUser,
+    )
+
+    s.AddTool(
+        mcp.NewTool("search_users",
+            mcp.WithDescription("Search users with filters"),
+            mcp.WithString("query", mcp.Description("Search query")),
+            mcp.WithNumber("limit", mcp.DefaultNumber(10), mcp.Max(100)),
+            mcp.WithNumber("offset", mcp.DefaultNumber(0), mcp.Min(0)),
+        ),
+        handleSearchUsers,
+    )
+
+    // Add resources
+    s.AddResource(
+        mcp.NewResource(
+            "users://{user_id}",
+            "User Profile",
+            mcp.WithResourceDescription("User profile data"),
+            mcp.WithMIMEType("application/json"),
+        ),
+        handleUserResource,
+    )
+
+    // Start StreamableHTTP server
+    log.Println("Starting StreamableHTTP server on :8080")
+    httpServer := server.NewStreamableHTTPServer(s)
+    if err := httpServer.Start(":8080"); err != nil {
+        log.Fatal(err)
+    }
+}
+
+func handleGetUser(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    userID := req.GetString("user_id", "")
+    if userID == "" {
+        return nil, fmt.Errorf("user_id is required")
+    }
+    
+    // Simulate database lookup
+    user, err := getUserFromDB(userID)
+    if err != nil {
+        return nil, fmt.Errorf("user not found: %s", userID)
+    }
+
+    return mcp.NewToolResultText(fmt.Sprintf(`{"id":"%s","name":"%s","email":"%s","age":%d}`, 
+        user.ID, user.Name, user.Email, user.Age)), nil
+}
+
+func handleCreateUser(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    name := req.GetString("name", "")
+    email := req.GetString("email", "")
+    age := req.GetInt("age", 0)
+
+    if name == "" || email == "" {
+        return nil, fmt.Errorf("name and email are required")
+    }
+
+    // Validate input
+    if !isValidEmail(email) {
+        return nil, fmt.Errorf("invalid email format: %s", email)
+    }
+
+    // Create user
+    user := &User{
+        ID:        generateID(),
+        Name:      name,
+        Email:     email,
+        Age:       age,
+        CreatedAt: time.Now(),
+    }
+
+    if err := saveUserToDB(user); err != nil {
+        return nil, fmt.Errorf("failed to create user: %w", err)
+    }
+
+    return mcp.NewToolResultText(fmt.Sprintf(`{"id":"%s","message":"User created successfully","user":{"id":"%s","name":"%s","email":"%s","age":%d}}`,
+        user.ID, user.ID, user.Name, user.Email, user.Age)), nil
+}
+
+// Helper functions and types for the examples
+type User struct {
+    ID        string    `json:"id"`
+    Name      string    `json:"name"`
+    Email     string    `json:"email"`
+    Age       int       `json:"age"`
+    CreatedAt time.Time `json:"created_at"`
+}
+
+func getUserFromDB(userID string) (*User, error) {
+    // Placeholder implementation
+    return &User{
+        ID:    userID,
+        Name:  "John Doe",
+        Email: "john@example.com",
+        Age:   30,
+    }, nil
+}
+
+func isValidEmail(email string) bool {
+    return strings.Contains(email, "@") && strings.Contains(email, ".")
+}
+
+func generateID() string {
+    // Placeholder implementation
+    return fmt.Sprintf("user_%d", time.Now().UnixNano())
+}
+
+func saveUserToDB(user *User) error {
+    // Placeholder implementation
+    return nil
+}
+
+func handleSearchUsers(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    query := req.GetString("query", "")
+    limit := req.GetInt("limit", 10)
+    offset := req.GetInt("offset", 0)
+
+    // Search users with pagination
+    users, total, err := searchUsersInDB(query, limit, offset)
+    if err != nil {
+        return nil, fmt.Errorf("search failed: %w", err)
+    }
+
+    return mcp.NewToolResultText(fmt.Sprintf(`{"users":[{"id":"1","name":"John Doe","email":"john@example.com","age":30},{"id":"2","name":"Jane Smith","email":"jane@example.com","age":25}],"total":%d,"limit":%d,"offset":%d,"query":"%s"}`,
+        total, limit, offset, query)), nil
+}
+
+func handleUserResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+    userID := extractUserIDFromURI(req.Params.URI)
+    
+    user, err := getUserFromDB(userID)
+    if err != nil {
+        return nil, fmt.Errorf("user not found: %s", userID)
+    }
+
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "application/json",
+            Text:     fmt.Sprintf(`{"id":"%s","name":"%s","email":"%s","age":%d}`, user.ID, user.Name, user.Email, user.Age),
+        },
+    }, nil
+}
+
+// Additional helper functions
+
+func searchUsersInDB(query string, limit, offset int) ([]*User, int, error) {
+    // Placeholder implementation
+    users := []*User{
+        {ID: "1", Name: "John Doe", Email: "john@example.com", Age: 30},
+        {ID: "2", Name: "Jane Smith", Email: "jane@example.com", Age: 25},
+    }
+    return users, len(users), nil
+}
+
+func extractUserIDFromURI(uri string) string {
+    // Extract user ID from URI like "users://123"
+    if len(uri) > 8 && uri[:8] == "users://" {
+        return uri[8:]
+    }
+    return uri
+}
+```
+
+#### Advanced StreamableHTTP Configuration
+
+```go
+func main() {
+    s := server.NewMCPServer("Advanced StreamableHTTP Server", "1.0.0",
+        server.WithResourceCapabilities(true, true),
+        server.WithPromptCapabilities(true),
+        server.WithToolCapabilities(true),
+        server.WithLogging(),
+    )
+
+    // Add comprehensive tools and resources
+    addCRUDTools(s)
+    addBatchTools(s)
+    addAnalyticsTools(s)
+
+    log.Println("Starting advanced StreamableHTTP server on :8080")
+    httpServer := server.NewStreamableHTTPServer(s,
+        server.WithEndpointPath("/api/v1/mcp"),
+        server.WithHeartbeatInterval(30*time.Second),
+        server.WithStateLess(false),
+    )
+    
+    if err := httpServer.Start(":8080"); err != nil {
+        log.Fatal(err)
+    }
+}
+
+// Helper functions for the advanced example
+func addCRUDTools(s *server.MCPServer) {
+    // Placeholder implementation - would add CRUD tools
+}
+
+func addBatchTools(s *server.MCPServer) {
+    // Placeholder implementation - would add batch processing tools
+}
+
+func addAnalyticsTools(s *server.MCPServer) {
+    // Placeholder implementation - would add analytics tools
+}
+
+func logToolCall(sessionID, toolName string, duration time.Duration, err error) {
+    // Placeholder implementation
+    if err != nil {
+        log.Printf("Tool %s failed: %v", toolName, err)
+    } else {
+        log.Printf("Tool %s completed in %v", toolName, duration)
+    }
+}
+
+func logResourceRead(sessionID, uri string, duration time.Duration, err error) {
+    // Placeholder implementation
+    if err != nil {
+        log.Printf("Resource read %s failed: %v", uri, err)
+    } else {
+        log.Printf("Resource read %s completed in %v", uri, duration)
+    }
+}
+
+func addStreamableHTTPMiddleware(s *server.MCPServer) {
+    // Authentication middleware
+    s.AddToolMiddleware(func(next server.ToolHandler) server.ToolHandler {
+        return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            // Extract and validate auth token
+            token := extractAuthToken(ctx)
+            if token == "" {
+                return nil, fmt.Errorf("authentication required")
+            }
+            
+            user, err := validateToken(token)
+            if err != nil {
+                return nil, fmt.Errorf("invalid token: %w", err)
+            }
+            
+            // Add user to context
+            ctx = context.WithValue(ctx, "user", user)
+            return next(ctx, req)
+        }
+    })
+
+    // Rate limiting middleware
+    s.AddToolMiddleware(func(next server.ToolHandler) server.ToolHandler {
+        return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            clientIP := getClientIP(ctx)
+            if !rateLimiter.Allow(clientIP) {
+                return nil, fmt.Errorf("rate limit exceeded")
+            }
+            return next(ctx, req)
+        }
+    })
+
+    // Caching middleware
+    s.AddResourceMiddleware(func(next server.ResourceHandler) server.ResourceHandler {
+        return func(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+            // Check cache first
+            if cached := getFromCache(req.Params.URI); cached != nil {
+                return cached, nil
+            }
+            
+            result, err := next(ctx, req)
+            if err == nil {
+                // Cache successful results
+                setCache(req.Params.URI, result, 5*time.Minute)
+            }
+            
+            return result, err
+        }
+    })
+}
+```
+
+### Endpoints
+
+#### Standard MCP Endpoints
+
+When you start a StreamableHTTP MCP server, it automatically creates these endpoints:
+
+```
+POST /mcp/initialize     - Initialize MCP session
+POST /mcp/tools/list     - List available tools
+POST /mcp/tools/call     - Call a tool
+POST /mcp/resources/list - List available resources
+POST /mcp/resources/read - Read a resource
+POST /mcp/prompts/list   - List available prompts
+POST /mcp/prompts/get    - Get a prompt
+GET  /mcp/health         - Health check
+GET  /mcp/capabilities   - Server capabilities
+```
+
+#### Custom Endpoints
+
+Add custom HTTP endpoints alongside MCP:
+
+```go
+func main() {
+    s := server.NewMCPServer("Custom StreamableHTTP Server", "1.0.0")
+    
+    // Create HTTP server with custom routes
+    mux := http.NewServeMux()
+    
+    // Add MCP endpoints
+    mux.Handle("/mcp", server.NewStreamableHTTPServer(s))
+    
+    // Add custom endpoints
+    mux.HandleFunc("/api/status", handleStatus)
+    mux.HandleFunc("/api/metrics", handleMetrics)
+    mux.HandleFunc("/api/users", handleUsersAPI)
+    mux.HandleFunc("/api/upload", handleFileUpload)
+    
+    // Add middleware
+    handler := addMiddleware(mux)
+    
+    log.Println("Starting custom StreamableHTTP server on :8080")
+    if err := http.ListenAndServe(":8080", handler); err != nil {
+        log.Fatal(err)
+    }
+}
+
+func handleStatus(w http.ResponseWriter, r *http.Request) {
+    status := map[string]interface{}{
+        "status":    "healthy",
+        "timestamp": time.Now().Unix(),
+        "version":   "1.0.0",
+        "uptime":    time.Since(startTime).String(),
+    }
+    
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(status)
+}
+
+func handleMetrics(w http.ResponseWriter, r *http.Request) {
+    metrics := collectMetrics()
+    
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(metrics)
+}
+
+func handleUsersAPI(w http.ResponseWriter, r *http.Request) {
+    switch r.Method {
+    case "GET":
+        handleListUsers(w, r)
+    case "POST":
+        handleCreateUserAPI(w, r)
+    case "PUT":
+        handleUpdateUser(w, r)
+    case "DELETE":
+        handleDeleteUser(w, r)
+    default:
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+    }
+}
+```
+
+#### Request/Response Patterns
+
+##### Standard MCP Request
+
+```json
+POST /mcp/tools/call
+Content-Type: application/json
+
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "search_users",
+    "arguments": {
+      "query": "john",
+      "limit": 10,
+      "offset": 0
+    }
+  }
+}
+```
+
+##### Standard MCP Response
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"users\":[...],\"total\":25,\"limit\":10,\"offset\":0}"
+      }
+    ]
+  }
+}
+```
+
+##### Error Response
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32602,
+    "message": "Invalid params",
+    "data": {
+      "details": "user_id is required"
+    }
+  }
+}
+```
+
+### Session Management
+
+#### Stateful vs Stateless
+
+##### Stateless Design (Recommended)
+
+```go
+// Each request is independent
+func handleStatelessTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Extract all needed information from request
+    userID := extractUserFromToken(ctx)
+    params := req.Params.Arguments
+    
+    // Process without relying on server state
+    result, err := processRequest(userID, params)
+    if err != nil {
+        return nil, err
+    }
+    
+    return mcp.NewToolResultJSON(result)
+}
+
+// Use external storage for persistence
+func getUserPreferences(userID string) (map[string]interface{}, error) {
+    // Load from database, cache, etc.
+    return loadFromRedis(fmt.Sprintf("user:%s:prefs", userID))
+}
+```
+
+##### Stateful Design (When Needed)
+
+```go
+type HTTPSessionManager struct {
+    sessions map[string]*HTTPSession
+    mutex    sync.RWMutex
+    cleanup  *time.Ticker
+}
+
+type HTTPSession struct {
+    ID          string
+    UserID      string
+    CreatedAt   time.Time
+    LastAccess  time.Time
+    Data        map[string]interface{}
+    ExpiresAt   time.Time
+}
+
+func NewHTTPSessionManager() *HTTPSessionManager {
+    sm := &HTTPSessionManager{
+        sessions: make(map[string]*HTTPSession),
+        cleanup:  time.NewTicker(1 * time.Minute),
+    }
+    
+    go sm.cleanupExpiredSessions()
+    return sm
+}
+
+func (sm *HTTPSessionManager) CreateSession(userID string) *HTTPSession {
+    sm.mutex.Lock()
+    defer sm.mutex.Unlock()
+    
+    session := &HTTPSession{
+        ID:         generateSessionID(),
+        UserID:     userID,
+        CreatedAt:  time.Now(),
+        LastAccess: time.Now(),
+        Data:       make(map[string]interface{}),
+        ExpiresAt:  time.Now().Add(30 * time.Minute),
+    }
+    
+    sm.sessions[session.ID] = session
+    return session
+}
+
+func (sm *HTTPSessionManager) GetSession(sessionID string) (*HTTPSession, bool) {
+    sm.mutex.RLock()
+    defer sm.mutex.RUnlock()
+    
+    session, exists := sm.sessions[sessionID]
+    if !exists || time.Now().After(session.ExpiresAt) {
+        return nil, false
+    }
+    
+    // Update last access
+    session.LastAccess = time.Now()
+    session.ExpiresAt = time.Now().Add(30 * time.Minute)
+    
+    return session, true
+}
+
+func (sm *HTTPSessionManager) cleanupExpiredSessions() {
+    for range sm.cleanup.C {
+        sm.mutex.Lock()
+        now := time.Now()
+        
+        for id, session := range sm.sessions {
+            if now.After(session.ExpiresAt) {
+                delete(sm.sessions, id)
+            }
+        }
+        
+        sm.mutex.Unlock()
+    }
+}
+```
+
+#### Authentication and Authorization
+
+```go
+type AuthMiddleware struct {
+    jwtSecret []byte
+    userStore UserStore
+}
+
+func NewAuthMiddleware(secret []byte, store UserStore) *AuthMiddleware {
+    return &AuthMiddleware{
+        jwtSecret: secret,
+        userStore: store,
+    }
+}
+
+func (m *AuthMiddleware) Middleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // Extract token from Authorization header
+        authHeader := r.Header.Get("Authorization")
+        if !strings.HasPrefix(authHeader, "Bearer ") {
+            http.Error(w, "Missing or invalid authorization header", http.StatusUnauthorized)
+            return
+        }
+        
+        token := strings.TrimPrefix(authHeader, "Bearer ")
+        
+        // Validate JWT token
+        claims, err := m.validateJWT(token)
+        if err != nil {
+            http.Error(w, "Invalid token", http.StatusUnauthorized)
+            return
+        }
+        
+        // Load user information
+        user, err := m.userStore.GetUser(claims.UserID)
+        if err != nil {
+            http.Error(w, "User not found", http.StatusUnauthorized)
+            return
+        }
+        
+        // Add user to request context
+        ctx := context.WithValue(r.Context(), "user", user)
+        next.ServeHTTP(w, r.WithContext(ctx))
+    })
+}
+
+func (m *AuthMiddleware) validateJWT(tokenString string) (*Claims, error) {
+    // Note: This example uses a hypothetical JWT library
+    // In practice, you would use a real JWT library like github.com/golang-jwt/jwt
+    token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+        return m.jwtSecret, nil
+    })
+    
+    if err != nil {
+        return nil, err
+    }
+    
+    if claims, ok := token.Claims.(*Claims); ok && token.Valid {
+        return claims, nil
+    }
+    
+    return nil, fmt.Errorf("invalid token")
+}
+
+type Claims struct {
+    UserID string `json:"user_id"`
+    Role   string `json:"role"`
+    jwt.StandardClaims
+}
+```
+
+#### Request Headers
+
+The StreamableHTTP transport now passes HTTP request headers to MCP handlers. This allows you to access the original HTTP headers that were sent with the request in your tool and resource handlers.
+
+##### Accessing Headers in Handlers
+
+Headers are available in all MCP request objects:
+
+```go
+func handleGetUser(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Access request headers
+    headers := req.Header
+
+    // Use headers for authentication, tracing, etc.
+    authToken := headers.Get("Authorization")
+    if authToken == "" {
+        return nil, fmt.Errorf("authentication required")
+    }
+    
+    // Access other headers
+    requestID := headers.Get("X-Request-ID")
+    userAgent := headers.Get("User-Agent")
+    
+    // Rest of your handler code...
+}
+```
+
+This works for all MCP request types including:
+
+* `CallToolRequest`
+* `ReadResourceRequest`
+* `ListToolsRequest`
+* `ListResourcesRequest`
+* `InitializeRequest`
+* And other MCP request types
+
+The headers are automatically populated by the transport layer and are available in your handlers without any additional configuration.
+
+### Sampling Support
+
+StreamableHTTP transport now supports bidirectional sampling, allowing servers to request LLM completions from clients. This enables advanced scenarios where servers can leverage client-side LLM capabilities.
+
+:::warning[Security: Human-in-the-Loop Required]
+Per the [MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/client/sampling), implementations **SHOULD** always include a human in the loop with the ability to deny sampling requests.
+
+**Your sampling handler implementation MUST:**
+
+* Present sampling requests to users for review before execution
+* Allow users to view and edit prompts before sending to the LLM
+* Display generated responses for approval before returning to the server
+* Provide clear UI to accept or reject sampling requests
+
+Failing to implement approval flows creates serious security and trust risks, including:
+
+* Servers making unauthorized LLM requests on behalf of users
+* Exposure of sensitive data through unreviewed prompts
+* Uncontrolled API costs from automated sampling
+* Lack of user consent for AI interactions
+
+See the [example implementation](#example-with-approval-flow) below for a reference approval pattern.
+:::
+
+#### Requirements for Sampling
+
+To enable sampling with StreamableHTTP transport, the client **must** use the `WithContinuousListening()` option:
+
+```go
+// Client setup with sampling support
+httpTransport, err := transport.NewStreamableHTTP(
+    serverURL,
+    transport.WithContinuousListening(), // Required for sampling
+)
+
+// Create client with sampling handler
+mcpClient := client.NewClient(httpTransport, 
+    client.WithSamplingHandler(samplingHandler))
+```
+
+Without `WithContinuousListening()`, the client won't maintain a persistent connection to receive sampling requests from the server.
+
+#### Server-Side Implementation
+
+Enable sampling in your StreamableHTTP server:
+
+```go
+mcpServer := server.NewMCPServer("HTTP Sampling Server", "1.0.0")
+mcpServer.EnableSampling()
+
+// Add a tool that uses sampling
+mcpServer.AddTool(mcp.Tool{
+    Name:        "ask-llm",
+    Description: "Ask the LLM a question",
+    InputSchema: mcp.ToolInputSchema{
+        Type: "object",
+        Properties: map[string]any{
+            "question": map[string]any{
+                "type":        "string",
+                "description": "Question to ask",
+            },
+        },
+        Required: []string{"question"},
+    },
+}, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    question := mcp.ParseString(req, "question", "")
+    
+    // Request sampling from client
+    samplingRequest := mcp.CreateMessageRequest{
+        Request: mcp.Request{
+            Method: string(mcp.MethodSamplingCreateMessage),
+        },
+        CreateMessageParams: mcp.CreateMessageParams{
+            Messages: []mcp.SamplingMessage{
+                {
+                    Role: mcp.RoleUser,
+                    Content: mcp.TextContent{
+                        Type: "text",
+                        Text: question,
+                    },
+                },
+            },
+            MaxTokens: 1000,
+        },
+    }
+    
+    result, err := mcpServer.RequestSampling(ctx, samplingRequest)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("Sampling failed: %v", err)), nil
+    }
+    
+    return mcp.NewToolResultText(mcp.GetTextFromContent(result.Content)), nil
+})
+```
+
+#### How It Works
+
+1. **Persistent Connection**: When `WithContinuousListening()` is enabled, the client maintains a persistent SSE connection to the server
+2. **Bidirectional Communication**: The server can send sampling requests through the SSE stream
+3. **Response Channel**: The client responds to sampling requests via HTTP POST to the same endpoint
+4. **Session Correlation**: Responses are correlated using session IDs to ensure they reach the correct handler
+
+#### Limitations
+
+* Sampling requires `WithContinuousListening()` to maintain the SSE connection
+* Without continuous listening, the transport operates in stateless request/response mode only
+* Network interruptions may require reconnection and re-establishment of the sampling channel
+
+#### Example with Approval Flow
+
+Here's a reference implementation showing proper human-in-the-loop approval:
+
+```go
+type ApprovalSamplingHandler struct {
+    llmClient LLMClient // Your actual LLM client
+    ui        UserInterface // Your UI for presenting requests to users
+}
+
+func (h *ApprovalSamplingHandler) CreateMessage(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
+    // Step 1: Present the sampling request to the user for review
+    approved, modifiedRequest, err := h.ui.PresentSamplingRequest(ctx, request)
+    if err != nil {
+        return nil, fmt.Errorf("failed to get user approval: %w", err)
+    }
+    
+    if !approved {
+        return nil, fmt.Errorf("user rejected sampling request")
+    }
+    
+    // Step 2: Send the approved/modified request to the LLM
+    response, err := h.llmClient.CreateCompletion(ctx, modifiedRequest)
+    if err != nil {
+        return nil, fmt.Errorf("LLM request failed: %w", err)
+    }
+    
+    // Step 3: Present the response to the user for final approval
+    approved, modifiedResponse, err := h.ui.PresentSamplingResponse(ctx, response)
+    if err != nil {
+        return nil, fmt.Errorf("failed to get response approval: %w", err)
+    }
+    
+    if !approved {
+        return nil, fmt.Errorf("user rejected sampling response")
+    }
+    
+    // Step 4: Return the approved response to the server
+    return modifiedResponse, nil
+}
+```
+
+**Key Points:**
+
+* Users must explicitly approve both the request (before sending to LLM) and the response (before returning to server)
+* Users can modify prompts or responses before approval
+* Rejection at any stage returns an error to the server
+* The UI should clearly display what the server is requesting and why
+
+### Next Steps
+
+* **[In-Process Transport](/transports/inprocess)** - Learn about embedded scenarios
+* **[Client Development](/clients)** - Build MCP clients for HTTP transport
+* **[Server Basics](/servers/basics)** - Review fundamental server concepts
+
+
+## Transport Options
+
+MCP-Go supports multiple transport methods to fit different deployment scenarios and integration patterns. Choose the right transport based on your use case, performance requirements, and client capabilities.
+
+### Overview
+
+Transport layers handle the communication between MCP clients and servers. Each transport has different characteristics and is optimized for specific scenarios:
+
+* **[STDIO](/transports/stdio)** - Standard input/output for command-line tools
+* **[SSE](/transports/sse)** - Server-Sent Events for web applications
+* **[StreamableHTTP](/transports/http)** - Traditional HTTP for REST-like interactions
+* **[In-Process](/transports/inprocess)** - Direct integration for embedded scenarios
+
+### Transport Comparison
+
+| Transport          | Use Case                | Pros                                       | Cons                             | Sampling Support |
+| ------------------ | ----------------------- | ------------------------------------------ | -------------------------------- | ---------------- |
+| **STDIO**          | CLI tools, desktop apps | Simple, secure, no network                 | Single client, local only        | ✅ Full support   |
+| **SSE**            | Web apps, real-time     | Multi-client, real-time, web-friendly      | HTTP overhead, one-way streaming | ❌ Not supported  |
+| **StreamableHTTP** | Web services, APIs      | Standard protocol, caching, load balancing | No real-time, more complex       | ❌ Not supported  |
+| **In-Process**     | Embedded, testing       | No serialization, fastest                  | Same process only                | ✅ Full support   |
+
+### Quick Example
+
+The same server code works with any transport:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "os"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/client"
+)
+
+func main() {
+    // Create server (transport-agnostic)
+    s := server.NewMCPServer("Multi-Transport Server", "1.0.0",
+        server.WithToolCapabilities(true),
+    )
+
+    // Add a simple tool
+    s.AddTool(
+        mcp.NewTool("echo",
+            mcp.WithDescription("Echo back the input"),
+            mcp.WithString("message", mcp.Required()),
+        ),
+        handleEcho,
+    )
+
+    // Choose transport based on environment
+    transport := os.Getenv("MCP_TRANSPORT")
+    port := os.Getenv("PORT")
+    if port == "" {
+        port = "8080"
+    }
+
+    switch transport {
+    case "sse":
+        fmt.Printf("Starting SSE server on port %s\n", port)
+        sseServer := server.NewSSEServer(s)
+        sseServer.Start(":" + port)
+    case "streamablehttp":
+        fmt.Printf("Starting StreamableHTTP server on port %s\n", port)
+        httpServer := server.NewStreamableHTTPServer(s)
+        httpServer.Start(":" + port)
+    default:
+        fmt.Println("Starting STDIO server")
+        server.ServeStdio(s)
+    }
+}
+
+func handleEcho(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    message, err := req.RequireString("message")
+    if err != nil {
+        return nil, err
+    }
+    return mcp.NewToolResultText(fmt.Sprintf("Echo: %s", message)), nil
+}
+```
+
+### Choosing the Right Transport
+
+#### STDIO Transport
+
+**Best for:**
+
+* Command-line tools and utilities
+* Desktop application integrations
+* Local development and testing
+* Single-user scenarios
+
+**Example use cases:**
+
+* File system tools for IDEs
+* Local database utilities
+* Development workflow automation
+* System administration tools
+
+#### SSE Transport
+
+**Best for:**
+
+* Web applications requiring real-time updates
+* Browser-based LLM interfaces
+* Multi-user collaborative tools
+* Dashboard and monitoring applications
+
+**Example use cases:**
+
+* Web-based chat interfaces
+* Real-time data visualization
+* Collaborative document editing
+* Live system monitoring
+
+#### StreamableHTTP Transport
+
+**Best for:**
+
+* Traditional web services
+* REST API integrations
+* Load-balanced deployments
+* Stateless interactions
+
+**Example use cases:**
+
+* Microservice architectures
+* Public API endpoints
+* Integration with existing HTTP infrastructure
+* Cached or rate-limited services
+
+#### In-Process Transport
+
+**Best for:**
+
+* Embedded MCP servers
+* Testing and development
+* High-performance scenarios
+* Library integrations
+* Sampling-enabled applications
+
+**Example use cases:**
+
+* Testing MCP implementations
+* Embedded analytics engines
+* High-frequency trading systems
+* Real-time game servers
+* LLM-powered applications with bidirectional communication
+
+### Transport Configuration
+
+#### Environment-Based Selection
+
+```go
+func startServer(s *server.MCPServer) error {
+    switch os.Getenv("MCP_TRANSPORT") {
+    case "sse":
+        sseServer := server.NewSSEServer(s)
+        return sseServer.Start(getPort())
+    case "streamablehttp":
+        httpServer := server.NewStreamableHTTPServer(s)
+        return httpServer.Start(getPort())
+    case "inprocess":
+        // Note: In-process transport doesn't use network ports
+        // This would typically be used differently in practice
+        client := client.NewInProcessClient(s)
+        defer client.Close()
+        // Keep the process running
+        select {}
+    default:
+        return server.ServeStdio(s)
+    }
+}
+
+func getPort() string {
+    if port := os.Getenv("PORT"); port != "" {
+        return ":" + port
+    }
+    return ":8080"
+}
+```
+
+#### Multi-Transport Server
+
+```go
+func main() {
+    s := server.NewMCPServer("Multi-Transport", "1.0.0")
+    
+    // Add your tools, resources, prompts...
+    setupServer(s)
+    
+    // Start multiple transports concurrently with proper error handling
+    errChan := make(chan error, 3)
+    
+    go func() {
+        log.Println("Starting STDIO server...")
+        if err := server.ServeStdio(s); err != nil {
+            log.Printf("STDIO server error: %v", err)
+            errChan <- fmt.Errorf("STDIO server failed: %w", err)
+        }
+    }()
+    
+    go func() {
+        log.Println("Starting SSE server on :8080...")
+        sseServer := server.NewSSEServer(s)
+        if err := sseServer.Start(":8080"); err != nil {
+            log.Printf("SSE server error: %v", err)
+            errChan <- fmt.Errorf("SSE server failed: %w", err)
+        }
+    }()
+    
+    log.Println("Starting StreamableHTTP server on :8081...")
+    httpServer := server.NewStreamableHTTPServer(s)
+    if err := httpServer.Start(":8081"); err != nil {
+        log.Printf("StreamableHTTP server error: %v", err)
+        errChan <- fmt.Errorf("StreamableHTTP server failed: %w", err)
+    }
+    
+    // Wait for any server to fail
+    select {
+    case err := <-errChan:
+        log.Printf("Server failed: %v", err)
+        return
+    }
+}
+
+// Helper function for the multi-transport example
+func setupServer(s *server.MCPServer) {
+    // Placeholder implementation - would add tools, resources, etc.
+}
+```
+
+### Performance Considerations
+
+#### Latency Comparison
+
+* **In-Process**: \~1μs (no serialization)
+* **STDIO**: \~100μs (local pipes)
+* **HTTP/SSE**: \~1-10ms (network + HTTP overhead)
+
+#### Throughput Comparison
+
+* **In-Process**: Limited by CPU/memory
+* **STDIO**: Limited by pipe buffers (\~64KB)
+* **HTTP/SSE**: Limited by network bandwidth
+
+#### Memory Usage
+
+* **In-Process**: Shared memory space
+* **STDIO**: Minimal overhead
+* **HTTP/SSE**: Connection pooling, request buffering
+
+### Security Considerations
+
+#### STDIO Transport
+
+* **Pros**: No network exposure, process isolation
+* **Cons**: Inherits parent process permissions
+* **Best practices**: Validate all inputs, use least privilege
+
+#### Network Transports (SSE/HTTP)
+
+* **Authentication**: Implement proper auth middleware
+* **Authorization**: Validate permissions per request
+* **Rate limiting**: Prevent abuse and DoS
+* **HTTPS**: Always use TLS in production
+
+```go
+// Example with security middleware
+s := server.NewMCPServer("Secure Server", "1.0.0",
+    server.WithToolMiddleware(authMiddleware),
+    server.WithToolMiddleware(rateLimitMiddleware),
+    server.WithRecovery(),
+)
+```
+
+### Next Steps
+
+Explore each transport in detail:
+
+* **[STDIO Transport](/transports/stdio)** - Command-line integration
+* **[SSE Transport](/transports/sse)** - Real-time web applications
+* **[StreamableHTTP Transport](/transports/http)** - Traditional web services
+* **[In-Process Transport](/transports/inprocess)** - Embedded scenarios
+
+
+## In-Process Transport
+
+In-process transport enables direct integration of MCP servers within the same process, eliminating network overhead and providing seamless integration for embedded scenarios.
+
+### Use Cases
+
+In-process transport is perfect for:
+
+* **Embedded servers**: MCP functionality within existing applications
+* **Testing and development**: Fast, reliable testing without network overhead
+* **Library integrations**: MCP as a library component
+* **Single-process architectures**: Monolithic applications with MCP capabilities
+
+**Example applications:**
+
+* Desktop applications with plugin architectures
+* Testing frameworks
+* Embedded analytics engines
+* Game engines with AI tool integration
+
+### Implementation
+
+#### Basic In-Process Server
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/client"
+)
+
+func main() {
+    // Create server
+    s := server.NewMCPServer("Calculator Server", "1.0.0",
+        server.WithToolCapabilities(true),
+    )
+
+    // Add calculator tool
+    s.AddTool(
+        mcp.NewTool("calculate",
+            mcp.WithDescription("Perform basic mathematical calculations"),
+            mcp.WithString("operation", 
+                mcp.Required(),
+                mcp.Enum("add", "subtract", "multiply", "divide"),
+                mcp.Description("The operation to perform"),
+            ),
+            mcp.WithNumber("x", mcp.Required(), mcp.Description("First number")),
+            mcp.WithNumber("y", mcp.Required(), mcp.Description("Second number")),
+        ),
+        handleCalculate,
+    )
+
+    // Create in-process client
+    mcpClient, err := client.NewInProcessClient(s)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer mcpClient.Close()
+
+    ctx := context.Background()
+
+    // Initialize
+    _, err = mcpClient.Initialize(ctx, mcp.InitializeRequest{
+        Params: mcp.InitializeRequestParams{
+            ProtocolVersion: "2024-11-05",
+            Capabilities: mcp.ClientCapabilities{
+                Tools: &mcp.ToolsCapability{},
+            },
+            ClientInfo: mcp.Implementation{
+                Name:    "test-client",
+                Version: "1.0.0",
+            },
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Use the calculator
+    result, err := mcpClient.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolParams{
+            Name: "calculate",
+            Arguments: map[string]interface{}{
+                "operation": "add",
+                "x":         10.0,
+                "y":         5.0,
+            },
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Extract text from the first content item
+    if len(result.Content) > 0 {
+        if textContent, ok := mcp.AsTextContent(result.Content[0]); ok {
+            fmt.Printf("Result: %s\n", textContent.Text)
+        }
+    }
+}
+
+func handleCalculate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    operation := req.GetString("operation", "")
+    x := req.GetFloat("x", 0)
+    y := req.GetFloat("y", 0)
+
+    var result float64
+    switch operation {
+    case "add":
+        result = x + y
+    case "subtract":
+        result = x - y
+    case "multiply":
+        result = x * y
+    case "divide":
+        if y == 0 {
+            return mcp.NewToolResultError("division by zero"), nil
+        }
+        result = x / y
+    default:
+        return nil, fmt.Errorf("unknown operation: %s", operation)
+    }
+
+    return mcp.NewToolResultText(fmt.Sprintf("%.2f", result)), nil
+}
+```
+
+#### Embedded Application Integration
+
+```go
+// Embedded MCP server in a larger application
+type Application struct {
+    mcpServer *server.MCPServer
+    mcpClient *client.InProcessClient
+    config    *Config
+}
+
+func NewApplication(config *Config) *Application {
+    app := &Application{
+        config: config,
+    }
+
+    // Create embedded MCP server
+    app.mcpServer = server.NewMCPServer("Embedded Server", "1.0.0",
+        server.WithToolCapabilities(true),
+    )
+
+    // Add application-specific tools
+    app.addApplicationTools()
+
+    // Create in-process client for internal use
+    var err error
+    app.mcpClient, err = client.NewInProcessClient(app.mcpServer)
+    if err != nil {
+        panic(err)
+    }
+
+    return app
+}
+
+type Config struct {
+    AppName string
+    Debug   bool
+}
+
+func (app *Application) addApplicationTools() {
+    // Application status tool
+    app.mcpServer.AddTool(
+        mcp.NewTool("get_app_status",
+            mcp.WithDescription("Get current application status"),
+        ),
+        func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            return mcp.NewToolResultText(fmt.Sprintf(`{"app_name":"%s","debug":%t,"status":"running"}`, 
+                app.config.AppName, app.config.Debug)), nil
+        },
+    )
+
+    // Configuration tool
+    app.mcpServer.AddTool(
+        mcp.NewTool("update_config",
+            mcp.WithDescription("Update application configuration"),
+            mcp.WithString("key", mcp.Required()),
+            mcp.WithString("value", mcp.Required()),
+        ),
+        func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            key := req.GetString("key", "")
+            value := req.GetString("value", "")
+
+            // Update configuration based on key
+            switch key {
+            case "debug":
+                app.config.Debug = value == "true"
+            case "app_name":
+                app.config.AppName = value
+            default:
+                return mcp.NewToolResultError(fmt.Sprintf("unknown config key: %s", key)), nil
+            }
+
+            return mcp.NewToolResultText(fmt.Sprintf("Updated %s to %s", key, value)), nil
+        },
+    )
+}
+
+func (app *Application) ProcessWithMCP(ctx context.Context, operation string) (interface{}, error) {
+    // Use MCP tools internally for processing
+    result, err := app.mcpClient.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolParams{
+            Name: "calculate",
+            Arguments: map[string]interface{}{
+                "operation": operation,
+                "x":         10.0,
+                "y":         5.0,
+            },
+        },
+    })
+    if err != nil {
+        return nil, err
+    }
+
+    // Extract text from the first content item
+    if len(result.Content) > 0 {
+        if textContent, ok := mcp.AsTextContent(result.Content[0]); ok {
+            return textContent.Text, nil
+        }
+    }
+    
+    return "no result", nil
+}
+
+// Usage example
+func main() {
+    config := &Config{
+        AppName: "My App",
+        Debug:   true,
+    }
+
+    app := NewApplication(config)
+    ctx := context.Background()
+
+    // Initialize the embedded MCP client
+    _, err := app.mcpClient.Initialize(ctx, mcp.InitializeRequest{
+        Params: mcp.InitializeRequestParams{
+            ProtocolVersion: "2024-11-05",
+            Capabilities: mcp.ClientCapabilities{
+                Tools: &mcp.ToolsCapability{},
+            },
+            ClientInfo: mcp.Implementation{
+                Name:    "embedded-client",
+                Version: "1.0.0",
+            },
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Use MCP functionality within the application
+    result, err := app.ProcessWithMCP(ctx, "add")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    fmt.Printf("Application result: %v\n", result)
+}
+```
+
+### Sampling Support
+
+In-process transport supports sampling, allowing servers to request LLM completions from clients. This enables bidirectional communication where servers can leverage client-side LLM capabilities.
+
+#### Enabling Sampling
+
+To enable sampling in your in-process server, call `EnableSampling()` during server setup:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+// MockSamplingHandler implements client.SamplingHandler for demonstration
+type MockSamplingHandler struct{}
+
+func (h *MockSamplingHandler) CreateMessage(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
+    // Extract the user's message
+    var userMessage string
+    for _, msg := range request.Messages {
+        if msg.Role == mcp.RoleUser {
+            if textContent, ok := msg.Content.(mcp.TextContent); ok {
+                userMessage = textContent.Text
+                break
+            }
+        }
+    }
+
+    // Generate a mock response
+    mockResponse := fmt.Sprintf("Mock LLM response to: '%s'", userMessage)
+
+    return &mcp.CreateMessageResult{
+        SamplingMessage: mcp.SamplingMessage{
+            Role: mcp.RoleAssistant,
+            Content: mcp.TextContent{
+                Type: "text",
+                Text: mockResponse,
+            },
+        },
+        Model:      "mock-llm-v1",
+        StopReason: "endTurn",
+    }, nil
+}
+
+func main() {
+    // Create server with sampling enabled
+    mcpServer := server.NewMCPServer("sampling-server", "1.0.0")
+    mcpServer.EnableSampling()
+
+    // Add a tool that uses sampling
+    mcpServer.AddTool(mcp.Tool{
+        Name:        "ask_llm",
+        Description: "Ask the LLM a question using sampling",
+        InputSchema: mcp.ToolInputSchema{
+            Type: "object",
+            Properties: map[string]any{
+                "question": map[string]any{
+                    "type":        "string",
+                    "description": "The question to ask the LLM",
+                },
+                "system_prompt": map[string]any{
+                    "type":        "string",
+                    "description": "Optional system prompt",
+                },
+            },
+            Required: []string{"question"},
+        },
+    }, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        question, err := request.RequireString("question")
+        if err != nil {
+            return nil, err
+        }
+
+        systemPrompt := request.GetString("system_prompt", "You are a helpful assistant.")
+
+        // Create sampling request
+        samplingRequest := mcp.CreateMessageRequest{
+            CreateMessageParams: mcp.CreateMessageParams{
+                Messages: []mcp.SamplingMessage{
+                    {
+                        Role: mcp.RoleUser,
+                        Content: mcp.TextContent{
+                            Type: "text",
+                            Text: question,
+                        },
+                    },
+                },
+                SystemPrompt: systemPrompt,
+                MaxTokens:    1000,
+                Temperature:  0.7,
+            },
+        }
+
+        // Request sampling from client
+        result, err := mcpServer.RequestSampling(ctx, samplingRequest)
+        if err != nil {
+            return &mcp.CallToolResult{
+                Content: []mcp.Content{
+                    mcp.TextContent{
+                        Type: "text",
+                        Text: fmt.Sprintf("Error requesting sampling: %v", err),
+                    },
+                },
+                IsError: true,
+            }, nil
+        }
+
+        // Return the LLM response
+        return &mcp.CallToolResult{
+            Content: []mcp.Content{
+                mcp.TextContent{
+                    Type: "text",
+                    Text: fmt.Sprintf("LLM Response (model: %s): %s",
+                        result.Model, result.Content.(mcp.TextContent).Text),
+                },
+            },
+        }, nil
+    })
+
+    // Create client with sampling handler
+    mockHandler := &MockSamplingHandler{}
+    mcpClient, err := client.NewInProcessClientWithSamplingHandler(mcpServer, mockHandler)
+    if err != nil {
+        log.Fatalf("Failed to create client: %v", err)
+    }
+    defer mcpClient.Close()
+
+    // Start and initialize the client
+    ctx := context.Background()
+    if err := mcpClient.Start(ctx); err != nil {
+        log.Fatalf("Failed to start client: %v", err)
+    }
+
+    initRequest := mcp.InitializeRequest{}
+    initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+    initRequest.Params.ClientInfo = mcp.Implementation{
+        Name:    "sampling-client",
+        Version: "1.0.0",
+    }
+
+    _, err = mcpClient.Initialize(ctx, initRequest)
+    if err != nil {
+        log.Fatalf("Failed to initialize: %v", err)
+    }
+
+    // Call the tool that uses sampling
+    result, err := mcpClient.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolParams{
+            Name: "ask_llm",
+            Arguments: map[string]any{
+                "question":      "What is the capital of France?",
+                "system_prompt": "You are a helpful geography assistant.",
+            },
+        },
+    })
+    if err != nil {
+        log.Fatalf("Tool call failed: %v", err)
+    }
+
+    // Print the result
+    if len(result.Content) > 0 {
+        if textContent, ok := result.Content[0].(mcp.TextContent); ok {
+            fmt.Printf("Tool result: %s\n", textContent.Text)
+        }
+    }
+}
+```
+
+#### Real LLM Integration
+
+For production use, replace the mock handler with a real LLM integration:
+
+##### OpenAI Integration
+
+```go
+import (
+    "github.com/sashabaranov/go-openai"
+)
+
+type OpenAISamplingHandler struct {
+    client *openai.Client
+}
+
+func NewOpenAISamplingHandler(apiKey string) *OpenAISamplingHandler {
+    return &OpenAISamplingHandler{
+        client: openai.NewClient(apiKey),
+    }
+}
+
+func (h *OpenAISamplingHandler) CreateMessage(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
+    // Convert MCP messages to OpenAI format
+    var messages []openai.ChatCompletionMessage
+
+    // Add system message if provided
+    if request.SystemPrompt != "" {
+        messages = append(messages, openai.ChatCompletionMessage{
+            Role:    openai.ChatMessageRoleSystem,
+            Content: request.SystemPrompt,
+        })
+    }
+
+    // Convert MCP messages
+    for _, msg := range request.Messages {
+        var role string
+        switch msg.Role {
+        case mcp.RoleUser:
+            role = openai.ChatMessageRoleUser
+        case mcp.RoleAssistant:
+            role = openai.ChatMessageRoleAssistant
+        }
+
+        if textContent, ok := msg.Content.(mcp.TextContent); ok {
+            messages = append(messages, openai.ChatCompletionMessage{
+                Role:    role,
+                Content: textContent.Text,
+            })
+        }
+    }
+
+    // Create OpenAI request
+    req := openai.ChatCompletionRequest{
+        Model:       openai.GPT3Dot5Turbo,
+        Messages:    messages,
+        MaxTokens:   request.MaxTokens,
+        Temperature: float32(request.Temperature),
+    }
+
+    // Call OpenAI API
+    resp, err := h.client.CreateChatCompletion(ctx, req)
+    if err != nil {
+        return nil, fmt.Errorf("OpenAI API call failed: %w", err)
+    }
+
+    if len(resp.Choices) == 0 {
+        return nil, fmt.Errorf("no response from OpenAI")
+    }
+
+    choice := resp.Choices[0]
+
+    // Convert stop reason
+    var stopReason string
+    switch choice.FinishReason {
+    case "stop":
+        stopReason = "endTurn"
+    case "length":
+        stopReason = "maxTokens"
+    default:
+        stopReason = "other"
+    }
+
+    return &mcp.CreateMessageResult{
+        SamplingMessage: mcp.SamplingMessage{
+            Role: mcp.RoleAssistant,
+            Content: mcp.TextContent{
+                Type: "text",
+                Text: choice.Message.Content,
+            },
+        },
+        Model:      resp.Model,
+        StopReason: stopReason,
+    }, nil
+}
+
+// Usage
+func main() {
+    // Create OpenAI handler
+    openaiHandler := NewOpenAISamplingHandler("your-api-key")
+    
+    // Create client with OpenAI sampling
+    mcpClient, err := client.NewInProcessClientWithSamplingHandler(mcpServer, openaiHandler)
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // ... rest of the setup
+}
+```
+
+#### Sampling Request Parameters
+
+The `CreateMessageRequest` supports various parameters to control LLM behavior:
+
+```go
+samplingRequest := mcp.CreateMessageRequest{
+    CreateMessageParams: mcp.CreateMessageParams{
+        // Required: Messages to send to the LLM
+        Messages: []mcp.SamplingMessage{
+            {
+                Role: mcp.RoleUser,        // or mcp.RoleAssistant
+                Content: mcp.TextContent{   // or mcp.ImageContent
+                    Type: "text",
+                    Text: "Your message here",
+                },
+            },
+        },
+        
+        // Optional: System prompt for context
+        SystemPrompt: "You are a helpful assistant.",
+        
+        // Optional: Maximum tokens to generate
+        MaxTokens: 1000,
+        
+        // Optional: Temperature for randomness (0.0 to 1.0)
+        Temperature: 0.7,
+        
+        // Optional: Top-p sampling parameter
+        TopP: 0.9,
+        
+        // Optional: Stop sequences
+        StopSequences: []string{"\\n\\n"},
+    },
+}
+```
+
+#### Error Handling
+
+Always handle sampling errors gracefully:
+
+```go
+result, err := mcpServer.RequestSampling(ctx, samplingRequest)
+if err != nil {
+    // Log the error
+    log.Printf("Sampling request failed: %v", err)
+    
+    // Return appropriate error response
+    return &mcp.CallToolResult{
+        Content: []mcp.Content{
+            mcp.TextContent{
+                Type: "text",
+                Text: "Sorry, I couldn't process your request at this time.",
+            },
+        },
+        IsError: true,
+    }, nil
+}
+```
+
+### Next Steps
+
+* **[Client Development](/clients)** - Build MCP clients for all transports
+* **[HTTP Transport](/transports/http)** - Learn about web-based scenarios
+* **[Server Advanced Features](/servers/advanced)** - Explore production-ready features
+* **[Client Sampling](/clients/advanced-sampling)** - Learn more about client-side sampling implementation
+
+
+## SSE Transport
+
+Server-Sent Events (SSE) transport enables real-time, web-friendly communication between MCP clients and servers. Perfect for web applications that need live updates and multi-client support.
+
+### Use Cases
+
+SSE transport is ideal for:
+
+* **Web applications**: Browser-based LLM interfaces
+* **Real-time dashboards**: Live data monitoring and visualization
+* **Collaborative tools**: Multi-user environments with shared state
+* **Streaming responses**: Long-running operations with progress updates
+* **Event-driven systems**: Applications that need server-initiated communication
+
+**Example applications:**
+
+* Web-based chat interfaces with LLMs
+* Real-time analytics dashboards
+* Collaborative document editing
+* Live system monitoring tools
+* Streaming data processing interfaces
+
+### Implementation
+
+#### Basic SSE Server
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "time"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func main() {
+    s := server.NewMCPServer("SSE Server", "1.0.0",
+        server.WithToolCapabilities(true),
+        server.WithResourceCapabilities(true, true),
+    )
+
+    // Add real-time tools
+    s.AddTool(
+        mcp.NewTool("stream_data",
+            mcp.WithDescription("Stream data with real-time updates"),
+            mcp.WithString("source", mcp.Required()),
+            mcp.WithNumber("count", mcp.DefaultNumber(10)),
+        ),
+        handleStreamData,
+    )
+
+    s.AddTool(
+        mcp.NewTool("monitor_system",
+            mcp.WithDescription("Monitor system metrics in real-time"),
+            mcp.WithNumber("duration", mcp.DefaultNumber(60)),
+        ),
+        handleSystemMonitor,
+    )
+
+    // Add dynamic resources
+    s.AddResource(
+        mcp.NewResource(
+            "metrics://current",
+            "Current System Metrics",
+            mcp.WithResourceDescription("Real-time system metrics"),
+            mcp.WithMIMEType("application/json"),
+        ),
+        handleCurrentMetrics,
+    )
+
+    // Start SSE server
+    log.Println("Starting SSE server on :8080")
+    sseServer := server.NewSSEServer(s)
+    if err := sseServer.Start(":8080"); err != nil {
+        log.Fatal(err)
+    }
+}
+
+func handleStreamData(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Access request headers
+    headers := req.Header
+
+    // Use headers for authentication, tracing, etc.
+    authToken := headers.Get("Authorization")
+    if authToken == "" {
+        return nil, fmt.Errorf("authentication required")
+    }
+    
+    // Access other headers
+    requestID := headers.Get("X-Request-ID")
+    userAgent := headers.Get("User-Agent")
+    
+    source := req.GetString("source", "")
+    count := req.GetInt("count", 10)
+
+    // Get server from context for notifications
+    mcpServer := server.ServerFromContext(ctx)
+
+    // Stream data with progress updates
+    var results []map[string]interface{}
+    for i := 0; i < count; i++ {
+        // Check for cancellation
+        select {
+        case <-ctx.Done():
+            return nil, ctx.Err()
+        default:
+        }
+
+        // Simulate data processing
+        data := generateData(source, i)
+        results = append(results, data)
+
+        // Send progress notification
+        if mcpServer != nil {
+            err := mcpServer.SendNotificationToClient(ctx, "notifications/progress", map[string]interface{}{
+                "progress": i + 1,
+                "total":    count,
+                "message":  fmt.Sprintf("Processed %d/%d items from %s", i+1, count, source),
+            })
+            if err != nil {
+                log.Printf("Failed to send notification: %v", err)
+            }
+        }
+
+        time.Sleep(100 * time.Millisecond)
+    }
+
+    return mcp.NewToolResultText(fmt.Sprintf(`{"source":"%s","results":%v,"count":%d}`, 
+        source, results, len(results))), nil
+}
+
+// Helper functions for the examples
+func generateData(source string, index int) map[string]interface{} {
+    return map[string]interface{}{
+        "source": source,
+        "index":  index,
+        "value":  fmt.Sprintf("data_%d", index),
+    }
+}
+
+func handleSystemMonitor(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    duration := req.GetInt("duration", 60)
+    
+    mcpServer := server.ServerFromContext(ctx)
+
+    // Monitor system for specified duration
+    ticker := time.NewTicker(5 * time.Second)
+    defer ticker.Stop()
+
+    timeout := time.After(time.Duration(duration) * time.Second)
+    var metrics []map[string]interface{}
+
+    for {
+        select {
+        case <-ctx.Done():
+            return nil, ctx.Err()
+        case <-timeout:
+            return mcp.NewToolResultText(fmt.Sprintf(`{"duration":%d,"metrics":%v,"samples":%d}`,
+                duration, metrics, len(metrics))), nil
+        case <-ticker.C:
+            // Collect current metrics
+            currentMetrics := collectSystemMetrics()
+            metrics = append(metrics, currentMetrics)
+
+            // Send real-time update
+            if mcpServer != nil {
+                err := mcpServer.SendNotificationToClient(ctx, "system_metrics", currentMetrics)
+                if err != nil {
+                    log.Printf("Failed to send system metrics notification: %v", err)
+                }
+            }
+        }
+    }
+}
+
+func collectSystemMetrics() map[string]interface{} {
+    // Placeholder implementation
+    return map[string]interface{}{
+        "cpu":    50.5,
+        "memory": 75.2,
+        "disk":   30.1,
+    }
+}
+
+func handleCurrentMetrics(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+    metrics := collectSystemMetrics()
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "application/json",
+            Text:     fmt.Sprintf(`{"cpu":%.1f,"memory":%.1f,"disk":%.1f}`, metrics["cpu"], metrics["memory"], metrics["disk"]),
+        },
+    }, nil
+}
+```
+
+#### Advanced SSE Configuration
+
+```go
+func main() {
+    s := server.NewMCPServer("Advanced SSE Server", "1.0.0",
+        server.WithResourceCapabilities(true, true),
+        server.WithPromptCapabilities(true),
+        server.WithToolCapabilities(true),
+        server.WithLogging(),
+    )
+
+    // Add collaborative tools
+    addCollaborativeTools(s)
+    addRealTimeResources(s)
+
+    log.Println("Starting advanced SSE server on :8080")
+    sseServer := server.NewSSEServer(s,
+        server.WithStaticBasePath("/mcp"),
+        server.WithKeepAliveInterval(30*time.Second),
+        server.WithBaseURL("http://localhost:8080"),
+    )
+    
+    if err := sseServer.Start(":8080"); err != nil {
+        log.Fatal(err)
+    }
+}
+
+// Helper functions for the advanced example
+func addRealTimeResources(s *server.MCPServer) {
+    // Placeholder implementation - would add real-time resources
+}
+
+func addCollaborativeTools(s *server.MCPServer) {
+    // Shared document editing
+    s.AddTool(
+        mcp.NewTool("edit_document",
+            mcp.WithDescription("Edit a shared document"),
+            mcp.WithString("doc_id", mcp.Required()),
+            mcp.WithString("operation", mcp.Required()),
+            mcp.WithObject("data", mcp.Required()),
+        ),
+        handleDocumentEdit,
+    )
+
+    // Real-time chat
+    s.AddTool(
+        mcp.NewTool("send_message",
+            mcp.WithDescription("Send a message to all connected clients"),
+            mcp.WithString("message", mcp.Required()),
+            mcp.WithString("channel", mcp.DefaultString("general")),
+        ),
+        handleSendMessage,
+    )
+
+    // Live data updates
+    s.AddTool(
+        mcp.NewTool("subscribe_updates",
+            mcp.WithDescription("Subscribe to real-time data updates"),
+            mcp.WithString("topic", mcp.Required()),
+            mcp.WithArray("filters", mcp.Description("Optional filters")),
+        ),
+        handleSubscribeUpdates,
+    )
+}
+```
+
+### Configuration
+
+#### SSE Server Options
+
+The SSE server can be configured with various options:
+
+```go
+sseServer := server.NewSSEServer(s,
+    // Set the base path for SSE endpoints
+    server.WithStaticBasePath("/api/mcp"),
+    
+    // Configure keep-alive interval
+    server.WithKeepAliveInterval(30*time.Second),
+    
+    // Set base URL for client connections
+    server.WithBaseURL("http://localhost:8080"),
+    
+    // Configure SSE and message endpoints
+    server.WithSSEEndpoint("/sse"),
+    server.WithMessageEndpoint("/message"),
+    
+    // Add context function for request processing
+    server.WithSSEContextFunc(func(ctx context.Context, r *http.Request) context.Context {
+        // Add custom context values from headers
+        return ctx
+    }),
+)
+```
+
+**Resulting endpoints:**
+
+* SSE stream: `http://localhost:8080/api/mcp/sse`
+* Message endpoint: `http://localhost:8080/api/mcp/message`
+
+### Real-Time Notifications
+
+SSE transport enables real-time server-to-client communication through notifications. Use the server context to send notifications:
+
+```go
+func handleRealtimeTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Get the MCP server from context
+    mcpServer := server.ServerFromContext(ctx)
+    
+    // Send a notification to the client
+    if mcpServer != nil {
+        err := mcpServer.SendNotificationToClient(ctx, "custom_event", map[string]interface{}{
+            "message": "Real-time update",
+            "timestamp": time.Now().Unix(),
+        })
+        if err != nil {
+            log.Printf("Failed to send notification: %v", err)
+        }
+    }
+    
+    return mcp.NewToolResultText(`{"status":"notification_sent"}`), nil
+}
+```
+
+#### Session Management
+
+The SSE server automatically handles session management. You can send events to specific sessions using the server's notification methods:
+
+```go
+// Send notification to current client session
+mcpServer.SendNotificationToClient(ctx, "progress_update", progressData)
+
+// Send notification to all connected clients (if supported)
+// Note: Check the server implementation for broadcast capabilities
+```
+
+#### Request Headers
+
+Like the StreamableHTTP transport, the SSE transport passes HTTP request headers to MCP handlers. This allows you to access the original HTTP headers that were sent with the SSE connection in your tool and resource handlers.
+
+##### Accessing Headers in Handlers
+
+Headers from the SSE connection are available in all MCP request objects:
+
+```go
+func handleStreamData(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Access request headers
+    headers := req.Header
+
+    // Use headers for authentication, tracing, etc.
+    authToken := headers.Get("Authorization")
+    if authToken == "" {
+        return nil, fmt.Errorf("authentication required")
+    }
+    
+    // Access other headers
+    requestID := headers.Get("X-Request-ID")
+    userAgent := headers.Get("User-Agent")
+    
+    // Rest of your handler code...
+    mcpServer := server.ServerFromContext(ctx)
+    // ...
+}
+```
+
+This works for all MCP request types including:
+
+* `CallToolRequest`
+* `ReadResourceRequest`
+* `ListToolsRequest`
+* `ListResourcesRequest`
+* `InitializeRequest`
+* And other MCP request types
+
+The headers are automatically populated by the SSE transport layer from the initial SSE connection and are available in your handlers without any additional configuration.
+
+Note: Since SSE maintains a persistent connection, the headers are captured when the connection is established and remain the same for all requests during that connection's lifetime.
+
+### Next Steps
+
+* **[HTTP Transport](/transports/http)** - Learn about traditional web service patterns
+* **[In-Process Transport](/transports/inprocess)** - Explore embedded scenarios
+* **[Client Development](/clients)** - Build MCP clients for different transports
+
+
+## STDIO Transport
+
+STDIO (Standard Input/Output) transport is the most common MCP transport method, perfect for command-line tools, desktop applications, and local integrations.
+
+### Use Cases
+
+STDIO transport excels in scenarios where:
+
+* **Command-line tools**: CLI utilities that LLMs can invoke
+* **Desktop applications**: IDE plugins, text editors, local tools
+* **Subprocess communication**: Parent processes managing MCP servers
+* **Local development**: Testing and debugging MCP implementations
+* **Single-user scenarios**: Personal productivity tools
+
+**Example applications:**
+
+* File system browsers for IDEs
+* Local database query tools
+* Git repository analyzers
+* System monitoring utilities
+* Development workflow automation
+
+### Implementation
+
+#### Basic STDIO Server
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "os"
+    "path/filepath"
+    "strings"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func main() {
+    s := server.NewMCPServer("File Tools", "1.0.0",
+        server.WithToolCapabilities(true),
+        server.WithResourceCapabilities(true, true),
+    )
+
+    // Add file listing tool
+    s.AddTool(
+        mcp.NewTool("list_files",
+            mcp.WithDescription("List files in a directory"),
+            mcp.WithString("path", 
+                mcp.Required(),
+                mcp.Description("Directory path to list"),
+            ),
+            mcp.WithBoolean("recursive",
+                mcp.DefaultBool(false),
+                mcp.Description("List files recursively"),
+            ),
+        ),
+        handleListFiles,
+    )
+
+    // Add file content resource
+    s.AddResource(
+        mcp.NewResource(
+            "file://{path}",
+            "File Content",
+            mcp.WithResourceDescription("Read file contents"),
+            mcp.WithMIMEType("text/plain"),
+        ),
+        handleFileContent,
+    )
+
+    // Start STDIO server
+    if err := server.ServeStdio(s); err != nil {
+        fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
+        os.Exit(1)
+    }
+}
+
+func handleListFiles(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    path, err := req.RequireString("path")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    recursive, err := req.RequireBool("recursive")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+
+    // Security: validate path
+    if !isValidPath(path) {
+        return mcp.NewToolResultError(fmt.Sprintf("invalid path: %s", path)), nil
+    }
+
+    files, err := listFiles(path, recursive)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to list files: %v", err)), nil
+    }
+
+    return mcp.NewToolResultText(fmt.Sprintf(`{"path":"%s","files":%v,"count":%d,"recursive":%t}`, 
+        path, files, len(files), recursive)), nil
+}
+
+func handleFileContent(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+    // Extract path from URI: "file:///path/to/file" -> "/path/to/file"
+    path := extractPathFromURI(req.Params.URI)
+    
+    if !isValidPath(path) {
+        return nil, fmt.Errorf("invalid path: %s", path)
+    }
+
+    content, err := os.ReadFile(path)
+    if err != nil {
+        return nil, fmt.Errorf("failed to read file: %w", err)
+    }
+
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: detectMIMEType(path),
+            Text:     string(content),
+        },
+    }, nil
+}
+
+func isValidPath(path string) bool {
+    // Clean the path to resolve any . or .. components
+    clean := filepath.Clean(path)
+    
+    // Check for directory traversal patterns
+    if strings.Contains(clean, "..") {
+        return false
+    }
+    
+    // For absolute paths, ensure they're within a safe base directory
+    if filepath.IsAbs(clean) {
+        // Define safe base directories (adjust as needed for your use case)
+        safeBaseDirs := []string{
+            "/tmp",
+            "/var/tmp", 
+            "/home",
+            "/Users", // macOS
+        }
+        
+        // Check if the path starts with any safe base directory
+        for _, baseDir := range safeBaseDirs {
+            if strings.HasPrefix(clean, baseDir) {
+                return true
+            }
+        }
+        return false
+    }
+    
+    // For relative paths, ensure they don't escape the current directory
+    return !strings.HasPrefix(clean, "..")
+}
+
+// Helper functions for the examples
+func listFiles(path string, recursive bool) ([]string, error) {
+    // Placeholder implementation
+    return []string{"file1.txt", "file2.txt"}, nil
+}
+
+func extractPathFromURI(uri string) string {
+    // Extract path from URI: "file:///path/to/file" -> "/path/to/file"
+    if strings.HasPrefix(uri, "file://") {
+        return strings.TrimPrefix(uri, "file://")
+    }
+    return uri
+}
+
+func detectMIMEType(path string) string {
+    // Simple MIME type detection based on extension
+    ext := filepath.Ext(path)
+    switch ext {
+    case ".txt":
+        return "text/plain"
+    case ".json":
+        return "application/json"
+    case ".html":
+        return "text/html"
+    default:
+        return "application/octet-stream"
+    }
+}
+```
+
+#### Advanced STDIO Server
+
+```go
+package main
+import (
+    "context"
+    "fmt"
+    "log"
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func main() {
+    s := server.NewMCPServer("Advanced CLI Tool", "1.0.0",
+        server.WithResourceCapabilities(true, true),
+        server.WithPromptCapabilities(true),
+        server.WithToolCapabilities(true),
+        server.WithLogging(),
+    )
+
+    // Add comprehensive tools
+    addSystemTools(s)
+    addFileTools(s)
+    addGitTools(s)
+    addDatabaseTools(s)
+
+    // Handle graceful shutdown
+    setupGracefulShutdown(s)
+
+    // Start with error handling
+    if err := server.ServeStdio(s); err != nil {
+        logError(fmt.Sprintf("Server error: %v", err))
+        os.Exit(1)
+    }
+}
+
+// Helper functions for the advanced example
+func logToFile(message string) {
+    // Placeholder implementation
+    log.Println(message)
+}
+
+func logError(message string) {
+    // Placeholder implementation
+    log.Printf("ERROR: %s", message)
+}
+
+func addSystemTools(s *server.MCPServer) {
+    // Placeholder implementation
+}
+
+func addFileTools(s *server.MCPServer) {
+    // Placeholder implementation
+}
+
+func addGitTools(s *server.MCPServer) {
+    // Placeholder implementation
+}
+
+func addDatabaseTools(s *server.MCPServer) {
+    // Placeholder implementation
+}
+
+func setupGracefulShutdown(s *server.MCPServer) {
+    c := make(chan os.Signal, 1)
+    signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+    
+    go func() {
+        <-c
+        logToFile("Received shutdown signal")
+        
+        ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+        defer cancel()
+        
+        if err := s.Shutdown(ctx); err != nil {
+            logError(fmt.Sprintf("Shutdown error: %v", err))
+        }
+        
+        os.Exit(0)
+    }()
+}
+```
+
+### Client Integration
+
+#### How LLM Applications Connect
+
+LLM applications typically connect to STDIO MCP servers by:
+
+1. **Spawning the process**: Starting your server as a subprocess
+2. **Pipe communication**: Using stdin/stdout for JSON-RPC messages
+3. **Lifecycle management**: Handling process startup, shutdown, and errors
+
+#### Claude Desktop Integration
+
+Configure your STDIO server in Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "file-tools": {
+      "command": "go",
+      "args": ["run", "/path/to/your/server/main.go"],
+      "env": {
+        "LOG_LEVEL": "info"
+      }
+    }
+  }
+}
+```
+
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+#### Custom Client Integration
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "time"
+
+
+    "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/mcp"
+)
+
+func main() {
+    // Create STDIO client
+    c, err := client.NewStdioClient(
+        "go", nil /* inherit env */, "run", "/path/to/server/main.go",
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer c.Close()
+
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+
+    // Initialize connection
+    _, err = c.Initialize(ctx, mcp.InitializeRequest{
+        Params: mcp.InitializeRequestParams{
+            ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+            ClientInfo: mcp.Implementation{
+                Name:    "test-client",
+                Version: "1.0.0",
+            },
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // List available tools
+    tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    log.Printf("Available tools: %d", len(tools.Tools))
+    for _, tool := range tools.Tools {
+        log.Printf("- %s: %s", tool.Name, tool.Description)
+    }
+
+    // Call a tool
+    result, err := c.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolParams{
+            Name: "list_files",
+            Arguments: map[string]interface{}{
+                "path":      ".",
+                "recursive": false,
+            },
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    log.Printf("Tool result: %+v", result)
+}
+```
+
+##### Customizing Subprocess Execution
+
+If you need more control over how a sub-process is spawned when creating a new STDIO client, you can use
+`NewStdioMCPClientWithOptions` instead of `NewStdioMCPClient`.
+
+By passing the `WithCommandFunc` option, you can supply a custom factory function to create the `exec.Cmd` that launches
+the server. This allows configuration of environment variables, working directories, and system-level process attributes.
+
+Referring to the previous example, we can replace the line that creates the client:
+
+```go
+c, err := client.NewStdioClient(
+    "go", nil, "run", "/path/to/server/main.go",
+)
+```
+
+With the options-aware version:
+
+```go
+c, err := client.NewStdioMCPClientWithOptions(
+	"go",
+	nil,
+	[]string {"run", "/path/to/server/main.go"},
+	transport.WithCommandFunc(func(ctx context.Context, command string, args []string, env []string) (*exec.Cmd, error) {
+        cmd := exec.CommandContext(ctx, command, args...)
+        cmd.Env = env // Explicit environment for the subprocess.
+        cmd.Dir = "/var/sandbox/mcp-server" // Working directory (not isolated unless paired with chroot or namespace).
+
+        // Apply low-level process isolation and privilege dropping.
+        cmd.SysProcAttr = &syscall.SysProcAttr{
+            // Drop to non-root user (e.g., user/group ID 1001)
+            Credential: &syscall.Credential{
+                Uid: 1001,
+                Gid: 1001,
+            },
+            // File system isolation: only works if running as root.
+            Chroot: "/var/sandbox/mcp-server",
+
+            // Linux namespace isolation (Linux only):
+            // Prevents access to other processes, mounts, IPC, networks, etc.
+            Cloneflags: syscall.CLONE_NEWIPC | // Isolate inter-process comms
+                syscall.CLONE_NEWNS  | // Isolate filesystem mounts
+                syscall.CLONE_NEWPID | // Isolate PID namespace (child sees itself as PID 1)
+                syscall.CLONE_NEWUTS | // Isolate hostname
+                syscall.CLONE_NEWNET,  // Isolate networking (optional)
+        }
+
+		return cmd, nil
+	}),
+)
+```
+
+### Debugging
+
+#### Command Line Testing
+
+Test your STDIO server directly from the command line:
+
+```bash
+# Start your server
+go run main.go
+
+# Send initialization request
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"clientInfo":{"name":"test","version":"1.0.0"}}}' | go run main.go
+
+# List tools
+echo '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | go run main.go
+
+# Call a tool
+echo '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_files","arguments":{"path":".","recursive":false}}}' | go run main.go
+```
+
+#### Interactive Testing Script
+
+```bash
+#!/bin/bash
+
+# interactive_test.sh
+SERVER_CMD="go run main.go"
+
+echo "Starting MCP STDIO server test..."
+
+# Function to send JSON-RPC request
+send_request() {
+    local request="$1"
+    echo "Sending: $request"
+    echo "$request" | $SERVER_CMD
+    echo "---"
+}
+
+# Initialize
+send_request '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"clientInfo":{"name":"test","version":"1.0.0"}}}'
+
+# List tools
+send_request '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+
+# List resources
+send_request '{"jsonrpc":"2.0","id":3,"method":"resources/list","params":{}}'
+
+# Call tool
+send_request '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_files","arguments":{"path":".","recursive":false}}}'
+
+echo "Test completed."
+```
+
+#### Debug Logging
+
+Add debug logging to your STDIO server:
+
+```go
+func main() {
+    // Setup debug logging
+    logFile, err := os.OpenFile("mcp-server.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer logFile.Close()
+
+    logger := log.New(logFile, "[MCP] ", log.LstdFlags|log.Lshortfile)
+
+    s := server.NewMCPServer("Debug Server", "1.0.0",
+        server.WithToolCapabilities(true),
+        server.WithLogging(),
+    )
+
+    // Add tools with debug logging
+    s.AddTool(
+        mcp.NewTool("debug_echo",
+            mcp.WithDescription("Echo with debug logging"),
+            mcp.WithString("message", mcp.Required()),
+        ),
+        func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            message := req.GetString("message", "")
+            logger.Printf("Echo tool called with message: %s", message)
+            return mcp.NewToolResultText(fmt.Sprintf("Echo: %s", message)), nil
+        },
+    )
+
+    logger.Println("Starting STDIO server...")
+    if err := server.ServeStdio(s); err != nil {
+        logger.Printf("Server error: %v", err)
+    }
+}
+```
+
+#### MCP Inspector Integration
+
+Use the MCP Inspector for visual debugging:
+
+```bash
+# Install MCP Inspector
+npm install -g @modelcontextprotocol/inspector
+
+# Run your server with inspector
+mcp-inspector go run main.go
+```
+
+This opens a web interface where you can:
+
+* View available tools and resources
+* Test tool calls interactively
+* Inspect request/response messages
+* Debug protocol issues
+
+### Error Handling
+
+#### Robust Error Handling
+
+```go
+func handleToolWithErrors(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Validate required parameters
+    path, err := req.RequireString("path")
+    if err != nil {
+        return nil, fmt.Errorf("path parameter is required and must be a string")
+    }
+
+    // Validate path security
+    if !isValidPath(path) {
+        return nil, fmt.Errorf("invalid or unsafe path: %s", path)
+    }
+
+    // Check if path exists
+    if _, err := os.Stat(path); os.IsNotExist(err) {
+        return nil, fmt.Errorf("path does not exist: %s", path)
+    }
+
+    // Handle context cancellation
+    select {
+    case <-ctx.Done():
+        return nil, ctx.Err()
+    default:
+    }
+
+    // Perform operation with timeout
+    ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+    defer cancel()
+
+    result, err := performOperation(ctx, path)
+    if err != nil {
+        // Log error for debugging
+        logError(fmt.Sprintf("Operation failed for path %s: %v", path, err))
+        
+        // Return user-friendly error
+        if errors.Is(err, context.DeadlineExceeded) {
+            return nil, fmt.Errorf("operation timed out")
+        }
+        
+        return nil, fmt.Errorf("operation failed: %w", err)
+    }
+
+    return mcp.NewToolResultText(fmt.Sprintf("%v", result)), nil
+}
+```
+
+#### Process Management
+
+```go
+func main() {
+    // Handle panics gracefully
+    defer func() {
+        if r := recover(); r != nil {
+            logError(fmt.Sprintf("Server panic: %v", r))
+            os.Exit(1)
+        }
+    }()
+
+    s := server.NewMCPServer("Robust Server", "1.0.0",
+        server.WithRecovery(), // Built-in panic recovery
+    )
+
+    // Setup signal handling
+    setupSignalHandling()
+
+    // Start server with retry logic
+    for attempts := 0; attempts < 3; attempts++ {
+        if err := server.ServeStdio(s); err != nil {
+            logError(fmt.Sprintf("Server attempt %d failed: %v", attempts+1, err))
+            if attempts == 2 {
+                os.Exit(1)
+            }
+            time.Sleep(time.Second * time.Duration(attempts+1))
+        } else {
+            break
+        }
+    }
+}
+
+func setupSignalHandling() {
+    c := make(chan os.Signal, 1)
+    signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+    
+    go func() {
+        sig := <-c
+        logToFile(fmt.Sprintf("Received signal: %v", sig))
+        os.Exit(0)
+    }()
+}
+```
+
+### Performance Optimization
+
+#### Efficient Resource Usage
+
+```go
+// Use connection pooling for database tools
+var dbPool *sql.DB
+
+func init() {
+    var err error
+    dbPool, err = sql.Open("sqlite3", "data.db")
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    dbPool.SetMaxOpenConns(10)
+    dbPool.SetMaxIdleConns(5)
+    dbPool.SetConnMaxLifetime(time.Hour)
+}
+
+// Cache frequently accessed data
+var fileCache = make(map[string]cacheEntry)
+var cacheMutex sync.RWMutex
+
+type cacheEntry struct {
+    content   string
+    timestamp time.Time
+}
+
+func getCachedFile(path string) (string, bool) {
+    cacheMutex.RLock()
+    defer cacheMutex.RUnlock()
+    
+    entry, exists := fileCache[path]
+    if !exists || time.Since(entry.timestamp) > 5*time.Minute {
+        return "", false
+    }
+    
+    return entry.content, true
+}
+```
+
+#### Memory Management
+
+```go
+func handleLargeFile(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    path := req.GetString("path", "")
+    
+    // Stream large files instead of loading into memory
+    file, err := os.Open(path)
+    if err != nil {
+        return nil, err
+    }
+    defer file.Close()
+
+    // Process in chunks
+    const chunkSize = 64 * 1024
+    buffer := make([]byte, chunkSize)
+    
+    var result strings.Builder
+    for {
+        n, err := file.Read(buffer)
+        if err == io.EOF {
+            break
+        }
+        if err != nil {
+            return nil, err
+        }
+        
+        // Process chunk
+        processed := processChunk(buffer[:n])
+        result.WriteString(processed)
+        
+        // Check for cancellation
+        select {
+        case <-ctx.Done():
+            return nil, ctx.Err()
+        default:
+        }
+    }
+
+    return mcp.NewToolResultText(result.String()), nil
+}
+```
+
+### Next Steps
+
+* **[SSE Transport](/transports/sse)** - Learn about real-time web communication
+* **[HTTP Transport](/transports/http)** - Explore traditional web service patterns
+* **[In-Process Transport](/transports/inprocess)** - Understand embedded scenarios
+
+
 ## Sampling
 
 Learn how to implement MCP servers that can request LLM completions from clients using the sampling capability.
@@ -8826,2892 +11714,4 @@ sseServer := server.NewSSEServer(
 * **[Prompts](/servers/prompts)** - Learn to create reusable interaction templates
 * **[Advanced Features](/servers/advanced)** - Explore typed tools, middleware, and hooks
 * **[Resources](/servers/resources)** - Learn about exposing data sources
-
-
-## StreamableHTTP Transport
-
-StreamableHTTP transport provides traditional request/response communication for MCP servers, perfect for REST-like interactions, stateless clients, and integration with existing web infrastructure.
-
-### Use Cases
-
-StreamableHTTP transport excels in scenarios requiring:
-
-* **Web services**: Traditional REST API patterns
-* **Stateless interactions**: Each request is independent
-* **Load balancing**: Distribute requests across multiple servers
-* **Caching**: Leverage HTTP caching mechanisms
-* **Integration**: Work with existing HTTP infrastructure
-* **Public APIs**: Expose MCP functionality as web APIs
-
-**Example applications:**
-
-* Microservice architectures
-* Public API endpoints
-* Integration with API gateways
-* Cached data services
-* Rate-limited services
-* Multi-tenant applications
-
-### Implementation
-
-#### Basic StreamableHTTP Server
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "log"
-    "net/http"
-    "strings"
-    "time"
-
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
-)
-
-func main() {
-    s := server.NewMCPServer("StreamableHTTP API Server", "1.0.0",
-        server.WithToolCapabilities(true),
-        server.WithResourceCapabilities(true, true),
-    )
-
-    // Add RESTful tools
-    s.AddTool(
-        mcp.NewTool("get_user",
-            mcp.WithDescription("Get user information"),
-            mcp.WithString("user_id", mcp.Required()),
-        ),
-        handleGetUser,
-    )
-
-    s.AddTool(
-        mcp.NewTool("create_user",
-            mcp.WithDescription("Create a new user"),
-            mcp.WithString("name", mcp.Required()),
-            mcp.WithString("email", mcp.Required()),
-            mcp.WithNumber("age", mcp.Min(0)),
-        ),
-        handleCreateUser,
-    )
-
-    s.AddTool(
-        mcp.NewTool("search_users",
-            mcp.WithDescription("Search users with filters"),
-            mcp.WithString("query", mcp.Description("Search query")),
-            mcp.WithNumber("limit", mcp.DefaultNumber(10), mcp.Max(100)),
-            mcp.WithNumber("offset", mcp.DefaultNumber(0), mcp.Min(0)),
-        ),
-        handleSearchUsers,
-    )
-
-    // Add resources
-    s.AddResource(
-        mcp.NewResource(
-            "users://{user_id}",
-            "User Profile",
-            mcp.WithResourceDescription("User profile data"),
-            mcp.WithMIMEType("application/json"),
-        ),
-        handleUserResource,
-    )
-
-    // Start StreamableHTTP server
-    log.Println("Starting StreamableHTTP server on :8080")
-    httpServer := server.NewStreamableHTTPServer(s)
-    if err := httpServer.Start(":8080"); err != nil {
-        log.Fatal(err)
-    }
-}
-
-func handleGetUser(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    userID := req.GetString("user_id", "")
-    if userID == "" {
-        return nil, fmt.Errorf("user_id is required")
-    }
-    
-    // Simulate database lookup
-    user, err := getUserFromDB(userID)
-    if err != nil {
-        return nil, fmt.Errorf("user not found: %s", userID)
-    }
-
-    return mcp.NewToolResultText(fmt.Sprintf(`{"id":"%s","name":"%s","email":"%s","age":%d}`, 
-        user.ID, user.Name, user.Email, user.Age)), nil
-}
-
-func handleCreateUser(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    name := req.GetString("name", "")
-    email := req.GetString("email", "")
-    age := req.GetInt("age", 0)
-
-    if name == "" || email == "" {
-        return nil, fmt.Errorf("name and email are required")
-    }
-
-    // Validate input
-    if !isValidEmail(email) {
-        return nil, fmt.Errorf("invalid email format: %s", email)
-    }
-
-    // Create user
-    user := &User{
-        ID:        generateID(),
-        Name:      name,
-        Email:     email,
-        Age:       age,
-        CreatedAt: time.Now(),
-    }
-
-    if err := saveUserToDB(user); err != nil {
-        return nil, fmt.Errorf("failed to create user: %w", err)
-    }
-
-    return mcp.NewToolResultText(fmt.Sprintf(`{"id":"%s","message":"User created successfully","user":{"id":"%s","name":"%s","email":"%s","age":%d}}`,
-        user.ID, user.ID, user.Name, user.Email, user.Age)), nil
-}
-
-// Helper functions and types for the examples
-type User struct {
-    ID        string    `json:"id"`
-    Name      string    `json:"name"`
-    Email     string    `json:"email"`
-    Age       int       `json:"age"`
-    CreatedAt time.Time `json:"created_at"`
-}
-
-func getUserFromDB(userID string) (*User, error) {
-    // Placeholder implementation
-    return &User{
-        ID:    userID,
-        Name:  "John Doe",
-        Email: "john@example.com",
-        Age:   30,
-    }, nil
-}
-
-func isValidEmail(email string) bool {
-    return strings.Contains(email, "@") && strings.Contains(email, ".")
-}
-
-func generateID() string {
-    // Placeholder implementation
-    return fmt.Sprintf("user_%d", time.Now().UnixNano())
-}
-
-func saveUserToDB(user *User) error {
-    // Placeholder implementation
-    return nil
-}
-
-func handleSearchUsers(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    query := req.GetString("query", "")
-    limit := req.GetInt("limit", 10)
-    offset := req.GetInt("offset", 0)
-
-    // Search users with pagination
-    users, total, err := searchUsersInDB(query, limit, offset)
-    if err != nil {
-        return nil, fmt.Errorf("search failed: %w", err)
-    }
-
-    return mcp.NewToolResultText(fmt.Sprintf(`{"users":[{"id":"1","name":"John Doe","email":"john@example.com","age":30},{"id":"2","name":"Jane Smith","email":"jane@example.com","age":25}],"total":%d,"limit":%d,"offset":%d,"query":"%s"}`,
-        total, limit, offset, query)), nil
-}
-
-func handleUserResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-    userID := extractUserIDFromURI(req.Params.URI)
-    
-    user, err := getUserFromDB(userID)
-    if err != nil {
-        return nil, fmt.Errorf("user not found: %s", userID)
-    }
-
-    return []mcp.ResourceContents{
-        mcp.TextResourceContents{
-            URI:      req.Params.URI,
-            MIMEType: "application/json",
-            Text:     fmt.Sprintf(`{"id":"%s","name":"%s","email":"%s","age":%d}`, user.ID, user.Name, user.Email, user.Age),
-        },
-    }, nil
-}
-
-// Additional helper functions
-
-func searchUsersInDB(query string, limit, offset int) ([]*User, int, error) {
-    // Placeholder implementation
-    users := []*User{
-        {ID: "1", Name: "John Doe", Email: "john@example.com", Age: 30},
-        {ID: "2", Name: "Jane Smith", Email: "jane@example.com", Age: 25},
-    }
-    return users, len(users), nil
-}
-
-func extractUserIDFromURI(uri string) string {
-    // Extract user ID from URI like "users://123"
-    if len(uri) > 8 && uri[:8] == "users://" {
-        return uri[8:]
-    }
-    return uri
-}
-```
-
-#### Advanced StreamableHTTP Configuration
-
-```go
-func main() {
-    s := server.NewMCPServer("Advanced StreamableHTTP Server", "1.0.0",
-        server.WithResourceCapabilities(true, true),
-        server.WithPromptCapabilities(true),
-        server.WithToolCapabilities(true),
-        server.WithLogging(),
-    )
-
-    // Add comprehensive tools and resources
-    addCRUDTools(s)
-    addBatchTools(s)
-    addAnalyticsTools(s)
-
-    log.Println("Starting advanced StreamableHTTP server on :8080")
-    httpServer := server.NewStreamableHTTPServer(s,
-        server.WithEndpointPath("/api/v1/mcp"),
-        server.WithHeartbeatInterval(30*time.Second),
-        server.WithStateLess(false),
-    )
-    
-    if err := httpServer.Start(":8080"); err != nil {
-        log.Fatal(err)
-    }
-}
-
-// Helper functions for the advanced example
-func addCRUDTools(s *server.MCPServer) {
-    // Placeholder implementation - would add CRUD tools
-}
-
-func addBatchTools(s *server.MCPServer) {
-    // Placeholder implementation - would add batch processing tools
-}
-
-func addAnalyticsTools(s *server.MCPServer) {
-    // Placeholder implementation - would add analytics tools
-}
-
-func logToolCall(sessionID, toolName string, duration time.Duration, err error) {
-    // Placeholder implementation
-    if err != nil {
-        log.Printf("Tool %s failed: %v", toolName, err)
-    } else {
-        log.Printf("Tool %s completed in %v", toolName, duration)
-    }
-}
-
-func logResourceRead(sessionID, uri string, duration time.Duration, err error) {
-    // Placeholder implementation
-    if err != nil {
-        log.Printf("Resource read %s failed: %v", uri, err)
-    } else {
-        log.Printf("Resource read %s completed in %v", uri, duration)
-    }
-}
-
-func addStreamableHTTPMiddleware(s *server.MCPServer) {
-    // Authentication middleware
-    s.AddToolMiddleware(func(next server.ToolHandler) server.ToolHandler {
-        return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-            // Extract and validate auth token
-            token := extractAuthToken(ctx)
-            if token == "" {
-                return nil, fmt.Errorf("authentication required")
-            }
-            
-            user, err := validateToken(token)
-            if err != nil {
-                return nil, fmt.Errorf("invalid token: %w", err)
-            }
-            
-            // Add user to context
-            ctx = context.WithValue(ctx, "user", user)
-            return next(ctx, req)
-        }
-    })
-
-    // Rate limiting middleware
-    s.AddToolMiddleware(func(next server.ToolHandler) server.ToolHandler {
-        return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-            clientIP := getClientIP(ctx)
-            if !rateLimiter.Allow(clientIP) {
-                return nil, fmt.Errorf("rate limit exceeded")
-            }
-            return next(ctx, req)
-        }
-    })
-
-    // Caching middleware
-    s.AddResourceMiddleware(func(next server.ResourceHandler) server.ResourceHandler {
-        return func(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-            // Check cache first
-            if cached := getFromCache(req.Params.URI); cached != nil {
-                return cached, nil
-            }
-            
-            result, err := next(ctx, req)
-            if err == nil {
-                // Cache successful results
-                setCache(req.Params.URI, result, 5*time.Minute)
-            }
-            
-            return result, err
-        }
-    })
-}
-```
-
-### Endpoints
-
-#### Standard MCP Endpoints
-
-When you start a StreamableHTTP MCP server, it automatically creates these endpoints:
-
-```
-POST /mcp/initialize     - Initialize MCP session
-POST /mcp/tools/list     - List available tools
-POST /mcp/tools/call     - Call a tool
-POST /mcp/resources/list - List available resources
-POST /mcp/resources/read - Read a resource
-POST /mcp/prompts/list   - List available prompts
-POST /mcp/prompts/get    - Get a prompt
-GET  /mcp/health         - Health check
-GET  /mcp/capabilities   - Server capabilities
-```
-
-#### Custom Endpoints
-
-Add custom HTTP endpoints alongside MCP:
-
-```go
-func main() {
-    s := server.NewMCPServer("Custom StreamableHTTP Server", "1.0.0")
-    
-    // Create HTTP server with custom routes
-    mux := http.NewServeMux()
-    
-    // Add MCP endpoints
-    mux.Handle("/mcp", server.NewStreamableHTTPServer(s))
-    
-    // Add custom endpoints
-    mux.HandleFunc("/api/status", handleStatus)
-    mux.HandleFunc("/api/metrics", handleMetrics)
-    mux.HandleFunc("/api/users", handleUsersAPI)
-    mux.HandleFunc("/api/upload", handleFileUpload)
-    
-    // Add middleware
-    handler := addMiddleware(mux)
-    
-    log.Println("Starting custom StreamableHTTP server on :8080")
-    if err := http.ListenAndServe(":8080", handler); err != nil {
-        log.Fatal(err)
-    }
-}
-
-func handleStatus(w http.ResponseWriter, r *http.Request) {
-    status := map[string]interface{}{
-        "status":    "healthy",
-        "timestamp": time.Now().Unix(),
-        "version":   "1.0.0",
-        "uptime":    time.Since(startTime).String(),
-    }
-    
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(status)
-}
-
-func handleMetrics(w http.ResponseWriter, r *http.Request) {
-    metrics := collectMetrics()
-    
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(metrics)
-}
-
-func handleUsersAPI(w http.ResponseWriter, r *http.Request) {
-    switch r.Method {
-    case "GET":
-        handleListUsers(w, r)
-    case "POST":
-        handleCreateUserAPI(w, r)
-    case "PUT":
-        handleUpdateUser(w, r)
-    case "DELETE":
-        handleDeleteUser(w, r)
-    default:
-        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-    }
-}
-```
-
-#### Request/Response Patterns
-
-##### Standard MCP Request
-
-```json
-POST /mcp/tools/call
-Content-Type: application/json
-
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "tools/call",
-  "params": {
-    "name": "search_users",
-    "arguments": {
-      "query": "john",
-      "limit": 10,
-      "offset": 0
-    }
-  }
-}
-```
-
-##### Standard MCP Response
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": {
-    "content": [
-      {
-        "type": "text",
-        "text": "{\"users\":[...],\"total\":25,\"limit\":10,\"offset\":0}"
-      }
-    ]
-  }
-}
-```
-
-##### Error Response
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "error": {
-    "code": -32602,
-    "message": "Invalid params",
-    "data": {
-      "details": "user_id is required"
-    }
-  }
-}
-```
-
-### Session Management
-
-#### Stateful vs Stateless
-
-##### Stateless Design (Recommended)
-
-```go
-// Each request is independent
-func handleStatelessTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    // Extract all needed information from request
-    userID := extractUserFromToken(ctx)
-    params := req.Params.Arguments
-    
-    // Process without relying on server state
-    result, err := processRequest(userID, params)
-    if err != nil {
-        return nil, err
-    }
-    
-    return mcp.NewToolResultJSON(result)
-}
-
-// Use external storage for persistence
-func getUserPreferences(userID string) (map[string]interface{}, error) {
-    // Load from database, cache, etc.
-    return loadFromRedis(fmt.Sprintf("user:%s:prefs", userID))
-}
-```
-
-##### Stateful Design (When Needed)
-
-```go
-type HTTPSessionManager struct {
-    sessions map[string]*HTTPSession
-    mutex    sync.RWMutex
-    cleanup  *time.Ticker
-}
-
-type HTTPSession struct {
-    ID          string
-    UserID      string
-    CreatedAt   time.Time
-    LastAccess  time.Time
-    Data        map[string]interface{}
-    ExpiresAt   time.Time
-}
-
-func NewHTTPSessionManager() *HTTPSessionManager {
-    sm := &HTTPSessionManager{
-        sessions: make(map[string]*HTTPSession),
-        cleanup:  time.NewTicker(1 * time.Minute),
-    }
-    
-    go sm.cleanupExpiredSessions()
-    return sm
-}
-
-func (sm *HTTPSessionManager) CreateSession(userID string) *HTTPSession {
-    sm.mutex.Lock()
-    defer sm.mutex.Unlock()
-    
-    session := &HTTPSession{
-        ID:         generateSessionID(),
-        UserID:     userID,
-        CreatedAt:  time.Now(),
-        LastAccess: time.Now(),
-        Data:       make(map[string]interface{}),
-        ExpiresAt:  time.Now().Add(30 * time.Minute),
-    }
-    
-    sm.sessions[session.ID] = session
-    return session
-}
-
-func (sm *HTTPSessionManager) GetSession(sessionID string) (*HTTPSession, bool) {
-    sm.mutex.RLock()
-    defer sm.mutex.RUnlock()
-    
-    session, exists := sm.sessions[sessionID]
-    if !exists || time.Now().After(session.ExpiresAt) {
-        return nil, false
-    }
-    
-    // Update last access
-    session.LastAccess = time.Now()
-    session.ExpiresAt = time.Now().Add(30 * time.Minute)
-    
-    return session, true
-}
-
-func (sm *HTTPSessionManager) cleanupExpiredSessions() {
-    for range sm.cleanup.C {
-        sm.mutex.Lock()
-        now := time.Now()
-        
-        for id, session := range sm.sessions {
-            if now.After(session.ExpiresAt) {
-                delete(sm.sessions, id)
-            }
-        }
-        
-        sm.mutex.Unlock()
-    }
-}
-```
-
-#### Authentication and Authorization
-
-```go
-type AuthMiddleware struct {
-    jwtSecret []byte
-    userStore UserStore
-}
-
-func NewAuthMiddleware(secret []byte, store UserStore) *AuthMiddleware {
-    return &AuthMiddleware{
-        jwtSecret: secret,
-        userStore: store,
-    }
-}
-
-func (m *AuthMiddleware) Middleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        // Extract token from Authorization header
-        authHeader := r.Header.Get("Authorization")
-        if !strings.HasPrefix(authHeader, "Bearer ") {
-            http.Error(w, "Missing or invalid authorization header", http.StatusUnauthorized)
-            return
-        }
-        
-        token := strings.TrimPrefix(authHeader, "Bearer ")
-        
-        // Validate JWT token
-        claims, err := m.validateJWT(token)
-        if err != nil {
-            http.Error(w, "Invalid token", http.StatusUnauthorized)
-            return
-        }
-        
-        // Load user information
-        user, err := m.userStore.GetUser(claims.UserID)
-        if err != nil {
-            http.Error(w, "User not found", http.StatusUnauthorized)
-            return
-        }
-        
-        // Add user to request context
-        ctx := context.WithValue(r.Context(), "user", user)
-        next.ServeHTTP(w, r.WithContext(ctx))
-    })
-}
-
-func (m *AuthMiddleware) validateJWT(tokenString string) (*Claims, error) {
-    // Note: This example uses a hypothetical JWT library
-    // In practice, you would use a real JWT library like github.com/golang-jwt/jwt
-    token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-        return m.jwtSecret, nil
-    })
-    
-    if err != nil {
-        return nil, err
-    }
-    
-    if claims, ok := token.Claims.(*Claims); ok && token.Valid {
-        return claims, nil
-    }
-    
-    return nil, fmt.Errorf("invalid token")
-}
-
-type Claims struct {
-    UserID string `json:"user_id"`
-    Role   string `json:"role"`
-    jwt.StandardClaims
-}
-```
-
-#### Request Headers
-
-The StreamableHTTP transport now passes HTTP request headers to MCP handlers. This allows you to access the original HTTP headers that were sent with the request in your tool and resource handlers.
-
-##### Accessing Headers in Handlers
-
-Headers are available in all MCP request objects:
-
-```go
-func handleGetUser(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    // Access request headers
-    headers := req.Header
-
-    // Use headers for authentication, tracing, etc.
-    authToken := headers.Get("Authorization")
-    if authToken == "" {
-        return nil, fmt.Errorf("authentication required")
-    }
-    
-    // Access other headers
-    requestID := headers.Get("X-Request-ID")
-    userAgent := headers.Get("User-Agent")
-    
-    // Rest of your handler code...
-}
-```
-
-This works for all MCP request types including:
-
-* `CallToolRequest`
-* `ReadResourceRequest`
-* `ListToolsRequest`
-* `ListResourcesRequest`
-* `InitializeRequest`
-* And other MCP request types
-
-The headers are automatically populated by the transport layer and are available in your handlers without any additional configuration.
-
-### Sampling Support
-
-StreamableHTTP transport now supports bidirectional sampling, allowing servers to request LLM completions from clients. This enables advanced scenarios where servers can leverage client-side LLM capabilities.
-
-:::warning[Security: Human-in-the-Loop Required]
-Per the [MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/client/sampling), implementations **SHOULD** always include a human in the loop with the ability to deny sampling requests.
-
-**Your sampling handler implementation MUST:**
-
-* Present sampling requests to users for review before execution
-* Allow users to view and edit prompts before sending to the LLM
-* Display generated responses for approval before returning to the server
-* Provide clear UI to accept or reject sampling requests
-
-Failing to implement approval flows creates serious security and trust risks, including:
-
-* Servers making unauthorized LLM requests on behalf of users
-* Exposure of sensitive data through unreviewed prompts
-* Uncontrolled API costs from automated sampling
-* Lack of user consent for AI interactions
-
-See the [example implementation](#example-with-approval-flow) below for a reference approval pattern.
-:::
-
-#### Requirements for Sampling
-
-To enable sampling with StreamableHTTP transport, the client **must** use the `WithContinuousListening()` option:
-
-```go
-// Client setup with sampling support
-httpTransport, err := transport.NewStreamableHTTP(
-    serverURL,
-    transport.WithContinuousListening(), // Required for sampling
-)
-
-// Create client with sampling handler
-mcpClient := client.NewClient(httpTransport, 
-    client.WithSamplingHandler(samplingHandler))
-```
-
-Without `WithContinuousListening()`, the client won't maintain a persistent connection to receive sampling requests from the server.
-
-#### Server-Side Implementation
-
-Enable sampling in your StreamableHTTP server:
-
-```go
-mcpServer := server.NewMCPServer("HTTP Sampling Server", "1.0.0")
-mcpServer.EnableSampling()
-
-// Add a tool that uses sampling
-mcpServer.AddTool(mcp.Tool{
-    Name:        "ask-llm",
-    Description: "Ask the LLM a question",
-    InputSchema: mcp.ToolInputSchema{
-        Type: "object",
-        Properties: map[string]any{
-            "question": map[string]any{
-                "type":        "string",
-                "description": "Question to ask",
-            },
-        },
-        Required: []string{"question"},
-    },
-}, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    question := mcp.ParseString(req, "question", "")
-    
-    // Request sampling from client
-    samplingRequest := mcp.CreateMessageRequest{
-        Request: mcp.Request{
-            Method: string(mcp.MethodSamplingCreateMessage),
-        },
-        CreateMessageParams: mcp.CreateMessageParams{
-            Messages: []mcp.SamplingMessage{
-                {
-                    Role: mcp.RoleUser,
-                    Content: mcp.TextContent{
-                        Type: "text",
-                        Text: question,
-                    },
-                },
-            },
-            MaxTokens: 1000,
-        },
-    }
-    
-    result, err := mcpServer.RequestSampling(ctx, samplingRequest)
-    if err != nil {
-        return mcp.NewToolResultError(fmt.Sprintf("Sampling failed: %v", err)), nil
-    }
-    
-    return mcp.NewToolResultText(mcp.GetTextFromContent(result.Content)), nil
-})
-```
-
-#### How It Works
-
-1. **Persistent Connection**: When `WithContinuousListening()` is enabled, the client maintains a persistent SSE connection to the server
-2. **Bidirectional Communication**: The server can send sampling requests through the SSE stream
-3. **Response Channel**: The client responds to sampling requests via HTTP POST to the same endpoint
-4. **Session Correlation**: Responses are correlated using session IDs to ensure they reach the correct handler
-
-#### Limitations
-
-* Sampling requires `WithContinuousListening()` to maintain the SSE connection
-* Without continuous listening, the transport operates in stateless request/response mode only
-* Network interruptions may require reconnection and re-establishment of the sampling channel
-
-#### Example with Approval Flow
-
-Here's a reference implementation showing proper human-in-the-loop approval:
-
-```go
-type ApprovalSamplingHandler struct {
-    llmClient LLMClient // Your actual LLM client
-    ui        UserInterface // Your UI for presenting requests to users
-}
-
-func (h *ApprovalSamplingHandler) CreateMessage(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
-    // Step 1: Present the sampling request to the user for review
-    approved, modifiedRequest, err := h.ui.PresentSamplingRequest(ctx, request)
-    if err != nil {
-        return nil, fmt.Errorf("failed to get user approval: %w", err)
-    }
-    
-    if !approved {
-        return nil, fmt.Errorf("user rejected sampling request")
-    }
-    
-    // Step 2: Send the approved/modified request to the LLM
-    response, err := h.llmClient.CreateCompletion(ctx, modifiedRequest)
-    if err != nil {
-        return nil, fmt.Errorf("LLM request failed: %w", err)
-    }
-    
-    // Step 3: Present the response to the user for final approval
-    approved, modifiedResponse, err := h.ui.PresentSamplingResponse(ctx, response)
-    if err != nil {
-        return nil, fmt.Errorf("failed to get response approval: %w", err)
-    }
-    
-    if !approved {
-        return nil, fmt.Errorf("user rejected sampling response")
-    }
-    
-    // Step 4: Return the approved response to the server
-    return modifiedResponse, nil
-}
-```
-
-**Key Points:**
-
-* Users must explicitly approve both the request (before sending to LLM) and the response (before returning to server)
-* Users can modify prompts or responses before approval
-* Rejection at any stage returns an error to the server
-* The UI should clearly display what the server is requesting and why
-
-### Next Steps
-
-* **[In-Process Transport](/transports/inprocess)** - Learn about embedded scenarios
-* **[Client Development](/clients)** - Build MCP clients for HTTP transport
-* **[Server Basics](/servers/basics)** - Review fundamental server concepts
-
-
-## Transport Options
-
-MCP-Go supports multiple transport methods to fit different deployment scenarios and integration patterns. Choose the right transport based on your use case, performance requirements, and client capabilities.
-
-### Overview
-
-Transport layers handle the communication between MCP clients and servers. Each transport has different characteristics and is optimized for specific scenarios:
-
-* **[STDIO](/transports/stdio)** - Standard input/output for command-line tools
-* **[SSE](/transports/sse)** - Server-Sent Events for web applications
-* **[StreamableHTTP](/transports/http)** - Traditional HTTP for REST-like interactions
-* **[In-Process](/transports/inprocess)** - Direct integration for embedded scenarios
-
-### Transport Comparison
-
-| Transport          | Use Case                | Pros                                       | Cons                             | Sampling Support |
-| ------------------ | ----------------------- | ------------------------------------------ | -------------------------------- | ---------------- |
-| **STDIO**          | CLI tools, desktop apps | Simple, secure, no network                 | Single client, local only        | ✅ Full support   |
-| **SSE**            | Web apps, real-time     | Multi-client, real-time, web-friendly      | HTTP overhead, one-way streaming | ❌ Not supported  |
-| **StreamableHTTP** | Web services, APIs      | Standard protocol, caching, load balancing | No real-time, more complex       | ❌ Not supported  |
-| **In-Process**     | Embedded, testing       | No serialization, fastest                  | Same process only                | ✅ Full support   |
-
-### Quick Example
-
-The same server code works with any transport:
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "log"
-    "os"
-
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
-    "github.com/mark3labs/mcp-go/client"
-)
-
-func main() {
-    // Create server (transport-agnostic)
-    s := server.NewMCPServer("Multi-Transport Server", "1.0.0",
-        server.WithToolCapabilities(true),
-    )
-
-    // Add a simple tool
-    s.AddTool(
-        mcp.NewTool("echo",
-            mcp.WithDescription("Echo back the input"),
-            mcp.WithString("message", mcp.Required()),
-        ),
-        handleEcho,
-    )
-
-    // Choose transport based on environment
-    transport := os.Getenv("MCP_TRANSPORT")
-    port := os.Getenv("PORT")
-    if port == "" {
-        port = "8080"
-    }
-
-    switch transport {
-    case "sse":
-        fmt.Printf("Starting SSE server on port %s\n", port)
-        sseServer := server.NewSSEServer(s)
-        sseServer.Start(":" + port)
-    case "streamablehttp":
-        fmt.Printf("Starting StreamableHTTP server on port %s\n", port)
-        httpServer := server.NewStreamableHTTPServer(s)
-        httpServer.Start(":" + port)
-    default:
-        fmt.Println("Starting STDIO server")
-        server.ServeStdio(s)
-    }
-}
-
-func handleEcho(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    message, err := req.RequireString("message")
-    if err != nil {
-        return nil, err
-    }
-    return mcp.NewToolResultText(fmt.Sprintf("Echo: %s", message)), nil
-}
-```
-
-### Choosing the Right Transport
-
-#### STDIO Transport
-
-**Best for:**
-
-* Command-line tools and utilities
-* Desktop application integrations
-* Local development and testing
-* Single-user scenarios
-
-**Example use cases:**
-
-* File system tools for IDEs
-* Local database utilities
-* Development workflow automation
-* System administration tools
-
-#### SSE Transport
-
-**Best for:**
-
-* Web applications requiring real-time updates
-* Browser-based LLM interfaces
-* Multi-user collaborative tools
-* Dashboard and monitoring applications
-
-**Example use cases:**
-
-* Web-based chat interfaces
-* Real-time data visualization
-* Collaborative document editing
-* Live system monitoring
-
-#### StreamableHTTP Transport
-
-**Best for:**
-
-* Traditional web services
-* REST API integrations
-* Load-balanced deployments
-* Stateless interactions
-
-**Example use cases:**
-
-* Microservice architectures
-* Public API endpoints
-* Integration with existing HTTP infrastructure
-* Cached or rate-limited services
-
-#### In-Process Transport
-
-**Best for:**
-
-* Embedded MCP servers
-* Testing and development
-* High-performance scenarios
-* Library integrations
-* Sampling-enabled applications
-
-**Example use cases:**
-
-* Testing MCP implementations
-* Embedded analytics engines
-* High-frequency trading systems
-* Real-time game servers
-* LLM-powered applications with bidirectional communication
-
-### Transport Configuration
-
-#### Environment-Based Selection
-
-```go
-func startServer(s *server.MCPServer) error {
-    switch os.Getenv("MCP_TRANSPORT") {
-    case "sse":
-        sseServer := server.NewSSEServer(s)
-        return sseServer.Start(getPort())
-    case "streamablehttp":
-        httpServer := server.NewStreamableHTTPServer(s)
-        return httpServer.Start(getPort())
-    case "inprocess":
-        // Note: In-process transport doesn't use network ports
-        // This would typically be used differently in practice
-        client := client.NewInProcessClient(s)
-        defer client.Close()
-        // Keep the process running
-        select {}
-    default:
-        return server.ServeStdio(s)
-    }
-}
-
-func getPort() string {
-    if port := os.Getenv("PORT"); port != "" {
-        return ":" + port
-    }
-    return ":8080"
-}
-```
-
-#### Multi-Transport Server
-
-```go
-func main() {
-    s := server.NewMCPServer("Multi-Transport", "1.0.0")
-    
-    // Add your tools, resources, prompts...
-    setupServer(s)
-    
-    // Start multiple transports concurrently with proper error handling
-    errChan := make(chan error, 3)
-    
-    go func() {
-        log.Println("Starting STDIO server...")
-        if err := server.ServeStdio(s); err != nil {
-            log.Printf("STDIO server error: %v", err)
-            errChan <- fmt.Errorf("STDIO server failed: %w", err)
-        }
-    }()
-    
-    go func() {
-        log.Println("Starting SSE server on :8080...")
-        sseServer := server.NewSSEServer(s)
-        if err := sseServer.Start(":8080"); err != nil {
-            log.Printf("SSE server error: %v", err)
-            errChan <- fmt.Errorf("SSE server failed: %w", err)
-        }
-    }()
-    
-    log.Println("Starting StreamableHTTP server on :8081...")
-    httpServer := server.NewStreamableHTTPServer(s)
-    if err := httpServer.Start(":8081"); err != nil {
-        log.Printf("StreamableHTTP server error: %v", err)
-        errChan <- fmt.Errorf("StreamableHTTP server failed: %w", err)
-    }
-    
-    // Wait for any server to fail
-    select {
-    case err := <-errChan:
-        log.Printf("Server failed: %v", err)
-        return
-    }
-}
-
-// Helper function for the multi-transport example
-func setupServer(s *server.MCPServer) {
-    // Placeholder implementation - would add tools, resources, etc.
-}
-```
-
-### Performance Considerations
-
-#### Latency Comparison
-
-* **In-Process**: \~1μs (no serialization)
-* **STDIO**: \~100μs (local pipes)
-* **HTTP/SSE**: \~1-10ms (network + HTTP overhead)
-
-#### Throughput Comparison
-
-* **In-Process**: Limited by CPU/memory
-* **STDIO**: Limited by pipe buffers (\~64KB)
-* **HTTP/SSE**: Limited by network bandwidth
-
-#### Memory Usage
-
-* **In-Process**: Shared memory space
-* **STDIO**: Minimal overhead
-* **HTTP/SSE**: Connection pooling, request buffering
-
-### Security Considerations
-
-#### STDIO Transport
-
-* **Pros**: No network exposure, process isolation
-* **Cons**: Inherits parent process permissions
-* **Best practices**: Validate all inputs, use least privilege
-
-#### Network Transports (SSE/HTTP)
-
-* **Authentication**: Implement proper auth middleware
-* **Authorization**: Validate permissions per request
-* **Rate limiting**: Prevent abuse and DoS
-* **HTTPS**: Always use TLS in production
-
-```go
-// Example with security middleware
-s := server.NewMCPServer("Secure Server", "1.0.0",
-    server.WithToolMiddleware(authMiddleware),
-    server.WithToolMiddleware(rateLimitMiddleware),
-    server.WithRecovery(),
-)
-```
-
-### Next Steps
-
-Explore each transport in detail:
-
-* **[STDIO Transport](/transports/stdio)** - Command-line integration
-* **[SSE Transport](/transports/sse)** - Real-time web applications
-* **[StreamableHTTP Transport](/transports/http)** - Traditional web services
-* **[In-Process Transport](/transports/inprocess)** - Embedded scenarios
-
-
-## In-Process Transport
-
-In-process transport enables direct integration of MCP servers within the same process, eliminating network overhead and providing seamless integration for embedded scenarios.
-
-### Use Cases
-
-In-process transport is perfect for:
-
-* **Embedded servers**: MCP functionality within existing applications
-* **Testing and development**: Fast, reliable testing without network overhead
-* **Library integrations**: MCP as a library component
-* **Single-process architectures**: Monolithic applications with MCP capabilities
-
-**Example applications:**
-
-* Desktop applications with plugin architectures
-* Testing frameworks
-* Embedded analytics engines
-* Game engines with AI tool integration
-
-### Implementation
-
-#### Basic In-Process Server
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "log"
-
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
-    "github.com/mark3labs/mcp-go/client"
-)
-
-func main() {
-    // Create server
-    s := server.NewMCPServer("Calculator Server", "1.0.0",
-        server.WithToolCapabilities(true),
-    )
-
-    // Add calculator tool
-    s.AddTool(
-        mcp.NewTool("calculate",
-            mcp.WithDescription("Perform basic mathematical calculations"),
-            mcp.WithString("operation", 
-                mcp.Required(),
-                mcp.Enum("add", "subtract", "multiply", "divide"),
-                mcp.Description("The operation to perform"),
-            ),
-            mcp.WithNumber("x", mcp.Required(), mcp.Description("First number")),
-            mcp.WithNumber("y", mcp.Required(), mcp.Description("Second number")),
-        ),
-        handleCalculate,
-    )
-
-    // Create in-process client
-    mcpClient, err := client.NewInProcessClient(s)
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer mcpClient.Close()
-
-    ctx := context.Background()
-
-    // Initialize
-    _, err = mcpClient.Initialize(ctx, mcp.InitializeRequest{
-        Params: mcp.InitializeRequestParams{
-            ProtocolVersion: "2024-11-05",
-            Capabilities: mcp.ClientCapabilities{
-                Tools: &mcp.ToolsCapability{},
-            },
-            ClientInfo: mcp.Implementation{
-                Name:    "test-client",
-                Version: "1.0.0",
-            },
-        },
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Use the calculator
-    result, err := mcpClient.CallTool(ctx, mcp.CallToolRequest{
-        Params: mcp.CallToolParams{
-            Name: "calculate",
-            Arguments: map[string]interface{}{
-                "operation": "add",
-                "x":         10.0,
-                "y":         5.0,
-            },
-        },
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Extract text from the first content item
-    if len(result.Content) > 0 {
-        if textContent, ok := mcp.AsTextContent(result.Content[0]); ok {
-            fmt.Printf("Result: %s\n", textContent.Text)
-        }
-    }
-}
-
-func handleCalculate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    operation := req.GetString("operation", "")
-    x := req.GetFloat("x", 0)
-    y := req.GetFloat("y", 0)
-
-    var result float64
-    switch operation {
-    case "add":
-        result = x + y
-    case "subtract":
-        result = x - y
-    case "multiply":
-        result = x * y
-    case "divide":
-        if y == 0 {
-            return mcp.NewToolResultError("division by zero"), nil
-        }
-        result = x / y
-    default:
-        return nil, fmt.Errorf("unknown operation: %s", operation)
-    }
-
-    return mcp.NewToolResultText(fmt.Sprintf("%.2f", result)), nil
-}
-```
-
-#### Embedded Application Integration
-
-```go
-// Embedded MCP server in a larger application
-type Application struct {
-    mcpServer *server.MCPServer
-    mcpClient *client.InProcessClient
-    config    *Config
-}
-
-func NewApplication(config *Config) *Application {
-    app := &Application{
-        config: config,
-    }
-
-    // Create embedded MCP server
-    app.mcpServer = server.NewMCPServer("Embedded Server", "1.0.0",
-        server.WithToolCapabilities(true),
-    )
-
-    // Add application-specific tools
-    app.addApplicationTools()
-
-    // Create in-process client for internal use
-    var err error
-    app.mcpClient, err = client.NewInProcessClient(app.mcpServer)
-    if err != nil {
-        panic(err)
-    }
-
-    return app
-}
-
-type Config struct {
-    AppName string
-    Debug   bool
-}
-
-func (app *Application) addApplicationTools() {
-    // Application status tool
-    app.mcpServer.AddTool(
-        mcp.NewTool("get_app_status",
-            mcp.WithDescription("Get current application status"),
-        ),
-        func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-            return mcp.NewToolResultText(fmt.Sprintf(`{"app_name":"%s","debug":%t,"status":"running"}`, 
-                app.config.AppName, app.config.Debug)), nil
-        },
-    )
-
-    // Configuration tool
-    app.mcpServer.AddTool(
-        mcp.NewTool("update_config",
-            mcp.WithDescription("Update application configuration"),
-            mcp.WithString("key", mcp.Required()),
-            mcp.WithString("value", mcp.Required()),
-        ),
-        func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-            key := req.GetString("key", "")
-            value := req.GetString("value", "")
-
-            // Update configuration based on key
-            switch key {
-            case "debug":
-                app.config.Debug = value == "true"
-            case "app_name":
-                app.config.AppName = value
-            default:
-                return mcp.NewToolResultError(fmt.Sprintf("unknown config key: %s", key)), nil
-            }
-
-            return mcp.NewToolResultText(fmt.Sprintf("Updated %s to %s", key, value)), nil
-        },
-    )
-}
-
-func (app *Application) ProcessWithMCP(ctx context.Context, operation string) (interface{}, error) {
-    // Use MCP tools internally for processing
-    result, err := app.mcpClient.CallTool(ctx, mcp.CallToolRequest{
-        Params: mcp.CallToolParams{
-            Name: "calculate",
-            Arguments: map[string]interface{}{
-                "operation": operation,
-                "x":         10.0,
-                "y":         5.0,
-            },
-        },
-    })
-    if err != nil {
-        return nil, err
-    }
-
-    // Extract text from the first content item
-    if len(result.Content) > 0 {
-        if textContent, ok := mcp.AsTextContent(result.Content[0]); ok {
-            return textContent.Text, nil
-        }
-    }
-    
-    return "no result", nil
-}
-
-// Usage example
-func main() {
-    config := &Config{
-        AppName: "My App",
-        Debug:   true,
-    }
-
-    app := NewApplication(config)
-    ctx := context.Background()
-
-    // Initialize the embedded MCP client
-    _, err := app.mcpClient.Initialize(ctx, mcp.InitializeRequest{
-        Params: mcp.InitializeRequestParams{
-            ProtocolVersion: "2024-11-05",
-            Capabilities: mcp.ClientCapabilities{
-                Tools: &mcp.ToolsCapability{},
-            },
-            ClientInfo: mcp.Implementation{
-                Name:    "embedded-client",
-                Version: "1.0.0",
-            },
-        },
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Use MCP functionality within the application
-    result, err := app.ProcessWithMCP(ctx, "add")
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    fmt.Printf("Application result: %v\n", result)
-}
-```
-
-### Sampling Support
-
-In-process transport supports sampling, allowing servers to request LLM completions from clients. This enables bidirectional communication where servers can leverage client-side LLM capabilities.
-
-#### Enabling Sampling
-
-To enable sampling in your in-process server, call `EnableSampling()` during server setup:
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "log"
-
-    "github.com/mark3labs/mcp-go/client"
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
-)
-
-// MockSamplingHandler implements client.SamplingHandler for demonstration
-type MockSamplingHandler struct{}
-
-func (h *MockSamplingHandler) CreateMessage(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
-    // Extract the user's message
-    var userMessage string
-    for _, msg := range request.Messages {
-        if msg.Role == mcp.RoleUser {
-            if textContent, ok := msg.Content.(mcp.TextContent); ok {
-                userMessage = textContent.Text
-                break
-            }
-        }
-    }
-
-    // Generate a mock response
-    mockResponse := fmt.Sprintf("Mock LLM response to: '%s'", userMessage)
-
-    return &mcp.CreateMessageResult{
-        SamplingMessage: mcp.SamplingMessage{
-            Role: mcp.RoleAssistant,
-            Content: mcp.TextContent{
-                Type: "text",
-                Text: mockResponse,
-            },
-        },
-        Model:      "mock-llm-v1",
-        StopReason: "endTurn",
-    }, nil
-}
-
-func main() {
-    // Create server with sampling enabled
-    mcpServer := server.NewMCPServer("sampling-server", "1.0.0")
-    mcpServer.EnableSampling()
-
-    // Add a tool that uses sampling
-    mcpServer.AddTool(mcp.Tool{
-        Name:        "ask_llm",
-        Description: "Ask the LLM a question using sampling",
-        InputSchema: mcp.ToolInputSchema{
-            Type: "object",
-            Properties: map[string]any{
-                "question": map[string]any{
-                    "type":        "string",
-                    "description": "The question to ask the LLM",
-                },
-                "system_prompt": map[string]any{
-                    "type":        "string",
-                    "description": "Optional system prompt",
-                },
-            },
-            Required: []string{"question"},
-        },
-    }, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-        question, err := request.RequireString("question")
-        if err != nil {
-            return nil, err
-        }
-
-        systemPrompt := request.GetString("system_prompt", "You are a helpful assistant.")
-
-        // Create sampling request
-        samplingRequest := mcp.CreateMessageRequest{
-            CreateMessageParams: mcp.CreateMessageParams{
-                Messages: []mcp.SamplingMessage{
-                    {
-                        Role: mcp.RoleUser,
-                        Content: mcp.TextContent{
-                            Type: "text",
-                            Text: question,
-                        },
-                    },
-                },
-                SystemPrompt: systemPrompt,
-                MaxTokens:    1000,
-                Temperature:  0.7,
-            },
-        }
-
-        // Request sampling from client
-        result, err := mcpServer.RequestSampling(ctx, samplingRequest)
-        if err != nil {
-            return &mcp.CallToolResult{
-                Content: []mcp.Content{
-                    mcp.TextContent{
-                        Type: "text",
-                        Text: fmt.Sprintf("Error requesting sampling: %v", err),
-                    },
-                },
-                IsError: true,
-            }, nil
-        }
-
-        // Return the LLM response
-        return &mcp.CallToolResult{
-            Content: []mcp.Content{
-                mcp.TextContent{
-                    Type: "text",
-                    Text: fmt.Sprintf("LLM Response (model: %s): %s",
-                        result.Model, result.Content.(mcp.TextContent).Text),
-                },
-            },
-        }, nil
-    })
-
-    // Create client with sampling handler
-    mockHandler := &MockSamplingHandler{}
-    mcpClient, err := client.NewInProcessClientWithSamplingHandler(mcpServer, mockHandler)
-    if err != nil {
-        log.Fatalf("Failed to create client: %v", err)
-    }
-    defer mcpClient.Close()
-
-    // Start and initialize the client
-    ctx := context.Background()
-    if err := mcpClient.Start(ctx); err != nil {
-        log.Fatalf("Failed to start client: %v", err)
-    }
-
-    initRequest := mcp.InitializeRequest{}
-    initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
-    initRequest.Params.ClientInfo = mcp.Implementation{
-        Name:    "sampling-client",
-        Version: "1.0.0",
-    }
-
-    _, err = mcpClient.Initialize(ctx, initRequest)
-    if err != nil {
-        log.Fatalf("Failed to initialize: %v", err)
-    }
-
-    // Call the tool that uses sampling
-    result, err := mcpClient.CallTool(ctx, mcp.CallToolRequest{
-        Params: mcp.CallToolParams{
-            Name: "ask_llm",
-            Arguments: map[string]any{
-                "question":      "What is the capital of France?",
-                "system_prompt": "You are a helpful geography assistant.",
-            },
-        },
-    })
-    if err != nil {
-        log.Fatalf("Tool call failed: %v", err)
-    }
-
-    // Print the result
-    if len(result.Content) > 0 {
-        if textContent, ok := result.Content[0].(mcp.TextContent); ok {
-            fmt.Printf("Tool result: %s\n", textContent.Text)
-        }
-    }
-}
-```
-
-#### Real LLM Integration
-
-For production use, replace the mock handler with a real LLM integration:
-
-##### OpenAI Integration
-
-```go
-import (
-    "github.com/sashabaranov/go-openai"
-)
-
-type OpenAISamplingHandler struct {
-    client *openai.Client
-}
-
-func NewOpenAISamplingHandler(apiKey string) *OpenAISamplingHandler {
-    return &OpenAISamplingHandler{
-        client: openai.NewClient(apiKey),
-    }
-}
-
-func (h *OpenAISamplingHandler) CreateMessage(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
-    // Convert MCP messages to OpenAI format
-    var messages []openai.ChatCompletionMessage
-
-    // Add system message if provided
-    if request.SystemPrompt != "" {
-        messages = append(messages, openai.ChatCompletionMessage{
-            Role:    openai.ChatMessageRoleSystem,
-            Content: request.SystemPrompt,
-        })
-    }
-
-    // Convert MCP messages
-    for _, msg := range request.Messages {
-        var role string
-        switch msg.Role {
-        case mcp.RoleUser:
-            role = openai.ChatMessageRoleUser
-        case mcp.RoleAssistant:
-            role = openai.ChatMessageRoleAssistant
-        }
-
-        if textContent, ok := msg.Content.(mcp.TextContent); ok {
-            messages = append(messages, openai.ChatCompletionMessage{
-                Role:    role,
-                Content: textContent.Text,
-            })
-        }
-    }
-
-    // Create OpenAI request
-    req := openai.ChatCompletionRequest{
-        Model:       openai.GPT3Dot5Turbo,
-        Messages:    messages,
-        MaxTokens:   request.MaxTokens,
-        Temperature: float32(request.Temperature),
-    }
-
-    // Call OpenAI API
-    resp, err := h.client.CreateChatCompletion(ctx, req)
-    if err != nil {
-        return nil, fmt.Errorf("OpenAI API call failed: %w", err)
-    }
-
-    if len(resp.Choices) == 0 {
-        return nil, fmt.Errorf("no response from OpenAI")
-    }
-
-    choice := resp.Choices[0]
-
-    // Convert stop reason
-    var stopReason string
-    switch choice.FinishReason {
-    case "stop":
-        stopReason = "endTurn"
-    case "length":
-        stopReason = "maxTokens"
-    default:
-        stopReason = "other"
-    }
-
-    return &mcp.CreateMessageResult{
-        SamplingMessage: mcp.SamplingMessage{
-            Role: mcp.RoleAssistant,
-            Content: mcp.TextContent{
-                Type: "text",
-                Text: choice.Message.Content,
-            },
-        },
-        Model:      resp.Model,
-        StopReason: stopReason,
-    }, nil
-}
-
-// Usage
-func main() {
-    // Create OpenAI handler
-    openaiHandler := NewOpenAISamplingHandler("your-api-key")
-    
-    // Create client with OpenAI sampling
-    mcpClient, err := client.NewInProcessClientWithSamplingHandler(mcpServer, openaiHandler)
-    if err != nil {
-        log.Fatal(err)
-    }
-    
-    // ... rest of the setup
-}
-```
-
-#### Sampling Request Parameters
-
-The `CreateMessageRequest` supports various parameters to control LLM behavior:
-
-```go
-samplingRequest := mcp.CreateMessageRequest{
-    CreateMessageParams: mcp.CreateMessageParams{
-        // Required: Messages to send to the LLM
-        Messages: []mcp.SamplingMessage{
-            {
-                Role: mcp.RoleUser,        // or mcp.RoleAssistant
-                Content: mcp.TextContent{   // or mcp.ImageContent
-                    Type: "text",
-                    Text: "Your message here",
-                },
-            },
-        },
-        
-        // Optional: System prompt for context
-        SystemPrompt: "You are a helpful assistant.",
-        
-        // Optional: Maximum tokens to generate
-        MaxTokens: 1000,
-        
-        // Optional: Temperature for randomness (0.0 to 1.0)
-        Temperature: 0.7,
-        
-        // Optional: Top-p sampling parameter
-        TopP: 0.9,
-        
-        // Optional: Stop sequences
-        StopSequences: []string{"\\n\\n"},
-    },
-}
-```
-
-#### Error Handling
-
-Always handle sampling errors gracefully:
-
-```go
-result, err := mcpServer.RequestSampling(ctx, samplingRequest)
-if err != nil {
-    // Log the error
-    log.Printf("Sampling request failed: %v", err)
-    
-    // Return appropriate error response
-    return &mcp.CallToolResult{
-        Content: []mcp.Content{
-            mcp.TextContent{
-                Type: "text",
-                Text: "Sorry, I couldn't process your request at this time.",
-            },
-        },
-        IsError: true,
-    }, nil
-}
-```
-
-### Next Steps
-
-* **[Client Development](/clients)** - Build MCP clients for all transports
-* **[HTTP Transport](/transports/http)** - Learn about web-based scenarios
-* **[Server Advanced Features](/servers/advanced)** - Explore production-ready features
-* **[Client Sampling](/clients/advanced-sampling)** - Learn more about client-side sampling implementation
-
-
-## SSE Transport
-
-Server-Sent Events (SSE) transport enables real-time, web-friendly communication between MCP clients and servers. Perfect for web applications that need live updates and multi-client support.
-
-### Use Cases
-
-SSE transport is ideal for:
-
-* **Web applications**: Browser-based LLM interfaces
-* **Real-time dashboards**: Live data monitoring and visualization
-* **Collaborative tools**: Multi-user environments with shared state
-* **Streaming responses**: Long-running operations with progress updates
-* **Event-driven systems**: Applications that need server-initiated communication
-
-**Example applications:**
-
-* Web-based chat interfaces with LLMs
-* Real-time analytics dashboards
-* Collaborative document editing
-* Live system monitoring tools
-* Streaming data processing interfaces
-
-### Implementation
-
-#### Basic SSE Server
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "log"
-    "time"
-
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
-)
-
-func main() {
-    s := server.NewMCPServer("SSE Server", "1.0.0",
-        server.WithToolCapabilities(true),
-        server.WithResourceCapabilities(true, true),
-    )
-
-    // Add real-time tools
-    s.AddTool(
-        mcp.NewTool("stream_data",
-            mcp.WithDescription("Stream data with real-time updates"),
-            mcp.WithString("source", mcp.Required()),
-            mcp.WithNumber("count", mcp.DefaultNumber(10)),
-        ),
-        handleStreamData,
-    )
-
-    s.AddTool(
-        mcp.NewTool("monitor_system",
-            mcp.WithDescription("Monitor system metrics in real-time"),
-            mcp.WithNumber("duration", mcp.DefaultNumber(60)),
-        ),
-        handleSystemMonitor,
-    )
-
-    // Add dynamic resources
-    s.AddResource(
-        mcp.NewResource(
-            "metrics://current",
-            "Current System Metrics",
-            mcp.WithResourceDescription("Real-time system metrics"),
-            mcp.WithMIMEType("application/json"),
-        ),
-        handleCurrentMetrics,
-    )
-
-    // Start SSE server
-    log.Println("Starting SSE server on :8080")
-    sseServer := server.NewSSEServer(s)
-    if err := sseServer.Start(":8080"); err != nil {
-        log.Fatal(err)
-    }
-}
-
-func handleStreamData(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    // Access request headers
-    headers := req.Header
-
-    // Use headers for authentication, tracing, etc.
-    authToken := headers.Get("Authorization")
-    if authToken == "" {
-        return nil, fmt.Errorf("authentication required")
-    }
-    
-    // Access other headers
-    requestID := headers.Get("X-Request-ID")
-    userAgent := headers.Get("User-Agent")
-    
-    source := req.GetString("source", "")
-    count := req.GetInt("count", 10)
-
-    // Get server from context for notifications
-    mcpServer := server.ServerFromContext(ctx)
-
-    // Stream data with progress updates
-    var results []map[string]interface{}
-    for i := 0; i < count; i++ {
-        // Check for cancellation
-        select {
-        case <-ctx.Done():
-            return nil, ctx.Err()
-        default:
-        }
-
-        // Simulate data processing
-        data := generateData(source, i)
-        results = append(results, data)
-
-        // Send progress notification
-        if mcpServer != nil {
-            err := mcpServer.SendNotificationToClient(ctx, "notifications/progress", map[string]interface{}{
-                "progress": i + 1,
-                "total":    count,
-                "message":  fmt.Sprintf("Processed %d/%d items from %s", i+1, count, source),
-            })
-            if err != nil {
-                log.Printf("Failed to send notification: %v", err)
-            }
-        }
-
-        time.Sleep(100 * time.Millisecond)
-    }
-
-    return mcp.NewToolResultText(fmt.Sprintf(`{"source":"%s","results":%v,"count":%d}`, 
-        source, results, len(results))), nil
-}
-
-// Helper functions for the examples
-func generateData(source string, index int) map[string]interface{} {
-    return map[string]interface{}{
-        "source": source,
-        "index":  index,
-        "value":  fmt.Sprintf("data_%d", index),
-    }
-}
-
-func handleSystemMonitor(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    duration := req.GetInt("duration", 60)
-    
-    mcpServer := server.ServerFromContext(ctx)
-
-    // Monitor system for specified duration
-    ticker := time.NewTicker(5 * time.Second)
-    defer ticker.Stop()
-
-    timeout := time.After(time.Duration(duration) * time.Second)
-    var metrics []map[string]interface{}
-
-    for {
-        select {
-        case <-ctx.Done():
-            return nil, ctx.Err()
-        case <-timeout:
-            return mcp.NewToolResultText(fmt.Sprintf(`{"duration":%d,"metrics":%v,"samples":%d}`,
-                duration, metrics, len(metrics))), nil
-        case <-ticker.C:
-            // Collect current metrics
-            currentMetrics := collectSystemMetrics()
-            metrics = append(metrics, currentMetrics)
-
-            // Send real-time update
-            if mcpServer != nil {
-                err := mcpServer.SendNotificationToClient(ctx, "system_metrics", currentMetrics)
-                if err != nil {
-                    log.Printf("Failed to send system metrics notification: %v", err)
-                }
-            }
-        }
-    }
-}
-
-func collectSystemMetrics() map[string]interface{} {
-    // Placeholder implementation
-    return map[string]interface{}{
-        "cpu":    50.5,
-        "memory": 75.2,
-        "disk":   30.1,
-    }
-}
-
-func handleCurrentMetrics(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-    metrics := collectSystemMetrics()
-    return []mcp.ResourceContents{
-        mcp.TextResourceContents{
-            URI:      req.Params.URI,
-            MIMEType: "application/json",
-            Text:     fmt.Sprintf(`{"cpu":%.1f,"memory":%.1f,"disk":%.1f}`, metrics["cpu"], metrics["memory"], metrics["disk"]),
-        },
-    }, nil
-}
-```
-
-#### Advanced SSE Configuration
-
-```go
-func main() {
-    s := server.NewMCPServer("Advanced SSE Server", "1.0.0",
-        server.WithResourceCapabilities(true, true),
-        server.WithPromptCapabilities(true),
-        server.WithToolCapabilities(true),
-        server.WithLogging(),
-    )
-
-    // Add collaborative tools
-    addCollaborativeTools(s)
-    addRealTimeResources(s)
-
-    log.Println("Starting advanced SSE server on :8080")
-    sseServer := server.NewSSEServer(s,
-        server.WithStaticBasePath("/mcp"),
-        server.WithKeepAliveInterval(30*time.Second),
-        server.WithBaseURL("http://localhost:8080"),
-    )
-    
-    if err := sseServer.Start(":8080"); err != nil {
-        log.Fatal(err)
-    }
-}
-
-// Helper functions for the advanced example
-func addRealTimeResources(s *server.MCPServer) {
-    // Placeholder implementation - would add real-time resources
-}
-
-func addCollaborativeTools(s *server.MCPServer) {
-    // Shared document editing
-    s.AddTool(
-        mcp.NewTool("edit_document",
-            mcp.WithDescription("Edit a shared document"),
-            mcp.WithString("doc_id", mcp.Required()),
-            mcp.WithString("operation", mcp.Required()),
-            mcp.WithObject("data", mcp.Required()),
-        ),
-        handleDocumentEdit,
-    )
-
-    // Real-time chat
-    s.AddTool(
-        mcp.NewTool("send_message",
-            mcp.WithDescription("Send a message to all connected clients"),
-            mcp.WithString("message", mcp.Required()),
-            mcp.WithString("channel", mcp.DefaultString("general")),
-        ),
-        handleSendMessage,
-    )
-
-    // Live data updates
-    s.AddTool(
-        mcp.NewTool("subscribe_updates",
-            mcp.WithDescription("Subscribe to real-time data updates"),
-            mcp.WithString("topic", mcp.Required()),
-            mcp.WithArray("filters", mcp.Description("Optional filters")),
-        ),
-        handleSubscribeUpdates,
-    )
-}
-```
-
-### Configuration
-
-#### SSE Server Options
-
-The SSE server can be configured with various options:
-
-```go
-sseServer := server.NewSSEServer(s,
-    // Set the base path for SSE endpoints
-    server.WithStaticBasePath("/api/mcp"),
-    
-    // Configure keep-alive interval
-    server.WithKeepAliveInterval(30*time.Second),
-    
-    // Set base URL for client connections
-    server.WithBaseURL("http://localhost:8080"),
-    
-    // Configure SSE and message endpoints
-    server.WithSSEEndpoint("/sse"),
-    server.WithMessageEndpoint("/message"),
-    
-    // Add context function for request processing
-    server.WithSSEContextFunc(func(ctx context.Context, r *http.Request) context.Context {
-        // Add custom context values from headers
-        return ctx
-    }),
-)
-```
-
-**Resulting endpoints:**
-
-* SSE stream: `http://localhost:8080/api/mcp/sse`
-* Message endpoint: `http://localhost:8080/api/mcp/message`
-
-### Real-Time Notifications
-
-SSE transport enables real-time server-to-client communication through notifications. Use the server context to send notifications:
-
-```go
-func handleRealtimeTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    // Get the MCP server from context
-    mcpServer := server.ServerFromContext(ctx)
-    
-    // Send a notification to the client
-    if mcpServer != nil {
-        err := mcpServer.SendNotificationToClient(ctx, "custom_event", map[string]interface{}{
-            "message": "Real-time update",
-            "timestamp": time.Now().Unix(),
-        })
-        if err != nil {
-            log.Printf("Failed to send notification: %v", err)
-        }
-    }
-    
-    return mcp.NewToolResultText(`{"status":"notification_sent"}`), nil
-}
-```
-
-#### Session Management
-
-The SSE server automatically handles session management. You can send events to specific sessions using the server's notification methods:
-
-```go
-// Send notification to current client session
-mcpServer.SendNotificationToClient(ctx, "progress_update", progressData)
-
-// Send notification to all connected clients (if supported)
-// Note: Check the server implementation for broadcast capabilities
-```
-
-#### Request Headers
-
-Like the StreamableHTTP transport, the SSE transport passes HTTP request headers to MCP handlers. This allows you to access the original HTTP headers that were sent with the SSE connection in your tool and resource handlers.
-
-##### Accessing Headers in Handlers
-
-Headers from the SSE connection are available in all MCP request objects:
-
-```go
-func handleStreamData(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    // Access request headers
-    headers := req.Header
-
-    // Use headers for authentication, tracing, etc.
-    authToken := headers.Get("Authorization")
-    if authToken == "" {
-        return nil, fmt.Errorf("authentication required")
-    }
-    
-    // Access other headers
-    requestID := headers.Get("X-Request-ID")
-    userAgent := headers.Get("User-Agent")
-    
-    // Rest of your handler code...
-    mcpServer := server.ServerFromContext(ctx)
-    // ...
-}
-```
-
-This works for all MCP request types including:
-
-* `CallToolRequest`
-* `ReadResourceRequest`
-* `ListToolsRequest`
-* `ListResourcesRequest`
-* `InitializeRequest`
-* And other MCP request types
-
-The headers are automatically populated by the SSE transport layer from the initial SSE connection and are available in your handlers without any additional configuration.
-
-Note: Since SSE maintains a persistent connection, the headers are captured when the connection is established and remain the same for all requests during that connection's lifetime.
-
-### Next Steps
-
-* **[HTTP Transport](/transports/http)** - Learn about traditional web service patterns
-* **[In-Process Transport](/transports/inprocess)** - Explore embedded scenarios
-* **[Client Development](/clients)** - Build MCP clients for different transports
-
-
-## STDIO Transport
-
-STDIO (Standard Input/Output) transport is the most common MCP transport method, perfect for command-line tools, desktop applications, and local integrations.
-
-### Use Cases
-
-STDIO transport excels in scenarios where:
-
-* **Command-line tools**: CLI utilities that LLMs can invoke
-* **Desktop applications**: IDE plugins, text editors, local tools
-* **Subprocess communication**: Parent processes managing MCP servers
-* **Local development**: Testing and debugging MCP implementations
-* **Single-user scenarios**: Personal productivity tools
-
-**Example applications:**
-
-* File system browsers for IDEs
-* Local database query tools
-* Git repository analyzers
-* System monitoring utilities
-* Development workflow automation
-
-### Implementation
-
-#### Basic STDIO Server
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "os"
-    "path/filepath"
-    "strings"
-
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
-)
-
-func main() {
-    s := server.NewMCPServer("File Tools", "1.0.0",
-        server.WithToolCapabilities(true),
-        server.WithResourceCapabilities(true, true),
-    )
-
-    // Add file listing tool
-    s.AddTool(
-        mcp.NewTool("list_files",
-            mcp.WithDescription("List files in a directory"),
-            mcp.WithString("path", 
-                mcp.Required(),
-                mcp.Description("Directory path to list"),
-            ),
-            mcp.WithBoolean("recursive",
-                mcp.DefaultBool(false),
-                mcp.Description("List files recursively"),
-            ),
-        ),
-        handleListFiles,
-    )
-
-    // Add file content resource
-    s.AddResource(
-        mcp.NewResource(
-            "file://{path}",
-            "File Content",
-            mcp.WithResourceDescription("Read file contents"),
-            mcp.WithMIMEType("text/plain"),
-        ),
-        handleFileContent,
-    )
-
-    // Start STDIO server
-    if err := server.ServeStdio(s); err != nil {
-        fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
-        os.Exit(1)
-    }
-}
-
-func handleListFiles(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    path, err := req.RequireString("path")
-    if err != nil {
-        return mcp.NewToolResultError(err.Error()), nil
-    }
-    
-    recursive, err := req.RequireBool("recursive")
-    if err != nil {
-        return mcp.NewToolResultError(err.Error()), nil
-    }
-
-    // Security: validate path
-    if !isValidPath(path) {
-        return mcp.NewToolResultError(fmt.Sprintf("invalid path: %s", path)), nil
-    }
-
-    files, err := listFiles(path, recursive)
-    if err != nil {
-        return mcp.NewToolResultError(fmt.Sprintf("failed to list files: %v", err)), nil
-    }
-
-    return mcp.NewToolResultText(fmt.Sprintf(`{"path":"%s","files":%v,"count":%d,"recursive":%t}`, 
-        path, files, len(files), recursive)), nil
-}
-
-func handleFileContent(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-    // Extract path from URI: "file:///path/to/file" -> "/path/to/file"
-    path := extractPathFromURI(req.Params.URI)
-    
-    if !isValidPath(path) {
-        return nil, fmt.Errorf("invalid path: %s", path)
-    }
-
-    content, err := os.ReadFile(path)
-    if err != nil {
-        return nil, fmt.Errorf("failed to read file: %w", err)
-    }
-
-    return []mcp.ResourceContents{
-        mcp.TextResourceContents{
-            URI:      req.Params.URI,
-            MIMEType: detectMIMEType(path),
-            Text:     string(content),
-        },
-    }, nil
-}
-
-func isValidPath(path string) bool {
-    // Clean the path to resolve any . or .. components
-    clean := filepath.Clean(path)
-    
-    // Check for directory traversal patterns
-    if strings.Contains(clean, "..") {
-        return false
-    }
-    
-    // For absolute paths, ensure they're within a safe base directory
-    if filepath.IsAbs(clean) {
-        // Define safe base directories (adjust as needed for your use case)
-        safeBaseDirs := []string{
-            "/tmp",
-            "/var/tmp", 
-            "/home",
-            "/Users", // macOS
-        }
-        
-        // Check if the path starts with any safe base directory
-        for _, baseDir := range safeBaseDirs {
-            if strings.HasPrefix(clean, baseDir) {
-                return true
-            }
-        }
-        return false
-    }
-    
-    // For relative paths, ensure they don't escape the current directory
-    return !strings.HasPrefix(clean, "..")
-}
-
-// Helper functions for the examples
-func listFiles(path string, recursive bool) ([]string, error) {
-    // Placeholder implementation
-    return []string{"file1.txt", "file2.txt"}, nil
-}
-
-func extractPathFromURI(uri string) string {
-    // Extract path from URI: "file:///path/to/file" -> "/path/to/file"
-    if strings.HasPrefix(uri, "file://") {
-        return strings.TrimPrefix(uri, "file://")
-    }
-    return uri
-}
-
-func detectMIMEType(path string) string {
-    // Simple MIME type detection based on extension
-    ext := filepath.Ext(path)
-    switch ext {
-    case ".txt":
-        return "text/plain"
-    case ".json":
-        return "application/json"
-    case ".html":
-        return "text/html"
-    default:
-        return "application/octet-stream"
-    }
-}
-```
-
-#### Advanced STDIO Server
-
-```go
-package main
-import (
-    "context"
-    "fmt"
-    "log"
-    "os"
-    "os/signal"
-    "syscall"
-    "time"
-
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
-)
-
-func main() {
-    s := server.NewMCPServer("Advanced CLI Tool", "1.0.0",
-        server.WithResourceCapabilities(true, true),
-        server.WithPromptCapabilities(true),
-        server.WithToolCapabilities(true),
-        server.WithLogging(),
-    )
-
-    // Add comprehensive tools
-    addSystemTools(s)
-    addFileTools(s)
-    addGitTools(s)
-    addDatabaseTools(s)
-
-    // Handle graceful shutdown
-    setupGracefulShutdown(s)
-
-    // Start with error handling
-    if err := server.ServeStdio(s); err != nil {
-        logError(fmt.Sprintf("Server error: %v", err))
-        os.Exit(1)
-    }
-}
-
-// Helper functions for the advanced example
-func logToFile(message string) {
-    // Placeholder implementation
-    log.Println(message)
-}
-
-func logError(message string) {
-    // Placeholder implementation
-    log.Printf("ERROR: %s", message)
-}
-
-func addSystemTools(s *server.MCPServer) {
-    // Placeholder implementation
-}
-
-func addFileTools(s *server.MCPServer) {
-    // Placeholder implementation
-}
-
-func addGitTools(s *server.MCPServer) {
-    // Placeholder implementation
-}
-
-func addDatabaseTools(s *server.MCPServer) {
-    // Placeholder implementation
-}
-
-func setupGracefulShutdown(s *server.MCPServer) {
-    c := make(chan os.Signal, 1)
-    signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-    
-    go func() {
-        <-c
-        logToFile("Received shutdown signal")
-        
-        ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-        defer cancel()
-        
-        if err := s.Shutdown(ctx); err != nil {
-            logError(fmt.Sprintf("Shutdown error: %v", err))
-        }
-        
-        os.Exit(0)
-    }()
-}
-```
-
-### Client Integration
-
-#### How LLM Applications Connect
-
-LLM applications typically connect to STDIO MCP servers by:
-
-1. **Spawning the process**: Starting your server as a subprocess
-2. **Pipe communication**: Using stdin/stdout for JSON-RPC messages
-3. **Lifecycle management**: Handling process startup, shutdown, and errors
-
-#### Claude Desktop Integration
-
-Configure your STDIO server in Claude Desktop:
-
-```json
-{
-  "mcpServers": {
-    "file-tools": {
-      "command": "go",
-      "args": ["run", "/path/to/your/server/main.go"],
-      "env": {
-        "LOG_LEVEL": "info"
-      }
-    }
-  }
-}
-```
-
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-
-#### Custom Client Integration
-
-```go
-package main
-
-import (
-    "context"
-    "log"
-    "time"
-
-
-    "github.com/mark3labs/mcp-go/client"
-    "github.com/mark3labs/mcp-go/mcp"
-)
-
-func main() {
-    // Create STDIO client
-    c, err := client.NewStdioClient(
-        "go", nil /* inherit env */, "run", "/path/to/server/main.go",
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer c.Close()
-
-    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-    defer cancel()
-
-    // Initialize connection
-    _, err = c.Initialize(ctx, mcp.InitializeRequest{
-        Params: mcp.InitializeRequestParams{
-            ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
-            ClientInfo: mcp.Implementation{
-                Name:    "test-client",
-                Version: "1.0.0",
-            },
-        },
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // List available tools
-    tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    log.Printf("Available tools: %d", len(tools.Tools))
-    for _, tool := range tools.Tools {
-        log.Printf("- %s: %s", tool.Name, tool.Description)
-    }
-
-    // Call a tool
-    result, err := c.CallTool(ctx, mcp.CallToolRequest{
-        Params: mcp.CallToolParams{
-            Name: "list_files",
-            Arguments: map[string]interface{}{
-                "path":      ".",
-                "recursive": false,
-            },
-        },
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    log.Printf("Tool result: %+v", result)
-}
-```
-
-##### Customizing Subprocess Execution
-
-If you need more control over how a sub-process is spawned when creating a new STDIO client, you can use
-`NewStdioMCPClientWithOptions` instead of `NewStdioMCPClient`.
-
-By passing the `WithCommandFunc` option, you can supply a custom factory function to create the `exec.Cmd` that launches
-the server. This allows configuration of environment variables, working directories, and system-level process attributes.
-
-Referring to the previous example, we can replace the line that creates the client:
-
-```go
-c, err := client.NewStdioClient(
-    "go", nil, "run", "/path/to/server/main.go",
-)
-```
-
-With the options-aware version:
-
-```go
-c, err := client.NewStdioMCPClientWithOptions(
-	"go",
-	nil,
-	[]string {"run", "/path/to/server/main.go"},
-	transport.WithCommandFunc(func(ctx context.Context, command string, args []string, env []string) (*exec.Cmd, error) {
-        cmd := exec.CommandContext(ctx, command, args...)
-        cmd.Env = env // Explicit environment for the subprocess.
-        cmd.Dir = "/var/sandbox/mcp-server" // Working directory (not isolated unless paired with chroot or namespace).
-
-        // Apply low-level process isolation and privilege dropping.
-        cmd.SysProcAttr = &syscall.SysProcAttr{
-            // Drop to non-root user (e.g., user/group ID 1001)
-            Credential: &syscall.Credential{
-                Uid: 1001,
-                Gid: 1001,
-            },
-            // File system isolation: only works if running as root.
-            Chroot: "/var/sandbox/mcp-server",
-
-            // Linux namespace isolation (Linux only):
-            // Prevents access to other processes, mounts, IPC, networks, etc.
-            Cloneflags: syscall.CLONE_NEWIPC | // Isolate inter-process comms
-                syscall.CLONE_NEWNS  | // Isolate filesystem mounts
-                syscall.CLONE_NEWPID | // Isolate PID namespace (child sees itself as PID 1)
-                syscall.CLONE_NEWUTS | // Isolate hostname
-                syscall.CLONE_NEWNET,  // Isolate networking (optional)
-        }
-
-		return cmd, nil
-	}),
-)
-```
-
-### Debugging
-
-#### Command Line Testing
-
-Test your STDIO server directly from the command line:
-
-```bash
-# Start your server
-go run main.go
-
-# Send initialization request
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"clientInfo":{"name":"test","version":"1.0.0"}}}' | go run main.go
-
-# List tools
-echo '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | go run main.go
-
-# Call a tool
-echo '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_files","arguments":{"path":".","recursive":false}}}' | go run main.go
-```
-
-#### Interactive Testing Script
-
-```bash
-#!/bin/bash
-
-# interactive_test.sh
-SERVER_CMD="go run main.go"
-
-echo "Starting MCP STDIO server test..."
-
-# Function to send JSON-RPC request
-send_request() {
-    local request="$1"
-    echo "Sending: $request"
-    echo "$request" | $SERVER_CMD
-    echo "---"
-}
-
-# Initialize
-send_request '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"clientInfo":{"name":"test","version":"1.0.0"}}}'
-
-# List tools
-send_request '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
-
-# List resources
-send_request '{"jsonrpc":"2.0","id":3,"method":"resources/list","params":{}}'
-
-# Call tool
-send_request '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_files","arguments":{"path":".","recursive":false}}}'
-
-echo "Test completed."
-```
-
-#### Debug Logging
-
-Add debug logging to your STDIO server:
-
-```go
-func main() {
-    // Setup debug logging
-    logFile, err := os.OpenFile("mcp-server.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer logFile.Close()
-
-    logger := log.New(logFile, "[MCP] ", log.LstdFlags|log.Lshortfile)
-
-    s := server.NewMCPServer("Debug Server", "1.0.0",
-        server.WithToolCapabilities(true),
-        server.WithLogging(),
-    )
-
-    // Add tools with debug logging
-    s.AddTool(
-        mcp.NewTool("debug_echo",
-            mcp.WithDescription("Echo with debug logging"),
-            mcp.WithString("message", mcp.Required()),
-        ),
-        func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-            message := req.GetString("message", "")
-            logger.Printf("Echo tool called with message: %s", message)
-            return mcp.NewToolResultText(fmt.Sprintf("Echo: %s", message)), nil
-        },
-    )
-
-    logger.Println("Starting STDIO server...")
-    if err := server.ServeStdio(s); err != nil {
-        logger.Printf("Server error: %v", err)
-    }
-}
-```
-
-#### MCP Inspector Integration
-
-Use the MCP Inspector for visual debugging:
-
-```bash
-# Install MCP Inspector
-npm install -g @modelcontextprotocol/inspector
-
-# Run your server with inspector
-mcp-inspector go run main.go
-```
-
-This opens a web interface where you can:
-
-* View available tools and resources
-* Test tool calls interactively
-* Inspect request/response messages
-* Debug protocol issues
-
-### Error Handling
-
-#### Robust Error Handling
-
-```go
-func handleToolWithErrors(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    // Validate required parameters
-    path, err := req.RequireString("path")
-    if err != nil {
-        return nil, fmt.Errorf("path parameter is required and must be a string")
-    }
-
-    // Validate path security
-    if !isValidPath(path) {
-        return nil, fmt.Errorf("invalid or unsafe path: %s", path)
-    }
-
-    // Check if path exists
-    if _, err := os.Stat(path); os.IsNotExist(err) {
-        return nil, fmt.Errorf("path does not exist: %s", path)
-    }
-
-    // Handle context cancellation
-    select {
-    case <-ctx.Done():
-        return nil, ctx.Err()
-    default:
-    }
-
-    // Perform operation with timeout
-    ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-    defer cancel()
-
-    result, err := performOperation(ctx, path)
-    if err != nil {
-        // Log error for debugging
-        logError(fmt.Sprintf("Operation failed for path %s: %v", path, err))
-        
-        // Return user-friendly error
-        if errors.Is(err, context.DeadlineExceeded) {
-            return nil, fmt.Errorf("operation timed out")
-        }
-        
-        return nil, fmt.Errorf("operation failed: %w", err)
-    }
-
-    return mcp.NewToolResultText(fmt.Sprintf("%v", result)), nil
-}
-```
-
-#### Process Management
-
-```go
-func main() {
-    // Handle panics gracefully
-    defer func() {
-        if r := recover(); r != nil {
-            logError(fmt.Sprintf("Server panic: %v", r))
-            os.Exit(1)
-        }
-    }()
-
-    s := server.NewMCPServer("Robust Server", "1.0.0",
-        server.WithRecovery(), // Built-in panic recovery
-    )
-
-    // Setup signal handling
-    setupSignalHandling()
-
-    // Start server with retry logic
-    for attempts := 0; attempts < 3; attempts++ {
-        if err := server.ServeStdio(s); err != nil {
-            logError(fmt.Sprintf("Server attempt %d failed: %v", attempts+1, err))
-            if attempts == 2 {
-                os.Exit(1)
-            }
-            time.Sleep(time.Second * time.Duration(attempts+1))
-        } else {
-            break
-        }
-    }
-}
-
-func setupSignalHandling() {
-    c := make(chan os.Signal, 1)
-    signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-    
-    go func() {
-        sig := <-c
-        logToFile(fmt.Sprintf("Received signal: %v", sig))
-        os.Exit(0)
-    }()
-}
-```
-
-### Performance Optimization
-
-#### Efficient Resource Usage
-
-```go
-// Use connection pooling for database tools
-var dbPool *sql.DB
-
-func init() {
-    var err error
-    dbPool, err = sql.Open("sqlite3", "data.db")
-    if err != nil {
-        log.Fatal(err)
-    }
-    
-    dbPool.SetMaxOpenConns(10)
-    dbPool.SetMaxIdleConns(5)
-    dbPool.SetConnMaxLifetime(time.Hour)
-}
-
-// Cache frequently accessed data
-var fileCache = make(map[string]cacheEntry)
-var cacheMutex sync.RWMutex
-
-type cacheEntry struct {
-    content   string
-    timestamp time.Time
-}
-
-func getCachedFile(path string) (string, bool) {
-    cacheMutex.RLock()
-    defer cacheMutex.RUnlock()
-    
-    entry, exists := fileCache[path]
-    if !exists || time.Since(entry.timestamp) > 5*time.Minute {
-        return "", false
-    }
-    
-    return entry.content, true
-}
-```
-
-#### Memory Management
-
-```go
-func handleLargeFile(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    path := req.GetString("path", "")
-    
-    // Stream large files instead of loading into memory
-    file, err := os.Open(path)
-    if err != nil {
-        return nil, err
-    }
-    defer file.Close()
-
-    // Process in chunks
-    const chunkSize = 64 * 1024
-    buffer := make([]byte, chunkSize)
-    
-    var result strings.Builder
-    for {
-        n, err := file.Read(buffer)
-        if err == io.EOF {
-            break
-        }
-        if err != nil {
-            return nil, err
-        }
-        
-        // Process chunk
-        processed := processChunk(buffer[:n])
-        result.WriteString(processed)
-        
-        // Check for cancellation
-        select {
-        case <-ctx.Done():
-            return nil, ctx.Err()
-        default:
-        }
-    }
-
-    return mcp.NewToolResultText(result.String()), nil
-}
-```
-
-### Next Steps
-
-* **[SSE Transport](/transports/sse)** - Learn about real-time web communication
-* **[HTTP Transport](/transports/http)** - Explore traditional web service patterns
-* **[In-Process Transport](/transports/inprocess)** - Understand embedded scenarios
 
