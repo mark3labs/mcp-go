@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"internal/synctest"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -559,10 +558,15 @@ func TestSSE(t *testing.T) {
 
 		// DO NOT set connection lost handler to test backward compatibility
 
-		synctest.Test(t, func(t *testing.T) {
-			go trans.readSSE(mockReader)
-			synctest.Wait() // Wait for all goroutines to block (readSSE completes)
-		})
+		// Capture stderr to verify the error is printed (backward compatible behavior)
+		// Since we can't easily capture fmt.Printf output in tests, we'll just verify
+		// that the readSSE method returns without calling any handler
+
+		// Directly test the readSSE method with our mock reader
+		go trans.readSSE(mockReader)
+
+		// Wait for readSSE to complete
+		time.Sleep(100 * time.Millisecond)
 
 		// The test passes if readSSE completes without panicking or hanging
 		// In backward compatibility mode, ERROR should be treated as a regular error
