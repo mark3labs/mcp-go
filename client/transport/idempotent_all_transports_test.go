@@ -20,7 +20,7 @@ func TestStreamableHTTP_StartIdempotency(t *testing.T) {
 		t.Fatalf("Failed to create StreamableHTTP client: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 1*time.Second)
 	defer cancel()
 
 	// First Start() - should succeed
@@ -52,7 +52,7 @@ func TestInProcessTransport_StartIdempotency(t *testing.T) {
 
 	transport := NewInProcessTransport(mcpServer)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 1*time.Second)
 	defer cancel()
 
 	// First Start() - should succeed
@@ -90,7 +90,7 @@ func TestInProcessTransport_StartFailureReset(t *testing.T) {
 
 	transport := NewInProcessTransport(mcpServer)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 1*time.Second)
 	defer cancel()
 
 	// Should be able to start successfully

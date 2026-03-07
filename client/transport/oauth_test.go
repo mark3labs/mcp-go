@@ -61,7 +61,7 @@ func TestToken_IsExpired(t *testing.T) {
 func TestMemoryTokenStore(t *testing.T) {
 	// Create a token store
 	store := NewMemoryTokenStore()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Test getting token from empty store
 	_, err := store.GetToken(ctx)
@@ -166,7 +166,7 @@ func TestValidateRedirectURI(t *testing.T) {
 
 func TestOAuthHandler_GetAuthorizationHeader_EmptyAccessToken(t *testing.T) {
 	// Create a token store with a token that has an empty access token
-	ctx := context.Background()
+	ctx := t.Context()
 	tokenStore := NewMemoryTokenStore()
 	invalidToken := &Token{
 		AccessToken:  "", // Empty access token
@@ -191,7 +191,7 @@ func TestOAuthHandler_GetAuthorizationHeader_EmptyAccessToken(t *testing.T) {
 	handler := NewOAuthHandler(config)
 
 	// Test getting authorization header with empty access token
-	_, err := handler.GetAuthorizationHeader(context.Background())
+	_, err := handler.GetAuthorizationHeader(t.Context())
 	if err == nil {
 		t.Fatalf("Expected error when getting authorization header with empty access token")
 	}
@@ -216,7 +216,7 @@ func TestOAuthHandler_GetServerMetadata_EmptyURL(t *testing.T) {
 	handler := NewOAuthHandler(config)
 
 	// Test getting server metadata with empty URL
-	_, err := handler.GetServerMetadata(context.Background())
+	_, err := handler.GetServerMetadata(t.Context())
 	if err == nil {
 		t.Fatalf("Expected error when getting server metadata with empty URL")
 	}
@@ -294,14 +294,14 @@ func TestOAuthHandler_ProcessAuthorizationResponse_StateValidation(t *testing.T)
 
 	// Test with non-matching state - this should fail immediately with ErrInvalidState
 	// before trying to connect to any server
-	err := handler.ProcessAuthorizationResponse(context.Background(), "test-code", "wrong-state", "test-code-verifier")
+	err := handler.ProcessAuthorizationResponse(t.Context(), "test-code", "wrong-state", "test-code-verifier")
 	if !errors.Is(err, ErrInvalidState) {
 		t.Errorf("Expected ErrInvalidState, got %v", err)
 	}
 
 	// Test with empty expected state
 	handler.expectedState = ""
-	err = handler.ProcessAuthorizationResponse(context.Background(), "test-code", expectedState, "test-code-verifier")
+	err = handler.ProcessAuthorizationResponse(t.Context(), "test-code", expectedState, "test-code-verifier")
 	if err == nil {
 		t.Errorf("Expected error with empty expected state, got nil")
 	}
@@ -336,7 +336,7 @@ func TestOAuthHandler_SetExpectedState_CrossRequestScenario(t *testing.T) {
 
 	// Generate state and get authorization URL (this would typically be done in the init handler)
 	testState := "generated-state-value-123"
-	_, err := handler1.GetAuthorizationURL(context.Background(), testState, "test-code-challenge")
+	_, err := handler1.GetAuthorizationURL(t.Context(), testState, "test-code-challenge")
 	if err != nil {
 		// We expect this to fail since we're not actually connecting to a server,
 		// but it should still store the expected state
@@ -381,7 +381,7 @@ func TestOAuthHandler_SetExpectedState_CrossRequestScenario(t *testing.T) {
 
 	// Test with correct state - should pass validation but fail at token exchange
 	// (since we're not actually running a real OAuth server)
-	err = handler2.ProcessAuthorizationResponse(context.Background(), "test-code", testState, "test-code-verifier")
+	err = handler2.ProcessAuthorizationResponse(t.Context(), "test-code", testState, "test-code-verifier")
 	if err == nil {
 		t.Errorf("Expected error due to token exchange failure, got nil")
 	}
@@ -397,7 +397,7 @@ func TestOAuthHandler_SetExpectedState_CrossRequestScenario(t *testing.T) {
 
 	// Step 5: Test with wrong state after resetting
 	handler2.SetExpectedState("different-state-value")
-	err = handler2.ProcessAuthorizationResponse(context.Background(), "test-code", testState, "test-code-verifier")
+	err = handler2.ProcessAuthorizationResponse(t.Context(), "test-code", testState, "test-code-verifier")
 	if !errors.Is(err, ErrInvalidState) {
 		t.Errorf("Expected ErrInvalidState with wrong state, got %v", err)
 	}
