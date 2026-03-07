@@ -265,7 +265,7 @@ func TestTypedToolHandlerWithComplexObjects(t *testing.T) {
 		},
 	}
 
-	result, err = wrappedHandler(context.Background(), req)
+	result, err = wrappedHandler(t.Context(), req)
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Contains(t, result.Content[0].(TextContent).Text, "Jane Smith")
@@ -294,7 +294,7 @@ func TestTypedToolHandlerWithComplexObjects(t *testing.T) {
 	}`
 
 	req.Params.Arguments = json.RawMessage(jsonInput)
-	result, err = wrappedHandler(context.Background(), req)
+	result, err = wrappedHandler(t.Context(), req)
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Contains(t, result.Content[0].(TextContent).Text, "Bob Johnson")
