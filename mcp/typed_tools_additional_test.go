@@ -29,7 +29,7 @@ func TestNewTypedToolHandler(t *testing.T) {
 			"count": 5,
 		}
 
-		result, err := typedHandler(context.Background(), req)
+		result, err := typedHandler(t.Context(), req)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 
@@ -49,7 +49,7 @@ func TestNewTypedToolHandler(t *testing.T) {
 		req := CallToolRequest{}
 		req.Params.Arguments = "invalid arguments" // Not a map
 
-		result, err := typedHandler(context.Background(), req)
+		result, err := typedHandler(t.Context(), req)
 		require.NoError(t, err) // Handler returns result, not error
 		require.NotNil(t, result)
 
@@ -73,7 +73,7 @@ func TestNewTypedToolHandler(t *testing.T) {
 			"count": 5,
 		}
 
-		result, err := typedHandler(context.Background(), req)
+		result, err := typedHandler(t.Context(), req)
 		assert.Error(t, err)
 		assert.Nil(t, result)
 	})
