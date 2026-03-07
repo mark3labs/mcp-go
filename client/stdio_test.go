@@ -61,10 +61,7 @@ func TestStdioMCPClient(t *testing.T) {
 	var logRecords []map[string]any
 	var logRecordsMu sync.RWMutex
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
+	wg.Go(func() {
 		stderr, ok := GetStderr(client)
 		if !ok {
 			return
@@ -80,7 +77,7 @@ func TestStdioMCPClient(t *testing.T) {
 			logRecords = append(logRecords, record)
 			logRecordsMu.Unlock()
 		}
-	}()
+	})
 
 	t.Run("Initialize", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -444,11 +441,9 @@ func TestStdio_ConcurrentCloseDoesNotPanic(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			c.Close()
-		}()
+		})
 	}
 	wg.Wait()
 	// If we get here without a panic, sync.Once is working correctly.
