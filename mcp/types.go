@@ -206,7 +206,7 @@ func NewMetaFromMap(m map[string]any) *Meta {
 
 type Request struct {
 	Method string        `json:"method"`
-	Params RequestParams `json:"params,omitempty"`
+	Params RequestParams `json:"params,omitzero"`
 }
 
 type RequestParams struct {

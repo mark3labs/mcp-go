@@ -74,7 +74,7 @@ type Token struct {
 	// Scope is the scope of the token
 	Scope string `json:"scope,omitempty"`
 	// ExpiresAt is the time when the token expires
-	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	ExpiresAt time.Time `json:"expires_at,omitzero"`
 }
 
 // IsExpired returns true if the token is expired

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"internal/synctest"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -290,9 +291,7 @@ func TestSSE(t *testing.T) {
 			t.Fatalf("SendNotification failed: %v", err)
 		}
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			select {
 			case nt := <-notificationChan:
 				// We received a notification
@@ -305,7 +304,7 @@ func TestSSE(t *testing.T) {
 			case <-time.After(1 * time.Second):
 				t.Errorf("Expected notification, got none")
 			}
-		}()
+		})
 
 		wg.Wait()
 	})
@@ -560,15 +559,10 @@ func TestSSE(t *testing.T) {
 
 		// DO NOT set connection lost handler to test backward compatibility
 
-		// Capture stderr to verify the error is printed (backward compatible behavior)
-		// Since we can't easily capture fmt.Printf output in tests, we'll just verify
-		// that the readSSE method returns without calling any handler
-
-		// Directly test the readSSE method with our mock reader
-		go trans.readSSE(mockReader)
-
-		// Wait for readSSE to complete
-		time.Sleep(100 * time.Millisecond)
+		synctest.Test(t, func(t *testing.T) {
+			go trans.readSSE(mockReader)
+			synctest.Wait() // Wait for all goroutines to block (readSSE completes)
+		})
 
 		// The test passes if readSSE completes without panicking or hanging
 		// In backward compatibility mode, ERROR should be treated as a regular error
