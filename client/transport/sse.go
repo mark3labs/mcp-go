@@ -179,10 +179,15 @@ func (c *SSE) Start(ctx context.Context) error {
 		resp.Body.Close()
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
+			resourceMetadata := ParseResourceMetadataFromWWWAuthenticate(resp.Header)
 			if c.oauthHandler != nil {
 				return &OAuthAuthorizationRequiredError{
-					Handler: c.oauthHandler,
+					Handler:             c.oauthHandler,
+					ResourceMetadataURL: resourceMetadata,
 				}
+			}
+			if resourceMetadata != "" {
+				return &OAuthAuthorizationRequiredError{ResourceMetadataURL: resourceMetadata}
 			}
 			return ErrUnauthorized
 		}
@@ -456,10 +461,15 @@ func (c *SSE) SendRequest(
 
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
+			resourceMetadata := ParseResourceMetadataFromWWWAuthenticate(resp.Header)
 			if c.oauthHandler != nil {
 				return nil, &OAuthAuthorizationRequiredError{
-					Handler: c.oauthHandler,
+					Handler:             c.oauthHandler,
+					ResourceMetadataURL: resourceMetadata,
 				}
+			}
+			if resourceMetadata != "" {
+				return nil, &OAuthAuthorizationRequiredError{ResourceMetadataURL: resourceMetadata}
 			}
 			return nil, ErrUnauthorized
 		}
@@ -604,10 +614,15 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
+			resourceMetadata := ParseResourceMetadataFromWWWAuthenticate(resp.Header)
 			if c.oauthHandler != nil {
 				return &OAuthAuthorizationRequiredError{
-					Handler: c.oauthHandler,
+					Handler:             c.oauthHandler,
+					ResourceMetadataURL: resourceMetadata,
 				}
+			}
+			if resourceMetadata != "" {
+				return &OAuthAuthorizationRequiredError{ResourceMetadataURL: resourceMetadata}
 			}
 			return ErrUnauthorized
 		}

@@ -247,6 +247,11 @@ var ErrOAuthAuthorizationRequired = errors.New("no valid token available, author
 // OAuthAuthorizationRequiredError is returned when OAuth authorization is required
 type OAuthAuthorizationRequiredError struct {
 	Handler *OAuthHandler
+	// ResourceMetadataURL holds the resource_metadata value parsed from the
+	// WWW-Authenticate header on the 401 response, per RFC 9728 section 5.1.
+	// Empty if the server did not advertise one. Feed this back into
+	// OAuthConfig.ProtectedResourceURL on the next connection attempt.
+	ResourceMetadataURL string
 }
 
 func (e *OAuthAuthorizationRequiredError) Error() string {
@@ -296,10 +301,15 @@ func (c *StreamableHTTP) SendRequest(
 
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
+			resourceMetadata := ParseResourceMetadataFromWWWAuthenticate(resp.Header)
 			if c.oauthHandler != nil {
 				return nil, &OAuthAuthorizationRequiredError{
-					Handler: c.oauthHandler,
+					Handler:             c.oauthHandler,
+					ResourceMetadataURL: resourceMetadata,
 				}
+			}
+			if resourceMetadata != "" {
+				return nil, &OAuthAuthorizationRequiredError{ResourceMetadataURL: resourceMetadata}
 			}
 			return nil, ErrUnauthorized
 		}
@@ -577,10 +587,15 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	case http.StatusOK, http.StatusAccepted, http.StatusNoContent:
 		return nil
 	case http.StatusUnauthorized:
+		resourceMetadata := ParseResourceMetadataFromWWWAuthenticate(resp.Header)
 		if c.oauthHandler != nil {
 			return &OAuthAuthorizationRequiredError{
-				Handler: c.oauthHandler,
+				Handler:             c.oauthHandler,
+				ResourceMetadataURL: resourceMetadata,
 			}
+		}
+		if resourceMetadata != "" {
+			return &OAuthAuthorizationRequiredError{ResourceMetadataURL: resourceMetadata}
 		}
 		return ErrUnauthorized
 	default:

@@ -32,6 +32,12 @@ type OAuthConfig struct {
 	// AuthServerMetadataURL is the URL to the OAuth server metadata
 	// If empty, the client will attempt to discover it from the base URL
 	AuthServerMetadataURL string
+	// ProtectedResourceURL is the URL to the OAuth protected resource metadata
+	// (RFC 9728). If empty, the client derives it from the base URL as
+	// {baseURL}/.well-known/oauth-protected-resource. Set this when the
+	// resource server returns a WWW-Authenticate header with a
+	// resource_metadata parameter pointing elsewhere.
+	ProtectedResourceURL string
 	// PKCEEnabled enables PKCE for the OAuth flow (recommended for public clients)
 	PKCEEnabled bool
 	// HTTPClient is an optional HTTP client to use for requests.
@@ -372,8 +378,12 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 			return
 		}
 
-		// Try to fetch the OAuth Protected Resource metadata
-		protectedResourceURL := baseURL + "/.well-known/oauth-protected-resource"
+		// Try to fetch the OAuth Protected Resource metadata. Prefer the URL
+		// supplied via WWW-Authenticate (RFC 9728 section 5.1) if the caller set one.
+		protectedResourceURL := h.config.ProtectedResourceURL
+		if protectedResourceURL == "" {
+			protectedResourceURL = baseURL + "/.well-known/oauth-protected-resource"
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, protectedResourceURL, nil)
 		if err != nil {
 			h.metadataFetchErr = fmt.Errorf("failed to create protected resource request: %w", err)
@@ -424,23 +434,19 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 			return
 		}
 
-		// Use the first authorization server
-		authServerURL := protectedResource.AuthorizationServers[0]
-
-		// Try OAuth Authorization Server Metadata first
-		h.fetchMetadataFromURL(ctx, authServerURL+"/.well-known/oauth-authorization-server")
-		if h.serverMetadata != nil {
-			return
+		// Probe each advertised authorization server until one responds.
+		for _, authServerURL := range protectedResource.AuthorizationServers {
+			for _, candidate := range authServerMetadataCandidates(authServerURL) {
+				h.fetchMetadataFromURL(ctx, candidate)
+				if h.serverMetadata != nil {
+					return
+				}
+			}
 		}
 
-		// If OAuth Authorization Server Metadata discovery fails, try OpenID Connect discovery
-		h.fetchMetadataFromURL(ctx, authServerURL+"/.well-known/openid-configuration")
-		if h.serverMetadata != nil {
-			return
-		}
-
-		// If both discovery methods fail, use default endpoints based on the authorization server URL
-		metadata, err := h.getDefaultEndpoints(authServerURL)
+		// If discovery fails for all advertised servers, use default endpoints
+		// based on the first authorization server URL.
+		metadata, err := h.getDefaultEndpoints(protectedResource.AuthorizationServers[0])
 		if err != nil {
 			h.metadataFetchErr = fmt.Errorf("failed to get default endpoints: %w", err)
 			return
@@ -485,6 +491,70 @@ func (h *OAuthHandler) fetchMetadataFromURL(ctx context.Context, metadataURL str
 	}
 
 	h.serverMetadata = &metadata
+}
+
+// authServerMetadataCandidates returns the ordered list of well-known metadata
+// URLs to try for a given authorization server issuer identifier, following
+// RFC 8414 section 3.1 and OpenID Connect Discovery 1.0 section 4.
+//
+// For an issuer with no path component (https://as.example.com), this is:
+//  1. https://as.example.com/.well-known/oauth-authorization-server
+//  2. https://as.example.com/.well-known/openid-configuration
+//
+// For an issuer with a path (https://as.example.com/tenant/x), RFC 8414
+// inserts the well-known segment between host and path, while OIDC historically
+// appended it. Both are tried:
+//  1. https://as.example.com/.well-known/oauth-authorization-server/tenant/x
+//  2. https://as.example.com/.well-known/openid-configuration/tenant/x
+//  3. https://as.example.com/tenant/x/.well-known/openid-configuration
+func authServerMetadataCandidates(issuer string) []string {
+	issuer = strings.TrimSuffix(issuer, "/")
+	u, err := url.Parse(issuer)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return []string{
+			issuer + "/.well-known/oauth-authorization-server",
+			issuer + "/.well-known/openid-configuration",
+		}
+	}
+	path := strings.Trim(u.Path, "/")
+	base := u.Scheme + "://" + u.Host
+	if path == "" {
+		return []string{
+			base + "/.well-known/oauth-authorization-server",
+			base + "/.well-known/openid-configuration",
+		}
+	}
+	return []string{
+		base + "/.well-known/oauth-authorization-server/" + path,
+		base + "/.well-known/openid-configuration/" + path,
+		base + "/" + path + "/.well-known/openid-configuration",
+	}
+}
+
+// ParseResourceMetadataFromWWWAuthenticate extracts the resource_metadata URL
+// from an RFC 9728 WWW-Authenticate challenge. The resource server advertises
+// the location of its protected resource metadata on a 401 response via:
+//
+//	WWW-Authenticate: Bearer resource_metadata="https://rs.example.com/.well-known/oauth-protected-resource"
+//
+// Returns empty string if the header is absent or does not contain the
+// parameter. The returned URL should be passed back via
+// OAuthConfig.ProtectedResourceURL on the next connection attempt.
+func ParseResourceMetadataFromWWWAuthenticate(h http.Header) string {
+	for _, challenge := range h.Values("WWW-Authenticate") {
+		scheme, params, ok := strings.Cut(challenge, " ")
+		if !ok || !strings.EqualFold(strings.TrimSpace(scheme), "Bearer") {
+			continue
+		}
+		for _, part := range strings.Split(params, ",") {
+			k, v, ok := strings.Cut(strings.TrimSpace(part), "=")
+			if !ok || !strings.EqualFold(k, "resource_metadata") {
+				continue
+			}
+			return strings.Trim(v, `"`)
+		}
+	}
+	return ""
 }
 
 // extractBaseURL extracts the base URL from the first request
