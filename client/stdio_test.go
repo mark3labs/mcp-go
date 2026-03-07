@@ -80,7 +80,7 @@ func TestStdioMCPClient(t *testing.T) {
 	})
 
 	t.Run("Initialize", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		request := mcp.InitializeRequest{}
@@ -111,7 +111,7 @@ func TestStdioMCPClient(t *testing.T) {
 	})
 
 	t.Run("Ping", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		err := client.Ping(ctx)
@@ -121,7 +121,7 @@ func TestStdioMCPClient(t *testing.T) {
 	})
 
 	t.Run("ListResources", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		request := mcp.ListResourcesRequest{}
@@ -136,7 +136,7 @@ func TestStdioMCPClient(t *testing.T) {
 	})
 
 	t.Run("ReadResource", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		request := mcp.ReadResourceRequest{}
@@ -153,7 +153,7 @@ func TestStdioMCPClient(t *testing.T) {
 	})
 
 	t.Run("Subscribe and Unsubscribe", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		// Test Subscribe
@@ -174,7 +174,7 @@ func TestStdioMCPClient(t *testing.T) {
 	})
 
 	t.Run("ListPrompts", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		request := mcp.ListPromptsRequest{}
@@ -189,7 +189,7 @@ func TestStdioMCPClient(t *testing.T) {
 	})
 
 	t.Run("GetPrompt", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		request := mcp.GetPromptRequest{}
@@ -206,7 +206,7 @@ func TestStdioMCPClient(t *testing.T) {
 	})
 
 	t.Run("ListTools", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		request := mcp.ListToolsRequest{}
@@ -221,7 +221,7 @@ func TestStdioMCPClient(t *testing.T) {
 	})
 
 	t.Run("CallTool", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		request := mcp.CallToolRequest{}
@@ -241,7 +241,7 @@ func TestStdioMCPClient(t *testing.T) {
 	})
 
 	t.Run("SetLevel", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		request := mcp.SetLevelRequest{}
@@ -254,7 +254,7 @@ func TestStdioMCPClient(t *testing.T) {
 	})
 
 	t.Run("Complete", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		request := mcp.CompleteRequest{}
@@ -316,7 +316,7 @@ func TestStdio_SendRequestReturnsWhenTransportCloses(t *testing.T) {
 	defer serverRead.Close()
 
 	stdioTransport := transport.NewIO(clientRead, clientWrite, io.NopCloser(strings.NewReader("")))
-	require.NoError(t, stdioTransport.Start(context.Background()))
+	require.NoError(t, stdioTransport.Start(t.Context()))
 
 	c := NewClient(stdioTransport)
 	defer c.Close()
@@ -338,7 +338,7 @@ func TestStdio_SendRequestReturnsWhenTransportCloses(t *testing.T) {
 		req := mcp.InitializeRequest{}
 		req.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
 		req.Params.ClientInfo = mcp.Implementation{Name: "test", Version: "1.0"}
-		_, err := c.Initialize(context.Background(), req)
+		_, err := c.Initialize(t.Context(), req)
 		errChan <- err
 	}()
 
@@ -367,7 +367,7 @@ func TestStdio_SendRequestReturnsImmediatelyWhenAlreadyClosed(t *testing.T) {
 	defer serverWrite.Close()
 
 	stdioTransport := transport.NewIO(clientRead, clientWrite, io.NopCloser(strings.NewReader("")))
-	require.NoError(t, stdioTransport.Start(context.Background()))
+	require.NoError(t, stdioTransport.Start(t.Context()))
 
 	c := NewClient(stdioTransport)
 	c.Close()
@@ -375,7 +375,7 @@ func TestStdio_SendRequestReturnsImmediatelyWhenAlreadyClosed(t *testing.T) {
 	req := mcp.InitializeRequest{}
 	req.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
 	req.Params.ClientInfo = mcp.Implementation{Name: "test", Version: "1.0"}
-	_, err := c.Initialize(context.Background(), req)
+	_, err := c.Initialize(t.Context(), req)
 	require.ErrorIs(t, err, transport.ErrTransportClosed)
 }
 
@@ -387,7 +387,7 @@ func TestStdio_SendNotificationReturnsWhenTransportClosed(t *testing.T) {
 	defer serverWrite.Close()
 
 	stdioTransport := transport.NewIO(clientRead, clientWrite, io.NopCloser(strings.NewReader("")))
-	require.NoError(t, stdioTransport.Start(context.Background()))
+	require.NoError(t, stdioTransport.Start(t.Context()))
 
 	c := NewClient(stdioTransport)
 	c.Close()
@@ -397,7 +397,7 @@ func TestStdio_SendNotificationReturnsWhenTransportClosed(t *testing.T) {
 	}
 	notification.Method = "notifications/initialized"
 
-	err := stdioTransport.SendNotification(context.Background(), notification)
+	err := stdioTransport.SendNotification(t.Context(), notification)
 	require.ErrorIs(t, err, transport.ErrTransportClosed)
 }
 
@@ -409,11 +409,11 @@ func TestStdio_SendNotificationReturnsWhenContextCancelled(t *testing.T) {
 	defer serverWrite.Close()
 
 	stdioTransport := transport.NewIO(clientRead, clientWrite, io.NopCloser(strings.NewReader("")))
-	require.NoError(t, stdioTransport.Start(context.Background()))
+	require.NoError(t, stdioTransport.Start(t.Context()))
 
 	defer stdioTransport.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel() // cancel immediately
 
 	notification := mcp.JSONRPCNotification{
@@ -435,7 +435,7 @@ func TestStdio_ConcurrentCloseDoesNotPanic(t *testing.T) {
 	defer serverWrite.Close()
 
 	stdioTransport := transport.NewIO(clientRead, clientWrite, io.NopCloser(strings.NewReader("")))
-	require.NoError(t, stdioTransport.Start(context.Background()))
+	require.NoError(t, stdioTransport.Start(t.Context()))
 
 	c := NewClient(stdioTransport)
 
@@ -458,7 +458,7 @@ func TestStdio_CloseCleanupRunsAfterReadResponsesCloseDone(t *testing.T) {
 	serverRead, clientWrite := io.Pipe()
 
 	stdioTransport := transport.NewIO(clientRead, clientWrite, io.NopCloser(strings.NewReader("")))
-	require.NoError(t, stdioTransport.Start(context.Background()))
+	require.NoError(t, stdioTransport.Start(t.Context()))
 
 	// Drain writes so nothing blocks
 	go func() {
@@ -501,7 +501,7 @@ func TestStdio_ConcurrentRequestsAllReceiveResponses(t *testing.T) {
 	serverRead, clientWrite := io.Pipe()
 
 	stdioTransport := transport.NewIO(clientRead, clientWrite, io.NopCloser(strings.NewReader("")))
-	require.NoError(t, stdioTransport.Start(context.Background()))
+	require.NoError(t, stdioTransport.Start(t.Context()))
 	defer stdioTransport.Close()
 
 	// Mock server: read JSON-RPC requests, respond with matching IDs after
@@ -578,7 +578,7 @@ func TestStdio_ConcurrentRequestsAllReceiveResponses(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			_, err := c.ListTools(ctx, mcp.ListToolsRequest{})
 			if err != nil {
@@ -608,7 +608,7 @@ func TestStdio_ConcurrentRequestsUnblockOnServerDeath(t *testing.T) {
 	serverRead, clientWrite := io.Pipe()
 
 	stdioTransport := transport.NewIO(clientRead, clientWrite, io.NopCloser(strings.NewReader("")))
-	require.NoError(t, stdioTransport.Start(context.Background()))
+	require.NoError(t, stdioTransport.Start(t.Context()))
 	defer stdioTransport.Close()
 
 	// Mock server: read requests but only respond to "initialize", then
@@ -666,7 +666,7 @@ func TestStdio_ConcurrentRequestsUnblockOnServerDeath(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			_, err := c.ListTools(ctx, mcp.ListToolsRequest{})
 			errCh <- err
