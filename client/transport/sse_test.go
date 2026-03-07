@@ -796,6 +796,54 @@ func TestSSEErrors(t *testing.T) {
 	})
 }
 
+func TestSSE_Start_CustomEndpointTimeout(t *testing.T) {
+	// Server sends SSE headers but never sends an endpoint event.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		flusher.Flush()
+		// Block until the client gives up
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	customTimeout := 500 * time.Millisecond
+	transport, err := NewSSE(server.URL, WithEndpointTimeout(customTimeout))
+	require.NoError(t, err)
+	defer transport.Close()
+
+	// Use a generous parent context so only the endpoint timeout fires.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	err = transport.Start(ctx)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "timeout waiting for endpoint")
+	require.GreaterOrEqual(t, elapsed, customTimeout*7/10)
+	require.LessOrEqual(t, elapsed, customTimeout*2)
+}
+
+func TestSSE_NonPositiveTimeoutsKeepDefaults(t *testing.T) {
+	sse, err := NewSSE("http://localhost:8080")
+	require.NoError(t, err)
+
+	WithEndpointTimeout(0)(sse)
+	require.Equal(t, 30*time.Second, sse.endpointTimeout, "zero should keep default")
+
+	WithEndpointTimeout(-1 * time.Second)(sse)
+	require.Equal(t, 30*time.Second, sse.endpointTimeout, "negative should keep default")
+
+	WithResponseTimeout(0)(sse)
+	require.Equal(t, 60*time.Second, sse.responseTimeout, "zero should keep default")
+
+	WithResponseTimeout(-5 * time.Second)(sse)
+	require.Equal(t, 60*time.Second, sse.responseTimeout, "negative should keep default")
+}
+
 func TestSSE_Start_Unauthorized_StaticToken(t *testing.T) {
 	// Create a test server that always returns 401
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1258,6 +1306,59 @@ func TestSSE_SendRequest_Timeout(t *testing.T) {
 		transport.mu.RUnlock()
 
 		require.Equal(t, 0, finalCount)
+	})
+
+	t.Run("CustomResponseTimeoutIsRespected", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Accept") == "text/event-stream" {
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.WriteHeader(http.StatusOK)
+				flusher, _ := w.(http.Flusher)
+				fmt.Fprintf(w, "event: endpoint\ndata: /message\n\n")
+				flusher.Flush()
+				<-r.Context().Done()
+				return
+			}
+
+			if r.Method == http.MethodPost {
+				w.WriteHeader(http.StatusAccepted)
+				// Never send an SSE response — force the timeout path
+				return
+			}
+		}))
+		defer server.Close()
+
+		customTimeout := 500 * time.Millisecond
+		transport, err := NewSSE(server.URL, WithResponseTimeout(customTimeout))
+		require.NoError(t, err)
+		defer transport.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		err = transport.Start(ctx)
+		require.NoError(t, err)
+
+		// Use a context with a deadline far beyond our custom timeout
+		// so only the custom timeout can fire.
+		reqCtx, reqCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer reqCancel()
+
+		request := JSONRPCRequest{
+			JSONRPC: "2.0",
+			ID:      mcp.NewRequestId(int64(1)),
+			Method:  "test/custom-timeout",
+		}
+
+		start := time.Now()
+		_, err = transport.SendRequest(reqCtx, request)
+		elapsed := time.Since(start)
+
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "timeout")
+		// Should fire around 500ms, not 60s
+		require.GreaterOrEqual(t, elapsed, customTimeout*7/10)
+		require.LessOrEqual(t, elapsed, customTimeout*2)
 	})
 
 	t.Run("AlreadyExpiredDeadline", func(t *testing.T) {
