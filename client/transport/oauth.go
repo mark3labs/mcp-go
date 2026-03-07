@@ -550,44 +550,59 @@ func authServerMetadataCandidates(issuer string) []string {
 // parameter. The returned URL should be passed back via
 // OAuthConfig.ProtectedResourceURL on the next connection attempt.
 func ParseResourceMetadataFromWWWAuthenticate(h http.Header) string {
-	const key = "resource_metadata"
 	for _, challenge := range h.Values("WWW-Authenticate") {
 		scheme, params, ok := strings.Cut(challenge, " ")
 		if !ok || !strings.EqualFold(strings.TrimSpace(scheme), "Bearer") {
 			continue
 		}
-		// RFC 9110 auth-param values may be quoted-strings containing commas,
-		// so splitting on comma is unsafe. Walk the param list respecting
-		// quote state instead. RFC 9728 resource_metadata values are absolute
-		// URIs and so never contain a literal double-quote; backslash-escape
-		// handling is therefore unnecessary here.
-		s := params
-		for len(s) > 0 {
-			s = strings.TrimLeft(s, " \t,")
-			eq := strings.IndexByte(s, '=')
-			if eq < 0 {
-				break
-			}
-			name := strings.TrimSpace(s[:eq])
-			s = s[eq+1:]
-			var val string
-			if len(s) > 0 && s[0] == '"' {
-				if end := strings.IndexByte(s[1:], '"'); end >= 0 {
-					val, s = s[1:end+1], s[end+2:]
-				} else {
-					val, s = s[1:], ""
-				}
-			} else if end := strings.IndexAny(s, ", \t"); end >= 0 {
-				val, s = s[:end], s[end:]
-			} else {
-				val, s = s, ""
-			}
-			if strings.EqualFold(name, key) {
-				return val
-			}
+		if v := parseAuthParam(params, "resource_metadata"); v != "" {
+			return v
 		}
 	}
 	return ""
+}
+
+// parseAuthParam extracts a named parameter from an RFC 9110 auth-param list.
+// It handles quoted-string values (which may contain commas) without splitting
+// on comma. Backslash-escapes inside quoted strings are not processed since
+// RFC 9728 resource_metadata values are absolute URIs that never need escaping.
+func parseAuthParam(params, key string) string {
+	for len(params) > 0 {
+		params = strings.TrimLeft(params, " \t,")
+
+		eq := strings.IndexByte(params, '=')
+		if eq < 0 {
+			return ""
+		}
+		name := strings.TrimSpace(params[:eq])
+		params = params[eq+1:]
+
+		val, rest := consumeParamValue(params)
+		params = rest
+
+		if strings.EqualFold(name, key) {
+			return val
+		}
+	}
+	return ""
+}
+
+// consumeParamValue reads a single auth-param value (quoted or token) from the
+// front of s and returns (value, remainder).
+func consumeParamValue(s string) (val, rest string) {
+	if len(s) == 0 {
+		return "", ""
+	}
+	if s[0] == '"' {
+		if end := strings.IndexByte(s[1:], '"'); end >= 0 {
+			return s[1 : end+1], s[end+2:]
+		}
+		return s[1:], "" // unterminated quote — take rest
+	}
+	if end := strings.IndexAny(s, ", \t"); end >= 0 {
+		return s[:end], s[end:]
+	}
+	return s, ""
 }
 
 // extractBaseURL extracts the base URL from the first request
