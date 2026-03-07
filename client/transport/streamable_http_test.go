@@ -321,9 +321,7 @@ func TestStreamableHTTP(t *testing.T) {
 			t.Fatalf("SendRequest failed: %v", err)
 		}
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			select {
 			case notification := <-notificationChan:
 				// We received a notification
@@ -343,7 +341,7 @@ func TestStreamableHTTP(t *testing.T) {
 			case <-time.After(1 * time.Second):
 				t.Errorf("Expected notification, got none")
 			}
-		}()
+		})
 
 		wg.Wait()
 	})

@@ -174,9 +174,7 @@ func TestStdio(t *testing.T) {
 			t.Fatalf("SendNotification failed: %v", err)
 		}
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			select {
 			case nt := <-notificationChan:
 				// We received a notification from the mock server
@@ -211,7 +209,7 @@ func TestStdio(t *testing.T) {
 			case <-time.After(1 * time.Second):
 				t.Errorf("Expected notification, got none")
 			}
-		}()
+		})
 
 		wg.Wait()
 	})
