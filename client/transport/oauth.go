@@ -435,8 +435,10 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		}
 
 		// Probe each advertised authorization server until one responds.
+		// Clear transient errors between attempts so we try all candidates.
 		for _, authServerURL := range protectedResource.AuthorizationServers {
 			for _, candidate := range authServerMetadataCandidates(authServerURL) {
+				h.metadataFetchErr = nil
 				h.fetchMetadataFromURL(ctx, candidate)
 				if h.serverMetadata != nil {
 					return
