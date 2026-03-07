@@ -34,9 +34,9 @@ type OAuthConfig struct {
 	AuthServerMetadataURL string
 	// ProtectedResourceURL is the URL to the OAuth protected resource metadata
 	// (RFC 9728). If empty, the client derives it from the base URL as
-	// {baseURL}/.well-known/oauth-protected-resource. Set this when the
-	// resource server returns a WWW-Authenticate header with a
-	// resource_metadata parameter pointing elsewhere.
+	// {baseURL}/.well-known/oauth-protected-resource. Transports populate this
+	// automatically from the WWW-Authenticate resource_metadata parameter on a
+	// 401 response; set it manually only if you need to override discovery.
 	ProtectedResourceURL string
 	// PKCEEnabled enables PKCE for the OAuth flow (recommended for public clients)
 	PKCEEnabled bool
@@ -151,8 +151,9 @@ type OAuthHandler struct {
 	metadataOnce     sync.Once
 	baseURL          string
 
-	mu            sync.RWMutex // Protects expectedState
-	expectedState string       // Expected state value for CSRF protection
+	mu                   sync.RWMutex // Protects the fields below
+	expectedState        string       // Expected state value for CSRF protection
+	protectedResourceURL string       // From WWW-Authenticate; overrides config.ProtectedResourceURL
 }
 
 // NewOAuthHandler creates a new OAuth handler
@@ -316,6 +317,25 @@ func (h *OAuthHandler) SetBaseURL(baseURL string) {
 	h.baseURL = baseURL
 }
 
+// SetProtectedResourceURL records the RFC 9728 protected-resource metadata URL
+// advertised by the resource server in a WWW-Authenticate challenge. It takes
+// precedence over OAuthConfig.ProtectedResourceURL during discovery. Calling
+// this after metadata has already been fetched has no effect.
+func (h *OAuthHandler) SetProtectedResourceURL(u string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.protectedResourceURL = u
+}
+
+func (h *OAuthHandler) getProtectedResourceURL() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.protectedResourceURL != "" {
+		return h.protectedResourceURL
+	}
+	return h.config.ProtectedResourceURL
+}
+
 // GetExpectedState returns the expected state value (for testing purposes)
 func (h *OAuthHandler) GetExpectedState() string {
 	h.mu.RLock()
@@ -379,8 +399,8 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		}
 
 		// Try to fetch the OAuth Protected Resource metadata. Prefer the URL
-		// supplied via WWW-Authenticate (RFC 9728 section 5.1) if the caller set one.
-		protectedResourceURL := h.config.ProtectedResourceURL
+		// supplied via WWW-Authenticate (RFC 9728 section 5.1) if one was set.
+		protectedResourceURL := h.getProtectedResourceURL()
 		if protectedResourceURL == "" {
 			protectedResourceURL = baseURL + "/.well-known/oauth-protected-resource"
 		}
@@ -549,8 +569,8 @@ func authServerMetadataCandidates(issuer string) []string {
 //	WWW-Authenticate: Bearer resource_metadata="https://rs.example.com/.well-known/oauth-protected-resource"
 //
 // Returns empty string if the header is absent or does not contain the
-// parameter. The returned URL should be passed back via
-// OAuthConfig.ProtectedResourceURL on the next connection attempt.
+// parameter. Transports call this automatically on 401 responses and plumb
+// the result into the OAuthHandler, so most callers need not invoke it directly.
 func ParseResourceMetadataFromWWWAuthenticate(h http.Header) string {
 	for _, challenge := range h.Values("WWW-Authenticate") {
 		scheme, params, ok := strings.Cut(challenge, " ")
