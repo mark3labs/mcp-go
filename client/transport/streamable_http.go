@@ -249,9 +249,28 @@ type OAuthAuthorizationRequiredError struct {
 	Handler *OAuthHandler
 	// ResourceMetadataURL holds the resource_metadata value parsed from the
 	// WWW-Authenticate header on the 401 response, per RFC 9728 section 5.1.
-	// Empty if the server did not advertise one. Feed this back into
-	// OAuthConfig.ProtectedResourceURL on the next connection attempt.
+	// Empty if the server did not advertise one. When Handler is non-nil the
+	// URL has already been pushed into it, so callers typically only need this
+	// for logging or when constructing a handler after the fact.
 	ResourceMetadataURL string
+}
+
+// unauthorizedError builds the error returned for a 401 response. It parses
+// the RFC 9728 resource_metadata hint from WWW-Authenticate and, if a handler
+// is present, pushes it into the handler so the subsequent OAuth flow can
+// discover metadata without caller intervention.
+func unauthorizedError(handler *OAuthHandler, header http.Header) error {
+	rm := ParseResourceMetadataFromWWWAuthenticate(header)
+	if handler != nil {
+		if rm != "" {
+			handler.SetProtectedResourceURL(rm)
+		}
+		return &OAuthAuthorizationRequiredError{Handler: handler, ResourceMetadataURL: rm}
+	}
+	if rm != "" {
+		return &OAuthAuthorizationRequiredError{ResourceMetadataURL: rm}
+	}
+	return ErrUnauthorized
 }
 
 func (e *OAuthAuthorizationRequiredError) Error() string {
@@ -301,17 +320,7 @@ func (c *StreamableHTTP) SendRequest(
 
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
-			resourceMetadata := ParseResourceMetadataFromWWWAuthenticate(resp.Header)
-			if c.oauthHandler != nil {
-				return nil, &OAuthAuthorizationRequiredError{
-					Handler:             c.oauthHandler,
-					ResourceMetadataURL: resourceMetadata,
-				}
-			}
-			if resourceMetadata != "" {
-				return nil, &OAuthAuthorizationRequiredError{ResourceMetadataURL: resourceMetadata}
-			}
-			return nil, ErrUnauthorized
+			return nil, unauthorizedError(c.oauthHandler, resp.Header)
 		}
 
 		// handle error response
@@ -587,17 +596,7 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	case http.StatusOK, http.StatusAccepted, http.StatusNoContent:
 		return nil
 	case http.StatusUnauthorized:
-		resourceMetadata := ParseResourceMetadataFromWWWAuthenticate(resp.Header)
-		if c.oauthHandler != nil {
-			return &OAuthAuthorizationRequiredError{
-				Handler:             c.oauthHandler,
-				ResourceMetadataURL: resourceMetadata,
-			}
-		}
-		if resourceMetadata != "" {
-			return &OAuthAuthorizationRequiredError{ResourceMetadataURL: resourceMetadata}
-		}
-		return ErrUnauthorized
+		return unauthorizedError(c.oauthHandler, resp.Header)
 	default:
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf(

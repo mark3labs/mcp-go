@@ -179,17 +179,7 @@ func (c *SSE) Start(ctx context.Context) error {
 		resp.Body.Close()
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
-			resourceMetadata := ParseResourceMetadataFromWWWAuthenticate(resp.Header)
-			if c.oauthHandler != nil {
-				return &OAuthAuthorizationRequiredError{
-					Handler:             c.oauthHandler,
-					ResourceMetadataURL: resourceMetadata,
-				}
-			}
-			if resourceMetadata != "" {
-				return &OAuthAuthorizationRequiredError{ResourceMetadataURL: resourceMetadata}
-			}
-			return ErrUnauthorized
+			return unauthorizedError(c.oauthHandler, resp.Header)
 		}
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
@@ -461,17 +451,7 @@ func (c *SSE) SendRequest(
 
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
-			resourceMetadata := ParseResourceMetadataFromWWWAuthenticate(resp.Header)
-			if c.oauthHandler != nil {
-				return nil, &OAuthAuthorizationRequiredError{
-					Handler:             c.oauthHandler,
-					ResourceMetadataURL: resourceMetadata,
-				}
-			}
-			if resourceMetadata != "" {
-				return nil, &OAuthAuthorizationRequiredError{ResourceMetadataURL: resourceMetadata}
-			}
-			return nil, ErrUnauthorized
+			return nil, unauthorizedError(c.oauthHandler, resp.Header)
 		}
 
 		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, body)
@@ -614,17 +594,7 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
-			resourceMetadata := ParseResourceMetadataFromWWWAuthenticate(resp.Header)
-			if c.oauthHandler != nil {
-				return &OAuthAuthorizationRequiredError{
-					Handler:             c.oauthHandler,
-					ResourceMetadataURL: resourceMetadata,
-				}
-			}
-			if resourceMetadata != "" {
-				return &OAuthAuthorizationRequiredError{ResourceMetadataURL: resourceMetadata}
-			}
-			return ErrUnauthorized
+			return unauthorizedError(c.oauthHandler, resp.Header)
 		}
 
 		body, _ := io.ReadAll(resp.Body)
