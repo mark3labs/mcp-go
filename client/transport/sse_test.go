@@ -175,7 +175,7 @@ func TestSSE(t *testing.T) {
 	}
 
 	// Start the transport
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 
 	err = trans.Start(ctx)
@@ -185,7 +185,7 @@ func TestSSE(t *testing.T) {
 	defer trans.Close()
 
 	t.Run("SendRequest", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		params := map[string]any{
@@ -243,7 +243,7 @@ func TestSSE(t *testing.T) {
 
 	t.Run("SendRequestWithTimeout", func(t *testing.T) {
 		// Create a context that's already canceled
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel() // Cancel the context immediately
 
 		// Prepare a request
@@ -273,7 +273,7 @@ func TestSSE(t *testing.T) {
 
 		// Send a notification
 		// This would trigger a notification from the server
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		defer cancel()
 
 		notification := mcp.JSONRPCNotification{
@@ -321,7 +321,7 @@ func TestSSE(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
 
 				// Each request has a unique ID and payload

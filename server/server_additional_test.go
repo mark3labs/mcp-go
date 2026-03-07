@@ -787,9 +787,7 @@ func TestMCPServer_ConcurrentCapabilityChecks(t *testing.T) {
 	errorCount := atomic.Int32{}
 
 	// Goroutine that adds tools (triggers capability registration)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		i := 0
 		for {
 			select {
@@ -801,13 +799,11 @@ func TestMCPServer_ConcurrentCapabilityChecks(t *testing.T) {
 				time.Sleep(1 * time.Millisecond)
 			}
 		}
-	}()
+	})
 
 	// Goroutines that check capabilities
 	for range 5 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				select {
 				case <-stopCh:
@@ -819,7 +815,7 @@ func TestMCPServer_ConcurrentCapabilityChecks(t *testing.T) {
 					time.Sleep(1 * time.Millisecond)
 				}
 			}
-		}()
+		})
 	}
 
 	// Let it run for a bit
