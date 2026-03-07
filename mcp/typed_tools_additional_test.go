@@ -100,7 +100,7 @@ func TestNewTypedToolHandler(t *testing.T) {
 			"nested":  map[string]any{"value": 42},
 		}
 
-		result, err := typedHandler(context.Background(), req)
+		result, err := typedHandler(t.Context(), req)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 	})
@@ -214,7 +214,7 @@ func TestNewStructuredToolHandler(t *testing.T) {
 			"limit": 10,
 		}
 
-		result, err := structuredHandler(context.Background(), req)
+		result, err := structuredHandler(t.Context(), req)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 
@@ -240,7 +240,7 @@ func TestNewStructuredToolHandler(t *testing.T) {
 			"limit": 10,
 		}
 
-		result, err := structuredHandler(context.Background(), req)
+		result, err := structuredHandler(t.Context(), req)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 
@@ -262,7 +262,7 @@ func TestNewStructuredToolHandler(t *testing.T) {
 		req := CallToolRequest{}
 		req.Params.Arguments = map[string]any{}
 
-		result, err := structuredHandler(context.Background(), req)
+		result, err := structuredHandler(t.Context(), req)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 	})
