@@ -96,7 +96,7 @@ func TestClient_HandleElicitationRequest(t *testing.T) {
 				},
 			}
 
-			result, err := client.handleElicitationRequestTransport(context.Background(), request)
+			result, err := client.handleElicitationRequestTransport(t.Context(), request)
 
 			if tt.expectedError != "" {
 				if err == nil {
@@ -165,12 +165,12 @@ func TestClient_Initialize_WithElicitationHandler(t *testing.T) {
 	handler := &mockElicitationHandler{}
 	client := NewClient(mockTransport, WithElicitationHandler(handler))
 
-	err := client.Start(context.Background())
+	err := client.Start(t.Context())
 	if err != nil {
 		t.Fatalf("failed to start client: %v", err)
 	}
 
-	_, err = client.Initialize(context.Background(), mcp.InitializeRequest{
+	_, err = client.Initialize(t.Context(), mcp.InitializeRequest{
 		Params: mcp.InitializeParams{
 			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
 			ClientInfo: mcp.Implementation{
