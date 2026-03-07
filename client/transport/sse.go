@@ -89,7 +89,9 @@ func WithOAuth(config OAuthConfig) ClientOption {
 // deadline, the shorter value is used.
 func WithEndpointTimeout(d time.Duration) ClientOption {
 	return func(sc *SSE) {
-		sc.endpointTimeout = d
+		if d > 0 {
+			sc.endpointTimeout = d
+		}
 	}
 }
 
@@ -98,7 +100,9 @@ func WithEndpointTimeout(d time.Duration) ClientOption {
 // deadline, the shorter value is used.
 func WithResponseTimeout(d time.Duration) ClientOption {
 	return func(sc *SSE) {
-		sc.responseTimeout = d
+		if d > 0 {
+			sc.responseTimeout = d
+		}
 	}
 }
 

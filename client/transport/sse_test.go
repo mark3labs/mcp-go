@@ -827,6 +827,23 @@ func TestSSE_Start_CustomEndpointTimeout(t *testing.T) {
 	require.LessOrEqual(t, elapsed, customTimeout*2)
 }
 
+func TestSSE_NonPositiveTimeoutsKeepDefaults(t *testing.T) {
+	sse, err := NewSSE("http://localhost:8080")
+	require.NoError(t, err)
+
+	WithEndpointTimeout(0)(sse)
+	require.Equal(t, 30*time.Second, sse.endpointTimeout, "zero should keep default")
+
+	WithEndpointTimeout(-1 * time.Second)(sse)
+	require.Equal(t, 30*time.Second, sse.endpointTimeout, "negative should keep default")
+
+	WithResponseTimeout(0)(sse)
+	require.Equal(t, 60*time.Second, sse.responseTimeout, "zero should keep default")
+
+	WithResponseTimeout(-5 * time.Second)(sse)
+	require.Equal(t, 60*time.Second, sse.responseTimeout, "negative should keep default")
+}
+
 func TestSSE_Start_Unauthorized_StaticToken(t *testing.T) {
 	// Create a test server that always returns 401
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
