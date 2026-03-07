@@ -1381,3 +1381,190 @@ func TestOAuthHandler_RefreshToken_ProperHTTP400Error(t *testing.T) {
 	_, getErr := tokenStore.GetToken(ctx)
 	assert.ErrorIs(t, getErr, ErrNoToken, "No token should be saved after HTTP 400 error")
 }
+
+func TestParseResourceMetadataFromWWWAuthenticate(t *testing.T) {
+	cases := []struct {
+		name string
+		hdr  http.Header
+		want string
+	}{
+		{
+			name: "quoted value",
+			hdr:  http.Header{"Www-Authenticate": {`Bearer resource_metadata="https://rs.example.com/.well-known/oauth-protected-resource"`}},
+			want: "https://rs.example.com/.well-known/oauth-protected-resource",
+		},
+		{
+			name: "unquoted value",
+			hdr:  http.Header{"Www-Authenticate": {`Bearer resource_metadata=https://rs.example.com/meta`}},
+			want: "https://rs.example.com/meta",
+		},
+		{
+			name: "preceded by param with comma in quoted value",
+			hdr:  http.Header{"Www-Authenticate": {`Bearer realm="My, Realm", resource_metadata="https://rs.example.com/meta"`}},
+			want: "https://rs.example.com/meta",
+		},
+		{
+			name: "followed by other params",
+			hdr:  http.Header{"Www-Authenticate": {`Bearer resource_metadata="https://rs.example.com/meta", error="invalid_token"`}},
+			want: "https://rs.example.com/meta",
+		},
+		{
+			name: "case insensitive scheme and key",
+			hdr:  http.Header{"Www-Authenticate": {`bearer Resource_Metadata="https://rs.example.com/meta"`}},
+			want: "https://rs.example.com/meta",
+		},
+		{
+			name: "second of multiple challenges",
+			hdr:  http.Header{"Www-Authenticate": {`Basic realm="x"`, `Bearer resource_metadata="https://rs.example.com/meta"`}},
+			want: "https://rs.example.com/meta",
+		},
+		{
+			name: "non-Bearer scheme ignored",
+			hdr:  http.Header{"Www-Authenticate": {`Basic resource_metadata="https://evil.example.com"`}},
+			want: "",
+		},
+		{
+			name: "no resource_metadata param",
+			hdr:  http.Header{"Www-Authenticate": {`Bearer realm="api", error="invalid_token"`}},
+			want: "",
+		},
+		{
+			name: "header absent",
+			hdr:  http.Header{},
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, ParseResourceMetadataFromWWWAuthenticate(tc.hdr))
+		})
+	}
+}
+
+func TestAuthServerMetadataCandidates(t *testing.T) {
+	cases := []struct {
+		name   string
+		issuer string
+		want   []string
+	}{
+		{
+			name:   "no path",
+			issuer: "https://as.example.com",
+			want: []string{
+				"https://as.example.com/.well-known/oauth-authorization-server",
+				"https://as.example.com/.well-known/openid-configuration",
+			},
+		},
+		{
+			name:   "trailing slash stripped",
+			issuer: "https://as.example.com/",
+			want: []string{
+				"https://as.example.com/.well-known/oauth-authorization-server",
+				"https://as.example.com/.well-known/openid-configuration",
+			},
+		},
+		{
+			name:   "with path (RFC 8414 insertion + OIDC append)",
+			issuer: "https://as.example.com/tenant/x",
+			want: []string{
+				"https://as.example.com/.well-known/oauth-authorization-server/tenant/x",
+				"https://as.example.com/.well-known/openid-configuration/tenant/x",
+				"https://as.example.com/tenant/x/.well-known/openid-configuration",
+			},
+		},
+		{
+			name:   "port preserved",
+			issuer: "https://as.example.com:8443/tenant",
+			want: []string{
+				"https://as.example.com:8443/.well-known/oauth-authorization-server/tenant",
+				"https://as.example.com:8443/.well-known/openid-configuration/tenant",
+				"https://as.example.com:8443/tenant/.well-known/openid-configuration",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, authServerMetadataCandidates(tc.issuer))
+		})
+	}
+}
+
+func TestOAuthHandler_GetServerMetadata_ProtectedResourceURL(t *testing.T) {
+	// A resource server advertises a protected-resource metadata URL via
+	// WWW-Authenticate that differs from the base URL. The caller passes it
+	// back via OAuthConfig.ProtectedResourceURL; discovery must fetch from
+	// there rather than {baseURL}/.well-known/oauth-protected-resource.
+	var defaultPathHit bool
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource":
+			defaultPathHit = true
+			w.WriteHeader(http.StatusNotFound)
+		case "/custom/protected-resource":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				AuthorizationServers: []string{server.URL},
+			})
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(AuthServerMetadata{
+				Issuer:                server.URL,
+				AuthorizationEndpoint: server.URL + "/authorize",
+				TokenEndpoint:         server.URL + "/token",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:             "test-client",
+		ProtectedResourceURL: server.URL + "/custom/protected-resource",
+	})
+	handler.SetBaseURL(server.URL)
+
+	md, err := handler.GetServerMetadata(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, server.URL+"/authorize", md.AuthorizationEndpoint)
+	assert.False(t, defaultPathHit, "must not fall back to baseURL/.well-known/oauth-protected-resource when ProtectedResourceURL is set")
+}
+
+func TestOAuthHandler_GetServerMetadata_IteratesAllAuthorizationServers(t *testing.T) {
+	// First authorization server is unreachable; discovery must fall through
+	// to the second one rather than giving up after [0].
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				AuthorizationServers: []string{
+					"http://127.0.0.1:1", // connection refused
+					server.URL,
+				},
+			})
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(AuthServerMetadata{
+				Issuer:                server.URL,
+				AuthorizationEndpoint: server.URL + "/authorize",
+				TokenEndpoint:         server.URL + "/token",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:   "test-client",
+		HTTPClient: &http.Client{Timeout: 2 * time.Second},
+	})
+	handler.SetBaseURL(server.URL)
+
+	md, err := handler.GetServerMetadata(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, server.URL+"/authorize", md.AuthorizationEndpoint)
+}
