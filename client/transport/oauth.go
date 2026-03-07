@@ -508,26 +508,35 @@ func (h *OAuthHandler) fetchMetadataFromURL(ctx context.Context, metadataURL str
 //  2. https://as.example.com/.well-known/openid-configuration/tenant/x
 //  3. https://as.example.com/tenant/x/.well-known/openid-configuration
 func authServerMetadataCandidates(issuer string) []string {
-	issuer = strings.TrimSuffix(issuer, "/")
-	u, err := url.Parse(issuer)
-	if err != nil || u.Scheme == "" || u.Host == "" {
+	u, err := url.Parse(strings.TrimSuffix(issuer, "/"))
+	if err != nil || u.Host == "" {
+		// Unparseable: fall back to naive suffix append so callers still get
+		// something to probe rather than an empty slice.
 		return []string{
 			issuer + "/.well-known/oauth-authorization-server",
 			issuer + "/.well-known/openid-configuration",
 		}
 	}
-	path := strings.Trim(u.Path, "/")
-	base := u.Scheme + "://" + u.Host
-	if path == "" {
+
+	// Build candidates by mutating only the Path field so that scheme, host,
+	// port, and userinfo are preserved and correctly re-encoded by URL.String.
+	issuerPath := strings.Trim(u.Path, "/")
+	withPath := func(p string) string {
+		c := *u
+		c.Path, c.RawPath = p, ""
+		return c.String()
+	}
+
+	if issuerPath == "" {
 		return []string{
-			base + "/.well-known/oauth-authorization-server",
-			base + "/.well-known/openid-configuration",
+			withPath("/.well-known/oauth-authorization-server"),
+			withPath("/.well-known/openid-configuration"),
 		}
 	}
 	return []string{
-		base + "/.well-known/oauth-authorization-server/" + path,
-		base + "/.well-known/openid-configuration/" + path,
-		base + "/" + path + "/.well-known/openid-configuration",
+		withPath("/.well-known/oauth-authorization-server/" + issuerPath),
+		withPath("/.well-known/openid-configuration/" + issuerPath),
+		withPath("/" + issuerPath + "/.well-known/openid-configuration"),
 	}
 }
 
@@ -541,17 +550,41 @@ func authServerMetadataCandidates(issuer string) []string {
 // parameter. The returned URL should be passed back via
 // OAuthConfig.ProtectedResourceURL on the next connection attempt.
 func ParseResourceMetadataFromWWWAuthenticate(h http.Header) string {
+	const key = "resource_metadata"
 	for _, challenge := range h.Values("WWW-Authenticate") {
 		scheme, params, ok := strings.Cut(challenge, " ")
 		if !ok || !strings.EqualFold(strings.TrimSpace(scheme), "Bearer") {
 			continue
 		}
-		for _, part := range strings.Split(params, ",") {
-			k, v, ok := strings.Cut(strings.TrimSpace(part), "=")
-			if !ok || !strings.EqualFold(k, "resource_metadata") {
-				continue
+		// RFC 9110 auth-param values may be quoted-strings containing commas,
+		// so splitting on comma is unsafe. Walk the param list respecting
+		// quote state instead. RFC 9728 resource_metadata values are absolute
+		// URIs and so never contain a literal double-quote; backslash-escape
+		// handling is therefore unnecessary here.
+		s := params
+		for len(s) > 0 {
+			s = strings.TrimLeft(s, " \t,")
+			eq := strings.IndexByte(s, '=')
+			if eq < 0 {
+				break
 			}
-			return strings.Trim(v, `"`)
+			name := strings.TrimSpace(s[:eq])
+			s = s[eq+1:]
+			var val string
+			if len(s) > 0 && s[0] == '"' {
+				if end := strings.IndexByte(s[1:], '"'); end >= 0 {
+					val, s = s[1:end+1], s[end+2:]
+				} else {
+					val, s = s[1:], ""
+				}
+			} else if end := strings.IndexAny(s, ", \t"); end >= 0 {
+				val, s = s[:end], s[end:]
+			} else {
+				val, s = s, ""
+			}
+			if strings.EqualFold(name, key) {
+				return val
+			}
 		}
 	}
 	return ""
