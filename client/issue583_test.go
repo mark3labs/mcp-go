@@ -29,7 +29,7 @@ func TestDirectTransportCreation(t *testing.T) {
 	tport := transport.NewStdioWithOptions(mockServerPath, nil, nil)
 	cli := NewClient(tport)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	// This should work now (was failing before fix)
@@ -39,7 +39,7 @@ func TestDirectTransportCreation(t *testing.T) {
 	defer cli.Close()
 
 	// Verify Initialize works (was failing with "stdio client not started")
-	initCtx, initCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	initCtx, initCancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer initCancel()
 
 	request := mcp.InitializeRequest{}
@@ -80,7 +80,7 @@ func TestNewStdioMCPClientWithOptions(t *testing.T) {
 	defer cli.Close()
 
 	// Calling Start() again should be idempotent (no error)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	if err := cli.Start(ctx); err != nil {
@@ -88,7 +88,7 @@ func TestNewStdioMCPClientWithOptions(t *testing.T) {
 	}
 
 	// Verify Initialize works
-	initCtx, initCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	initCtx, initCancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer initCancel()
 
 	request := mcp.InitializeRequest{}
@@ -124,7 +124,7 @@ func TestMultipleClientStartCalls(t *testing.T) {
 	tport := transport.NewStdioWithOptions(mockServerPath, nil, nil)
 	cli := NewClient(tport)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	// First Start()
@@ -144,7 +144,7 @@ func TestMultipleClientStartCalls(t *testing.T) {
 	}
 
 	// Verify client still works
-	initCtx, initCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	initCtx, initCancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer initCancel()
 
 	request := mcp.InitializeRequest{}

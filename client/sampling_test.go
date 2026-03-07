@@ -67,7 +67,7 @@ func TestClient_HandleSamplingRequest(t *testing.T) {
 				},
 			}
 
-			result, err := client.handleIncomingRequest(context.Background(), mockJSONRPCRequest(request))
+			result, err := client.handleIncomingRequest(t.Context(), mockJSONRPCRequest(request))
 
 			if tt.expectedError != "" {
 				if err == nil {
@@ -168,7 +168,7 @@ func TestClient_Initialize_WithSampling(t *testing.T) {
 	}
 
 	// Start the client
-	ctx := context.Background()
+	ctx := t.Context()
 	err := client.Start(ctx)
 	if err != nil {
 		t.Fatalf("Failed to start client: %v", err)
