@@ -101,7 +101,7 @@ func TestInProcessMCPClient(t *testing.T) {
 		defer client.Close()
 
 		// Start the client
-		if err := client.Start(context.Background()); err != nil {
+		if err := client.Start(t.Context()); err != nil {
 			t.Fatalf("Failed to start client: %v", err)
 		}
 
@@ -113,7 +113,7 @@ func TestInProcessMCPClient(t *testing.T) {
 			Version: "1.0.0",
 		}
 
-		result, err := client.Initialize(context.Background(), initRequest)
+		result, err := client.Initialize(t.Context(), initRequest)
 		if err != nil {
 			t.Fatalf("Failed to initialize: %v", err)
 		}
