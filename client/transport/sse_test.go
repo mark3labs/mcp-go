@@ -175,7 +175,7 @@ func TestSSE(t *testing.T) {
 	}
 
 	// Start the transport
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 
 	err = trans.Start(ctx)
@@ -185,7 +185,7 @@ func TestSSE(t *testing.T) {
 	defer trans.Close()
 
 	t.Run("SendRequest", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		params := map[string]any{
@@ -243,7 +243,7 @@ func TestSSE(t *testing.T) {
 
 	t.Run("SendRequestWithTimeout", func(t *testing.T) {
 		// Create a context that's already canceled
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel() // Cancel the context immediately
 
 		// Prepare a request
@@ -273,7 +273,7 @@ func TestSSE(t *testing.T) {
 
 		// Send a notification
 		// This would trigger a notification from the server
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		defer cancel()
 
 		notification := mcp.JSONRPCNotification{
@@ -290,9 +290,7 @@ func TestSSE(t *testing.T) {
 			t.Fatalf("SendNotification failed: %v", err)
 		}
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			select {
 			case nt := <-notificationChan:
 				// We received a notification
@@ -305,7 +303,7 @@ func TestSSE(t *testing.T) {
 			case <-time.After(1 * time.Second):
 				t.Errorf("Expected notification, got none")
 			}
-		}()
+		})
 
 		wg.Wait()
 	})
@@ -323,7 +321,7 @@ func TestSSE(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
 
 				// Each request has a unique ID and payload
@@ -504,7 +502,7 @@ func TestSSE(t *testing.T) {
 		}
 
 		// Start the transport
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		err = trans.Start(ctx)
@@ -652,7 +650,7 @@ func TestSSEErrors(t *testing.T) {
 		}
 
 		// Start should fail
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		defer cancel()
 
 		err = sse.Start(ctx)
@@ -675,7 +673,7 @@ func TestSSEErrors(t *testing.T) {
 		}
 
 		// Starting should immediately error due to timeout
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 		err = trans.Start(ctx)
 		if err == nil {
@@ -704,7 +702,7 @@ func TestSSEErrors(t *testing.T) {
 			Method:  "ping",
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 		defer cancel()
 
 		_, err = sse.SendRequest(ctx, request)
@@ -725,7 +723,7 @@ func TestSSEErrors(t *testing.T) {
 		}
 
 		// Start the transport
-		ctx := context.Background()
+		ctx := t.Context()
 		if err := sse.Start(ctx); err != nil {
 			t.Fatalf("Failed to start SSE transport: %v", err)
 		}
@@ -777,7 +775,7 @@ func TestSSEErrors(t *testing.T) {
 		require.NoError(t, err)
 
 		// Start the transport
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		t.Cleanup(cancel)
 
 		err = trans.Start(ctx)
@@ -818,7 +816,7 @@ func TestSSE_Start_Unauthorized_StaticToken(t *testing.T) {
 	}
 
 	// Start should fail with ErrUnauthorized
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	err = transport.Start(ctx)
 
@@ -867,7 +865,7 @@ func TestSSE_SendRequest_Unauthorized_StaticToken(t *testing.T) {
 	}
 
 	// Start the transport
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	err = transport.Start(ctx)
 	if err != nil {
@@ -880,7 +878,7 @@ func TestSSE_SendRequest_Unauthorized_StaticToken(t *testing.T) {
 	}
 
 	// Send a request
-	_, err = transport.SendRequest(context.Background(), JSONRPCRequest{
+	_, err = transport.SendRequest(t.Context(), JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      mcp.NewRequestId(1),
 		Method:  "test",
@@ -929,7 +927,7 @@ func TestSSE_SendNotification_Unauthorized_StaticToken(t *testing.T) {
 	}
 
 	// Start the transport
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	err = transport.Start(ctx)
 	if err != nil {
@@ -942,7 +940,7 @@ func TestSSE_SendNotification_Unauthorized_StaticToken(t *testing.T) {
 	}
 
 	// Send a notification
-	err = transport.SendNotification(context.Background(), mcp.JSONRPCNotification{
+	err = transport.SendNotification(t.Context(), mcp.JSONRPCNotification{
 		JSONRPC: "2.0",
 		Notification: mcp.Notification{
 			Method: "test/notification",
@@ -1023,7 +1021,7 @@ func TestSSEHostOverride(t *testing.T) {
 		trans, err := NewSSE(testServer.URL)
 		require.NoError(t, err)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		err = trans.Start(ctx)
@@ -1043,7 +1041,7 @@ func TestSSEHostOverride(t *testing.T) {
 		trans, err := NewSSE(testServer.URL, WithHTTPHost(customHost))
 		require.NoError(t, err)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		err = trans.Start(ctx)
@@ -1064,7 +1062,7 @@ func TestSSEHostOverride(t *testing.T) {
 		trans, err := NewSSE(testServer.URL, WithHTTPHost(customHost))
 		require.NoError(t, err)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		err = trans.Start(ctx)
@@ -1126,13 +1124,13 @@ func TestSSE_SendRequest_Timeout(t *testing.T) {
 		require.NoError(t, err)
 		defer transport.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		err = transport.Start(ctx)
 		require.NoError(t, err)
 
-		requestCtx, requestCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		requestCtx, requestCancel := context.WithTimeout(t.Context(), 2*time.Second)
 		defer requestCancel()
 
 		request := JSONRPCRequest{
@@ -1178,13 +1176,13 @@ func TestSSE_SendRequest_Timeout(t *testing.T) {
 		require.NoError(t, err)
 		defer transport.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		err = transport.Start(ctx)
 		require.NoError(t, err)
 
-		requestCtx, requestCancel := context.WithTimeout(context.Background(), 1*time.Second)
+		requestCtx, requestCancel := context.WithTimeout(t.Context(), 1*time.Second)
 		defer requestCancel()
 
 		request := JSONRPCRequest{
@@ -1228,7 +1226,7 @@ func TestSSE_SendRequest_Timeout(t *testing.T) {
 		require.NoError(t, err)
 		defer transport.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		err = transport.Start(ctx)
@@ -1239,7 +1237,7 @@ func TestSSE_SendRequest_Timeout(t *testing.T) {
 		transport.mu.RUnlock()
 		require.Equal(t, 0, initialCount)
 
-		requestCtx, requestCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		requestCtx, requestCancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 		defer requestCancel()
 
 		request := JSONRPCRequest{
@@ -1283,13 +1281,13 @@ func TestSSE_SendRequest_Timeout(t *testing.T) {
 		require.NoError(t, err)
 		defer transport.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		err = transport.Start(ctx)
 		require.NoError(t, err)
 
-		expiredCtx, expiredCancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+		expiredCtx, expiredCancel := context.WithDeadline(t.Context(), time.Now().Add(-1*time.Second))
 		defer expiredCancel()
 
 		request := JSONRPCRequest{

@@ -321,9 +321,7 @@ func TestStreamableHTTP(t *testing.T) {
 			t.Fatalf("SendRequest failed: %v", err)
 		}
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			select {
 			case notification := <-notificationChan:
 				// We received a notification
@@ -343,7 +341,7 @@ func TestStreamableHTTP(t *testing.T) {
 			case <-time.After(1 * time.Second):
 				t.Errorf("Expected notification, got none")
 			}
-		}()
+		})
 
 		wg.Wait()
 	})
@@ -1002,11 +1000,11 @@ func TestStreamableHTTP_SendNotification_Accepts204NoContent(t *testing.T) {
 		t.Fatalf("Failed to create StreamableHTTP: %v", err)
 	}
 
-	if err := transport.Start(context.Background()); err != nil {
+	if err := transport.Start(t.Context()); err != nil {
 		t.Fatalf("Failed to start transport: %v", err)
 	}
 
-	err = transport.SendNotification(context.Background(), mcp.JSONRPCNotification{
+	err = transport.SendNotification(t.Context(), mcp.JSONRPCNotification{
 		JSONRPC: "2.0",
 		Notification: mcp.Notification{
 			Method: "notifications/initialized",
@@ -1082,7 +1080,7 @@ func TestStreamableHTTPHostOverride(t *testing.T) {
 		require.NoError(t, err)
 		defer trans.Close()
 
-		ctx := context.Background()
+		ctx := t.Context()
 		err = trans.Start(ctx)
 		require.NoError(t, err)
 
@@ -1110,7 +1108,7 @@ func TestStreamableHTTPHostOverride(t *testing.T) {
 		require.NoError(t, err)
 		defer trans.Close()
 
-		ctx := context.Background()
+		ctx := t.Context()
 		err = trans.Start(ctx)
 		require.NoError(t, err)
 
@@ -1139,7 +1137,7 @@ func TestStreamableHTTPHostOverride(t *testing.T) {
 		require.NoError(t, err)
 		defer trans.Close()
 
-		ctx := context.Background()
+		ctx := t.Context()
 		err = trans.Start(ctx)
 		require.NoError(t, err)
 

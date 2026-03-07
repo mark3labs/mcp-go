@@ -2197,8 +2197,7 @@ func TestStreamableHTTP_SendNotificationToSpecificClient(t *testing.T) {
 		var toolResponse jsonRPCResponse
 		if strings.HasPrefix(bodyStr, "event: message") {
 			// Parse SSE format
-			lines := strings.Split(bodyStr, "\n")
-			for _, line := range lines {
+			for line := range strings.SplitSeq(bodyStr, "\n") {
 				if jsonData, ok := strings.CutPrefix(line, "data: "); ok {
 					if err := json.Unmarshal([]byte(jsonData), &toolResponse); err == nil {
 						break

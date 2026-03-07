@@ -94,7 +94,7 @@ func TestSSEMCPClient(t *testing.T) {
 		}
 		defer client.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		// Start the client
@@ -158,7 +158,7 @@ func TestSSEMCPClient(t *testing.T) {
 	// 		notificationReceived <- notification
 	// 	})
 
-	// 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	// 	defer cancel()
 
 	// 	if err := client.Start(ctx); err != nil {
@@ -200,7 +200,7 @@ func TestSSEMCPClient(t *testing.T) {
 		}
 		defer client.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		if err := client.Start(ctx); err != nil {
@@ -243,7 +243,7 @@ func TestSSEMCPClient(t *testing.T) {
 		}
 		defer client.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		if err := client.Start(ctx); err != nil {
@@ -295,7 +295,7 @@ func TestSSEMCPClient(t *testing.T) {
 		}
 		defer client.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		if err := client.Start(ctx); err != nil {

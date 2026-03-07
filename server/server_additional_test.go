@@ -363,9 +363,7 @@ func TestMCPServer_SessionUnregistrationDuringNotification(t *testing.T) {
 	stopCh := make(chan struct{})
 
 	// Goroutine that continuously sends notifications
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			select {
 			case <-stopCh:
@@ -377,17 +375,15 @@ func TestMCPServer_SessionUnregistrationDuringNotification(t *testing.T) {
 				time.Sleep(1 * time.Millisecond)
 			}
 		}
-	}()
+	})
 
 	// Goroutine that unregisters sessions
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := range numSessions {
 			time.Sleep(5 * time.Millisecond)
 			server.UnregisterSession(context.Background(), sessions[i].SessionID())
 		}
-	}()
+	})
 
 	// Let it run for a bit
 	time.Sleep(100 * time.Millisecond)
@@ -791,9 +787,7 @@ func TestMCPServer_ConcurrentCapabilityChecks(t *testing.T) {
 	errorCount := atomic.Int32{}
 
 	// Goroutine that adds tools (triggers capability registration)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		i := 0
 		for {
 			select {
@@ -805,13 +799,11 @@ func TestMCPServer_ConcurrentCapabilityChecks(t *testing.T) {
 				time.Sleep(1 * time.Millisecond)
 			}
 		}
-	}()
+	})
 
 	// Goroutines that check capabilities
 	for range 5 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				select {
 				case <-stopCh:
@@ -823,7 +815,7 @@ func TestMCPServer_ConcurrentCapabilityChecks(t *testing.T) {
 					time.Sleep(1 * time.Millisecond)
 				}
 			}
-		}()
+		})
 	}
 
 	// Let it run for a bit

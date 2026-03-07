@@ -111,12 +111,12 @@ func TestInProcessElicitation(t *testing.T) {
 	defer client.Close()
 
 	// Start the client
-	if err := client.Start(context.Background()); err != nil {
+	if err := client.Start(t.Context()); err != nil {
 		t.Fatalf("Failed to start client: %v", err)
 	}
 
 	// Initialize the client
-	_, err := client.Initialize(context.Background(), mcp.InitializeRequest{
+	_, err := client.Initialize(t.Context(), mcp.InitializeRequest{
 		Params: mcp.InitializeParams{
 			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
 			ClientInfo: mcp.Implementation{
@@ -133,7 +133,7 @@ func TestInProcessElicitation(t *testing.T) {
 	}
 
 	// Call the tool that triggers elicitation
-	result, err := client.CallTool(context.Background(), mcp.CallToolRequest{
+	result, err := client.CallTool(t.Context(), mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
 			Name: "test_elicitation",
 			Arguments: map[string]any{
