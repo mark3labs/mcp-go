@@ -34,6 +34,12 @@ type OAuthConfig struct {
 	// AuthServerMetadataURL is the URL to the OAuth server metadata
 	// If empty, the client will attempt to discover it from the base URL
 	AuthServerMetadataURL string
+	// ProtectedResourceURL is the URL to the OAuth protected resource metadata
+	// (RFC 9728). If empty, the client derives it from the base URL as
+	// {baseURL}/.well-known/oauth-protected-resource. Transports populate this
+	// automatically from the WWW-Authenticate resource_metadata parameter on a
+	// 401 response; set it manually only if you need to override discovery.
+	ProtectedResourceURL string
 	// PKCEEnabled enables PKCE for the OAuth flow (recommended for public clients)
 	PKCEEnabled bool
 	// HTTPClient is an optional HTTP client to use for requests.
@@ -147,8 +153,9 @@ type OAuthHandler struct {
 	metadataOnce     sync.Once
 	baseURL          string
 
-	mu            sync.RWMutex // Protects expectedState
-	expectedState string       // Expected state value for CSRF protection
+	mu                   sync.RWMutex // Protects the fields below
+	expectedState        string       // Expected state value for CSRF protection
+	protectedResourceURL string       // From WWW-Authenticate; overrides config.ProtectedResourceURL
 }
 
 // NewOAuthHandler creates a new OAuth handler
@@ -312,6 +319,25 @@ func (h *OAuthHandler) SetBaseURL(baseURL string) {
 	h.baseURL = baseURL
 }
 
+// SetProtectedResourceURL records the RFC 9728 protected-resource metadata URL
+// advertised by the resource server in a WWW-Authenticate challenge. It takes
+// precedence over OAuthConfig.ProtectedResourceURL during discovery. Calling
+// this after metadata has already been fetched has no effect.
+func (h *OAuthHandler) SetProtectedResourceURL(u string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.protectedResourceURL = u
+}
+
+func (h *OAuthHandler) getProtectedResourceURL() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.protectedResourceURL != "" {
+		return h.protectedResourceURL
+	}
+	return h.config.ProtectedResourceURL
+}
+
 // GetExpectedState returns the expected state value (for testing purposes)
 func (h *OAuthHandler) GetExpectedState() string {
 	h.mu.RLock()
@@ -374,8 +400,12 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 			return
 		}
 
-		// Try to fetch the OAuth Protected Resource metadata
-		protectedResourceURL := baseURL + "/.well-known/oauth-protected-resource"
+		// Try to fetch the OAuth Protected Resource metadata. Prefer the URL
+		// supplied via WWW-Authenticate (RFC 9728 section 5.1) if one was set.
+		protectedResourceURL := h.getProtectedResourceURL()
+		if protectedResourceURL == "" {
+			protectedResourceURL = baseURL + "/.well-known/oauth-protected-resource"
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, protectedResourceURL, nil)
 		if err != nil {
 			h.metadataFetchErr = fmt.Errorf("failed to create protected resource request: %w", err)
@@ -426,23 +456,21 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 			return
 		}
 
-		// Use the first authorization server
-		authServerURL := protectedResource.AuthorizationServers[0]
-
-		// Try OAuth Authorization Server Metadata first
-		h.fetchMetadataFromURL(ctx, authServerURL+"/.well-known/oauth-authorization-server")
-		if h.serverMetadata != nil {
-			return
+		// Probe each advertised authorization server until one responds.
+		// Clear transient errors between attempts so we try all candidates.
+		for _, authServerURL := range protectedResource.AuthorizationServers {
+			for _, candidate := range authServerMetadataCandidates(authServerURL) {
+				h.metadataFetchErr = nil
+				h.fetchMetadataFromURL(ctx, candidate)
+				if h.serverMetadata != nil {
+					return
+				}
+			}
 		}
 
-		// If OAuth Authorization Server Metadata discovery fails, try OpenID Connect discovery
-		h.fetchMetadataFromURL(ctx, authServerURL+"/.well-known/openid-configuration")
-		if h.serverMetadata != nil {
-			return
-		}
-
-		// If both discovery methods fail, use default endpoints based on the authorization server URL
-		metadata, err := h.getDefaultEndpoints(authServerURL)
+		// If discovery fails for all advertised servers, use default endpoints
+		// based on the first authorization server URL.
+		metadata, err := h.getDefaultEndpoints(protectedResource.AuthorizationServers[0])
 		if err != nil {
 			h.metadataFetchErr = fmt.Errorf("failed to get default endpoints: %w", err)
 			return
@@ -487,6 +515,118 @@ func (h *OAuthHandler) fetchMetadataFromURL(ctx context.Context, metadataURL str
 	}
 
 	h.serverMetadata = &metadata
+}
+
+// authServerMetadataCandidates returns the ordered list of well-known metadata
+// URLs to try for a given authorization server issuer identifier, following
+// RFC 8414 section 3.1 and OpenID Connect Discovery 1.0 section 4.
+//
+// For an issuer with no path component (https://as.example.com), this is:
+//  1. https://as.example.com/.well-known/oauth-authorization-server
+//  2. https://as.example.com/.well-known/openid-configuration
+//
+// For an issuer with a path (https://as.example.com/tenant/x), RFC 8414
+// inserts the well-known segment between host and path, while OIDC historically
+// appended it. Both are tried:
+//  1. https://as.example.com/.well-known/oauth-authorization-server/tenant/x
+//  2. https://as.example.com/.well-known/openid-configuration/tenant/x
+//  3. https://as.example.com/tenant/x/.well-known/openid-configuration
+func authServerMetadataCandidates(issuer string) []string {
+	u, err := url.Parse(strings.TrimSuffix(issuer, "/"))
+	if err != nil || u.Host == "" {
+		// Unparseable: fall back to naive suffix append so callers still get
+		// something to probe rather than an empty slice.
+		return []string{
+			issuer + "/.well-known/oauth-authorization-server",
+			issuer + "/.well-known/openid-configuration",
+		}
+	}
+
+	// Build candidates by mutating only the Path field so that scheme, host,
+	// port, and userinfo are preserved and correctly re-encoded by URL.String.
+	issuerPath := strings.Trim(u.Path, "/")
+	withPath := func(p string) string {
+		c := *u
+		c.Path, c.RawPath = p, ""
+		return c.String()
+	}
+
+	if issuerPath == "" {
+		return []string{
+			withPath("/.well-known/oauth-authorization-server"),
+			withPath("/.well-known/openid-configuration"),
+		}
+	}
+	return []string{
+		withPath("/.well-known/oauth-authorization-server/" + issuerPath),
+		withPath("/.well-known/openid-configuration/" + issuerPath),
+		withPath("/" + issuerPath + "/.well-known/openid-configuration"),
+	}
+}
+
+// ParseResourceMetadataFromWWWAuthenticate extracts the resource_metadata URL
+// from an RFC 9728 WWW-Authenticate challenge. The resource server advertises
+// the location of its protected resource metadata on a 401 response via:
+//
+//	WWW-Authenticate: Bearer resource_metadata="https://rs.example.com/.well-known/oauth-protected-resource"
+//
+// Returns empty string if the header is absent or does not contain the
+// parameter. Transports call this automatically on 401 responses and plumb
+// the result into the OAuthHandler, so most callers need not invoke it directly.
+func ParseResourceMetadataFromWWWAuthenticate(h http.Header) string {
+	for _, challenge := range h.Values("WWW-Authenticate") {
+		scheme, params, ok := strings.Cut(challenge, " ")
+		if !ok || !strings.EqualFold(strings.TrimSpace(scheme), "Bearer") {
+			continue
+		}
+		if v := parseAuthParam(params, "resource_metadata"); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// parseAuthParam extracts a named parameter from an RFC 9110 auth-param list.
+// It handles quoted-string values (which may contain commas) without splitting
+// on comma. Backslash-escapes inside quoted strings are not processed since
+// RFC 9728 resource_metadata values are absolute URIs that never need escaping.
+func parseAuthParam(params, key string) string {
+	for len(params) > 0 {
+		params = strings.TrimLeft(params, " \t,")
+
+		eq := strings.IndexByte(params, '=')
+		if eq < 0 {
+			return ""
+		}
+		name := strings.TrimSpace(params[:eq])
+		params = params[eq+1:]
+
+		val, rest := consumeParamValue(params)
+		params = rest
+
+		if strings.EqualFold(name, key) {
+			return val
+		}
+	}
+	return ""
+}
+
+// consumeParamValue reads a single auth-param value (quoted or token) from the
+// front of s and returns (value, remainder).
+func consumeParamValue(s string) (val, rest string) {
+	if len(s) == 0 {
+		return "", ""
+	}
+	if s[0] == '"' {
+		if end := strings.IndexByte(s[1:], '"'); end >= 0 {
+			return s[1 : end+1], s[end+2:]
+		}
+		return s[1:], "" // unterminated quote — take rest
+	}
+	if end := strings.IndexAny(s, ", \t"); end >= 0 {
+		return s[:end], s[end:]
+	}
+	return s, ""
 }
 
 // extractBaseURL extracts the base URL from the first request
