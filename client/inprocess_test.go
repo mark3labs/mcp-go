@@ -126,13 +126,13 @@ func TestInProcessMCPClient(t *testing.T) {
 		}
 
 		// Test Ping
-		if err := client.Ping(context.Background()); err != nil {
+		if err := client.Ping(t.Context()); err != nil {
 			t.Errorf("Ping failed: %v", err)
 		}
 
 		// Test ListTools
 		toolsRequest := mcp.ListToolsRequest{}
-		toolListResult, err := client.ListTools(context.Background(), toolsRequest)
+		toolListResult, err := client.ListTools(t.Context(), toolsRequest)
 		if err != nil {
 			t.Errorf("ListTools failed: %v", err)
 		}
@@ -156,13 +156,13 @@ func TestInProcessMCPClient(t *testing.T) {
 		}
 		defer client.Close()
 
-		if err := client.Start(context.Background()); err != nil {
+		if err := client.Start(t.Context()); err != nil {
 			t.Fatalf("Failed to start client: %v", err)
 		}
 
 		// Try to make a request without initializing
 		toolsRequest := mcp.ListToolsRequest{}
-		_, err = client.ListTools(context.Background(), toolsRequest)
+		_, err = client.ListTools(t.Context(), toolsRequest)
 		if err == nil {
 			t.Error("Expected error when making request before initialization")
 		}

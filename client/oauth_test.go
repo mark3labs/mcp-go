@@ -1,7 +1,6 @@
 package client
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,7 +12,7 @@ import (
 )
 
 func TestNewOAuthStreamableHttpClient(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	// Create a test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check for Authorization header
@@ -72,7 +71,7 @@ func TestNewOAuthStreamableHttpClient(t *testing.T) {
 	}
 
 	// Start the client
-	if err := client.Start(context.Background()); err != nil {
+	if err := client.Start(t.Context()); err != nil {
 		t.Fatalf("Failed to start client: %v", err)
 	}
 	defer client.Close()
