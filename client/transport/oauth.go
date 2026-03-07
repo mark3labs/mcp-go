@@ -173,9 +173,10 @@ func (h *OAuthHandler) GetAuthorizationHeader(ctx context.Context) (string, erro
 		return "", err
 	}
 
-	// Some auth implementations are strict about token type
+	// Per RFC 6749 §5.1, token_type is case-insensitive.
+	// Normalize to "Bearer" for strict implementations.
 	tokenType := token.TokenType
-	if tokenType == "bearer" {
+	if strings.EqualFold(tokenType, "bearer") {
 		tokenType = "Bearer"
 	}
 
