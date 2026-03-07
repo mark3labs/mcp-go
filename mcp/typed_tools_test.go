@@ -35,7 +35,7 @@ func TestTypedToolHandler(t *testing.T) {
 	}
 
 	// Call the wrapped handler
-	result, err := wrappedHandler(context.Background(), req)
+	result, err := wrappedHandler(t.Context(), req)
 
 	// Verify results
 	assert.NoError(t, err)
@@ -50,7 +50,7 @@ func TestTypedToolHandler(t *testing.T) {
 	}
 
 	// This should still work because of type conversion
-	result, err = wrappedHandler(context.Background(), req)
+	result, err = wrappedHandler(t.Context(), req)
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 
@@ -62,14 +62,14 @@ func TestTypedToolHandler(t *testing.T) {
 	}
 
 	// This should still work but name will be empty
-	result, err = wrappedHandler(context.Background(), req)
+	result, err = wrappedHandler(t.Context(), req)
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, "", result.Content[0].(TextContent).Text)
 
 	// Test with completely invalid arguments
 	req.Params.Arguments = "not a map"
-	result, err = wrappedHandler(context.Background(), req)
+	result, err = wrappedHandler(t.Context(), req)
 	assert.NoError(t, err) // Error is wrapped in the result
 	assert.NotNil(t, result)
 	assert.True(t, result.IsError)
@@ -123,7 +123,7 @@ func TestTypedToolHandlerWithValidation(t *testing.T) {
 	}
 
 	// Call the wrapped handler
-	result, err := wrappedHandler(context.Background(), req)
+	result, err := wrappedHandler(t.Context(), req)
 
 	// Verify results
 	assert.NoError(t, err)
@@ -137,7 +137,7 @@ func TestTypedToolHandlerWithValidation(t *testing.T) {
 		"y":         0.0,
 	}
 
-	result, err = wrappedHandler(context.Background(), req)
+	result, err = wrappedHandler(t.Context(), req)
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.True(t, result.IsError)
@@ -239,7 +239,7 @@ func TestTypedToolHandlerWithComplexObjects(t *testing.T) {
 	}
 
 	// Call the wrapped handler
-	result, err := wrappedHandler(context.Background(), req)
+	result, err := wrappedHandler(t.Context(), req)
 
 	// Verify results
 	assert.NoError(t, err)
