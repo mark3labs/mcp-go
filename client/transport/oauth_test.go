@@ -1491,9 +1491,8 @@ func TestAuthServerMetadataCandidates(t *testing.T) {
 
 func TestOAuthHandler_GetServerMetadata_ProtectedResourceURL(t *testing.T) {
 	// A resource server advertises a protected-resource metadata URL via
-	// WWW-Authenticate that differs from the base URL. The caller passes it
-	// back via OAuthConfig.ProtectedResourceURL; discovery must fetch from
-	// there rather than {baseURL}/.well-known/oauth-protected-resource.
+	// WWW-Authenticate that differs from the base URL. Discovery must fetch
+	// from that URL rather than {baseURL}/.well-known/oauth-protected-resource.
 	var defaultPathHit bool
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1519,16 +1518,81 @@ func TestOAuthHandler_GetServerMetadata_ProtectedResourceURL(t *testing.T) {
 	}))
 	defer server.Close()
 
-	handler := NewOAuthHandler(OAuthConfig{
-		ClientID:             "test-client",
-		ProtectedResourceURL: server.URL + "/custom/protected-resource",
-	})
-	handler.SetBaseURL(server.URL)
+	check := func(t *testing.T, handler *OAuthHandler) {
+		t.Helper()
+		defaultPathHit = false
+		handler.SetBaseURL(server.URL)
+		md, err := handler.GetServerMetadata(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, server.URL+"/authorize", md.AuthorizationEndpoint)
+		assert.False(t, defaultPathHit, "must not fall back to baseURL/.well-known/oauth-protected-resource")
+	}
 
-	md, err := handler.GetServerMetadata(context.Background())
-	require.NoError(t, err)
-	assert.Equal(t, server.URL+"/authorize", md.AuthorizationEndpoint)
-	assert.False(t, defaultPathHit, "must not fall back to baseURL/.well-known/oauth-protected-resource when ProtectedResourceURL is set")
+	t.Run("via config", func(t *testing.T) {
+		check(t, NewOAuthHandler(OAuthConfig{
+			ClientID:             "test-client",
+			ProtectedResourceURL: server.URL + "/custom/protected-resource",
+		}))
+	})
+
+	t.Run("via SetProtectedResourceURL", func(t *testing.T) {
+		// This is the path transports take on 401: they parse the
+		// WWW-Authenticate header and push the URL into the existing handler.
+		h := NewOAuthHandler(OAuthConfig{ClientID: "test-client"})
+		h.SetProtectedResourceURL(server.URL + "/custom/protected-resource")
+		check(t, h)
+	})
+
+	t.Run("setter overrides config", func(t *testing.T) {
+		h := NewOAuthHandler(OAuthConfig{
+			ClientID:             "test-client",
+			ProtectedResourceURL: server.URL + "/wrong",
+		})
+		h.SetProtectedResourceURL(server.URL + "/custom/protected-resource")
+		check(t, h)
+	})
+}
+
+func TestUnauthorizedError(t *testing.T) {
+	const rmURL = "https://rs.example.com/.well-known/oauth-protected-resource"
+	headerWithRM := http.Header{"Www-Authenticate": {`Bearer resource_metadata="` + rmURL + `"`}}
+
+	t.Run("handler present, resource_metadata present", func(t *testing.T) {
+		h := NewOAuthHandler(OAuthConfig{ClientID: "c"})
+		err := unauthorizedError(h, headerWithRM)
+
+		var oauthErr *OAuthAuthorizationRequiredError
+		require.ErrorAs(t, err, &oauthErr)
+		assert.Same(t, h, oauthErr.Handler)
+		assert.Equal(t, rmURL, oauthErr.ResourceMetadataURL)
+		assert.Equal(t, rmURL, h.getProtectedResourceURL(), "URL must be pushed into the handler")
+		assert.ErrorIs(t, err, ErrOAuthAuthorizationRequired)
+	})
+
+	t.Run("handler present, no resource_metadata", func(t *testing.T) {
+		h := NewOAuthHandler(OAuthConfig{ClientID: "c"})
+		err := unauthorizedError(h, http.Header{})
+
+		var oauthErr *OAuthAuthorizationRequiredError
+		require.ErrorAs(t, err, &oauthErr)
+		assert.Same(t, h, oauthErr.Handler)
+		assert.Empty(t, oauthErr.ResourceMetadataURL)
+		assert.Empty(t, h.getProtectedResourceURL(), "handler must not be touched when header has no hint")
+	})
+
+	t.Run("no handler, resource_metadata present", func(t *testing.T) {
+		err := unauthorizedError(nil, headerWithRM)
+
+		var oauthErr *OAuthAuthorizationRequiredError
+		require.ErrorAs(t, err, &oauthErr)
+		assert.Nil(t, oauthErr.Handler)
+		assert.Equal(t, rmURL, oauthErr.ResourceMetadataURL)
+	})
+
+	t.Run("no handler, no resource_metadata", func(t *testing.T) {
+		err := unauthorizedError(nil, http.Header{})
+		assert.Equal(t, ErrUnauthorized, err, "must return sentinel, not wrapped")
+	})
 }
 
 func TestOAuthHandler_GetServerMetadata_IteratesAllAuthorizationServers(t *testing.T) {
