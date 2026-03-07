@@ -502,7 +502,7 @@ func TestSSE(t *testing.T) {
 		}
 
 		// Start the transport
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		err = trans.Start(ctx)
@@ -1226,7 +1226,7 @@ func TestSSE_SendRequest_Timeout(t *testing.T) {
 		require.NoError(t, err)
 		defer transport.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		err = transport.Start(ctx)
@@ -1237,7 +1237,7 @@ func TestSSE_SendRequest_Timeout(t *testing.T) {
 		transport.mu.RUnlock()
 		require.Equal(t, 0, initialCount)
 
-		requestCtx, requestCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		requestCtx, requestCancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 		defer requestCancel()
 
 		request := JSONRPCRequest{
@@ -1281,13 +1281,13 @@ func TestSSE_SendRequest_Timeout(t *testing.T) {
 		require.NoError(t, err)
 		defer transport.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		err = transport.Start(ctx)
 		require.NoError(t, err)
 
-		expiredCtx, expiredCancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+		expiredCtx, expiredCancel := context.WithDeadline(t.Context(), time.Now().Add(-1*time.Second))
 		defer expiredCancel()
 
 		request := JSONRPCRequest{
