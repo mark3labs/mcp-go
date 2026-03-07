@@ -315,9 +315,7 @@ func (h *OAuthHandler) SetBaseURL(baseURL string) {
 }
 
 // getResourceURL returns the RFC 8707 resource indicator to send to the
-// authorization server so it can audience-restrict issued tokens. It prefers
-// the resource value advertised via RFC 9728 protected resource metadata and
-// falls back to the MCP server base URL. Returns empty string if unknown.
+// authorization server so it can audience-restrict issued tokens.
 func (h *OAuthHandler) getResourceURL() string {
 	if h.resourceURL != "" {
 		return h.resourceURL
