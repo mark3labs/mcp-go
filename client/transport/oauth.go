@@ -146,6 +146,7 @@ type OAuthHandler struct {
 	metadataFetchErr error
 	metadataOnce     sync.Once
 	baseURL          string
+	resourceURL      string // RFC 8707 resource indicator; populated from RFC 9728 discovery or baseURL
 
 	mu            sync.RWMutex // Protects expectedState
 	expectedState string       // Expected state value for CSRF protection
@@ -218,6 +219,9 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken string) (*
 	data.Set("client_id", h.config.ClientID)
 	if h.config.ClientSecret != "" {
 		data.Set("client_secret", h.config.ClientSecret)
+	}
+	if resource := h.getResourceURL(); resource != "" {
+		data.Set("resource", resource)
 	}
 
 	req, err := http.NewRequestWithContext(
@@ -310,6 +314,15 @@ func (h *OAuthHandler) GetClientSecret() string {
 // SetBaseURL sets the base URL for the API server
 func (h *OAuthHandler) SetBaseURL(baseURL string) {
 	h.baseURL = baseURL
+}
+
+// getResourceURL returns the RFC 8707 resource indicator to send to the
+// authorization server so it can audience-restrict issued tokens.
+func (h *OAuthHandler) getResourceURL() string {
+	if h.resourceURL != "" {
+		return h.resourceURL
+	}
+	return h.baseURL
 }
 
 // GetExpectedState returns the expected state value (for testing purposes)
@@ -413,6 +426,11 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		if err := json.NewDecoder(resp.Body).Decode(&protectedResource); err != nil {
 			h.metadataFetchErr = fmt.Errorf("failed to decode protected resource response: %w", err)
 			return
+		}
+
+		// Capture the canonical resource identifier for RFC 8707 resource indicators
+		if protectedResource.Resource != "" {
+			h.resourceURL = protectedResource.Resource
 		}
 
 		// If no authorization servers are specified, fall back to default endpoints
@@ -660,6 +678,10 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 		data.Set("code_verifier", codeVerifier)
 	}
 
+	if resource := h.getResourceURL(); resource != "" {
+		data.Set("resource", resource)
+	}
+
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
@@ -738,6 +760,10 @@ func (h *OAuthHandler) GetAuthorizationURL(ctx context.Context, state, codeChall
 	if h.config.PKCEEnabled && codeChallenge != "" {
 		params.Set("code_challenge", codeChallenge)
 		params.Set("code_challenge_method", "S256")
+	}
+
+	if resource := h.getResourceURL(); resource != "" {
+		params.Set("resource", resource)
 	}
 
 	return metadata.AuthorizationEndpoint + "?" + params.Encode(), nil
