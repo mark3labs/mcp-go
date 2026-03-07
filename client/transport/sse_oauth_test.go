@@ -239,3 +239,114 @@ func TestSSE_IsOAuthEnabled(t *testing.T) {
 		t.Errorf("Expected IsOAuthEnabled() to return true")
 	}
 }
+
+func TestSSE_OAuthMetadataFeedback(t *testing.T) {
+	// Verify that after a 401 with resource_metadata, the OAuthHandler's
+	// ProtectedResourceMetadataURL has been updated
+	const expectedMetadataURL = "https://auth.example.com/.well-known/oauth-protected-resource"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+expectedMetadataURL+`"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	tokenStore := NewMemoryTokenStore()
+	_ = tokenStore.SaveToken(context.Background(), &Token{
+		AccessToken: "test-token",
+		TokenType:   "Bearer",
+		ExpiresAt:   time.Now().Add(1 * time.Hour),
+	})
+
+	oauthConfig := OAuthConfig{
+		ClientID:   "test-client",
+		TokenStore: tokenStore,
+	}
+
+	transport, err := NewSSE(server.URL, WithOAuth(oauthConfig))
+	if err != nil {
+		t.Fatalf("Failed to create SSE: %v", err)
+	}
+
+	// Start SSE which will trigger 401
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = transport.Start(ctx)
+
+	if err == nil {
+		t.Fatal("Expected error, got nil")
+	}
+
+	var oauthErr *OAuthAuthorizationRequiredError
+	if !errors.As(err, &oauthErr) {
+		t.Fatalf("Expected OAuthAuthorizationRequiredError, got %T: %v", err, err)
+	}
+
+	// Verify the OAuthHandler was updated with the discovered URL
+	if got := transport.GetOAuthHandler().config.ProtectedResourceMetadataURL; got != expectedMetadataURL {
+		t.Errorf("Expected OAuthHandler.config.ProtectedResourceMetadataURL to be %q, got %q", expectedMetadataURL, got)
+	}
+}
+
+func TestSSE_OAuthMetadataDiscovery(t *testing.T) {
+	// Test that we correctly extract resource_metadata URL from WWW-Authenticate header per RFC9728
+	const expectedMetadataURL = "https://auth.example.com/.well-known/oauth-protected-resource"
+
+	// Create a test server that returns 401 with WWW-Authenticate header
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Return 401 with WWW-Authenticate header containing resource_metadata
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+expectedMetadataURL+`"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	// Create a token store with a valid token so the request reaches the server
+	// The server will still return 401 to simulate token rejection
+	tokenStore := NewMemoryTokenStore()
+	validToken := &Token{
+		AccessToken:  "test-token",
+		TokenType:    "Bearer",
+		RefreshToken: "refresh-token",
+		ExpiresIn:    3600,
+		ExpiresAt:    time.Now().Add(1 * time.Hour), // Valid for 1 hour
+	}
+	if err := tokenStore.SaveToken(context.Background(), validToken); err != nil {
+		t.Fatalf("Failed to save token: %v", err)
+	}
+
+	// Create OAuth config
+	oauthConfig := OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost:8085/callback",
+		Scopes:      []string{"mcp.read", "mcp.write"},
+		TokenStore:  tokenStore,
+		PKCEEnabled: true,
+	}
+
+	// Create SSE with OAuth
+	transport, err := NewSSE(server.URL, WithOAuth(oauthConfig))
+	if err != nil {
+		t.Fatalf("Failed to create SSE: %v", err)
+	}
+
+	// Start SSE which will trigger 401
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = transport.Start(ctx)
+
+	// Verify the error is an OAuthAuthorizationRequiredError
+	if err == nil {
+		t.Fatalf("Expected error, got nil")
+	}
+
+	var oauthErr *OAuthAuthorizationRequiredError
+	if !errors.As(err, &oauthErr) {
+		t.Fatalf("Expected OAuthAuthorizationRequiredError, got %T: %v", err, err)
+	}
+
+	// Verify the discovered metadata URL was extracted from WWW-Authenticate header
+	if oauthErr.ResourceMetadataURL != expectedMetadataURL {
+		t.Errorf("Expected ResourceMetadataURL to be %q, got %q",
+			expectedMetadataURL, oauthErr.ResourceMetadataURL)
+	}
+}

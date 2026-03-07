@@ -1381,3 +1381,54 @@ func TestOAuthHandler_RefreshToken_ProperHTTP400Error(t *testing.T) {
 	_, getErr := tokenStore.GetToken(ctx)
 	assert.ErrorIs(t, getErr, ErrNoToken, "No token should be saved after HTTP 400 error")
 }
+
+func TestOAuthHandler_SetProtectedResourceMetadataURL(t *testing.T) {
+	// Create a metadata server that returns different results based on the
+	// protected resource metadata URL used
+	metadataServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource":
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				Resource:             "https://resource.example.com",
+				AuthorizationServers: []string{"https://auth1.example.com"},
+			})
+		case "/updated/.well-known/oauth-protected-resource":
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				Resource:             "https://resource.example.com",
+				AuthorizationServers: []string{"https://auth2.example.com"},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer metadataServer.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:                     "test",
+		ProtectedResourceMetadataURL: metadataServer.URL + "/.well-known/oauth-protected-resource",
+	})
+	handler.SetBaseURL(metadataServer.URL)
+
+	// First fetch caches metadata via sync.Once
+	_, err := handler.GetServerMetadata(context.Background())
+	// May fail since auth server URLs are fake, but that's fine — we only care
+	// that metadataOnce fired and is now "used up"
+	_ = err
+
+	// Update the URL and verify it resets the once so re-discovery happens
+	newURL := metadataServer.URL + "/updated/.well-known/oauth-protected-resource"
+	handler.SetProtectedResourceMetadataURL(newURL)
+
+	if handler.config.ProtectedResourceMetadataURL != newURL {
+		t.Errorf("Expected ProtectedResourceMetadataURL to be %q, got %q",
+			newURL, handler.config.ProtectedResourceMetadataURL)
+	}
+
+	// Verify that cached metadata was cleared
+	if handler.serverMetadata != nil {
+		t.Error("Expected serverMetadata to be nil after SetProtectedResourceMetadataURL")
+	}
+	if handler.metadataFetchErr != nil {
+		t.Error("Expected metadataFetchErr to be nil after SetProtectedResourceMetadataURL")
+	}
+}
