@@ -363,9 +363,7 @@ func TestMCPServer_SessionUnregistrationDuringNotification(t *testing.T) {
 	stopCh := make(chan struct{})
 
 	// Goroutine that continuously sends notifications
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			select {
 			case <-stopCh:
@@ -377,17 +375,15 @@ func TestMCPServer_SessionUnregistrationDuringNotification(t *testing.T) {
 				time.Sleep(1 * time.Millisecond)
 			}
 		}
-	}()
+	})
 
 	// Goroutine that unregisters sessions
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := range numSessions {
 			time.Sleep(5 * time.Millisecond)
 			server.UnregisterSession(context.Background(), sessions[i].SessionID())
 		}
-	}()
+	})
 
 	// Let it run for a bit
 	time.Sleep(100 * time.Millisecond)

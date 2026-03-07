@@ -217,7 +217,7 @@ type Params map[string]any
 
 type Notification struct {
 	Method string             `json:"method"`
-	Params NotificationParams `json:"params,omitempty"`
+	Params NotificationParams `json:"params,omitzero"`
 }
 
 type NotificationParams struct {
@@ -629,7 +629,7 @@ type ProgressNotificationParams struct {
 
 type PaginatedRequest struct {
 	Request
-	Params PaginatedParams `json:"params,omitempty"`
+	Params PaginatedParams `json:"params,omitzero"`
 }
 
 type PaginatedParams struct {
