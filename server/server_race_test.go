@@ -143,10 +143,7 @@ func runConcurrentOperation(
 	_ string,
 	operation func(),
 ) {
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
+	wg.Go(func() {
 		done := time.After(duration)
 		for {
 			select {
@@ -156,7 +153,7 @@ func runConcurrentOperation(
 				operation()
 			}
 		}
-	}()
+	})
 }
 
 // TestConcurrentPromptAdd specifically tests for the deadlock scenario where adding a prompt

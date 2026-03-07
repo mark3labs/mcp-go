@@ -408,7 +408,7 @@ func TestMemoryTokenStore_ContextCancellation(t *testing.T) {
 
 	t.Run("GetToken with canceled context", func(t *testing.T) {
 		// Create a canceled context
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel() // Cancel immediately
 
 		// Attempt to get token with canceled context
@@ -422,7 +422,7 @@ func TestMemoryTokenStore_ContextCancellation(t *testing.T) {
 
 	t.Run("SaveToken with canceled context", func(t *testing.T) {
 		// Create a canceled context
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel() // Cancel immediately
 
 		token := &Token{
@@ -441,7 +441,7 @@ func TestMemoryTokenStore_ContextCancellation(t *testing.T) {
 
 	t.Run("GetToken with deadline exceeded", func(t *testing.T) {
 		// Create a context with past deadline
-		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+		ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-1*time.Second))
 		defer cancel()
 
 		// Attempt to get token with expired context
@@ -455,7 +455,7 @@ func TestMemoryTokenStore_ContextCancellation(t *testing.T) {
 
 	t.Run("SaveToken with deadline exceeded", func(t *testing.T) {
 		// Create a context with past deadline
-		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+		ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-1*time.Second))
 		defer cancel()
 
 		token := &Token{
@@ -485,7 +485,7 @@ func TestOAuthHandler_GetAuthorizationHeader_ContextCancellation(t *testing.T) {
 	}
 
 	// Save the token with a valid context
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := tokenStore.SaveToken(ctx, validToken); err != nil {
 		t.Fatalf("Failed to save token: %v", err)
 	}
@@ -502,7 +502,7 @@ func TestOAuthHandler_GetAuthorizationHeader_ContextCancellation(t *testing.T) {
 
 	t.Run("GetAuthorizationHeader with canceled context", func(t *testing.T) {
 		// Create a canceled context
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel() // Cancel immediately
 
 		// Attempt to get authorization header with canceled context
@@ -516,7 +516,7 @@ func TestOAuthHandler_GetAuthorizationHeader_ContextCancellation(t *testing.T) {
 
 	t.Run("GetAuthorizationHeader with deadline exceeded", func(t *testing.T) {
 		// Create a context with past deadline
-		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+		ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-1*time.Second))
 		defer cancel()
 
 		// Attempt to get authorization header with expired context
@@ -545,7 +545,7 @@ func TestOAuthHandler_getValidToken_ContextCancellation(t *testing.T) {
 
 	t.Run("Context canceled during initial token retrieval", func(t *testing.T) {
 		// Create a canceled context
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel() // Cancel immediately
 
 		// This will call getValidToken internally
@@ -559,7 +559,7 @@ func TestOAuthHandler_getValidToken_ContextCancellation(t *testing.T) {
 
 	t.Run("Context deadline exceeded during token retrieval", func(t *testing.T) {
 		// Create a context with past deadline
-		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+		ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-1*time.Second))
 		defer cancel()
 
 		// This will call getValidToken internally
@@ -580,14 +580,14 @@ func TestOAuthHandler_getValidToken_ContextCancellation(t *testing.T) {
 			ExpiresAt:    time.Now().Add(-1 * time.Hour), // Expired
 		}
 
-		validCtx := context.Background()
+		validCtx := t.Context()
 		if err := tokenStore.SaveToken(validCtx, expiredToken); err != nil {
 			t.Fatalf("Failed to save expired token: %v", err)
 		}
 
 		// Now try to get authorization header with canceled context
 		// This should detect the canceled context during the refresh attempt
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel() // Cancel immediately
 
 		_, err := handler.GetAuthorizationHeader(ctx)
@@ -616,7 +616,7 @@ func TestOAuthHandler_RefreshToken_ContextCancellation(t *testing.T) {
 		ExpiresAt:    time.Now().Add(-1 * time.Hour), // Expired access token
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := tokenStore.SaveToken(ctx, tokenWithRefresh); err != nil {
 		t.Fatalf("Failed to save token with refresh: %v", err)
 	}
@@ -635,7 +635,7 @@ func TestOAuthHandler_RefreshToken_ContextCancellation(t *testing.T) {
 
 	t.Run("RefreshToken with canceled context", func(t *testing.T) {
 		// Create a canceled context
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel() // Cancel immediately
 
 		// Attempt to refresh token with canceled context
@@ -649,7 +649,7 @@ func TestOAuthHandler_RefreshToken_ContextCancellation(t *testing.T) {
 
 	t.Run("RefreshToken with deadline exceeded", func(t *testing.T) {
 		// Create a context with past deadline
-		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+		ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-1*time.Second))
 		defer cancel()
 
 		// Attempt to refresh token with expired context
@@ -681,7 +681,7 @@ func TestOAuthHandler_CachedClientContextScenario(t *testing.T) {
 		}
 
 		// Save token with initial valid context
-		initialCtx := context.Background()
+		initialCtx := t.Context()
 		if err := tokenStore.SaveToken(initialCtx, validToken); err != nil {
 			t.Fatalf("Failed to save initial token: %v", err)
 		}
@@ -708,7 +708,7 @@ func TestOAuthHandler_CachedClientContextScenario(t *testing.T) {
 
 		// Step 2: Simulate production scenario - context gets canceled
 		// (this could happen due to request timeout, user cancellation, etc.)
-		staleCancelableCtx, cancel := context.WithCancel(context.Background())
+		staleCancelableCtx, cancel := context.WithCancel(t.Context())
 		cancel() // Cancel immediately to simulate stale context
 
 		// Step 3: Try to use cached client with canceled context
@@ -732,7 +732,7 @@ func TestOAuthHandler_CachedClientContextScenario(t *testing.T) {
 		}
 
 		// Save token with valid context
-		validCtx := context.Background()
+		validCtx := t.Context()
 		if err := tokenStore.SaveToken(validCtx, validToken); err != nil {
 			t.Fatalf("Failed to save token: %v", err)
 		}
@@ -746,7 +746,7 @@ func TestOAuthHandler_CachedClientContextScenario(t *testing.T) {
 		handler := NewOAuthHandler(config)
 
 		// Create context with past deadline (simulating expired request context)
-		expiredCtx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+		expiredCtx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-1*time.Second))
 		defer cancel()
 
 		// Try to use cached client with expired context
@@ -772,7 +772,7 @@ func TestOAuthHandler_CachedClientContextScenario(t *testing.T) {
 		}
 
 		// Save expired token
-		validCtx := context.Background()
+		validCtx := t.Context()
 		if err := tokenStore.SaveToken(validCtx, expiredToken); err != nil {
 			t.Fatalf("Failed to save expired token: %v", err)
 		}
@@ -788,7 +788,7 @@ func TestOAuthHandler_CachedClientContextScenario(t *testing.T) {
 		handler := NewOAuthHandler(config)
 
 		// Create a context that's already canceled (simulating race condition)
-		canceledCtx, cancel := context.WithCancel(context.Background())
+		canceledCtx, cancel := context.WithCancel(t.Context())
 		cancel() // Cancel before the operation
 
 		// This should detect the canceled context early in the refresh process
@@ -857,7 +857,7 @@ func TestOAuthHandler_GetServerMetadata_FallbackToOAuthAuthorizationServer(t *te
 	handler.SetBaseURL(server.URL)
 
 	// Call getServerMetadata which should trigger the fallback behavior
-	metadata, err := handler.GetServerMetadata(context.Background())
+	metadata, err := handler.GetServerMetadata(t.Context())
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -920,7 +920,7 @@ func TestOAuthHandler_GetServerMetadata_FallbackToDefaultEndpoints(t *testing.T)
 	handler.SetBaseURL(server.URL)
 
 	// Call getServerMetadata which should fall back to default endpoints
-	metadata, err := handler.GetServerMetadata(context.Background())
+	metadata, err := handler.GetServerMetadata(t.Context())
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -988,7 +988,7 @@ func TestOAuthHandler_RefreshToken_GitHubErrorIn200Response(t *testing.T) {
 	handler := NewOAuthHandler(config)
 
 	// Attempt to refresh with a "bad" token
-	ctx := context.Background()
+	ctx := t.Context()
 	_, err := handler.RefreshToken(ctx, "bad-refresh-token")
 
 	// Should detect the error even though status code is 200
@@ -1046,7 +1046,7 @@ func TestOAuthHandler_RefreshToken_EmptyAccessToken(t *testing.T) {
 
 	handler := NewOAuthHandler(config)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	token, err := handler.RefreshToken(ctx, "test-refresh-token")
 
 	// mcp-go doesn't validate empty tokens - it just parses the response
@@ -1112,7 +1112,7 @@ func TestOAuthHandler_RefreshToken_RefreshTokenRotation(t *testing.T) {
 	}
 
 	handler := NewOAuthHandler(config)
-	ctx := context.Background()
+	ctx := t.Context()
 	token1, err := handler.RefreshToken(ctx, "ghr_original")
 	require.NoError(t, err, "First refresh should succeed")
 	assert.Equal(t, "ghr_refresh_1", token1.RefreshToken, "Should receive new refresh token")
@@ -1190,7 +1190,7 @@ func TestOAuthHandler_RefreshToken_SingleUseRefreshToken(t *testing.T) {
 	}
 
 	handler := NewOAuthHandler(config)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// First use of refresh token - should succeed
 	token1, err := handler.RefreshToken(ctx, "ghr_original")
@@ -1254,7 +1254,7 @@ func TestOAuthHandler_ProcessAuthorizationResponse_ErrorIn200(t *testing.T) {
 	}
 
 	handler := NewOAuthHandler(config)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Set expected state
 	handler.SetExpectedState("test-state")
@@ -1313,7 +1313,7 @@ func TestOAuthHandler_RefreshToken_KeepsOldRefreshToken(t *testing.T) {
 	}
 
 	handler := NewOAuthHandler(config)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	originalRefreshToken := "ghr_original_refresh_token"
 
@@ -1368,7 +1368,7 @@ func TestOAuthHandler_RefreshToken_ProperHTTP400Error(t *testing.T) {
 	}
 
 	handler := NewOAuthHandler(config)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Attempt refresh
 	_, err := handler.RefreshToken(ctx, "invalid-token")

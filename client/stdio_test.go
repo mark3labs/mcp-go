@@ -567,7 +567,7 @@ func TestStdio_ConcurrentRequestsAllReceiveResponses(t *testing.T) {
 	initReq := mcp.InitializeRequest{}
 	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
 	initReq.Params.ClientInfo = mcp.Implementation{Name: "stress-test", Version: "1.0"}
-	_, err := c.Initialize(context.Background(), initReq)
+	_, err := c.Initialize(t.Context(), initReq)
 	require.NoError(t, err)
 
 	// Fire N concurrent ListTools requests
@@ -655,7 +655,7 @@ func TestStdio_ConcurrentRequestsUnblockOnServerDeath(t *testing.T) {
 	initReq := mcp.InitializeRequest{}
 	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
 	initReq.Params.ClientInfo = mcp.Implementation{Name: "death-test", Version: "1.0"}
-	_, err := c.Initialize(context.Background(), initReq)
+	_, err := c.Initialize(t.Context(), initReq)
 	require.NoError(t, err)
 
 	// Fire N concurrent requests that will never get a response
