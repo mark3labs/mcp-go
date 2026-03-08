@@ -144,7 +144,7 @@ func TestMCPServer_Capabilities(t *testing.T) {
 			messageBytes, err := json.Marshal(message)
 			assert.NoError(t, err)
 
-			response := server.HandleMessage(context.Background(), messageBytes)
+			response := server.HandleMessage(t.Context(), messageBytes)
 			tt.validate(t, response)
 		})
 	}
@@ -183,7 +183,7 @@ func TestMCPServer_Tools(t *testing.T) {
 		{
 			name: "SetTools sends single notifications/tools/list_changed with one active session",
 			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
-				err := server.RegisterSession(context.TODO(), &fakeSession{
+				err := server.RegisterSession(t.Context(), &fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
 					initialized:         true,
@@ -214,7 +214,7 @@ func TestMCPServer_Tools(t *testing.T) {
 			name: "SetTools sends single notifications/tools/list_changed per each active session",
 			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
 				for i := range 5 {
-					err := server.RegisterSession(context.TODO(), &fakeSession{
+					err := server.RegisterSession(t.Context(), &fakeSession{
 						sessionID:           fmt.Sprintf("test%d", i),
 						notificationChannel: notificationChannel,
 						initialized:         true,
@@ -223,7 +223,7 @@ func TestMCPServer_Tools(t *testing.T) {
 				}
 				// also let's register inactive sessions
 				for i := range 5 {
-					err := server.RegisterSession(context.TODO(), &fakeSession{
+					err := server.RegisterSession(t.Context(), &fakeSession{
 						sessionID:           fmt.Sprintf("test%d", i+5),
 						notificationChannel: notificationChannel,
 						initialized:         false,
@@ -256,7 +256,7 @@ func TestMCPServer_Tools(t *testing.T) {
 		{
 			name: "AddTool sends multiple notifications/tools/list_changed",
 			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
-				err := server.RegisterSession(context.TODO(), &fakeSession{
+				err := server.RegisterSession(t.Context(), &fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
 					initialized:         true,
@@ -288,7 +288,7 @@ func TestMCPServer_Tools(t *testing.T) {
 		{
 			name: "DeleteTools sends single notifications/tools/list_changed",
 			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
-				err := server.RegisterSession(context.TODO(), &fakeSession{
+				err := server.RegisterSession(t.Context(), &fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
 					initialized:         true,
@@ -319,7 +319,7 @@ func TestMCPServer_Tools(t *testing.T) {
 		{
 			name: "DeleteTools with non-existent tools does nothing and not receives notifications from MCPServer",
 			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
-				err := server.RegisterSession(context.TODO(), &fakeSession{
+				err := server.RegisterSession(t.Context(), &fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
 					initialized:         true,
@@ -347,7 +347,7 @@ func TestMCPServer_Tools(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
+			ctx := t.Context()
 			server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(true))
 			_ = server.HandleMessage(ctx, []byte(`{
 				"jsonrpc": "2.0",
@@ -456,7 +456,7 @@ func TestMCPServer_HandleValidMessages(t *testing.T) {
 			messageBytes, err := json.Marshal(tt.message)
 			assert.NoError(t, err)
 
-			response := server.HandleMessage(context.Background(), messageBytes)
+			response := server.HandleMessage(t.Context(), messageBytes)
 			assert.NotNil(t, response)
 			tt.validate(t, response)
 		})
@@ -496,7 +496,7 @@ func TestMCPServer_HandlePagination(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			response := server.HandleMessage(
-				context.Background(),
+				t.Context(),
 				[]byte(tt.message),
 			)
 			tt.validate(t, response)
@@ -520,7 +520,7 @@ func TestMCPServer_HandleNotifications(t *testing.T) {
             "method": "notifications/initialized"
         }`
 
-	response := server.HandleMessage(context.Background(), []byte(message))
+	response := server.HandleMessage(t.Context(), []byte(message))
 	assert.Nil(t, response)
 	assert.True(t, notificationReceived)
 }
@@ -598,7 +598,7 @@ func TestMCPServer_SendNotificationToClient(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := NewMCPServer("test-server", "1.0.0")
-			ctx := tt.contextPrepare(context.Background(), server)
+			ctx := tt.contextPrepare(t.Context(), server)
 			_ = server.HandleMessage(ctx, []byte(`{
 				"jsonrpc": "2.0",
 				"id": 1,
@@ -678,7 +678,7 @@ func TestMCPServer_SendNotificationToAllClients(t *testing.T) {
 
 	t.Run("all sessions", func(t *testing.T) {
 		server := NewMCPServer("test-server", "1.0.0")
-		ctx := contextPrepare(context.Background(), server)
+		ctx := contextPrepare(t.Context(), server)
 		_ = server.HandleMessage(ctx, []byte(`{
 				"jsonrpc": "2.0",
 				"id": 1,
@@ -802,7 +802,7 @@ func TestMCPServer_PromptHandling(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			response := server.HandleMessage(
-				context.Background(),
+				t.Context(),
 				[]byte(tt.message),
 			)
 			tt.validate(t, response)
@@ -820,7 +820,7 @@ func TestMCPServer_Prompts(t *testing.T) {
 		{
 			name: "DeletePrompts sends single notifications/prompts/list_changed",
 			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
-				err := server.RegisterSession(context.TODO(), &fakeSession{
+				err := server.RegisterSession(t.Context(), &fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
 					initialized:         true,
@@ -861,7 +861,7 @@ func TestMCPServer_Prompts(t *testing.T) {
 		{
 			name: "DeletePrompts removes the first prompt and retains the other",
 			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
-				err := server.RegisterSession(context.TODO(), &fakeSession{
+				err := server.RegisterSession(t.Context(), &fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
 					initialized:         true,
@@ -914,7 +914,7 @@ func TestMCPServer_Prompts(t *testing.T) {
 		{
 			name: "DeletePrompts with non-existent prompts does nothing and not receives notifications from MCPServer",
 			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
-				err := server.RegisterSession(context.TODO(), &fakeSession{
+				err := server.RegisterSession(t.Context(), &fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
 					initialized:         true,
@@ -966,7 +966,7 @@ func TestMCPServer_Prompts(t *testing.T) {
 		{
 			name: "SetPrompts sends single notifications/prompts/list_changed with one active session",
 			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
-				err := server.RegisterSession(context.TODO(), &fakeSession{
+				err := server.RegisterSession(t.Context(), &fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
 					initialized:         true,
@@ -1052,7 +1052,7 @@ func TestMCPServer_Resources(t *testing.T) {
 		{
 			name: "DeleteResources sends single notifications/resources/list_changed",
 			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
-				err := server.RegisterSession(context.TODO(), &fakeSession{
+				err := server.RegisterSession(t.Context(), &fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
 					initialized:         true,
@@ -1089,7 +1089,7 @@ func TestMCPServer_Resources(t *testing.T) {
 		{
 			name: "DeleteResources removes the first resource and retains the other",
 			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
-				err := server.RegisterSession(context.TODO(), &fakeSession{
+				err := server.RegisterSession(t.Context(), &fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
 					initialized:         true,
@@ -1133,7 +1133,7 @@ func TestMCPServer_Resources(t *testing.T) {
 		{
 			name: "DeleteResources with non-existent resources does nothing and not receives notifications from MCPServer",
 			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
-				err := server.RegisterSession(context.TODO(), &fakeSession{
+				err := server.RegisterSession(t.Context(), &fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
 					initialized:         true,
@@ -1178,7 +1178,7 @@ func TestMCPServer_Resources(t *testing.T) {
 		{
 			name: "SetResources sends single notifications/resources/list_changed with one active session",
 			action: func(t *testing.T, server *MCPServer, notificationChannel chan mcp.JSONRPCNotification) {
-				err := server.RegisterSession(context.TODO(), &fakeSession{
+				err := server.RegisterSession(t.Context(), &fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
 					initialized:         true,

@@ -278,7 +278,7 @@ func TestStreamableHTTP(t *testing.T) {
 
 	t.Run("SendRequestWithTimeout", func(t *testing.T) {
 		// Create a context that's already canceled
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel() // Cancel the context immediately
 
 		// Prepare a request

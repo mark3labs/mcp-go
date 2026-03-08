@@ -296,7 +296,7 @@ func TestSendElicitationComplete_NoPriorRequest(t *testing.T) {
 
 	// Call SendElicitationComplete directly without any prior request state
 	// This verifies the server can send completion notifications independently
-	err := s.SendElicitationComplete(context.Background(), mockSession, "independent-id-999")
+	err := s.SendElicitationComplete(t.Context(), mockSession, "independent-id-999")
 	require.NoError(t, err)
 
 	select {

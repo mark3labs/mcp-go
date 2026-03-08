@@ -67,7 +67,7 @@ func TestMCPServer_RequestRoots_NoSession(t *testing.T) {
 		},
 	}
 
-	_, err := server.RequestRoots(context.Background(), request)
+	_, err := server.RequestRoots(t.Context(), request)
 
 	if err == nil {
 		t.Error("expected error when no session available")
@@ -84,7 +84,7 @@ func TestMCPServer_RequestRoots_SessionDoesNotSupportRoots(t *testing.T) {
 	// Use a regular session that doesn't implement SessionWithRoots
 	mockSession := &mockBasicRootsSession{sessionID: "test-session"}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	ctx = server.WithContext(ctx, mockSession)
 
 	request := mcp.ListRootsRequest{
@@ -128,7 +128,7 @@ func TestMCPServer_RequestRoots_Success(t *testing.T) {
 	}
 
 	// Create context with session
-	ctx := context.Background()
+	ctx := t.Context()
 	ctx = server.WithContext(ctx, mockSession)
 
 	request := mcp.ListRootsRequest{
@@ -222,7 +222,7 @@ func TestRequestRoots(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := NewMCPServer("test", "1.0", WithRoots())
-			ctx := server.WithContext(context.Background(), tt.session)
+			ctx := server.WithContext(t.Context(), tt.session)
 
 			result, err := server.RequestRoots(ctx, tt.request)
 
