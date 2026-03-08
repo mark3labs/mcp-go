@@ -157,7 +157,7 @@ func TestStdio(t *testing.T) {
 
 		// Send a notification
 		// This would trigger a notification from the server
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		defer cancel()
 
 		notification := mcp.JSONRPCNotification{
@@ -509,7 +509,7 @@ func TestStdioErrors(t *testing.T) {
 		stdio := NewIO(stdoutReader, stdinWriter, stderrReader)
 		stdio.logger = testLogger
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		t.Cleanup(cancel)
 
 		err := stdio.Start(ctx)
@@ -592,7 +592,7 @@ func TestStdio_WithCommandFunc(t *testing.T) {
 	require.NotNil(t, stdio.cmdFunc)
 
 	// Manually call the cmdFunc passing the same values as in spawnCommand.
-	cmd, err := stdio.cmdFunc(context.Background(), "echo", nil, []string{"hello"})
+	cmd, err := stdio.cmdFunc(t.Context(), "echo", nil, []string{"hello"})
 	require.NoError(t, err)
 	require.True(t, called)
 	require.NotNil(t, cmd)

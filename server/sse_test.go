@@ -1427,7 +1427,7 @@ func TestSSEServer(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		shutdownDone := make(chan error, 1)
-		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 		defer cancel()
 		go func() {
 			err := sseServer.Shutdown(ctx)
