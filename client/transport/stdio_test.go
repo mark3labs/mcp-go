@@ -609,7 +609,7 @@ func TestStdio_WithCommandFunc(t *testing.T) {
 }
 
 func TestStdio_SpawnCommand(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	t.Setenv("TEST_ENVIRON_VAR", "true")
 
 	// Explicitly not passing any environment, so we can see if it
@@ -630,7 +630,7 @@ func TestStdio_SpawnCommand(t *testing.T) {
 }
 
 func TestStdio_SpawnCommand_UsesCommandFunc(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	t.Setenv("TEST_ENVIRON_VAR", "true")
 
 	stdio := NewStdioWithOptions(
@@ -659,7 +659,7 @@ func TestStdio_SpawnCommand_UsesCommandFunc(t *testing.T) {
 }
 
 func TestStdio_SpawnCommand_UsesCommandFunc_Error(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	stdio := NewStdioWithOptions(
 		"echo",

@@ -539,7 +539,7 @@ func TestMCPServer_ResourcesWithSessionResources(t *testing.T) {
 
 func TestMCPServer_AddSessionTools(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(true))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a session
 	sessionChan := make(chan mcp.JSONRPCNotification, 10)
@@ -574,7 +574,7 @@ func TestMCPServer_AddSessionTools(t *testing.T) {
 
 func TestMCPServer_AddSessionTool(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(true))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a session
 	sessionChan := make(chan mcp.JSONRPCNotification, 10)
@@ -634,7 +634,7 @@ func TestMCPServer_AddSessionToolsUninitialized(t *testing.T) {
 		WithToolCapabilities(true),
 		WithHooks(hooks),
 	)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create an uninitialized session
 	sessionChan := make(chan mcp.JSONRPCNotification, 1)
@@ -727,7 +727,7 @@ func TestMCPServer_DeleteSessionToolsUninitialized(t *testing.T) {
 		WithToolCapabilities(true),
 		WithHooks(hooks),
 	)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create an uninitialized session with some tools
 	sessionChan := make(chan mcp.JSONRPCNotification, 1)
@@ -856,7 +856,7 @@ func TestMCPServer_CallSessionTool(t *testing.T) {
 
 func TestMCPServer_DeleteSessionTools(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(true))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a session with tools
 	sessionChan := make(chan mcp.JSONRPCNotification, 10)
@@ -1188,7 +1188,7 @@ func TestMCPServer_ToolNotificationsDisabled(t *testing.T) {
 
 	// Create a server WITHOUT tool capabilities
 	server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(false))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create an initialized session
 	sessionChan := make(chan mcp.JSONRPCNotification, 1)
@@ -1378,7 +1378,7 @@ func TestSessionWithClientInfo_Integration(t *testing.T) {
 // New test function to cover log notification functionality
 func TestMCPServer_SendLogMessageToClient(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithLogging())
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a session that supports logging
 	sessionChan := make(chan mcp.JSONRPCNotification, 10)
@@ -1471,7 +1471,7 @@ func TestMCPServer_SendLogMessageToClient(t *testing.T) {
 
 func TestMCPServer_SendLogMessageToSpecificClient(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithLogging())
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create two sessions
 	session1Chan := make(chan mcp.JSONRPCNotification, 10)
@@ -1593,7 +1593,7 @@ func TestMCPServer_SendLogMessageToSpecificClient(t *testing.T) {
 
 func TestMCPServer_LoggingWithUnsupportedSessions(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithLogging())
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create three types of sessions:
 	// 1. Logging-supported session
@@ -1680,7 +1680,7 @@ func TestMCPServer_LoggingWithUnsupportedSessions(t *testing.T) {
 
 func TestMCPServer_LoggingNotificationFormat(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithLogging())
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a session
 	sessionChan := make(chan mcp.JSONRPCNotification, 10)

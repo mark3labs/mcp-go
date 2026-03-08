@@ -205,7 +205,7 @@ func TestMCPServer_ResourceTemplatesWithSessionResourceTemplates(t *testing.T) {
 
 func TestMCPServer_AddSessionResourceTemplates(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithResourceCapabilities(false, true))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	sessionChan := make(chan mcp.JSONRPCNotification, 10)
 	session := &sessionTestClientWithResourceTemplates{
@@ -235,7 +235,7 @@ func TestMCPServer_AddSessionResourceTemplates(t *testing.T) {
 
 func TestMCPServer_AddSessionResourceTemplate(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithResourceCapabilities(false, true))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	sessionChan := make(chan mcp.JSONRPCNotification, 10)
 	session := &sessionTestClientWithResourceTemplates{
@@ -283,7 +283,7 @@ func TestMCPServer_AddSessionResourceTemplatesUninitialized(t *testing.T) {
 		WithResourceCapabilities(false, true),
 		WithHooks(hooks),
 	)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	sessionChan := make(chan mcp.JSONRPCNotification, 1)
 	session := &sessionTestClientWithResourceTemplates{
@@ -352,7 +352,7 @@ func TestMCPServer_DeleteSessionResourceTemplatesUninitialized(t *testing.T) {
 		WithResourceCapabilities(false, true),
 		WithHooks(hooks),
 	)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	sessionChan := make(chan mcp.JSONRPCNotification, 1)
 	session := &sessionTestClientWithResourceTemplates{
@@ -469,7 +469,7 @@ func TestMCPServer_CallSessionResourceTemplate(t *testing.T) {
 
 func TestMCPServer_DeleteSessionResourceTemplates(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithResourceCapabilities(false, true))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	sessionChan := make(chan mcp.JSONRPCNotification, 10)
 	session := &sessionTestClientWithResourceTemplates{
@@ -506,7 +506,7 @@ func TestMCPServer_DeleteSessionResourceTemplates(t *testing.T) {
 
 func TestMCPServer_SessionResourceTemplateError(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0")
-	ctx := context.Background()
+	ctx := t.Context()
 
 	session := &sessionTestClient{
 		sessionID:           "session-1",
@@ -525,7 +525,7 @@ func TestMCPServer_SessionResourceTemplateError(t *testing.T) {
 
 func TestMCPServer_ResourceTemplatesNotificationsDisabled(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithResourceCapabilities(false, false))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	sessionChan := make(chan mcp.JSONRPCNotification, 1)
 	session := &sessionTestClientWithResourceTemplates{

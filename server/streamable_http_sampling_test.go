@@ -190,7 +190,7 @@ func TestStreamableHTTPServer_SamplingQueueFull(t *testing.T) {
 	}
 
 	// Try to add another request (should fail)
-	ctx := context.Background()
+	ctx := t.Context()
 	request := mcp.CreateMessageRequest{
 		CreateMessageParams: mcp.CreateMessageParams{
 			Messages: []mcp.SamplingMessage{

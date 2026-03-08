@@ -1010,7 +1010,7 @@ func TestMCPServer_Prompts(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
+			ctx := t.Context()
 			server := NewMCPServer("test-server", "1.0.0", WithPromptCapabilities(true))
 			_ = server.HandleMessage(ctx, []byte(`{
 				"jsonrpc": "2.0",
@@ -1215,7 +1215,7 @@ func TestMCPServer_Resources(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
+			ctx := t.Context()
 			server := NewMCPServer("test-server", "1.0.0", WithResourceCapabilities(true, true))
 			_ = server.HandleMessage(ctx, []byte(`{
 				"jsonrpc": "2.0",

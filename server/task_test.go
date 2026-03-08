@@ -103,7 +103,7 @@ func TestMCPServer_TaskLifecycle(t *testing.T) {
 		WithTaskCapabilities(true, true, true),
 	)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a task
 	ttl := int64(60000)
@@ -146,7 +146,7 @@ func TestMCPServer_HandleGetTask(t *testing.T) {
 		WithTaskCapabilities(true, true, true),
 	)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a task
 	ttl := int64(60000)
@@ -202,7 +202,7 @@ func TestMCPServer_HandleListTasks(t *testing.T) {
 		WithTaskCapabilities(true, true, true),
 	)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create multiple tasks
 	ttl := int64(60000)
@@ -241,7 +241,7 @@ func TestMCPServer_HandleCancelTask(t *testing.T) {
 		WithTaskCapabilities(true, true, true),
 	)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a task
 	ttl := int64(60000)
@@ -279,7 +279,7 @@ func TestMCPServer_HandleCancelTerminalTask(t *testing.T) {
 		WithTaskCapabilities(true, true, true),
 	)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create and complete a task
 	ttl := int64(60000)
@@ -357,7 +357,7 @@ func TestMCPServer_TaskTTLCleanup(t *testing.T) {
 		WithTaskCapabilities(true, true, true),
 	)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a task with very short TTL
 	ttl := int64(100) // 100ms
@@ -390,7 +390,7 @@ func TestMCPServer_TaskExpiredVsNotFoundErrors(t *testing.T) {
 		WithTaskCapabilities(true, true, true),
 	)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("expired task returns 'task has expired' error", func(t *testing.T) {
 		ttl := int64(50) // 50ms
@@ -459,7 +459,7 @@ func TestMCPServer_TaskResultWaitForCompletion(t *testing.T) {
 		WithTaskCapabilities(true, true, true),
 	)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a task
 	ttl := int64(60000)
@@ -516,7 +516,7 @@ func TestMCPServer_CompleteTaskWithError(t *testing.T) {
 		WithTaskCapabilities(true, true, true),
 	)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a task
 	ttl := int64(60000)
@@ -625,7 +625,7 @@ func TestMCPServer_TaskListPagination(t *testing.T) {
 		WithPaginationLimit(2), // Limit to 2 tasks per page
 	)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create multiple tasks with predictable IDs
 	ttl := int64(60000)
@@ -785,7 +785,7 @@ func TestMCPServer_TaskLastUpdatedAt(t *testing.T) {
 		WithTaskCapabilities(true, true, true),
 	)
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("task creation sets initial lastUpdatedAt", func(t *testing.T) {
 		ttl := int64(60000)
@@ -921,7 +921,7 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 	)
 
 	// Create a session to receive notifications
-	ctx := context.Background()
+	ctx := t.Context()
 	notifyChan := make(chan mcp.JSONRPCNotification, 10)
 	session := fakeSess{
 		sessionID:  "test-session",
@@ -1178,7 +1178,7 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 	t.Run("successful task execution stores result", func(t *testing.T) {
 		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Create a task tool that returns a successful result
 		taskTool := ServerTaskTool{
@@ -1225,7 +1225,7 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 
 	t.Run("failed task execution stores error", func(t *testing.T) {
 		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
-		ctx := context.Background()
+		ctx := t.Context()
 
 		expectedErr := fmt.Errorf("task execution failed")
 
@@ -1273,7 +1273,7 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 
 	t.Run("task can be cancelled via context", func(t *testing.T) {
 		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Channel to synchronize the test
 		started := make(chan struct{})
@@ -1344,7 +1344,7 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 
 	t.Run("cancel function is stored before handler execution", func(t *testing.T) {
 		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Channel to check when handler starts
 		handlerStarted := make(chan struct{})
@@ -1392,7 +1392,7 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 
 	t.Run("sends task status notification on completion", func(t *testing.T) {
 		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Register a test session to receive notifications
 		notifyChan := make(chan mcp.JSONRPCNotification, 10)
@@ -1452,7 +1452,7 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 
 	t.Run("multiple tasks can execute concurrently", func(t *testing.T) {
 		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Create multiple task tools
 		numTasks := 5
@@ -1514,7 +1514,7 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 func TestMCPServer_HandleTaskResult(t *testing.T) {
 	t.Run("returns tool result with related task metadata", func(t *testing.T) {
 		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Create a task and complete it with a CallToolResult
 		taskID := "test-task-result"
@@ -1568,7 +1568,7 @@ func TestMCPServer_HandleTaskResult(t *testing.T) {
 
 	t.Run("returns error when task failed", func(t *testing.T) {
 		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Create a task and complete it with an error
 		taskID := "test-task-error"
@@ -1594,7 +1594,7 @@ func TestMCPServer_HandleTaskResult(t *testing.T) {
 
 	t.Run("waits for task completion before returning result", func(t *testing.T) {
 		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Create a task but don't complete it yet
 		taskID := "test-task-wait"
@@ -1631,7 +1631,7 @@ func TestMCPServer_HandleTaskResult(t *testing.T) {
 
 	t.Run("merges original result meta with related task meta", func(t *testing.T) {
 		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Create a task and complete it with a result that has meta
 		taskID := "test-task-meta-merge"
@@ -1681,7 +1681,7 @@ func TestMCPServer_HandleTaskResult(t *testing.T) {
 
 	t.Run("returns error for non-existent task", func(t *testing.T) {
 		server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Call handleTaskResult with non-existent task ID
 		request := mcp.TaskResultRequest{
@@ -1700,7 +1700,7 @@ func TestMCPServer_HandleTaskResult(t *testing.T) {
 // TestTaskResultEndToEnd tests the complete flow of task-augmented tool call and result retrieval
 func TestTaskResultEndToEnd(t *testing.T) {
 	server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Register a tool with TaskSupportRequired
 	tool := mcp.NewTool("long_operation",

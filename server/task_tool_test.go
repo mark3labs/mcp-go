@@ -36,7 +36,7 @@ func TestTaskToolTracerBullet(t *testing.T) {
 		)
 
 		// Register a test session to receive notifications
-		ctx := context.Background()
+		ctx := t.Context()
 		notifyChan := make(chan mcp.JSONRPCNotification, 10)
 		session := fakeSess{
 			sessionID:  "test-session-tracer",
@@ -234,7 +234,7 @@ func TestTaskToolTracerBullet(t *testing.T) {
 			WithTaskCapabilities(true, true, true),
 		)
 
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Step 2: Register a task-optional tool
 		optionalTool := mcp.NewTool("flexible_operation",
@@ -292,7 +292,7 @@ func TestTaskToolTracerBullet(t *testing.T) {
 			WithTaskCapabilities(true, true, true),
 		)
 
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Step 2: Register a task-optional tool
 		optionalTool := mcp.NewTool("flexible_operation",
@@ -371,7 +371,7 @@ func TestTaskToolTracerBullet(t *testing.T) {
 			WithTaskCapabilities(true, true, true),
 		)
 
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Step 2: Register a long-running task tool
 		started := make(chan struct{})
@@ -432,7 +432,7 @@ func TestTaskToolTracerBullet(t *testing.T) {
 			WithTaskCapabilities(true, true, true),
 		)
 
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Step 2: Register a tool that returns an error
 		expectedErr := fmt.Errorf("processing failed: invalid input")
@@ -568,7 +568,7 @@ func TestTaskToolTracerBullet(t *testing.T) {
 			WithTaskCapabilities(true, true, true),
 		)
 
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Step 2: Register a task tool
 		concurrentTool := mcp.NewTool("concurrent_operation",
