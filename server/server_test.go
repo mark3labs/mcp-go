@@ -1304,7 +1304,7 @@ func TestMCPServer_HandleInvalidMessages(t *testing.T) {
 			errs = nil // Reset errors for each test case
 
 			response := server.HandleMessage(
-				context.Background(),
+				t.Context(),
 				[]byte(tt.message),
 			)
 			assert.NotNil(t, response)
@@ -1438,7 +1438,7 @@ func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 			errs = nil // Reset errors for each test case
 			beforeResults = nil
 			response := server.HandleMessage(
-				context.Background(),
+				t.Context(),
 				[]byte(tt.message),
 			)
 			assert.NotNil(t, response)
@@ -1529,7 +1529,7 @@ func TestMCPServer_HandleMethodsWithoutCapabilities(t *testing.T) {
 
 			server := NewMCPServer("test-server", "1.0.0", tt.options...)
 			response := server.HandleMessage(
-				context.Background(),
+				t.Context(),
 				[]byte(tt.message),
 			)
 			assert.NotNil(t, response)
@@ -1617,7 +1617,7 @@ func TestMCPServer_Instructions(t *testing.T) {
 			messageBytes, err := json.Marshal(message)
 			assert.NoError(t, err)
 
-			response := server.HandleMessage(context.Background(), messageBytes)
+			response := server.HandleMessage(t.Context(), messageBytes)
 			tt.validate(t, response)
 		})
 	}
@@ -1666,7 +1666,7 @@ func TestMCPServer_ResourceTemplates(t *testing.T) {
 
 	t.Run("Get resource template", func(t *testing.T) {
 		response := server.HandleMessage(
-			context.Background(),
+			t.Context(),
 			[]byte(listMessage),
 		)
 		assert.NotNil(t, response)
@@ -1688,7 +1688,7 @@ func TestMCPServer_ResourceTemplates(t *testing.T) {
 		assert.Equal(t, "test://{a}/test-resource{/b*}", resourceTemplate["uriTemplate"])
 
 		response = server.HandleMessage(
-			context.Background(),
+			t.Context(),
 			[]byte(message),
 		)
 
@@ -1734,7 +1734,7 @@ func TestMCPServer_ResourceTemplates(t *testing.T) {
 
 	t.Run("Get resource template again", func(t *testing.T) {
 		response := server.HandleMessage(
-			context.Background(),
+			t.Context(),
 			[]byte(listMessage),
 		)
 		assert.NotNil(t, response)
@@ -1926,14 +1926,14 @@ func TestMCPServer_WithHooks(t *testing.T) {
 	)
 
 	// Initialize the server
-	_ = server.HandleMessage(context.Background(), []byte(`{
+	_ = server.HandleMessage(t.Context(), []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
 		"method": "initialize"
 	}`))
 
 	// Test 1: Verify ping method hooks
-	pingResponse := server.HandleMessage(context.Background(), []byte(`{
+	pingResponse := server.HandleMessage(t.Context(), []byte(`{
 		"jsonrpc": "2.0",
 		"id": 2,
 		"method": "ping"
@@ -1943,7 +1943,7 @@ func TestMCPServer_WithHooks(t *testing.T) {
 	assert.IsType(t, mcp.JSONRPCResponse{}, pingResponse)
 
 	// Test 2: Verify tools/list method hooks
-	toolsListResponse := server.HandleMessage(context.Background(), []byte(`{
+	toolsListResponse := server.HandleMessage(t.Context(), []byte(`{
 		"jsonrpc": "2.0",
 		"id": 3,
 		"method": "tools/list"
@@ -1953,7 +1953,7 @@ func TestMCPServer_WithHooks(t *testing.T) {
 	assert.IsType(t, mcp.JSONRPCResponse{}, toolsListResponse)
 
 	// Test 3: Verify error hooks with invalid tool
-	errorResponse := server.HandleMessage(context.Background(), []byte(`{
+	errorResponse := server.HandleMessage(t.Context(), []byte(`{
 		"jsonrpc": "2.0",
 		"id": 4,
 		"method": "tools/call",
@@ -2131,7 +2131,7 @@ func TestMCPServer_SessionHooks(t *testing.T) {
 		initialized:         false,
 	}
 
-	ctx := context.WithoutCancel(context.Background())
+	ctx := context.WithoutCancel(t.Context())
 	err := server.RegisterSession(ctx, testSession)
 	require.NoError(t, err)
 
@@ -2158,7 +2158,7 @@ func TestMCPServer_SessionHooks_NilHooks(t *testing.T) {
 		initialized:         false,
 	}
 
-	ctx := context.WithoutCancel(context.Background())
+	ctx := context.WithoutCancel(t.Context())
 	err := server.RegisterSession(ctx, testSession)
 	require.NoError(t, err)
 
@@ -2181,7 +2181,7 @@ func TestMCPServer_WithRecover(t *testing.T) {
 		panicToolHandler,
 	)
 
-	response := server.HandleMessage(context.Background(), []byte(`{
+	response := server.HandleMessage(t.Context(), []byte(`{
 		"jsonrpc": "2.0",
 		"id": 4,
 		"method": "tools/call",
@@ -2377,7 +2377,7 @@ func TestMCPServer_ProtocolNegotiation(t *testing.T) {
 			messageBytes, err := json.Marshal(initRequest)
 			assert.NoError(t, err)
 
-			response := server.HandleMessage(context.Background(), messageBytes)
+			response := server.HandleMessage(t.Context(), messageBytes)
 			assert.NotNil(t, response)
 
 			resp, ok := response.(mcp.JSONRPCResponse)
@@ -2979,7 +2979,7 @@ func TestMCPServer_HandleListTools_IncludesTaskTools(t *testing.T) {
 		request := mcp.ListToolsRequest{}
 
 		// Call handleListTools
-		result, err := server.handleListTools(context.Background(), 1, request)
+		result, err := server.handleListTools(t.Context(), 1, request)
 
 		// Verify both tools are included
 		require.Nil(t, err)
@@ -3042,7 +3042,7 @@ func TestMCPServer_HandleListTools_IncludesTaskTools(t *testing.T) {
 		request := mcp.ListToolsRequest{}
 
 		// Call handleListTools
-		result, err := server.handleListTools(context.Background(), 1, request)
+		result, err := server.handleListTools(t.Context(), 1, request)
 
 		// Verify both task tools are included
 		require.Nil(t, err)
@@ -3061,7 +3061,7 @@ func TestMCPServer_HandleListTools_IncludesTaskTools(t *testing.T) {
 		request := mcp.ListToolsRequest{}
 
 		// Call handleListTools
-		result, err := server.handleListTools(context.Background(), 1, request)
+		result, err := server.handleListTools(t.Context(), 1, request)
 
 		// Verify empty list
 		require.Nil(t, err)
@@ -3109,7 +3109,7 @@ func TestMCPServer_HandleListTools_IncludesTaskTools(t *testing.T) {
 		request := mcp.ListToolsRequest{}
 
 		// Call handleListTools
-		result, err := server.handleListTools(context.Background(), 1, request)
+		result, err := server.handleListTools(t.Context(), 1, request)
 
 		// Verify correct alphabetical ordering
 		require.Nil(t, err)
@@ -3228,7 +3228,7 @@ func TestMCPServer_AddTaskTool(t *testing.T) {
 		)
 
 		// List tools
-		result, err := server.handleListTools(context.Background(), 1, mcp.ListToolsRequest{})
+		result, err := server.handleListTools(t.Context(), 1, mcp.ListToolsRequest{})
 
 		// Verify the task tool appears in the list
 		require.Nil(t, err)
@@ -3491,7 +3491,7 @@ func TestMCPServer_Complete(t *testing.T) {
 		}`
 
 		server := NewMCPServer("test-server", "1.0.0")
-		response := server.HandleMessage(context.Background(), []byte(message))
+		response := server.HandleMessage(t.Context(), []byte(message))
 		assert.Equal(t, mcp.JSONRPCError{
 			JSONRPC: mcp.JSONRPC_VERSION,
 			ID:      mcp.NewRequestId(float64(1)),
@@ -3517,7 +3517,7 @@ func TestMCPServer_Complete(t *testing.T) {
 		}`
 
 		server := NewMCPServer("test-server", "1.0.0", WithCompletions())
-		response := server.HandleMessage(context.Background(), []byte(invalidRefTypeMessage))
+		response := server.HandleMessage(t.Context(), []byte(invalidRefTypeMessage))
 		assert.Equal(t, mcp.JSONRPCError{
 			JSONRPC: mcp.JSONRPC_VERSION,
 			ID:      mcp.NewRequestId(float64(1)),
@@ -3546,7 +3546,7 @@ func TestMCPServer_Complete(t *testing.T) {
 					}
 				}
 			}`
-			response := server.HandleMessage(context.Background(), []byte(promptMessage))
+			response := server.HandleMessage(t.Context(), []byte(promptMessage))
 			assert.Equal(t, mcp.JSONRPCResponse{
 				JSONRPC: mcp.JSONRPC_VERSION,
 				ID:      mcp.NewRequestId(float64(1)),
@@ -3574,7 +3574,7 @@ func TestMCPServer_Complete(t *testing.T) {
 					}
 				}
 			}`
-			response := server.HandleMessage(context.Background(), []byte(resourceMessage))
+			response := server.HandleMessage(t.Context(), []byte(resourceMessage))
 			assert.Equal(t, mcp.JSONRPCResponse{
 				JSONRPC: mcp.JSONRPC_VERSION,
 				ID:      mcp.NewRequestId(float64(1)),
@@ -3621,7 +3621,7 @@ func TestMCPServer_Complete(t *testing.T) {
 					}),
 				),
 			)
-			response := server.HandleMessage(context.Background(), []byte(message))
+			response := server.HandleMessage(t.Context(), []byte(message))
 			assert.Equal(t, mcp.JSONRPCResponse{
 				JSONRPC: mcp.JSONRPC_VERSION,
 				ID:      mcp.NewRequestId(float64(1)),
@@ -3676,7 +3676,7 @@ func TestMCPServer_Complete(t *testing.T) {
 					}),
 				),
 			)
-			response := server.HandleMessage(context.Background(), []byte(message))
+			response := server.HandleMessage(t.Context(), []byte(message))
 			assert.Equal(t, mcp.JSONRPCResponse{
 				JSONRPC: mcp.JSONRPC_VERSION,
 				ID:      mcp.NewRequestId(float64(1)),
@@ -3706,7 +3706,7 @@ func TestMCPServer_TaskSupportValidation(t *testing.T) {
 		})
 
 		// Try to call the tool without task param
-		response := server.HandleMessage(context.Background(), []byte(`{
+		response := server.HandleMessage(t.Context(), []byte(`{
 			"jsonrpc": "2.0",
 			"id": 1,
 			"method": "tools/call",
@@ -3735,7 +3735,7 @@ func TestMCPServer_TaskSupportValidation(t *testing.T) {
 		})
 
 		// Create request with task param
-		response := server.HandleMessage(context.Background(), []byte(`{
+		response := server.HandleMessage(t.Context(), []byte(`{
 			"jsonrpc": "2.0",
 			"id": 1,
 			"method": "tools/call",
@@ -3772,7 +3772,7 @@ func TestMCPServer_TaskSupportValidation(t *testing.T) {
 		})
 
 		// Call without task param
-		response := server.HandleMessage(context.Background(), []byte(`{
+		response := server.HandleMessage(t.Context(), []byte(`{
 			"jsonrpc": "2.0",
 			"id": 1,
 			"method": "tools/call",
@@ -3802,7 +3802,7 @@ func TestMCPServer_TaskSupportValidation(t *testing.T) {
 		})
 
 		// Call with task param
-		response := server.HandleMessage(context.Background(), []byte(`{
+		response := server.HandleMessage(t.Context(), []byte(`{
 			"jsonrpc": "2.0",
 			"id": 1,
 			"method": "tools/call",
@@ -3838,7 +3838,7 @@ func TestMCPServer_TaskSupportValidation(t *testing.T) {
 		})
 
 		// Call without task param
-		response := server.HandleMessage(context.Background(), []byte(`{
+		response := server.HandleMessage(t.Context(), []byte(`{
 			"jsonrpc": "2.0",
 			"id": 1,
 			"method": "tools/call",
@@ -3867,7 +3867,7 @@ func TestMCPServer_TaskSupportValidation(t *testing.T) {
 		})
 
 		// Call with task param (should still work, just ignores the task param for now)
-		response := server.HandleMessage(context.Background(), []byte(`{
+		response := server.HandleMessage(t.Context(), []byte(`{
 			"jsonrpc": "2.0",
 			"id": 1,
 			"method": "tools/call",
@@ -3896,7 +3896,7 @@ func TestMCPServer_TaskSupportValidation(t *testing.T) {
 		})
 
 		// Call without task param
-		response := server.HandleMessage(context.Background(), []byte(`{
+		response := server.HandleMessage(t.Context(), []byte(`{
 			"jsonrpc": "2.0",
 			"id": 1,
 			"method": "tools/call",
@@ -3928,7 +3928,7 @@ func TestMCPServer_HybridModeDetection(t *testing.T) {
 		})
 
 		// Call without task param - should execute synchronously
-		response := server.HandleMessage(context.Background(), []byte(`{
+		response := server.HandleMessage(t.Context(), []byte(`{
 			"jsonrpc": "2.0",
 			"id": 1,
 			"method": "tools/call",
@@ -3961,7 +3961,7 @@ func TestMCPServer_HybridModeDetection(t *testing.T) {
 		})
 
 		// Call with task param - should execute as task
-		response := server.HandleMessage(context.Background(), []byte(`{
+		response := server.HandleMessage(t.Context(), []byte(`{
 			"jsonrpc": "2.0",
 			"id": 1,
 			"method": "tools/call",
@@ -4003,7 +4003,7 @@ func TestMCPServer_HybridModeDetection(t *testing.T) {
 		})
 
 		// Call with task param - should execute as task
-		response := server.HandleMessage(context.Background(), []byte(`{
+		response := server.HandleMessage(t.Context(), []byte(`{
 			"jsonrpc": "2.0",
 			"id": 1,
 			"method": "tools/call",
@@ -4045,7 +4045,7 @@ func TestMCPServer_HybridModeDetection(t *testing.T) {
 		})
 
 		// Call with task param - should still execute synchronously (task param ignored)
-		response := server.HandleMessage(context.Background(), []byte(`{
+		response := server.HandleMessage(t.Context(), []byte(`{
 			"jsonrpc": "2.0",
 			"id": 1,
 			"method": "tools/call",
@@ -4077,7 +4077,7 @@ func TestMCPServer_HybridModeDetection(t *testing.T) {
 		})
 
 		// Call with task param - should still execute synchronously (no task support)
-		response := server.HandleMessage(context.Background(), []byte(`{
+		response := server.HandleMessage(t.Context(), []byte(`{
 			"jsonrpc": "2.0",
 			"id": 1,
 			"method": "tools/call",

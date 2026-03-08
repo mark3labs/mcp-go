@@ -52,7 +52,7 @@ func TestMCPServer_TaskCapabilities(t *testing.T) {
 			server := NewMCPServer("test-server", "1.0.0", tt.serverOptions...)
 
 			// Initialize to get capabilities
-			response := server.HandleMessage(context.Background(), []byte(`{
+			response := server.HandleMessage(t.Context(), []byte(`{
 				"jsonrpc": "2.0",
 				"id": 1,
 				"method": "initialize",
@@ -181,7 +181,7 @@ func TestMCPServer_HandleGetTaskNotFound(t *testing.T) {
 		WithTaskCapabilities(true, true, true),
 	)
 
-	response := server.HandleMessage(context.Background(), []byte(`{
+	response := server.HandleMessage(t.Context(), []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
 		"method": "tasks/get",

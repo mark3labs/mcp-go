@@ -268,7 +268,7 @@ func TestSessionWithTools_Integration(t *testing.T) {
 	}
 
 	// Register the session
-	err := server.RegisterSession(context.Background(), session)
+	err := server.RegisterSession(t.Context(), session)
 	require.NoError(t, err)
 
 	// Test that we can access the session-specific tool
@@ -277,7 +277,7 @@ func TestSessionWithTools_Integration(t *testing.T) {
 	testReq.Params.Arguments = map[string]any{}
 
 	// Call using session context
-	sessionCtx := server.WithContext(context.Background(), session)
+	sessionCtx := server.WithContext(t.Context(), session)
 
 	// Check if the session was stored in the context correctly
 	s := ClientSessionFromContext(sessionCtx)
@@ -337,7 +337,7 @@ func TestSessionWithResources_Integration(t *testing.T) {
 	}
 
 	// Register the session
-	err := server.RegisterSession(context.Background(), session)
+	err := server.RegisterSession(t.Context(), session)
 	require.NoError(t, err)
 
 	// Test that we can access the session-specific resource
@@ -346,7 +346,7 @@ func TestSessionWithResources_Integration(t *testing.T) {
 	testReq.Params.Arguments = map[string]any{}
 
 	// Call using session context
-	sessionCtx := server.WithContext(context.Background(), session)
+	sessionCtx := server.WithContext(t.Context(), session)
 
 	// Check if the session was stored in the context correctly
 	s := ClientSessionFromContext(sessionCtx)
@@ -403,11 +403,11 @@ func TestMCPServer_ToolsWithSessionTools(t *testing.T) {
 	}
 
 	// Register the session
-	err := server.RegisterSession(context.Background(), session)
+	err := server.RegisterSession(t.Context(), session)
 	require.NoError(t, err)
 
 	// List tools with session context
-	sessionCtx := server.WithContext(context.Background(), session)
+	sessionCtx := server.WithContext(t.Context(), session)
 	resp := server.HandleMessage(sessionCtx, []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
@@ -479,11 +479,11 @@ func TestMCPServer_ResourcesWithSessionResources(t *testing.T) {
 	}
 
 	// Register the session
-	err := server.RegisterSession(context.Background(), session)
+	err := server.RegisterSession(t.Context(), session)
 	require.NoError(t, err)
 
 	// List resources with session context via HandleMessage
-	sessionCtx := server.WithContext(context.Background(), session)
+	sessionCtx := server.WithContext(t.Context(), session)
 	resp := server.HandleMessage(sessionCtx, []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
@@ -810,7 +810,7 @@ func TestMCPServer_CallSessionTool(t *testing.T) {
 	}
 
 	// Register the session
-	err := server.RegisterSession(context.Background(), session)
+	err := server.RegisterSession(t.Context(), session)
 	require.NoError(t, err)
 
 	// Add session-specific tool with the same name to override the global tool
@@ -824,7 +824,7 @@ func TestMCPServer_CallSessionTool(t *testing.T) {
 	require.NoError(t, err)
 
 	// Call the tool using session context
-	sessionCtx := server.WithContext(context.Background(), session)
+	sessionCtx := server.WithContext(t.Context(), session)
 	toolRequest := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
@@ -940,11 +940,11 @@ func TestMCPServer_ToolFiltering(t *testing.T) {
 	}
 
 	// Register the session
-	err := server.RegisterSession(context.Background(), session)
+	err := server.RegisterSession(t.Context(), session)
 	require.NoError(t, err)
 
 	// List tools with session context
-	sessionCtx := server.WithContext(context.Background(), session)
+	sessionCtx := server.WithContext(t.Context(), session)
 	response := server.HandleMessage(sessionCtx, []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
@@ -990,11 +990,11 @@ func TestMCPServer_SendNotificationToSpecificClient(t *testing.T) {
 	}
 
 	// Register sessions
-	err := server.RegisterSession(context.Background(), session1)
+	err := server.RegisterSession(t.Context(), session1)
 	require.NoError(t, err)
-	err = server.RegisterSession(context.Background(), session2)
+	err = server.RegisterSession(t.Context(), session2)
 	require.NoError(t, err)
-	err = server.RegisterSession(context.Background(), session3)
+	err = server.RegisterSession(t.Context(), session3)
 	require.NoError(t, err)
 
 	// Send notification to session 1
@@ -1069,7 +1069,7 @@ func TestMCPServer_NotificationChannelBlocked(t *testing.T) {
 	session.Initialize()
 
 	// Register the session
-	err := server.RegisterSession(context.Background(), session)
+	err := server.RegisterSession(t.Context(), session)
 	require.NoError(t, err)
 
 	// Fill the buffer first to ensure it gets blocked
@@ -1165,7 +1165,7 @@ func TestMCPServer_SessionToolCapabilitiesBehavior(t *testing.T) {
 				notificationChannel: make(chan mcp.JSONRPCNotification, 10),
 				initialized:         true,
 			}
-			err := server.RegisterSession(context.Background(), session)
+			err := server.RegisterSession(t.Context(), session)
 			require.NoError(t, err)
 
 			// Add a session tool and verify listChanged remains false
@@ -1249,11 +1249,11 @@ func TestMCPServer_SetLevelNotEnabled(t *testing.T) {
 	session.Initialize()
 
 	// Register the session
-	err := server.RegisterSession(context.Background(), session)
+	err := server.RegisterSession(t.Context(), session)
 	require.NoError(t, err)
 
 	// Try to set logging level when capability is disabled
-	sessionCtx := server.WithContext(context.Background(), session)
+	sessionCtx := server.WithContext(t.Context(), session)
 	setRequest := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
@@ -1291,11 +1291,11 @@ func TestMCPServer_SetLevel(t *testing.T) {
 	}
 
 	// Register the session
-	err := server.RegisterSession(context.Background(), session)
+	err := server.RegisterSession(t.Context(), session)
 	require.NoError(t, err)
 
 	// Set Logging level to critical
-	sessionCtx := server.WithContext(context.Background(), session)
+	sessionCtx := server.WithContext(t.Context(), session)
 	setRequest := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
@@ -1331,7 +1331,7 @@ func TestSessionWithClientInfo_Integration(t *testing.T) {
 		initialized:         false,
 	}
 
-	err := server.RegisterSession(context.Background(), session)
+	err := server.RegisterSession(t.Context(), session)
 	require.NoError(t, err)
 
 	clientInfo := mcp.Implementation{
@@ -1348,7 +1348,7 @@ func TestSessionWithClientInfo_Integration(t *testing.T) {
 	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
 	initRequest.Params.Capabilities = clientCapability
 
-	sessionCtx := server.WithContext(context.Background(), session)
+	sessionCtx := server.WithContext(t.Context(), session)
 
 	// Retrieve the session from context
 	retrievedSession := ClientSessionFromContext(sessionCtx)

@@ -75,13 +75,13 @@ func TestSessionWithResourceTemplates_Integration(t *testing.T) {
 	}
 	session.initialized.Store(true)
 
-	err := server.RegisterSession(context.Background(), session)
+	err := server.RegisterSession(t.Context(), session)
 	require.NoError(t, err)
 
 	testReq := mcp.ReadResourceRequest{}
 	testReq.Params.URI = "test://session/123"
 
-	sessionCtx := server.WithContext(context.Background(), session)
+	sessionCtx := server.WithContext(t.Context(), session)
 
 	s := ClientSessionFromContext(sessionCtx)
 	require.NotNil(t, s, "Session should be available from context")
@@ -151,10 +151,10 @@ func TestMCPServer_ResourceTemplatesWithSessionResourceTemplates(t *testing.T) {
 	}
 	session.initialized.Store(true)
 
-	err := server.RegisterSession(context.Background(), session)
+	err := server.RegisterSession(t.Context(), session)
 	require.NoError(t, err)
 
-	sessionCtx := server.WithContext(context.Background(), session)
+	sessionCtx := server.WithContext(t.Context(), session)
 	resp := server.HandleMessage(sessionCtx, []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
@@ -426,7 +426,7 @@ func TestMCPServer_CallSessionResourceTemplate(t *testing.T) {
 		notificationChannel: sessionChan,
 	}
 
-	err := server.RegisterSession(context.Background(), session)
+	err := server.RegisterSession(t.Context(), session)
 	require.NoError(t, err)
 
 	err = server.AddSessionResourceTemplate(
@@ -441,7 +441,7 @@ func TestMCPServer_CallSessionResourceTemplate(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	sessionCtx := server.WithContext(context.Background(), session)
+	sessionCtx := server.WithContext(t.Context(), session)
 	resourceRequest := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
