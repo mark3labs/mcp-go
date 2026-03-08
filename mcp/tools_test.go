@@ -2227,6 +2227,167 @@ func TestCallToolRequest_WithTaskParams(t *testing.T) {
 	}
 }
 
+// TestToolInputSchema_NoDoubleWrapping_Issue671 verifies that Tool schema
+// serialization does not wrap the inputSchema in an extra "properties" key.
+// See https://github.com/mark3labs/mcp-go/issues/671
+func TestToolInputSchema_NoDoubleWrapping_Issue671(t *testing.T) {
+	tests := []struct {
+		name string
+		tool Tool
+	}{
+		{
+			name: "tool created with WithString params",
+			tool: NewTool("test_tool",
+				WithDescription("Test tool"),
+				WithString("param1", Required(), Description("Parameter 1")),
+				WithString("param2", Required(), Description("Parameter 2")),
+			),
+		},
+		{
+			name: "tool created with mixed param types",
+			tool: NewTool("mixed_tool",
+				WithDescription("Mixed tool"),
+				WithString("name", Required(), Description("Name")),
+				WithNumber("count", Description("Count")),
+				WithBoolean("verbose", Description("Verbose")),
+			),
+		},
+		{
+			name: "tool created with no params",
+			tool: NewTool("no_params_tool",
+				WithDescription("No params tool"),
+			),
+		},
+		{
+			name: "tool with manually constructed schema",
+			tool: Tool{
+				Name:        "manual_tool",
+				Description: "Manual tool",
+				InputSchema: ToolInputSchema{
+					Type: "object",
+					Properties: map[string]any{
+						"param1": map[string]any{
+							"type":        "string",
+							"description": "Parameter 1",
+						},
+					},
+					Required: []string{"param1"},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(tt.tool)
+			require.NoError(t, err)
+
+			var parsed map[string]any
+			require.NoError(t, json.Unmarshal(data, &parsed))
+
+			inputSchema, ok := parsed["inputSchema"].(map[string]any)
+			require.True(t, ok, "inputSchema should be a JSON object")
+
+			// The inputSchema must have "type" at the top level.
+			// If it is missing, the schema is likely double-wrapped
+			// inside an extra "properties" key (the bug from #671).
+			assert.Equal(t, "object", inputSchema["type"],
+				"inputSchema must have 'type' at the top level, not nested inside 'properties'")
+
+			// Verify "properties" contains actual property definitions,
+			// not the entire schema object.
+			if props, hasProps := inputSchema["properties"].(map[string]any); hasProps {
+				_, propsHasType := props["type"]
+				_, propsHasProperties := props["properties"]
+				if propsHasType && propsHasProperties {
+					t.Error("inputSchema is double-wrapped: 'properties' contains 'type' and 'properties' keys, indicating the schema object was incorrectly nested")
+				}
+			}
+		})
+	}
+}
+
+// TestToolSchema_MarshalUnmarshal_RoundTrip_Issue671 verifies that
+// marshaling a Tool to JSON and unmarshaling it back produces the same
+// inputSchema structure without double-wrapping.
+// See https://github.com/mark3labs/mcp-go/issues/671
+func TestToolSchema_MarshalUnmarshal_RoundTrip_Issue671(t *testing.T) {
+	original := NewTool("test_tool",
+		WithDescription("Test tool"),
+		WithString("param1", Required(), Description("Parameter 1")),
+		WithString("param2", Required(), Description("Parameter 2")),
+	)
+
+	// Marshal
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	// Unmarshal into a new Tool
+	var roundTripped Tool
+	require.NoError(t, json.Unmarshal(data, &roundTripped))
+
+	// Re-marshal
+	data2, err := json.Marshal(roundTripped)
+	require.NoError(t, err)
+
+	// Compare the two JSON outputs structurally
+	var parsed1, parsed2 map[string]any
+	require.NoError(t, json.Unmarshal(data, &parsed1))
+	require.NoError(t, json.Unmarshal(data2, &parsed2))
+
+	schema1 := parsed1["inputSchema"].(map[string]any)
+	schema2 := parsed2["inputSchema"].(map[string]any)
+
+	assert.Equal(t, schema1["type"], schema2["type"],
+		"type field should survive round-trip")
+	assert.Equal(t, fmt.Sprint(schema1["properties"]), fmt.Sprint(schema2["properties"]),
+		"properties field should survive round-trip")
+	assert.Equal(t, fmt.Sprint(schema1["required"]), fmt.Sprint(schema2["required"]),
+		"required field should survive round-trip")
+}
+
+// TestListToolsResult_Schema_Issue671 verifies that Tool schemas within a
+// ListToolsResult are serialized correctly without double-wrapping.
+// See https://github.com/mark3labs/mcp-go/issues/671
+func TestListToolsResult_Schema_Issue671(t *testing.T) {
+	tool := NewTool("test_tool",
+		WithDescription("Test tool"),
+		WithString("param1", Required(), Description("Parameter 1")),
+		WithString("param2", Required(), Description("Parameter 2")),
+	)
+
+	result := ListToolsResult{
+		Tools: []Tool{tool},
+	}
+
+	data, err := json.Marshal(result)
+	require.NoError(t, err)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(data, &parsed))
+
+	tools := parsed["tools"].([]any)
+	require.Len(t, tools, 1)
+
+	toolMap := tools[0].(map[string]any)
+	inputSchema := toolMap["inputSchema"].(map[string]any)
+
+	assert.Equal(t, "object", inputSchema["type"],
+		"inputSchema.type should be 'object'")
+
+	props := inputSchema["properties"].(map[string]any)
+	assert.Contains(t, props, "param1", "should contain param1")
+	assert.Contains(t, props, "param2", "should contain param2")
+
+	// Verify no double-wrapping
+	_, propsHasType := props["type"]
+	assert.False(t, propsHasType,
+		"properties should not contain a 'type' key (double-wrapping detected)")
+
+	required := inputSchema["required"].([]any)
+	assert.Len(t, required, 2)
+}
+
 // TestCallToolRequest_WithTaskParams_RoundTrip tests that marshaling and unmarshaling preserves task params
 func TestCallToolRequest_WithTaskParams_RoundTrip(t *testing.T) {
 	original := CallToolRequest{
