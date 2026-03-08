@@ -2081,12 +2081,12 @@ func TestMCPServer_GetHooks_Composable(t *testing.T) {
 	assert.Len(t, existing.OnBeforeAny, 2)
 
 	// Trigger hooks via a ping request
-	_ = s.HandleMessage(context.Background(), []byte(`{
+	_ = s.HandleMessage(t.Context(), []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
 		"method": "initialize"
 	}`))
-	_ = s.HandleMessage(context.Background(), []byte(`{
+	_ = s.HandleMessage(t.Context(), []byte(`{
 		"jsonrpc": "2.0",
 		"id": 2,
 		"method": "ping"
