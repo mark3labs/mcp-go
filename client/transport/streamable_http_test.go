@@ -164,7 +164,7 @@ func TestStreamableHTTP(t *testing.T) {
 	defer trans.Close()
 
 	// Initialize the transport first
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	initRequest := JSONRPCRequest{
@@ -180,7 +180,7 @@ func TestStreamableHTTP(t *testing.T) {
 
 	// Now run the tests
 	t.Run("SendRequest", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		params := map[string]any{
@@ -237,7 +237,7 @@ func TestStreamableHTTP(t *testing.T) {
 	})
 
 	t.Run("SendRequestWithHeader", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		params := map[string]any{
@@ -307,7 +307,7 @@ func TestStreamableHTTP(t *testing.T) {
 		})
 
 		// Send a request that triggers a notification
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		defer cancel()
 
 		request := JSONRPCRequest{
@@ -359,7 +359,7 @@ func TestStreamableHTTP(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
 
 				// Each request has a unique ID and payload
@@ -435,7 +435,7 @@ func TestStreamableHTTP(t *testing.T) {
 	})
 
 	t.Run("ResponseError", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		// Prepare a request
@@ -520,7 +520,7 @@ func TestStreamableHTTP(t *testing.T) {
 		defer trans.Close()
 
 		// Send a request
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		request := JSONRPCRequest{
@@ -566,7 +566,7 @@ func TestStreamableHTTPErrors(t *testing.T) {
 		}
 
 		// Send request should fail
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		defer cancel()
 
 		request := JSONRPCRequest{
@@ -783,12 +783,12 @@ func TestContinuousListening(t *testing.T) {
 	})
 
 	// Start the transport - this will launch listenForever in a goroutine
-	if err := trans.Start(context.Background()); err != nil {
+	if err := trans.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 
 	// Initialize the transport first
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	initRequest := JSONRPCRequest{
@@ -861,11 +861,11 @@ func TestContinuousListeningMethodNotAllowed(t *testing.T) {
 	}()
 
 	// Initialize the transport first
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	// Start the transport
-	if err := trans.Start(context.Background()); err != nil {
+	if err := trans.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -926,7 +926,7 @@ func TestStreamableHTTP_Unauthorized_StaticToken(t *testing.T) {
 	}
 
 	// Send a request
-	_, err = transport.SendRequest(context.Background(), JSONRPCRequest{
+	_, err = transport.SendRequest(t.Context(), JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      mcp.NewRequestId(1),
 		Method:  "test",
@@ -964,12 +964,12 @@ func TestStreamableHTTP_SendNotification_Unauthorized_StaticToken(t *testing.T) 
 	}
 
 	// Start the transport (needed for session initialization)
-	if err := transport.Start(context.Background()); err != nil {
+	if err := transport.Start(t.Context()); err != nil {
 		t.Fatalf("Failed to start transport: %v", err)
 	}
 
 	// Send a notification
-	err = transport.SendNotification(context.Background(), mcp.JSONRPCNotification{
+	err = transport.SendNotification(t.Context(), mcp.JSONRPCNotification{
 		JSONRPC: "2.0",
 		Notification: mcp.Notification{
 			Method: "test/notification",

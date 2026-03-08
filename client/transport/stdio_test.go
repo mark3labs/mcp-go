@@ -59,7 +59,7 @@ func TestStdio(t *testing.T) {
 	stdio := NewStdio(mockServerPath, nil)
 
 	// Start the transport
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	startErr := stdio.Start(ctx)
@@ -69,7 +69,7 @@ func TestStdio(t *testing.T) {
 	defer stdio.Close()
 
 	t.Run("SendRequest", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		params := map[string]any{
@@ -127,7 +127,7 @@ func TestStdio(t *testing.T) {
 
 	t.Run("SendRequestWithTimeout", func(t *testing.T) {
 		// Create a context that's already canceled
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel() // Cancel the context immediately
 
 		// Prepare a request
@@ -226,7 +226,7 @@ func TestStdio(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
 
 				// Each request has a unique ID and payload
@@ -342,7 +342,7 @@ func TestStdio(t *testing.T) {
 	})
 
 	t.Run("SendRequestWithStringID", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		params := map[string]any{
@@ -406,7 +406,7 @@ func TestStdioErrors(t *testing.T) {
 		stdio := NewStdio("non_existent_command", nil)
 
 		// Start should fail
-		ctx := context.Background()
+		ctx := t.Context()
 		err := stdio.Start(ctx)
 		if err == nil {
 			t.Errorf("Expected error when starting with invalid command, got nil")
@@ -442,7 +442,7 @@ func TestStdioErrors(t *testing.T) {
 			Method:  "ping",
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 		defer cancel()
 		_, reqErr := uninitiatedStdio.SendRequest(ctx, request)
 		if reqErr == nil {
@@ -469,7 +469,7 @@ func TestStdioErrors(t *testing.T) {
 		stdio := NewStdio(mockServerPath, nil)
 
 		// Start the transport
-		ctx := context.Background()
+		ctx := t.Context()
 		if startErr := stdio.Start(ctx); startErr != nil {
 			t.Fatalf("Failed to start Stdio transport: %v", startErr)
 		}
@@ -701,7 +701,7 @@ func TestStdio_LargeMessages(t *testing.T) {
 
 	stdio := NewStdio(mockServerPath, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
 	startErr := stdio.Start(ctx)
@@ -726,7 +726,7 @@ func TestStdio_LargeMessages(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 
 			largeString := generateRandomString(tc.dataSize)

@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -14,7 +13,7 @@ import (
 )
 
 func TestStreamableHTTP_WithOAuth(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	// Track request count to simulate 401 on first request, then success
 	var requestCount int32
 	authHeaderReceived := ""
@@ -91,7 +90,7 @@ func TestStreamableHTTP_WithOAuth(t *testing.T) {
 	}
 
 	// First request should fail with OAuthAuthorizationRequiredError
-	_, err = transport.SendRequest(context.Background(), JSONRPCRequest{
+	_, err = transport.SendRequest(t.Context(), JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      mcp.NewRequestId(1),
 		Method:  "test",
@@ -118,7 +117,7 @@ func TestStreamableHTTP_WithOAuth(t *testing.T) {
 	}
 
 	// Second request should succeed
-	response, err := transport.SendRequest(context.Background(), JSONRPCRequest{
+	response, err := transport.SendRequest(t.Context(), JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      mcp.NewRequestId(2),
 		Method:  "test",
@@ -171,7 +170,7 @@ func TestStreamableHTTP_WithOAuth_Unauthorized(t *testing.T) {
 	}
 
 	// Send a request
-	_, err = transport.SendRequest(context.Background(), JSONRPCRequest{
+	_, err = transport.SendRequest(t.Context(), JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      mcp.NewRequestId(1),
 		Method:  "test",
