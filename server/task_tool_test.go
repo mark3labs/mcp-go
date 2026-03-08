@@ -504,7 +504,7 @@ func TestTaskToolTracerBullet(t *testing.T) {
 		)
 
 		// Step 2: Create a parent context that we'll cancel
-		parentCtx, cancelParent := context.WithCancel(context.Background())
+		parentCtx, cancelParent := context.WithCancel(t.Context())
 		defer cancelParent()
 
 		// Step 3: Register a task tool that respects context cancellation
@@ -546,7 +546,7 @@ func TestTaskToolTracerBullet(t *testing.T) {
 		// Step 6: Wait for task to complete
 		var finalTask mcp.Task
 		for range 20 {
-			task, _, err := server.getTask(context.Background(), taskID)
+			task, _, err := server.getTask(t.Context(), taskID)
 			require.NoError(t, err)
 			finalTask = task
 			if task.Status.IsTerminal() {

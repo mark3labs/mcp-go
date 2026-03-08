@@ -341,7 +341,7 @@ func TestMCPServer_TaskWithoutCapabilities(t *testing.T) {
 				"method": "` + tt.method + `"` + paramsStr + `
 			}`
 
-			response := server.HandleMessage(context.Background(), []byte(requestJSON))
+			response := server.HandleMessage(t.Context(), []byte(requestJSON))
 
 			errResp, ok := response.(mcp.JSONRPCError)
 			require.True(t, ok, "Expected JSONRPCError, got %T", response)
