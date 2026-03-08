@@ -2253,7 +2253,7 @@ func listByPaginationForReflect[T any](
 
 func BenchmarkMCPServer_Pagination(b *testing.B) {
 	list := getTools(10000)
-	ctx := context.Background()
+	ctx := b.Context()
 	server := createTestServer()
 	for b.Loop() {
 		_, _, _ = listByPagination(ctx, server, "dG9vbDY1NA==", list)
@@ -2262,7 +2262,7 @@ func BenchmarkMCPServer_Pagination(b *testing.B) {
 
 func BenchmarkMCPServer_PaginationForReflect(b *testing.B) {
 	list := getTools(10000)
-	ctx := context.Background()
+	ctx := b.Context()
 	server := createTestServer()
 	for b.Loop() {
 		_, _, _ = listByPaginationForReflect(ctx, server, "dG9vbDY1NA==", list)

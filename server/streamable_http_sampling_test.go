@@ -148,7 +148,7 @@ func TestStreamableHTTPServer_SamplingInterface(t *testing.T) {
 	}
 
 	// Test RequestSampling with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
 
 	request := mcp.CreateMessageRequest{

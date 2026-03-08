@@ -505,7 +505,7 @@ func TestStreamableHTTP_GET(t *testing.T) {
 	addSSETool(mcpServer)
 	server := NewTestStreamableHTTPServer(mcpServer)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 1*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "GET", server.URL, nil)
 	if err != nil {
@@ -747,7 +747,7 @@ func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 
 		// Watch the notification to ensure the session is registered
 		// (Normal http request (post) will not trigger the session registration)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 		defer cancel()
 		go func() {
 			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, testServer.URL, nil)
@@ -876,7 +876,7 @@ func TestStreamableHTTP_SessionWithResources(t *testing.T) {
 
 		// Watch the notification to ensure the session is registered
 		// (Normal http request (post) will not trigger the session registration)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 		defer cancel()
 		go func() {
 			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, testServer.URL, nil)
@@ -1333,7 +1333,7 @@ func TestStreamableHTTPServer_WithDisableStreaming(t *testing.T) {
 		server := NewTestStreamableHTTPServer(mcpServer, WithDisableStreaming(false))
 		defer server.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 		defer cancel()
 
 		// GET request should work when streaming is enabled
@@ -2385,7 +2385,7 @@ func TestStreamableHTTP_GET_NonFlusherReturns405(t *testing.T) {
 		server := NewTestStreamableHTTPServer(mcpServer)
 		defer server.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 		defer cancel()
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
@@ -2619,7 +2619,7 @@ func TestStreamableHTTP_SessionIdleTTLSweeper(t *testing.T) {
 			WithStateful(true),
 			WithSessionIdleTTL(100*time.Millisecond),
 		)
-		defer func() { _ = httpServer.Shutdown(context.Background()) }()
+		defer func() { _ = httpServer.Shutdown(t.Context()) }()
 		ts := httptest.NewServer(httpServer)
 		defer ts.Close()
 
@@ -2657,7 +2657,7 @@ func TestStreamableHTTP_SessionIdleTTLSweeper(t *testing.T) {
 			WithStateful(true),
 			WithSessionIdleTTL(200*time.Millisecond),
 		)
-		defer func() { _ = httpServer.Shutdown(context.Background()) }()
+		defer func() { _ = httpServer.Shutdown(t.Context()) }()
 		ts := httptest.NewServer(httpServer)
 		defer ts.Close()
 
@@ -2696,7 +2696,7 @@ func TestStreamableHTTP_SessionIdleTTLSweeper(t *testing.T) {
 			WithStateful(true),
 			// No WithSessionIdleTTL — sweeper disabled
 		)
-		defer func() { _ = httpServer.Shutdown(context.Background()) }()
+		defer func() { _ = httpServer.Shutdown(t.Context()) }()
 		ts := httptest.NewServer(httpServer)
 		defer ts.Close()
 
@@ -2724,7 +2724,7 @@ func TestStreamableHTTP_SessionIdleTTLSweeper(t *testing.T) {
 			WithStateful(true),
 			WithSessionIdleTTL(10*time.Second), // long TTL so sweeper won't fire
 		)
-		defer func() { _ = httpServer.Shutdown(context.Background()) }()
+		defer func() { _ = httpServer.Shutdown(t.Context()) }()
 		ts := httptest.NewServer(httpServer)
 		defer ts.Close()
 
