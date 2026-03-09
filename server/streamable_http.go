@@ -344,10 +344,16 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	}
 
 	// detect empty ping response, skip session ID validation
-	isPingResponse := jsonMessage.Method == "" && jsonMessage.ID != nil &&
+	isEmptyResponse := jsonMessage.Method == "" && jsonMessage.ID != nil &&
 		(isJSONEmpty(jsonMessage.Result) && isJSONEmpty(jsonMessage.Error))
+	isPingResponse := jsonMessage.Method == "" && jsonMessage.ID != nil &&
+		isExplicitEmptyObject(jsonMessage.Result) && len(bytes.TrimSpace(jsonMessage.Error)) == 0
 
 	if isPingResponse {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	if isEmptyResponse {
 		return
 	}
 
@@ -1579,4 +1585,23 @@ func isJSONEmpty(data json.RawMessage) bool {
 			trimmed[3] == 'l'
 	}
 	return false
+}
+
+// isExplicitEmptyObject reports whether data is a JSON object literal with no fields.
+func isExplicitEmptyObject(data json.RawMessage) bool {
+	if len(data) == 0 {
+		return false
+	}
+
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return false
+	}
+
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &obj); err != nil {
+		return false
+	}
+
+	return len(obj) == 0
 }

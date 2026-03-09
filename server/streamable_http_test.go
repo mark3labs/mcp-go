@@ -1157,7 +1157,7 @@ func TestStreamableHTTP_PongResponseHandling(t *testing.T) {
 	server := NewTestStreamableHTTPServer(mcpServer)
 	defer server.Close()
 
-	t.Run("Pong response with empty result should not be treated as sampling response", func(t *testing.T) {
+	t.Run("Pong response with empty result should return 202 and not be treated as sampling response", func(t *testing.T) {
 		// According to MCP spec, pong responses have empty result: {"jsonrpc": "2.0", "id": "123", "result": {}}
 		pongResponse := map[string]any{
 			"jsonrpc": "2.0",
@@ -1184,8 +1184,8 @@ func TestStreamableHTTP_PongResponseHandling(t *testing.T) {
 			t.Errorf("Pong response was incorrectly detected as sampling response. Response: %s", bodyStr)
 		}
 
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("Expected status 200 for pong response, got %d. Body: %s", resp.StatusCode, bodyStr)
+		if resp.StatusCode != http.StatusAccepted {
+			t.Errorf("Expected status 202 for pong response, got %d. Body: %s", resp.StatusCode, bodyStr)
 		}
 	})
 
