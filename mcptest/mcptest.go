@@ -42,11 +42,13 @@ type Server struct {
 }
 
 // NewServer starts a new MCP server with the provided tools and returns the server instance.
+// The server's lifetime is managed by Close(), not by the test context, so it can be
+// safely created in setup helpers and used across multiple subtests.
 func NewServer(t *testing.T, tools ...server.ServerTool) (*Server, error) {
 	server := NewUnstartedServer(t)
 	server.AddTools(tools...)
 
-	if err := server.Start(t.Context()); err != nil {
+	if err := server.Start(context.Background()); err != nil {
 		return nil, err
 	}
 
