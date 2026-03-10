@@ -510,7 +510,10 @@ drainLoop:
 		return
 	}
 	// If client-server communication already upgraded to SSE stream
-	if session.upgradeToSSE.Load() {
+	// Also check upgradedHeader: a notification during HandleMessage processing
+	// may have already written SSE headers on this response, so we must continue
+	// in SSE mode to avoid writing JSON on top of SSE data.
+	if session.upgradeToSSE.Load() || upgradedHeader {
 		if !upgradedHeader {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Connection", "keep-alive")

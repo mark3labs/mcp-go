@@ -2613,6 +2613,93 @@ func TestStreamableHTTP_DrainNotifications(t *testing.T) {
 	})
 }
 
+// TestStreamableHTTP_NotificationUpgradeDoesNotCorruptResponse verifies that when
+// a notification is sent during HandleMessage (triggering an SSE upgrade on the
+// response), the final response is written as SSE — not as JSON on top of SSE
+// headers, which would corrupt the response.
+//
+// This is a regression test for https://github.com/mark3labs/mcp-go/issues/742
+func TestStreamableHTTP_NotificationUpgradeDoesNotCorruptResponse(t *testing.T) {
+	// Run multiple iterations to increase the chance of hitting the race window.
+	// The bug is timing-dependent: a notification must be processed by the
+	// goroutine before the main handler writes the response.
+	for i := range 20 {
+		t.Run(fmt.Sprintf("iteration_%d", i), func(t *testing.T) {
+			t.Parallel()
+
+			mcpServer := NewMCPServer("test-mcp-server", "1.0",
+				WithToolCapabilities(true),
+			)
+
+			// Add a tool that sends a notification during execution.
+			// This notification goes through session.notificationChannel,
+			// where the goroutine in handlePost picks it up and writes SSE
+			// headers before the main handler gets to write the response.
+			mcpServer.AddTool(mcp.NewTool("notifying_tool"), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				server := ServerFromContext(ctx)
+				_ = server.SendNotificationToClient(ctx, "test/raceNotification", map[string]any{
+					"info": "this triggers the SSE upgrade",
+				})
+				return mcp.NewToolResultText("tool result ok"), nil
+			})
+
+			server := NewTestStreamableHTTPServer(mcpServer)
+			defer server.Close()
+
+			// Initialize session
+			resp, err := postJSON(server.URL, initRequest)
+			require.NoError(t, err)
+			resp.Body.Close()
+			sessionID := resp.Header.Get(HeaderKeySessionID)
+			require.NotEmpty(t, sessionID)
+
+			// Call the tool — this is where the race can happen
+			callReq := map[string]any{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"method":  "tools/call",
+				"params":  map[string]any{"name": "notifying_tool"},
+			}
+			resp, err = postSessionJSON(server.URL, sessionID, callReq)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			bodyStr := string(body)
+
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+			contentType := resp.Header.Get("Content-Type")
+
+			// The tool sends a notification synchronously before returning,
+			// so by the time HandleMessage completes the notification is on the
+			// channel. Either the goroutine or the drain loop will process it,
+			// setting upgradedHeader = true. The response MUST be SSE.
+			require.True(t, strings.HasPrefix(contentType, "text/event-stream"),
+				"notification path must upgrade this response to SSE, got %q", contentType)
+			require.Contains(t, bodyStr, "event: message")
+			require.Contains(t, bodyStr, "tool result ok")
+
+			// Every non-empty line must be valid SSE syntax — no raw JSON
+			// objects appended (which would indicate the corruption this test guards against).
+			for _, line := range strings.Split(strings.TrimSpace(bodyStr), "\n") {
+				if line == "" {
+					continue
+				}
+				require.True(t,
+					strings.HasPrefix(line, "event:") ||
+						strings.HasPrefix(line, "data:") ||
+						strings.HasPrefix(line, "id:") ||
+						strings.HasPrefix(line, "retry:") ||
+						strings.HasPrefix(line, ":"),
+					"unexpected non-SSE line %q", line,
+				)
+			}
+		})
+	}
+}
+
 func TestStreamableHTTP_SessionIdleTTLSweeper(t *testing.T) {
 	t.Run("expired sessions are swept", func(t *testing.T) {
 		mcpServer := NewMCPServer("test", "1.0")
