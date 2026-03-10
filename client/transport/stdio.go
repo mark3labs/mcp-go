@@ -29,25 +29,25 @@ type Stdio struct {
 	args    []string
 	env     []string
 
-	cmd            *exec.Cmd
-	cmdFunc        CommandFunc
-	stdin          io.WriteCloser
-	stdout         *bufio.Reader
-	stderr         io.ReadCloser
-	responses      map[string]chan *JSONRPCResponse
-	mu             sync.RWMutex
+	cmd              *exec.Cmd
+	cmdFunc          CommandFunc
+	stdin            io.WriteCloser
+	stdout           *bufio.Reader
+	stderr           io.ReadCloser
+	responses        map[string]chan *JSONRPCResponse
+	mu               sync.RWMutex
 	done             chan struct{}
 	closeOnce        sync.Once
 	closeCleanupOnce sync.Once
 	onNotification   func(mcp.JSONRPCNotification)
-	notifyMu       sync.RWMutex
-	onRequest      RequestHandler
-	requestMu      sync.RWMutex
-	ctx            context.Context
-	ctxMu          sync.RWMutex
-	logger         util.Logger
-	started        bool
-	startedMu      sync.Mutex
+	notifyMu         sync.RWMutex
+	onRequest        RequestHandler
+	requestMu        sync.RWMutex
+	ctx              context.Context
+	ctxMu            sync.RWMutex
+	logger           util.Logger
+	started          bool
+	startedMu        sync.Mutex
 }
 
 // StdioOption defines a function that configures a Stdio transport instance.
@@ -154,8 +154,7 @@ func (c *Stdio) Start(ctx context.Context) error {
 
 	ready := make(chan struct{})
 	go func() {
-		close(ready)
-		c.readResponses()
+		c.readResponses(ready)
 	}()
 	<-ready
 
@@ -274,8 +273,16 @@ func (c *Stdio) SetRequestHandler(handler RequestHandler) {
 // readResponses continuously reads and processes responses from the server's stdout.
 // It handles both responses to requests and notifications, routing them appropriately.
 // Runs until the done channel is closed or an error occurs reading from stdout.
-func (c *Stdio) readResponses() {
+// The ready channel, if non-nil, is closed once the read loop is entered, signaling
+// to Start() that the transport is actively processing responses.
+func (c *Stdio) readResponses(ready chan struct{}) {
 	for {
+		// Signal readiness on the first iteration, inside the loop, so that
+		// Start() only unblocks after the reader is actively processing.
+		if ready != nil {
+			close(ready)
+			ready = nil
+		}
 		select {
 		case <-c.done:
 			return
