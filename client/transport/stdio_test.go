@@ -556,6 +556,69 @@ func TestStdioErrors(t *testing.T) {
 	})
 }
 
+func TestStdio_StartGuaranteesReaderReady(t *testing.T) {
+	stdoutReader, stdoutWriter := io.Pipe()
+	stdinReader, stdinWriter := io.Pipe()
+	stderrReader, stderrWriter := io.Pipe()
+	t.Cleanup(func() {
+		_ = stdoutWriter.Close()
+		_ = stdinWriter.Close()
+		_ = stderrWriter.Close()
+	})
+
+	stdio := NewIO(stdoutReader, stdinWriter, stderrReader)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+
+	require.NoError(t, stdio.Start(ctx))
+	t.Cleanup(func() { _ = stdio.Close() })
+
+	// Mock server: echo every request back as a response immediately.
+	// No sleep — responses arrive as fast as possible to stress the
+	// window between Start() returning and the reader entering its loop.
+	go func() {
+		dec := json.NewDecoder(stdinReader)
+		for {
+			var req map[string]any
+			if err := dec.Decode(&req); err != nil {
+				return
+			}
+			id := req["id"]
+			if id == nil {
+				continue
+			}
+			resp := map[string]any{
+				"jsonrpc": "2.0",
+				"id":      id,
+				"result":  map[string]any{},
+			}
+			b, _ := json.Marshal(resp)
+			b = append(b, '\n')
+			if _, err := stdoutWriter.Write(b); err != nil {
+				return
+			}
+		}
+	}()
+
+	// Send requests immediately after Start(), no sleep.
+	// If the reader is not yet in its loop when the response arrives,
+	// the response will be written to stdout before ReadString is called,
+	// and will be lost — causing the request to time out.
+	const N = 20
+	for i := range N {
+		reqCtx, reqCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		req := JSONRPCRequest{
+			JSONRPC: "2.0",
+			ID:      mcp.NewRequestId(int64(i)),
+			Method:  "ping",
+		}
+		_, err := stdio.SendRequest(reqCtx, req)
+		reqCancel()
+		require.NoError(t, err, "request %d lost: reader was not ready when Start() returned", i)
+	}
+}
+
 func TestStdio_WithCommandFunc(t *testing.T) {
 	called := false
 	tmpDir := t.TempDir()
