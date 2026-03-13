@@ -511,6 +511,8 @@ type InitializedNotification struct {
 // capabilities are defined here, in this schema, but this is not a closed set: any
 // client can define its own, additional capabilities.
 type ClientCapabilities struct {
+	// Optional, present if the client is advertising extension support.
+	Extensions map[string]any `json:"extensions,omitempty"`
 	// Experimental, non-standard capabilities that the client supports.
 	Experimental map[string]any `json:"experimental,omitempty"`
 	// Present if the client supports listing roots.
@@ -530,6 +532,8 @@ type ClientCapabilities struct {
 // capabilities are defined here, in this schema, but this is not a closed set: any
 // server can define its own, additional capabilities.
 type ServerCapabilities struct {
+	// Optional, present if the server is advertising extension support.
+	Extensions map[string]any `json:"extensions,omitempty"`
 	// Experimental, non-standard capabilities that the server supports.
 	Experimental map[string]any `json:"experimental,omitempty"`
 	// Present if the server supports sending log messages to the client.
