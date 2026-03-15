@@ -966,6 +966,207 @@ func TestMCPServer_ToolFiltering(t *testing.T) {
 	}
 }
 
+func TestMCPServer_PromptFiltering(t *testing.T) {
+	// Create a filter that filters prompts by prefix
+	filterByPrefix := func(prefix string) PromptFilterFunc {
+		return func(ctx context.Context, prompts []mcp.Prompt) []mcp.Prompt {
+			var filtered []mcp.Prompt
+			for _, prompt := range prompts {
+				if len(prompt.Name) >= len(prefix) && prompt.Name[:len(prefix)] == prefix {
+					filtered = append(filtered, prompt)
+				}
+			}
+			return filtered
+		}
+	}
+
+	// Create a server with a prompt filter
+	server := NewMCPServer("test-server", "1.0.0",
+		WithPromptCapabilities(true),
+		WithPromptFilter(filterByPrefix("allow-")),
+	)
+
+	// Add prompts with different prefixes
+	noopHandler := func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		return &mcp.GetPromptResult{}, nil
+	}
+	server.AddPrompt(mcp.Prompt{Name: "allow-prompt-1"}, noopHandler)
+	server.AddPrompt(mcp.Prompt{Name: "allow-prompt-2"}, noopHandler)
+	server.AddPrompt(mcp.Prompt{Name: "deny-prompt-1"}, noopHandler)
+	server.AddPrompt(mcp.Prompt{Name: "deny-prompt-2"}, noopHandler)
+
+	// List prompts
+	ctx := context.Background()
+	response := server.HandleMessage(ctx, []byte(`{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "prompts/list"
+	}`))
+	resp, ok := response.(mcp.JSONRPCResponse)
+	require.True(t, ok)
+
+	result, ok := resp.Result.(mcp.ListPromptsResult)
+	require.True(t, ok)
+
+	// Should only include prompts with the "allow-" prefix
+	assert.Len(t, result.Prompts, 2)
+	for _, prompt := range result.Prompts {
+		assert.True(t, len(prompt.Name) >= 6 && prompt.Name[:6] == "allow-",
+			"Prompt should start with 'allow-', got: %s", prompt.Name)
+	}
+}
+
+func TestMCPServer_MultiplePromptFilters(t *testing.T) {
+	// First filter: keep only prompts starting with "a"
+	filterA := func(ctx context.Context, prompts []mcp.Prompt) []mcp.Prompt {
+		var filtered []mcp.Prompt
+		for _, p := range prompts {
+			if len(p.Name) > 0 && p.Name[0] == 'a' {
+				filtered = append(filtered, p)
+			}
+		}
+		return filtered
+	}
+	// Second filter: keep only prompts containing "keep"
+	filterKeep := func(ctx context.Context, prompts []mcp.Prompt) []mcp.Prompt {
+		var filtered []mcp.Prompt
+		for _, p := range prompts {
+			for i := 0; i+4 <= len(p.Name); i++ {
+				if p.Name[i:i+4] == "keep" {
+					filtered = append(filtered, p)
+					break
+				}
+			}
+		}
+		return filtered
+	}
+
+	server := NewMCPServer("test-server", "1.0.0",
+		WithPromptCapabilities(true),
+		WithPromptFilter(PromptFilterFunc(filterA)),
+		WithPromptFilter(PromptFilterFunc(filterKeep)),
+	)
+
+	noopHandler := func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		return &mcp.GetPromptResult{}, nil
+	}
+	server.AddPrompt(mcp.Prompt{Name: "a-keep-this"}, noopHandler)
+	server.AddPrompt(mcp.Prompt{Name: "a-remove-this"}, noopHandler)
+	server.AddPrompt(mcp.Prompt{Name: "b-keep-this"}, noopHandler)
+
+	ctx := context.Background()
+	response := server.HandleMessage(ctx, []byte(`{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "prompts/list"
+	}`))
+	resp, ok := response.(mcp.JSONRPCResponse)
+	require.True(t, ok)
+
+	result, ok := resp.Result.(mcp.ListPromptsResult)
+	require.True(t, ok)
+
+	// Only "a-keep-this" should survive both filters
+	assert.Len(t, result.Prompts, 1)
+	assert.Equal(t, "a-keep-this", result.Prompts[0].Name)
+}
+
+func TestMCPServer_PromptHandlerMiddleware(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0",
+		WithPromptCapabilities(true),
+		WithPromptHandlerMiddleware(func(next PromptHandlerFunc) PromptHandlerFunc {
+			return func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+				result, err := next(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				// Middleware appends a message
+				result.Messages = append(result.Messages, mcp.PromptMessage{
+					Role: mcp.RoleAssistant,
+					Content: mcp.TextContent{
+						Type: "text",
+						Text: "added-by-middleware",
+					},
+				})
+				return result, nil
+			}
+		}),
+	)
+
+	server.AddPrompt(mcp.Prompt{Name: "test-prompt"}, func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		return &mcp.GetPromptResult{
+			Messages: []mcp.PromptMessage{
+				{
+					Role:    mcp.RoleUser,
+					Content: mcp.TextContent{Type: "text", Text: "original"},
+				},
+			},
+		}, nil
+	})
+
+	ctx := context.Background()
+	response := server.HandleMessage(ctx, []byte(`{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "prompts/get",
+		"params": {"name": "test-prompt"}
+	}`))
+	resp, ok := response.(mcp.JSONRPCResponse)
+	require.True(t, ok)
+
+	result, ok := resp.Result.(mcp.GetPromptResult)
+	require.True(t, ok)
+
+	assert.Len(t, result.Messages, 2)
+	// Verify original message is first
+	tc, ok := result.Messages[0].Content.(mcp.TextContent)
+	require.True(t, ok)
+	assert.Equal(t, "original", tc.Text)
+	// Verify middleware-added message is second
+	tc, ok = result.Messages[1].Content.(mcp.TextContent)
+	require.True(t, ok)
+	assert.Equal(t, "added-by-middleware", tc.Text)
+}
+
+func TestMCPServer_MultiplePromptHandlerMiddlewares(t *testing.T) {
+	var order []string
+
+	makeMiddleware := func(name string) PromptHandlerMiddleware {
+		return func(next PromptHandlerFunc) PromptHandlerFunc {
+			return func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+				order = append(order, name+"-before")
+				result, err := next(ctx, req)
+				order = append(order, name+"-after")
+				return result, err
+			}
+		}
+	}
+
+	server := NewMCPServer("test-server", "1.0.0",
+		WithPromptCapabilities(true),
+		WithPromptHandlerMiddleware(makeMiddleware("first")),
+		WithPromptHandlerMiddleware(makeMiddleware("second")),
+	)
+
+	server.AddPrompt(mcp.Prompt{Name: "test-prompt"}, func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		order = append(order, "handler")
+		return &mcp.GetPromptResult{}, nil
+	})
+
+	ctx := context.Background()
+	response := server.HandleMessage(ctx, []byte(`{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "prompts/get",
+		"params": {"name": "test-prompt"}
+	}`))
+	_, ok := response.(mcp.JSONRPCResponse)
+	require.True(t, ok)
+
+	// Middlewares applied in reverse order means first-registered wraps outermost
+	assert.Equal(t, []string{"first-before", "second-before", "handler", "second-after", "first-after"}, order)
+}
+
 func TestMCPServer_SendNotificationToSpecificClient(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0")
 

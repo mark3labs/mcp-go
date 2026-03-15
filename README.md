@@ -878,6 +878,14 @@ Add middleware to tool call handlers using the `server.WithToolHandlerMiddleware
 
 A recovery middleware option is available to recover from panics in a tool call and can be added to the server with the `server.WithRecovery` option.
 
+### Prompt Handler Middleware
+
+Add middleware to prompt handlers using the `server.WithPromptHandlerMiddleware` option. Middlewares can be registered on server creation and are applied on every `prompts/get` call.
+
+### Prompt Filtering
+
+Filter prompts based on context using the `server.WithPromptFilter` option. This works the same way as tool filtering but applies to `prompts/list` results.
+
 ### Regenerating Server Code
 
 Server hooks and request handlers are generated. Regenerate them by running:
