@@ -6,6 +6,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/mark3labs/mcp-go?cache)](https://goreportcard.com/report/github.com/mark3labs/mcp-go)
 [![GoDoc](https://pkg.go.dev/badge/github.com/mark3labs/mcp-go.svg)](https://pkg.go.dev/github.com/mark3labs/mcp-go)
 
+[![AgentRank](https://agentrank-ai.com/api/badge/tool/mark3labs--mcp-go)](https://agentrank-ai.com/tool/mark3labs--mcp-go/)
 <strong>A Go implementation of the Model Context Protocol (MCP), enabling seamless integration between LLM applications and external data sources and tools.</strong>
 
 <br>
