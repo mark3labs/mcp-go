@@ -35,6 +35,9 @@ import (
 	"time"
 )
 
+// BenchmarkSessionRequestIDs_RetainedAfterClose measures heap objects retained
+// in sessionRequestIDs after GET/SSE connections close without a DELETE request.
+// map_entries_retained should be 0 with the fix and equal to b.N without it.
 func BenchmarkSessionRequestIDs_RetainedAfterClose(b *testing.B) {
 	mcpServer := NewMCPServer("bench", "1.0.0")
 	httpServer := NewStreamableHTTPServer(mcpServer,
