@@ -80,6 +80,16 @@ func (s *MCPServer) HandleMessage(
 		headers = make(http.Header)
 	}
 
+	// Wrap context with cancel for in-flight request cancellation (MCP spec: notifications/cancelled)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Store cancel func so notifications/cancelled can cancel this request
+	if baseMessage.ID != nil {
+		s.inflightCancels.Store(baseMessage.ID, cancel)
+		defer s.inflightCancels.Delete(baseMessage.ID)
+	}
+
 	switch baseMessage.Method {
 	case mcp.MethodInitialize:
 		var request mcp.InitializeRequest

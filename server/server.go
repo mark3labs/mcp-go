@@ -202,6 +202,7 @@ type MCPServer struct {
 	expiredTasks               map[string]time.Time // Tracks recently expired task IDs with expiration timestamp
 	maxConcurrentTasks         *int                 // Optional limit on concurrent running tasks
 	activeTasks                int                  // Current count of running (non-terminal) tasks
+	inflightCancels            sync.Map             // Maps request ID -> context.CancelFunc for in-flight requests
 }
 
 // WithPaginationLimit sets the pagination limit for the server.
@@ -1775,6 +1776,18 @@ func (s *MCPServer) handleNotification(
 	ctx context.Context,
 	notification mcp.JSONRPCNotification,
 ) mcp.JSONRPCMessage {
+	// Handle cancellation notifications per MCP spec
+	if notification.Method == "notifications/cancelled" {
+		if params, ok := notification.Params.AdditionalFields["requestId"]; ok {
+			if cancel, loaded := s.inflightCancels.LoadAndDelete(params); loaded {
+				if cancelFunc, ok := cancel.(context.CancelFunc); ok {
+					cancelFunc()
+				}
+			}
+		}
+		return nil
+	}
+
 	s.notificationHandlersMu.RLock()
 	handler, ok := s.notificationHandlers[notification.Method]
 	s.notificationHandlersMu.RUnlock()
