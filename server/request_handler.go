@@ -84,10 +84,12 @@ func (s *MCPServer) HandleMessage(
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Store cancel func so notifications/cancelled can cancel this request
+	// Store cancel func so notifications/cancelled can cancel this request.
+	// Use session-scoped keys to prevent cross-session request ID collisions.
 	if baseMessage.ID != nil {
-		s.inflightCancels.Store(baseMessage.ID, cancel)
-		defer s.inflightCancels.Delete(baseMessage.ID)
+		key := inflightKey(ctx, baseMessage.ID)
+		s.inflightCancels.Store(key, cancel)
+		defer s.inflightCancels.Delete(key)
 	}
 
 	switch baseMessage.Method {

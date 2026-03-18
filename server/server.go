@@ -1778,8 +1778,9 @@ func (s *MCPServer) handleNotification(
 ) mcp.JSONRPCMessage {
 	// Handle cancellation notifications per MCP spec
 	if notification.Method == "notifications/cancelled" {
-		if params, ok := notification.Params.AdditionalFields["requestId"]; ok {
-			if cancel, loaded := s.inflightCancels.LoadAndDelete(params); loaded {
+		if reqID, ok := notification.Params.AdditionalFields["requestId"]; ok {
+			key := inflightKey(ctx, reqID)
+			if cancel, loaded := s.inflightCancels.LoadAndDelete(key); loaded {
 				if cancelFunc, ok := cancel.(context.CancelFunc); ok {
 					cancelFunc()
 				}
@@ -1796,6 +1797,15 @@ func (s *MCPServer) handleNotification(
 		handler(ctx, notification)
 	}
 	return nil
+}
+
+// inflightKey returns a session-scoped key for the inflight cancellation map.
+// This prevents cross-session request ID collisions in multi-client scenarios.
+func inflightKey(ctx context.Context, requestID any) string {
+	if session := ClientSessionFromContext(ctx); session != nil {
+		return fmt.Sprintf("%s:%v", session.SessionID(), requestID)
+	}
+	return fmt.Sprintf(":%v", requestID)
 }
 
 func createResponse(id any, result any) mcp.JSONRPCMessage {
