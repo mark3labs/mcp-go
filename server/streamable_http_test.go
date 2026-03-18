@@ -2873,3 +2873,41 @@ func TestStreamableHTTPNotificationRace(t *testing.T) {
 		}
 	}
 }
+
+func TestStreamableHTTP_SessionRequestIDs_CleanedOnGetClose(t *testing.T) {
+	// Verify that sessionRequestIDs entry is removed when a GET connection closes,
+	// preventing unbounded growth in stateless/heartbeat scenarios.
+	mcpServer := NewMCPServer("test", "1.0.0")
+	httpServer := NewStreamableHTTPServer(mcpServer,
+		WithHeartbeatInterval(50*time.Millisecond),
+	)
+	ts := httptest.NewServer(httpServer)
+	defer ts.Close()
+
+	// Open a GET (SSE) connection with a short-lived context.
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "text/event-stream")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+
+	// Let the heartbeat tick at least once so that sessionRequestIDs is populated.
+	time.Sleep(150 * time.Millisecond)
+
+	countEntries := func() int {
+		n := 0
+		httpServer.sessionRequestIDs.Range(func(_, _ any) bool { n++; return true })
+		return n
+	}
+
+	require.Greater(t, countEntries(), 0, "sessionRequestIDs should have an entry while GET is open")
+
+	// Close the connection and wait for cleanup.
+	cancel()
+	resp.Body.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	assert.Equal(t, 0, countEntries(), "sessionRequestIDs should be empty after GET connection closes")
+}
