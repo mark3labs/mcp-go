@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"strconv"
 
-	"github.com/invopop/jsonschema"
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 var errToolSchemaConflict = errors.New("provide either InputSchema or RawInputSchema, not both")
@@ -843,24 +843,13 @@ func WithDeferLoading(deferLoading bool) ToolOption {
 // It accepts any Go type, usually a struct, and automatically generates a JSON schema from it.
 func WithInputSchema[T any]() ToolOption {
 	return func(t *Tool) {
-		var zero T
-
-		// Generate schema using invopop/jsonschema library
-		// Configure reflector to generate clean, MCP-compatible schemas
-		reflector := jsonschema.Reflector{
-			DoNotReference:            true, // Removes $defs map, outputs entire structure inline
-			Anonymous:                 true, // Hides auto-generated Schema IDs
-			AllowAdditionalProperties: true, // Removes additionalProperties: false
+		schema, err := jsonschema.For[T](&jsonschema.ForOptions{IgnoreInvalidTypes: true})
+		if err != nil {
+			return
 		}
-		schema := reflector.Reflect(zero)
 
-		// Clean up schema for MCP compliance
-		schema.Version = "" // Remove $schema field
-
-		// Convert to raw JSON for MCP
 		mcpSchema, err := json.Marshal(schema)
 		if err != nil {
-			// Skip and maintain backward compatibility
 			return
 		}
 
@@ -904,30 +893,17 @@ func WithRawInputSchema(schema json.RawMessage) ToolOption {
 // It accepts any Go type, usually a struct, and automatically generates a JSON schema from it.
 func WithOutputSchema[T any]() ToolOption {
 	return func(t *Tool) {
-		var zero T
-
-		// Generate schema using invopop/jsonschema library
-		// Configure reflector to generate clean, MCP-compatible schemas
-		reflector := jsonschema.Reflector{
-			DoNotReference:            true, // Removes $defs map, outputs entire structure inline
-			Anonymous:                 true, // Hides auto-generated Schema IDs
-			AllowAdditionalProperties: true, // Removes additionalProperties: false
-		}
-		schema := reflector.Reflect(zero)
-
-		// Clean up schema for MCP compliance
-		schema.Version = "" // Remove $schema field
-
-		// Convert to raw JSON for MCP
-		mcpSchema, err := json.Marshal(schema)
+		schema, err := jsonschema.For[T](&jsonschema.ForOptions{IgnoreInvalidTypes: true})
 		if err != nil {
-			// Skip and maintain backward compatibility
 			return
 		}
 
-		// Retrieve the schema from raw JSON
+		mcpSchema, err := json.Marshal(schema)
+		if err != nil {
+			return
+		}
+
 		if err := json.Unmarshal(mcpSchema, &t.OutputSchema); err != nil {
-			// Skip and maintain backward compatibility
 			return
 		}
 

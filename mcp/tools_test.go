@@ -635,9 +635,9 @@ func TestFlexibleArgumentsJSONMarshalUnmarshal(t *testing.T) {
 // generates an MCP-compatible JSON output schema for a tool
 func TestToolWithInputSchema(t *testing.T) {
 	type TestInput struct {
-		Name  string `json:"name" jsonschema_description:"Person's name" jsonschema:"required"`
-		Age   int    `json:"age" jsonschema_description:"Person's age"`
-		Email string `json:"email,omitempty" jsonschema_description:"Email address" jsonschema:"required"`
+		Name  string `json:"name" jsonschema:"Person's name"`
+		Age   int    `json:"age" jsonschema:"Person's age"`
+		Email string `json:"email,omitempty" jsonschema:"Email address"`
 	}
 
 	tool := NewTool("test_tool",
@@ -678,15 +678,41 @@ func TestToolWithInputSchema(t *testing.T) {
 	assert.Contains(t, propertiesMap, "name")
 	assert.Contains(t, propertiesMap, "age")
 	assert.Contains(t, propertiesMap, "email")
+
+	// Verify schema type is "object"
+	assert.Equal(t, "object", schemaMap["type"])
+
+	// Verify required field contents: name and age required, email (omitempty) not required
+	requiredSlice, ok := requiredList.([]any)
+	assert.True(t, ok)
+	assert.Contains(t, requiredSlice, "name")
+	assert.Contains(t, requiredSlice, "age")
+	assert.NotContains(t, requiredSlice, "email")
+
+	// Verify field descriptions match jsonschema tag values
+	nameProp, ok := propertiesMap["name"].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "Person's name", nameProp["description"])
+
+	ageProp, ok := propertiesMap["age"].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "Person's age", ageProp["description"])
+
+	emailProp, ok := propertiesMap["email"].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "Email address", emailProp["description"])
+
+	// Verify additionalProperties is false
+	assert.Equal(t, false, schemaMap["additionalProperties"])
 }
 
 // TestToolWithOutputSchema tests that the WithOutputSchema function
 // generates an MCP-compatible JSON output schema for a tool
 func TestToolWithOutputSchema(t *testing.T) {
 	type TestOutput struct {
-		Name  string `json:"name" jsonschema_description:"Person's name"`
-		Age   int    `json:"age" jsonschema_description:"Person's age"`
-		Email string `json:"email,omitempty" jsonschema_description:"Email address"`
+		Name  string `json:"name" jsonschema:"Person's name"`
+		Age   int    `json:"age" jsonschema:"Person's age"`
+		Email string `json:"email,omitempty" jsonschema:"Email address"`
 	}
 
 	tests := []struct {
@@ -728,6 +754,42 @@ func TestToolWithOutputSchema(t *testing.T) {
 			if tt.expectedOutputSchema {
 				assert.True(t, exists)
 				assert.NotNil(t, outputSchema)
+
+				outputSchemaMap, ok := outputSchema.(map[string]any)
+				assert.True(t, ok)
+
+				// Verify schema type is "object"
+				assert.Equal(t, "object", outputSchemaMap["type"])
+
+				// Verify properties exist
+				outputProps, ok := outputSchemaMap["properties"].(map[string]any)
+				assert.True(t, ok)
+				assert.Contains(t, outputProps, "name")
+				assert.Contains(t, outputProps, "age")
+				assert.Contains(t, outputProps, "email")
+
+				// Verify required field contents: name and age required, email (omitempty) not required
+				outputRequired, ok := outputSchemaMap["required"].([]any)
+				assert.True(t, ok)
+				assert.Contains(t, outputRequired, "name")
+				assert.Contains(t, outputRequired, "age")
+				assert.NotContains(t, outputRequired, "email")
+
+				// Verify field descriptions match jsonschema tag values
+				nameProp, ok := outputProps["name"].(map[string]any)
+				assert.True(t, ok)
+				assert.Equal(t, "Person's name", nameProp["description"])
+
+				ageProp, ok := outputProps["age"].(map[string]any)
+				assert.True(t, ok)
+				assert.Equal(t, "Person's age", ageProp["description"])
+
+				emailProp, ok := outputProps["email"].(map[string]any)
+				assert.True(t, ok)
+				assert.Equal(t, "Email address", emailProp["description"])
+
+				// Verify additionalProperties is false
+				assert.Equal(t, false, outputSchemaMap["additionalProperties"])
 			} else {
 				assert.False(t, exists)
 				assert.Nil(t, outputSchema)

@@ -9,41 +9,41 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// Note: The jsonschema_description tag is added to the JSON schema as description
+// Note: The jsonschema tag is added to the JSON schema as description
 // Ideally use better descriptions, this is just an example
 type WeatherRequest struct {
-	Location string `json:"location" jsonschema_description:"City or location" jsonschema:"required"`
-	Units    string `json:"units,omitempty" jsonschema_description:"celsius or fahrenheit" jsonschema:"enum=celsius,enum=fahrenheit"`
+	Location string `json:"location" jsonschema:"City or location"`
+	Units    string `json:"units,omitempty" jsonschema:"celsius or fahrenheit"`
 }
 
 type WeatherResponse struct {
-	Location    string    `json:"location" jsonschema_description:"Location"`
-	Temperature float64   `json:"temperature" jsonschema_description:"Temperature"`
-	Units       string    `json:"units" jsonschema_description:"Units"`
-	Conditions  string    `json:"conditions" jsonschema_description:"Weather conditions"`
-	Timestamp   time.Time `json:"timestamp" jsonschema_description:"When retrieved"`
+	Location    string    `json:"location" jsonschema:"Location"`
+	Temperature float64   `json:"temperature" jsonschema:"Temperature"`
+	Units       string    `json:"units" jsonschema:"Units"`
+	Conditions  string    `json:"conditions" jsonschema:"Weather conditions"`
+	Timestamp   time.Time `json:"timestamp" jsonschema:"When retrieved"`
 }
 
 type UserProfile struct {
-	ID    string   `json:"id" jsonschema_description:"User ID"`
-	Name  string   `json:"name" jsonschema_description:"Full name"`
-	Email string   `json:"email" jsonschema_description:"Email"`
-	Tags  []string `json:"tags" jsonschema_description:"User tags"`
+	ID    string   `json:"id" jsonschema:"User ID"`
+	Name  string   `json:"name" jsonschema:"Full name"`
+	Email string   `json:"email" jsonschema:"Email"`
+	Tags  []string `json:"tags" jsonschema:"User tags"`
 }
 
 type UserRequest struct {
-	UserID string `json:"userId" jsonschema_description:"User ID" jsonschema:"required"`
+	UserID string `json:"userId" jsonschema:"User ID"`
 }
 
 type Asset struct {
-	ID       string  `json:"id" jsonschema_description:"Asset identifier"`
-	Name     string  `json:"name" jsonschema_description:"Asset name"`
-	Value    float64 `json:"value" jsonschema_description:"Current value"`
-	Currency string  `json:"currency" jsonschema_description:"Currency code"`
+	ID       string  `json:"id" jsonschema:"Asset identifier"`
+	Name     string  `json:"name" jsonschema:"Asset name"`
+	Value    float64 `json:"value" jsonschema:"Current value"`
+	Currency string  `json:"currency" jsonschema:"Currency code"`
 }
 
 type AssetListRequest struct {
-	Limit int `json:"limit,omitempty" jsonschema_description:"Number of assets to return" jsonschema:"minimum=1,maximum=100,default=10"`
+	Limit int `json:"limit,omitempty" jsonschema:"Number of assets to return"`
 }
 
 func main() {
