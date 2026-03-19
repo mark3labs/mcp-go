@@ -1442,6 +1442,7 @@ func (s *MCPServer) handleToolCall(
 	// First check session-specific tools
 	var tool ServerTool
 	var ok bool
+	var taskToolOnly bool
 
 	session := ClientSessionFromContext(ctx)
 	if session != nil {
@@ -1470,6 +1471,7 @@ func (s *MCPServer) handleToolCall(
 					Handler: nil, // Handler will be used from taskTool in handleTaskAugmentedToolCall
 				}
 				ok = true
+				taskToolOnly = true
 			}
 		}
 		s.toolsMu.RUnlock()
@@ -1504,6 +1506,14 @@ func (s *MCPServer) handleToolCall(
 	if shouldExecuteAsTask {
 		// Route to task-augmented execution handler
 		return s.handleTaskAugmentedToolCall(ctx, id, request)
+	}
+
+	if taskToolOnly {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.METHOD_NOT_FOUND,
+			err:  fmt.Errorf("tool '%s' does not support synchronous execution", request.Params.Name),
+		}
 	}
 
 	finalHandler := tool.Handler
