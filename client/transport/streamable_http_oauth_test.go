@@ -218,3 +218,20 @@ func TestStreamableHTTP_IsOAuthEnabled(t *testing.T) {
 		t.Errorf("Expected IsOAuthEnabled() to return true")
 	}
 }
+
+func TestStreamableHTTP_WithOAuth_PreservesPathInBaseURL(t *testing.T) {
+	transport, err := NewStreamableHTTP("https://example.com/googledrive", WithHTTPOAuth(OAuthConfig{
+		ClientID: "test-client",
+	}))
+	if err != nil {
+		t.Fatalf("Failed to create StreamableHTTP: %v", err)
+	}
+
+	if transport.GetOAuthHandler() == nil {
+		t.Fatalf("Expected GetOAuthHandler() to return a handler")
+	}
+
+	if transport.GetOAuthHandler().baseURL != "https://example.com/googledrive" {
+		t.Errorf("Expected OAuth base URL to preserve path, got %q", transport.GetOAuthHandler().baseURL)
+	}
+}

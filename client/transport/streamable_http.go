@@ -162,8 +162,9 @@ func NewStreamableHTTP(serverURL string, options ...StreamableHTTPCOption) (*Str
 
 	// If OAuth is configured, set the base URL for metadata discovery
 	if smc.oauthHandler != nil {
-		// Extract base URL from server URL for metadata discovery
-		baseURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
+		parsedURL.RawQuery = ""
+		parsedURL.Fragment = ""
+		baseURL := parsedURL.String()
 		smc.oauthHandler.SetBaseURL(baseURL)
 	}
 
