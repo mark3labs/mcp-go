@@ -945,6 +945,50 @@ func TestOAuthHandler_GetServerMetadata_FallbackToDefaultEndpoints(t *testing.T)
 	}
 }
 
+func TestOAuthHandler_GetServerMetadata_PathAwareDiscovery(t *testing.T) {
+	protectedResourceRequested := false
+	authServerRequested := false
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource/googledrive":
+			protectedResourceRequested = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				AuthorizationServers: []string{server.URL + "/oauth/googledrive"},
+			})
+		case "/.well-known/oauth-authorization-server/oauth/googledrive":
+			authServerRequested = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(AuthServerMetadata{
+				Issuer:                server.URL + "/oauth/googledrive",
+				AuthorizationEndpoint: server.URL + "/oauth/googledrive/authorize",
+				TokenEndpoint:         server.URL + "/oauth/googledrive/token",
+				RegistrationEndpoint:  server.URL + "/oauth/googledrive/register",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost/callback",
+		TokenStore:  NewMemoryTokenStore(),
+	})
+	handler.SetBaseURL(server.URL + "/googledrive")
+
+	metadata, err := handler.GetServerMetadata(context.Background())
+	require.NoError(t, err)
+	assert.True(t, protectedResourceRequested)
+	assert.True(t, authServerRequested)
+	assert.Equal(t, server.URL+"/oauth/googledrive", metadata.Issuer)
+	assert.Equal(t, server.URL+"/oauth/googledrive/authorize", metadata.AuthorizationEndpoint)
+	assert.Equal(t, server.URL+"/oauth/googledrive/token", metadata.TokenEndpoint)
+}
+
 // TestOAuthHandler_RefreshToken_GitHubErrorIn200Response tests that we properly detect
 // GitHub's non-spec-compliant behavior of returning HTTP 200 with error details in the JSON body
 func TestOAuthHandler_RefreshToken_GitHubErrorIn200Response(t *testing.T) {

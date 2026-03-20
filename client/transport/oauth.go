@@ -375,8 +375,11 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 			return
 		}
 
-		// Try to fetch the OAuth Protected Resource metadata
-		protectedResourceURL := baseURL + "/.well-known/oauth-protected-resource"
+		protectedResourceURL, err := buildWellKnownURL(baseURL, "oauth-protected-resource")
+		if err != nil {
+			h.metadataFetchErr = fmt.Errorf("failed to build protected resource URL: %w", err)
+			return
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, protectedResourceURL, nil)
 		if err != nil {
 			h.metadataFetchErr = fmt.Errorf("failed to create protected resource request: %w", err)
@@ -395,7 +398,12 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 
 		// If we can't get the protected resource metadata, try OAuth Authorization Server discovery
 		if resp.StatusCode != http.StatusOK {
-			h.fetchMetadataFromURL(ctx, baseURL+"/.well-known/oauth-authorization-server")
+			authMetadataURL, err := buildWellKnownURL(baseURL, "oauth-authorization-server")
+			if err != nil {
+				h.metadataFetchErr = fmt.Errorf("failed to build authorization server metadata URL: %w", err)
+				return
+			}
+			h.fetchMetadataFromURL(ctx, authMetadataURL)
 			if h.serverMetadata != nil {
 				return
 			}
@@ -431,13 +439,23 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		authServerURL := protectedResource.AuthorizationServers[0]
 
 		// Try OAuth Authorization Server Metadata first
-		h.fetchMetadataFromURL(ctx, authServerURL+"/.well-known/oauth-authorization-server")
+		authMetadataURL, err := buildWellKnownURL(authServerURL, "oauth-authorization-server")
+		if err != nil {
+			h.metadataFetchErr = fmt.Errorf("failed to build authorization server metadata URL: %w", err)
+			return
+		}
+		h.fetchMetadataFromURL(ctx, authMetadataURL)
 		if h.serverMetadata != nil {
 			return
 		}
 
 		// If OAuth Authorization Server Metadata discovery fails, try OpenID Connect discovery
-		h.fetchMetadataFromURL(ctx, authServerURL+"/.well-known/openid-configuration")
+		openidMetadataURL, err := buildWellKnownURL(authServerURL, "openid-configuration")
+		if err != nil {
+			h.metadataFetchErr = fmt.Errorf("failed to build openid metadata URL: %w", err)
+			return
+		}
+		h.fetchMetadataFromURL(ctx, openidMetadataURL)
 		if h.serverMetadata != nil {
 			return
 		}
@@ -456,6 +474,25 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 	}
 
 	return h.serverMetadata, nil
+}
+
+func buildWellKnownURL(baseURL string, suffix string) (string, error) {
+	parsedURL, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse base URL: %w", err)
+	}
+
+	if parsedURL.Scheme == "" || parsedURL.Host == "" {
+		return "", fmt.Errorf("invalid base URL: missing scheme or host in %q", baseURL)
+	}
+
+	path := strings.TrimSuffix(parsedURL.EscapedPath(), "/")
+	root := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
+	if path == "" || path == "/" {
+		return root + "/.well-known/" + suffix, nil
+	}
+
+	return root + "/.well-known/" + suffix + path, nil
 }
 
 // fetchMetadataFromURL fetches and parses OAuth server metadata from a URL
