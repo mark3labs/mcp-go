@@ -129,6 +129,25 @@ func TestMCPServer_Capabilities(t *testing.T) {
 				assert.NotNil(t, initResult.Capabilities.Logging)
 			},
 		},
+		{
+			name: "Experimental capabilities",
+			options: []ServerOption{
+				WithExperimental(map[string]any{
+					"claude/channel": map[string]any{},
+				}),
+			},
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				assert.True(t, ok)
+
+				initResult, ok := resp.Result.(mcp.InitializeResult)
+				assert.True(t, ok)
+
+				assert.NotNil(t, initResult.Capabilities.Experimental)
+				_, hasChannel := initResult.Capabilities.Experimental["claude/channel"]
+				assert.True(t, hasChannel, "expected claude/channel in experimental capabilities")
+			},
+		},
 	}
 
 	for _, tt := range tests {

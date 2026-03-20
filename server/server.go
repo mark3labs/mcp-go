@@ -220,8 +220,9 @@ type serverCapabilities struct {
 	sampling    *bool
 	elicitation *bool
 	roots       *bool
-	tasks       *taskCapabilities
-	completions *bool
+	tasks        *taskCapabilities
+	completions  *bool
+	experimental map[string]any
 }
 
 // resourceCapabilities defines the supported resource-related features
@@ -441,6 +442,13 @@ func WithInstructions(instructions string) ServerOption {
 func WithCompletions() ServerOption {
 	return func(s *MCPServer) {
 		s.capabilities.completions = mcp.ToBoolPtr(true)
+	}
+}
+
+// WithExperimental sets experimental, non-standard capabilities on the server.
+func WithExperimental(experimental map[string]any) ServerOption {
+	return func(s *MCPServer) {
+		s.capabilities.experimental = experimental
 	}
 }
 
@@ -882,6 +890,10 @@ func (s *MCPServer) handleInitialize(
 
 	if s.capabilities.completions != nil && *s.capabilities.completions {
 		capabilities.Completions = &struct{}{}
+	}
+
+	if s.capabilities.experimental != nil {
+		capabilities.Experimental = s.capabilities.experimental
 	}
 
 	result := mcp.InitializeResult{
