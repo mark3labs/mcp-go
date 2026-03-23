@@ -57,33 +57,36 @@ func BenchmarkSessionRequestIDs_RetainedAfterClose(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		// Open a GET (SSE) connection and close it without sending DELETE.
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(b.Context())
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
 		if err != nil {
 			b.Fatalf("failed to create request: %v", err)
 		}
-		req.Header.Set("Content-Type", "text/event-stream")
+		req.Header.Set("Accept", "text/event-stream")
 
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			b.Fatalf("GET failed: %v", err)
 		}
 
-		// Let the heartbeat goroutine tick at least once so that
-		// nextRequestID populates sessionRequestIDs.
+		// Sleep ~3× the heartbeat interval (20 ms) to ensure the heartbeat
+		// goroutine has called nextRequestID and written to sessionRequestIDs.
+		// Fixed sleep is intentional here: require.Eventually would add
+		// synchronization overhead that skews the benchmark measurements.
 		time.Sleep(60 * time.Millisecond)
 
 		cancel()
 		_ = resp.Body.Close()
 
-		// Give the server goroutine time to run the deferred cleanup.
+		// Give the server goroutine a generous window to execute the deferred
+		// sessionRequestIDs.Delete before the next iteration measures the map.
 		time.Sleep(30 * time.Millisecond)
 	}
 
 	b.StopTimer()
 
 	// Force several GC cycles to reclaim anything that can be reclaimed.
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		runtime.GC()
 	}
 
@@ -98,10 +101,7 @@ func BenchmarkSessionRequestIDs_RetainedAfterClose(b *testing.B) {
 	})
 
 	// HeapInuse can decrease between GC cycles; clamp negative delta to 0.
-	retainedBytes := int64(after.HeapInuse) - int64(before.HeapInuse)
-	if retainedBytes < 0 {
-		retainedBytes = 0
-	}
+	retainedBytes := max(int64(after.HeapInuse)-int64(before.HeapInuse), 0)
 
 	b.ReportMetric(float64(retained), "map_entries_retained")
 	b.ReportMetric(float64(retainedBytes)/float64(b.N), "retained_heap_bytes/op")
