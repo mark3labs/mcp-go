@@ -1439,6 +1439,9 @@ type TaskParams struct {
 type CreateTaskResult struct {
 	Result
 	Task Task `json:"task"`
+	Content []Content `json:"-"`
+	StructuredContent any `json:"-"`
+	IsError bool `json:"-"`
 }
 
 // GetTaskRequest retrieves the current status of a task.

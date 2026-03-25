@@ -1968,28 +1968,36 @@ func (s *MCPServer) handleTaskResult(
 		},
 	}
 
-	// If the stored result is a CallToolResult, extract its fields
-	if callToolResult, ok := storedResult.(*mcp.CallToolResult); ok {
-		result.Content = callToolResult.Content
-		result.StructuredContent = callToolResult.StructuredContent
-		result.IsError = callToolResult.IsError
-
-		// Merge any meta from the original result with the related task meta
-		if callToolResult.Meta != nil {
-			if result.Meta.AdditionalFields == nil {
-				result.Meta.AdditionalFields = make(map[string]any)
-			}
-			// Copy over any additional fields from the original result
-			for k, v := range callToolResult.Meta.AdditionalFields {
-				// Don't overwrite the related task meta
-				if k != mcp.RelatedTaskMetaKey {
-					result.Meta.AdditionalFields[k] = v
-				}
-			}
-		}
+	switch taskResult := storedResult.(type) {
+	case *mcp.CallToolResult:
+		result.Content = taskResult.Content
+		result.StructuredContent = taskResult.StructuredContent
+		result.IsError = taskResult.IsError
+		mergeTaskResultMeta(result, taskResult.Meta)
+	case *mcp.CreateTaskResult:
+		result.Content = taskResult.Content
+		result.StructuredContent = taskResult.StructuredContent
+		result.IsError = taskResult.IsError
+		mergeTaskResultMeta(result, taskResult.Meta)
 	}
 
 	return result, nil
+}
+
+func mergeTaskResultMeta(result *mcp.TaskResultResult, meta *mcp.Meta) {
+	if meta == nil {
+		return
+	}
+
+	if result.Meta.AdditionalFields == nil {
+		result.Meta.AdditionalFields = make(map[string]any)
+	}
+
+	for k, v := range meta.AdditionalFields {
+		if k != mcp.RelatedTaskMetaKey {
+			result.Meta.AdditionalFields[k] = v
+		}
+	}
 }
 
 // handleCancelTask handles tasks/cancel requests to cancel a task.
