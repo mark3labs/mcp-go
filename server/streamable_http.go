@@ -479,8 +479,14 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	// Process message through MCPServer
 	response := s.server.HandleMessage(ctx, rawData)
 	if response == nil {
-		// For notifications, just send 202 Accepted with no body
-		w.WriteHeader(http.StatusAccepted)
+		mu.Lock()
+		close(done)
+		if !upgradedHeader {
+			mu.Unlock()
+			w.WriteHeader(http.StatusAccepted)
+		} else {
+			mu.Unlock()
+		}
 		return
 	}
 

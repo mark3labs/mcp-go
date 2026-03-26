@@ -2840,3 +2840,36 @@ func TestStreamableHTTP_SessionIdleTTLSweeper(t *testing.T) {
 		assert.False(t, hasActiveSession, "activeSessions should be cleaned after DELETE")
 	})
 }
+
+func TestStreamableHTTPNotificationRace(t *testing.T) {
+	s := NewMCPServer("test-server", "1.0")
+	s.AddNotificationHandler("notifications/initialized", func(ctx context.Context, _ mcp.JSONRPCNotification) {
+		session := ClientSessionFromContext(ctx)
+		session.NotificationChannel() <- mcp.JSONRPCNotification{
+			JSONRPC:      mcp.JSONRPC_VERSION,
+			Notification: mcp.Notification{Method: "server/ping"},
+		}
+	})
+
+	hs := NewStreamableHTTPServer(s,
+		WithSessionIdManager(&StatelessSessionIdManager{}),
+	)
+
+	ts := httptest.NewServer(hs)
+	defer ts.Close()
+
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+	body := `{"jsonrpc":"2.0","method":"notifications/initialized"}`
+
+	for i := range 200 {
+		resp, err := client.Post(ts.URL+"/mcp", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("iteration %d: %v", i, err)
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+			t.Fatalf("iteration %d: expected 200 or 202, got %d", i, resp.StatusCode)
+		}
+	}
+}
