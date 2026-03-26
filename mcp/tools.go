@@ -636,7 +636,12 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 		m["outputSchema"] = t.OutputSchema
 	}
 
-	m["annotations"] = t.Annotations
+	// Only include annotations when explicitly set (non-default values)
+	if t.Annotations.Title != "" || t.Annotations.ReadOnlyHint != nil ||
+		t.Annotations.DestructiveHint != nil || t.Annotations.IdempotentHint != nil ||
+		t.Annotations.OpenWorldHint != nil {
+		m["annotations"] = t.Annotations
+	}
 
 	if t.DeferLoading {
 		m["defer_loading"] = t.DeferLoading
