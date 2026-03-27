@@ -4227,3 +4227,35 @@ func TestMCPServer_Use_ConcurrentSafe(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestMCPServer_Use_MiddlewareAppliedToRegularToolAsTask(t *testing.T) {
+	// executeRegularToolAsTask runs in a goroutine; use a channel to confirm
+	// the middleware ran before the test exits.
+	mwCalled := make(chan struct{}, 1)
+	countingMW := func(next ToolHandlerFunc) ToolHandlerFunc {
+		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			mwCalled <- struct{}{}
+			return next(ctx, req)
+		}
+	}
+
+	s := NewMCPServer("test", "1.0.0")
+	tool := mcp.NewTool("hybrid_tool",
+		mcp.WithDescription("hybrid"),
+		mcp.WithTaskSupport(mcp.TaskSupportOptional),
+	)
+	s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("ok"), nil
+	})
+	s.Use(countingMW)
+
+	// task param causes handleToolCall to route into executeRegularToolAsTask
+	s.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"hybrid_tool","task":{"ttl":3600}}}`)) //nolint:lll
+
+	select {
+	case <-mwCalled:
+		// middleware ran in executeRegularToolAsTask path — pass
+	case <-time.After(2 * time.Second):
+		t.Fatal("middleware was not called within executeRegularToolAsTask")
+	}
+}
