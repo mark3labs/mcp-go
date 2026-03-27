@@ -31,14 +31,17 @@ import (
 // until the request context is canceled.
 type h2BodySimulator struct {
 	data   io.Reader
+	reader *blockingSSEReader
 	readCh chan struct{} // closed on first Close() to unblock pending reads
 	reqCtx context.Context
 	once   sync.Once
 }
 
 func newH2BodySimulator(reqCtx context.Context, ssePayload []byte) *h2BodySimulator {
+	reader := newBlockingSSEReader(ssePayload)
 	return &h2BodySimulator{
-		data:   newBlockingSSEReader(ssePayload),
+		data:   reader,
+		reader: reader,
 		readCh: make(chan struct{}),
 		reqCtx: reqCtx,
 	}
@@ -57,7 +60,10 @@ func (b *h2BodySimulator) Read(p []byte) (int, error) {
 
 func (b *h2BodySimulator) Close() error {
 	// Unblock any pending Read() — mirrors bufPipe.BreakWithError in real HTTP/2.
-	b.once.Do(func() { close(b.readCh) })
+	b.once.Do(func() {
+		close(b.readCh)
+		close(b.reader.done)
+	})
 
 	// Simulate the blocking select in http2.transportResponseBody.Close():
 	//   select {
@@ -75,20 +81,23 @@ func (b *h2BodySimulator) Close() error {
 	return nil
 }
 
-// blockingSSEReader is an io.Reader that returns SSE data then blocks forever.
+// blockingSSEReader is an io.Reader that returns SSE data then blocks until
+// its done channel is closed (simulating an open SSE stream).
 type blockingSSEReader struct {
 	buf    []byte
 	offset int
+	done   chan struct{}
 }
 
 func newBlockingSSEReader(data []byte) *blockingSSEReader {
-	return &blockingSSEReader{buf: data}
+	return &blockingSSEReader{buf: data, done: make(chan struct{})}
 }
 
 func (r *blockingSSEReader) Read(p []byte) (int, error) {
 	if r.offset >= len(r.buf) {
-		// All data consumed; block forever (the stream stays open).
-		select {}
+		// All data consumed; block until done is closed.
+		<-r.done
+		return 0, io.EOF
 	}
 	n := copy(p, r.buf[r.offset:])
 	r.offset += n
