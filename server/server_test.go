@@ -4163,3 +4163,67 @@ func TestServerTaskTool_TypeDefinitions(t *testing.T) {
 		assert.Equal(t, 0, len(server.taskTools))
 	})
 }
+
+func TestMCPServer_Use_AppliesMiddlewareToToolCall(t *testing.T) {
+	called := 0
+	countingMW := func(next ToolHandlerFunc) ToolHandlerFunc {
+		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			called++
+			return next(ctx, req)
+		}
+	}
+
+	s := NewMCPServer("test", "1.0.0")
+	s.AddTool(mcp.NewTool("echo"), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("ok"), nil
+	})
+	s.Use(countingMW)
+
+	resp := s.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{}}}`)) //nolint:lll
+	_, ok := resp.(mcp.JSONRPCResponse)
+	require.True(t, ok)
+	assert.Equal(t, 1, called)
+}
+
+func TestMCPServer_Use_MultipleMiddlewaresExecuteInOrder(t *testing.T) {
+	var order []string
+	make := func(label string) ToolHandlerMiddleware {
+		return func(next ToolHandlerFunc) ToolHandlerFunc {
+			return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				order = append(order, label)
+				return next(ctx, req)
+			}
+		}
+	}
+
+	s := NewMCPServer("test", "1.0.0")
+	s.AddTool(mcp.NewTool("echo"), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("ok"), nil
+	})
+	s.Use(make("first"), make("second"))
+
+	resp := s.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{}}}`)) //nolint:lll
+	_, ok := resp.(mcp.JSONRPCResponse)
+	require.True(t, ok)
+	// first registered runs outermost, so executes first
+	assert.Equal(t, []string{"first", "second"}, order)
+}
+
+func TestMCPServer_Use_ConcurrentSafe(t *testing.T) {
+	s := NewMCPServer("test", "1.0.0")
+	s.AddTool(mcp.NewTool("echo"), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("ok"), nil
+	})
+
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.Use(func(next ToolHandlerFunc) ToolHandlerFunc {
+				return next
+			})
+		}()
+	}
+	wg.Wait()
+}

@@ -296,6 +296,14 @@ func WithToolHandlerMiddleware(
 	}
 }
 
+// Use adds one or more tool handler middlewares to the server.
+// Middleware is applied in the order added (outermost first), matching net/http convention.
+func (s *MCPServer) Use(mw ...ToolHandlerMiddleware) {
+	s.toolMiddlewareMu.Lock()
+	s.toolHandlerMiddlewares = append(s.toolHandlerMiddlewares, mw...)
+	s.toolMiddlewareMu.Unlock()
+}
+
 // WithResourceHandlerMiddleware allows adding a middleware for the
 // resource handler call chain.
 func WithResourceHandlerMiddleware(
@@ -1787,8 +1795,17 @@ func (s *MCPServer) executeRegularToolAsTask(
 	entry.cancelFunc = cancel
 	s.tasksMu.Unlock()
 
-	// Execute the regular tool handler
-	result, err := regularTool.Handler(taskCtx, request)
+	// Execute the regular tool handler with middleware applied
+	finalHandler := regularTool.Handler
+
+	s.toolMiddlewareMu.RLock()
+	mw := s.toolHandlerMiddlewares
+	for i := len(mw) - 1; i >= 0; i-- {
+		finalHandler = mw[i](finalHandler)
+	}
+	s.toolMiddlewareMu.RUnlock()
+
+	result, err := finalHandler(taskCtx, request)
 
 	if err != nil {
 		// If the error is due to context cancellation, don't mark as failed.
