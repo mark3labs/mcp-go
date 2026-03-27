@@ -272,10 +272,10 @@ func (c *StreamableHTTP) SendRequest(
 	}
 
 	ctx, cancel := c.contextAwareOfClientClose(ctx)
-	defer cancel()
 
 	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream", request.Header)
 	if err != nil {
+		cancel()
 		if errors.Is(err, ErrSessionTerminated) && request.Method == string(mcp.MethodInitialize) {
 			// Per the MCP spec's backwards compatibility section: a 404 on an
 			// initialize POST means the server likely only supports legacy SSE.
@@ -286,9 +286,14 @@ func (c *StreamableHTTP) SendRequest(
 
 	// Only proceed if we have a valid response.
 	if resp == nil {
+		cancel()
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+	// Cancel the context before closing the body. On HTTP/2, Close() blocks in a
+	// select on cs.donec (stream cleanup) or cs.ctx.Done() (context cancellation).
+	// If cc.wmu is contended, cs.donec may never close, making ctx.Done() the only
+	// exit path. Canceling first guarantees Close() returns promptly.
+	defer func() { cancel(); resp.Body.Close() }()
 
 	// Check if we got an error response
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
@@ -571,13 +576,13 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 
 	// Create HTTP request
 	ctx, cancel := c.contextAwareOfClientClose(ctx)
-	defer cancel()
 
 	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream", nil)
 	if err != nil {
+		cancel()
 		return fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { cancel(); resp.Body.Close() }()
 
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusAccepted, http.StatusNoContent:
@@ -785,14 +790,14 @@ func (c *StreamableHTTP) sendResponseToServer(ctx context.Context, response *JSO
 	}
 
 	ctx, cancel := c.contextAwareOfClientClose(ctx)
-	defer cancel()
 
 	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(responseBody), "application/json, text/event-stream", nil)
 	if err != nil {
+		cancel()
 		c.logger.Errorf("failed to send response to server: %v", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { cancel(); resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		body, _ := io.ReadAll(resp.Body)
