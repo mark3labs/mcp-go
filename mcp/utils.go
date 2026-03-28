@@ -1113,7 +1113,7 @@ func ParseListTasksResult(rawMessage *json.RawMessage) (*ListTasksResult, error)
 	nextCursor, ok := jsonContent["nextCursor"]
 	if ok {
 		if cursor, ok := nextCursor.(Cursor); ok {
-			listTasksResult.PaginatedResult.NextCursor = cursor
+			listTasksResult.NextCursor = cursor
 		}
 	}
 
@@ -1141,9 +1141,21 @@ func ParseTaskResultResult(rawMessage *json.RawMessage) (*TaskResultResult, erro
 
 	result, ok := jsonContent["result"]
 	if ok {
-		if resultResultStruct, ok := result.(TaskResultResult); ok {
-			resultResult.Content = resultResultStruct.Content
-			resultResult.IsError = resultResultStruct.IsError
+		if resultMap, ok := result.(map[string]any); ok {
+			if isError, ok := resultMap["isError"].(bool); ok {
+				resultResult.IsError = isError
+			}
+			if contents, ok := resultMap["content"].([]any); ok {
+				for _, content := range contents {
+					if contentMap, ok := content.(map[string]any); ok {
+						parsedContent, err := ParseContent(contentMap)
+						if err != nil {
+							return nil, err
+						}
+						resultResult.Content = append(resultResult.Content, parsedContent)
+					}
+				}
+			}
 		}
 	}
 
