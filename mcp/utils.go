@@ -997,3 +997,179 @@ func GetTextFromContent(content any) string {
 		return fmt.Sprintf("%v", content)
 	}
 }
+
+// jsonToTask convert json content to GetTaskResult structure
+func jsonToTask(jsonContent map[string]any, result *GetTaskResult) {
+	taskId, ok := jsonContent["taskId"]
+	if ok {
+		if taskIdStr, ok := taskId.(string); ok {
+			result.TaskId = taskIdStr
+		}
+	}
+
+	taskStatus, ok := jsonContent["status"]
+	if ok {
+		if taskStatusStr, ok := taskStatus.(string); ok {
+			result.Status = TaskStatus(taskStatusStr)
+		}
+	}
+
+	taskStatusMessage, ok := jsonContent["StatusMessage"]
+	if ok {
+		if taskStatusMessageStr, ok := taskStatusMessage.(string); ok {
+			result.StatusMessage = taskStatusMessageStr
+		}
+	}
+
+	createdAt, ok := jsonContent["createdAt"]
+	if ok {
+		if createdAtStr, ok := createdAt.(string); ok {
+			result.CreatedAt = createdAtStr
+		}
+	}
+
+	lastUpdatedAt, ok := jsonContent["lastUpdatedAt"]
+	if ok {
+		if lastUpdatedAtStr, ok := lastUpdatedAt.(string); ok {
+			result.LastUpdatedAt = lastUpdatedAtStr
+		}
+	}
+
+	ttl, ok := jsonContent["ttl"]
+	if ok {
+		if ttlFloat, ok := ttl.(float64); ok {
+			ttlInt64 := int64(ttlFloat)
+			result.TTL = &ttlInt64
+		}
+	}
+
+	pollInterval, ok := jsonContent["pollInterval"]
+	if ok {
+		if pollIntervalFloat64, ok := pollInterval.(float64); ok {
+			pollIntervalInt := int64(pollIntervalFloat64)
+			result.PollInterval = &pollIntervalInt
+		}
+	}
+}
+
+// ParseCancelTaskResult parse json message and convert to CancelTaskResult structure
+func ParseCancelTaskResult(rawMessage *json.RawMessage) (*CancelTaskResult, error) {
+	if rawMessage == nil {
+		return nil, fmt.Errorf("response is nil")
+	}
+
+	var jsonContent map[string]any
+	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	convertResult := GetTaskResult{}
+	jsonToTask(jsonContent, &convertResult)
+	cancelResult := CancelTaskResult(convertResult)
+
+	meta, ok := jsonContent["_meta"]
+	if ok {
+		if metaMap, ok := meta.(map[string]any); ok {
+			cancelResult.Meta = NewMetaFromMap(metaMap)
+		}
+	}
+
+	return &cancelResult, nil
+}
+
+// ParseListTasksResult parse json message and convert to ListTasksResult structure
+func ParseListTasksResult(rawMessage *json.RawMessage) (*ListTasksResult, error) {
+	if rawMessage == nil {
+		return nil, fmt.Errorf("response is nil")
+	}
+
+	var jsonContent map[string]any
+	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	listTasksResult := ListTasksResult{}
+
+	meta, ok := jsonContent["_meta"]
+	if ok {
+		if metaMap, ok := meta.(map[string]any); ok {
+			listTasksResult.Meta = NewMetaFromMap(metaMap)
+		}
+	}
+
+	tasks, ok := jsonContent["tasks"]
+	if ok {
+		if taskArr, ok := tasks.([]any); ok {
+			for _, task := range taskArr {
+				if taskJsonContent, ok := task.(map[string]any); ok {
+					getTaskResult := GetTaskResult{}
+					jsonToTask(taskJsonContent, &getTaskResult)
+					listTasksResult.Tasks = append(listTasksResult.Tasks, getTaskResult.Task)
+				}
+			}
+		}
+	}
+
+	nextCursor, ok := jsonContent["nextCursor"]
+	if ok {
+		if cursor, ok := nextCursor.(Cursor); ok {
+			listTasksResult.PaginatedResult.NextCursor = cursor
+		}
+	}
+
+	return &listTasksResult, nil
+}
+
+// ParseTaskResultResult parse json message and convert to TaskResultResult structure
+func ParseTaskResultResult(rawMessage *json.RawMessage) (*TaskResultResult, error) {
+	if rawMessage == nil {
+		return nil, fmt.Errorf("response is nil")
+	}
+
+	var jsonContent map[string]any
+	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	resultResult := TaskResultResult{}
+	meta, ok := jsonContent["_meta"]
+	if ok {
+		if metaMap, ok := meta.(map[string]any); ok {
+			resultResult.Meta = NewMetaFromMap(metaMap)
+		}
+	}
+
+	result, ok := jsonContent["result"]
+	if ok {
+		if resultResultStruct, ok := result.(TaskResultResult); ok {
+			resultResult.Content = resultResultStruct.Content
+			resultResult.IsError = resultResultStruct.IsError
+		}
+	}
+
+	return &resultResult, nil
+}
+
+// ParseGetTaskResult parse json message and convert to GetTaskResult structure
+func ParseGetTaskResult(rawMessage *json.RawMessage) (*GetTaskResult, error) {
+	if rawMessage == nil {
+		return nil, fmt.Errorf("response is nil")
+	}
+
+	var jsonContent map[string]any
+	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	result := GetTaskResult{}
+	meta, ok := jsonContent["_meta"]
+	if ok {
+		if metaMap, ok := meta.(map[string]any); ok {
+			result.Meta = NewMetaFromMap(metaMap)
+		}
+	}
+
+	jsonToTask(jsonContent, &result)
+
+	return &result, nil
+}
