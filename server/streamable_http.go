@@ -18,6 +18,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/util"
 )
@@ -367,7 +368,7 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	if isSamplingResponse {
 		if err := s.handleSamplingResponse(w, r, jsonMessage); err != nil {
 			s.logger.Errorf("Failed to handle sampling response: %v", err)
-			http.Error(w, "Failed to handle sampling response", http.StatusInternalServerError)
+			// HTTP Status code is already set in handleSamplingResponse, just return here
 		}
 		return
 	}
@@ -816,9 +817,9 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w http.ResponseWriter, r *
 
 	// Find the corresponding session and deliver the response
 	// The response is delivered to the specific session identified by sessionID
-	if err := s.deliverSamplingResponse(sessionID, response); err != nil {
+	if err := s.deliverSamplingResponse(w, sessionID, response); err != nil {
 		s.logger.Errorf("Failed to deliver sampling response: %v", err)
-		http.Error(w, "Failed to deliver response", http.StatusInternalServerError)
+		// HTTP Status code is already set in deliverSamplingResponse, just return here
 		return err
 	}
 
@@ -827,27 +828,32 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w http.ResponseWriter, r *
 	return nil
 }
 
-// deliverSamplingResponse delivers a sampling response to the appropriate session
-func (s *StreamableHTTPServer) deliverSamplingResponse(sessionID string, response samplingResponseItem) error {
+// deliverSamplingResponse delivers a sampling response to the appropriate session.
+// On failure it writes the HTTP error status directly to w.
+func (s *StreamableHTTPServer) deliverSamplingResponse(w http.ResponseWriter, sessionID string, response samplingResponseItem) error {
 	// Look up the active session
 	sessionInterface, ok := s.activeSessions.Load(sessionID)
 	if !ok {
+		http.Error(w, "No active session found for the given session ID", http.StatusBadRequest)
 		return fmt.Errorf("no active session found for session %s", sessionID)
 	}
 
 	session, ok := sessionInterface.(*streamableHttpSession)
 	if !ok {
+		http.Error(w, "Invalid session type for the given session ID", http.StatusBadRequest)
 		return fmt.Errorf("invalid session type for session %s", sessionID)
 	}
 
 	// Look up the dedicated response channel for this specific request
 	responseChannelInterface, exists := session.samplingRequests.Load(response.requestID)
 	if !exists {
+		http.Error(w, "No pending sampling request found for the given request ID", http.StatusBadRequest)
 		return fmt.Errorf("no pending request found for session %s, request %d", sessionID, response.requestID)
 	}
 
 	responseChan, ok := responseChannelInterface.(chan samplingResponseItem)
 	if !ok {
+		http.Error(w, "Failed to deliver response", http.StatusInternalServerError)
 		return fmt.Errorf("invalid response channel type for session %s, request %d", sessionID, response.requestID)
 	}
 
@@ -857,6 +863,7 @@ func (s *StreamableHTTPServer) deliverSamplingResponse(sessionID string, respons
 		s.logger.Infof("Delivered sampling response for session %s, request %d", sessionID, response.requestID)
 		return nil
 	default:
+		http.Error(w, "Failed to deliver response", http.StatusInternalServerError)
 		return fmt.Errorf("failed to deliver sampling response for session %s, request %d: channel full or blocked", sessionID, response.requestID)
 	}
 }
