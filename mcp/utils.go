@@ -1014,7 +1014,7 @@ func jsonToTask(jsonContent map[string]any, result *GetTaskResult) {
 		}
 	}
 
-	taskStatusMessage, ok := jsonContent["StatusMessage"]
+	taskStatusMessage, ok := jsonContent["statusMessage"]
 	if ok {
 		if taskStatusMessageStr, ok := taskStatusMessage.(string); ok {
 			result.StatusMessage = taskStatusMessageStr
@@ -1052,7 +1052,7 @@ func jsonToTask(jsonContent map[string]any, result *GetTaskResult) {
 	}
 }
 
-// ParseCancelTaskResult parse json message and convert to CancelTaskResult structure
+// ParseCancelTaskResult parses a JSON message and converts it to a CancelTaskResult.
 func ParseCancelTaskResult(rawMessage *json.RawMessage) (*CancelTaskResult, error) {
 	if rawMessage == nil {
 		return nil, fmt.Errorf("response is nil")
@@ -1077,7 +1077,7 @@ func ParseCancelTaskResult(rawMessage *json.RawMessage) (*CancelTaskResult, erro
 	return &cancelResult, nil
 }
 
-// ParseListTasksResult parse json message and convert to ListTasksResult structure
+// ParseListTasksResult parses a JSON message and converts it to a ListTasksResult.
 func ParseListTasksResult(rawMessage *json.RawMessage) (*ListTasksResult, error) {
 	if rawMessage == nil {
 		return nil, fmt.Errorf("response is nil")
@@ -1112,15 +1112,15 @@ func ParseListTasksResult(rawMessage *json.RawMessage) (*ListTasksResult, error)
 
 	nextCursor, ok := jsonContent["nextCursor"]
 	if ok {
-		if cursor, ok := nextCursor.(Cursor); ok {
-			listTasksResult.NextCursor = cursor
+		if cursorStr, ok := nextCursor.(string); ok {
+			listTasksResult.NextCursor = Cursor(cursorStr)
 		}
 	}
 
 	return &listTasksResult, nil
 }
 
-// ParseTaskResultResult parse json message and convert to TaskResultResult structure
+// ParseTaskResultResult parses a JSON message and converts it to a TaskResultResult.
 func ParseTaskResultResult(rawMessage *json.RawMessage) (*TaskResultResult, error) {
 	if rawMessage == nil {
 		return nil, fmt.Errorf("response is nil")
@@ -1162,7 +1162,7 @@ func ParseTaskResultResult(rawMessage *json.RawMessage) (*TaskResultResult, erro
 	return &resultResult, nil
 }
 
-// ParseGetTaskResult parse json message and convert to GetTaskResult structure
+// ParseGetTaskResult parses a JSON message and converts it to a GetTaskResult.
 func ParseGetTaskResult(rawMessage *json.RawMessage) (*GetTaskResult, error) {
 	if rawMessage == nil {
 		return nil, fmt.Errorf("response is nil")
