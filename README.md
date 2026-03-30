@@ -645,6 +645,9 @@ For examples, see the [`examples/`](examples/) directory.
 
 Key examples include:
 - [`examples/task_tool/`](examples/task_tool/) - Demonstrates task-augmented tools with TaskSupportRequired and TaskSupportOptional modes
+- [`examples/structured_input_and_output/`](examples/structured_input_and_output/) - Shows how to use struct-based input/output schemas with type-safe tool handlers
+- [`examples/typed_tools/`](examples/typed_tools/) - Demonstrates type-safe tool handlers with strongly-typed arguments
+- [`examples/custom_context/`](examples/custom_context/) - Shows how to use custom contexts in tool handlers
 - Additional examples covering resources, prompts, and more in the examples directory
 
 ## Extras
