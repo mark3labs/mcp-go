@@ -57,7 +57,7 @@ func BenchmarkSessionRequestIDs_RetainedAfterClose(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		// Open a GET (SSE) connection and close it without sending DELETE.
-		ctx, cancel := context.WithCancel(b.Context())
+		ctx, cancel := context.WithCancel(context.Background())
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
 		if err != nil {
 			b.Fatalf("failed to create request: %v", err)

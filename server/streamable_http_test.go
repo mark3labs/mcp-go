@@ -2886,7 +2886,7 @@ func TestStreamableHTTP_SessionRequestIDs_CleanedOnGetClose(t *testing.T) {
 	defer ts.Close()
 
 	// Open a GET (SSE) connection with a short-lived context.
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx, cancel := context.WithCancel(context.Background())
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "text/event-stream")
