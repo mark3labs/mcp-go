@@ -665,7 +665,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - uses: aak204/MCP-Trust-Kit@v0.4.0
+      - uses: aak204/MCP-Trust-Kit@5d37f99e3cdfd703e4fe75aa88969475d1970e28
         with:
           cmd: go run ./cmd/your-server
           sarif-out: mcp-trust.sarif
