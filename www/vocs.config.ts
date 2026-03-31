@@ -59,6 +59,10 @@ export default defineConfig({
           link: '/servers/elicitation',
         },
         {
+          text: 'Middleware',
+          link: '/servers/middleware',
+        },
+        {
           text: 'Advanced Features',
           link: '/servers/advanced',
         },
