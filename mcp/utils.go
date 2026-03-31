@@ -581,6 +581,9 @@ func ExtractMap(data map[string]any, key string) map[string]any {
 	return nil
 }
 
+// ParseContent parses a generic map into a strongly-typed Content value.
+// It extracts annotations and _meta fields from the map and sets them on
+// the returned content type.
 func ParseContent(contentMap map[string]any) (Content, error) {
 	contentType := ExtractString(contentMap, "type")
 
@@ -589,11 +592,17 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		annotations = ParseAnnotations(annotationsMap)
 	}
 
+	var meta *Meta
+	if metaMap := ExtractMap(contentMap, "_meta"); metaMap != nil {
+		meta = NewMetaFromMap(metaMap)
+	}
+
 	switch contentType {
 	case ContentTypeText:
 		text := ExtractString(contentMap, "text")
 		c := NewTextContent(text)
 		c.Annotations = annotations
+		c.Meta = meta
 		return c, nil
 
 	case ContentTypeImage:
@@ -604,6 +613,7 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		}
 		c := NewImageContent(data, mimeType)
 		c.Annotations = annotations
+		c.Meta = meta
 		return c, nil
 
 	case ContentTypeAudio:
@@ -614,6 +624,7 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		}
 		c := NewAudioContent(data, mimeType)
 		c.Annotations = annotations
+		c.Meta = meta
 		return c, nil
 
 	case ContentTypeLink:
@@ -641,6 +652,7 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 
 		c := NewEmbeddedResource(resourceContents)
 		c.Annotations = annotations
+		c.Meta = meta
 		return c, nil
 	}
 

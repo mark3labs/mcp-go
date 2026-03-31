@@ -301,6 +301,120 @@ func TestParseContent(t *testing.T) {
 			expected:    nil,
 			expectError: true,
 		},
+		{
+			name: "text content with _meta",
+			contentMap: map[string]any{
+				"type": "text",
+				"text": "Hello, world!",
+				"_meta": map[string]any{
+					"source_url": "https://example.com",
+				},
+			},
+			expected: TextContent{
+				Type: ContentTypeText,
+				Text: "Hello, world!",
+				Meta: &Meta{
+					AdditionalFields: map[string]any{
+						"source_url": "https://example.com",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "image content with _meta",
+			contentMap: map[string]any{
+				"type":     "image",
+				"data":     "base64data",
+				"mimeType": "image/png",
+				"_meta": map[string]any{
+					"source": "camera",
+				},
+			},
+			expected: ImageContent{
+				Type:     ContentTypeImage,
+				Data:     "base64data",
+				MIMEType: "image/png",
+				Meta: &Meta{
+					AdditionalFields: map[string]any{
+						"source": "camera",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "audio content with _meta",
+			contentMap: map[string]any{
+				"type":     "audio",
+				"data":     "base64data",
+				"mimeType": "audio/mp3",
+				"_meta": map[string]any{
+					"duration": 120.5,
+				},
+			},
+			expected: AudioContent{
+				Type:     ContentTypeAudio,
+				Data:     "base64data",
+				MIMEType: "audio/mp3",
+				Meta: &Meta{
+					AdditionalFields: map[string]any{
+						"duration": 120.5,
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "embedded resource with _meta",
+			contentMap: map[string]any{
+				"type": "resource",
+				"resource": map[string]any{
+					"uri":      "file:///test.txt",
+					"mimeType": "text/plain",
+					"text":     "Hello, world!",
+				},
+				"_meta": map[string]any{
+					"version": "1.0",
+				},
+			},
+			expected: EmbeddedResource{
+				Type: ContentTypeResource,
+				Resource: TextResourceContents{
+					URI:      "file:///test.txt",
+					MIMEType: "text/plain",
+					Text:     "Hello, world!",
+				},
+				Meta: &Meta{
+					AdditionalFields: map[string]any{
+						"version": "1.0",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "text content with _meta containing progressToken",
+			contentMap: map[string]any{
+				"type": "text",
+				"text": "data",
+				"_meta": map[string]any{
+					"progressToken": "tok-123",
+					"custom_field":  "value",
+				},
+			},
+			expected: TextContent{
+				Type: ContentTypeText,
+				Text: "data",
+				Meta: &Meta{
+					ProgressToken: "tok-123",
+					AdditionalFields: map[string]any{
+						"custom_field": "value",
+					},
+				},
+			},
+			expectError: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -321,6 +435,7 @@ func TestParseContent(t *testing.T) {
 					assert.Equal(t, exp.Type, act.Type)
 					assert.Equal(t, exp.Text, act.Text)
 					assert.Equal(t, exp.Annotations, act.Annotations)
+					assert.Equal(t, exp.Meta, act.Meta)
 				case ImageContent:
 					act, ok := result.(ImageContent)
 					assert.True(t, ok)
@@ -328,6 +443,7 @@ func TestParseContent(t *testing.T) {
 					assert.Equal(t, exp.Data, act.Data)
 					assert.Equal(t, exp.MIMEType, act.MIMEType)
 					assert.Equal(t, exp.Annotations, act.Annotations)
+					assert.Equal(t, exp.Meta, act.Meta)
 				case AudioContent:
 					act, ok := result.(AudioContent)
 					assert.True(t, ok)
@@ -335,6 +451,7 @@ func TestParseContent(t *testing.T) {
 					assert.Equal(t, exp.Data, act.Data)
 					assert.Equal(t, exp.MIMEType, act.MIMEType)
 					assert.Equal(t, exp.Annotations, act.Annotations)
+					assert.Equal(t, exp.Meta, act.Meta)
 				case ResourceLink:
 					act, ok := result.(ResourceLink)
 					assert.True(t, ok)
@@ -350,6 +467,7 @@ func TestParseContent(t *testing.T) {
 					assert.Equal(t, exp.Type, act.Type)
 					assert.Equal(t, exp.Resource, act.Resource)
 					assert.Equal(t, exp.Annotations, act.Annotations)
+					assert.Equal(t, exp.Meta, act.Meta)
 				default:
 					assert.Equal(t, tt.expected, result)
 				}
