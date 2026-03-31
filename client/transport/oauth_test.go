@@ -206,7 +206,7 @@ func TestOAuthHandler_GetServerMetadata_EmptyURL(t *testing.T) {
 	// Create an OAuth handler with an empty AuthServerMetadataURL
 	config := OAuthConfig{
 		ClientID:              "test-client",
-		RedirectURI:           "http://localhost:8085/callback",
+		RedirectURI:           "",
 		Scopes:                []string{"mcp.read"},
 		TokenStore:            NewMemoryTokenStore(),
 		AuthServerMetadataURL: "", // Empty URL
@@ -221,11 +221,9 @@ func TestOAuthHandler_GetServerMetadata_EmptyURL(t *testing.T) {
 		t.Fatalf("Expected error when getting server metadata with empty URL")
 	}
 
-	// Verify the error message contains something about a connection error
-	// since we're now trying to connect to the well-known endpoint
-	if !strings.Contains(err.Error(), "connection refused") &&
-		!strings.Contains(err.Error(), "failed to send protected resource request") {
-		t.Errorf("Expected error message to contain connection error, got %s", err.Error())
+	if !strings.Contains(err.Error(), "failed to extract base URL") &&
+		!strings.Contains(err.Error(), "no base URL available") {
+		t.Errorf("Expected error message to mention missing base URL, got %s", err.Error())
 	}
 }
 
