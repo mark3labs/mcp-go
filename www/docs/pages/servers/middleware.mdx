@@ -51,6 +51,14 @@ s := server.NewMCPServer("my-server", "1.0.0",
 A basic middleware that logs every tool call:
 
 ```go
+import (
+    "context"
+    "log"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
 func loggingMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
     return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
         log.Printf("tool call: %s", req.Params.Name)
@@ -79,17 +87,21 @@ func timingMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 
 ### Authentication Middleware
 
-Reject unauthenticated requests before they reach the tool handler:
+Reject unauthenticated requests before they reach the tool handler. You need to provide your own `extractToken`, `validateToken`, and `userKey` implementations:
 
 ```go
+// userKey is a custom context key for storing the authenticated user.
+type contextKey string
+const userKey contextKey = "user"
+
 func authMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
     return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-        token := extractToken(ctx)
+        token := extractToken(ctx) // your token extraction logic
         if token == "" {
             return nil, fmt.Errorf("authentication required")
         }
 
-        user, err := validateToken(token)
+        user, err := validateToken(token) // your token validation logic
         if err != nil {
             return nil, fmt.Errorf("invalid token: %w", err)
         }
@@ -100,9 +112,9 @@ func authMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 }
 ```
 
-### Rate Limiting Middleware
+### Rate-Limiting Middleware
 
-Limit the number of tool calls per session:
+Limit the number of tool calls per session. This example uses [`golang.org/x/time/rate`](https://pkg.go.dev/golang.org/x/time/rate) and `server.GetSessionID()` to identify the caller:
 
 ```go
 type rateLimiter struct {
@@ -146,7 +158,9 @@ This matches the convention used by `net/http` middleware in Go.
 
 ## Task-Augmented Tools
 
-Middleware registered via `Use()` also applies to tools that run as tasks (via `executeRegularToolAsTask`). You do not need separate configuration for task-routed tool calls — the same middleware chain is applied automatically.
+Middleware registered via `Use()` also applies to regular tools executed via the task path (when a tool has `TaskSupportOptional` or `TaskSupportPreferred` and the client requests task execution). The same middleware chain wraps the regular tool handler automatically.
+
+**Note:** Native task tools (those registered with a `TaskToolHandlerFunc`) do not have `Use()` middleware applied. If you need cross-cutting logic for native task tools, implement it directly in your task handler.
 
 ```go
 tool := mcp.NewTool("long-running",
@@ -155,13 +169,13 @@ tool := mcp.NewTool("long-running",
 )
 s.AddTool(tool, handler)
 
-// This middleware applies to both regular and task-routed calls
+// This middleware applies to regular calls and when this regular tool is executed via the task path
 s.Use(loggingMiddleware)
 ```
 
 ## Built-in Middleware
 
-MCP-Go includes built-in recovery middleware that catches panics in tool handlers:
+MCP-Go includes built-in recovery middleware that catches panics in tool handlers and returns an error response instead of crashing the server:
 
 ```go
 s := server.NewMCPServer("my-server", "1.0.0",
