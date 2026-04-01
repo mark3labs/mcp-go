@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1158,4 +1159,212 @@ func TestStreamableHTTPHostOverride(t *testing.T) {
 		require.Equal(t, customHost, capturedHost)
 		mu.Unlock()
 	})
+}
+
+// startMockStatelessSSEServer starts a server that mimics a stateless MCP server
+// (e.g. Python FastMCP with stateless_http=True) which responds to POST requests with text/event-stream SSE containing
+// a single event, but keeps the HTTP stream open (no EOF). GET requests return 200
+// with an SSE stream that never sends any data, simulating the listenForever hang.
+func startMockStatelessSSEServer() (string, func()) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			// Stateless server: accept GET SSE but never send data (stream hangs)
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			// Block until client disconnects
+			<-r.Context().Done()
+			return
+		}
+
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		method, _ := request["method"].(string)
+
+		if method == "notifications/initialized" {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+
+		// Respond with SSE (text/event-stream), send the event, but keep stream open.
+		// This simulates servers that use stateless_http=True without json_response=True.
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		var response map[string]any
+		if method == "initialize" {
+			response = map[string]any{
+				"jsonrpc": "2.0",
+				"id":      request["id"],
+				"result": map[string]any{
+					"protocolVersion": "2025-03-26",
+					"capabilities":    map[string]any{},
+					"serverInfo":      map[string]any{"name": "test-stateless", "version": "1.0"},
+				},
+			}
+		} else {
+			response = map[string]any{
+				"jsonrpc": "2.0",
+				"id":      request["id"],
+				"result":  map[string]any{"data": "ok"},
+			}
+		}
+
+		responseData, _ := json.Marshal(response)
+		fmt.Fprintf(w, "event: message\ndata: %s\n\n", responseData)
+		flusher.Flush()
+
+		// Keep the stream open — do NOT return. This is the key behavior that
+		// causes hangs if readSSE is not context-aware, because ReadString('\n')
+		// blocks indefinitely waiting for more data that never arrives.
+		<-r.Context().Done()
+	})
+
+	testServer := httptest.NewServer(handler)
+	return testServer.URL, testServer.Close
+}
+
+// TestReadSSEContextCancellation verifies that readSSE exits promptly when the
+// context is cancelled, even if the underlying reader is blocked on I/O.
+// This is a regression test for the hang caused by blocking ReadString calls
+// that ignored context cancellation.
+func TestReadSSEContextCancellation(t *testing.T) {
+	// Create a pipe where the writer never writes (simulates idle SSE stream)
+	pr, pw := io.Pipe()
+	defer pw.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	c := &StreamableHTTP{}
+
+	handlerCalled := make(chan struct{}, 1)
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		c.readSSE(ctx, pr, func(event, data string) {
+			handlerCalled <- struct{}{}
+		})
+	}()
+
+	// readSSE should be blocked on ReadString — cancel the context
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	// readSSE must exit within 1 second after cancellation
+	select {
+	case <-done:
+		// Success — readSSE exited promptly
+	case <-time.After(2 * time.Second):
+		t.Fatal("readSSE did not exit within 2 seconds after context cancellation — blocking I/O is not interrupted")
+	}
+
+	select {
+	case <-handlerCalled:
+		t.Fatal("handler should not have been called on an idle stream")
+	default:
+	}
+}
+
+// TestSendRequestSSEStreamStaysOpen verifies that SendRequest returns the response
+// promptly even when the server sends an SSE response and keeps the HTTP stream open.
+// This reproduces the exact hang seen with stateless MCP servers (e.g. Python FastMCP) that
+// respond with text/event-stream but never close the connection.
+func TestSendRequestSSEStreamStaysOpen(t *testing.T) {
+	serverURL, closeServer := startMockStatelessSSEServer()
+	defer closeServer()
+
+	trans, err := NewStreamableHTTP(serverURL)
+	require.NoError(t, err)
+	defer trans.Close()
+
+	err = trans.Start(context.Background())
+	require.NoError(t, err)
+
+	// Initialize — server responds with SSE event but keeps stream open
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	initReq := JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(int64(1)),
+		Method:  "initialize",
+	}
+
+	resp, err := trans.SendRequest(ctx, initReq)
+	require.NoError(t, err, "Initialize should not hang even though SSE stream stays open")
+	require.NotNil(t, resp)
+
+	// Send a second request (simulates ListTools after Initialize) — this is the
+	// request that hangs in production because readSSE from the first request's
+	// goroutine or the listenForever GET SSE interferes.
+	echoReq := JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(int64(2)),
+		Method:  "tools/list",
+	}
+
+	resp2, err := trans.SendRequest(ctx, echoReq)
+	require.NoError(t, err, "Second request should not hang even though SSE streams stay open")
+	require.NotNil(t, resp2)
+}
+
+// TestSendRequestSSEStreamStaysOpenWithContinuousListening is the same as above but
+// with WithContinuousListening enabled — the GET SSE connection hangs forever on
+// a stateless server, and we verify it doesn't block POST requests.
+func TestSendRequestSSEStreamStaysOpenWithContinuousListening(t *testing.T) {
+	retryInterval = 10 * time.Millisecond
+	serverURL, closeServer := startMockStatelessSSEServer()
+	defer closeServer()
+
+	trans, err := NewStreamableHTTP(serverURL, WithContinuousListening())
+	require.NoError(t, err)
+	defer trans.Close()
+
+	err = trans.Start(context.Background())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Initialize — triggers listenForever goroutine which opens a GET SSE
+	// that hangs forever against the stateless server
+	initReq := JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(int64(1)),
+		Method:  "initialize",
+	}
+
+	resp, err := trans.SendRequest(ctx, initReq)
+	require.NoError(t, err, "Initialize should succeed despite stateless SSE server")
+	require.NotNil(t, resp)
+
+	// Give listenForever time to start the GET SSE connection
+	time.Sleep(100 * time.Millisecond)
+
+	// Send tools/list — must not hang even though GET SSE stream is blocking
+	listReq := JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(int64(2)),
+		Method:  "tools/list",
+	}
+
+	resp2, err := trans.SendRequest(ctx, listReq)
+	require.NoError(t, err, "tools/list should not hang even with continuous listening against stateless server")
+	require.NotNil(t, resp2)
 }

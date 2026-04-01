@@ -509,60 +509,62 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 
 // readSSE reads the SSE stream(reader) and calls the handler for each event and data pair.
 // It will end when the reader is closed (or the context is done).
+//
+// A background goroutine closes the reader when ctx is cancelled, which unblocks
+// any in-progress ReadString call. This is necessary because ReadString is blocking
+// I/O that does not respect context cancellation on its own.
 func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, handler func(event, data string)) {
-	defer reader.Close()
+	// Close the reader when context is cancelled to interrupt blocking reads.
+	// This ensures ReadString returns immediately with an error instead of
+	// blocking indefinitely when the SSE stream is open but idle.
+	go func() {
+		<-ctx.Done()
+		reader.Close()
+	}()
 
 	br := bufio.NewReader(reader)
 	var event, data string
 
 	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			line, err := br.ReadString('\n')
-			if err != nil {
-				if err == io.EOF {
-					// Process any pending event before exit
-					if data != "" {
-						// If no event type is specified, use empty string (default event type)
-						if event == "" {
-							event = "message"
-						}
-						handler(event, data)
-					}
-					return
-				}
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					c.logger.Errorf("SSE stream error: %v", err)
-					return
-				}
+		line, err := br.ReadString('\n')
+		if err != nil {
+			// Context was cancelled — reader was closed by the goroutine above.
+			if ctx.Err() != nil {
+				return
 			}
-
-			// Remove only newline markers
-			line = strings.TrimRight(line, "\r\n")
-			if line == "" {
-				// Empty line means end of event
+			if err == io.EOF {
+				// Process any pending event before exit
 				if data != "" {
-					// If no event type is specified, use empty string (default event type)
 					if event == "" {
 						event = "message"
 					}
 					handler(event, data)
-					event = ""
-					data = ""
 				}
-				continue
+				return
 			}
+			c.logger.Errorf("SSE stream error: %v", err)
+			return
+		}
 
-			if eventStr, ok := strings.CutPrefix(line, "event:"); ok {
-				event = strings.TrimSpace(eventStr)
-			} else if dataStr, ok := strings.CutPrefix(line, "data:"); ok {
-				data = strings.TrimSpace(dataStr)
+		// Remove only newline markers
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			// Empty line means end of event
+			if data != "" {
+				if event == "" {
+					event = "message"
+				}
+				handler(event, data)
+				event = ""
+				data = ""
 			}
+			continue
+		}
+
+		if eventStr, ok := strings.CutPrefix(line, "event:"); ok {
+			event = strings.TrimSpace(eventStr)
+		} else if dataStr, ok := strings.CutPrefix(line, "data:"); ok {
+			data = strings.TrimSpace(dataStr)
 		}
 	}
 }
@@ -681,7 +683,9 @@ func (c *StreamableHTTP) createGETConnectionToServer(ctx context.Context) error 
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+	// Cancel the context before closing the body to prevent HTTP/2 drain hangs,
+	// matching the pattern used in SendRequest and SendNotification.
+	defer func() { resp.Body.Close() }()
 
 	// Check if we got an error response
 	if resp.StatusCode == http.StatusMethodNotAllowed {
