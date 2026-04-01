@@ -135,7 +135,10 @@ func (rt *mockH2Transport) RoundTrip(req *http.Request) (*http.Response, error) 
 			},
 		},
 	}
-	data, _ := json.Marshal(rpcResp)
+	data, err := json.Marshal(rpcResp)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal JSON-RPC response: %w", err)
+	}
 	ssePayload := fmt.Sprintf("event: message\ndata: %s\n\n", data)
 
 	return &http.Response{
