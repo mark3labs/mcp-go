@@ -107,9 +107,7 @@ func (r *blockingSSEReader) Read(p []byte) (int, error) {
 // mockH2Transport is an http.RoundTripper that simulates an HTTP/2 server
 // returning SSE responses with a body that exhibits the HTTP/2 Close() blocking
 // behavior when cs.donec can't close due to cc.wmu contention.
-type mockH2Transport struct {
-	t *testing.T
-}
+type mockH2Transport struct{}
 
 func (rt *mockH2Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Parse the JSON-RPC request to get the ID.
@@ -165,7 +163,7 @@ func (rt *mockH2Transport) RoundTrip(req *http.Request) (*http.Response, error) 
 //
 //	defer func() { cancel(); resp.Body.Close() }()
 func TestStreamableHTTP_CloseBlocksBeforeCancel(t *testing.T) {
-	mockTransport := &mockH2Transport{t: t}
+	mockTransport := &mockH2Transport{}
 	client := &http.Client{Transport: mockTransport}
 
 	// Use a dummy URL — the mock transport intercepts all requests.
@@ -174,6 +172,7 @@ func TestStreamableHTTP_CloseBlocksBeforeCancel(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NoError(t, transport.Start(context.Background()))
+	defer transport.Close()
 
 	done := make(chan struct{})
 	var sendErr error
