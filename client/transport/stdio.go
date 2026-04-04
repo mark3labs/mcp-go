@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/util"
@@ -49,6 +51,11 @@ type Stdio struct {
 	started          bool
 	startedMu        sync.Mutex
 }
+
+const (
+	gracefulShutdownTimeout = 2 * time.Second
+	forceKillTimeout        = 3 * time.Second
+)
 
 // StdioOption defines a function that configures a Stdio transport instance.
 // Options can be used to customize the behavior of the transport before it starts,
@@ -238,7 +245,38 @@ func (c *Stdio) Close() error {
 			}
 		}
 		if c.cmd != nil {
-			if err := c.cmd.Wait(); err != nil && closeErr == nil {
+			waitErrCh := make(chan error, 1)
+			go func() {
+				waitErrCh <- c.cmd.Wait()
+			}()
+
+			select {
+			case err := <-waitErrCh:
+				if err != nil && closeErr == nil {
+					closeErr = err
+				}
+				return
+			case <-time.After(gracefulShutdownTimeout):
+			}
+
+			if c.cmd.Process != nil {
+				_ = c.cmd.Process.Signal(syscall.SIGTERM)
+			}
+
+			select {
+			case err := <-waitErrCh:
+				if err != nil && closeErr == nil {
+					closeErr = err
+				}
+				return
+			case <-time.After(forceKillTimeout):
+			}
+
+			if c.cmd.Process != nil {
+				_ = c.cmd.Process.Kill()
+			}
+
+			if err := <-waitErrCh; err != nil && closeErr == nil {
 				closeErr = err
 			}
 		}

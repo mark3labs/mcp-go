@@ -740,6 +740,33 @@ func TestStdio_SpawnCommand_UsesCommandFunc_Error(t *testing.T) {
 	require.EqualError(t, err, "test error")
 }
 
+func TestStdio_Close_TerminatesChildThatIgnoresStdinClose(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("signal-based shutdown test is not supported on Windows")
+	}
+
+	stdio := NewStdio("sh", nil, "-c", "trap 'exit 0' TERM; while :; do sleep 1; done")
+	require.NotNil(t, stdio)
+
+	err := stdio.spawnCommand(context.Background())
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		if stdio.cmd != nil && stdio.cmd.Process != nil {
+			_ = stdio.cmd.Process.Kill()
+		}
+	})
+
+	start := time.Now()
+	err = stdio.Close()
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	require.Less(t, elapsed, gracefulShutdownTimeout+forceKillTimeout+time.Second)
+	require.NotNil(t, stdio.cmd.ProcessState)
+	require.True(t, stdio.cmd.ProcessState.Exited())
+}
+
 func TestStdio_NewStdioWithOptions_AppliesOptions(t *testing.T) {
 	configured := false
 
