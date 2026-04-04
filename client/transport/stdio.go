@@ -18,9 +18,14 @@ import (
 	"github.com/mark3labs/mcp-go/util"
 )
 
-// ErrTransportClosed is returned when attempting to send a request or notification
-// to a transport that has already been closed.
-var ErrTransportClosed = errors.New("transport closed")
+var (
+	// ErrTransportClosed is returned when attempting to send a request or notification
+	// to a transport that has already been closed.
+	ErrTransportClosed = errors.New("transport closed")
+	// ErrChildShutdownTimeout is returned when a stdio subprocess still has not exited
+	// after the forced shutdown path has been attempted.
+	ErrChildShutdownTimeout = errors.New("stdio child did not exit after forced shutdown")
+)
 
 // Stdio implements the transport layer of the MCP protocol using stdio communication.
 // It launches a subprocess and communicates with it via standard input/output streams
@@ -56,6 +61,15 @@ const (
 	gracefulShutdownTimeout = 2 * time.Second
 	forceKillTimeout        = 3 * time.Second
 )
+
+func waitForProcessExit(waitErrCh <-chan error, timeout time.Duration) (error, bool) {
+	select {
+	case err := <-waitErrCh:
+		return err, true
+	case <-time.After(timeout):
+		return nil, false
+	}
+}
 
 // StdioOption defines a function that configures a Stdio transport instance.
 // Options can be used to customize the behavior of the transport before it starts,
@@ -250,34 +264,36 @@ func (c *Stdio) Close() error {
 				waitErrCh <- c.cmd.Wait()
 			}()
 
-			select {
-			case err := <-waitErrCh:
+			if err, done := waitForProcessExit(waitErrCh, gracefulShutdownTimeout); done {
 				if err != nil && closeErr == nil {
 					closeErr = err
 				}
 				return
-			case <-time.After(gracefulShutdownTimeout):
 			}
 
 			if c.cmd.Process != nil {
 				_ = c.cmd.Process.Signal(syscall.SIGTERM)
 			}
 
-			select {
-			case err := <-waitErrCh:
+			if err, done := waitForProcessExit(waitErrCh, forceKillTimeout); done {
 				if err != nil && closeErr == nil {
 					closeErr = err
 				}
 				return
-			case <-time.After(forceKillTimeout):
 			}
 
 			if c.cmd.Process != nil {
-				_ = c.cmd.Process.Kill()
+				if err := c.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) && closeErr == nil {
+					closeErr = fmt.Errorf("failed to kill process: %w", err)
+				}
 			}
 
-			if err := <-waitErrCh; err != nil && closeErr == nil {
-				closeErr = err
+			if err, done := waitForProcessExit(waitErrCh, forceKillTimeout); done {
+				if err != nil && closeErr == nil {
+					closeErr = err
+				}
+			} else if closeErr == nil {
+				closeErr = ErrChildShutdownTimeout
 			}
 		}
 	})

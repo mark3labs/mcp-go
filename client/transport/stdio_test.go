@@ -740,31 +740,80 @@ func TestStdio_SpawnCommand_UsesCommandFunc_Error(t *testing.T) {
 	require.EqualError(t, err, "test error")
 }
 
-func TestStdio_Close_TerminatesChildThatIgnoresStdinClose(t *testing.T) {
+func TestStdio_Close_ShutsDownHungChild(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("signal-based shutdown test is not supported on Windows")
 	}
 
-	stdio := NewStdio("sh", nil, "-c", "trap 'exit 0' TERM; while :; do sleep 1; done")
-	require.NotNil(t, stdio)
+	deadline := gracefulShutdownTimeout + forceKillTimeout + 2*time.Second
+	tests := []struct {
+		name          string
+		script        string
+		wantErr       bool
+		wantForceKill bool
+	}{
+		{
+			name:          "exits_on_sigterm",
+			script:        "trap 'exit 0' TERM; while :; do sleep 1; done",
+			wantErr:       false,
+			wantForceKill: false,
+		},
+		{
+			name:          "requires_sigkill",
+			script:        "trap '' TERM; while :; do sleep 1; done",
+			wantErr:       true,
+			wantForceKill: true,
+		},
+	}
 
-	err := stdio.spawnCommand(context.Background())
-	require.NoError(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdio := NewStdio("sh", nil, "-c", tt.script)
+			require.NotNil(t, stdio)
 
-	t.Cleanup(func() {
-		if stdio.cmd != nil && stdio.cmd.Process != nil {
-			_ = stdio.cmd.Process.Kill()
-		}
-	})
+			err := stdio.spawnCommand(context.Background())
+			require.NoError(t, err)
 
-	start := time.Now()
-	err = stdio.Close()
-	elapsed := time.Since(start)
+			t.Cleanup(func() {
+				if stdio.cmd != nil && stdio.cmd.Process != nil {
+					_ = stdio.cmd.Process.Kill()
+				}
+			})
 
-	require.NoError(t, err)
-	require.Less(t, elapsed, gracefulShutdownTimeout+forceKillTimeout+time.Second)
-	require.NotNil(t, stdio.cmd.ProcessState)
-	require.True(t, stdio.cmd.ProcessState.Exited())
+			closeErrCh := make(chan error, 1)
+			start := time.Now()
+			go func() {
+				closeErrCh <- stdio.Close()
+			}()
+
+			var closeErr error
+			select {
+			case closeErr = <-closeErrCh:
+			case <-time.After(deadline):
+				t.Fatalf("Close() did not return within %s", deadline)
+			}
+
+			elapsed := time.Since(start)
+			if tt.wantErr {
+				require.Error(t, closeErr)
+			} else {
+				require.NoError(t, closeErr)
+			}
+			if tt.wantForceKill {
+				require.NotErrorIs(t, closeErr, ErrChildShutdownTimeout)
+			}
+			if tt.wantForceKill {
+				require.GreaterOrEqual(t, elapsed, gracefulShutdownTimeout+forceKillTimeout)
+			} else {
+				require.Less(t, elapsed, gracefulShutdownTimeout+forceKillTimeout)
+			}
+			require.Less(t, elapsed, deadline)
+			require.NotNil(t, stdio.cmd.ProcessState)
+			if !tt.wantForceKill {
+				require.True(t, stdio.cmd.ProcessState.Exited())
+			}
+		})
+	}
 }
 
 func TestStdio_NewStdioWithOptions_AppliesOptions(t *testing.T) {
