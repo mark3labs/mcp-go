@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -1322,6 +1323,54 @@ func TestSendRequestSSEStreamStaysOpen(t *testing.T) {
 	resp2, err := trans.SendRequest(ctx, echoReq)
 	require.NoError(t, err, "Second request should not hang even though SSE streams stay open")
 	require.NotNil(t, resp2)
+}
+
+// TestContinuousListeningGoroutineExitsOnContextCancel verifies that the goroutine
+// spawned by WithContinuousListening exits when the context passed to Start() is
+// cancelled, even if Initialize never succeeds.
+func TestContinuousListeningGoroutineExitsOnContextCancel(t *testing.T) {
+	origRetryInterval := retryInterval
+	retryInterval = 10 * time.Millisecond
+	t.Cleanup(func() { retryInterval = origRetryInterval })
+
+	// Server that always rejects requests, so Initialize never succeeds.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"jsonrpc":"2.0","id":"1","error":{"code":-32600,"message":"Bad Request"}}`, http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	const cycles = 5
+	before := runtime.NumGoroutine()
+
+	for range cycles {
+		trans, err := NewStreamableHTTP(srv.URL, WithContinuousListening())
+		require.NoError(t, err)
+
+		startCtx, cancel := context.WithCancel(context.Background())
+
+		err = trans.Start(startCtx)
+		require.NoError(t, err)
+
+		// Attempt Initialize — it will fail because the server returns 400.
+		initReq := JSONRPCRequest{
+			JSONRPC: "2.0",
+			ID:      mcp.NewRequestId(int64(1)),
+			Method:  "initialize",
+		}
+		_, err = trans.SendRequest(startCtx, initReq)
+		require.Error(t, err)
+
+		// Cancel the context. This should be sufficient to release the goroutine
+		// spawned in Start(), without requiring an explicit Close() call.
+		cancel()
+	}
+
+	// Poll until goroutines settle, to avoid a flaky single-snapshot check.
+	allowed := 1
+	require.Eventually(t, func() bool {
+		runtime.Gosched()
+		return runtime.NumGoroutine()-before <= allowed
+	}, 5*time.Second, 50*time.Millisecond, "goroutines leaked beyond allowed=%d (ran %d cycles)", allowed, cycles)
 }
 
 // TestSendRequestSSEStreamStaysOpenWithContinuousListening is the same as above but

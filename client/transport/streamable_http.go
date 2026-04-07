@@ -191,6 +191,8 @@ func (c *StreamableHTTP) Start(ctx context.Context) error {
 				c.listenForever(ctx)
 			case <-c.closed:
 				return
+			case <-ctx.Done():
+				return
 			}
 		}()
 	}
