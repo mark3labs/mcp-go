@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -14,6 +15,172 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestOAuthHandler_ResourceIndicator_RFC8707 verifies that the RFC 8707
+// "resource" parameter is included in the authorization URL, the
+// authorization_code token exchange, and the refresh_token request so the
+// authorization server can audience-restrict issued tokens.
+func TestOAuthHandler_ResourceIndicator_RFC8707(t *testing.T) {
+	var tokenExchangeResource, refreshResource string
+
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                 serverURL,
+				"authorization_endpoint": serverURL + "/authorize",
+				"token_endpoint":         serverURL + "/token",
+			})
+		case "/token":
+			_ = r.ParseForm()
+			switch r.FormValue("grant_type") {
+			case "authorization_code":
+				tokenExchangeResource = r.FormValue("resource")
+			case "refresh_token":
+				refreshResource = r.FormValue("resource")
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token":  "at",
+				"token_type":    "Bearer",
+				"expires_in":    3600,
+				"refresh_token": "rt",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	serverURL = server.URL
+	defer server.Close()
+
+	const mcpServerURL = "https://mcp.example.com/api"
+
+	config := OAuthConfig{
+		ClientID:              "test-client",
+		RedirectURI:           "http://localhost/callback",
+		TokenStore:            NewMemoryTokenStore(),
+		AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
+	}
+	handler := NewOAuthHandler(config)
+	handler.SetBaseURL(mcpServerURL)
+	ctx := context.Background()
+
+	// 1. Authorization URL must carry resource=
+	authURL, err := handler.GetAuthorizationURL(ctx, "state123", "")
+	require.NoError(t, err)
+	parsed, err := url.Parse(authURL)
+	require.NoError(t, err)
+	assert.Equal(t, mcpServerURL, parsed.Query().Get("resource"),
+		"authorization URL must include RFC 8707 resource indicator")
+
+	// 2. Token exchange must carry resource=
+	handler.SetExpectedState("state123")
+	require.NoError(t, handler.ProcessAuthorizationResponse(ctx, "code", "state123", ""))
+	assert.Equal(t, mcpServerURL, tokenExchangeResource,
+		"authorization_code token request must include RFC 8707 resource indicator")
+
+	// 3. Refresh must carry resource=
+	_, err = handler.RefreshToken(ctx, "rt")
+	require.NoError(t, err)
+	assert.Equal(t, mcpServerURL, refreshResource,
+		"refresh_token request must include RFC 8707 resource indicator")
+}
+
+// TestOAuthHandler_ResourceIndicator_FromProtectedResourceMetadata verifies that
+// when RFC 9728 protected resource metadata advertises a canonical "resource"
+// value, that value is preferred over the base URL as the RFC 8707 indicator.
+func TestOAuthHandler_ResourceIndicator_FromProtectedResourceMetadata(t *testing.T) {
+	const canonicalResource = "https://mcp.example.com/"
+	var gotResource string
+
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"resource":              canonicalResource,
+				"authorization_servers": []string{serverURL},
+			})
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                 serverURL,
+				"authorization_endpoint": serverURL + "/authorize",
+				"token_endpoint":         serverURL + "/token",
+			})
+		case "/token":
+			_ = r.ParseForm()
+			gotResource = r.FormValue("resource")
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "at",
+				"token_type":   "Bearer",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	serverURL = server.URL
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost/callback",
+		TokenStore:  NewMemoryTokenStore(),
+	})
+	// baseURL differs from the canonical resource advertised by the server;
+	// the advertised value must win.
+	handler.SetBaseURL(server.URL)
+
+	_, err := handler.RefreshToken(context.Background(), "rt")
+	require.NoError(t, err)
+	assert.Equal(t, canonicalResource, gotResource,
+		"resource indicator must prefer RFC 9728 'resource' over base URL")
+}
+
+// TestOAuthHandler_ResourceIndicator_OmittedWhenUnknown verifies that no
+// resource parameter is sent when the handler has no way to determine one.
+func TestOAuthHandler_ResourceIndicator_OmittedWhenUnknown(t *testing.T) {
+	var hadResource bool
+
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                 serverURL,
+				"authorization_endpoint": serverURL + "/authorize",
+				"token_endpoint":         serverURL + "/token",
+			})
+		case "/token":
+			_ = r.ParseForm()
+			_, hadResource = r.Form["resource"]
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "at",
+				"token_type":   "Bearer",
+			})
+		}
+	}))
+	serverURL = server.URL
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:              "test-client",
+		RedirectURI:           "http://localhost/callback",
+		TokenStore:            NewMemoryTokenStore(),
+		AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
+	})
+	// No SetBaseURL, no protected-resource discovery → resource unknown.
+
+	_, err := handler.RefreshToken(context.Background(), "rt")
+	require.NoError(t, err)
+	assert.False(t, hadResource, "resource parameter must be omitted when unknown")
+}
 
 func TestToken_IsExpired(t *testing.T) {
 	// Test cases
