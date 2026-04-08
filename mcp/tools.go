@@ -585,7 +585,7 @@ type Tool struct {
 	// Alternative to InputSchema - allows arbitrary JSON Schema to be provided
 	RawInputSchema json.RawMessage `json:"-"` // Hide this from JSON marshaling
 	// A JSON Schema object defining the expected output returned by the tool .
-	OutputSchema ToolOutputSchema `json:"outputSchema,omitempty"`
+	OutputSchema ToolOutputSchema `json:"outputSchema,omitzero"`
 	// Optional JSON Schema defining expected output structure
 	RawOutputSchema json.RawMessage `json:"-"` // Hide this from JSON marshaling
 	// Optional properties describing tool behavior

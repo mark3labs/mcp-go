@@ -27,7 +27,7 @@ func TestTaskAugmentedToolCall_ResponseFormat(t *testing.T) {
 	})
 
 	// Call with task param
-	response := server.HandleMessage(context.Background(), []byte(`{
+	response := server.HandleMessage(t.Context(), []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
 		"method": "tools/call",
@@ -68,7 +68,7 @@ func TestTaskAugmentedToolCall_SpecCompliance(t *testing.T) {
 	})
 
 	// Call with task param
-	response := server.HandleMessage(context.Background(), []byte(`{
+	response := server.HandleMessage(t.Context(), []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
 		"method": "tools/call",

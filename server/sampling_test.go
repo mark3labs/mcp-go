@@ -20,7 +20,7 @@ func TestMCPServer_RequestSampling_NoSession(t *testing.T) {
 		},
 	}
 
-	_, err := server.RequestSampling(context.Background(), request)
+	_, err := server.RequestSampling(t.Context(), request)
 
 	if err == nil {
 		t.Error("expected error when no session available")
@@ -86,7 +86,7 @@ func TestMCPServer_RequestSampling_Success(t *testing.T) {
 	}
 
 	// Create context with session
-	ctx := context.Background()
+	ctx := t.Context()
 	ctx = server.WithContext(ctx, mockSession)
 
 	request := mcp.CreateMessageRequest{
@@ -118,7 +118,7 @@ func TestMCPServer_EnableSampling_SetsCapability(t *testing.T) {
 	server := NewMCPServer("test", "1.0.0")
 
 	// Verify sampling capability is not set initially
-	ctx := context.Background()
+	ctx := t.Context()
 	initRequest := mcp.InitializeRequest{
 		Params: mcp.InitializeParams{
 			ProtocolVersion: "2025-03-26",

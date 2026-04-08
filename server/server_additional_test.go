@@ -27,7 +27,7 @@ func TestMCPServer_MiddlewarePanicRecovery(t *testing.T) {
 			},
 		)
 
-		response := server.HandleMessage(context.Background(), []byte(`{
+		response := server.HandleMessage(t.Context(), []byte(`{
 			"jsonrpc": "2.0",
 			"id": 1,
 			"method": "tools/call",
@@ -56,7 +56,7 @@ func TestMCPServer_MiddlewarePanicRecovery(t *testing.T) {
 			},
 		)
 
-		response := server.HandleMessage(context.Background(), []byte(`{
+		response := server.HandleMessage(t.Context(), []byte(`{
 			"jsonrpc": "2.0",
 			"id": 1,
 			"method": "resources/read",
@@ -220,7 +220,7 @@ func TestMCPServer_PaginationEdgeCases(t *testing.T) {
 			)
 		}
 
-		response := server.HandleMessage(context.Background(), []byte(`{
+		response := server.HandleMessage(t.Context(), []byte(`{
 			"jsonrpc": "2.0",
 			"id": 1,
 			"method": "resources/list",
@@ -248,7 +248,7 @@ func TestMCPServer_PaginationEdgeCases(t *testing.T) {
 		// Create cursor that points beyond the list
 		beyondCursor := base64.StdEncoding.EncodeToString([]byte("tool-99"))
 
-		response := server.HandleMessage(context.Background(), fmt.Appendf(nil, `{
+		response := server.HandleMessage(t.Context(), fmt.Appendf(nil, `{
 			"jsonrpc": "2.0",
 			"id": 1,
 			"method": "tools/list",
@@ -283,7 +283,7 @@ func TestMCPServer_PaginationEdgeCases(t *testing.T) {
 			)
 		}
 
-		response := server.HandleMessage(context.Background(), []byte(`{
+		response := server.HandleMessage(t.Context(), []byte(`{
 			"jsonrpc": "2.0",
 			"id": 1,
 			"method": "prompts/list"
@@ -300,7 +300,7 @@ func TestMCPServer_PaginationEdgeCases(t *testing.T) {
 		assert.NotEmpty(t, result.NextCursor, "Cursor should be set when exactly at limit")
 
 		// Request next page - should be empty
-		response = server.HandleMessage(context.Background(), fmt.Appendf(nil, `{
+		response = server.HandleMessage(t.Context(), fmt.Appendf(nil, `{
 			"jsonrpc": "2.0",
 			"id": 2,
 			"method": "prompts/list",
@@ -325,7 +325,7 @@ func TestMCPServer_PaginationEdgeCases(t *testing.T) {
 			WithPaginationLimit(10),
 		)
 
-		response := server.HandleMessage(context.Background(), []byte(`{
+		response := server.HandleMessage(t.Context(), []byte(`{
 			"jsonrpc": "2.0",
 			"id": 1,
 			"method": "resources/list"
@@ -355,7 +355,7 @@ func TestMCPServer_SessionUnregistrationDuringNotification(t *testing.T) {
 			notificationChannel: make(chan mcp.JSONRPCNotification, 10),
 		}
 		sessions[i].Initialize()
-		err := server.RegisterSession(context.Background(), sessions[i])
+		err := server.RegisterSession(t.Context(), sessions[i])
 		require.NoError(t, err)
 	}
 
@@ -363,9 +363,7 @@ func TestMCPServer_SessionUnregistrationDuringNotification(t *testing.T) {
 	stopCh := make(chan struct{})
 
 	// Goroutine that continuously sends notifications
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			select {
 			case <-stopCh:
@@ -377,17 +375,15 @@ func TestMCPServer_SessionUnregistrationDuringNotification(t *testing.T) {
 				time.Sleep(1 * time.Millisecond)
 			}
 		}
-	}()
+	})
 
 	// Goroutine that unregisters sessions
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := range numSessions {
 			time.Sleep(5 * time.Millisecond)
-			server.UnregisterSession(context.Background(), sessions[i].SessionID())
+			server.UnregisterSession(t.Context(), sessions[i].SessionID())
 		}
-	}()
+	})
 
 	// Let it run for a bit
 	time.Sleep(100 * time.Millisecond)
@@ -412,11 +408,11 @@ func TestMCPServer_DuplicateSessionRegistration(t *testing.T) {
 	}
 
 	// First registration should succeed
-	err := server.RegisterSession(context.Background(), session1)
+	err := server.RegisterSession(t.Context(), session1)
 	require.NoError(t, err)
 
 	// Second registration with same ID should fail
-	err = server.RegisterSession(context.Background(), session2)
+	err = server.RegisterSession(t.Context(), session2)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrSessionExists)
 }
@@ -431,7 +427,7 @@ func TestMCPServer_SessionToolOperationsAfterUnregister(t *testing.T) {
 		initialized:         true,
 	}
 
-	err := server.RegisterSession(context.Background(), session)
+	err := server.RegisterSession(t.Context(), session)
 	require.NoError(t, err)
 
 	// Add a tool to the session
@@ -439,7 +435,7 @@ func TestMCPServer_SessionToolOperationsAfterUnregister(t *testing.T) {
 	require.NoError(t, err)
 
 	// Unregister the session
-	server.UnregisterSession(context.Background(), session.SessionID())
+	server.UnregisterSession(t.Context(), session.SessionID())
 
 	// Try to add tool to unregistered session
 	err = server.AddSessionTool(session.SessionID(), mcp.NewTool("another-tool"), nil)
@@ -567,7 +563,7 @@ func TestMCPServer_ResourceTemplateURIMatching(t *testing.T) {
 			})
 			require.NoError(t, err)
 
-			response := server.HandleMessage(context.Background(), requestBytes)
+			response := server.HandleMessage(t.Context(), requestBytes)
 
 			if tt.shouldMatch {
 				resp, ok := response.(mcp.JSONRPCResponse)
@@ -658,7 +654,7 @@ func TestMCPServer_UnsupportedProtocolVersions(t *testing.T) {
 			})
 			require.NoError(t, err)
 
-			response := server.HandleMessage(context.Background(), requestBytes)
+			response := server.HandleMessage(t.Context(), requestBytes)
 
 			resp, ok := response.(mcp.JSONRPCResponse)
 			require.True(t, ok)
@@ -685,7 +681,7 @@ func TestMCPServer_HooksWithNilSession(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithHooks(hooks))
 
 	// Make request without session context
-	response := server.HandleMessage(context.Background(), []byte(`{
+	response := server.HandleMessage(t.Context(), []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
 		"method": "ping"
@@ -791,9 +787,7 @@ func TestMCPServer_ConcurrentCapabilityChecks(t *testing.T) {
 	errorCount := atomic.Int32{}
 
 	// Goroutine that adds tools (triggers capability registration)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		i := 0
 		for {
 			select {
@@ -805,13 +799,11 @@ func TestMCPServer_ConcurrentCapabilityChecks(t *testing.T) {
 				time.Sleep(1 * time.Millisecond)
 			}
 		}
-	}()
+	})
 
 	// Goroutines that check capabilities
 	for range 5 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				select {
 				case <-stopCh:
@@ -823,7 +815,7 @@ func TestMCPServer_ConcurrentCapabilityChecks(t *testing.T) {
 					time.Sleep(1 * time.Millisecond)
 				}
 			}
-		}()
+		})
 	}
 
 	// Let it run for a bit
@@ -847,7 +839,7 @@ func TestMCPServer_PaginationCursorStability(t *testing.T) {
 	}
 
 	// Get first page
-	response := server.HandleMessage(context.Background(), []byte(`{
+	response := server.HandleMessage(t.Context(), []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
 		"method": "tools/list"
@@ -868,7 +860,7 @@ func TestMCPServer_PaginationCursorStability(t *testing.T) {
 	server.DeleteTools("tool-05")
 
 	// Get second page with original cursor
-	response = server.HandleMessage(context.Background(), fmt.Appendf(nil, `{
+	response = server.HandleMessage(t.Context(), fmt.Appendf(nil, `{
 		"jsonrpc": "2.0",
 		"id": 2,
 		"method": "tools/list",

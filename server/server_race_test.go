@@ -25,7 +25,7 @@ func TestRaceConditions(t *testing.T) {
 	)
 
 	// Create a context
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a sync.WaitGroup to coordinate test goroutines
 	var wg sync.WaitGroup
@@ -143,10 +143,7 @@ func runConcurrentOperation(
 	_ string,
 	operation func(),
 ) {
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
+	wg.Go(func() {
 		done := time.After(duration)
 		for {
 			select {
@@ -156,14 +153,14 @@ func runConcurrentOperation(
 				operation()
 			}
 		}
-	}()
+	})
 }
 
 // TestConcurrentPromptAdd specifically tests for the deadlock scenario where adding a prompt
 // from a goroutine can cause a deadlock
 func TestConcurrentPromptAdd(t *testing.T) {
 	srv := NewMCPServer("test-server", "1.0.0", WithPromptCapabilities(true))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Add a prompt with a handler that adds another prompt in a goroutine
 	srv.AddPrompt(mcp.Prompt{

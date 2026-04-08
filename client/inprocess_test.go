@@ -101,7 +101,7 @@ func TestInProcessMCPClient(t *testing.T) {
 		defer client.Close()
 
 		// Start the client
-		if err := client.Start(context.Background()); err != nil {
+		if err := client.Start(t.Context()); err != nil {
 			t.Fatalf("Failed to start client: %v", err)
 		}
 
@@ -113,7 +113,7 @@ func TestInProcessMCPClient(t *testing.T) {
 			Version: "1.0.0",
 		}
 
-		result, err := client.Initialize(context.Background(), initRequest)
+		result, err := client.Initialize(t.Context(), initRequest)
 		if err != nil {
 			t.Fatalf("Failed to initialize: %v", err)
 		}
@@ -126,13 +126,13 @@ func TestInProcessMCPClient(t *testing.T) {
 		}
 
 		// Test Ping
-		if err := client.Ping(context.Background()); err != nil {
+		if err := client.Ping(t.Context()); err != nil {
 			t.Errorf("Ping failed: %v", err)
 		}
 
 		// Test ListTools
 		toolsRequest := mcp.ListToolsRequest{}
-		toolListResult, err := client.ListTools(context.Background(), toolsRequest)
+		toolListResult, err := client.ListTools(t.Context(), toolsRequest)
 		if err != nil {
 			t.Errorf("ListTools failed: %v", err)
 		}
@@ -156,13 +156,13 @@ func TestInProcessMCPClient(t *testing.T) {
 		}
 		defer client.Close()
 
-		if err := client.Start(context.Background()); err != nil {
+		if err := client.Start(t.Context()); err != nil {
 			t.Fatalf("Failed to start client: %v", err)
 		}
 
 		// Try to make a request without initializing
 		toolsRequest := mcp.ListToolsRequest{}
-		_, err = client.ListTools(context.Background(), toolsRequest)
+		_, err = client.ListTools(t.Context(), toolsRequest)
 		if err == nil {
 			t.Error("Expected error when making request before initialization")
 		}
@@ -175,7 +175,7 @@ func TestInProcessMCPClient(t *testing.T) {
 		}
 		defer client.Close()
 
-		if err := client.Start(context.Background()); err != nil {
+		if err := client.Start(t.Context()); err != nil {
 			t.Fatalf("Failed to start client: %v", err)
 		}
 
@@ -187,7 +187,7 @@ func TestInProcessMCPClient(t *testing.T) {
 			Version: "1.0.0",
 		}
 
-		_, err = client.Initialize(context.Background(), initRequest)
+		_, err = client.Initialize(t.Context(), initRequest)
 		if err != nil {
 			t.Fatalf("Failed to initialize: %v", err)
 		}
@@ -198,7 +198,7 @@ func TestInProcessMCPClient(t *testing.T) {
 			"parameter-1": "value1",
 		}
 
-		result, err := client.CallTool(context.Background(), request)
+		result, err := client.CallTool(t.Context(), request)
 		if err != nil {
 			t.Fatalf("CallTool failed: %v", err)
 		}
@@ -215,7 +215,7 @@ func TestInProcessMCPClient(t *testing.T) {
 		}
 		defer client.Close()
 
-		if err := client.Start(context.Background()); err != nil {
+		if err := client.Start(t.Context()); err != nil {
 			t.Fatalf("Failed to start client: %v", err)
 		}
 
@@ -227,12 +227,12 @@ func TestInProcessMCPClient(t *testing.T) {
 			Version: "1.0.0",
 		}
 
-		_, err = client.Initialize(context.Background(), initRequest)
+		_, err = client.Initialize(t.Context(), initRequest)
 		if err != nil {
 			t.Fatalf("Failed to initialize: %v", err)
 		}
 
-		err = client.Ping(context.Background())
+		err = client.Ping(t.Context())
 		if err != nil {
 			t.Errorf("Ping failed: %v", err)
 		}
@@ -245,7 +245,7 @@ func TestInProcessMCPClient(t *testing.T) {
 		}
 		defer client.Close()
 
-		if err := client.Start(context.Background()); err != nil {
+		if err := client.Start(t.Context()); err != nil {
 			t.Fatalf("Failed to start client: %v", err)
 		}
 
@@ -257,13 +257,13 @@ func TestInProcessMCPClient(t *testing.T) {
 			Version: "1.0.0",
 		}
 
-		_, err = client.Initialize(context.Background(), initRequest)
+		_, err = client.Initialize(t.Context(), initRequest)
 		if err != nil {
 			t.Fatalf("Failed to initialize: %v", err)
 		}
 
 		request := mcp.ListResourcesRequest{}
-		result, err := client.ListResources(context.Background(), request)
+		result, err := client.ListResources(t.Context(), request)
 		if err != nil {
 			t.Errorf("ListResources failed: %v", err)
 		}
@@ -280,7 +280,7 @@ func TestInProcessMCPClient(t *testing.T) {
 		}
 		defer client.Close()
 
-		if err := client.Start(context.Background()); err != nil {
+		if err := client.Start(t.Context()); err != nil {
 			t.Fatalf("Failed to start client: %v", err)
 		}
 
@@ -292,7 +292,7 @@ func TestInProcessMCPClient(t *testing.T) {
 			Version: "1.0.0",
 		}
 
-		_, err = client.Initialize(context.Background(), initRequest)
+		_, err = client.Initialize(t.Context(), initRequest)
 		if err != nil {
 			t.Fatalf("Failed to initialize: %v", err)
 		}
@@ -300,7 +300,7 @@ func TestInProcessMCPClient(t *testing.T) {
 		request := mcp.ReadResourceRequest{}
 		request.Params.URI = "resource://testresource"
 
-		result, err := client.ReadResource(context.Background(), request)
+		result, err := client.ReadResource(t.Context(), request)
 		if err != nil {
 			t.Errorf("ReadResource failed: %v", err)
 		}
@@ -317,7 +317,7 @@ func TestInProcessMCPClient(t *testing.T) {
 		}
 		defer client.Close()
 
-		if err := client.Start(context.Background()); err != nil {
+		if err := client.Start(t.Context()); err != nil {
 			t.Fatalf("Failed to start client: %v", err)
 		}
 
@@ -329,12 +329,12 @@ func TestInProcessMCPClient(t *testing.T) {
 			Version: "1.0.0",
 		}
 
-		_, err = client.Initialize(context.Background(), initRequest)
+		_, err = client.Initialize(t.Context(), initRequest)
 		if err != nil {
 			t.Fatalf("Failed to initialize: %v", err)
 		}
 		request := mcp.ListPromptsRequest{}
-		result, err := client.ListPrompts(context.Background(), request)
+		result, err := client.ListPrompts(t.Context(), request)
 		if err != nil {
 			t.Errorf("ListPrompts failed: %v", err)
 		}
@@ -351,7 +351,7 @@ func TestInProcessMCPClient(t *testing.T) {
 		}
 		defer client.Close()
 
-		if err := client.Start(context.Background()); err != nil {
+		if err := client.Start(t.Context()); err != nil {
 			t.Fatalf("Failed to start client: %v", err)
 		}
 
@@ -363,7 +363,7 @@ func TestInProcessMCPClient(t *testing.T) {
 			Version: "1.0.0",
 		}
 
-		_, err = client.Initialize(context.Background(), initRequest)
+		_, err = client.Initialize(t.Context(), initRequest)
 		if err != nil {
 			t.Fatalf("Failed to initialize: %v", err)
 		}
@@ -374,7 +374,7 @@ func TestInProcessMCPClient(t *testing.T) {
 			"arg1": "arg1 value",
 		}
 
-		result, err := client.GetPrompt(context.Background(), request)
+		result, err := client.GetPrompt(t.Context(), request)
 		if err != nil {
 			t.Errorf("GetPrompt failed: %v", err)
 		}
@@ -391,7 +391,7 @@ func TestInProcessMCPClient(t *testing.T) {
 		}
 		defer client.Close()
 
-		if err := client.Start(context.Background()); err != nil {
+		if err := client.Start(t.Context()); err != nil {
 			t.Fatalf("Failed to start client: %v", err)
 		}
 
@@ -403,13 +403,13 @@ func TestInProcessMCPClient(t *testing.T) {
 			Version: "1.0.0",
 		}
 
-		_, err = client.Initialize(context.Background(), initRequest)
+		_, err = client.Initialize(t.Context(), initRequest)
 		if err != nil {
 			t.Fatalf("Failed to initialize: %v", err)
 		}
 
 		request := mcp.ListToolsRequest{}
-		result, err := client.ListTools(context.Background(), request)
+		result, err := client.ListTools(t.Context(), request)
 		if err != nil {
 			t.Errorf("ListTools failed: %v", err)
 		}

@@ -18,7 +18,7 @@ func TestMaxConcurrentTasks(t *testing.T) {
 			WithTaskCapabilities(true, true, true),
 			WithMaxConcurrentTasks(3),
 		)
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Create 3 tasks (at the limit)
 		_, err := server.createTask(ctx, "task-1", "test-tool", nil, nil)
@@ -42,7 +42,7 @@ func TestMaxConcurrentTasks(t *testing.T) {
 			WithTaskCapabilities(true, true, true),
 			WithMaxConcurrentTasks(2),
 		)
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Create 2 tasks (at the limit)
 		_, err := server.createTask(ctx, "task-1", "test-tool", nil, nil)
@@ -69,7 +69,7 @@ func TestMaxConcurrentTasks(t *testing.T) {
 			WithTaskCapabilities(true, true, true),
 			WithMaxConcurrentTasks(2),
 		)
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Create 2 tasks (at the limit)
 		entry1, err := server.createTask(ctx, "task-1", "test-tool", nil, nil)
@@ -112,7 +112,7 @@ func TestMaxConcurrentTasks(t *testing.T) {
 			WithTaskCapabilities(true, true, true),
 			WithMaxConcurrentTasks(2),
 		)
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Create 2 tasks (at the limit)
 		entry1, err := server.createTask(ctx, "task-1", "test-tool", nil, nil)
@@ -144,7 +144,7 @@ func TestMaxConcurrentTasks(t *testing.T) {
 		server := NewMCPServer("test-server", "1.0.0",
 			WithTaskCapabilities(true, true, true),
 		)
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Create many tasks without limit
 		for i := range 100 {
@@ -163,7 +163,7 @@ func TestMaxConcurrentTasks(t *testing.T) {
 			WithTaskCapabilities(true, true, true),
 			WithMaxConcurrentTasks(0),
 		)
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Create many tasks without limit
 		for i := range 50 {
@@ -182,7 +182,7 @@ func TestMaxConcurrentTasks(t *testing.T) {
 			WithTaskCapabilities(true, true, true),
 			WithMaxConcurrentTasks(10),
 		)
-		ctx := context.Background()
+		ctx := t.Context()
 
 		var wg sync.WaitGroup
 		successCount := 0
@@ -240,7 +240,7 @@ func TestMaxConcurrentTasks(t *testing.T) {
 		}
 		server.AddTaskTool(tool, handler)
 
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Create first task (should succeed)
 		request1 := mcp.CallToolRequest{

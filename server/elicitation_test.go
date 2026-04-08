@@ -78,7 +78,7 @@ func TestMCPServer_RequestElicitation_NoSession(t *testing.T) {
 		},
 	}
 
-	_, err := server.RequestElicitation(context.Background(), request)
+	_, err := server.RequestElicitation(t.Context(), request)
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNoActiveSession), "expected ErrNoActiveSession, got %v", err)
@@ -90,7 +90,7 @@ func TestMCPServer_RequestElicitation_SessionDoesNotSupportElicitation(t *testin
 	// Use a regular session that doesn't implement SessionWithElicitation
 	mockSession := &mockBasicSession{sessionID: "test-session"}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	ctx = server.WithContext(ctx, mockSession)
 
 	request := mcp.ElicitationRequest{
@@ -126,7 +126,7 @@ func TestMCPServer_RequestElicitation_Success(t *testing.T) {
 	}
 
 	// Create context with session
-	ctx := context.Background()
+	ctx := t.Context()
 	ctx = server.WithContext(ctx, mockSession)
 
 	request := mcp.ElicitationRequest{
@@ -223,7 +223,7 @@ func TestRequestElicitation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := NewMCPServer("test", "1.0", WithElicitation())
-			ctx := server.WithContext(context.Background(), tt.session)
+			ctx := server.WithContext(t.Context(), tt.session)
 
 			result, err := server.RequestElicitation(ctx, tt.request)
 
@@ -256,7 +256,7 @@ func TestRequestURLElicitation(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	_, err := s.RequestURLElicitation(ctx, mockSession, "id-123", "https://example.com/auth", "Please auth")
 	require.NoError(t, err)
 
@@ -296,7 +296,7 @@ func TestSendElicitationComplete_NoPriorRequest(t *testing.T) {
 
 	// Call SendElicitationComplete directly without any prior request state
 	// This verifies the server can send completion notifications independently
-	err := s.SendElicitationComplete(context.Background(), mockSession, "independent-id-999")
+	err := s.SendElicitationComplete(t.Context(), mockSession, "independent-id-999")
 	require.NoError(t, err)
 
 	select {

@@ -59,7 +59,7 @@ func TestStdio(t *testing.T) {
 	stdio := NewStdio(mockServerPath, nil)
 
 	// Start the transport
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	startErr := stdio.Start(ctx)
@@ -69,7 +69,7 @@ func TestStdio(t *testing.T) {
 	defer stdio.Close()
 
 	t.Run("SendRequest", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		params := map[string]any{
@@ -127,7 +127,7 @@ func TestStdio(t *testing.T) {
 
 	t.Run("SendRequestWithTimeout", func(t *testing.T) {
 		// Create a context that's already canceled
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel() // Cancel the context immediately
 
 		// Prepare a request
@@ -157,7 +157,7 @@ func TestStdio(t *testing.T) {
 
 		// Send a notification
 		// This would trigger a notification from the server
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		defer cancel()
 
 		notification := mcp.JSONRPCNotification{
@@ -174,9 +174,7 @@ func TestStdio(t *testing.T) {
 			t.Fatalf("SendNotification failed: %v", err)
 		}
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			select {
 			case nt := <-notificationChan:
 				// We received a notification from the mock server
@@ -211,7 +209,7 @@ func TestStdio(t *testing.T) {
 			case <-time.After(1 * time.Second):
 				t.Errorf("Expected notification, got none")
 			}
-		}()
+		})
 
 		wg.Wait()
 	})
@@ -228,7 +226,7 @@ func TestStdio(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
 
 				// Each request has a unique ID and payload
@@ -344,7 +342,7 @@ func TestStdio(t *testing.T) {
 	})
 
 	t.Run("SendRequestWithStringID", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		params := map[string]any{
@@ -408,7 +406,7 @@ func TestStdioErrors(t *testing.T) {
 		stdio := NewStdio("non_existent_command", nil)
 
 		// Start should fail
-		ctx := context.Background()
+		ctx := t.Context()
 		err := stdio.Start(ctx)
 		if err == nil {
 			t.Errorf("Expected error when starting with invalid command, got nil")
@@ -444,7 +442,7 @@ func TestStdioErrors(t *testing.T) {
 			Method:  "ping",
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 		defer cancel()
 		_, reqErr := uninitiatedStdio.SendRequest(ctx, request)
 		if reqErr == nil {
@@ -471,7 +469,7 @@ func TestStdioErrors(t *testing.T) {
 		stdio := NewStdio(mockServerPath, nil)
 
 		// Start the transport
-		ctx := context.Background()
+		ctx := t.Context()
 		if startErr := stdio.Start(ctx); startErr != nil {
 			t.Fatalf("Failed to start Stdio transport: %v", startErr)
 		}
@@ -511,7 +509,7 @@ func TestStdioErrors(t *testing.T) {
 		stdio := NewIO(stdoutReader, stdinWriter, stderrReader)
 		stdio.logger = testLogger
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		t.Cleanup(cancel)
 
 		err := stdio.Start(ctx)
@@ -657,7 +655,7 @@ func TestStdio_WithCommandFunc(t *testing.T) {
 	require.NotNil(t, stdio.cmdFunc)
 
 	// Manually call the cmdFunc passing the same values as in spawnCommand.
-	cmd, err := stdio.cmdFunc(context.Background(), "echo", nil, []string{"hello"})
+	cmd, err := stdio.cmdFunc(t.Context(), "echo", nil, []string{"hello"})
 	require.NoError(t, err)
 	require.True(t, called)
 	require.NotNil(t, cmd)
@@ -674,7 +672,7 @@ func TestStdio_WithCommandFunc(t *testing.T) {
 }
 
 func TestStdio_SpawnCommand(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	t.Setenv("TEST_ENVIRON_VAR", "true")
 
 	// Explicitly not passing any environment, so we can see if it
@@ -695,7 +693,7 @@ func TestStdio_SpawnCommand(t *testing.T) {
 }
 
 func TestStdio_SpawnCommand_UsesCommandFunc(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	t.Setenv("TEST_ENVIRON_VAR", "true")
 
 	stdio := NewStdioWithOptions(
@@ -724,7 +722,7 @@ func TestStdio_SpawnCommand_UsesCommandFunc(t *testing.T) {
 }
 
 func TestStdio_SpawnCommand_UsesCommandFunc_Error(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	stdio := NewStdioWithOptions(
 		"echo",
@@ -842,7 +840,7 @@ func TestStdio_LargeMessages(t *testing.T) {
 
 	stdio := NewStdio(mockServerPath, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
 	startErr := stdio.Start(ctx)
@@ -867,7 +865,7 @@ func TestStdio_LargeMessages(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 
 			largeString := generateRandomString(tc.dataSize)
