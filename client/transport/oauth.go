@@ -150,6 +150,7 @@ type OAuthHandler struct {
 	metadataFetchErr error
 	metadataOnce     sync.Once
 	baseURL          string
+	metadataMu       sync.Mutex // Protects serverMetadata, metadataFetchErr, metadataOnce, and config.ProtectedResourceMetadataURL
 
 	mu            sync.RWMutex // Protects expectedState
 	expectedState string       // Expected state value for CSRF protection
@@ -312,6 +313,8 @@ func extractOAuthError(body []byte, statusCode int, context string) error {
 // This is used when a 401 response includes a resource_metadata parameter in the
 // WWW-Authenticate header per RFC 9728.
 func (h *OAuthHandler) SetProtectedResourceMetadataURL(u string) {
+	h.metadataMu.Lock()
+	defer h.metadataMu.Unlock()
 	h.config.ProtectedResourceMetadataURL = u
 	h.serverMetadata = nil
 	h.metadataFetchErr = nil
@@ -375,6 +378,8 @@ type OAuthProtectedResource struct {
 
 // getServerMetadata fetches the OAuth server metadata
 func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetadata, error) {
+	h.metadataMu.Lock()
+	defer h.metadataMu.Unlock()
 	h.metadataOnce.Do(func() {
 		// If AuthServerMetadataURL is explicitly provided, use it directly
 		if h.config.AuthServerMetadataURL != "" {
