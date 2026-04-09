@@ -581,6 +581,11 @@ func (h *OAuthHandler) RegisterClient(ctx context.Context, clientName string) er
 		regRequest["token_endpoint_auth_method"] = "client_secret_basic"
 	}
 
+	// RFC 8707: Include resource parameter in client registration
+	if h.resourceURL != "" {
+		regRequest["resource"] = h.resourceURL
+	}
+
 	reqBody, err := json.Marshal(regRequest)
 	if err != nil {
 		return fmt.Errorf("failed to marshal registration request: %w", err)
@@ -667,6 +672,11 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 
 	if h.config.PKCEEnabled && codeVerifier != "" {
 		data.Set("code_verifier", codeVerifier)
+	}
+
+	// RFC 8707: Include resource parameter in token exchange
+	if h.resourceURL != "" {
+		data.Set("resource", h.resourceURL)
 	}
 
 	req, err := http.NewRequestWithContext(
