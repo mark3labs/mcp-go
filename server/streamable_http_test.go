@@ -2873,3 +2873,52 @@ func TestStreamableHTTPNotificationRace(t *testing.T) {
 		}
 	}
 }
+
+// TestStreamableHTTP_SessionRequestIDs_CleanedOnGetClose verifies that the
+// sessionRequestIDs entry is removed when a GET connection closes, preventing
+// unbounded growth in stateless/heartbeat scenarios.
+func TestStreamableHTTP_SessionRequestIDs_CleanedOnGetClose(t *testing.T) {
+	tests := []struct {
+		name string
+	}{
+		{name: "cleanup on GET close"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mcpServer := NewMCPServer("test", "1.0.0")
+			httpServer := NewStreamableHTTPServer(mcpServer,
+				WithHeartbeatInterval(50*time.Millisecond),
+			)
+			ts := httptest.NewServer(httpServer)
+			defer ts.Close()
+
+			// Open a GET (SSE) connection with a short-lived context.
+			ctx, cancel := context.WithCancel(context.Background())
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", "text/event-stream")
+
+			resp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+
+			countEntries := func() int {
+				n := 0
+				httpServer.sessionRequestIDs.Range(func(_, _ any) bool { n++; return true })
+				return n
+			}
+
+			// Poll until the heartbeat fires and populates sessionRequestIDs.
+			require.Eventually(t, func() bool { return countEntries() > 0 },
+				time.Second, 10*time.Millisecond,
+				"sessionRequestIDs should have an entry while GET is open")
+
+			// Close the connection and poll until the deferred cleanup runs.
+			cancel()
+			resp.Body.Close()
+			assert.Eventually(t, func() bool { return countEntries() == 0 },
+				time.Second, 10*time.Millisecond,
+				"sessionRequestIDs should be empty after GET connection closes")
+		})
+	}
+}
