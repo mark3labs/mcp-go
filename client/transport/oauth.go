@@ -150,7 +150,7 @@ type OAuthHandler struct {
 	metadataFetchErr error
 	metadataOnce     sync.Once
 	baseURL          string
-	metadataMu       sync.Mutex // Protects serverMetadata, metadataFetchErr, metadataOnce, and config.ProtectedResourceMetadataURL
+	metadataMu       sync.Mutex // Protects baseURL, serverMetadata, metadataFetchErr, metadataOnce, and config.ProtectedResourceMetadataURL
 
 	mu            sync.RWMutex // Protects expectedState
 	expectedState string       // Expected state value for CSRF protection
@@ -326,8 +326,11 @@ func (h *OAuthHandler) GetClientSecret() string {
 	return h.config.ClientSecret
 }
 
-// SetBaseURL sets the base URL for the API server
+// SetBaseURL sets the base URL for the API server.
+// Must be called before any calls to getServerMetadata (i.e., during initialization).
 func (h *OAuthHandler) SetBaseURL(baseURL string) {
+	h.metadataMu.Lock()
+	defer h.metadataMu.Unlock()
 	h.baseURL = baseURL
 }
 
@@ -398,7 +401,8 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		// 1. Explicit config (ProtectedResourceMetadataURL from RFC9728 WWW-Authenticate header)
 		// 2. Constructed from base URL
 		var protectedResourceURL string
-		if h.config.ProtectedResourceMetadataURL != "" {
+		explicitMetadataURL := h.config.ProtectedResourceMetadataURL != ""
+		if explicitMetadataURL {
 			protectedResourceURL = h.config.ProtectedResourceMetadataURL
 		} else {
 			protectedResourceURL, err = buildWellKnownURL(baseURL, "oauth-protected-resource")
@@ -423,8 +427,15 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		}
 		defer resp.Body.Close()
 
-		// If we can't get the protected resource metadata, try OAuth Authorization Server discovery
+		// If we can't get the protected resource metadata, try OAuth Authorization Server discovery.
+		// However, if the resource_metadata URL was explicitly provided (via RFC 9728), don't
+		// fall back to baseURL-derived discovery — the server specifically indicated where to
+		// find metadata, so falling back would mask the signal.
 		if resp.StatusCode != http.StatusOK {
+			if explicitMetadataURL {
+				h.metadataFetchErr = fmt.Errorf("protected resource metadata discovery failed for explicit URL %q: status %d", protectedResourceURL, resp.StatusCode)
+				return
+			}
 			authMetadataURL, err := buildWellKnownURL(baseURL, "oauth-authorization-server")
 			if err != nil {
 				h.metadataFetchErr = fmt.Errorf("failed to build authorization server metadata URL: %w", err)
