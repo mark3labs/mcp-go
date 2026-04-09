@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1422,4 +1423,83 @@ func TestOAuthHandler_RefreshToken_ProperHTTP400Error(t *testing.T) {
 	// Verify no token was saved to token store (regression test for original bug)
 	_, getErr := tokenStore.GetToken(ctx)
 	assert.ErrorIs(t, getErr, ErrNoToken, "No token should be saved after HTTP 400 error")
+}
+
+func TestOAuthHandler_SetProtectedResourceMetadataURL(t *testing.T) {
+	// Track which paths the server receives to verify re-discovery
+	var requestedPaths []string
+	var serverURL string
+
+	metadataServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPaths = append(requestedPaths, r.URL.Path)
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource":
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				Resource:             "https://resource.example.com",
+				AuthorizationServers: []string{serverURL},
+			})
+		case "/updated/.well-known/oauth-protected-resource":
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				Resource:             "https://resource.example.com",
+				AuthorizationServers: []string{serverURL},
+			})
+		case "/.well-known/oauth-authorization-server":
+			_ = json.NewEncoder(w).Encode(AuthServerMetadata{
+				Issuer:                serverURL,
+				AuthorizationEndpoint: serverURL + "/authorize",
+				TokenEndpoint:         serverURL + "/token",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer metadataServer.Close()
+	serverURL = metadataServer.URL
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:                     "test",
+		ProtectedResourceMetadataURL: metadataServer.URL + "/.well-known/oauth-protected-resource",
+	})
+	handler.SetBaseURL(metadataServer.URL)
+
+	// First fetch caches metadata via sync.Once
+	meta1, err := handler.GetServerMetadata(context.Background())
+	if err != nil {
+		t.Fatalf("First GetServerMetadata failed: %v", err)
+	}
+	if meta1.Issuer != serverURL {
+		t.Fatalf("Expected issuer %q, got %q", serverURL, meta1.Issuer)
+	}
+
+	// Update the URL and verify it resets the once so re-discovery happens
+	newURL := metadataServer.URL + "/updated/.well-known/oauth-protected-resource"
+	handler.SetProtectedResourceMetadataURL(newURL)
+
+	if handler.config.ProtectedResourceMetadataURL != newURL {
+		t.Errorf("Expected ProtectedResourceMetadataURL to be %q, got %q",
+			newURL, handler.config.ProtectedResourceMetadataURL)
+	}
+
+	// Verify that cached metadata was cleared
+	if handler.serverMetadata != nil {
+		t.Error("Expected serverMetadata to be nil after SetProtectedResourceMetadataURL")
+	}
+	if handler.metadataFetchErr != nil {
+		t.Error("Expected metadataFetchErr to be nil after SetProtectedResourceMetadataURL")
+	}
+
+	// Verify re-discovery actually happens by calling GetServerMetadata again
+	requestedPaths = nil // reset
+	meta2, err := handler.GetServerMetadata(context.Background())
+	if err != nil {
+		t.Fatalf("Second GetServerMetadata failed: %v", err)
+	}
+	if meta2 == nil {
+		t.Fatal("Expected non-nil metadata from second GetServerMetadata")
+	}
+
+	// Verify the updated URL was fetched (proves sync.Once was reset)
+	if !slices.Contains(requestedPaths, "/updated/.well-known/oauth-protected-resource") {
+		t.Errorf("Expected server to receive request for /updated/.well-known/oauth-protected-resource, got paths: %v", requestedPaths)
+	}
 }
