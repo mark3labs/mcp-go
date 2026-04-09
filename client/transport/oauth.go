@@ -146,6 +146,7 @@ type OAuthHandler struct {
 	metadataFetchErr error
 	metadataOnce     sync.Once
 	baseURL          string
+	resourceURL      string // RFC 8707 resource indicator; set from protected resource metadata
 
 	mu            sync.RWMutex // Protects expectedState
 	expectedState string       // Expected state value for CSRF protection
@@ -219,6 +220,10 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken string) (*
 	data.Set("client_id", h.config.ClientID)
 	if h.config.ClientSecret != "" {
 		data.Set("client_secret", h.config.ClientSecret)
+	}
+	// RFC 8707: Include resource parameter on refresh requests
+	if h.resourceURL != "" {
+		data.Set("resource", h.resourceURL)
 	}
 
 	req, err := http.NewRequestWithContext(
@@ -424,6 +429,16 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 			return
 		}
 
+		// RFC 8707: Capture the resource identifier for use in authorization requests.
+		// If not provided in metadata, fall back to base URL per RFC 8707 Section 2:
+		// "The client SHOULD use the base URI of the API as the resource parameter value
+		// unless specific knowledge of the resource dictates otherwise."
+		if protectedResource.Resource != "" {
+			h.resourceURL = protectedResource.Resource
+		} else {
+			h.resourceURL = baseURL
+		}
+
 		// If no authorization servers are specified, fall back to default endpoints
 		if len(protectedResource.AuthorizationServers) == 0 {
 			metadata, err := h.getDefaultEndpoints(baseURL)
@@ -610,6 +625,11 @@ func (h *OAuthHandler) RegisterClient(ctx context.Context, clientName string) er
 		regRequest["token_endpoint_auth_method"] = "client_secret_basic"
 	}
 
+	// RFC 8707: Include resource parameter in client registration
+	if h.resourceURL != "" {
+		regRequest["resource"] = h.resourceURL
+	}
+
 	reqBody, err := json.Marshal(regRequest)
 	if err != nil {
 		return fmt.Errorf("failed to marshal registration request: %w", err)
@@ -698,6 +718,11 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 		data.Set("code_verifier", codeVerifier)
 	}
 
+	// RFC 8707: Include resource parameter in token exchange
+	if h.resourceURL != "" {
+		data.Set("resource", h.resourceURL)
+	}
+
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
@@ -776,6 +801,11 @@ func (h *OAuthHandler) GetAuthorizationURL(ctx context.Context, state, codeChall
 	if h.config.PKCEEnabled && codeChallenge != "" {
 		params.Set("code_challenge", codeChallenge)
 		params.Set("code_challenge_method", "S256")
+	}
+
+	// RFC 8707: Include resource parameter in authorization URL
+	if h.resourceURL != "" {
+		params.Set("resource", h.resourceURL)
 	}
 
 	return metadata.AuthorizationEndpoint + "?" + params.Encode(), nil
