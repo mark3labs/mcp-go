@@ -425,14 +425,14 @@ func TestExtractResourceMetadataURL(t *testing.T) {
 		},
 		{
 			name:        "Whitespace around equals",
-			wwwAuth:     `Bearer resource_metadata="https://example.com/meta"`,
+			wwwAuth:     `Bearer resource_metadata = "https://example.com/meta"`,
 			expectedURL: "https://example.com/meta",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := extractResourceMetadataURL(tc.wwwAuth)
+			result := extractResourceMetadataURL([]string{tc.wwwAuth})
 			if result != tc.expectedURL {
 				t.Errorf("Expected %q, got %q", tc.expectedURL, result)
 			}

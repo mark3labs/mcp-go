@@ -189,7 +189,7 @@ func (c *SSE) Start(ctx context.Context) error {
 		authHeader, err := c.oauthHandler.GetAuthorizationHeader(ctx)
 		if err != nil {
 			// If we get an authorization error, return a specific error that can be handled by the client
-			if err.Error() == "no valid token available, authorization required" {
+			if errors.Is(err, ErrOAuthAuthorizationRequired) {
 				return &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
 					AuthorizationRequiredError: AuthorizationRequiredError{
@@ -212,7 +212,7 @@ func (c *SSE) Start(ctx context.Context) error {
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
 			// Extract discovered metadata URL per RFC9728
-			metadataURL := extractResourceMetadataURL(resp.Header.Get("WWW-Authenticate"))
+			metadataURL := extractResourceMetadataURL(resp.Header.Values("WWW-Authenticate"))
 
 			// Feed discovered URL back to OAuthHandler so next auth attempt uses it
 			if metadataURL != "" && c.oauthHandler != nil {
@@ -452,7 +452,7 @@ func (c *SSE) SendRequest(
 		authHeader, err := c.oauthHandler.GetAuthorizationHeader(ctx)
 		if err != nil {
 			// If we get an authorization error, return a specific error that can be handled by the client
-			if err.Error() == "no valid token available, authorization required" {
+			if errors.Is(err, ErrOAuthAuthorizationRequired) {
 				return nil, &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
 					AuthorizationRequiredError: AuthorizationRequiredError{
@@ -508,7 +508,7 @@ func (c *SSE) SendRequest(
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
 			// Extract discovered metadata URL per RFC9728
-			metadataURL := extractResourceMetadataURL(resp.Header.Get("WWW-Authenticate"))
+			metadataURL := extractResourceMetadataURL(resp.Header.Values("WWW-Authenticate"))
 
 			// Feed discovered URL back to OAuthHandler so next auth attempt uses it
 			if metadataURL != "" && c.oauthHandler != nil {
@@ -675,7 +675,7 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
 			// Extract discovered metadata URL per RFC9728
-			metadataURL := extractResourceMetadataURL(resp.Header.Get("WWW-Authenticate"))
+			metadataURL := extractResourceMetadataURL(resp.Header.Values("WWW-Authenticate"))
 
 			// Feed discovered URL back to OAuthHandler so next auth attempt uses it
 			if metadataURL != "" && c.oauthHandler != nil {

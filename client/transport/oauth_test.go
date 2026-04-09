@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1425,25 +1426,35 @@ func TestOAuthHandler_RefreshToken_ProperHTTP400Error(t *testing.T) {
 }
 
 func TestOAuthHandler_SetProtectedResourceMetadataURL(t *testing.T) {
-	// Create a metadata server that returns different results based on the
-	// protected resource metadata URL used
+	// Track which paths the server receives to verify re-discovery
+	var requestedPaths []string
+	var serverURL string
+
 	metadataServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPaths = append(requestedPaths, r.URL.Path)
 		switch r.URL.Path {
 		case "/.well-known/oauth-protected-resource":
 			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
 				Resource:             "https://resource.example.com",
-				AuthorizationServers: []string{"https://auth1.example.com"},
+				AuthorizationServers: []string{serverURL},
 			})
 		case "/updated/.well-known/oauth-protected-resource":
 			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
 				Resource:             "https://resource.example.com",
-				AuthorizationServers: []string{"https://auth2.example.com"},
+				AuthorizationServers: []string{serverURL},
+			})
+		case "/.well-known/oauth-authorization-server":
+			_ = json.NewEncoder(w).Encode(AuthServerMetadata{
+				Issuer:                serverURL,
+				AuthorizationEndpoint: serverURL + "/authorize",
+				TokenEndpoint:         serverURL + "/token",
 			})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	defer metadataServer.Close()
+	serverURL = metadataServer.URL
 
 	handler := NewOAuthHandler(OAuthConfig{
 		ClientID:                     "test",
@@ -1452,10 +1463,13 @@ func TestOAuthHandler_SetProtectedResourceMetadataURL(t *testing.T) {
 	handler.SetBaseURL(metadataServer.URL)
 
 	// First fetch caches metadata via sync.Once
-	_, err := handler.GetServerMetadata(context.Background())
-	// May fail since auth server URLs are fake, but that's fine — we only care
-	// that metadataOnce fired and is now "used up"
-	_ = err
+	meta1, err := handler.GetServerMetadata(context.Background())
+	if err != nil {
+		t.Fatalf("First GetServerMetadata failed: %v", err)
+	}
+	if meta1.Issuer != serverURL {
+		t.Fatalf("Expected issuer %q, got %q", serverURL, meta1.Issuer)
+	}
 
 	// Update the URL and verify it resets the once so re-discovery happens
 	newURL := metadataServer.URL + "/updated/.well-known/oauth-protected-resource"
@@ -1472,5 +1486,20 @@ func TestOAuthHandler_SetProtectedResourceMetadataURL(t *testing.T) {
 	}
 	if handler.metadataFetchErr != nil {
 		t.Error("Expected metadataFetchErr to be nil after SetProtectedResourceMetadataURL")
+	}
+
+	// Verify re-discovery actually happens by calling GetServerMetadata again
+	requestedPaths = nil // reset
+	meta2, err := handler.GetServerMetadata(context.Background())
+	if err != nil {
+		t.Fatalf("Second GetServerMetadata failed: %v", err)
+	}
+	if meta2 == nil {
+		t.Fatal("Expected non-nil metadata from second GetServerMetadata")
+	}
+
+	// Verify the updated URL was fetched (proves sync.Once was reset)
+	if !slices.Contains(requestedPaths, "/updated/.well-known/oauth-protected-resource") {
+		t.Errorf("Expected server to receive request for /updated/.well-known/oauth-protected-resource, got paths: %v", requestedPaths)
 	}
 }

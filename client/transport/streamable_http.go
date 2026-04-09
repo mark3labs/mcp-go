@@ -283,7 +283,7 @@ func parseAuthParams(header string) map[string]string {
 			break
 		}
 		key := strings.TrimSpace(rest[:eqIdx])
-		rest = rest[eqIdx+1:]
+		rest = strings.TrimLeft(rest[eqIdx+1:], " \t")
 
 		// Parse value: quoted-string or token
 		var value string
@@ -340,11 +340,17 @@ func parseQuotedString(s string) (value, rest string) {
 	return b.String(), ""
 }
 
-// extractResourceMetadataURL extracts the resource_metadata parameter from a WWW-Authenticate header
-// per RFC9728 Section 5.1. Returns empty string if not found.
+// extractResourceMetadataURL extracts the resource_metadata parameter from WWW-Authenticate headers
+// per RFC9728 Section 5.1. Scans all provided header values since a response may contain multiple
+// WWW-Authenticate headers (RFC 9110). Returns empty string if not found.
 // Example: Bearer resource_metadata="https://resource.example.com/.well-known/oauth-protected-resource"
-func extractResourceMetadataURL(wwwAuthHeader string) string {
-	return parseAuthParams(wwwAuthHeader)["resource_metadata"]
+func extractResourceMetadataURL(wwwAuthHeaders []string) string {
+	for _, header := range wwwAuthHeaders {
+		if u := parseAuthParams(header)["resource_metadata"]; u != "" {
+			return u
+		}
+	}
+	return ""
 }
 
 // AuthorizationRequiredError is returned when a 401 Unauthorized response is received.
@@ -418,7 +424,7 @@ func (c *StreamableHTTP) SendRequest(
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
 			// Extract discovered metadata URL per RFC9728
-			metadataURL := extractResourceMetadataURL(resp.Header.Get("WWW-Authenticate"))
+			metadataURL := extractResourceMetadataURL(resp.Header.Values("WWW-Authenticate"))
 
 			// Feed discovered URL back to OAuthHandler so next auth attempt uses it
 			if metadataURL != "" && c.oauthHandler != nil {
@@ -727,7 +733,7 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 		return nil
 	case http.StatusUnauthorized:
 		// Extract discovered metadata URL per RFC9728
-		metadataURL := extractResourceMetadataURL(resp.Header.Get("WWW-Authenticate"))
+		metadataURL := extractResourceMetadataURL(resp.Header.Values("WWW-Authenticate"))
 
 		// Feed discovered URL back to OAuthHandler so next auth attempt uses it
 		if metadataURL != "" && c.oauthHandler != nil {
