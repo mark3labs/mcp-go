@@ -39,6 +39,7 @@ type Stdio struct {
 	cmd              *exec.Cmd
 	cmdFunc          CommandFunc
 	stdin            io.WriteCloser
+	stdinMu          sync.Mutex
 	stdout           *bufio.Reader
 	stderr           io.ReadCloser
 	responses        map[string]chan *JSONRPCResponse
@@ -451,8 +452,13 @@ func (c *Stdio) SendRequest(
 		c.mu.Unlock()
 	}
 
-	// Send request
-	if _, err := c.stdin.Write(requestBytes); err != nil {
+	// Send request. stdinMu serializes frame writes so concurrent
+	// SendRequest/SendNotification/sendResponse calls cannot interleave
+	// JSON-RPC lines on the subprocess's stdin.
+	c.stdinMu.Lock()
+	_, err = c.stdin.Write(requestBytes)
+	c.stdinMu.Unlock()
+	if err != nil {
 		deleteResponseChan()
 		return nil, fmt.Errorf("failed to write request: %w", err)
 	}
@@ -499,7 +505,10 @@ func (c *Stdio) SendNotification(
 	}
 	notificationBytes = append(notificationBytes, '\n')
 
-	if _, err := c.stdin.Write(notificationBytes); err != nil {
+	c.stdinMu.Lock()
+	_, err = c.stdin.Write(notificationBytes)
+	c.stdinMu.Unlock()
+	if err != nil {
 		return fmt.Errorf("failed to write notification: %w", err)
 	}
 
@@ -562,7 +571,10 @@ func (c *Stdio) sendResponse(response JSONRPCResponse) {
 	}
 	responseBytes = append(responseBytes, '\n')
 
-	if _, err := c.stdin.Write(responseBytes); err != nil {
+	c.stdinMu.Lock()
+	_, err = c.stdin.Write(responseBytes)
+	c.stdinMu.Unlock()
+	if err != nil {
 		c.logger.Errorf("Error writing response: %v", err)
 	}
 }
