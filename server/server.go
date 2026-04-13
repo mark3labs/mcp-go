@@ -188,6 +188,7 @@ type MCPServer struct {
 
 	name                       string
 	version                    string
+	implementation             mcp.Implementation
 	instructions               string
 	resources                  map[string]resourceEntry
 	resourceTemplates          map[string]resourceTemplateEntry
@@ -491,6 +492,44 @@ func WithCompletions() ServerOption {
 func WithExperimental(experimental map[string]any) ServerOption {
 	return func(s *MCPServer) {
 		s.capabilities.experimental = experimental
+	}
+}
+
+// WithIcons sets the server icons for the implementation metadata returned
+// during initialization. The icons slice and nested Sizes fields are defensively
+// copied to prevent external mutation.
+func WithIcons(icons ...mcp.Icon) ServerOption {
+	return func(s *MCPServer) {
+		copied := make([]mcp.Icon, len(icons))
+		for i, icon := range icons {
+			copied[i] = icon
+			if icon.Sizes != nil {
+				copied[i].Sizes = make([]string, len(icon.Sizes))
+				copy(copied[i].Sizes, icon.Sizes)
+			}
+		}
+		s.implementation.Icons = copied
+	}
+}
+
+// WithTitle sets the human-readable display title for the server implementation.
+func WithTitle(title string) ServerOption {
+	return func(s *MCPServer) {
+		s.implementation.Title = title
+	}
+}
+
+// WithDescription sets the description for the server implementation.
+func WithDescription(description string) ServerOption {
+	return func(s *MCPServer) {
+		s.implementation.Description = description
+	}
+}
+
+// WithWebsiteURL sets the website URL for the server implementation.
+func WithWebsiteURL(websiteURL string) ServerOption {
+	return func(s *MCPServer) {
+		s.implementation.WebsiteURL = websiteURL
 	}
 }
 
@@ -942,8 +981,12 @@ func (s *MCPServer) handleInitialize(
 	result := mcp.InitializeResult{
 		ProtocolVersion: s.protocolVersion(request.Params.ProtocolVersion),
 		ServerInfo: mcp.Implementation{
-			Name:    s.name,
-			Version: s.version,
+			Name:        s.name,
+			Version:     s.version,
+			Title:       s.implementation.Title,
+			Description: s.implementation.Description,
+			WebsiteURL:  s.implementation.WebsiteURL,
+			Icons:       s.implementation.Icons,
 		},
 		Capabilities: capabilities,
 		Instructions: s.instructions,

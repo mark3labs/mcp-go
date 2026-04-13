@@ -25,6 +25,217 @@ func TestMCPServer_NewMCPServer(t *testing.T) {
 	assert.Equal(t, "1.0.0", server.version)
 }
 
+func TestMCPServer_ImplementationMetadata(t *testing.T) {
+	tests := []struct {
+		name     string
+		options  []ServerOption
+		validate func(t *testing.T, response mcp.JSONRPCMessage)
+	}{
+		{
+			name:    "No implementation metadata",
+			options: []ServerOption{},
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				require.True(t, ok)
+
+				initResult, ok := resp.Result.(mcp.InitializeResult)
+				require.True(t, ok)
+
+				assert.Equal(t, "test-server", initResult.ServerInfo.Name)
+				assert.Equal(t, "1.0.0", initResult.ServerInfo.Version)
+				assert.Empty(t, initResult.ServerInfo.Title)
+				assert.Empty(t, initResult.ServerInfo.Description)
+				assert.Empty(t, initResult.ServerInfo.WebsiteURL)
+				assert.Nil(t, initResult.ServerInfo.Icons)
+			},
+		},
+		{
+			name: "With title",
+			options: []ServerOption{
+				WithTitle("My Server"),
+			},
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				require.True(t, ok)
+
+				initResult, ok := resp.Result.(mcp.InitializeResult)
+				require.True(t, ok)
+
+				assert.Equal(t, "My Server", initResult.ServerInfo.Title)
+			},
+		},
+		{
+			name: "With description",
+			options: []ServerOption{
+				WithDescription("A server that does amazing things"),
+			},
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				require.True(t, ok)
+
+				initResult, ok := resp.Result.(mcp.InitializeResult)
+				require.True(t, ok)
+
+				assert.Equal(t, "A server that does amazing things", initResult.ServerInfo.Description)
+			},
+		},
+		{
+			name: "With website URL",
+			options: []ServerOption{
+				WithWebsiteURL("https://example.com"),
+			},
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				require.True(t, ok)
+
+				initResult, ok := resp.Result.(mcp.InitializeResult)
+				require.True(t, ok)
+
+				assert.Equal(t, "https://example.com", initResult.ServerInfo.WebsiteURL)
+			},
+		},
+		{
+			name: "With icons",
+			options: []ServerOption{
+				WithIcons(
+					mcp.Icon{
+						Src:      "https://example.com/icon.png",
+						MIMEType: "image/png",
+						Sizes:    []string{"48x48"},
+					},
+				),
+			},
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				require.True(t, ok)
+
+				initResult, ok := resp.Result.(mcp.InitializeResult)
+				require.True(t, ok)
+
+				require.Len(t, initResult.ServerInfo.Icons, 1)
+				assert.Equal(t, "https://example.com/icon.png", initResult.ServerInfo.Icons[0].Src)
+				assert.Equal(t, "image/png", initResult.ServerInfo.Icons[0].MIMEType)
+				assert.Equal(t, []string{"48x48"}, initResult.ServerInfo.Icons[0].Sizes)
+			},
+		},
+		{
+			name: "With multiple icons",
+			options: []ServerOption{
+				WithIcons(
+					mcp.Icon{
+						Src:      "https://example.com/icon.png",
+						MIMEType: "image/png",
+						Sizes:    []string{"48x48"},
+					},
+					mcp.Icon{
+						Src:      "https://example.com/icon.svg",
+						MIMEType: "image/svg+xml",
+						Sizes:    []string{"any"},
+					},
+				),
+			},
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				require.True(t, ok)
+
+				initResult, ok := resp.Result.(mcp.InitializeResult)
+				require.True(t, ok)
+
+				require.Len(t, initResult.ServerInfo.Icons, 2)
+				assert.Equal(t, "https://example.com/icon.png", initResult.ServerInfo.Icons[0].Src)
+				assert.Equal(t, "https://example.com/icon.svg", initResult.ServerInfo.Icons[1].Src)
+			},
+		},
+		{
+			name: "With all implementation metadata",
+			options: []ServerOption{
+				WithTitle("My Server"),
+				WithDescription("A server that does amazing things"),
+				WithWebsiteURL("https://example.com"),
+				WithIcons(
+					mcp.Icon{
+						Src:      "https://example.com/icon.png",
+						MIMEType: "image/png",
+						Sizes:    []string{"48x48"},
+					},
+				),
+			},
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				require.True(t, ok)
+
+				initResult, ok := resp.Result.(mcp.InitializeResult)
+				require.True(t, ok)
+
+				assert.Equal(t, "test-server", initResult.ServerInfo.Name)
+				assert.Equal(t, "1.0.0", initResult.ServerInfo.Version)
+				assert.Equal(t, "My Server", initResult.ServerInfo.Title)
+				assert.Equal(t, "A server that does amazing things", initResult.ServerInfo.Description)
+				assert.Equal(t, "https://example.com", initResult.ServerInfo.WebsiteURL)
+				require.Len(t, initResult.ServerInfo.Icons, 1)
+				assert.Equal(t, "https://example.com/icon.png", initResult.ServerInfo.Icons[0].Src)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewMCPServer("test-server", "1.0.0", tt.options...)
+			message := mcp.JSONRPCRequest{
+				JSONRPC: "2.0",
+				ID:      mcp.NewRequestId(int64(1)),
+				Request: mcp.Request{
+					Method: "initialize",
+				},
+			}
+			messageBytes, err := json.Marshal(message)
+			require.NoError(t, err)
+
+			response := server.HandleMessage(context.Background(), messageBytes)
+			tt.validate(t, response)
+		})
+	}
+}
+
+func TestMCPServer_WithIcons_DefensiveCopy(t *testing.T) {
+	// Verify that WithIcons makes a defensive copy so external mutation
+	// does not affect the server's stored icons.
+	icons := []mcp.Icon{
+		{
+			Src:      "https://example.com/icon.png",
+			MIMEType: "image/png",
+			Sizes:    []string{"48x48"},
+		},
+	}
+
+	server := NewMCPServer("test-server", "1.0.0", WithIcons(icons...))
+
+	// Mutate the caller's slice and nested Sizes after passing to WithIcons.
+	icons[0].Src = "https://malicious.example.com/icon.png"
+	icons[0].Sizes[0] = "999x999"
+
+	message := mcp.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(int64(1)),
+		Request: mcp.Request{
+			Method: "initialize",
+		},
+	}
+	messageBytes, err := json.Marshal(message)
+	require.NoError(t, err)
+
+	response := server.HandleMessage(context.Background(), messageBytes)
+	resp, ok := response.(mcp.JSONRPCResponse)
+	require.True(t, ok)
+
+	initResult, ok := resp.Result.(mcp.InitializeResult)
+	require.True(t, ok)
+
+	require.Len(t, initResult.ServerInfo.Icons, 1)
+	assert.Equal(t, "https://example.com/icon.png", initResult.ServerInfo.Icons[0].Src)
+	assert.Equal(t, []string{"48x48"}, initResult.ServerInfo.Icons[0].Sizes)
+}
+
 func TestMCPServer_Capabilities(t *testing.T) {
 	tests := []struct {
 		name     string
