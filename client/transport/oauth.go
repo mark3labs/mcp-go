@@ -419,6 +419,7 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 				return
 			}
 			h.serverMetadata = metadata
+			h.metadataFetchErr = nil
 			return
 		}
 
@@ -447,6 +448,7 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 				return
 			}
 			h.serverMetadata = metadata
+			h.metadataFetchErr = nil
 			return
 		}
 
@@ -482,6 +484,7 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 			return
 		}
 		h.serverMetadata = metadata
+		h.metadataFetchErr = nil
 	})
 
 	if h.metadataFetchErr != nil {
