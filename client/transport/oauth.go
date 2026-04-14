@@ -463,6 +463,7 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		}
 		h.fetchMetadataFromURL(ctx, authMetadataURL)
 		if h.serverMetadata != nil {
+			h.metadataFetchErr = nil
 			return
 		}
 
@@ -474,6 +475,7 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		}
 		h.fetchMetadataFromURL(ctx, openidMetadataURL)
 		if h.serverMetadata != nil {
+			h.metadataFetchErr = nil
 			return
 		}
 
