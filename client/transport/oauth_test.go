@@ -1704,3 +1704,54 @@ func TestOAuthHandler_RFC8707_ResourceParameter(t *testing.T) {
 		assert.Equal(t, server.URL, capturedResource, "resource should fall back to baseURL")
 	})
 }
+
+// TestOAuthHandler_GetServerMetadata_AuthServerReturnsHTML tests that when the
+// authorization server's .well-known endpoint returns 200 with HTML (e.g. a login
+// page) instead of JSON, the fallback chain is not poisoned and default endpoints
+// are used successfully.
+func TestOAuthHandler_GetServerMetadata_AuthServerReturnsHTML(t *testing.T) {
+	// Create a separate "auth server" that returns HTML at its .well-known endpoints
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Return 200 with HTML for all requests (simulating a login page)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("<html><body>Login Page</body></html>"))
+	}))
+	defer authServer.Close()
+
+	// Create the MCP server that returns valid protected resource metadata
+	// pointing to the auth server above
+	var mcpServerURL string
+	mcpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/oauth-protected-resource" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"resource":              mcpServerURL,
+				"authorization_servers": []string{authServer.URL},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	mcpServerURL = mcpServer.URL
+	defer mcpServer.Close()
+
+	config := OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: mcpServer.URL + "/callback",
+		Scopes:      []string{"mcp.read"},
+		TokenStore:  NewMemoryTokenStore(),
+		PKCEEnabled: true,
+	}
+
+	handler := NewOAuthHandler(config)
+	handler.SetBaseURL(mcpServer.URL)
+
+	metadata, err := handler.GetServerMetadata(context.Background())
+	require.NoError(t, err, "Should fall back to default endpoints when auth server returns HTML")
+
+	// Verify default endpoints were derived from the auth server URL
+	assert.Equal(t, authServer.URL+"/authorize", metadata.AuthorizationEndpoint)
+	assert.Equal(t, authServer.URL+"/token", metadata.TokenEndpoint)
+	assert.Equal(t, authServer.URL+"/register", metadata.RegistrationEndpoint)
+}
