@@ -410,6 +410,7 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 			}
 			h.fetchMetadataFromURL(ctx, authMetadataURL)
 			if h.serverMetadata != nil {
+				h.metadataFetchErr = nil
 				return
 			}
 			// If that also fails, fall back to default endpoints
