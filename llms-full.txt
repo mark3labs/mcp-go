@@ -6181,7 +6181,24 @@ The server's `Implementation` struct supports additional optional fields for ric
 //   Icons       []Icon — visual identifiers for the implementation
 ```
 
-You can set these via the `WithIcons` option. The `Title`, `Description`, and `WebsiteURL` fields are populated on the `Implementation` struct and sent to clients during initialization.
+You can set these via server options:
+
+```go
+s := server.NewMCPServer(
+    "My Server",
+    "1.0.0",
+    server.WithTitle("My Server"),                                    // Human-readable display title
+    server.WithDescription("A server that does amazing things"),     // Brief description
+    server.WithWebsiteURL("https://example.com"),                    // Website or docs URL
+    server.WithIcons(                                                // Visual identifiers
+        mcp.Icon{
+            Src:      "https://example.com/icon.png",
+            MIMEType: "image/png",
+            Sizes:    []string{"48x48"},
+        },
+    ),
+)
+```
 
 #### Extensions vs Experimental Capabilities
 
