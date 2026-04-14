@@ -25,7 +25,7 @@ func TestStdio_StartIdempotency(t *testing.T) {
 
 	stdio := NewStdio(mockServerPath, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	// First Start() - should succeed
@@ -65,7 +65,7 @@ func TestStdio_StartFailureReset(t *testing.T) {
 	// First attempt with invalid command - should fail
 	stdio := NewStdio("nonexistent_command_xyz", nil)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	err := stdio.Start(ctx)
 	if err == nil {
 		t.Fatal("Expected Start() to fail with invalid command")
@@ -110,7 +110,7 @@ func TestStdio_StartWithOptions_Idempotent(t *testing.T) {
 
 	stdio := NewStdioWithOptions(mockServerPath, nil, nil, WithCommandFunc(cmdFunc))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	// First Start()

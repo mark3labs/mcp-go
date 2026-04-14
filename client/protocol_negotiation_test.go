@@ -125,7 +125,7 @@ func TestProtocolVersionNegotiation(t *testing.T) {
 
 			client := NewClient(mockTransport)
 
-			_, err := client.Initialize(context.Background(), mcp.InitializeRequest{
+			_, err := client.Initialize(t.Context(), mcp.InitializeRequest{
 				Params: mcp.InitializeParams{
 					ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
 					ClientInfo:      mcp.Implementation{Name: "test-client", Version: "1.0"},
@@ -182,7 +182,7 @@ func TestProtocolVersionHeaderSetting(t *testing.T) {
 
 	client := NewClient(mockTransport)
 
-	_, err := client.Initialize(context.Background(), mcp.InitializeRequest{
+	_, err := client.Initialize(t.Context(), mcp.InitializeRequest{
 		Params: mcp.InitializeParams{
 			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
 			ClientInfo:      mcp.Implementation{Name: "test-client", Version: "1.0"},

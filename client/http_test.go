@@ -104,7 +104,7 @@ func TestHTTPClient(t *testing.T) {
 			notificationNum.Increment(notification.Method)
 		})
 
-		ctx := context.Background()
+		ctx := t.Context()
 
 		if err := client.Start(ctx); err != nil {
 			t.Fatalf("Failed to start client: %v", err)
@@ -162,7 +162,7 @@ func TestHTTPClient(t *testing.T) {
 				notificationNum.Increment(notification.Method)
 			})
 
-			ctx := context.Background()
+			ctx := t.Context()
 
 			if err := client.Start(ctx); err != nil {
 				t.Fatalf("Failed to start client: %v", err)

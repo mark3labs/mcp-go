@@ -248,7 +248,7 @@ func TestSamplingHTTPE2E(t *testing.T) {
 	defer httpClient.Close()
 
 	// Start the HTTP client
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := httpClient.Start(ctx); err != nil {
 		t.Fatalf("Failed to start HTTP client: %v", err)
 	}
@@ -380,7 +380,7 @@ func TestSamplingHTTPE2E(t *testing.T) {
 	// Cleanup
 	httpClient.Close()
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
@@ -464,7 +464,7 @@ func TestSamplingHTTPBasic(t *testing.T) {
 	mcpClient := client.NewClient(httpTransport)
 
 	// Start client
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
 	err = mcpClient.Start(ctx)
@@ -527,7 +527,7 @@ func TestSamplingHTTPBasic(t *testing.T) {
 	// Cleanup
 	mcpClient.Close()
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {

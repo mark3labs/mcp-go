@@ -28,7 +28,7 @@ func TestTaskHooks_TaskCreated(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithTaskHooks(hooks))
 
 	// Create a task
-	ctx := context.Background()
+	ctx := t.Context()
 	_, err := server.createTask(ctx, "test-task-1", "test-tool", nil, nil)
 	require.NoError(t, err)
 
@@ -65,7 +65,7 @@ func TestTaskHooks_TaskCompleted(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithTaskHooks(hooks))
 
 	// Create and complete a task
-	ctx := context.Background()
+	ctx := t.Context()
 	entry, err := server.createTask(ctx, "test-task-2", "test-tool", nil, nil)
 	require.NoError(t, err)
 
@@ -107,7 +107,7 @@ func TestTaskHooks_TaskFailed(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithTaskHooks(hooks))
 
 	// Create and fail a task
-	ctx := context.Background()
+	ctx := t.Context()
 	entry, err := server.createTask(ctx, "test-task-3", "test-tool", nil, nil)
 	require.NoError(t, err)
 
@@ -151,7 +151,7 @@ func TestTaskHooks_TaskCancelled(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithTaskHooks(hooks))
 
 	// Create a task
-	ctx := context.Background()
+	ctx := t.Context()
 	entry, err := server.createTask(ctx, "test-task-4", "test-tool", nil, nil)
 	require.NoError(t, err)
 
@@ -201,7 +201,7 @@ func TestTaskHooks_TaskStatusChanged(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithTaskHooks(hooks))
 
 	// Create a task (status change 1: working)
-	ctx := context.Background()
+	ctx := t.Context()
 	entry, err := server.createTask(ctx, "test-task-5", "test-tool", nil, nil)
 	require.NoError(t, err)
 
@@ -255,7 +255,7 @@ func TestTaskHooks_MultipleHooks(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithTaskHooks(hooks))
 
 	// Create and complete a task
-	ctx := context.Background()
+	ctx := t.Context()
 	entry, err := server.createTask(ctx, "test-task-6", "test-tool", nil, nil)
 	require.NoError(t, err)
 	server.completeTask(entry, "result", nil)
@@ -285,7 +285,7 @@ func TestTaskHooks_NilHooks(t *testing.T) {
 	// Test that nil hooks don't cause panics
 	server := NewMCPServer("test-server", "1.0.0")
 
-	ctx := context.Background()
+	ctx := t.Context()
 	entry, err := server.createTask(ctx, "test-task-7", "test-tool", nil, nil)
 	require.NoError(t, err)
 
@@ -333,7 +333,7 @@ func TestTaskHooks_IntegrationWithTaskTool(t *testing.T) {
 	server.AddTaskTool(tool, handler)
 
 	// Call the tool
-	ctx := context.Background()
+	ctx := t.Context()
 	request := mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
 			Name: "async-tool",

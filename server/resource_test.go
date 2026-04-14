@@ -59,7 +59,7 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 				)
 
 				// First, verify we have two resources
-				response := server.HandleMessage(context.Background(), []byte(`{
+				response := server.HandleMessage(t.Context(), []byte(`{
 					"jsonrpc": "2.0",
 					"id": 1,
 					"method": "resources/list"
@@ -71,7 +71,7 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 				assert.Len(t, result.Resources, 2)
 
 				// Now register session to receive notifications
-				err := server.RegisterSession(context.TODO(), &fakeSession{
+				err := server.RegisterSession(t.Context(), &fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
 					initialized:         true,
@@ -120,7 +120,7 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 				)
 
 				// Register session to receive notifications
-				err := server.RegisterSession(context.TODO(), &fakeSession{
+				err := server.RegisterSession(t.Context(), &fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
 					initialized:         true,
@@ -176,7 +176,7 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 				)
 
 				// Register session to receive notifications
-				err := noListChangedServer.RegisterSession(context.TODO(), &fakeSession{
+				err := noListChangedServer.RegisterSession(t.Context(), &fakeSession{
 					sessionID:           "test",
 					notificationChannel: notificationChannel,
 					initialized:         true,
@@ -199,7 +199,7 @@ func TestMCPServer_RemoveResource(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
+			ctx := t.Context()
 			server := NewMCPServer(
 				"test-server",
 				"1.0.0",

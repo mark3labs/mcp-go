@@ -14,7 +14,7 @@ import (
 // TestAddSessionResource tests adding a single resource to a session
 func TestAddSessionResource(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithResourceCapabilities(false, true))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a session with resources support
 	sessionChan := make(chan mcp.JSONRPCNotification, 10)
@@ -68,7 +68,7 @@ func TestAddSessionResource(t *testing.T) {
 // TestAddSessionResources tests adding multiple resources to a session
 func TestAddSessionResources(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithResourceCapabilities(false, true))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a session with resources support
 	sessionChan := make(chan mcp.JSONRPCNotification, 10)
@@ -151,7 +151,7 @@ func TestAddSessionResources(t *testing.T) {
 // TestDeleteSessionResources tests removing resources from a session
 func TestDeleteSessionResources(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithResourceCapabilities(false, true))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a session with pre-existing resources
 	sessionChan := make(chan mcp.JSONRPCNotification, 10)
@@ -205,7 +205,7 @@ func TestDeleteSessionResources(t *testing.T) {
 // TestSessionResourcesWithGlobalResources tests merging of global and session resources
 func TestSessionResourcesWithGlobalResources(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithResourceCapabilities(false, true))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Add global resources
 	server.AddResource(
@@ -321,7 +321,7 @@ func TestSessionResourcesWithGlobalResources(t *testing.T) {
 // TestAddSessionResourcesUninitialized tests adding resources to uninitialized session
 func TestAddSessionResourcesUninitialized(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithResourceCapabilities(false, true))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create an uninitialized session
 	sessionChan := make(chan mcp.JSONRPCNotification, 10)
@@ -391,7 +391,7 @@ func TestAddSessionResourcesUninitialized(t *testing.T) {
 // TestDeleteSessionResourcesUninitialized tests deleting resources from uninitialized session
 func TestDeleteSessionResourcesUninitialized(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithResourceCapabilities(false, true))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create an uninitialized session with resources
 	sessionChan := make(chan mcp.JSONRPCNotification, 10)
@@ -461,7 +461,7 @@ func TestSessionResourceCapabilitiesBehavior(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := tt.setupServer()
-			ctx := context.Background()
+			ctx := t.Context()
 
 			sessionChan := make(chan mcp.JSONRPCNotification, 10)
 			session := &sessionTestClientWithResources{
@@ -529,7 +529,7 @@ func TestSessionResourceCapabilitiesBehavior(t *testing.T) {
 // TestSessionResourceOperationsAfterUnregister tests operations on unregistered sessions
 func TestSessionResourceOperationsAfterUnregister(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithResourceCapabilities(false, true))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create and register a session
 	session := &sessionTestClientWithResources{
@@ -563,7 +563,7 @@ func TestSessionResourceOperationsAfterUnregister(t *testing.T) {
 // TestSessionResourcesConcurrency tests thread-safe resource operations
 func TestSessionResourcesConcurrency(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0", WithResourceCapabilities(false, true))
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a session
 	session := &sessionTestClientWithResources{
@@ -660,7 +660,7 @@ func TestSessionResourcesConcurrency(t *testing.T) {
 // TestSessionDoesNotSupportResources tests error handling for incompatible sessions
 func TestSessionDoesNotSupportResources(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0")
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a session that doesn't implement SessionWithResources
 	session := &sessionTestClientWithTools{
@@ -719,7 +719,7 @@ func TestNotificationErrorHandling(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Create a session with a blocking notification channel
 	blockingChan := make(chan mcp.JSONRPCNotification) // No buffer, will block

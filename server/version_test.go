@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -76,7 +75,7 @@ func TestMCPServer_VersionNegotiation_Explicit(t *testing.T) {
 			messageBytes, err := json.Marshal(initReq)
 			assert.NoError(t, err)
 
-			response := server.HandleMessage(context.Background(), messageBytes)
+			response := server.HandleMessage(t.Context(), messageBytes)
 			assert.NotNil(t, response)
 
 			resp, ok := response.(mcp.JSONRPCResponse)
