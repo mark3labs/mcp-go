@@ -563,7 +563,7 @@ func (h *OAuthHandler) RegisterClient(ctx context.Context, clientName string) er
 
 	// Add client_secret if this is a confidential client
 	if h.config.ClientSecret != "" {
-		regRequest["token_endpoint_auth_method"] = "client_secret_basic"
+		regRequest["token_endpoint_auth_method"] = "client_secret_post"
 	}
 
 	reqBody, err := json.Marshal(regRequest)
