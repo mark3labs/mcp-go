@@ -1888,13 +1888,13 @@ func TestSetResourceMetadataURL_ReDiscovery(t *testing.T) {
 		switch r.URL.Path {
 		case "/.well-known/oauth-protected-resource":
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(OAuthProtectedResource{
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
 				AuthorizationServers: []string{"https://auth.example.com"},
 				Resource:             "https://api.example.com",
 			})
 		case "/new-resource-metadata":
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(OAuthProtectedResource{
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
 				AuthorizationServers: []string{r.Host}, // Use server's own URL
 				Resource:             "https://new-api.example.com",
 			})
