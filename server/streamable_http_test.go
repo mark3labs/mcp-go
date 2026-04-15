@@ -1189,7 +1189,12 @@ func TestStreamableHTTP_PongResponseHandling(t *testing.T) {
 		}
 	})
 
-	t.Run("Pong response with null result should not be treated as sampling response", func(t *testing.T) {
+	t.Run("Pong response with null result should return 202 and not be treated as sampling response", func(t *testing.T) {
+		// Some MCP clients (e.g. VS Code Copilot Chat) send ping responses without
+		// the result field: {"jsonrpc":"2.0","id":N}. While this is not strictly
+		// compliant with JSON-RPC 2.0 (which requires result or error), the server
+		// should accept it leniently and return 202 Accepted per the MCP spec
+		// (Streamable HTTP transport, rule 4).
 		pongResponse := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      124,
@@ -1211,12 +1216,12 @@ func TestStreamableHTTP_PongResponseHandling(t *testing.T) {
 			t.Errorf("Pong response with omitted result was incorrectly detected as sampling response. Response: %s", bodyStr)
 		}
 
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("Expected status 200 for pong response, got %d. Body: %s", resp.StatusCode, bodyStr)
+		if resp.StatusCode != http.StatusAccepted {
+			t.Errorf("Expected status 202 for pong response, got %d. Body: %s", resp.StatusCode, bodyStr)
 		}
 	})
 
-	t.Run("Response with empty error should not be treated as sampling response", func(t *testing.T) {
+	t.Run("Response with empty error should return 202 and not be treated as sampling response", func(t *testing.T) {
 		response := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      125,
@@ -1239,8 +1244,8 @@ func TestStreamableHTTP_PongResponseHandling(t *testing.T) {
 			t.Errorf("Response with empty error was incorrectly detected as sampling response. Response: %s", bodyStr)
 		}
 
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("Expected status 200 for response with empty error, got %d. Body: %s", resp.StatusCode, bodyStr)
+		if resp.StatusCode != http.StatusAccepted {
+			t.Errorf("Expected status 202 for response with empty error, got %d. Body: %s", resp.StatusCode, bodyStr)
 		}
 	})
 }
