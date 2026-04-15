@@ -284,6 +284,46 @@ func TestTaskToolTracerBullet(t *testing.T) {
 		}
 	})
 
+	t.Run("AddTaskTool with TaskSupportOptional rejects sync calls without task param", func(t *testing.T) {
+		server := NewMCPServer(
+			"test-optional-task-only-sync",
+			"1.0.0",
+			WithTaskCapabilities(true, true, true),
+		)
+
+		ctx := context.Background()
+		handlerCalled := false
+
+		optionalTool := mcp.NewTool("task_only_optional",
+			mcp.WithDescription("Task-only registration with optional task support"),
+			mcp.WithTaskSupport(mcp.TaskSupportOptional),
+		)
+
+		server.AddTaskTool(optionalTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			handlerCalled = true
+			return &mcp.CreateTaskResult{
+				Task: mcp.Task{TaskId: "task-1", Status: mcp.TaskStatusWorking},
+			}, nil
+		})
+
+		syncRequest := mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Name: "task_only_optional",
+			},
+		}
+
+		var syncResult any
+		var syncErr *requestError
+		assert.NotPanics(t, func() {
+			syncResult, syncErr = server.handleToolCall(ctx, 1, syncRequest)
+		})
+		require.Nil(t, syncResult, "Sync call should not produce a tool result")
+		require.NotNil(t, syncErr, "Sync call should return a request error")
+		assert.Equal(t, mcp.METHOD_NOT_FOUND, syncErr.code)
+		assert.Contains(t, syncErr.err.Error(), "does not support synchronous execution")
+		assert.False(t, handlerCalled, "Task handler should not be called without task augmentation")
+	})
+
 	t.Run("task tool with TaskSupportOptional - asynchronous execution", func(t *testing.T) {
 		// Step 1: Create server
 		server := NewMCPServer(

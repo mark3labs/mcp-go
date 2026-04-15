@@ -556,6 +556,69 @@ func TestStdioErrors(t *testing.T) {
 	})
 }
 
+func TestStdio_StartGuaranteesReaderReady(t *testing.T) {
+	stdoutReader, stdoutWriter := io.Pipe()
+	stdinReader, stdinWriter := io.Pipe()
+	stderrReader, stderrWriter := io.Pipe()
+	t.Cleanup(func() {
+		_ = stdoutWriter.Close()
+		_ = stdinWriter.Close()
+		_ = stderrWriter.Close()
+	})
+
+	stdio := NewIO(stdoutReader, stdinWriter, stderrReader)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+
+	require.NoError(t, stdio.Start(ctx))
+	t.Cleanup(func() { _ = stdio.Close() })
+
+	// Mock server: echo every request back as a response immediately.
+	// No sleep — responses arrive as fast as possible to stress the
+	// window between Start() returning and the reader entering its loop.
+	go func() {
+		dec := json.NewDecoder(stdinReader)
+		for {
+			var req map[string]any
+			if err := dec.Decode(&req); err != nil {
+				return
+			}
+			id := req["id"]
+			if id == nil {
+				continue
+			}
+			resp := map[string]any{
+				"jsonrpc": "2.0",
+				"id":      id,
+				"result":  map[string]any{},
+			}
+			b, _ := json.Marshal(resp)
+			b = append(b, '\n')
+			if _, err := stdoutWriter.Write(b); err != nil {
+				return
+			}
+		}
+	}()
+
+	// Send requests immediately after Start(), no sleep.
+	// If the reader is not yet in its loop when the response arrives,
+	// the response will be written to stdout before ReadString is called,
+	// and will be lost — causing the request to time out.
+	const N = 20
+	for i := range N {
+		reqCtx, reqCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		req := JSONRPCRequest{
+			JSONRPC: "2.0",
+			ID:      mcp.NewRequestId(int64(i)),
+			Method:  "ping",
+		}
+		_, err := stdio.SendRequest(reqCtx, req)
+		reqCancel()
+		require.NoError(t, err, "request %d lost: reader was not ready when Start() returned", i)
+	}
+}
+
 func TestStdio_WithCommandFunc(t *testing.T) {
 	called := false
 	tmpDir := t.TempDir()
@@ -677,6 +740,82 @@ func TestStdio_SpawnCommand_UsesCommandFunc_Error(t *testing.T) {
 	require.EqualError(t, err, "test error")
 }
 
+func TestStdio_Close_ShutsDownHungChild(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("signal-based shutdown test is not supported on Windows")
+	}
+
+	deadline := gracefulShutdownTimeout + forceKillTimeout + 2*time.Second
+	tests := []struct {
+		name          string
+		script        string
+		wantErr       bool
+		wantForceKill bool
+	}{
+		{
+			name:          "exits_on_sigterm",
+			script:        "trap 'exit 0' TERM; while :; do sleep 1; done",
+			wantErr:       false,
+			wantForceKill: false,
+		},
+		{
+			name:          "requires_sigkill",
+			script:        "trap '' TERM; while :; do sleep 1; done",
+			wantErr:       true,
+			wantForceKill: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdio := NewStdio("sh", nil, "-c", tt.script)
+			require.NotNil(t, stdio)
+
+			err := stdio.spawnCommand(context.Background())
+			require.NoError(t, err)
+
+			t.Cleanup(func() {
+				if stdio.cmd != nil && stdio.cmd.Process != nil {
+					_ = stdio.cmd.Process.Kill()
+				}
+			})
+
+			closeErrCh := make(chan error, 1)
+			start := time.Now()
+			go func() {
+				closeErrCh <- stdio.Close()
+			}()
+
+			var closeErr error
+			select {
+			case closeErr = <-closeErrCh:
+			case <-time.After(deadline):
+				t.Fatalf("Close() did not return within %s", deadline)
+			}
+
+			elapsed := time.Since(start)
+			if tt.wantErr {
+				require.Error(t, closeErr)
+			} else {
+				require.NoError(t, closeErr)
+			}
+			if tt.wantForceKill {
+				require.NotErrorIs(t, closeErr, ErrChildShutdownTimeout)
+			}
+			if tt.wantForceKill {
+				require.GreaterOrEqual(t, elapsed, gracefulShutdownTimeout+forceKillTimeout)
+			} else {
+				require.Less(t, elapsed, gracefulShutdownTimeout+forceKillTimeout)
+			}
+			require.Less(t, elapsed, deadline)
+			require.NotNil(t, stdio.cmd.ProcessState)
+			if !tt.wantForceKill {
+				require.True(t, stdio.cmd.ProcessState.Exited())
+			}
+		})
+	}
+}
+
 func TestStdio_NewStdioWithOptions_AppliesOptions(t *testing.T) {
 	configured := false
 
@@ -787,6 +926,86 @@ func TestStdio_LargeMessages(t *testing.T) {
 
 			t.Logf("Successfully handled %s message of size %d bytes", tc.name, tc.dataSize)
 		})
+	}
+}
+
+// TestStdio_ConcurrentWritesDoNotInterleave verifies that concurrent calls to
+// SendRequest and SendNotification do not interleave bytes on the subprocess's
+// stdin. Without the stdinMu serialization, large JSON-RPC frames written from
+// different goroutines can be fragmented by the Go runtime or the OS pipe
+// buffer (POSIX guarantees atomicity only up to PIPE_BUF == 4096 bytes), which
+// corrupts messages read line-by-line by the subprocess.
+//
+// Regression coverage for the client-side equivalent of #528 (PR #529 fixed
+// the server-side only).
+func TestStdio_ConcurrentWritesDoNotInterleave(t *testing.T) {
+	tempFile, err := os.CreateTemp(t.TempDir(), "mockstdio_server")
+	require.NoError(t, err)
+	tempFile.Close()
+	mockServerPath := tempFile.Name() + ".exe"
+	require.NoError(t, compileTestServer(mockServerPath))
+
+	stdio := NewStdio(mockServerPath, nil)
+	require.NoError(t, stdio.Start(context.Background()))
+	t.Cleanup(func() { _ = stdio.Close() })
+
+	// Payload well above PIPE_BUF so any interleaving would corrupt the frame.
+	const (
+		numGoroutines   = 20
+		requestsPerGo   = 5
+		payloadByteSize = 16 * 1024
+	)
+
+	payload := generateRandomString(payloadByteSize)
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, numGoroutines*requestsPerGo)
+	for g := range numGoroutines {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for r := range requestsPerGo {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				id := int64(10_000 + g*requestsPerGo + r)
+				req := JSONRPCRequest{
+					JSONRPC: "2.0",
+					ID:      mcp.NewRequestId(id),
+					Method:  "debug/echo",
+					Params: map[string]any{
+						"requestIndex": id,
+						"payload":      payload,
+					},
+				}
+				resp, err := stdio.SendRequest(ctx, req)
+				cancel()
+				if err != nil {
+					errCh <- fmt.Errorf("goroutine %d req %d: %w", g, r, err)
+					continue
+				}
+				if resp == nil {
+					errCh <- fmt.Errorf("goroutine %d req %d: nil response", g, r)
+					continue
+				}
+				gotID, ok := resp.ID.Value().(int64)
+				if !ok || gotID != id {
+					errCh <- fmt.Errorf("goroutine %d req %d: id mismatch got=%v want=%d", g, r, resp.ID.Value(), id)
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+	close(errCh)
+
+	var firstErr error
+	errCount := 0
+	for e := range errCh {
+		errCount++
+		if firstErr == nil {
+			firstErr = e
+		}
+	}
+	if errCount > 0 {
+		t.Fatalf("%d concurrent requests failed (first error: %v)", errCount, firstErr)
 	}
 }
 

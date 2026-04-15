@@ -29,6 +29,17 @@ func WithHTTPHost(host string) transport.ClientOption {
 
 // NewSSEMCPClient creates a new SSE-based MCP client with the given base URL.
 // Returns an error if the URL is invalid.
+//
+// Example:
+//
+//	c, err := client.NewSSEMCPClient("http://localhost:8080/mcp/sse")
+//	if err != nil {
+//	    log.Fatalf("Failed to create client: %v", err)
+//	}
+//	defer c.Close()
+//
+// Note: Use a variable name other than "client" (e.g., "c", "mcpClient") to avoid
+// shadowing the package name.
 func NewSSEMCPClient(baseURL string, options ...transport.ClientOption) (*Client, error) {
 	sseTransport, err := transport.NewSSE(baseURL, options...)
 	if err != nil {

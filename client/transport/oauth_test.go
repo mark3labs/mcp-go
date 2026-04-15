@@ -206,7 +206,7 @@ func TestOAuthHandler_GetServerMetadata_EmptyURL(t *testing.T) {
 	// Create an OAuth handler with an empty AuthServerMetadataURL
 	config := OAuthConfig{
 		ClientID:              "test-client",
-		RedirectURI:           "http://localhost:8085/callback",
+		RedirectURI:           "",
 		Scopes:                []string{"mcp.read"},
 		TokenStore:            NewMemoryTokenStore(),
 		AuthServerMetadataURL: "", // Empty URL
@@ -215,19 +215,15 @@ func TestOAuthHandler_GetServerMetadata_EmptyURL(t *testing.T) {
 
 	handler := NewOAuthHandler(config)
 
-	// When no server is reachable, the handler should fall back to default endpoints
-	// derived from the base URL (extracted from RedirectURI).
-	metadata, err := handler.GetServerMetadata(context.Background())
-	if err != nil {
-		t.Fatalf("Expected fallback to default endpoints, got error: %v", err)
+	// With empty RedirectURI, extractBaseURL should fail
+	_, err := handler.GetServerMetadata(context.Background())
+	if err == nil {
+		t.Fatalf("Expected error when getting server metadata with empty URL")
 	}
 
-	// Verify default endpoints are based on the base URL
-	if metadata.AuthorizationEndpoint != "http://localhost:8085/authorize" {
-		t.Errorf("Expected default authorization endpoint, got %s", metadata.AuthorizationEndpoint)
-	}
-	if metadata.TokenEndpoint != "http://localhost:8085/token" {
-		t.Errorf("Expected default token endpoint, got %s", metadata.TokenEndpoint)
+	if !strings.Contains(err.Error(), "failed to extract base URL") &&
+		!strings.Contains(err.Error(), "no base URL available") {
+		t.Errorf("Expected error message to mention missing base URL, got %s", err.Error())
 	}
 }
 
@@ -947,6 +943,50 @@ func TestOAuthHandler_GetServerMetadata_FallbackToDefaultEndpoints(t *testing.T)
 	}
 }
 
+func TestOAuthHandler_GetServerMetadata_PathAwareDiscovery(t *testing.T) {
+	protectedResourceRequested := false
+	authServerRequested := false
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource/googledrive":
+			protectedResourceRequested = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				AuthorizationServers: []string{server.URL + "/oauth/googledrive"},
+			})
+		case "/.well-known/oauth-authorization-server/oauth/googledrive":
+			authServerRequested = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(AuthServerMetadata{
+				Issuer:                server.URL + "/oauth/googledrive",
+				AuthorizationEndpoint: server.URL + "/oauth/googledrive/authorize",
+				TokenEndpoint:         server.URL + "/oauth/googledrive/token",
+				RegistrationEndpoint:  server.URL + "/oauth/googledrive/register",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost/callback",
+		TokenStore:  NewMemoryTokenStore(),
+	})
+	handler.SetBaseURL(server.URL + "/googledrive")
+
+	metadata, err := handler.GetServerMetadata(context.Background())
+	require.NoError(t, err)
+	assert.True(t, protectedResourceRequested)
+	assert.True(t, authServerRequested)
+	assert.Equal(t, server.URL+"/oauth/googledrive", metadata.Issuer)
+	assert.Equal(t, server.URL+"/oauth/googledrive/authorize", metadata.AuthorizationEndpoint)
+	assert.Equal(t, server.URL+"/oauth/googledrive/token", metadata.TokenEndpoint)
+}
+
 // TestOAuthHandler_RefreshToken_GitHubErrorIn200Response tests that we properly detect
 // GitHub's non-spec-compliant behavior of returning HTTP 200 with error details in the JSON body
 func TestOAuthHandler_RefreshToken_GitHubErrorIn200Response(t *testing.T) {
@@ -1382,4 +1422,336 @@ func TestOAuthHandler_RefreshToken_ProperHTTP400Error(t *testing.T) {
 	// Verify no token was saved to token store (regression test for original bug)
 	_, getErr := tokenStore.GetToken(ctx)
 	assert.ErrorIs(t, getErr, ErrNoToken, "No token should be saved after HTTP 400 error")
+}
+
+// TestOAuthHandler_RFC8707_ResourceParameter tests that the resource parameter
+// from protected resource metadata is included in OAuth requests per RFC 8707
+func TestOAuthHandler_RFC8707_ResourceParameter(t *testing.T) {
+	t.Run("resource parameter captured from protected resource metadata", func(t *testing.T) {
+		var server *httptest.Server
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/.well-known/oauth-protected-resource":
+				// Return protected resource metadata with resource field (RFC 9728)
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"resource":              "https://api.example.com/mcp",
+					"authorization_servers": []string{server.URL},
+				})
+			case "/.well-known/oauth-authorization-server":
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"issuer":                 server.URL,
+					"authorization_endpoint": server.URL + "/authorize",
+					"token_endpoint":         server.URL + "/token",
+				})
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+
+		config := OAuthConfig{
+			ClientID:    "test-client",
+			RedirectURI: server.URL + "/callback",
+			TokenStore:  NewMemoryTokenStore(),
+			PKCEEnabled: true,
+		}
+
+		handler := NewOAuthHandler(config)
+		handler.SetBaseURL(server.URL)
+
+		// Trigger metadata discovery
+		_, err := handler.GetServerMetadata(context.Background())
+		require.NoError(t, err)
+
+		// Verify resourceURL was captured
+		assert.Equal(t, "https://api.example.com/mcp", handler.resourceURL)
+	})
+
+	t.Run("resource parameter falls back to baseURL when not in metadata", func(t *testing.T) {
+		var server *httptest.Server
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/.well-known/oauth-protected-resource":
+				// Return metadata WITHOUT resource field - should fall back to baseURL
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"authorization_servers": []string{server.URL},
+				})
+			case "/.well-known/oauth-authorization-server":
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"issuer":                 server.URL,
+					"authorization_endpoint": server.URL + "/authorize",
+					"token_endpoint":         server.URL + "/token",
+				})
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+
+		config := OAuthConfig{
+			ClientID:    "test-client",
+			RedirectURI: server.URL + "/callback",
+			TokenStore:  NewMemoryTokenStore(),
+		}
+
+		handler := NewOAuthHandler(config)
+		handler.SetBaseURL(server.URL)
+
+		// Trigger metadata discovery
+		_, err := handler.GetServerMetadata(context.Background())
+		require.NoError(t, err)
+
+		// Per RFC 8707 Section 2: "The client SHOULD use the base URI of the API
+		// as the resource parameter value unless specific knowledge of the resource
+		// dictates otherwise."
+		assert.Equal(t, server.URL, handler.resourceURL, "resourceURL should fall back to baseURL")
+	})
+
+	t.Run("resource parameter included in authorization URL", func(t *testing.T) {
+		var server *httptest.Server
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/.well-known/oauth-protected-resource":
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"resource":              "https://api.example.com/mcp",
+					"authorization_servers": []string{server.URL},
+				})
+			case "/.well-known/oauth-authorization-server":
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"issuer":                 server.URL,
+					"authorization_endpoint": server.URL + "/authorize",
+					"token_endpoint":         server.URL + "/token",
+				})
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+
+		config := OAuthConfig{
+			ClientID:    "test-client",
+			RedirectURI: server.URL + "/callback",
+			TokenStore:  NewMemoryTokenStore(),
+			PKCEEnabled: true,
+		}
+
+		handler := NewOAuthHandler(config)
+		handler.SetBaseURL(server.URL)
+
+		authURL, err := handler.GetAuthorizationURL(context.Background(), "test-state", "test-challenge")
+		require.NoError(t, err)
+
+		// Verify resource parameter is in the URL
+		assert.Contains(t, authURL, "resource=https%3A%2F%2Fapi.example.com%2Fmcp")
+	})
+
+	t.Run("resource parameter included in token exchange", func(t *testing.T) {
+		var capturedResource string
+		var server *httptest.Server
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/.well-known/oauth-protected-resource":
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"resource":              "https://api.example.com/mcp",
+					"authorization_servers": []string{server.URL},
+				})
+			case "/.well-known/oauth-authorization-server":
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"issuer":                 server.URL,
+					"authorization_endpoint": server.URL + "/authorize",
+					"token_endpoint":         server.URL + "/token",
+				})
+			case "/token":
+				_ = r.ParseForm()
+				capturedResource = r.FormValue("resource")
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"access_token":  "test-access-token",
+					"token_type":    "Bearer",
+					"expires_in":    3600,
+					"refresh_token": "test-refresh-token",
+				})
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+
+		config := OAuthConfig{
+			ClientID:    "test-client",
+			RedirectURI: server.URL + "/callback",
+			TokenStore:  NewMemoryTokenStore(),
+			PKCEEnabled: true,
+		}
+
+		handler := NewOAuthHandler(config)
+		handler.SetBaseURL(server.URL)
+		handler.SetExpectedState("test-state")
+
+		err := handler.ProcessAuthorizationResponse(context.Background(), "test-code", "test-state", "test-verifier")
+		require.NoError(t, err)
+
+		// Verify resource parameter was sent in token request
+		assert.Equal(t, "https://api.example.com/mcp", capturedResource)
+	})
+
+	t.Run("resource parameter included in refresh token request", func(t *testing.T) {
+		var capturedResource string
+		var server *httptest.Server
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/.well-known/oauth-protected-resource":
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"resource":              "https://api.example.com/mcp",
+					"authorization_servers": []string{server.URL},
+				})
+			case "/.well-known/oauth-authorization-server":
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"issuer":                 server.URL,
+					"authorization_endpoint": server.URL + "/authorize",
+					"token_endpoint":         server.URL + "/token",
+				})
+			case "/token":
+				_ = r.ParseForm()
+				capturedResource = r.FormValue("resource")
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"access_token":  "new-access-token",
+					"token_type":    "Bearer",
+					"expires_in":    3600,
+					"refresh_token": "new-refresh-token",
+				})
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+
+		config := OAuthConfig{
+			ClientID:    "test-client",
+			RedirectURI: server.URL + "/callback",
+			TokenStore:  NewMemoryTokenStore(),
+		}
+
+		handler := NewOAuthHandler(config)
+		handler.SetBaseURL(server.URL)
+
+		_, err := handler.RefreshToken(context.Background(), "old-refresh-token")
+		require.NoError(t, err)
+
+		// Verify resource parameter was sent in refresh request
+		assert.Equal(t, "https://api.example.com/mcp", capturedResource)
+	})
+
+	t.Run("baseURL used as resource when not in protected resource metadata", func(t *testing.T) {
+		var capturedResource string
+		var server *httptest.Server
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/.well-known/oauth-protected-resource":
+				// Return metadata WITHOUT resource field - per RFC 8707 Section 2,
+				// client SHOULD use baseURL as resource parameter
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"authorization_servers": []string{server.URL},
+				})
+			case "/.well-known/oauth-authorization-server":
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"issuer":                 server.URL,
+					"authorization_endpoint": server.URL + "/authorize",
+					"token_endpoint":         server.URL + "/token",
+				})
+			case "/token":
+				_ = r.ParseForm()
+				capturedResource = r.FormValue("resource")
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"access_token":  "test-access-token",
+					"token_type":    "Bearer",
+					"expires_in":    3600,
+					"refresh_token": "test-refresh-token",
+				})
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+
+		config := OAuthConfig{
+			ClientID:    "test-client",
+			RedirectURI: server.URL + "/callback",
+			TokenStore:  NewMemoryTokenStore(),
+		}
+
+		handler := NewOAuthHandler(config)
+		handler.SetBaseURL(server.URL)
+
+		_, err := handler.RefreshToken(context.Background(), "test-refresh-token")
+		require.NoError(t, err)
+
+		// Per RFC 8707 Section 2: resource SHOULD be sent, falling back to baseURL
+		assert.Equal(t, server.URL, capturedResource, "resource should fall back to baseURL")
+	})
+}
+
+// TestOAuthHandler_GetServerMetadata_AuthServerReturnsHTML tests that when the
+// authorization server's .well-known endpoint returns 200 with HTML (e.g. a login
+// page) instead of JSON, the fallback chain is not poisoned and default endpoints
+// are used successfully.
+func TestOAuthHandler_GetServerMetadata_AuthServerReturnsHTML(t *testing.T) {
+	// Create a separate "auth server" that returns HTML at its .well-known endpoints
+	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Return 200 with HTML for all requests (simulating a login page)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("<html><body>Login Page</body></html>"))
+	}))
+	defer authServer.Close()
+
+	// Create the MCP server that returns valid protected resource metadata
+	// pointing to the auth server above
+	var mcpServerURL string
+	mcpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/oauth-protected-resource" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"resource":              mcpServerURL,
+				"authorization_servers": []string{authServer.URL},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	mcpServerURL = mcpServer.URL
+	defer mcpServer.Close()
+
+	config := OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: mcpServer.URL + "/callback",
+		Scopes:      []string{"mcp.read"},
+		TokenStore:  NewMemoryTokenStore(),
+		PKCEEnabled: true,
+	}
+
+	handler := NewOAuthHandler(config)
+	handler.SetBaseURL(mcpServer.URL)
+
+	metadata, err := handler.GetServerMetadata(context.Background())
+	require.NoError(t, err, "Should fall back to default endpoints when auth server returns HTML")
+
+	// Verify default endpoints were derived from the auth server URL
+	assert.Equal(t, authServer.URL+"/authorize", metadata.AuthorizationEndpoint)
+	assert.Equal(t, authServer.URL+"/token", metadata.TokenEndpoint)
+	assert.Equal(t, authServer.URL+"/register", metadata.RegistrationEndpoint)
 }

@@ -80,6 +80,10 @@ s := server.NewMCPServer(
 - **Tools**: Server can execute function calls from LLMs
 - **Resources**: Server can provide data/content to LLMs  
 - **Prompts**: Server can provide prompt templates
+- **Tasks**: Server supports asynchronous task-augmented tool execution (see [Task-Augmented Tools](/servers/tasks))
+- **Completions**: Server provides argument auto-completion (see [Completions](/servers/completions))
+- **Elicitation**: Server can request additional user input (see [Elicitation](/servers/elicitation))
+- **Roots**: Server can request root directory information from clients
 
 ### Recovery Middleware
 
@@ -106,6 +110,61 @@ s := server.NewMCPServer(
     server.WithInstructions("A server that does amazing things"),
 )
 ```
+
+### Implementation Metadata
+
+The server's `Implementation` struct supports additional optional fields for richer metadata sent during initialization:
+
+```go
+// These fields are set automatically from NewMCPServer args:
+//   Name    string — server name
+//   Version string — server version
+//
+// Additional optional fields on mcp.Implementation:
+//   Title       string — human-readable display title
+//   Description string — brief description of the server
+//   WebsiteURL  string — URL for the server's website or docs
+//   Icons       []Icon — visual identifiers for the implementation
+```
+
+You can set these via server options:
+
+```go
+s := server.NewMCPServer(
+    "My Server",
+    "1.0.0",
+    server.WithTitle("My Server"),                                    // Human-readable display title
+    server.WithDescription("A server that does amazing things"),     // Brief description
+    server.WithWebsiteURL("https://example.com"),                    // Website or docs URL
+    server.WithIcons(                                                // Visual identifiers
+        mcp.Icon{
+            Src:      "https://example.com/icon.png",
+            MIMEType: "image/png",
+            Sizes:    []string{"48x48"},
+        },
+    ),
+)
+```
+
+### Extensions vs Experimental Capabilities
+
+Servers can advertise two kinds of non-standard capabilities:
+
+- **Extensions** (`ServerCapabilities.Extensions`) — standardized extension points for advertising well-known extension support
+- **Experimental** (`ServerCapabilities.Experimental`) — non-standard, experimental capabilities
+
+```go
+s := server.NewMCPServer("My Server", "1.0.0",
+    // Set experimental capabilities
+    server.WithExperimental(map[string]any{
+        "claude/channel": map[string]any{
+            "supported": true,
+        },
+    }),
+)
+```
+
+Both fields are `map[string]any` and are included in the server's capabilities during initialization. The same `Extensions` field is available on `ClientCapabilities` for clients to advertise extension support.
 
 ## Starting Servers
 
@@ -309,4 +368,7 @@ Now that you understand server basics, learn how to add functionality:
 - **[Resources](/servers/resources)** - Expose data to LLMs
 - **[Tools](/servers/tools)** - Provide functionality to LLMs  
 - **[Prompts](/servers/prompts)** - Create reusable interaction templates
+- **[Task-Augmented Tools](/servers/tasks)** - Asynchronous long-running tool execution
+- **[Completions](/servers/completions)** - Argument auto-completion
+- **[Elicitation](/servers/elicitation)** - Request additional user input
 - **[Advanced Features](/servers/advanced)** - Hooks, middleware, and more

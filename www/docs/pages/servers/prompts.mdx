@@ -574,6 +574,74 @@ func handleTemplatePrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.G
 }
 ```
 
+## Prompt Filtering
+
+Filter which prompts are visible to each client based on context, session, or permissions — analogous to tool filtering via `WithToolFilter`.
+
+### Permission-Based Prompt Filtering
+
+```go
+s := server.NewMCPServer("Prompt Server", "1.0.0",
+    server.WithPromptCapabilities(true),
+    server.WithPromptFilter(func(ctx context.Context, prompts []mcp.Prompt) []mcp.Prompt {
+        session := server.ClientSessionFromContext(ctx)
+        if session == nil {
+            return nil
+        }
+
+        // Filter prompts based on session or context
+        var filtered []mcp.Prompt
+        for _, p := range prompts {
+            if shouldExposePrompt(ctx, p) {
+                filtered = append(filtered, p)
+            }
+        }
+        return filtered
+    }),
+)
+```
+
+Multiple filters can be added and they are applied in order:
+
+```go
+s := server.NewMCPServer("Server", "1.0.0",
+    server.WithPromptCapabilities(true),
+    server.WithPromptFilter(roleFilter),
+    server.WithPromptFilter(environmentFilter),
+)
+```
+
+## Prompt Handler Middleware
+
+Wrap prompt handlers with cross-cutting concerns like logging, caching, or authentication — analogous to `WithToolHandlerMiddleware`.
+
+```go
+s := server.NewMCPServer("Server", "1.0.0",
+    server.WithPromptCapabilities(true),
+    server.WithPromptHandlerMiddleware(func(next server.PromptHandlerFunc) server.PromptHandlerFunc {
+        return func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+            start := time.Now()
+            log.Printf("Prompt requested: %s", req.Params.Name)
+
+            result, err := next(ctx, req)
+
+            log.Printf("Prompt %s served in %v", req.Params.Name, time.Since(start))
+            return result, err
+        }
+    }),
+)
+```
+
+Middlewares are composed in order — the first registered wraps the outermost layer:
+
+```go
+s := server.NewMCPServer("Server", "1.0.0",
+    server.WithPromptCapabilities(true),
+    server.WithPromptHandlerMiddleware(loggingMiddleware),
+    server.WithPromptHandlerMiddleware(authMiddleware),
+)
+```
+
 ## Next Steps
 
 - **[Advanced Features](/servers/advanced)** - Explore typed tools, middleware, and hooks

@@ -461,6 +461,25 @@ func (m *AuthMiddleware) ToolMiddleware(next server.ToolHandler) server.ToolHand
 
 Implement lifecycle callbacks for telemetry, logging, and custom behavior.
 
+### Hook Composability with GetHooks()
+
+Use `GetHooks()` to append hooks to an existing server without replacing the entire hooks configuration. This is useful for libraries or plugins that need to add hooks after construction:
+
+```go
+s := server.NewMCPServer("My Server", "1.0.0",
+    server.WithHooks(initialHooks),
+)
+
+// Later, add more hooks without replacing existing ones
+hooks := s.GetHooks()
+if hooks == nil {
+    hooks = &server.Hooks{}
+}
+hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, message any) {
+    log.Printf("Request: %s", method)
+})
+```
+
 ### Comprehensive Hooks
 
 ```go
@@ -979,9 +998,65 @@ mcpServer.AddTool(mcp.Tool{
 })
 ```
 
+## Additional Content Types
+
+### AudioContent
+
+Audio data can be embedded in prompt messages or tool results:
+
+```go
+audioResult := &mcp.CallToolResult{
+    Content: []mcp.Content{
+        mcp.AudioContent{
+            Type:     "audio",
+            Data:     base64EncodedAudioData,
+            MIMEType: "audio/wav",
+        },
+    },
+}
+```
+
+`AudioContent` fields:
+- `Type` — must be `"audio"`
+- `Data` — base64-encoded audio data
+- `MIMEType` — MIME type of the audio (e.g., `"audio/wav"`, `"audio/mp3"`)
+
+### ResourceLink
+
+Tool results can include links to server resources instead of inline content:
+
+```go
+result := &mcp.CallToolResult{
+    Content: []mcp.Content{
+        mcp.ResourceLink{
+            Type:        "resource_link",
+            URI:         "files://reports/q4-summary.pdf",
+            Name:        "Q4 Summary Report",
+            Description: "Quarterly financial summary",
+            MIMEType:    "application/pdf",
+        },
+    },
+}
+```
+
+## Roots Capability
+
+Enable the roots capability to request root directory information from connected clients:
+
+```go
+s := server.NewMCPServer("Server", "1.0.0",
+    server.WithRoots(),
+)
+```
+
+When enabled, the server advertises roots support in its capabilities. Clients that support the `SessionWithRoots` interface can then provide root directory information that the server can use for file operations, project scoping, and similar use cases.
+
 For complete sampling documentation, see **[Server Sampling Guide](/servers/advanced-sampling)**.
 
 ## Next Steps
 
+- **[Task-Augmented Tools](/servers/tasks)** - Asynchronous long-running tools
+- **[Completions](/servers/completions)** - Argument auto-completion
+- **[Elicitation](/servers/elicitation)** - Request user input during interactions
 - **[Client Development](/clients)** - Learn to build MCP clients
 - **[Server Basics](/servers/basics)** - Review fundamental concepts
