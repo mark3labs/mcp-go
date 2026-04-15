@@ -215,17 +215,19 @@ func TestOAuthHandler_GetServerMetadata_EmptyURL(t *testing.T) {
 
 	handler := NewOAuthHandler(config)
 
-	// Test getting server metadata with empty URL
-	_, err := handler.GetServerMetadata(context.Background())
-	if err == nil {
-		t.Fatalf("Expected error when getting server metadata with empty URL")
+	// When no server is reachable, the handler should fall back to default endpoints
+	// derived from the base URL (extracted from RedirectURI).
+	metadata, err := handler.GetServerMetadata(context.Background())
+	if err != nil {
+		t.Fatalf("Expected fallback to default endpoints, got error: %v", err)
 	}
 
-	// Verify the error message contains something about a connection error
-	// since we're now trying to connect to the well-known endpoint
-	if !strings.Contains(err.Error(), "connection refused") &&
-		!strings.Contains(err.Error(), "failed to send protected resource request") {
-		t.Errorf("Expected error message to contain connection error, got %s", err.Error())
+	// Verify default endpoints are based on the base URL
+	if metadata.AuthorizationEndpoint != "http://localhost:8085/authorize" {
+		t.Errorf("Expected default authorization endpoint, got %s", metadata.AuthorizationEndpoint)
+	}
+	if metadata.TokenEndpoint != "http://localhost:8085/token" {
+		t.Errorf("Expected default token endpoint, got %s", metadata.TokenEndpoint)
 	}
 }
 
