@@ -375,7 +375,7 @@ func (h *OAuthHandler) SetResourceMetadataURL(metadataURL string) {
 // ParseResourceMetadataURL extracts the resource_metadata URL from a
 // WWW-Authenticate header value (RFC 9728). Returns "" if not present.
 //
-// Parser adapted from github.com/modelcontextprotocol/go-sdk (MIT/Apache-2.0)
+// Parser adapted from github.com/modelcontextprotocol/go-sdk
 // https://github.com/modelcontextprotocol/go-sdk/blob/main/oauthex/resource_meta.go
 func ParseResourceMetadataURL(wwwAuthenticate string) string {
 	challenges, err := parseWWWAuthenticate([]string{wwwAuthenticate})
