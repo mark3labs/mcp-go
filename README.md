@@ -650,6 +650,32 @@ Key examples include:
 - [`examples/custom_context/`](examples/custom_context/) - Shows how to use custom contexts in tool handlers
 - Additional examples covering resources, prompts, and more in the examples directory
 
+### Optional CI hardening for downstream servers
+
+If you maintain an MCP server built with `mcp-go`, the following workflow is a small optional starting point for running a manual surface-risk check in your own repository:
+
+```yaml
+name: Optional MCP hardening
+
+on:
+  workflow_dispatch:
+
+jobs:
+  hardening:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: aak204/MCP-Trust-Kit@5d37f99e3cdfd703e4fe75aa88969475d1970e28
+        with:
+          cmd: go run ./cmd/your-server
+          sarif-out: mcp-trust.sarif
+```
+
+The action also produces SARIF output, so downstream repositories can upload it in a separate step if they already use code scanning.
+
 ## Extras
 
 ### Transports
