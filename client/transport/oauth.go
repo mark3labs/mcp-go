@@ -403,6 +403,36 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 
 		// If we can't get the protected resource metadata, try OAuth Authorization Server discovery
 		if resp.StatusCode != http.StatusOK {
+			// RFC 9728 allows the server to advertise a protected resource metadata URL
+			// via the WWW-Authenticate header when direct discovery fails.
+			if resourceMetadataURL := extractResourceMetadataURL(resp.Header.Values("WWW-Authenticate")); resourceMetadataURL != "" {
+				protectedResource, err := h.fetchProtectedResourceFromURL(ctx, resourceMetadataURL)
+				if err == nil && len(protectedResource.AuthorizationServers) > 0 {
+					authServerURL := protectedResource.AuthorizationServers[0]
+					authMetadataURL, err := buildWellKnownURL(authServerURL, "oauth-authorization-server")
+					if err == nil {
+						h.fetchMetadataFromURL(ctx, authMetadataURL)
+						if h.serverMetadata != nil {
+							return
+						}
+					}
+
+					openidMetadataURL, err := buildWellKnownURL(authServerURL, "openid-configuration")
+					if err == nil {
+						h.fetchMetadataFromURL(ctx, openidMetadataURL)
+						if h.serverMetadata != nil {
+							return
+						}
+					}
+
+					metadata, err := h.getDefaultEndpoints(authServerURL)
+					if err == nil {
+						h.serverMetadata = metadata
+						return
+					}
+				}
+			}
+
 			authMetadataURL, err := buildWellKnownURL(baseURL, "oauth-authorization-server")
 			if err != nil {
 				h.metadataFetchErr = fmt.Errorf("failed to build authorization server metadata URL: %w", err)
@@ -508,6 +538,57 @@ func buildWellKnownURL(baseURL string, suffix string) (string, error) {
 	}
 
 	return root + "/.well-known/" + suffix + path, nil
+}
+
+func extractResourceMetadataURL(wwwAuthenticateHeaders []string) string {
+	for _, header := range wwwAuthenticateHeaders {
+		for _, param := range strings.Split(header, ",") {
+			param = strings.TrimSpace(param)
+			if param == "" {
+				continue
+			}
+
+			key, value, found := strings.Cut(param, "=")
+			if !found || !strings.EqualFold(strings.TrimSpace(key), "resource_metadata") {
+				continue
+			}
+
+			value = strings.TrimSpace(value)
+			value = strings.Trim(value, "\"")
+			if value != "" {
+				return value
+			}
+		}
+	}
+
+	return ""
+}
+
+func (h *OAuthHandler) fetchProtectedResourceFromURL(ctx context.Context, protectedResourceURL string) (*OAuthProtectedResource, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, protectedResourceURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create protected resource request: %w", err)
+	}
+
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("MCP-Protocol-Version", "2025-03-26")
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send protected resource request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("protected resource request failed with status %d", resp.StatusCode)
+	}
+
+	var protectedResource OAuthProtectedResource
+	if err := json.NewDecoder(resp.Body).Decode(&protectedResource); err != nil {
+		return nil, fmt.Errorf("failed to decode protected resource response: %w", err)
+	}
+
+	return &protectedResource, nil
 }
 
 // fetchMetadataFromURL fetches and parses OAuth server metadata from a URL

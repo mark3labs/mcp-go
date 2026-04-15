@@ -987,6 +987,106 @@ func TestOAuthHandler_GetServerMetadata_PathAwareDiscovery(t *testing.T) {
 	assert.Equal(t, server.URL+"/oauth/googledrive/token", metadata.TokenEndpoint)
 }
 
+func TestOAuthHandler_GetServerMetadata_UsesResourceMetadataHeader(t *testing.T) {
+	protectedResourceRequested := false
+	headerResourceMetadataRequested := false
+	authServerRequested := false
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource":
+			protectedResourceRequested = true
+			w.Header().Set("WWW-Authenticate", `Bearer error="invalid_request", resource_metadata="`+server.URL+`/.well-known/oauth-protected-resource/googledrive"`)
+			w.WriteHeader(http.StatusUnauthorized)
+		case "/.well-known/oauth-protected-resource/googledrive":
+			headerResourceMetadataRequested = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				AuthorizationServers: []string{server.URL + "/oauth/googledrive"},
+			})
+		case "/.well-known/oauth-authorization-server/oauth/googledrive":
+			authServerRequested = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(AuthServerMetadata{
+				Issuer:                server.URL + "/oauth/googledrive",
+				AuthorizationEndpoint: server.URL + "/oauth/googledrive/authorize",
+				TokenEndpoint:         server.URL + "/oauth/googledrive/token",
+				RegistrationEndpoint:  server.URL + "/oauth/googledrive/register",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost/callback",
+		TokenStore:  NewMemoryTokenStore(),
+	})
+	handler.SetBaseURL(server.URL)
+
+	metadata, err := handler.GetServerMetadata(context.Background())
+	require.NoError(t, err)
+	assert.True(t, protectedResourceRequested)
+	assert.True(t, headerResourceMetadataRequested)
+	assert.True(t, authServerRequested)
+	assert.Equal(t, server.URL+"/oauth/googledrive", metadata.Issuer)
+	assert.Equal(t, server.URL+"/oauth/googledrive/authorize", metadata.AuthorizationEndpoint)
+	assert.Equal(t, server.URL+"/oauth/googledrive/token", metadata.TokenEndpoint)
+}
+
+func TestOAuthHandler_GetServerMetadata_UsesResourceMetadataHeaderWithWhitespace(t *testing.T) {
+	protectedResourceRequested := false
+	headerResourceMetadataRequested := false
+	authServerRequested := false
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource":
+			protectedResourceRequested = true
+			w.Header().Add("WWW-Authenticate", `Bearer error="invalid_request", resource_metadata = "`+server.URL+`/.well-known/oauth-protected-resource/googledrive"`)
+			w.WriteHeader(http.StatusUnauthorized)
+		case "/.well-known/oauth-protected-resource/googledrive":
+			headerResourceMetadataRequested = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				AuthorizationServers: []string{server.URL + "/oauth/googledrive"},
+			})
+		case "/.well-known/oauth-authorization-server/oauth/googledrive":
+			authServerRequested = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(AuthServerMetadata{
+				Issuer:                server.URL + "/oauth/googledrive",
+				AuthorizationEndpoint: server.URL + "/oauth/googledrive/authorize",
+				TokenEndpoint:         server.URL + "/oauth/googledrive/token",
+				RegistrationEndpoint:  server.URL + "/oauth/googledrive/register",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost/callback",
+		TokenStore:  NewMemoryTokenStore(),
+	})
+	handler.SetBaseURL(server.URL)
+
+	metadata, err := handler.GetServerMetadata(context.Background())
+	require.NoError(t, err)
+	assert.True(t, protectedResourceRequested)
+	assert.True(t, headerResourceMetadataRequested)
+	assert.True(t, authServerRequested)
+	assert.Equal(t, server.URL+"/oauth/googledrive", metadata.Issuer)
+	assert.Equal(t, server.URL+"/oauth/googledrive/authorize", metadata.AuthorizationEndpoint)
+	assert.Equal(t, server.URL+"/oauth/googledrive/token", metadata.TokenEndpoint)
+}
+
 // TestOAuthHandler_RefreshToken_GitHubErrorIn200Response tests that we properly detect
 // GitHub's non-spec-compliant behavior of returning HTTP 200 with error details in the JSON body
 func TestOAuthHandler_RefreshToken_GitHubErrorIn200Response(t *testing.T) {
