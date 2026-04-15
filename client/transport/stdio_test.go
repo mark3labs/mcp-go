@@ -929,6 +929,86 @@ func TestStdio_LargeMessages(t *testing.T) {
 	}
 }
 
+// TestStdio_ConcurrentWritesDoNotInterleave verifies that concurrent calls to
+// SendRequest and SendNotification do not interleave bytes on the subprocess's
+// stdin. Without the stdinMu serialization, large JSON-RPC frames written from
+// different goroutines can be fragmented by the Go runtime or the OS pipe
+// buffer (POSIX guarantees atomicity only up to PIPE_BUF == 4096 bytes), which
+// corrupts messages read line-by-line by the subprocess.
+//
+// Regression coverage for the client-side equivalent of #528 (PR #529 fixed
+// the server-side only).
+func TestStdio_ConcurrentWritesDoNotInterleave(t *testing.T) {
+	tempFile, err := os.CreateTemp(t.TempDir(), "mockstdio_server")
+	require.NoError(t, err)
+	tempFile.Close()
+	mockServerPath := tempFile.Name() + ".exe"
+	require.NoError(t, compileTestServer(mockServerPath))
+
+	stdio := NewStdio(mockServerPath, nil)
+	require.NoError(t, stdio.Start(context.Background()))
+	t.Cleanup(func() { _ = stdio.Close() })
+
+	// Payload well above PIPE_BUF so any interleaving would corrupt the frame.
+	const (
+		numGoroutines   = 20
+		requestsPerGo   = 5
+		payloadByteSize = 16 * 1024
+	)
+
+	payload := generateRandomString(payloadByteSize)
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, numGoroutines*requestsPerGo)
+	for g := range numGoroutines {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for r := range requestsPerGo {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				id := int64(10_000 + g*requestsPerGo + r)
+				req := JSONRPCRequest{
+					JSONRPC: "2.0",
+					ID:      mcp.NewRequestId(id),
+					Method:  "debug/echo",
+					Params: map[string]any{
+						"requestIndex": id,
+						"payload":      payload,
+					},
+				}
+				resp, err := stdio.SendRequest(ctx, req)
+				cancel()
+				if err != nil {
+					errCh <- fmt.Errorf("goroutine %d req %d: %w", g, r, err)
+					continue
+				}
+				if resp == nil {
+					errCh <- fmt.Errorf("goroutine %d req %d: nil response", g, r)
+					continue
+				}
+				gotID, ok := resp.ID.Value().(int64)
+				if !ok || gotID != id {
+					errCh <- fmt.Errorf("goroutine %d req %d: id mismatch got=%v want=%d", g, r, resp.ID.Value(), id)
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+	close(errCh)
+
+	var firstErr error
+	errCount := 0
+	for e := range errCh {
+		errCount++
+		if firstErr == nil {
+			firstErr = e
+		}
+	}
+	if errCount > 0 {
+		t.Fatalf("%d concurrent requests failed (first error: %v)", errCount, firstErr)
+	}
+}
+
 func generateRandomString(size int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 "
 
