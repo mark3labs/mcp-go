@@ -251,7 +251,7 @@ var ErrOAuthAuthorizationRequired = errors.New("no valid token available, author
 // OAuthAuthorizationRequiredError is returned when OAuth authorization is required
 type OAuthAuthorizationRequiredError struct {
 	Handler         *OAuthHandler
-	WWWAuthenticate string // Raw WWW-Authenticate header from 401 response
+	WWWAuthenticate []string // Raw WWW-Authenticate header values from 401 response
 }
 
 func (e *OAuthAuthorizationRequiredError) Error() string {
@@ -306,7 +306,7 @@ func (c *StreamableHTTP) SendRequest(
 			if c.oauthHandler != nil {
 				return nil, &OAuthAuthorizationRequiredError{
 					Handler:         c.oauthHandler,
-					WWWAuthenticate: resp.Header.Get("WWW-Authenticate"),
+					WWWAuthenticate: resp.Header.Values("WWW-Authenticate"),
 				}
 			}
 			return nil, ErrUnauthorized
@@ -597,7 +597,7 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 		if c.oauthHandler != nil {
 			return &OAuthAuthorizationRequiredError{
 				Handler:         c.oauthHandler,
-				WWWAuthenticate: resp.Header.Get("WWW-Authenticate"),
+				WWWAuthenticate: resp.Header.Values("WWW-Authenticate"),
 			}
 		}
 		return ErrUnauthorized

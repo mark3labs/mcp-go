@@ -211,7 +211,7 @@ func (c *SSE) Start(ctx context.Context) error {
 			if c.oauthHandler != nil {
 				return &OAuthAuthorizationRequiredError{
 					Handler:         c.oauthHandler,
-					WWWAuthenticate: resp.Header.Get("WWW-Authenticate"),
+					WWWAuthenticate: resp.Header.Values("WWW-Authenticate"),
 				}
 			}
 			return ErrUnauthorized
@@ -489,7 +489,7 @@ func (c *SSE) SendRequest(
 			if c.oauthHandler != nil {
 				return nil, &OAuthAuthorizationRequiredError{
 					Handler:         c.oauthHandler,
-					WWWAuthenticate: resp.Header.Get("WWW-Authenticate"),
+					WWWAuthenticate: resp.Header.Values("WWW-Authenticate"),
 				}
 			}
 			return nil, ErrUnauthorized
@@ -638,7 +638,7 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 			if c.oauthHandler != nil {
 				return &OAuthAuthorizationRequiredError{
 					Handler:         c.oauthHandler,
-					WWWAuthenticate: resp.Header.Get("WWW-Authenticate"),
+					WWWAuthenticate: resp.Header.Values("WWW-Authenticate"),
 				}
 			}
 			return ErrUnauthorized

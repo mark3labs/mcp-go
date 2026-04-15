@@ -380,13 +380,13 @@ func (h *OAuthHandler) SetResourceMetadataURL(metadataURL string) {
 	}
 }
 
-// ParseResourceMetadataURL extracts the resource_metadata URL from a
-// WWW-Authenticate header value (RFC 9728). Returns "" if not present.
+// ParseResourceMetadataURL extracts the resource_metadata URL from
+// WWW-Authenticate header values (RFC 9728). Returns "" if not present.
 //
 // Parser adapted from github.com/modelcontextprotocol/go-sdk
 // https://github.com/modelcontextprotocol/go-sdk/blob/main/oauthex/resource_meta.go
-func ParseResourceMetadataURL(wwwAuthenticate string) string {
-	challenges, err := parseWWWAuthenticate([]string{wwwAuthenticate})
+func ParseResourceMetadataURL(wwwAuthenticate []string) string {
+	challenges, err := parseWWWAuthenticate(wwwAuthenticate)
 	if err != nil {
 		return ""
 	}
@@ -420,7 +420,8 @@ func parseWWWAuthenticate(headers []string) ([]wwwAuthChallenge, error) {
 			}
 			c, err := parseSingleWWWAuthChallenge(cs)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse challenge %q: %w", cs, err)
+				// Skip unparseable challenges (e.g. token68 like "Basic abc123")
+				continue
 			}
 			challenges = append(challenges, c)
 		}
@@ -549,6 +550,10 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 	if h.config.AuthServerMetadataURL != "" {
 		h.fetchMetadataFromURL(ctx, h.config.AuthServerMetadataURL)
 		if h.metadataFetchErr != nil {
+			return nil, h.metadataFetchErr
+		}
+		if h.serverMetadata == nil {
+			h.metadataFetchErr = fmt.Errorf("failed to fetch metadata from %s", h.config.AuthServerMetadataURL)
 			return nil, h.metadataFetchErr
 		}
 		return h.serverMetadata, nil
