@@ -215,7 +215,7 @@ func TestOAuthHandler_GetServerMetadata_EmptyURL(t *testing.T) {
 
 	handler := NewOAuthHandler(config)
 
-	// Test getting server metadata with empty URL
+	// With empty RedirectURI, extractBaseURL should fail
 	_, err := handler.GetServerMetadata(context.Background())
 	if err == nil {
 		t.Fatalf("Expected error when getting server metadata with empty URL")
@@ -1754,4 +1754,211 @@ func TestOAuthHandler_GetServerMetadata_AuthServerReturnsHTML(t *testing.T) {
 	assert.Equal(t, authServer.URL+"/authorize", metadata.AuthorizationEndpoint)
 	assert.Equal(t, authServer.URL+"/token", metadata.TokenEndpoint)
 	assert.Equal(t, authServer.URL+"/register", metadata.RegistrationEndpoint)
+}
+
+func TestParseResourceMetadataURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		headers  []string
+		expected string
+	}{
+		{
+			name:     "single Bearer challenge with resource_metadata",
+			headers:  []string{`Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource"`},
+			expected: "https://example.com/.well-known/oauth-protected-resource",
+		},
+		{
+			name:     "Bearer with multiple params",
+			headers:  []string{`Bearer realm="example", resource_metadata="https://example.com/meta"`},
+			expected: "https://example.com/meta",
+		},
+		{
+			name:     "multiple headers",
+			headers:  []string{`Basic realm="foo"`, `Bearer resource_metadata="https://example.com/meta"`},
+			expected: "https://example.com/meta",
+		},
+		{
+			name:     "no resource_metadata",
+			headers:  []string{`Bearer realm="example"`},
+			expected: "",
+		},
+		{
+			name:     "empty headers",
+			headers:  []string{},
+			expected: "",
+		},
+		{
+			name:     "nil headers",
+			headers:  nil,
+			expected: "",
+		},
+		{
+			name:     "token68 challenge followed by Bearer",
+			headers:  []string{`Basic abc123, Bearer resource_metadata="https://example.com/meta"`},
+			expected: "https://example.com/meta",
+		},
+		{
+			name:     "resource_metadata in single combined header",
+			headers:  []string{`Bearer realm="test", resource_metadata="https://rs.example.com/.well-known/oauth-protected-resource"`},
+			expected: "https://rs.example.com/.well-known/oauth-protected-resource",
+		},
+		{
+			name:     "escaped quotes in value",
+			headers:  []string{`Bearer resource_metadata="https://example.com/path"`},
+			expected: "https://example.com/path",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := ParseResourceMetadataURL(tc.headers)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestBuildWellKnownURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		baseURL  string
+		suffix   string
+		expected string
+		wantErr  bool
+	}{
+		{
+			name:     "simple base URL",
+			baseURL:  "https://example.com",
+			suffix:   "oauth-authorization-server",
+			expected: "https://example.com/.well-known/oauth-authorization-server",
+		},
+		{
+			name:     "base URL with trailing slash",
+			baseURL:  "https://example.com/",
+			suffix:   "oauth-authorization-server",
+			expected: "https://example.com/.well-known/oauth-authorization-server",
+		},
+		{
+			name:     "base URL with path",
+			baseURL:  "https://example.com/oauth2/default",
+			suffix:   "oauth-authorization-server",
+			expected: "https://example.com/.well-known/oauth-authorization-server/oauth2/default",
+		},
+		{
+			name:     "protected resource suffix",
+			baseURL:  "https://example.com",
+			suffix:   "oauth-protected-resource",
+			expected: "https://example.com/.well-known/oauth-protected-resource",
+		},
+		{
+			name:     "openid-configuration suffix with path",
+			baseURL:  "https://idp.example.com/tenants/abc",
+			suffix:   "openid-configuration",
+			expected: "https://idp.example.com/.well-known/openid-configuration/tenants/abc",
+		},
+		{
+			name:    "missing scheme",
+			baseURL: "example.com",
+			suffix:  "oauth-authorization-server",
+			wantErr: true,
+		},
+		{
+			name:    "empty URL",
+			baseURL: "",
+			suffix:  "oauth-authorization-server",
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := buildWellKnownURL(tc.baseURL, tc.suffix)
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tc.expected, result)
+			}
+		})
+	}
+}
+
+func TestSetResourceMetadataURL_ReDiscovery(t *testing.T) {
+	// Server that serves both protected resource metadata and auth server metadata
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-protected-resource":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				AuthorizationServers: []string{"https://auth.example.com"},
+				Resource:             "https://api.example.com",
+			})
+		case "/new-resource-metadata":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				AuthorizationServers: []string{r.Host}, // Use server's own URL
+				Resource:             "https://new-api.example.com",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: server.URL + "/callback",
+		TokenStore:  NewMemoryTokenStore(),
+	})
+
+	// First call discovers metadata and falls back to defaults
+	meta1, err := handler.GetServerMetadata(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, meta1)
+
+	// Setting the same URL should be a no-op
+	handler.SetResourceMetadataURL("")
+
+	// Setting a new resource metadata URL should reset discovery
+	handler.SetResourceMetadataURL(server.URL + "/new-resource-metadata")
+
+	// Verify internal state was reset
+	handler.metadataMu.Lock()
+	assert.False(t, handler.metadataFetched)
+	assert.Nil(t, handler.serverMetadata)
+	handler.metadataMu.Unlock()
+}
+
+func TestGetServerMetadata_ExplicitURL_Non200(t *testing.T) {
+	// Server that returns 404 for the explicit metadata URL
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:              "test-client",
+		RedirectURI:           server.URL + "/callback",
+		TokenStore:            NewMemoryTokenStore(),
+		AuthServerMetadataURL: server.URL + "/metadata",
+	})
+
+	_, err := handler.GetServerMetadata(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to fetch metadata")
+}
+
+func TestOAuthAuthorizationRequiredError_WWWAuthenticate(t *testing.T) {
+	// Verify the error type carries WWW-Authenticate headers
+	err := &OAuthAuthorizationRequiredError{
+		Handler:         nil,
+		WWWAuthenticate: []string{`Bearer realm="test"`, `Bearer resource_metadata="https://example.com/meta"`},
+	}
+
+	assert.True(t, errors.Is(err, ErrOAuthAuthorizationRequired))
+	assert.Len(t, err.WWWAuthenticate, 2)
+	assert.Equal(t, `Bearer realm="test"`, err.WWWAuthenticate[0])
+
+	// Verify ParseResourceMetadataURL works with the error's headers
+	metaURL := ParseResourceMetadataURL(err.WWWAuthenticate)
+	assert.Equal(t, "https://example.com/meta", metaURL)
 }

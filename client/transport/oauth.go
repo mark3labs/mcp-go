@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // ErrNoToken is returned when no token is available in the token store
@@ -144,9 +145,12 @@ type OAuthHandler struct {
 	httpClient       *http.Client
 	serverMetadata   *AuthServerMetadata
 	metadataFetchErr error
-	metadataOnce     sync.Once
+	metadataFetched  bool
+	metadataMu       sync.Mutex // Protects metadata discovery state
 	baseURL          string
 	resourceURL      string // RFC 8707 resource indicator; set from protected resource metadata
+
+	resourceMetadataURL string // URL from WWW-Authenticate resource_metadata param
 
 	mu            sync.RWMutex // Protects expectedState
 	expectedState string       // Expected state value for CSRF protection
@@ -363,140 +367,330 @@ type OAuthProtectedResource struct {
 	ResourceName         string   `json:"resource_name,omitempty"`
 }
 
-// getServerMetadata fetches the OAuth server metadata
-func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetadata, error) {
-	h.metadataOnce.Do(func() {
-		// If AuthServerMetadataURL is explicitly provided, use it directly
-		if h.config.AuthServerMetadataURL != "" {
-			h.fetchMetadataFromURL(ctx, h.config.AuthServerMetadataURL)
-			return
-		}
+// SetResourceMetadataURL sets the resource metadata URL from a WWW-Authenticate
+// header, triggering re-discovery on the next getServerMetadata call.
+func (h *OAuthHandler) SetResourceMetadataURL(metadataURL string) {
+	h.metadataMu.Lock()
+	defer h.metadataMu.Unlock()
+	if metadataURL != "" && metadataURL != h.resourceMetadataURL {
+		h.resourceMetadataURL = metadataURL
+		h.serverMetadata = nil
+		h.metadataFetchErr = nil
+		h.metadataFetched = false
+	}
+}
 
-		// Try to discover the authorization server via OAuth Protected Resource
-		// as per RFC 9728 (https://datatracker.ietf.org/doc/html/rfc9728)
-		baseURL, err := h.extractBaseURL()
+// ParseResourceMetadataURL extracts the resource_metadata URL from
+// WWW-Authenticate header values (RFC 9728). Returns "" if not present.
+//
+// Parser adapted from github.com/modelcontextprotocol/go-sdk
+// https://github.com/modelcontextprotocol/go-sdk/blob/main/oauthex/resource_meta.go
+func ParseResourceMetadataURL(wwwAuthenticate []string) string {
+	challenges, err := parseWWWAuthenticate(wwwAuthenticate)
+	if err != nil {
+		return ""
+	}
+	for _, c := range challenges {
+		if u := c.params["resource_metadata"]; u != "" {
+			return u
+		}
+	}
+	return ""
+}
+
+// wwwAuthChallenge is a parsed WWW-Authenticate challenge.
+// Adapted from github.com/modelcontextprotocol/go-sdk (MIT/Apache-2.0)
+type wwwAuthChallenge struct {
+	scheme string
+	params map[string]string
+}
+
+// parseWWWAuthenticate parses WWW-Authenticate headers per RFC 9110 §11.6.1.
+// Adapted from github.com/modelcontextprotocol/go-sdk (MIT/Apache-2.0)
+func parseWWWAuthenticate(headers []string) ([]wwwAuthChallenge, error) {
+	var challenges []wwwAuthChallenge
+	for _, h := range headers {
+		chunks, err := splitWWWAuthChallenges(h)
 		if err != nil {
-			h.metadataFetchErr = fmt.Errorf("failed to extract base URL: %w", err)
-			return
+			return nil, err
 		}
-
-		protectedResourceURL, err := buildWellKnownURL(baseURL, "oauth-protected-resource")
-		if err != nil {
-			h.metadataFetchErr = fmt.Errorf("failed to build protected resource URL: %w", err)
-			return
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, protectedResourceURL, nil)
-		if err != nil {
-			h.metadataFetchErr = fmt.Errorf("failed to create protected resource request: %w", err)
-			return
-		}
-
-		req.Header.Set("Accept", "application/json")
-		req.Header.Set("MCP-Protocol-Version", "2025-03-26")
-
-		resp, err := h.httpClient.Do(req)
-		if err != nil {
-			h.metadataFetchErr = fmt.Errorf("failed to send protected resource request: %w", err)
-			return
-		}
-		defer resp.Body.Close()
-
-		// If we can't get the protected resource metadata, try OAuth Authorization Server discovery
-		if resp.StatusCode != http.StatusOK {
-			authMetadataURL, err := buildWellKnownURL(baseURL, "oauth-authorization-server")
+		for _, cs := range chunks {
+			if strings.TrimSpace(cs) == "" {
+				continue
+			}
+			c, err := parseSingleWWWAuthChallenge(cs)
 			if err != nil {
-				h.metadataFetchErr = fmt.Errorf("failed to build authorization server metadata URL: %w", err)
-				return
+				// Skip unparseable challenges (e.g. token68 like "Basic abc123")
+				continue
 			}
-			h.fetchMetadataFromURL(ctx, authMetadataURL)
-			if h.serverMetadata != nil {
-				h.metadataFetchErr = nil
-				return
-			}
-			// If that also fails, fall back to default endpoints
-			metadata, err := h.getDefaultEndpoints(baseURL)
-			if err != nil {
-				h.metadataFetchErr = fmt.Errorf("failed to get default endpoints: %w", err)
-				return
-			}
-			h.serverMetadata = metadata
-			h.metadataFetchErr = nil
-			return
+			challenges = append(challenges, c)
 		}
+	}
+	return challenges, nil
+}
 
-		// Parse the protected resource metadata
-		var protectedResource OAuthProtectedResource
-		if err := json.NewDecoder(resp.Body).Decode(&protectedResource); err != nil {
-			h.metadataFetchErr = fmt.Errorf("failed to decode protected resource response: %w", err)
-			return
+// splitWWWAuthChallenges splits a header into individual challenges,
+// handling quoted strings and distinguishing param vs challenge commas.
+func splitWWWAuthChallenges(header string) ([]string, error) {
+	var challenges []string
+	inQuotes := false
+	start := 0
+	for i, r := range header {
+		if r == '"' {
+			if i > 0 && header[i-1] != '\\' {
+				inQuotes = !inQuotes
+			} else if i == 0 {
+				return nil, errors.New(`challenge begins with '"'`)
+			}
+		} else if r == ',' && !inQuotes {
+			lookahead := strings.TrimSpace(header[i+1:])
+			eqPos := strings.Index(lookahead, "=")
+
+			isParam := false
+			if eqPos > 0 {
+				token := lookahead[:eqPos]
+				if strings.IndexFunc(token, unicode.IsSpace) == -1 {
+					isParam = true
+				}
+			}
+
+			if !isParam {
+				challenges = append(challenges, header[start:i])
+				start = i + 1
+			}
 		}
+	}
+	challenges = append(challenges, header[start:])
+	return challenges, nil
+}
 
-		// RFC 8707: Capture the resource identifier for use in authorization requests.
-		// If not provided in metadata, fall back to base URL per RFC 8707 Section 2:
-		// "The client SHOULD use the base URI of the API as the resource parameter value
-		// unless specific knowledge of the resource dictates otherwise."
-		if protectedResource.Resource != "" {
-			h.resourceURL = protectedResource.Resource
+// parseSingleWWWAuthChallenge parses exactly one challenge string.
+func parseSingleWWWAuthChallenge(s string) (wwwAuthChallenge, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return wwwAuthChallenge{}, errors.New("empty challenge string")
+	}
+
+	scheme, paramsStr, found := strings.Cut(s, " ")
+	c := wwwAuthChallenge{scheme: strings.ToLower(scheme)}
+	if !found {
+		return c, nil
+	}
+
+	params := make(map[string]string)
+	for paramsStr != "" {
+		keyEnd := strings.Index(paramsStr, "=")
+		if keyEnd <= 0 {
+			return wwwAuthChallenge{}, fmt.Errorf("malformed auth parameter: expected key=value, but got %q", paramsStr)
+		}
+		key := strings.TrimSpace(paramsStr[:keyEnd])
+		paramsStr = strings.TrimSpace(paramsStr[keyEnd+1:])
+
+		var value string
+		if strings.HasPrefix(paramsStr, "\"") {
+			paramsStr = paramsStr[1:]
+			var valBuilder strings.Builder
+			i := 0
+			for ; i < len(paramsStr); i++ {
+				if paramsStr[i] == '\\' && i+1 < len(paramsStr) {
+					valBuilder.WriteByte(paramsStr[i+1])
+					i++
+				} else if paramsStr[i] == '"' {
+					break
+				} else {
+					valBuilder.WriteByte(paramsStr[i])
+				}
+			}
+			if i == len(paramsStr) {
+				return wwwAuthChallenge{}, fmt.Errorf("unterminated quoted string in auth parameter")
+			}
+			value = valBuilder.String()
+			paramsStr = strings.TrimSpace(paramsStr[i+1:])
 		} else {
-			h.resourceURL = baseURL
-		}
-
-		// If no authorization servers are specified, fall back to default endpoints
-		if len(protectedResource.AuthorizationServers) == 0 {
-			metadata, err := h.getDefaultEndpoints(baseURL)
-			if err != nil {
-				h.metadataFetchErr = fmt.Errorf("failed to get default endpoints: %w", err)
-				return
+			commaPos := strings.Index(paramsStr, ",")
+			if commaPos == -1 {
+				value = paramsStr
+				paramsStr = ""
+			} else {
+				value = strings.TrimSpace(paramsStr[:commaPos])
+				paramsStr = strings.TrimSpace(paramsStr[commaPos:])
 			}
-			h.serverMetadata = metadata
-			h.metadataFetchErr = nil
-			return
+		}
+		if value == "" {
+			return wwwAuthChallenge{}, fmt.Errorf("no value for auth param %q", key)
 		}
 
-		// Use the first authorization server
-		authServerURL := protectedResource.AuthorizationServers[0]
+		params[strings.ToLower(key)] = value
 
-		// Try OAuth Authorization Server Metadata first
-		authMetadataURL, err := buildWellKnownURL(authServerURL, "oauth-authorization-server")
+		if strings.HasPrefix(paramsStr, ",") {
+			paramsStr = strings.TrimSpace(paramsStr[1:])
+		} else if paramsStr != "" {
+			return wwwAuthChallenge{}, fmt.Errorf("malformed auth parameter: expected comma after value, but got %q", paramsStr)
+		}
+	}
+
+	c.params = params
+	return c, nil
+}
+
+// getServerMetadata fetches the OAuth server metadata.
+func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetadata, error) {
+	h.metadataMu.Lock()
+	defer h.metadataMu.Unlock()
+
+	if h.metadataFetched && h.serverMetadata != nil {
+		return h.serverMetadata, nil
+	}
+	if h.metadataFetched && h.metadataFetchErr != nil {
+		return nil, h.metadataFetchErr
+	}
+
+	h.metadataFetched = true
+
+	if h.config.AuthServerMetadataURL != "" {
+		h.fetchMetadataFromURL(ctx, h.config.AuthServerMetadataURL)
+		if h.metadataFetchErr != nil {
+			return nil, h.metadataFetchErr
+		}
+		if h.serverMetadata == nil {
+			h.metadataFetchErr = fmt.Errorf("failed to fetch metadata from %s", h.config.AuthServerMetadataURL)
+			return nil, h.metadataFetchErr
+		}
+		return h.serverMetadata, nil
+	}
+
+	if h.resourceMetadataURL != "" {
+		protectedResource := h.fetchProtectedResourceFromURL(ctx, h.resourceMetadataURL)
+		if protectedResource != nil {
+			h.captureResourceURL(protectedResource, h.resourceMetadataURL)
+			if len(protectedResource.AuthorizationServers) > 0 {
+				if h.discoverAuthServerMetadata(ctx, protectedResource.AuthorizationServers[0]) {
+					return h.serverMetadata, nil
+				}
+			}
+		}
+	}
+
+	baseURL, err := h.extractBaseURL()
+	if err != nil {
+		h.metadataFetchErr = fmt.Errorf("failed to extract base URL: %w", err)
+		return nil, h.metadataFetchErr
+	}
+
+	protectedResourceURL, err := buildWellKnownURL(baseURL, "oauth-protected-resource")
+	if err != nil {
+		h.metadataFetchErr = fmt.Errorf("failed to build protected resource URL: %w", err)
+		return nil, h.metadataFetchErr
+	}
+	protectedResource := h.fetchProtectedResourceFromURL(ctx, protectedResourceURL)
+
+	if protectedResource == nil {
+		authMetadataURL, err := buildWellKnownURL(baseURL, "oauth-authorization-server")
 		if err != nil {
 			h.metadataFetchErr = fmt.Errorf("failed to build authorization server metadata URL: %w", err)
-			return
+			return nil, h.metadataFetchErr
 		}
 		h.fetchMetadataFromURL(ctx, authMetadataURL)
 		if h.serverMetadata != nil {
 			h.metadataFetchErr = nil
-			return
+			return h.serverMetadata, nil
 		}
-
-		// If OAuth Authorization Server Metadata discovery fails, try OpenID Connect discovery
-		openidMetadataURL, err := buildWellKnownURL(authServerURL, "openid-configuration")
-		if err != nil {
-			h.metadataFetchErr = fmt.Errorf("failed to build openid metadata URL: %w", err)
-			return
-		}
-		h.fetchMetadataFromURL(ctx, openidMetadataURL)
-		if h.serverMetadata != nil {
-			h.metadataFetchErr = nil
-			return
-		}
-
-		// If both discovery methods fail, use default endpoints based on the authorization server URL
-		metadata, err := h.getDefaultEndpoints(authServerURL)
+		metadata, err := h.getDefaultEndpoints(baseURL)
 		if err != nil {
 			h.metadataFetchErr = fmt.Errorf("failed to get default endpoints: %w", err)
-			return
+			return nil, h.metadataFetchErr
 		}
 		h.serverMetadata = metadata
 		h.metadataFetchErr = nil
-	})
-
-	if h.metadataFetchErr != nil {
-		return nil, h.metadataFetchErr
+		return h.serverMetadata, nil
 	}
 
+	h.captureResourceURL(protectedResource, baseURL)
+
+	if len(protectedResource.AuthorizationServers) == 0 {
+		metadata, err := h.getDefaultEndpoints(baseURL)
+		if err != nil {
+			h.metadataFetchErr = fmt.Errorf("failed to get default endpoints: %w", err)
+			return nil, h.metadataFetchErr
+		}
+		h.serverMetadata = metadata
+		h.metadataFetchErr = nil
+		return h.serverMetadata, nil
+	}
+
+	authServerURL := protectedResource.AuthorizationServers[0]
+	if h.discoverAuthServerMetadata(ctx, authServerURL) {
+		return h.serverMetadata, nil
+	}
+
+	metadata, err := h.getDefaultEndpoints(authServerURL)
+	if err != nil {
+		h.metadataFetchErr = fmt.Errorf("failed to get default endpoints: %w", err)
+		return nil, h.metadataFetchErr
+	}
+	h.serverMetadata = metadata
+	h.metadataFetchErr = nil
 	return h.serverMetadata, nil
 }
 
+// fetchProtectedResourceFromURL fetches Protected Resource metadata, returning nil on failure.
+func (h *OAuthHandler) fetchProtectedResourceFromURL(ctx context.Context, metadataURL string) *OAuthProtectedResource {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataURL, nil)
+	if err != nil {
+		return nil
+	}
+
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("MCP-Protocol-Version", "2025-03-26")
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+
+	var pr OAuthProtectedResource
+	if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
+		return nil
+	}
+	return &pr
+}
+
+// captureResourceURL sets h.resourceURL from protected resource metadata per RFC 8707.
+func (h *OAuthHandler) captureResourceURL(pr *OAuthProtectedResource, fallbackURL string) {
+	if pr.Resource != "" {
+		h.resourceURL = pr.Resource
+	} else {
+		h.resourceURL = fallbackURL
+	}
+}
+
+// discoverAuthServerMetadata tries oauth-authorization-server then openid-configuration discovery.
+func (h *OAuthHandler) discoverAuthServerMetadata(ctx context.Context, authServerURL string) bool {
+	if authMetadataURL, err := buildWellKnownURL(authServerURL, "oauth-authorization-server"); err == nil {
+		h.fetchMetadataFromURL(ctx, authMetadataURL)
+		if h.serverMetadata != nil {
+			h.metadataFetchErr = nil
+			return true
+		}
+	}
+
+	if openidURL, err := buildWellKnownURL(authServerURL, "openid-configuration"); err == nil {
+		h.fetchMetadataFromURL(ctx, openidURL)
+		if h.serverMetadata != nil {
+			h.metadataFetchErr = nil
+			return true
+		}
+	}
+
+	return false
+}
+
+// buildWellKnownURL constructs a well-known URL per RFC 8414 §3.
 func buildWellKnownURL(baseURL string, suffix string) (string, error) {
 	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
