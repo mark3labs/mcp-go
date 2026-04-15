@@ -527,34 +527,22 @@ func buildWellKnownURL(baseURL string, suffix string) (string, error) {
 
 func extractResourceMetadataURL(wwwAuthenticateHeaders []string) string {
 	for _, header := range wwwAuthenticateHeaders {
-		lowerHeader := strings.ToLower(header)
-		idx := strings.Index(lowerHeader, "resource_metadata=")
-		if idx < 0 {
-			continue
-		}
-
-		value := header[idx+len("resource_metadata="):]
-		if value == "" {
-			continue
-		}
-
-		if strings.HasPrefix(value, "\"") {
-			value = value[1:]
-			end := strings.Index(value, "\"")
-			if end < 0 {
+		for _, param := range strings.Split(header, ",") {
+			param = strings.TrimSpace(param)
+			if param == "" {
 				continue
 			}
-			return value[:end]
-		}
 
-		end := strings.IndexAny(value, ", ")
-		if end >= 0 {
-			value = value[:end]
-		}
+			key, value, found := strings.Cut(param, "=")
+			if !found || !strings.EqualFold(strings.TrimSpace(key), "resource_metadata") {
+				continue
+			}
 
-		value = strings.TrimSpace(value)
-		if value != "" {
-			return value
+			value = strings.TrimSpace(value)
+			value = strings.Trim(value, "\"")
+			if value != "" {
+				return value
+			}
 		}
 	}
 
