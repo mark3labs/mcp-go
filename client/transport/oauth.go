@@ -136,6 +136,7 @@ type AuthServerMetadata struct {
 	ResponseTypesSupported            []string `json:"response_types_supported"`
 	GrantTypesSupported               []string `json:"grant_types_supported,omitempty"`
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported,omitempty"`
+	Resource                          string   `json:"resource,omitempty"`
 }
 
 // OAuthHandler handles OAuth authentication for HTTP requests
@@ -616,6 +617,9 @@ func (h *OAuthHandler) RegisterClient(ctx context.Context, clientName string) er
 		"scope":                      strings.Join(h.config.Scopes, " "),
 	}
 
+	// Add resource parameter if available (RFC 8707)
+	if metadata.Resource != "" {
+		regRequest["resource"] = metadata.Resource
 	if h.config.ClientURI != "" {
 		regRequest["client_uri"] = h.config.ClientURI
 	}
@@ -710,6 +714,10 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 	data.Set("client_id", h.config.ClientID)
 	data.Set("redirect_uri", h.config.RedirectURI)
 
+	if metadata.Resource != "" {
+		data.Set("resource", metadata.Resource)
+	}
+
 	if h.config.ClientSecret != "" {
 		data.Set("client_secret", h.config.ClientSecret)
 	}
@@ -793,6 +801,10 @@ func (h *OAuthHandler) GetAuthorizationURL(ctx context.Context, state, codeChall
 	params.Set("client_id", h.config.ClientID)
 	params.Set("redirect_uri", h.config.RedirectURI)
 	params.Set("state", state)
+
+	if metadata.Resource != "" {
+		params.Set("resource", metadata.Resource)
+	}
 
 	if len(h.config.Scopes) > 0 {
 		params.Set("scope", strings.Join(h.config.Scopes, " "))
