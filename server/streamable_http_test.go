@@ -1189,7 +1189,7 @@ func TestStreamableHTTP_PongResponseHandling(t *testing.T) {
 		}
 	})
 
-	t.Run("Pong response with null result should return 202 and not be treated as sampling response", func(t *testing.T) {
+	t.Run("Pong response with omitted result should return 202 and not be treated as sampling response", func(t *testing.T) {
 		// Some MCP clients (e.g. VS Code Copilot Chat) send ping responses without
 		// the result field: {"jsonrpc":"2.0","id":N}. While this is not strictly
 		// compliant with JSON-RPC 2.0 (which requires result or error), the server
