@@ -59,21 +59,21 @@ mcp.WithString("name",
 mcp.WithNumber("age",
     mcp.Required(),
     mcp.Description("User's age"),
-    mcp.Minimum(0),
-    mcp.Maximum(150),
+    mcp.Min(0),
+    mcp.Max(150),
 )
 
 // Integer parameters
 mcp.WithInteger("count",
-    mcp.Default(10),
+    mcp.DefaultNumber(10),
     mcp.Description("Number of items"),
-    mcp.Minimum(1),
-    mcp.Maximum(1000),
+    mcp.Min(1),
+    mcp.Max(1000),
 )
 
 // Boolean parameters
 mcp.WithBoolean("enabled",
-    mcp.Default(true),
+    mcp.DefaultBool(true),
     mcp.Description("Whether feature is enabled"),
 )
 
@@ -113,8 +113,8 @@ mcp.WithString("email",
 // Number constraints
 mcp.WithNumber("price",
     mcp.Required(),
-    mcp.Minimum(0),
-    mcp.ExclusiveMaximum(10000),
+    mcp.Min(0),
+    mcp.Max(10000),
     mcp.Description("Product price in USD"),
 )
 ```

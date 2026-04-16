@@ -1056,33 +1056,33 @@ func Pattern(pattern string) PropertyOption {
 // Number Property Options
 //
 
-// DefaultNumber sets the default value for a number property.
+// DefaultNumber sets the default value for a number or integer property.
 // This value will be used if the property is not explicitly provided.
-func DefaultNumber(value float64) PropertyOption {
+func DefaultNumber[T int | int64 | float64](value T) PropertyOption {
 	return func(schema map[string]any) {
 		schema["default"] = value
 	}
 }
 
-// Max sets the maximum value for a number property.
+// Max sets the maximum value for a number or integer property.
 // The number value must not exceed this maximum.
-func Max(max float64) PropertyOption {
+func Max[T int | int64 | float64](max T) PropertyOption {
 	return func(schema map[string]any) {
 		schema["maximum"] = max
 	}
 }
 
-// Min sets the minimum value for a number property.
+// Min sets the minimum value for a number or integer property.
 // The number value must not be less than this minimum.
-func Min(min float64) PropertyOption {
+func Min[T int | int64 | float64](min T) PropertyOption {
 	return func(schema map[string]any) {
 		schema["minimum"] = min
 	}
 }
 
-// MultipleOf specifies that a number must be a multiple of the given value.
+// MultipleOf specifies that a number or integer must be a multiple of the given value.
 // The number value must be divisible by this value.
-func MultipleOf(value float64) PropertyOption {
+func MultipleOf[T int | int64 | float64](value T) PropertyOption {
 	return func(schema map[string]any) {
 		schema["multipleOf"] = value
 	}
@@ -1115,6 +1115,28 @@ func DefaultArray[T any](value []T) PropertyOption {
 //
 // Property Type Helpers
 //
+
+// WithInteger adds an integer property to the tool schema.
+// It accepts property options to configure the integer property's behavior and constraints.
+func WithInteger(name string, opts ...PropertyOption) ToolOption {
+	return func(t *Tool) {
+		schema := map[string]any{
+			"type": "integer",
+		}
+
+		for _, opt := range opts {
+			opt(schema)
+		}
+
+		// Remove required from property schema and add to InputSchema.required
+		if required, ok := schema["required"].(bool); ok && required {
+			delete(schema, "required")
+			t.InputSchema.Required = append(t.InputSchema.Required, name)
+		}
+
+		t.InputSchema.Properties[name] = schema
+	}
+}
 
 // WithBoolean adds a boolean property to the tool schema.
 // It accepts property options to configure the boolean property's behavior and constraints.
@@ -1384,6 +1406,31 @@ func WithNumberItems(opts ...PropertyOption) PropertyOption {
 	return func(schema map[string]any) {
 		itemSchema := map[string]any{
 			"type": "number",
+		}
+
+		for _, opt := range opts {
+			opt(itemSchema)
+		}
+
+		schema["items"] = itemSchema
+	}
+}
+
+// WithIntegerItems configures an array's items to be of type integer.
+//
+// Supported options: Description(), DefaultNumber(), Min(), Max(), MultipleOf()
+// Note: Options like Required() are not valid for item schemas and will be ignored.
+//
+// Examples:
+//
+//	mcp.WithArray("ids", mcp.WithIntegerItems())
+//	mcp.WithArray("scores", mcp.WithIntegerItems(mcp.Min(0), mcp.Max(100)))
+//
+// Limitations: Only supports simple integer arrays. Use Items() for complex objects.
+func WithIntegerItems(opts ...PropertyOption) PropertyOption {
+	return func(schema map[string]any) {
+		itemSchema := map[string]any{
+			"type": "integer",
 		}
 
 		for _, opt := range opts {
