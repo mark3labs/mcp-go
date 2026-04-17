@@ -150,7 +150,7 @@ type OAuthHandler struct {
 	metadataFetchErr error
 	metadataOnce     sync.Once
 	baseURL          string
-	metadataMu       sync.Mutex // Protects baseURL, serverMetadata, metadataFetchErr, metadataOnce, and config.ProtectedResourceMetadataURL
+	metadataMu       sync.Mutex // Protects baseURL, serverMetadata, metadataFetchErr, metadataOnce, config.ProtectedResourceMetadataURL, and resourceURL
 	resourceURL      string     // RFC 8707 resource indicator; set from protected resource metadata
 
 	mu            sync.RWMutex // Protects expectedState
@@ -227,8 +227,8 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken string) (*
 		data.Set("client_secret", h.config.ClientSecret)
 	}
 	// RFC 8707: Include resource parameter on refresh requests
-	if h.resourceURL != "" {
-		data.Set("resource", h.resourceURL)
+	if resourceURL := h.getResourceURL(); resourceURL != "" {
+		data.Set("resource", resourceURL)
 	}
 
 	req, err := http.NewRequestWithContext(
@@ -324,6 +324,14 @@ func (h *OAuthHandler) SetProtectedResourceMetadataURL(u string) {
 	h.serverMetadata = nil
 	h.metadataFetchErr = nil
 	h.metadataOnce = sync.Once{}
+	h.resourceURL = ""
+}
+
+// getResourceURL returns the RFC 8707 resource indicator under metadataMu.
+func (h *OAuthHandler) getResourceURL() string {
+	h.metadataMu.Lock()
+	defer h.metadataMu.Unlock()
+	return h.resourceURL
 }
 
 // GetClientSecret returns the client secret
@@ -664,8 +672,8 @@ func (h *OAuthHandler) RegisterClient(ctx context.Context, clientName string) er
 	}
 
 	// RFC 8707: Include resource parameter in client registration
-	if h.resourceURL != "" {
-		regRequest["resource"] = h.resourceURL
+	if resourceURL := h.getResourceURL(); resourceURL != "" {
+		regRequest["resource"] = resourceURL
 	}
 
 	reqBody, err := json.Marshal(regRequest)
@@ -757,8 +765,8 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 	}
 
 	// RFC 8707: Include resource parameter in token exchange
-	if h.resourceURL != "" {
-		data.Set("resource", h.resourceURL)
+	if resourceURL := h.getResourceURL(); resourceURL != "" {
+		data.Set("resource", resourceURL)
 	}
 
 	req, err := http.NewRequestWithContext(
@@ -842,8 +850,8 @@ func (h *OAuthHandler) GetAuthorizationURL(ctx context.Context, state, codeChall
 	}
 
 	// RFC 8707: Include resource parameter in authorization URL
-	if h.resourceURL != "" {
-		params.Set("resource", h.resourceURL)
+	if resourceURL := h.getResourceURL(); resourceURL != "" {
+		params.Set("resource", resourceURL)
 	}
 
 	return metadata.AuthorizationEndpoint + "?" + params.Encode(), nil
