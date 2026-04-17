@@ -132,6 +132,10 @@ func (s *MemoryTokenStore) SaveToken(ctx context.Context, token *Token) error {
 // AuthServerMetadata represents the OAuth 2.0 Authorization Server Metadata
 // as defined in RFC 8414 (https://www.rfc-editor.org/rfc/rfc8414.html).
 //
+// URL-bearing fields are validated by validateAuthServerMetadataURLs to
+// reject non-http(s) schemes (e.g. javascript:, data:, file:) that could
+// otherwise be injected by a hostile authorization server.
+//
 // Signed metadata (the "signed_metadata" JWT field) is not supported.
 type AuthServerMetadata struct {
 	Issuer                                             string   `json:"issuer"`
@@ -553,7 +557,52 @@ func (h *OAuthHandler) fetchMetadataFromURL(ctx context.Context, metadataURL str
 		return
 	}
 
+	if err := validateAuthServerMetadataURLs(&metadata); err != nil {
+		h.metadataFetchErr = fmt.Errorf("invalid authorization server metadata from %s: %w", metadataURL, err)
+		return
+	}
+
 	h.serverMetadata = &metadata
+}
+
+// validateAuthServerMetadataURLs ensures every URL-bearing field in m uses an
+// http or https scheme. This prevents a hostile authorization server from
+// advertising values like "javascript:..." or "file:..." that could be
+// reflected into a browser or the local file system by downstream consumers.
+// Empty optional fields are permitted.
+func validateAuthServerMetadataURLs(m *AuthServerMetadata) error {
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{"issuer", m.Issuer},
+		{"authorization_endpoint", m.AuthorizationEndpoint},
+		{"token_endpoint", m.TokenEndpoint},
+		{"jwks_uri", m.JwksURI},
+		{"registration_endpoint", m.RegistrationEndpoint},
+		{"service_documentation", m.ServiceDocumentation},
+		{"op_policy_uri", m.OpPolicyURI},
+		{"op_tos_uri", m.OpTOSURI},
+		{"revocation_endpoint", m.RevocationEndpoint},
+		{"introspection_endpoint", m.IntrospectionEndpoint},
+	}
+	for _, f := range fields {
+		if f.value == "" {
+			continue
+		}
+		u, err := url.Parse(f.value)
+		if err != nil {
+			return fmt.Errorf("%s: %w", f.name, err)
+		}
+		scheme := strings.ToLower(u.Scheme)
+		if scheme != "http" && scheme != "https" {
+			return fmt.Errorf("%s has disallowed scheme %q", f.name, u.Scheme)
+		}
+		if u.Host == "" {
+			return fmt.Errorf("%s is missing host", f.name)
+		}
+	}
+	return nil
 }
 
 // authorizationServerMetadataURLs returns the ordered list of discovery URLs to
