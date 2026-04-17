@@ -296,6 +296,24 @@ sseServer := server.NewSSEServer(s,
 - SSE stream: `http://localhost:8080/api/mcp/sse`
 - Message endpoint: `http://localhost:8080/api/mcp/message`
 
+### SSE Client Timeout Options
+
+When using the legacy SSE transport on the client side, you can configure endpoint and response timeouts:
+
+```go
+import "github.com/mark3labs/mcp-go/client/transport"
+
+sseTransport, err := transport.NewSSE("http://localhost:8080/sse",
+    // Max time to wait for the SSE endpoint URL during Start() (default: 30s)
+    transport.WithEndpointTimeout(60*time.Second),
+
+    // Max time to wait for a response after sending a request (default: 60s)
+    transport.WithResponseTimeout(120*time.Second),
+)
+```
+
+Zero or negative values are silently ignored to prevent misconfiguration. If the context passed to the operation has a shorter deadline, the shorter value takes precedence.
+
 ## Real-Time Notifications
 
 SSE transport enables real-time server-to-client communication through notifications. Use the server context to send notifications:

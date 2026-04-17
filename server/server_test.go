@@ -25,6 +25,217 @@ func TestMCPServer_NewMCPServer(t *testing.T) {
 	assert.Equal(t, "1.0.0", server.version)
 }
 
+func TestMCPServer_ImplementationMetadata(t *testing.T) {
+	tests := []struct {
+		name     string
+		options  []ServerOption
+		validate func(t *testing.T, response mcp.JSONRPCMessage)
+	}{
+		{
+			name:    "No implementation metadata",
+			options: []ServerOption{},
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				require.True(t, ok)
+
+				initResult, ok := resp.Result.(mcp.InitializeResult)
+				require.True(t, ok)
+
+				assert.Equal(t, "test-server", initResult.ServerInfo.Name)
+				assert.Equal(t, "1.0.0", initResult.ServerInfo.Version)
+				assert.Empty(t, initResult.ServerInfo.Title)
+				assert.Empty(t, initResult.ServerInfo.Description)
+				assert.Empty(t, initResult.ServerInfo.WebsiteURL)
+				assert.Nil(t, initResult.ServerInfo.Icons)
+			},
+		},
+		{
+			name: "With title",
+			options: []ServerOption{
+				WithTitle("My Server"),
+			},
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				require.True(t, ok)
+
+				initResult, ok := resp.Result.(mcp.InitializeResult)
+				require.True(t, ok)
+
+				assert.Equal(t, "My Server", initResult.ServerInfo.Title)
+			},
+		},
+		{
+			name: "With description",
+			options: []ServerOption{
+				WithDescription("A server that does amazing things"),
+			},
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				require.True(t, ok)
+
+				initResult, ok := resp.Result.(mcp.InitializeResult)
+				require.True(t, ok)
+
+				assert.Equal(t, "A server that does amazing things", initResult.ServerInfo.Description)
+			},
+		},
+		{
+			name: "With website URL",
+			options: []ServerOption{
+				WithWebsiteURL("https://example.com"),
+			},
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				require.True(t, ok)
+
+				initResult, ok := resp.Result.(mcp.InitializeResult)
+				require.True(t, ok)
+
+				assert.Equal(t, "https://example.com", initResult.ServerInfo.WebsiteURL)
+			},
+		},
+		{
+			name: "With icons",
+			options: []ServerOption{
+				WithIcons(
+					mcp.Icon{
+						Src:      "https://example.com/icon.png",
+						MIMEType: "image/png",
+						Sizes:    []string{"48x48"},
+					},
+				),
+			},
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				require.True(t, ok)
+
+				initResult, ok := resp.Result.(mcp.InitializeResult)
+				require.True(t, ok)
+
+				require.Len(t, initResult.ServerInfo.Icons, 1)
+				assert.Equal(t, "https://example.com/icon.png", initResult.ServerInfo.Icons[0].Src)
+				assert.Equal(t, "image/png", initResult.ServerInfo.Icons[0].MIMEType)
+				assert.Equal(t, []string{"48x48"}, initResult.ServerInfo.Icons[0].Sizes)
+			},
+		},
+		{
+			name: "With multiple icons",
+			options: []ServerOption{
+				WithIcons(
+					mcp.Icon{
+						Src:      "https://example.com/icon.png",
+						MIMEType: "image/png",
+						Sizes:    []string{"48x48"},
+					},
+					mcp.Icon{
+						Src:      "https://example.com/icon.svg",
+						MIMEType: "image/svg+xml",
+						Sizes:    []string{"any"},
+					},
+				),
+			},
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				require.True(t, ok)
+
+				initResult, ok := resp.Result.(mcp.InitializeResult)
+				require.True(t, ok)
+
+				require.Len(t, initResult.ServerInfo.Icons, 2)
+				assert.Equal(t, "https://example.com/icon.png", initResult.ServerInfo.Icons[0].Src)
+				assert.Equal(t, "https://example.com/icon.svg", initResult.ServerInfo.Icons[1].Src)
+			},
+		},
+		{
+			name: "With all implementation metadata",
+			options: []ServerOption{
+				WithTitle("My Server"),
+				WithDescription("A server that does amazing things"),
+				WithWebsiteURL("https://example.com"),
+				WithIcons(
+					mcp.Icon{
+						Src:      "https://example.com/icon.png",
+						MIMEType: "image/png",
+						Sizes:    []string{"48x48"},
+					},
+				),
+			},
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				require.True(t, ok)
+
+				initResult, ok := resp.Result.(mcp.InitializeResult)
+				require.True(t, ok)
+
+				assert.Equal(t, "test-server", initResult.ServerInfo.Name)
+				assert.Equal(t, "1.0.0", initResult.ServerInfo.Version)
+				assert.Equal(t, "My Server", initResult.ServerInfo.Title)
+				assert.Equal(t, "A server that does amazing things", initResult.ServerInfo.Description)
+				assert.Equal(t, "https://example.com", initResult.ServerInfo.WebsiteURL)
+				require.Len(t, initResult.ServerInfo.Icons, 1)
+				assert.Equal(t, "https://example.com/icon.png", initResult.ServerInfo.Icons[0].Src)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewMCPServer("test-server", "1.0.0", tt.options...)
+			message := mcp.JSONRPCRequest{
+				JSONRPC: "2.0",
+				ID:      mcp.NewRequestId(int64(1)),
+				Request: mcp.Request{
+					Method: "initialize",
+				},
+			}
+			messageBytes, err := json.Marshal(message)
+			require.NoError(t, err)
+
+			response := server.HandleMessage(context.Background(), messageBytes)
+			tt.validate(t, response)
+		})
+	}
+}
+
+func TestMCPServer_WithIcons_DefensiveCopy(t *testing.T) {
+	// Verify that WithIcons makes a defensive copy so external mutation
+	// does not affect the server's stored icons.
+	icons := []mcp.Icon{
+		{
+			Src:      "https://example.com/icon.png",
+			MIMEType: "image/png",
+			Sizes:    []string{"48x48"},
+		},
+	}
+
+	server := NewMCPServer("test-server", "1.0.0", WithIcons(icons...))
+
+	// Mutate the caller's slice and nested Sizes after passing to WithIcons.
+	icons[0].Src = "https://malicious.example.com/icon.png"
+	icons[0].Sizes[0] = "999x999"
+
+	message := mcp.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(int64(1)),
+		Request: mcp.Request{
+			Method: "initialize",
+		},
+	}
+	messageBytes, err := json.Marshal(message)
+	require.NoError(t, err)
+
+	response := server.HandleMessage(context.Background(), messageBytes)
+	resp, ok := response.(mcp.JSONRPCResponse)
+	require.True(t, ok)
+
+	initResult, ok := resp.Result.(mcp.InitializeResult)
+	require.True(t, ok)
+
+	require.Len(t, initResult.ServerInfo.Icons, 1)
+	assert.Equal(t, "https://example.com/icon.png", initResult.ServerInfo.Icons[0].Src)
+	assert.Equal(t, []string{"48x48"}, initResult.ServerInfo.Icons[0].Sizes)
+}
+
 func TestMCPServer_Capabilities(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -127,6 +338,25 @@ func TestMCPServer_Capabilities(t *testing.T) {
 				assert.False(t, initResult.Capabilities.Tools.ListChanged)
 
 				assert.NotNil(t, initResult.Capabilities.Logging)
+			},
+		},
+		{
+			name: "Experimental capabilities",
+			options: []ServerOption{
+				WithExperimental(map[string]any{
+					"claude/channel": map[string]any{},
+				}),
+			},
+			validate: func(t *testing.T, response mcp.JSONRPCMessage) {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				assert.True(t, ok)
+
+				initResult, ok := resp.Result.(mcp.InitializeResult)
+				assert.True(t, ok)
+
+				assert.NotNil(t, initResult.Capabilities.Experimental)
+				_, hasChannel := initResult.Capabilities.Experimental["claude/channel"]
+				assert.True(t, hasChannel, "expected claude/channel in experimental capabilities")
 			},
 		},
 	}
@@ -2018,6 +2248,81 @@ func TestMCPServer_WithHooks(t *testing.T) {
 		onSuccessData[0].res,
 		"OnSuccess result should be same type as AfterPing result",
 	)
+}
+
+// TestMCPServer_GetHooks verifies GetHooks returns nil when no hooks are
+// configured and returns the same pointer passed to WithHooks when set.
+func TestMCPServer_GetHooks(t *testing.T) {
+	hooks := &Hooks{}
+	hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, message any) {})
+
+	tests := []struct {
+		name      string
+		server    *MCPServer
+		wantHooks *Hooks
+		wantLen   int
+	}{
+		{
+			name:      "no hooks configured returns nil",
+			server:    NewMCPServer("test", "1.0.0"),
+			wantHooks: nil,
+			wantLen:   0,
+		},
+		{
+			name:      "with hooks configured returns same pointer",
+			server:    NewMCPServer("test", "1.0.0", WithHooks(hooks)),
+			wantHooks: hooks,
+			wantLen:   1,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.server.GetHooks()
+			if tc.wantHooks == nil {
+				assert.Nil(t, got)
+				return
+			}
+			require.Same(t, tc.wantHooks, got)
+			assert.Len(t, got.OnBeforeAny, tc.wantLen)
+		})
+	}
+}
+
+// TestMCPServer_GetHooks_Composable verifies that third-party libraries can
+// append hooks via GetHooks without replacing existing registrations, and that
+// all composed hooks execute in registration order.
+func TestMCPServer_GetHooks_Composable(t *testing.T) {
+	hooks := &Hooks{}
+	var callOrder []string
+
+	hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, message any) {
+		callOrder = append(callOrder, "original")
+	})
+
+	s := NewMCPServer("test", "1.0.0", WithHooks(hooks))
+
+	// Simulate a third-party library getting hooks and appending
+	existing := s.GetHooks()
+	existing.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, message any) {
+		callOrder = append(callOrder, "third-party")
+	})
+
+	assert.Len(t, existing.OnBeforeAny, 2)
+
+	// Trigger hooks via a ping request
+	_ = s.HandleMessage(context.Background(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "initialize"
+	}`))
+	_ = s.HandleMessage(context.Background(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 2,
+		"method": "ping"
+	}`))
+
+	assert.Equal(t, []string{"original", "third-party", "original", "third-party"}, callOrder)
 }
 
 func TestMCPServer_SessionHooks(t *testing.T) {
@@ -4068,4 +4373,100 @@ func TestServerTaskTool_TypeDefinitions(t *testing.T) {
 		assert.NotNil(t, server.taskTools)
 		assert.Equal(t, 0, len(server.taskTools))
 	})
+}
+
+func TestMCPServer_Use_AppliesMiddlewareToToolCall(t *testing.T) {
+	called := 0
+	countingMW := func(next ToolHandlerFunc) ToolHandlerFunc {
+		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			called++
+			return next(ctx, req)
+		}
+	}
+
+	s := NewMCPServer("test", "1.0.0")
+	s.AddTool(mcp.NewTool("echo"), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("ok"), nil
+	})
+	s.Use(countingMW)
+
+	resp := s.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{}}}`)) //nolint:lll
+	_, ok := resp.(mcp.JSONRPCResponse)
+	require.True(t, ok)
+	assert.Equal(t, 1, called)
+}
+
+func TestMCPServer_Use_MultipleMiddlewaresExecuteInOrder(t *testing.T) {
+	var order []string
+	make := func(label string) ToolHandlerMiddleware {
+		return func(next ToolHandlerFunc) ToolHandlerFunc {
+			return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				order = append(order, label)
+				return next(ctx, req)
+			}
+		}
+	}
+
+	s := NewMCPServer("test", "1.0.0")
+	s.AddTool(mcp.NewTool("echo"), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("ok"), nil
+	})
+	s.Use(make("first"), make("second"))
+
+	resp := s.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{}}}`)) //nolint:lll
+	_, ok := resp.(mcp.JSONRPCResponse)
+	require.True(t, ok)
+	// first registered runs outermost, so executes first
+	assert.Equal(t, []string{"first", "second"}, order)
+}
+
+func TestMCPServer_Use_ConcurrentSafe(t *testing.T) {
+	s := NewMCPServer("test", "1.0.0")
+	s.AddTool(mcp.NewTool("echo"), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("ok"), nil
+	})
+
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.Use(func(next ToolHandlerFunc) ToolHandlerFunc {
+				return next
+			})
+		}()
+	}
+	wg.Wait()
+}
+
+func TestMCPServer_Use_MiddlewareAppliedToRegularToolAsTask(t *testing.T) {
+	// executeRegularToolAsTask runs in a goroutine; use a channel to confirm
+	// the middleware ran before the test exits.
+	mwCalled := make(chan struct{}, 1)
+	countingMW := func(next ToolHandlerFunc) ToolHandlerFunc {
+		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			mwCalled <- struct{}{}
+			return next(ctx, req)
+		}
+	}
+
+	s := NewMCPServer("test", "1.0.0")
+	tool := mcp.NewTool("hybrid_tool",
+		mcp.WithDescription("hybrid"),
+		mcp.WithTaskSupport(mcp.TaskSupportOptional),
+	)
+	s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("ok"), nil
+	})
+	s.Use(countingMW)
+
+	// task param causes handleToolCall to route into executeRegularToolAsTask
+	s.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"hybrid_tool","task":{"ttl":3600}}}`)) //nolint:lll
+
+	select {
+	case <-mwCalled:
+		// middleware ran in executeRegularToolAsTask path — pass
+	case <-time.After(2 * time.Second):
+		t.Fatal("middleware was not called within executeRegularToolAsTask")
+	}
 }

@@ -11,14 +11,21 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/util"
 )
 
-// ErrTransportClosed is returned when attempting to send a request or notification
-// to a transport that has already been closed.
-var ErrTransportClosed = errors.New("transport closed")
+var (
+	// ErrTransportClosed is returned when attempting to send a request or notification
+	// to a transport that has already been closed.
+	ErrTransportClosed = errors.New("transport closed")
+	// ErrChildShutdownTimeout is returned when a stdio subprocess still has not exited
+	// after the forced shutdown path has been attempted.
+	ErrChildShutdownTimeout = errors.New("stdio child did not exit after forced shutdown")
+)
 
 // Stdio implements the transport layer of the MCP protocol using stdio communication.
 // It launches a subprocess and communicates with it via standard input/output streams
@@ -29,25 +36,40 @@ type Stdio struct {
 	args    []string
 	env     []string
 
-	cmd            *exec.Cmd
-	cmdFunc        CommandFunc
-	stdin          io.WriteCloser
-	stdout         *bufio.Reader
-	stderr         io.ReadCloser
-	responses      map[string]chan *JSONRPCResponse
-	mu             sync.RWMutex
+	cmd              *exec.Cmd
+	cmdFunc          CommandFunc
+	stdin            io.WriteCloser
+	stdinMu          sync.Mutex
+	stdout           *bufio.Reader
+	stderr           io.ReadCloser
+	responses        map[string]chan *JSONRPCResponse
+	mu               sync.RWMutex
 	done             chan struct{}
 	closeOnce        sync.Once
 	closeCleanupOnce sync.Once
 	onNotification   func(mcp.JSONRPCNotification)
-	notifyMu       sync.RWMutex
-	onRequest      RequestHandler
-	requestMu      sync.RWMutex
-	ctx            context.Context
-	ctxMu          sync.RWMutex
-	logger         util.Logger
-	started        bool
-	startedMu      sync.Mutex
+	notifyMu         sync.RWMutex
+	onRequest        RequestHandler
+	requestMu        sync.RWMutex
+	ctx              context.Context
+	ctxMu            sync.RWMutex
+	logger           util.Logger
+	started          bool
+	startedMu        sync.Mutex
+}
+
+const (
+	gracefulShutdownTimeout = 2 * time.Second
+	forceKillTimeout        = 3 * time.Second
+)
+
+func waitForProcessExit(waitErrCh <-chan error, timeout time.Duration) (error, bool) {
+	select {
+	case err := <-waitErrCh:
+		return err, true
+	case <-time.After(timeout):
+		return nil, false
+	}
 }
 
 // StdioOption defines a function that configures a Stdio transport instance.
@@ -154,8 +176,7 @@ func (c *Stdio) Start(ctx context.Context) error {
 
 	ready := make(chan struct{})
 	go func() {
-		close(ready)
-		c.readResponses()
+		c.readResponses(ready)
 	}()
 	<-ready
 
@@ -239,8 +260,41 @@ func (c *Stdio) Close() error {
 			}
 		}
 		if c.cmd != nil {
-			if err := c.cmd.Wait(); err != nil && closeErr == nil {
-				closeErr = err
+			waitErrCh := make(chan error, 1)
+			go func() {
+				waitErrCh <- c.cmd.Wait()
+			}()
+
+			if err, done := waitForProcessExit(waitErrCh, gracefulShutdownTimeout); done {
+				if err != nil && closeErr == nil {
+					closeErr = err
+				}
+				return
+			}
+
+			if c.cmd.Process != nil {
+				_ = c.cmd.Process.Signal(syscall.SIGTERM)
+			}
+
+			if err, done := waitForProcessExit(waitErrCh, forceKillTimeout); done {
+				if err != nil && closeErr == nil {
+					closeErr = err
+				}
+				return
+			}
+
+			if c.cmd.Process != nil {
+				if err := c.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) && closeErr == nil {
+					closeErr = fmt.Errorf("failed to kill process: %w", err)
+				}
+			}
+
+			if err, done := waitForProcessExit(waitErrCh, forceKillTimeout); done {
+				if err != nil && closeErr == nil {
+					closeErr = err
+				}
+			} else if closeErr == nil {
+				closeErr = ErrChildShutdownTimeout
 			}
 		}
 	})
@@ -274,8 +328,16 @@ func (c *Stdio) SetRequestHandler(handler RequestHandler) {
 // readResponses continuously reads and processes responses from the server's stdout.
 // It handles both responses to requests and notifications, routing them appropriately.
 // Runs until the done channel is closed or an error occurs reading from stdout.
-func (c *Stdio) readResponses() {
+// The ready channel, if non-nil, is closed once the read loop is entered, signaling
+// to Start() that the transport is actively processing responses.
+func (c *Stdio) readResponses(ready chan struct{}) {
 	for {
+		// Signal readiness on the first iteration, inside the loop, so that
+		// Start() only unblocks after the reader is actively processing.
+		if ready != nil {
+			close(ready)
+			ready = nil
+		}
 		select {
 		case <-c.done:
 			return
@@ -390,8 +452,13 @@ func (c *Stdio) SendRequest(
 		c.mu.Unlock()
 	}
 
-	// Send request
-	if _, err := c.stdin.Write(requestBytes); err != nil {
+	// Send request. stdinMu serializes frame writes so concurrent
+	// SendRequest/SendNotification/sendResponse calls cannot interleave
+	// JSON-RPC lines on the subprocess's stdin.
+	c.stdinMu.Lock()
+	_, err = c.stdin.Write(requestBytes)
+	c.stdinMu.Unlock()
+	if err != nil {
 		deleteResponseChan()
 		return nil, fmt.Errorf("failed to write request: %w", err)
 	}
@@ -438,7 +505,10 @@ func (c *Stdio) SendNotification(
 	}
 	notificationBytes = append(notificationBytes, '\n')
 
-	if _, err := c.stdin.Write(notificationBytes); err != nil {
+	c.stdinMu.Lock()
+	_, err = c.stdin.Write(notificationBytes)
+	c.stdinMu.Unlock()
+	if err != nil {
 		return fmt.Errorf("failed to write notification: %w", err)
 	}
 
@@ -501,7 +571,10 @@ func (c *Stdio) sendResponse(response JSONRPCResponse) {
 	}
 	responseBytes = append(responseBytes, '\n')
 
-	if _, err := c.stdin.Write(responseBytes); err != nil {
+	c.stdinMu.Lock()
+	_, err = c.stdin.Write(responseBytes)
+	c.stdinMu.Unlock()
+	if err != nil {
 		c.logger.Errorf("Error writing response: %v", err)
 	}
 }

@@ -344,10 +344,16 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	}
 
 	// detect empty ping response, skip session ID validation
-	isPingResponse := jsonMessage.Method == "" && jsonMessage.ID != nil &&
+	isEmptyResponse := jsonMessage.Method == "" && jsonMessage.ID != nil &&
 		(isJSONEmpty(jsonMessage.Result) && isJSONEmpty(jsonMessage.Error))
+	isPingResponse := jsonMessage.Method == "" && jsonMessage.ID != nil &&
+		isExplicitEmptyObject(jsonMessage.Result) && len(bytes.TrimSpace(jsonMessage.Error)) == 0
 
 	if isPingResponse {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	if isEmptyResponse {
 		return
 	}
 
@@ -473,8 +479,14 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	// Process message through MCPServer
 	response := s.server.HandleMessage(ctx, rawData)
 	if response == nil {
-		// For notifications, just send 202 Accepted with no body
-		w.WriteHeader(http.StatusAccepted)
+		mu.Lock()
+		close(done)
+		if !upgradedHeader {
+			mu.Unlock()
+			w.WriteHeader(http.StatusAccepted)
+		} else {
+			mu.Unlock()
+		}
 		return
 	}
 
@@ -510,7 +522,10 @@ drainLoop:
 		return
 	}
 	// If client-server communication already upgraded to SSE stream
-	if session.upgradeToSSE.Load() {
+	// Also check upgradedHeader: a notification during HandleMessage processing
+	// may have already written SSE headers on this response, so we must continue
+	// in SSE mode to avoid writing JSON on top of SSE data.
+	if session.upgradeToSSE.Load() || upgradedHeader {
 		if !upgradedHeader {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Connection", "keep-alive")
@@ -814,7 +829,7 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w http.ResponseWriter, r *
 	}
 
 	// Acknowledge receipt
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusAccepted)
 	return nil
 }
 
@@ -1579,4 +1594,23 @@ func isJSONEmpty(data json.RawMessage) bool {
 			trimmed[3] == 'l'
 	}
 	return false
+}
+
+// isExplicitEmptyObject reports whether data is a JSON object literal with no fields.
+func isExplicitEmptyObject(data json.RawMessage) bool {
+	if len(data) == 0 {
+		return false
+	}
+
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return false
+	}
+
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &obj); err != nil {
+		return false
+	}
+
+	return len(obj) == 0
 }

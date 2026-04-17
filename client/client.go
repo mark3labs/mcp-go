@@ -718,3 +718,55 @@ func (c *Client) GetSessionId() string {
 func (c *Client) IsInitialized() bool {
 	return c.initialized
 }
+
+// CancelTask returns canceled task result
+func (c *Client) CancelTask(
+	ctx context.Context,
+	request mcp.CancelTaskRequest,
+) (*mcp.CancelTaskResult, error) {
+	response, err := c.sendRequest(ctx, string(mcp.MethodTasksCancel), request.Params, request.Header)
+	if err != nil {
+		return nil, err
+	}
+
+	return mcp.ParseCancelTaskResult(response)
+}
+
+// ListTasks returns the list of tasks
+func (c *Client) ListTasks(
+	ctx context.Context,
+	request mcp.ListTasksRequest,
+) (*mcp.ListTasksResult, error) {
+	response, err := c.sendRequest(ctx, string(mcp.MethodTasksList), request.Params, request.Header)
+	if err != nil {
+		return nil, err
+	}
+
+	return mcp.ParseListTasksResult(response)
+}
+
+// TaskResult returns finished task result
+func (c *Client) TaskResult(
+	ctx context.Context,
+	request mcp.TaskResultRequest,
+) (*mcp.TaskResultResult, error) {
+	response, err := c.sendRequest(ctx, string(mcp.MethodTasksResult), request.Params, request.Header)
+	if err != nil {
+		return nil, err
+	}
+
+	return mcp.ParseTaskResultResult(response)
+}
+
+// GetTask returns task with current status
+func (c *Client) GetTask(
+	ctx context.Context,
+	request mcp.GetTaskRequest,
+) (*mcp.GetTaskResult, error) {
+	response, err := c.sendRequest(ctx, string(mcp.MethodTasksGet), request.Params, request.Header)
+	if err != nil {
+		return nil, err
+	}
+
+	return mcp.ParseGetTaskResult(response)
+}

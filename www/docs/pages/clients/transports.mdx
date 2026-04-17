@@ -284,6 +284,40 @@ var (
 
 StreamableHTTP clients communicate with servers using traditional HTTP requests.
 
+### Automatic Fallback to Legacy SSE
+
+When connecting to a server that only supports the legacy SSE transport, the StreamableHTTP client will receive a 4xx error during initialization. Use the `ErrLegacySSEServer` sentinel error to detect this and fall back automatically:
+
+```go
+import "github.com/mark3labs/mcp-go/client/transport"
+
+func connectWithFallback(ctx context.Context, url string) (*client.Client, error) {
+    // Try StreamableHTTP first
+    streamableTransport, err := transport.NewStreamableHTTP(url)
+    if err != nil {
+        return nil, err
+    }
+
+    c := client.New(streamableTransport)
+    if err := c.Start(ctx); err != nil {
+        if errors.Is(err, transport.ErrLegacySSEServer) {
+            // Fall back to legacy SSE transport
+            sseTransport, err := transport.NewSSE(url)
+            if err != nil {
+                return nil, err
+            }
+            c = client.New(sseTransport)
+            if err := c.Start(ctx); err != nil {
+                return nil, err
+            }
+            return c, nil
+        }
+        return nil, err
+    }
+    return c, nil
+}
+```
+
 ### Basic StreamableHTTP Client
 
 ```go
@@ -463,11 +497,15 @@ SSE (Server-Sent Events) clients provide real-time communication with servers.
 ```go
 func createSSEClient() {
     // Create SSE client
-    c := client.NewSSEClient("http://localhost:8080/mcp/sse")
+    c, err := client.NewSSEMCPClient("http://localhost:8080/mcp/sse",
+        transport.WithHeaders(map[string]string{
+            "Authorization": "Bearer your-token",
+        }),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
     defer c.Close()
-
-    // Set authentication
-    c.SetHeader("Authorization", "Bearer your-token")
 
     ctx := context.Background()
 
@@ -539,7 +577,7 @@ func createCustomSSEClient() {
 type ResilientSSEClient struct {
     baseURL     string
     headers     map[string]string
-    client      *client.SSEClient
+    client      *client.Client
     ctx         context.Context
     cancel      context.CancelFunc
     reconnectCh chan struct{}
@@ -575,11 +613,11 @@ func (rsc *ResilientSSEClient) connect() error {
         rsc.client.Close()
     }
 
-    client := client.NewSSEClient(rsc.baseURL)
-
-    // Set headers
-    for key, value := range rsc.headers {
-        client.SetHeader(key, value)
+    client, err := client.NewSSEMCPClient(rsc.baseURL,
+        transport.WithHeaders(rsc.headers),
+    )
+    if err != nil {
+        return err
     }
 
     if err := client.Initialize(rsc.ctx); err != nil {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/client"
@@ -409,6 +410,156 @@ func TestListToolsWithHeader(t *testing.T) {
 	}
 	if expectedHeaderValue != gotHeaderValue {
 		t.Fatalf("Expected value is %s, got %s", expectedHeaderValue, gotHeaderValue)
+	}
+}
+
+func TestServerWithHooks(t *testing.T) {
+	ctx := context.Background()
+
+	var callCount atomic.Int32
+	hooks := &server.Hooks{}
+	hooks.AddBeforeCallTool(func(ctx context.Context, id any, request *mcp.CallToolRequest) {
+		callCount.Add(1)
+	})
+
+	srv := mcptest.NewUnstartedServer(t)
+	defer srv.Close()
+
+	srv.AddTool(mcp.NewTool("greet",
+		mcp.WithDescription("Says hello."),
+		mcp.WithString("name", mcp.Description("Name to greet.")),
+	), helloWorldHandler)
+
+	srv.AddServerOptions(server.WithHooks(hooks))
+
+	if err := srv.Start(ctx); err != nil {
+		t.Fatal("Start:", err)
+	}
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "greet"
+	req.Params.Arguments = map[string]any{"name": "World"}
+
+	result, err := srv.Client().CallTool(ctx, req)
+	if err != nil {
+		t.Fatal("CallTool:", err)
+	}
+
+	got, err := resultToString(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "Hello, World!" {
+		t.Errorf("Got %q, want %q", got, "Hello, World!")
+	}
+
+	if n := callCount.Load(); n != 1 {
+		t.Errorf("Expected hook to be called 1 time, got %d", n)
+	}
+}
+
+func TestServerWithToolFilter(t *testing.T) {
+	ctx := context.Background()
+
+	srv := mcptest.NewUnstartedServer(t)
+	defer srv.Close()
+
+	srv.AddTools(
+		server.ServerTool{
+			Tool:    mcp.NewTool("visible_tool", mcp.WithDescription("This tool is visible.")),
+			Handler: helloWorldHandler,
+		},
+		server.ServerTool{
+			Tool:    mcp.NewTool("hidden_tool", mcp.WithDescription("This tool is hidden.")),
+			Handler: helloWorldHandler,
+		},
+	)
+
+	// Filter out tools whose name starts with "hidden_".
+	srv.AddServerOptions(
+		server.WithToolCapabilities(false),
+		server.WithToolFilter(func(ctx context.Context, tools []mcp.Tool) []mcp.Tool {
+			var filtered []mcp.Tool
+			for _, tool := range tools {
+				if !strings.HasPrefix(tool.Name, "hidden_") {
+					filtered = append(filtered, tool)
+				}
+			}
+			return filtered
+		}),
+	)
+
+	if err := srv.Start(ctx); err != nil {
+		t.Fatal("Start:", err)
+	}
+
+	result, err := srv.Client().ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatal("ListTools:", err)
+	}
+
+	if len(result.Tools) != 1 {
+		t.Fatalf("Expected 1 tool, got %d", len(result.Tools))
+	}
+	if result.Tools[0].Name != "visible_tool" {
+		t.Errorf("Expected tool name %q, got %q", "visible_tool", result.Tools[0].Name)
+	}
+}
+
+func TestServerWithToolHandlerMiddleware(t *testing.T) {
+	ctx := context.Background()
+
+	srv := mcptest.NewUnstartedServer(t)
+	defer srv.Close()
+
+	srv.AddTool(mcp.NewTool("echo",
+		mcp.WithDescription("Echoes input."),
+		mcp.WithString("msg", mcp.Description("Message to echo.")),
+	), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		msg, _ := request.RequireString("msg")
+		return mcp.NewToolResultText(msg), nil
+	})
+
+	// Middleware that prefixes the result with "[middleware] ".
+	srv.AddServerOptions(
+		server.WithToolHandlerMiddleware(func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
+			return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				result, err := next(ctx, request)
+				if err != nil {
+					return result, err
+				}
+				for i, content := range result.Content {
+					if tc, ok := content.(mcp.TextContent); ok {
+						tc.Text = "[middleware] " + tc.Text
+						result.Content[i] = tc
+					}
+				}
+				return result, nil
+			}
+		}),
+	)
+
+	if err := srv.Start(ctx); err != nil {
+		t.Fatal("Start:", err)
+	}
+
+	var req mcp.CallToolRequest
+	req.Params.Name = "echo"
+	req.Params.Arguments = map[string]any{"msg": "hello"}
+
+	result, err := srv.Client().CallTool(ctx, req)
+	if err != nil {
+		t.Fatal("CallTool:", err)
+	}
+
+	got, err := resultToString(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := "[middleware] hello"
+	if got != want {
+		t.Errorf("Got %q, want %q", got, want)
 	}
 }
 

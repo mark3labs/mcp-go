@@ -44,6 +44,9 @@ type SSE struct {
 	onConnectionLost func(error)
 	connectionLostMu sync.RWMutex
 
+	endpointTimeout time.Duration
+	responseTimeout time.Duration
+
 	// OAuth support
 	oauthHandler *OAuthHandler
 }
@@ -81,6 +84,28 @@ func WithOAuth(config OAuthConfig) ClientOption {
 	}
 }
 
+// WithEndpointTimeout sets the maximum time to wait for the SSE endpoint to be
+// received during Start(). Defaults to 30 seconds. If the context has a shorter
+// deadline, the shorter value is used.
+func WithEndpointTimeout(d time.Duration) ClientOption {
+	return func(sc *SSE) {
+		if d > 0 {
+			sc.endpointTimeout = d
+		}
+	}
+}
+
+// WithResponseTimeout sets the maximum time to wait for an SSE response after
+// sending a request. Defaults to 60 seconds. If the context has a shorter
+// deadline, the shorter value is used.
+func WithResponseTimeout(d time.Duration) ClientOption {
+	return func(sc *SSE) {
+		if d > 0 {
+			sc.responseTimeout = d
+		}
+	}
+}
+
 // WithHTTPHost sets a custom Host header for the SSE client, enabling manual DNS resolution.
 // This allows connecting to an IP address while sending a specific Host header to the server.
 // For example, connecting to "http://192.168.1.100:8080/sse" but sending Host: "api.example.com"
@@ -99,12 +124,14 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 	}
 
 	smc := &SSE{
-		baseURL:      parsedURL,
-		httpClient:   &http.Client{},
-		responses:    make(map[string]chan *JSONRPCResponse),
-		endpointChan: make(chan struct{}),
-		headers:      make(map[string]string),
-		logger:       util.DefaultLogger(),
+		baseURL:         parsedURL,
+		httpClient:      &http.Client{},
+		responses:       make(map[string]chan *JSONRPCResponse),
+		endpointChan:    make(chan struct{}),
+		headers:         make(map[string]string),
+		logger:          util.DefaultLogger(),
+		endpointTimeout: 30 * time.Second,
+		responseTimeout: 60 * time.Second,
 	}
 
 	for _, opt := range options {
@@ -113,8 +140,10 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 
 	// If OAuth is configured, set the base URL for metadata discovery
 	if smc.oauthHandler != nil {
-		// Extract base URL from server URL for metadata discovery
-		baseURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
+		discoveryURL := *parsedURL
+		discoveryURL.RawQuery = ""
+		discoveryURL.Fragment = ""
+		baseURL := discoveryURL.String()
 		smc.oauthHandler.SetBaseURL(baseURL)
 	}
 
@@ -192,7 +221,7 @@ func (c *SSE) Start(ctx context.Context) error {
 	go c.readSSE(resp.Body)
 
 	// Wait for the endpoint to be received
-	endpointTimeout := 30 * time.Second
+	endpointTimeout := c.endpointTimeout
 	if deadline, ok := ctx.Deadline(); ok {
 		remaining := time.Until(deadline)
 		// If context deadline has already passed, return immediately
@@ -468,7 +497,7 @@ func (c *SSE) SendRequest(
 	}
 
 	// Calculate response timeout
-	responseTimeout := 60 * time.Second
+	responseTimeout := c.responseTimeout
 	if deadline, ok := ctx.Deadline(); ok {
 		remaining := time.Until(deadline)
 		// Check if context deadline has already passed

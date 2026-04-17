@@ -24,6 +24,7 @@ type Server struct {
 	prompts           []server.ServerPrompt
 	resources         []server.ServerResource
 	resourceTemplates []server.ServerResourceTemplate
+	serverOpts        []server.ServerOption
 	clientInfo        mcp.Implementation
 
 	cancel func()
@@ -121,6 +122,13 @@ func (s *Server) AddResourceTemplates(templates ...server.ServerResourceTemplate
 	s.resourceTemplates = append(s.resourceTemplates, templates...)
 }
 
+// AddServerOptions adds server options to an unstarted server.
+// These options are passed to server.NewMCPServer when the server is started,
+// allowing configuration of hooks, middleware, tool filters, and other server settings.
+func (s *Server) AddServerOptions(opts ...server.ServerOption) {
+	s.serverOpts = append(s.serverOpts, opts...)
+}
+
 // SetClientInfo sets the client info for the test client.
 func (s *Server) SetClientInfo(info mcp.Implementation) {
 	s.clientInfo = info
@@ -137,7 +145,7 @@ func (s *Server) Start(ctx context.Context) error {
 	go func() {
 		defer s.wg.Done()
 
-		mcpServer := server.NewMCPServer(s.name, "1.0.0")
+		mcpServer := server.NewMCPServer(s.name, "1.0.0", s.serverOpts...)
 
 		mcpServer.AddTools(s.tools...)
 		mcpServer.AddPrompts(s.prompts...)

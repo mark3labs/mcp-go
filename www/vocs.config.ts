@@ -47,6 +47,22 @@ export default defineConfig({
           link: '/servers/prompts',
         },
         {
+          text: 'Task-Augmented Tools',
+          link: '/servers/tasks',
+        },
+        {
+          text: 'Completions',
+          link: '/servers/completions',
+        },
+        {
+          text: 'Elicitation',
+          link: '/servers/elicitation',
+        },
+        {
+          text: 'Middleware',
+          link: '/servers/middleware',
+        },
+        {
           text: 'Advanced Features',
           link: '/servers/advanced',
         },

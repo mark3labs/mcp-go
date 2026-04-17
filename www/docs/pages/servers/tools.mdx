@@ -130,10 +130,10 @@ Define your input parameters as a Go struct and use `WithInputSchema`:
 ```go
 // Define input struct with JSON schema tags
 type SearchRequest struct {
-    Query      string   `json:"query" jsonschema_description:"Search query" jsonschema:"required"`
-    Limit      int      `json:"limit,omitempty" jsonschema_description:"Maximum results" jsonschema:"minimum=1,maximum=100,default=10"`
-    Categories []string `json:"categories,omitempty" jsonschema_description:"Filter by categories"`
-    SortBy     string   `json:"sortBy,omitempty" jsonschema_description:"Sort field" jsonschema:"enum=relevance,enum=date,enum=popularity"`
+    Query      string   `json:"query" jsonschema:"Search query"`
+    Limit      int      `json:"limit,omitempty" jsonschema:"Maximum results"`
+    Categories []string `json:"categories,omitempty" jsonschema:"Filter by categories"`
+    SortBy     string   `json:"sortBy,omitempty" jsonschema:"Sort field"`
 }
 
 // Create tool with struct-based input schema
@@ -150,17 +150,17 @@ Define structured output for predictable tool responses:
 ```go
 // Define output struct
 type SearchResponse struct {
-    Query       string    `json:"query" jsonschema_description:"Original search query"`
-    TotalCount  int       `json:"totalCount" jsonschema_description:"Total matching products"`
-    Products    []Product `json:"products" jsonschema_description:"Search results"`
-    ProcessedAt time.Time `json:"processedAt" jsonschema_description:"When search was performed"`
+    Query       string    `json:"query" jsonschema:"Original search query"`
+    TotalCount  int       `json:"totalCount" jsonschema:"Total matching products"`
+    Products    []Product `json:"products" jsonschema:"Search results"`
+    ProcessedAt time.Time `json:"processedAt" jsonschema:"When search was performed"`
 }
 
 type Product struct {
-    ID          string  `json:"id" jsonschema_description:"Product ID"`
-    Name        string  `json:"name" jsonschema_description:"Product name"`
-    Price       float64 `json:"price" jsonschema_description:"Price in USD"`
-    InStock     bool    `json:"inStock" jsonschema_description:"Availability"`
+    ID          string  `json:"id" jsonschema:"Product ID"`
+    Name        string  `json:"name" jsonschema:"Product name"`
+    Price       float64 `json:"price" jsonschema:"Price in USD"`
+    InStock     bool    `json:"inStock" jsonschema:"Availability"`
 }
 
 // Create tool with both input and output schemas
@@ -222,17 +222,17 @@ Tools can return arrays of structured data:
 ```go
 // Define asset struct
 type Asset struct {
-    ID       string  `json:"id" jsonschema_description:"Asset identifier"`
-    Name     string  `json:"name" jsonschema_description:"Asset name"`
-    Value    float64 `json:"value" jsonschema_description:"Current value"`
-    Currency string  `json:"currency" jsonschema_description:"Currency code"`
+    ID       string  `json:"id" jsonschema:"Asset identifier"`
+    Name     string  `json:"name" jsonschema:"Asset name"`
+    Value    float64 `json:"value" jsonschema:"Current value"`
+    Currency string  `json:"currency" jsonschema:"Currency code"`
 }
 
 // Tool that returns array of assets
 assetsTool := mcp.NewTool("list_assets",
     mcp.WithDescription("List portfolio assets"),
     mcp.WithInputSchema[struct {
-        Portfolio string `json:"portfolio" jsonschema_description:"Portfolio ID" jsonschema:"required"`
+        Portfolio string `json:"portfolio" jsonschema:"Portfolio ID"`
     }](),
     mcp.WithOutputSchema[[]Asset](), // Array output schema
 )
@@ -248,29 +248,32 @@ func listAssetsHandler(ctx context.Context, req mcp.CallToolRequest, args struct
 
 ### Schema Tags Reference
 
-MCP-Go uses the `jsonschema` struct tags for schema generation:
+MCP-Go uses the [`google/jsonschema-go`](https://github.com/google/jsonschema-go) library with the `jsonschema` struct tag for schema generation:
 
 ```go
 type ExampleStruct struct {
-    // Required field
-    Name string `json:"name" jsonschema:"required"`
-    
+    // Required field (no omitempty in json tag means required)
+    Name string `json:"name" jsonschema:"User's full name"`
+
     // Field with description
-    Age int `json:"age" jsonschema_description:"User age in years"`
-    
-    // Field with constraints
-    Score float64 `json:"score" jsonschema:"minimum=0,maximum=100"`
-    
-    // Enum field
-    Status string `json:"status" jsonschema:"enum=active,enum=inactive,enum=pending"`
-    
-    // Optional field with default
-    PageSize int `json:"pageSize,omitempty" jsonschema:"default=20"`
-    
-    // Array with constraints
-    Tags []string `json:"tags" jsonschema:"minItems=1,maxItems=10"`
+    Age int `json:"age" jsonschema:"User age in years"`
+
+    // Optional field (omitempty makes it optional)
+    PageSize int `json:"pageSize,omitempty" jsonschema:"Number of items per page"`
+
+    // Optional field with description
+    Status string `json:"status,omitempty" jsonschema:"Current status"`
 }
 ```
+
+:::info Migration Note
+MCP-Go migrated from `invopop/jsonschema` to `google/jsonschema-go`. If you are upgrading from an older version, note these breaking changes:
+
+- **Description tag**: Changed from `jsonschema_description:"text"` to `jsonschema:"text"`
+- **Required fields**: The `jsonschema:"required"` tag is no longer supported. Fields without `omitempty` in their `json` tag are automatically required.
+- **Validation constraints**: Tags like `jsonschema:"enum=..."`, `jsonschema:"minimum=..."` are no longer supported in struct tags. Use `mcp.WithRawInputSchema()` for these constraints or define them with the builder API (`mcp.WithString`, `mcp.WithNumber`, etc.).
+- **Additional properties**: `additionalProperties: false` is now automatically included in generated schemas.
+:::
 
 ### Manual Structured Results
 
@@ -308,19 +311,19 @@ Here's a complete example using the file operations pattern from earlier, enhanc
 ```go
 // Define structured input for file operations
 type FileOperationRequest struct {
-    Path     string `json:"path" jsonschema_description:"File path" jsonschema:"required"`
-    Content  string `json:"content,omitempty" jsonschema_description:"File content (for write operations)"`
-    Encoding string `json:"encoding,omitempty" jsonschema_description:"File encoding" jsonschema:"enum=utf-8,enum=ascii,enum=base64,default=utf-8"`
+    Path     string `json:"path" jsonschema:"File path"`
+    Content  string `json:"content,omitempty" jsonschema:"File content (for write operations)"`
+    Encoding string `json:"encoding,omitempty" jsonschema:"File encoding"`
 }
 
 // Define structured output
 type FileOperationResponse struct {
-    Success   bool      `json:"success" jsonschema_description:"Operation success status"`
-    Path      string    `json:"path" jsonschema_description:"File path"`
-    Message   string    `json:"message" jsonschema_description:"Result message"`
-    Content   string    `json:"content,omitempty" jsonschema_description:"File content (for read operations)"`
-    Size      int64     `json:"size,omitempty" jsonschema_description:"File size in bytes"`
-    Modified  time.Time `json:"modified,omitempty" jsonschema_description:"Last modified time"`
+    Success   bool      `json:"success" jsonschema:"Operation success status"`
+    Path      string    `json:"path" jsonschema:"File path"`
+    Message   string    `json:"message" jsonschema:"Result message"`
+    Content   string    `json:"content,omitempty" jsonschema:"File content (for read operations)"`
+    Size      int64     `json:"size,omitempty" jsonschema:"File size in bytes"`
+    Modified  time.Time `json:"modified,omitempty" jsonschema:"Last modified time"`
 }
 
 func main() {
@@ -339,7 +342,7 @@ func main() {
     readFileTool := mcp.NewTool("read_file",
         mcp.WithDescription("Read file contents"),
         mcp.WithInputSchema[struct {
-            Path string `json:"path" jsonschema_description:"File path to read" jsonschema:"required"`
+            Path string `json:"path" jsonschema:"File path to read"`
         }](),
         mcp.WithOutputSchema[FileOperationResponse](),
     )

@@ -1,0 +1,174 @@
+# Auto-Completion
+
+The `completion/complete` MCP method enables servers to provide argument completions for prompts and resource templates. This helps clients offer autocomplete suggestions when users are filling in prompt arguments or resource template parameters.
+
+## Enabling Completions
+
+To support completions, enable the capability when creating your server:
+
+```go
+s := server.NewMCPServer("Completion Server", "1.0.0",
+    server.WithPromptCapabilities(true),
+    server.WithResourceCapabilities(true, true),
+    server.WithCompletions(), // Enable the completion capability
+)
+```
+
+Once enabled, clients can send `completion/complete` requests and receive suggested values for prompt arguments and resource template parameters.
+
+## Prompt Completion Provider
+
+Implement the `PromptCompletionProvider` interface to return completions for prompt arguments:
+
+```go
+type PromptCompletionProvider interface {
+    CompletePromptArgument(ctx context.Context, promptName string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error)
+}
+```
+
+### Example Implementation
+
+```go
+type MyPromptCompletionProvider struct {
+    prompts map[string][]string // prompt name -> known argument values
+}
+
+func (p *MyPromptCompletionProvider) CompletePromptArgument(
+    ctx context.Context,
+    promptName string,
+    argument mcp.CompleteArgument,
+    compCtx mcp.CompleteContext,
+) (*mcp.Completion, error) {
+    // Return completions based on the prompt name and argument
+    switch promptName {
+    case "code_review":
+        if argument.Name == "language" {
+            languages := []string{"go", "python", "javascript", "rust", "java"}
+            // Filter by what the user has typed so far
+            var matches []string
+            for _, lang := range languages {
+                if strings.HasPrefix(lang, strings.ToLower(argument.Value)) {
+                    matches = append(matches, lang)
+                }
+            }
+            return &mcp.Completion{
+                Values:  matches,
+                HasMore: false,
+            }, nil
+        }
+    }
+    return &mcp.Completion{Values: []string{}}, nil
+}
+```
+
+### Registering the Provider
+
+Pass your provider as a server option:
+
+```go
+s := server.NewMCPServer("Server", "1.0.0",
+    server.WithCompletions(),
+    server.WithPromptCompletionProvider(&MyPromptCompletionProvider{}),
+)
+```
+
+## Resource Completion Provider
+
+Implement the `ResourceCompletionProvider` interface to return completions for resource URI template parameters:
+
+```go
+type ResourceCompletionProvider interface {
+    CompleteResourceArgument(ctx context.Context, uri string, argument mcp.CompleteArgument, context mcp.CompleteContext) (*mcp.Completion, error)
+}
+```
+
+### Example Implementation
+
+```go
+type MyResourceCompletionProvider struct{}
+
+func (p *MyResourceCompletionProvider) CompleteResourceArgument(
+    ctx context.Context,
+    uri string,
+    argument mcp.CompleteArgument,
+    compCtx mcp.CompleteContext,
+) (*mcp.Completion, error) {
+    // Provide completions for resource URI template parameters
+    if strings.HasPrefix(uri, "db://") && argument.Name == "table" {
+        tables := []string{"users", "orders", "products", "inventory"}
+        var matches []string
+        for _, t := range tables {
+            if strings.HasPrefix(t, argument.Value) {
+                matches = append(matches, t)
+            }
+        }
+        return &mcp.Completion{
+            Values:  matches,
+            HasMore: false,
+        }, nil
+    }
+    return &mcp.Completion{Values: []string{}}, nil
+}
+```
+
+### Registering the Provider
+
+```go
+s := server.NewMCPServer("Server", "1.0.0",
+    server.WithCompletions(),
+    server.WithResourceCompletionProvider(&MyResourceCompletionProvider{}),
+)
+```
+
+## Default Providers
+
+If you don't set custom providers, `DefaultPromptCompletionProvider` and `DefaultResourceCompletionProvider` are used automatically. These defaults return empty completions for every request, so the server will always respond to `completion/complete` without errors — it simply won't suggest anything.
+
+You only need to register a custom provider when you want to return actual suggestions.
+
+## The Completion Type
+
+The `mcp.Completion` struct is what your provider returns to the client:
+
+```go
+type Completion struct {
+    // An array of completion values. Must not exceed 100 items.
+    Values []string `json:"values"`
+    // The total number of completion options available. This can exceed the
+    // number of values actually sent in the response.
+    Total int `json:"total,omitempty"`
+    // Indicates whether there are additional completion options beyond those
+    // provided in the current response, even if the exact total is unknown.
+    HasMore bool `json:"hasMore,omitempty"`
+}
+```
+
+- **`Values`** — the suggested completions, filtered by what the user has typed so far. Keep this list at 100 items or fewer.
+- **`Total`** — the full count of matching options when there are more results than you return. Omit when all matches fit in `Values`.
+- **`HasMore`** — set to `true` when additional completions exist beyond the current response.
+
+### Supporting Types
+
+The request carries two small structs your provider receives:
+
+```go
+// CompleteArgument is the argument the client is asking about.
+type CompleteArgument struct {
+    Name  string `json:"name"`  // Argument name
+    Value string `json:"value"` // What the user has typed so far
+}
+
+// CompleteContext holds values for arguments that are already resolved.
+type CompleteContext struct {
+    Arguments map[string]string `json:"arguments"`
+}
+```
+
+Use `CompleteContext` when the completion for one argument depends on the value of another — for example, suggesting column names only after a table has been selected.
+
+## Next Steps
+
+- **[Prompts](/servers/prompts)** - Learn to create reusable interaction templates
+- **[Resources](/servers/resources)** - Learn about exposing data sources
+- **[Tools](/servers/tools)** - Learn to implement interactive functionality
+- **[Advanced Features](/servers/advanced)** - Explore hooks, middleware, and more

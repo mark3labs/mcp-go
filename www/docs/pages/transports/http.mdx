@@ -247,6 +247,7 @@ func main() {
         server.WithEndpointPath("/api/v1/mcp"),
         server.WithHeartbeatInterval(30*time.Second),
         server.WithStateLess(false),
+        server.WithSessionIdleTTL(10*time.Minute), // Sweep idle sessions after 10 minutes
     )
     
     if err := httpServer.Start(":8080"); err != nil {
@@ -476,6 +477,18 @@ Content-Type: application/json
 ```
 
 ## Session Management
+
+### Session Idle TTL
+
+When clients disconnect without sending a `DELETE` request, per-session transport state (tools, resources, log levels, etc.) can leak memory. Use `WithSessionIdleTTL` to automatically sweep idle sessions:
+
+```go
+httpServer := server.NewStreamableHTTPServer(s,
+    server.WithSessionIdleTTL(10*time.Minute), // Sweep sessions idle for 10+ minutes
+)
+```
+
+The sweeper runs in the background and removes per-session state for sessions that haven't received any requests within the TTL. It also invalidates swept session IDs so they cannot be reused. A zero or negative TTL disables the sweeper (default behavior). The sweeper is automatically stopped on `Shutdown()`.
 
 ### Stateful vs Stateless
 
