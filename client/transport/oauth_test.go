@@ -1755,3 +1755,77 @@ func TestOAuthHandler_GetServerMetadata_AuthServerReturnsHTML(t *testing.T) {
 	assert.Equal(t, authServer.URL+"/token", metadata.TokenEndpoint)
 	assert.Equal(t, authServer.URL+"/register", metadata.RegistrationEndpoint)
 }
+
+func TestValidateAuthServerMetadataURLs(t *testing.T) {
+	valid := &AuthServerMetadata{
+		Issuer:                "https://issuer.example.com",
+		AuthorizationEndpoint: "https://issuer.example.com/authorize",
+		TokenEndpoint:         "https://issuer.example.com/token",
+		RegistrationEndpoint:  "https://issuer.example.com/register",
+		JwksURI:               "https://issuer.example.com/jwks",
+		ServiceDocumentation:  "https://docs.example.com",
+		OpPolicyURI:           "https://policy.example.com",
+		OpTOSURI:              "https://tos.example.com",
+		RevocationEndpoint:    "https://issuer.example.com/revoke",
+		IntrospectionEndpoint: "https://issuer.example.com/introspect",
+	}
+	require.NoError(t, validateAuthServerMetadataURLs(valid))
+
+	httpOK := *valid
+	httpOK.Issuer = "http://issuer.example.com"
+	require.NoError(t, validateAuthServerMetadataURLs(&httpOK))
+
+	cases := []struct {
+		name   string
+		mutate func(*AuthServerMetadata)
+	}{
+		{"javascript scheme in op_policy_uri", func(m *AuthServerMetadata) { m.OpPolicyURI = "javascript:alert(1)" }},
+		{"file scheme in revocation_endpoint", func(m *AuthServerMetadata) { m.RevocationEndpoint = "file:///etc/passwd" }},
+		{"data scheme in service_documentation", func(m *AuthServerMetadata) { m.ServiceDocumentation = "data:text/html,<script>alert(1)</script>" }},
+		{"ftp scheme in introspection_endpoint", func(m *AuthServerMetadata) { m.IntrospectionEndpoint = "ftp://evil.example.com" }},
+		{"scheme missing host in token_endpoint", func(m *AuthServerMetadata) { m.TokenEndpoint = "https:///path" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := *valid
+			tc.mutate(&m)
+			assert.Error(t, validateAuthServerMetadataURLs(&m))
+		})
+	}
+}
+
+func TestOAuthHandler_GetServerMetadata_RejectsDangerousSchemes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/.well-known/oauth-protected-resource") {
+			http.NotFound(w, r)
+			return
+		}
+		if strings.Contains(r.URL.Path, "oauth-authorization-server") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"issuer": "` + "http://issuer.example.com" + `",
+				"authorization_endpoint": "javascript:alert(1)",
+				"token_endpoint": "https://issuer.example.com/token",
+				"response_types_supported": ["code"]
+			}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost:8085/callback",
+		Scopes:      []string{"mcp.read"},
+	})
+	handler.SetBaseURL(server.URL)
+
+	metadata, err := handler.GetServerMetadata(context.Background())
+	// The hostile endpoint should be rejected; we then fall back to default
+	// endpoints derived from the base URL, so metadata should still be valid.
+	require.NoError(t, err)
+	require.NotNil(t, metadata)
+	assert.NotEqual(t, "javascript:alert(1)", metadata.AuthorizationEndpoint)
+	assert.Equal(t, server.URL+"/authorize", metadata.AuthorizationEndpoint)
+}
