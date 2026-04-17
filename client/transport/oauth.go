@@ -133,9 +133,6 @@ func (s *MemoryTokenStore) SaveToken(ctx context.Context, token *Token) error {
 // as defined in RFC 8414 (https://www.rfc-editor.org/rfc/rfc8414.html).
 //
 // Signed metadata (the "signed_metadata" JWT field) is not supported.
-//
-// Note: URL fields in this struct are validated by validateAuthServerMetadataURLs
-// to prevent XSS via dangerous schemes. If you add a new URL field, add it there too.
 type AuthServerMetadata struct {
 	Issuer                                             string   `json:"issuer"`
 	AuthorizationEndpoint                              string   `json:"authorization_endpoint"`
