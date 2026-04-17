@@ -248,9 +248,130 @@ func (c *StreamableHTTP) SetProtocolVersion(version string) {
 // ErrOAuthAuthorizationRequired is a sentinel error for OAuth authorization required
 var ErrOAuthAuthorizationRequired = errors.New("no valid token available, authorization required")
 
+// ErrAuthorizationRequired is a sentinel error for authorization required (401)
+var ErrAuthorizationRequired = errors.New("authorization required")
+
+// parseAuthParams parses the auth-params from a WWW-Authenticate header value
+// per RFC 7235. It skips the auth-scheme (first token) and returns a map of
+// key=value pairs. Values may be tokens or quoted-strings (with backslash
+// escaping per RFC 7230 §3.2.6).
+func parseAuthParams(header string) map[string]string {
+	params := make(map[string]string)
+
+	// Skip leading whitespace
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return params
+	}
+
+	// Skip the auth-scheme (first token before space)
+	_, rest, found := strings.Cut(header, " ")
+	if !found {
+		return params // auth-scheme only, no params
+	}
+	rest = strings.TrimSpace(rest)
+
+	for rest != "" {
+		rest = strings.TrimSpace(rest)
+		if rest == "" {
+			break
+		}
+
+		// Parse key
+		eqIdx := strings.IndexByte(rest, '=')
+		if eqIdx == -1 {
+			break
+		}
+		key := strings.TrimSpace(rest[:eqIdx])
+		rest = strings.TrimLeft(rest[eqIdx+1:], " \t")
+
+		// Parse value: quoted-string or token
+		var value string
+		if len(rest) > 0 && rest[0] == '"' {
+			value, rest = parseQuotedString(rest)
+		} else {
+			// Token value: ends at comma, space, or end of string
+			end := strings.IndexAny(rest, ", \t")
+			if end == -1 {
+				value = rest
+				rest = ""
+			} else {
+				value = rest[:end]
+				rest = rest[end:]
+			}
+		}
+
+		params[key] = value
+
+		// Skip comma separator
+		rest = strings.TrimSpace(rest)
+		if len(rest) > 0 && rest[0] == ',' {
+			rest = rest[1:]
+		}
+	}
+
+	return params
+}
+
+// parseQuotedString parses a quoted-string value per RFC 7230 §3.2.6.
+// Input must start with a double-quote. Returns the unescaped value and
+// the remaining unparsed input after the closing quote.
+func parseQuotedString(s string) (value, rest string) {
+	if len(s) == 0 || s[0] != '"' {
+		return "", s
+	}
+	s = s[1:] // skip opening quote
+
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			if i+1 < len(s) {
+				b.WriteByte(s[i+1])
+				i++ // skip escaped char
+			}
+		case '"':
+			return b.String(), s[i+1:]
+		default:
+			b.WriteByte(s[i])
+		}
+	}
+	// No closing quote found; return what we have
+	return b.String(), ""
+}
+
+// extractResourceMetadataURL extracts the resource_metadata parameter from WWW-Authenticate headers
+// per RFC9728 Section 5.1. Scans all provided header values since a response may contain multiple
+// WWW-Authenticate headers (RFC 9110). Returns empty string if not found.
+// Example: Bearer resource_metadata="https://resource.example.com/.well-known/oauth-protected-resource"
+func extractResourceMetadataURL(wwwAuthHeaders []string) string {
+	for _, header := range wwwAuthHeaders {
+		if u := parseAuthParams(header)["resource_metadata"]; u != "" {
+			return u
+		}
+	}
+	return ""
+}
+
+// AuthorizationRequiredError is returned when a 401 Unauthorized response is received.
+// It contains the protected resource metadata URL from the WWW-Authenticate header if present.
+type AuthorizationRequiredError struct {
+	ResourceMetadataURL string // Extracted from WWW-Authenticate header per RFC9728
+}
+
+func (e *AuthorizationRequiredError) Error() string {
+	return ErrAuthorizationRequired.Error()
+}
+
+func (e *AuthorizationRequiredError) Unwrap() error {
+	return ErrAuthorizationRequired
+}
+
 // OAuthAuthorizationRequiredError is returned when OAuth authorization is required
+// and an OAuth handler is available.
 type OAuthAuthorizationRequiredError struct {
 	Handler *OAuthHandler
+	AuthorizationRequiredError
 }
 
 func (e *OAuthAuthorizationRequiredError) Error() string {
@@ -302,12 +423,28 @@ func (c *StreamableHTTP) SendRequest(
 
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
+			// Extract discovered metadata URL per RFC9728
+			metadataURL := extractResourceMetadataURL(resp.Header.Values("WWW-Authenticate"))
+
+			// Feed discovered URL back to OAuthHandler so next auth attempt uses it
+			if metadataURL != "" && c.oauthHandler != nil {
+				c.oauthHandler.SetProtectedResourceMetadataURL(metadataURL)
+			}
+
+			// If OAuth handler exists, return OAuth-specific error
 			if c.oauthHandler != nil {
 				return nil, &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
+					AuthorizationRequiredError: AuthorizationRequiredError{
+						ResourceMetadataURL: metadataURL,
+					},
 				}
 			}
-			return nil, ErrUnauthorized
+
+			// No OAuth handler, return base authorization error
+			return nil, &AuthorizationRequiredError{
+				ResourceMetadataURL: metadataURL,
+			}
 		}
 
 		// Per the MCP spec's backwards compatibility section: if an initialize
@@ -412,6 +549,9 @@ func (c *StreamableHTTP) sendHTTP(
 			if errors.Is(err, ErrOAuthAuthorizationRequired) {
 				return nil, &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
+					AuthorizationRequiredError: AuthorizationRequiredError{
+						ResourceMetadataURL: "", // No response available in this code path
+					},
 				}
 			}
 			return nil, fmt.Errorf("failed to get authorization header: %w", err)
@@ -592,12 +732,28 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	case http.StatusOK, http.StatusAccepted, http.StatusNoContent:
 		return nil
 	case http.StatusUnauthorized:
+		// Extract discovered metadata URL per RFC9728
+		metadataURL := extractResourceMetadataURL(resp.Header.Values("WWW-Authenticate"))
+
+		// Feed discovered URL back to OAuthHandler so next auth attempt uses it
+		if metadataURL != "" && c.oauthHandler != nil {
+			c.oauthHandler.SetProtectedResourceMetadataURL(metadataURL)
+		}
+
+		// If OAuth handler exists, return OAuth-specific error
 		if c.oauthHandler != nil {
 			return &OAuthAuthorizationRequiredError{
 				Handler: c.oauthHandler,
+				AuthorizationRequiredError: AuthorizationRequiredError{
+					ResourceMetadataURL: metadataURL,
+				},
 			}
 		}
-		return ErrUnauthorized
+
+		// No OAuth handler, return base authorization error
+		return &AuthorizationRequiredError{
+			ResourceMetadataURL: metadataURL,
+		}
 	default:
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf(

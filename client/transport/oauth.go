@@ -34,6 +34,10 @@ type OAuthConfig struct {
 	// AuthServerMetadataURL is the URL to the OAuth server metadata
 	// If empty, the client will attempt to discover it from the base URL
 	AuthServerMetadataURL string
+	// ProtectedResourceMetadataURL is the URL to the OAuth protected resource metadata
+	// per RFC9728. If set, this URL will be used to discover the authorization server.
+	// This is typically extracted from the WWW-Authenticate header's resource_metadata parameter.
+	ProtectedResourceMetadataURL string
 	// PKCEEnabled enables PKCE for the OAuth flow (recommended for public clients)
 	PKCEEnabled bool
 	// HTTPClient is an optional HTTP client to use for requests.
@@ -146,7 +150,8 @@ type OAuthHandler struct {
 	metadataFetchErr error
 	metadataOnce     sync.Once
 	baseURL          string
-	resourceURL      string // RFC 8707 resource indicator; set from protected resource metadata
+	metadataMu       sync.Mutex // Protects baseURL, serverMetadata, metadataFetchErr, metadataOnce, config.ProtectedResourceMetadataURL, and resourceURL
+	resourceURL      string     // RFC 8707 resource indicator; set from protected resource metadata
 
 	mu            sync.RWMutex // Protects expectedState
 	expectedState string       // Expected state value for CSRF protection
@@ -222,8 +227,8 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken string) (*
 		data.Set("client_secret", h.config.ClientSecret)
 	}
 	// RFC 8707: Include resource parameter on refresh requests
-	if h.resourceURL != "" {
-		data.Set("resource", h.resourceURL)
+	if resourceURL := h.getResourceURL(); resourceURL != "" {
+		data.Set("resource", resourceURL)
 	}
 
 	req, err := http.NewRequestWithContext(
@@ -308,13 +313,37 @@ func extractOAuthError(body []byte, statusCode int, context string) error {
 	return fmt.Errorf("%s with status %d: %s", context, statusCode, body)
 }
 
+// SetProtectedResourceMetadataURL updates the protected resource metadata URL
+// and resets the cached server metadata so it will be re-discovered on the next call.
+// This is used when a 401 response includes a resource_metadata parameter in the
+// WWW-Authenticate header per RFC 9728.
+func (h *OAuthHandler) SetProtectedResourceMetadataURL(u string) {
+	h.metadataMu.Lock()
+	defer h.metadataMu.Unlock()
+	h.config.ProtectedResourceMetadataURL = u
+	h.serverMetadata = nil
+	h.metadataFetchErr = nil
+	h.metadataOnce = sync.Once{}
+	h.resourceURL = ""
+}
+
+// getResourceURL returns the RFC 8707 resource indicator under metadataMu.
+func (h *OAuthHandler) getResourceURL() string {
+	h.metadataMu.Lock()
+	defer h.metadataMu.Unlock()
+	return h.resourceURL
+}
+
 // GetClientSecret returns the client secret
 func (h *OAuthHandler) GetClientSecret() string {
 	return h.config.ClientSecret
 }
 
-// SetBaseURL sets the base URL for the API server
+// SetBaseURL sets the base URL for the API server.
+// Must be called before any calls to getServerMetadata (i.e., during initialization).
 func (h *OAuthHandler) SetBaseURL(baseURL string) {
+	h.metadataMu.Lock()
+	defer h.metadataMu.Unlock()
 	h.baseURL = baseURL
 }
 
@@ -365,6 +394,8 @@ type OAuthProtectedResource struct {
 
 // getServerMetadata fetches the OAuth server metadata
 func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetadata, error) {
+	h.metadataMu.Lock()
+	defer h.metadataMu.Unlock()
 	h.metadataOnce.Do(func() {
 		// If AuthServerMetadataURL is explicitly provided, use it directly
 		if h.config.AuthServerMetadataURL != "" {
@@ -372,18 +403,26 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 			return
 		}
 
-		// Try to discover the authorization server via OAuth Protected Resource
-		// as per RFC 9728 (https://datatracker.ietf.org/doc/html/rfc9728)
+		// Always extract base URL for fallback scenarios
 		baseURL, err := h.extractBaseURL()
 		if err != nil {
 			h.metadataFetchErr = fmt.Errorf("failed to extract base URL: %w", err)
 			return
 		}
 
-		protectedResourceURL, err := buildWellKnownURL(baseURL, "oauth-protected-resource")
-		if err != nil {
-			h.metadataFetchErr = fmt.Errorf("failed to build protected resource URL: %w", err)
-			return
+		// Determine the protected resource metadata URL with priority:
+		// 1. Explicit config (ProtectedResourceMetadataURL from RFC9728 WWW-Authenticate header)
+		// 2. Constructed from base URL
+		var protectedResourceURL string
+		explicitMetadataURL := h.config.ProtectedResourceMetadataURL != ""
+		if explicitMetadataURL {
+			protectedResourceURL = h.config.ProtectedResourceMetadataURL
+		} else {
+			protectedResourceURL, err = buildWellKnownURL(baseURL, "oauth-protected-resource")
+			if err != nil {
+				h.metadataFetchErr = fmt.Errorf("failed to build protected resource URL: %w", err)
+				return
+			}
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, protectedResourceURL, nil)
 		if err != nil {
@@ -401,8 +440,15 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		}
 		defer resp.Body.Close()
 
-		// If we can't get the protected resource metadata, try OAuth Authorization Server discovery
+		// If we can't get the protected resource metadata, try OAuth Authorization Server discovery.
+		// However, if the resource_metadata URL was explicitly provided (via RFC 9728), don't
+		// fall back to baseURL-derived discovery — the server specifically indicated where to
+		// find metadata, so falling back would mask the signal.
 		if resp.StatusCode != http.StatusOK {
+			if explicitMetadataURL {
+				h.metadataFetchErr = fmt.Errorf("protected resource metadata discovery failed for explicit URL %q: status %d", protectedResourceURL, resp.StatusCode)
+				return
+			}
 			authMetadataURL, err := buildWellKnownURL(baseURL, "oauth-authorization-server")
 			if err != nil {
 				h.metadataFetchErr = fmt.Errorf("failed to build authorization server metadata URL: %w", err)
@@ -632,8 +678,8 @@ func (h *OAuthHandler) RegisterClient(ctx context.Context, clientName string) er
 	}
 
 	// RFC 8707: Include resource parameter in client registration
-	if h.resourceURL != "" {
-		regRequest["resource"] = h.resourceURL
+	if resourceURL := h.getResourceURL(); resourceURL != "" {
+		regRequest["resource"] = resourceURL
 	}
 
 	reqBody, err := json.Marshal(regRequest)
@@ -725,8 +771,8 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 	}
 
 	// RFC 8707: Include resource parameter in token exchange
-	if h.resourceURL != "" {
-		data.Set("resource", h.resourceURL)
+	if resourceURL := h.getResourceURL(); resourceURL != "" {
+		data.Set("resource", resourceURL)
 	}
 
 	req, err := http.NewRequestWithContext(
@@ -810,8 +856,8 @@ func (h *OAuthHandler) GetAuthorizationURL(ctx context.Context, state, codeChall
 	}
 
 	// RFC 8707: Include resource parameter in authorization URL
-	if h.resourceURL != "" {
-		params.Set("resource", h.resourceURL)
+	if resourceURL := h.getResourceURL(); resourceURL != "" {
+		params.Set("resource", resourceURL)
 	}
 
 	return metadata.AuthorizationEndpoint + "?" + params.Encode(), nil
