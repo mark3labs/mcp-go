@@ -397,9 +397,18 @@ func (h *OAuthHandler) validateAdvertisedPRMURL(candidate string) error {
 	if err != nil {
 		return fmt.Errorf("invalid base URL %q: %w", h.baseURL, err)
 	}
+	// url.Parse accepts relative references (empty Scheme and Host)
+	// without error. Reject those explicitly so two empty values do not
+	// EqualFold-match each other and bypass origin validation.
+	if base.Scheme == "" || base.Host == "" {
+		return fmt.Errorf("base URL %q is not absolute (missing scheme or host)", h.baseURL)
+	}
 	parsed, err := url.Parse(candidate)
 	if err != nil {
 		return fmt.Errorf("invalid advertised PRM URL %q: %w", candidate, err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("advertised PRM URL %q is not absolute (missing scheme or host)", candidate)
 	}
 	if !strings.EqualFold(parsed.Scheme, base.Scheme) {
 		return fmt.Errorf("advertised PRM URL scheme %q does not match base %q", parsed.Scheme, base.Scheme)

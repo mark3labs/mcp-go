@@ -1921,6 +1921,24 @@ func TestOAuthHandler_HandleUnauthorizedResponse(t *testing.T) {
 			want: "",
 		},
 		{
+			name: "relative PRM URL is rejected",
+			response: &http.Response{
+				Header: http.Header{
+					"Www-Authenticate": []string{`Bearer resource_metadata="just-a-path"`},
+				},
+			},
+			want: "",
+		},
+		{
+			name: "schemeless host-only PRM URL is rejected",
+			response: &http.Response{
+				Header: http.Header{
+					"Www-Authenticate": []string{`Bearer resource_metadata="example.com/mcp"`},
+				},
+			},
+			want: "",
+		},
+		{
 			name: "multiple WWW-Authenticate headers: picks first that validates",
 			response: &http.Response{
 				Header: http.Header{
@@ -1983,6 +2001,25 @@ func TestOAuthHandler_HandleUnauthorizedResponse_NoBaseURL(t *testing.T) {
 		},
 	})
 	assert.Equal(t, "", handler.ProtectedResourceMetadataURL())
+}
+
+// TestOAuthHandler_HandleUnauthorizedResponse_RelativeBaseURL verifies that
+// origin validation rejects advertised PRM URLs when the configured base URL
+// itself is a relative reference. Without this check, two empty
+// scheme/host strings would compare equal and bypass validation entirely.
+func TestOAuthHandler_HandleUnauthorizedResponse_RelativeBaseURL(t *testing.T) {
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost/callback",
+	})
+	handler.SetBaseURL("just-a-path") // misconfigured — not an absolute URL
+	handler.HandleUnauthorizedResponse(&http.Response{
+		Header: http.Header{
+			"Www-Authenticate": []string{`Bearer resource_metadata="also-just-a-path"`},
+		},
+	})
+	assert.Equal(t, "", handler.ProtectedResourceMetadataURL(),
+		"relative baseURL + relative candidate must not validate equal")
 }
 
 func TestResourceIdentifiersEqual(t *testing.T) {
