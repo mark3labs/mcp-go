@@ -245,13 +245,15 @@ func TestStreamableHTTP_WithOAuth_PreservesPathInBaseURL(t *testing.T) {
 // parameter (RFC 9728 §5.1) stores the advertised URL on the OAuth handler
 // so subsequent metadata discovery can use it.
 func TestStreamableHTTP_WithOAuth_ExtractsPRMFromWWWAuthenticate(t *testing.T) {
-	const advertisedPRM = "https://example.com/tenant-a/.well-known/oauth-protected-resource"
-
+	var advertisedPRM string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="mcp", error="invalid_token", resource_metadata="`+advertisedPRM+`"`)
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer server.Close()
+	// Same-origin PRM URL: origin validation requires the advertised URL's
+	// scheme and host to match the protected resource's base URL.
+	advertisedPRM = server.URL + "/tenant-a/.well-known/oauth-protected-resource"
 
 	// Pre-populate a token so the transport reaches the server and the 401
 	// WWW-Authenticate path runs — with no token the transport short-circuits

@@ -1847,6 +1847,7 @@ func TestOAuthHandler_ProtectedResourceMetadataURL_SetGet(t *testing.T) {
 }
 
 func TestOAuthHandler_HandleUnauthorizedResponse(t *testing.T) {
+	const baseURL = "https://example.com/mcp"
 	cases := []struct {
 		name     string
 		response *http.Response
@@ -1874,13 +1875,64 @@ func TestOAuthHandler_HandleUnauthorizedResponse(t *testing.T) {
 			want: "",
 		},
 		{
-			name: "bearer challenge with resource_metadata stores the URL",
+			name: "bearer challenge with same-origin resource_metadata stores the URL",
 			response: &http.Response{
 				Header: http.Header{
-					"Www-Authenticate": []string{`Bearer resource_metadata="https://example.com/prm"`},
+					"Www-Authenticate": []string{`Bearer resource_metadata="https://example.com/mcp/.well-known/oauth-protected-resource"`},
 				},
 			},
-			want: "https://example.com/prm",
+			want: "https://example.com/mcp/.well-known/oauth-protected-resource",
+		},
+		{
+			name: "cross-host PRM URL is rejected",
+			response: &http.Response{
+				Header: http.Header{
+					"Www-Authenticate": []string{`Bearer resource_metadata="https://attacker.example/evil-prm"`},
+				},
+			},
+			want: "",
+		},
+		{
+			name: "scheme-downgraded PRM URL is rejected",
+			response: &http.Response{
+				Header: http.Header{
+					"Www-Authenticate": []string{`Bearer resource_metadata="http://example.com/prm"`},
+				},
+			},
+			want: "",
+		},
+		{
+			name: "unparseable PRM URL is rejected",
+			response: &http.Response{
+				Header: http.Header{
+					"Www-Authenticate": []string{`Bearer resource_metadata="://not-a-url"`},
+				},
+			},
+			want: "",
+		},
+		{
+			name: "multiple WWW-Authenticate headers: picks first that validates",
+			response: &http.Response{
+				Header: http.Header{
+					"Www-Authenticate": []string{
+						`Basic realm="mcp"`,
+						`Bearer realm="mcp", resource_metadata="https://example.com/mcp/prm"`,
+					},
+				},
+			},
+			want: "https://example.com/mcp/prm",
+		},
+		{
+			name: "multiple headers: skips cross-origin and takes the valid one",
+			response: &http.Response{
+				Header: http.Header{
+					"Www-Authenticate": []string{
+						`Bearer resource_metadata="https://attacker.example/evil"`,
+						`Bearer resource_metadata="https://example.com/mcp/prm"`,
+					},
+				},
+			},
+			want: "https://example.com/mcp/prm",
 		},
 	}
 	for _, tc := range cases {
@@ -1889,10 +1941,124 @@ func TestOAuthHandler_HandleUnauthorizedResponse(t *testing.T) {
 				ClientID:    "test-client",
 				RedirectURI: "http://localhost/callback",
 			})
+			handler.SetBaseURL(baseURL)
 			handler.HandleUnauthorizedResponse(tc.response)
 			assert.Equal(t, tc.want, handler.ProtectedResourceMetadataURL())
 		})
 	}
+}
+
+// TestOAuthHandler_HandleUnauthorizedResponse_NoBaseURL verifies that origin
+// validation refuses to accept an advertised PRM URL when no base URL has
+// been configured — otherwise there is nothing to validate against.
+func TestOAuthHandler_HandleUnauthorizedResponse_NoBaseURL(t *testing.T) {
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost/callback",
+	})
+	handler.HandleUnauthorizedResponse(&http.Response{
+		Header: http.Header{
+			"Www-Authenticate": []string{`Bearer resource_metadata="https://example.com/prm"`},
+		},
+	})
+	assert.Equal(t, "", handler.ProtectedResourceMetadataURL())
+}
+
+func TestResourceIdentifiersEqual(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{"identical", "https://example.com/mcp", "https://example.com/mcp", true},
+		{"scheme case-insensitive", "HTTPS://example.com/mcp", "https://example.com/mcp", true},
+		{"host case-insensitive", "https://Example.COM/mcp", "https://example.com/mcp", true},
+		{"trailing slash ignored", "https://example.com/mcp", "https://example.com/mcp/", true},
+		{"different host", "https://example.com/mcp", "https://other.example/mcp", false},
+		{"different scheme", "http://example.com/mcp", "https://example.com/mcp", false},
+		{"different path", "https://example.com/mcp", "https://example.com/other", false},
+		{"different query", "https://example.com/mcp?a=1", "https://example.com/mcp?a=2", false},
+		{"userinfo difference", "https://u@example.com/mcp", "https://example.com/mcp", false},
+		{"unparseable falls back to string equality", "://bad", "://bad", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, resourceIdentifiersEqual(tc.a, tc.b))
+		})
+	}
+}
+
+// TestOAuthHandler_GetServerMetadata_RejectsMismatchedResourceFromAdvertisedPRM
+// verifies RFC 9728 §3.3 / §7.3: when metadata is fetched from a PRM URL the
+// server advertised via WWW-Authenticate and the response declares a
+// `resource` identifier that does not match the protected resource the
+// client addressed, the metadata MUST NOT be used. Without this check, a
+// compromised resource could impersonate another and redirect OAuth
+// discovery to an attacker's authorization server.
+func TestOAuthHandler_GetServerMetadata_RejectsMismatchedResourceFromAdvertisedPRM(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/advertised-prm" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				Resource:             "https://impersonated.example/mcp",
+				AuthorizationServers: []string{"https://attacker.example/oauth"},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost/callback",
+		TokenStore:  NewMemoryTokenStore(),
+	})
+	handler.SetBaseURL(server.URL)
+	handler.SetProtectedResourceMetadataURL(server.URL + "/advertised-prm")
+
+	_, err := handler.GetServerMetadata(context.Background())
+	require.Error(t, err, "mismatched resource identifier must be rejected")
+	assert.Contains(t, err.Error(), "does not match base URL")
+}
+
+// TestOAuthHandler_GetServerMetadata_AcceptsMatchingResourceFromAdvertisedPRM
+// verifies that an advertised PRM response whose `resource` identifier
+// matches the base URL is accepted and drives downstream discovery normally.
+func TestOAuthHandler_GetServerMetadata_AcceptsMatchingResourceFromAdvertisedPRM(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/advertised-prm":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				Resource:             server.URL + "/",
+				AuthorizationServers: []string{server.URL},
+			})
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(AuthServerMetadata{
+				Issuer:                server.URL,
+				AuthorizationEndpoint: server.URL + "/authorize",
+				TokenEndpoint:         server.URL + "/token",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost/callback",
+		TokenStore:  NewMemoryTokenStore(),
+	})
+	handler.SetBaseURL(server.URL)
+	handler.SetProtectedResourceMetadataURL(server.URL + "/advertised-prm")
+
+	metadata, err := handler.GetServerMetadata(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, server.URL+"/token", metadata.TokenEndpoint)
 }
 
 // TestOAuthHandler_GetServerMetadata_UsesAdvertisedPRMURL verifies that when
