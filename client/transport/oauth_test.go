@@ -1756,76 +1756,81 @@ func TestOAuthHandler_GetServerMetadata_AuthServerReturnsHTML(t *testing.T) {
 	assert.Equal(t, authServer.URL+"/register", metadata.RegistrationEndpoint)
 }
 
-func TestExtractResourceMetadataURL(t *testing.T) {
+func TestExtractResourceMetadataURLs(t *testing.T) {
 	cases := []struct {
 		name   string
 		header string
-		want   string
+		want   []string
 	}{
 		{
 			name:   "empty header",
 			header: "",
-			want:   "",
+			want:   nil,
 		},
 		{
 			name:   "bearer challenge with quoted resource_metadata",
 			header: `Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource/tenant"`,
-			want:   "https://example.com/.well-known/oauth-protected-resource/tenant",
+			want:   []string{"https://example.com/.well-known/oauth-protected-resource/tenant"},
 		},
 		{
 			name:   "bearer challenge with realm, error, and resource_metadata",
 			header: `Bearer realm="mcp", error="invalid_token", resource_metadata="https://example.com/.well-known/oauth-protected-resource"`,
-			want:   "https://example.com/.well-known/oauth-protected-resource",
+			want:   []string{"https://example.com/.well-known/oauth-protected-resource"},
 		},
 		{
 			name:   "parameter name matched case-insensitively",
 			header: `Bearer Resource_Metadata="https://example.com/prm"`,
-			want:   "https://example.com/prm",
+			want:   []string{"https://example.com/prm"},
 		},
 		{
 			name:   "unquoted token value",
 			header: `Bearer resource_metadata=abc123`,
-			want:   "abc123",
+			want:   []string{"abc123"},
 		},
 		{
 			name:   "quoted value with escaped quote",
 			header: `Bearer resource_metadata="https://example.com/with-\"quote\""`,
-			want:   `https://example.com/with-"quote"`,
+			want:   []string{`https://example.com/with-"quote"`},
 		},
 		{
 			name:   "value with tabs and extra whitespace",
 			header: "Bearer\tresource_metadata\t=\t\"https://example.com/prm\"",
-			want:   "https://example.com/prm",
+			want:   []string{"https://example.com/prm"},
 		},
 		{
 			name:   "no resource_metadata parameter",
 			header: `Bearer realm="mcp", error="invalid_token"`,
-			want:   "",
+			want:   nil,
 		},
 		{
 			name:   "word containing resource_metadata is not a match",
 			header: `Bearer realm="foo resource_metadata bar"`,
-			want:   "",
+			want:   nil,
 		},
 		{
 			name:   "missing equals after parameter name",
 			header: `Bearer resource_metadata`,
-			want:   "",
+			want:   nil,
 		},
 		{
 			name:   "truncated quoted value returns what was read",
 			header: `Bearer resource_metadata="https://example.com/prm`,
-			want:   "https://example.com/prm",
+			want:   []string{"https://example.com/prm"},
 		},
 		{
-			name:   "prefers first occurrence",
+			name:   "returns all occurrences in order",
 			header: `Bearer resource_metadata="https://example.com/a", resource_metadata="https://example.com/b"`,
-			want:   "https://example.com/a",
+			want:   []string{"https://example.com/a", "https://example.com/b"},
+		},
+		{
+			name:   "multiple Bearer challenges each with resource_metadata",
+			header: `Bearer realm="tenant-a", resource_metadata="https://example.com/a", Bearer realm="tenant-b", resource_metadata="https://example.com/b"`,
+			want:   []string{"https://example.com/a", "https://example.com/b"},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := extractResourceMetadataURL(tc.header)
+			got := extractResourceMetadataURLs(tc.header)
 			assert.Equal(t, tc.want, got)
 		})
 	}
@@ -1934,6 +1939,17 @@ func TestOAuthHandler_HandleUnauthorizedResponse(t *testing.T) {
 			},
 			want: "https://example.com/mcp/prm",
 		},
+		{
+			name: "single header with two resource_metadata params: bad first, good second",
+			response: &http.Response{
+				Header: http.Header{
+					"Www-Authenticate": []string{
+						`Bearer resource_metadata="https://attacker.example/evil", Bearer resource_metadata="https://example.com/mcp/prm"`,
+					},
+				},
+			},
+			want: "https://example.com/mcp/prm",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2022,6 +2038,39 @@ func TestOAuthHandler_GetServerMetadata_RejectsMismatchedResourceFromAdvertisedP
 	assert.Contains(t, err.Error(), "does not match base URL")
 }
 
+// TestOAuthHandler_GetServerMetadata_RejectsEmptyResourceFromAdvertisedPRM
+// verifies RFC 9728 compliance: because an advertised PRM URL may not
+// share an origin with the protected resource, the response MUST declare
+// its `resource` identifier explicitly. Omitting it leaves no way to bind
+// the metadata to the protected resource the client addressed, so the
+// response is rejected.
+func TestOAuthHandler_GetServerMetadata_RejectsEmptyResourceFromAdvertisedPRM(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/advertised-prm" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				// Resource deliberately omitted
+				AuthorizationServers: []string{"https://attacker.example/oauth"},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost/callback",
+		TokenStore:  NewMemoryTokenStore(),
+	})
+	handler.SetBaseURL(server.URL)
+	handler.SetProtectedResourceMetadataURL(server.URL + "/advertised-prm")
+
+	_, err := handler.GetServerMetadata(context.Background())
+	require.Error(t, err, "advertised PRM response without a resource field must be rejected")
+	assert.Contains(t, err.Error(), "omits required resource field")
+}
+
 // TestOAuthHandler_GetServerMetadata_AcceptsMatchingResourceFromAdvertisedPRM
 // verifies that an advertised PRM response whose `resource` identifier
 // matches the base URL is accepted and drives downstream discovery normally.
@@ -2077,6 +2126,7 @@ func TestOAuthHandler_GetServerMetadata_UsesAdvertisedPRMURL(t *testing.T) {
 			advertisedPRMRequested = true
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				Resource:             server.URL,
 				AuthorizationServers: []string{server.URL},
 			})
 		case "/.well-known/oauth-protected-resource":

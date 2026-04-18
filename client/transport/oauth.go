@@ -353,9 +353,10 @@ func (h *OAuthHandler) ProtectedResourceMetadataURL() string {
 // parameter whose URL shares the protected resource's origin, stores it
 // so subsequent metadata discovery can use it. It iterates every
 // WWW-Authenticate header line (a response can carry multiple challenges
-// — Basic, Bearer, etc. — each on its own line), takes the first
-// resource_metadata value that validates, and silently ignores headers
-// that are absent, malformed, or advertise an unrelated origin.
+// — Basic, Bearer, etc. — each on its own line) and every
+// resource_metadata parameter within each line, takes the first
+// candidate that validates, and silently ignores headers that are
+// absent, malformed, or advertise an unrelated origin.
 //
 // Origin validation rejects URLs whose scheme or host differs from the
 // OAuth handler's configured base URL. This prevents a compromised or
@@ -368,15 +369,13 @@ func (h *OAuthHandler) HandleUnauthorizedResponse(resp *http.Response) {
 		return
 	}
 	for _, header := range resp.Header.Values("WWW-Authenticate") {
-		candidate := extractResourceMetadataURL(header)
-		if candidate == "" {
-			continue
+		for _, candidate := range extractResourceMetadataURLs(header) {
+			if err := h.validateAdvertisedPRMURL(candidate); err != nil {
+				continue
+			}
+			h.SetProtectedResourceMetadataURL(candidate)
+			return
 		}
-		if err := h.validateAdvertisedPRMURL(candidate); err != nil {
-			continue
-		}
-		h.SetProtectedResourceMetadataURL(candidate)
-		return
 	}
 }
 
@@ -536,18 +535,30 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		// server advertised via WWW-Authenticate (an untrusted network
 		// input), the declared resource identifier MUST match the
 		// protected resource the client addressed — otherwise the
-		// response MUST NOT be used. This prevents a compromised resource
-		// from pointing clients at another resource's OAuth metadata.
+		// response MUST NOT be used. An advertised PRM response that
+		// omits the resource field is also rejected: since the PRM
+		// endpoint may not share an origin with the protected resource,
+		// the response cannot be implicitly trusted without an explicit
+		// binding.
+		//
 		// The check is scoped to the advertised path because the
-		// well-known origin-constructed path has already been validated
-		// by same-origin URL construction.
-		if prmFromAdvertisement && protectedResource.Resource != "" &&
-			!resourceIdentifiersEqual(protectedResource.Resource, baseURL) {
-			h.metadataFetchErr = fmt.Errorf(
-				"advertised protected resource metadata declares resource %q which does not match base URL %q",
-				protectedResource.Resource, baseURL,
-			)
-			return
+		// well-known origin-constructed path is already bound to the
+		// protected resource by same-origin URL construction.
+		if prmFromAdvertisement {
+			if protectedResource.Resource == "" {
+				h.metadataFetchErr = fmt.Errorf(
+					"advertised protected resource metadata from %q omits required resource field",
+					protectedResourceURL,
+				)
+				return
+			}
+			if !resourceIdentifiersEqual(protectedResource.Resource, baseURL) {
+				h.metadataFetchErr = fmt.Errorf(
+					"advertised protected resource metadata declares resource %q which does not match base URL %q",
+					protectedResource.Resource, baseURL,
+				)
+				return
+			}
 		}
 
 		// RFC 8707: Capture the resource identifier for use in authorization requests.
@@ -635,13 +646,16 @@ func buildWellKnownURL(baseURL string, suffix string) (string, error) {
 	return root + "/.well-known/" + suffix + path, nil
 }
 
-// extractResourceMetadataURL returns the resource_metadata parameter value
-// from a WWW-Authenticate header per RFC 9728 §5.1, or an empty string when
-// the header is empty, no such parameter is present, or the value is
-// malformed. Parameter names are matched case-insensitively per
-// RFC 9110 §11.2; both quoted-string and token value forms are accepted.
-func extractResourceMetadataURL(header string) string {
+// extractResourceMetadataURLs returns every resource_metadata parameter
+// value from a WWW-Authenticate header per RFC 9728 §5.1, in the order
+// they appear. Returns an empty slice when the header is empty or no
+// such parameters are present. Parameter names are matched
+// case-insensitively per RFC 9110 §11.2; both quoted-string and token
+// value forms are accepted. Multiple occurrences are possible when a
+// single header value contains several Bearer challenges.
+func extractResourceMetadataURLs(header string) []string {
 	const target = "resource_metadata"
+	var out []string
 	i := 0
 	for i < len(header) {
 		// Advance to the next token start.
@@ -668,11 +682,11 @@ func extractResourceMetadataURL(header string) string {
 		}
 		value, next := parseAuthParamValue(header, i)
 		i = next
-		if strings.EqualFold(name, target) {
-			return value
+		if value != "" && strings.EqualFold(name, target) {
+			out = append(out, value)
 		}
 	}
-	return ""
+	return out
 }
 
 // parseAuthParamValue reads a single WWW-Authenticate parameter value
@@ -715,10 +729,13 @@ func parseAuthParamValue(s string, i int) (string, int) {
 
 // resourceIdentifiersEqual reports whether two OAuth protected resource
 // identifiers refer to the same resource for the purposes of RFC 9728 §3.3
-// equality checks. Scheme and host are compared case-insensitively and a
-// single trailing slash on either path is ignored; query, fragment, and
-// userinfo components are considered significant. Unparseable inputs
-// fall back to exact string equality.
+// equality checks. Scheme and host are compared case-insensitively per
+// RFC 3986 §3.1 / §3.2.2, and a single trailing slash on either path is
+// ignored because real-world OAuth deployments routinely emit the
+// resource with or without it for the same URL; rejecting that variant
+// would produce false positives on legitimate servers. Query, fragment,
+// and userinfo components are significant. Unparseable inputs fall back
+// to exact string equality.
 func resourceIdentifiersEqual(a, b string) bool {
 	ua, errA := url.Parse(a)
 	ub, errB := url.Parse(b)
