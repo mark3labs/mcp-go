@@ -680,8 +680,11 @@ func extractResourceMetadataURLs(header string) []string {
 		for i < len(header) && (header[i] == ' ' || header[i] == '\t') {
 			i++
 		}
-		value, next := parseAuthParamValue(header, i)
+		value, next, ok := parseAuthParamValue(header, i)
 		i = next
+		if !ok {
+			continue
+		}
 		if value != "" && strings.EqualFold(name, target) {
 			out = append(out, value)
 		}
@@ -691,11 +694,14 @@ func extractResourceMetadataURLs(header string) []string {
 
 // parseAuthParamValue reads a single WWW-Authenticate parameter value
 // starting at offset i: a quoted-string (with backslash escapes) when the
-// first byte is '"', otherwise a bare token. It returns the decoded value
-// and the index of the first byte after it.
-func parseAuthParamValue(s string, i int) (string, int) {
+// first byte is '"', otherwise a bare token. It returns the decoded
+// value, the index of the first byte after it, and whether the value
+// was well-formed. Truncated quoted strings (no closing '"') and lone
+// trailing backslashes yield ok=false so malformed input is rejected
+// rather than producing a partial value.
+func parseAuthParamValue(s string, i int) (string, int, bool) {
 	if i >= len(s) {
-		return "", i
+		return "", i, false
 	}
 	if s[i] == '"' {
 		i++
@@ -703,28 +709,29 @@ func parseAuthParamValue(s string, i int) (string, int) {
 		for i < len(s) {
 			c := s[i]
 			if c == '\\' {
-				if i+1 < len(s) {
-					b.WriteByte(s[i+1])
-					i += 2
-					continue
+				if i+1 >= len(s) {
+					// Lone trailing backslash — the quoted string was
+					// truncated mid-escape, so the value is malformed.
+					return "", i + 1, false
 				}
-				// Lone trailing backslash in a truncated quoted string:
-				// drop it rather than emitting a stray '\'.
-				return b.String(), i + 1
+				b.WriteByte(s[i+1])
+				i += 2
+				continue
 			}
 			if c == '"' {
-				return b.String(), i + 1
+				return b.String(), i + 1, true
 			}
 			b.WriteByte(c)
 			i++
 		}
-		return b.String(), i
+		// Reached end of input without a closing '"'.
+		return "", i, false
 	}
 	start := i
 	for i < len(s) && isAuthTokenChar(s[i]) {
 		i++
 	}
-	return s[start:i], i
+	return s[start:i], i, i > start
 }
 
 // resourceIdentifiersEqual reports whether two OAuth protected resource
@@ -748,7 +755,11 @@ func resourceIdentifiersEqual(a, b string) bool {
 	if !strings.EqualFold(ua.Host, ub.Host) {
 		return false
 	}
-	if strings.TrimSuffix(ua.Path, "/") != strings.TrimSuffix(ub.Path, "/") {
+	// Use EscapedPath rather than Path so percent-encoded reserved
+	// characters stay distinct from their decoded forms (e.g. "a%2Fb"
+	// must not compare equal to "a/b"), preserving RFC 3986 segment
+	// semantics.
+	if strings.TrimSuffix(ua.EscapedPath(), "/") != strings.TrimSuffix(ub.EscapedPath(), "/") {
 		return false
 	}
 	if ua.RawQuery != ub.RawQuery {

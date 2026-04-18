@@ -1813,9 +1813,14 @@ func TestExtractResourceMetadataURLs(t *testing.T) {
 			want:   nil,
 		},
 		{
-			name:   "truncated quoted value returns what was read",
+			name:   "unterminated quoted value is rejected",
 			header: `Bearer resource_metadata="https://example.com/prm`,
-			want:   []string{"https://example.com/prm"},
+			want:   nil,
+		},
+		{
+			name:   "lone trailing backslash in quoted value is rejected",
+			header: `Bearer resource_metadata="https://example.com/prm\`,
+			want:   nil,
 		},
 		{
 			name:   "returns all occurrences in order",
@@ -1996,6 +2001,8 @@ func TestResourceIdentifiersEqual(t *testing.T) {
 		{"different query", "https://example.com/mcp?a=1", "https://example.com/mcp?a=2", false},
 		{"userinfo difference", "https://u@example.com/mcp", "https://example.com/mcp", false},
 		{"unparseable falls back to string equality", "://bad", "://bad", true},
+		{"encoded slash distinct from literal slash", "https://example.com/a%2Fb", "https://example.com/a/b", false},
+		{"both encoded equally", "https://example.com/a%2Fb", "https://example.com/a%2Fb", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
