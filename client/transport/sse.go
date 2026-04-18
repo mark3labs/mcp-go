@@ -209,6 +209,7 @@ func (c *SSE) Start(ctx context.Context) error {
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
 			if c.oauthHandler != nil {
+				c.oauthHandler.HandleUnauthorizedResponse(resp)
 				return &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
 				}
@@ -486,6 +487,7 @@ func (c *SSE) SendRequest(
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
 			if c.oauthHandler != nil {
+				c.oauthHandler.HandleUnauthorizedResponse(resp)
 				return nil, &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
 				}
@@ -634,6 +636,7 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
 			if c.oauthHandler != nil {
+				c.oauthHandler.HandleUnauthorizedResponse(resp)
 				return &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
 				}

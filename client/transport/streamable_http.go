@@ -303,6 +303,7 @@ func (c *StreamableHTTP) SendRequest(
 		// Handle unauthorized error
 		if resp.StatusCode == http.StatusUnauthorized {
 			if c.oauthHandler != nil {
+				c.oauthHandler.HandleUnauthorizedResponse(resp)
 				return nil, &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
 				}
@@ -593,6 +594,7 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 		return nil
 	case http.StatusUnauthorized:
 		if c.oauthHandler != nil {
+			c.oauthHandler.HandleUnauthorizedResponse(resp)
 			return &OAuthAuthorizationRequiredError{
 				Handler: c.oauthHandler,
 			}

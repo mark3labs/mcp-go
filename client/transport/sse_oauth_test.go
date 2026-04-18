@@ -260,3 +260,84 @@ func TestSSE_WithOAuth_PreservesPathInBaseURL(t *testing.T) {
 		t.Errorf("Expected transport base URL to retain query and fragment, got %q", transport.baseURL.String())
 	}
 }
+
+// TestSSE_WithOAuth_ExtractsPRMFromWWWAuthenticate verifies that a 401
+// response carrying a WWW-Authenticate header with a resource_metadata
+// parameter (RFC 9728 §5.1) stores the advertised URL on the OAuth handler
+// so subsequent metadata discovery can use it.
+func TestSSE_WithOAuth_ExtractsPRMFromWWWAuthenticate(t *testing.T) {
+	var advertisedPRM string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="mcp", error="invalid_token", resource_metadata="`+advertisedPRM+`"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	// Same-origin PRM URL: origin validation requires the advertised URL's
+	// scheme and host to match the protected resource's base URL.
+	advertisedPRM = server.URL + "/tenant-a/.well-known/oauth-protected-resource"
+
+	// Pre-populate a token so the transport reaches the server and the 401
+	// WWW-Authenticate path runs — with no token the transport short-circuits
+	// with OAuthAuthorizationRequiredError before any HTTP request is sent.
+	tokenStore := NewMemoryTokenStore()
+	_ = tokenStore.SaveToken(context.Background(), &Token{
+		AccessToken: "rejected-by-server",
+		TokenType:   "Bearer",
+		ExpiresAt:   time.Now().Add(1 * time.Hour),
+	})
+
+	transport, err := NewSSE(server.URL, WithOAuth(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost/callback",
+		TokenStore:  tokenStore,
+	}))
+	if err != nil {
+		t.Fatalf("Failed to create SSE: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = transport.Start(ctx)
+
+	var oauthErr *OAuthAuthorizationRequiredError
+	if !errors.As(err, &oauthErr) {
+		t.Fatalf("Expected OAuthAuthorizationRequiredError, got %T: %v", err, err)
+	}
+	if got := transport.GetOAuthHandler().ProtectedResourceMetadataURL(); got != advertisedPRM {
+		t.Errorf("Expected PRM URL %q, got %q", advertisedPRM, got)
+	}
+}
+
+// TestSSE_WithOAuth_NoWWWAuthenticate_LeavesPRMUnset verifies that a 401
+// without a WWW-Authenticate header preserves the pre-RFC-9728 behaviour:
+// no PRM URL is captured and discovery falls back to origin-based paths.
+func TestSSE_WithOAuth_NoWWWAuthenticate_LeavesPRMUnset(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	tokenStore := NewMemoryTokenStore()
+	_ = tokenStore.SaveToken(context.Background(), &Token{
+		AccessToken: "rejected-by-server",
+		TokenType:   "Bearer",
+		ExpiresAt:   time.Now().Add(1 * time.Hour),
+	})
+
+	transport, err := NewSSE(server.URL, WithOAuth(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost/callback",
+		TokenStore:  tokenStore,
+	}))
+	if err != nil {
+		t.Fatalf("Failed to create SSE: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = transport.Start(ctx)
+
+	if got := transport.GetOAuthHandler().ProtectedResourceMetadataURL(); got != "" {
+		t.Errorf("Expected PRM URL to remain empty, got %q", got)
+	}
+}
