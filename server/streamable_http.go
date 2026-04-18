@@ -607,6 +607,7 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		}
 		defer s.server.UnregisterSession(r.Context(), sessionID)
 		defer s.activeSessions.Delete(sessionID)
+		defer s.sessionRequestIDs.Delete(sessionID)
 	}
 
 	s.touchSession(sessionID)
