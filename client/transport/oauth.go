@@ -148,8 +148,9 @@ type OAuthHandler struct {
 	baseURL          string
 	resourceURL      string // RFC 8707 resource indicator; set from protected resource metadata
 
-	mu            sync.RWMutex // Protects expectedState
-	expectedState string       // Expected state value for CSRF protection
+	mu                           sync.RWMutex // Protects expectedState and protectedResourceMetadataURL
+	expectedState                string       // Expected state value for CSRF protection
+	protectedResourceMetadataURL string       // RFC 9728 §5.1: PRM URL advertised by the server via WWW-Authenticate
 }
 
 // NewOAuthHandler creates a new OAuth handler
@@ -318,6 +319,44 @@ func (h *OAuthHandler) SetBaseURL(baseURL string) {
 	h.baseURL = baseURL
 }
 
+// SetProtectedResourceMetadataURL stores the OAuth 2.0 Protected Resource
+// Metadata URL advertised by the server. When set, metadata discovery
+// fetches this URL in preference to constructing one from the base URL's
+// /.well-known/oauth-protected-resource path.
+//
+// The transport layer calls this automatically when a 401 response carries
+// a resource_metadata parameter in the WWW-Authenticate header per
+// RFC 9728 §5.1. Callers may also set it explicitly when the URL is known
+// out of band.
+func (h *OAuthHandler) SetProtectedResourceMetadataURL(prmURL string) {
+	h.mu.Lock()
+	h.protectedResourceMetadataURL = prmURL
+	h.mu.Unlock()
+}
+
+// ProtectedResourceMetadataURL returns the Protected Resource Metadata URL
+// that will be used during metadata discovery, or an empty string if none
+// has been set.
+func (h *OAuthHandler) ProtectedResourceMetadataURL() string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.protectedResourceMetadataURL
+}
+
+// HandleUnauthorizedResponse inspects a 401 response for an RFC 9728 §5.1
+// WWW-Authenticate challenge and, when it contains a resource_metadata
+// parameter, stores the URL so subsequent metadata discovery can use it.
+// It is safe to call with a nil response and is a no-op when the header
+// is absent or contains no resource_metadata parameter.
+func (h *OAuthHandler) HandleUnauthorizedResponse(resp *http.Response) {
+	if resp == nil {
+		return
+	}
+	if u := extractResourceMetadataURL(resp.Header.Get("WWW-Authenticate")); u != "" {
+		h.SetProtectedResourceMetadataURL(u)
+	}
+}
+
 // GetExpectedState returns the expected state value (for testing purposes)
 func (h *OAuthHandler) GetExpectedState() string {
 	h.mu.RLock()
@@ -380,10 +419,17 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 			return
 		}
 
-		protectedResourceURL, err := buildWellKnownURL(baseURL, "oauth-protected-resource")
-		if err != nil {
-			h.metadataFetchErr = fmt.Errorf("failed to build protected resource URL: %w", err)
-			return
+		// Prefer a PRM URL advertised via WWW-Authenticate (RFC 9728 §5.1)
+		// when the server provided one; this is required for deployments
+		// where the PRM endpoint sits under a path that origin-based
+		// construction cannot reach.
+		protectedResourceURL := h.ProtectedResourceMetadataURL()
+		if protectedResourceURL == "" {
+			protectedResourceURL, err = buildWellKnownURL(baseURL, "oauth-protected-resource")
+			if err != nil {
+				h.metadataFetchErr = fmt.Errorf("failed to build protected resource URL: %w", err)
+				return
+			}
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, protectedResourceURL, nil)
 		if err != nil {
@@ -514,6 +560,90 @@ func buildWellKnownURL(baseURL string, suffix string) (string, error) {
 	}
 
 	return root + "/.well-known/" + suffix + path, nil
+}
+
+// extractResourceMetadataURL returns the resource_metadata parameter value
+// from a WWW-Authenticate header per RFC 9728 §5.1, or an empty string when
+// the header is empty, no such parameter is present, or the value is
+// malformed. Parameter names are matched case-insensitively per
+// RFC 9110 §11.2; both quoted-string and token value forms are accepted.
+func extractResourceMetadataURL(header string) string {
+	const target = "resource_metadata"
+	i := 0
+	for i < len(header) {
+		// Advance to the next token start.
+		for i < len(header) && !isAuthTokenChar(header[i]) {
+			i++
+		}
+		nameStart := i
+		for i < len(header) && isAuthTokenChar(header[i]) {
+			i++
+		}
+		name := header[nameStart:i]
+		// Skip optional whitespace between the name and '='.
+		for i < len(header) && (header[i] == ' ' || header[i] == '\t') {
+			i++
+		}
+		if i >= len(header) || header[i] != '=' {
+			// Name was a scheme token (e.g. "Bearer"), not a parameter.
+			continue
+		}
+		// Skip '=' and optional whitespace.
+		i++
+		for i < len(header) && (header[i] == ' ' || header[i] == '\t') {
+			i++
+		}
+		value, next := parseAuthParamValue(header, i)
+		i = next
+		if strings.EqualFold(name, target) {
+			return value
+		}
+	}
+	return ""
+}
+
+// parseAuthParamValue reads a single WWW-Authenticate parameter value
+// starting at offset i: a quoted-string (with backslash escapes) when the
+// first byte is '"', otherwise a bare token. It returns the decoded value
+// and the index of the first byte after it.
+func parseAuthParamValue(s string, i int) (string, int) {
+	if i >= len(s) {
+		return "", i
+	}
+	if s[i] == '"' {
+		i++
+		var b strings.Builder
+		for i < len(s) {
+			c := s[i]
+			if c == '\\' && i+1 < len(s) {
+				b.WriteByte(s[i+1])
+				i += 2
+				continue
+			}
+			if c == '"' {
+				return b.String(), i + 1
+			}
+			b.WriteByte(c)
+			i++
+		}
+		return b.String(), i
+	}
+	start := i
+	for i < len(s) && isAuthTokenChar(s[i]) {
+		i++
+	}
+	return s[start:i], i
+}
+
+// isAuthTokenChar reports whether c is a valid RFC 9110 §5.6.2 token
+// character — the character class used for scheme and parameter names in
+// WWW-Authenticate.
+func isAuthTokenChar(c byte) bool {
+	switch {
+	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		return true
+	}
+	return strings.IndexByte("!#$%&'*+-.^_`|~", c) >= 0
 }
 
 // fetchMetadataFromURL fetches and parses OAuth server metadata from a URL

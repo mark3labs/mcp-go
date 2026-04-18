@@ -1755,3 +1755,193 @@ func TestOAuthHandler_GetServerMetadata_AuthServerReturnsHTML(t *testing.T) {
 	assert.Equal(t, authServer.URL+"/token", metadata.TokenEndpoint)
 	assert.Equal(t, authServer.URL+"/register", metadata.RegistrationEndpoint)
 }
+
+func TestExtractResourceMetadataURL(t *testing.T) {
+	cases := []struct {
+		name   string
+		header string
+		want   string
+	}{
+		{
+			name:   "empty header",
+			header: "",
+			want:   "",
+		},
+		{
+			name:   "bearer challenge with quoted resource_metadata",
+			header: `Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource/tenant"`,
+			want:   "https://example.com/.well-known/oauth-protected-resource/tenant",
+		},
+		{
+			name:   "bearer challenge with realm, error, and resource_metadata",
+			header: `Bearer realm="mcp", error="invalid_token", resource_metadata="https://example.com/.well-known/oauth-protected-resource"`,
+			want:   "https://example.com/.well-known/oauth-protected-resource",
+		},
+		{
+			name:   "parameter name matched case-insensitively",
+			header: `Bearer Resource_Metadata="https://example.com/prm"`,
+			want:   "https://example.com/prm",
+		},
+		{
+			name:   "unquoted token value",
+			header: `Bearer resource_metadata=abc123`,
+			want:   "abc123",
+		},
+		{
+			name:   "quoted value with escaped quote",
+			header: `Bearer resource_metadata="https://example.com/with-\"quote\""`,
+			want:   `https://example.com/with-"quote"`,
+		},
+		{
+			name:   "value with tabs and extra whitespace",
+			header: "Bearer\tresource_metadata\t=\t\"https://example.com/prm\"",
+			want:   "https://example.com/prm",
+		},
+		{
+			name:   "no resource_metadata parameter",
+			header: `Bearer realm="mcp", error="invalid_token"`,
+			want:   "",
+		},
+		{
+			name:   "word containing resource_metadata is not a match",
+			header: `Bearer realm="foo resource_metadata bar"`,
+			want:   "",
+		},
+		{
+			name:   "missing equals after parameter name",
+			header: `Bearer resource_metadata`,
+			want:   "",
+		},
+		{
+			name:   "truncated quoted value returns what was read",
+			header: `Bearer resource_metadata="https://example.com/prm`,
+			want:   "https://example.com/prm",
+		},
+		{
+			name:   "prefers first occurrence",
+			header: `Bearer resource_metadata="https://example.com/a", resource_metadata="https://example.com/b"`,
+			want:   "https://example.com/a",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractResourceMetadataURL(tc.header)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestOAuthHandler_ProtectedResourceMetadataURL_SetGet(t *testing.T) {
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost/callback",
+	})
+
+	assert.Equal(t, "", handler.ProtectedResourceMetadataURL(), "should default to empty")
+
+	handler.SetProtectedResourceMetadataURL("https://example.com/prm")
+	assert.Equal(t, "https://example.com/prm", handler.ProtectedResourceMetadataURL())
+
+	handler.SetProtectedResourceMetadataURL("")
+	assert.Equal(t, "", handler.ProtectedResourceMetadataURL(), "empty value should clear")
+}
+
+func TestOAuthHandler_HandleUnauthorizedResponse(t *testing.T) {
+	cases := []struct {
+		name     string
+		response *http.Response
+		want     string
+	}{
+		{
+			name:     "nil response is a no-op",
+			response: nil,
+			want:     "",
+		},
+		{
+			name: "no WWW-Authenticate header leaves PRM unset",
+			response: &http.Response{
+				Header: http.Header{},
+			},
+			want: "",
+		},
+		{
+			name: "bearer challenge without resource_metadata leaves PRM unset",
+			response: &http.Response{
+				Header: http.Header{
+					"Www-Authenticate": []string{`Bearer realm="mcp"`},
+				},
+			},
+			want: "",
+		},
+		{
+			name: "bearer challenge with resource_metadata stores the URL",
+			response: &http.Response{
+				Header: http.Header{
+					"Www-Authenticate": []string{`Bearer resource_metadata="https://example.com/prm"`},
+				},
+			},
+			want: "https://example.com/prm",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := NewOAuthHandler(OAuthConfig{
+				ClientID:    "test-client",
+				RedirectURI: "http://localhost/callback",
+			})
+			handler.HandleUnauthorizedResponse(tc.response)
+			assert.Equal(t, tc.want, handler.ProtectedResourceMetadataURL())
+		})
+	}
+}
+
+// TestOAuthHandler_GetServerMetadata_UsesAdvertisedPRMURL verifies that when
+// the server has advertised a Protected Resource Metadata URL via
+// WWW-Authenticate (RFC 9728 §5.1), discovery fetches that URL in preference
+// to the origin-based /.well-known/oauth-protected-resource construction.
+func TestOAuthHandler_GetServerMetadata_UsesAdvertisedPRMURL(t *testing.T) {
+	advertisedPRMRequested := false
+	wellKnownPRMRequested := false
+	authServerRequested := false
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/custom/prm-path":
+			advertisedPRMRequested = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				AuthorizationServers: []string{server.URL},
+			})
+		case "/.well-known/oauth-protected-resource":
+			wellKnownPRMRequested = true
+			w.WriteHeader(http.StatusNotFound)
+		case "/.well-known/oauth-authorization-server":
+			authServerRequested = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(AuthServerMetadata{
+				Issuer:                server.URL,
+				AuthorizationEndpoint: server.URL + "/authorize",
+				TokenEndpoint:         server.URL + "/token",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost/callback",
+		TokenStore:  NewMemoryTokenStore(),
+	})
+	handler.SetBaseURL(server.URL)
+	handler.SetProtectedResourceMetadataURL(server.URL + "/custom/prm-path")
+
+	metadata, err := handler.GetServerMetadata(context.Background())
+	require.NoError(t, err)
+	assert.True(t, advertisedPRMRequested, "advertised PRM URL should be fetched")
+	assert.False(t, wellKnownPRMRequested, "well-known PRM URL should be skipped when an advertised one is set")
+	assert.True(t, authServerRequested, "authorization-server metadata should still be fetched")
+	assert.Equal(t, server.URL+"/token", metadata.TokenEndpoint)
+}
