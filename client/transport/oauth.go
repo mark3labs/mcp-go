@@ -14,6 +14,10 @@ import (
 	"time"
 )
 
+// maxMetadataBodyBytes caps the size of an OAuth metadata document we are
+// willing to read.
+const maxMetadataBodyBytes = 1 << 20 // 1 MiB
+
 // ErrNoToken is returned when no token is available in the token store
 var ErrNoToken = errors.New("no token available")
 
@@ -80,7 +84,7 @@ type Token struct {
 	// Scope is the scope of the token
 	Scope string `json:"scope,omitempty"`
 	// ExpiresAt is the time when the token expires
-	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	ExpiresAt time.Time `json:"expires_at,omitzero"`
 }
 
 // IsExpired returns true if the token is expired
@@ -130,16 +134,36 @@ func (s *MemoryTokenStore) SaveToken(ctx context.Context, token *Token) error {
 }
 
 // AuthServerMetadata represents the OAuth 2.0 Authorization Server Metadata
+// as defined in RFC 8414 (https://www.rfc-editor.org/rfc/rfc8414.html).
+//
+// URL-bearing fields are validated by validateAuthServerMetadataURLs to
+// reject non-http(s) schemes (e.g. javascript:, data:, file:) that could
+// otherwise be injected by a hostile authorization server.
+//
+// Signed metadata (the "signed_metadata" JWT field) is not supported.
 type AuthServerMetadata struct {
-	Issuer                            string   `json:"issuer"`
-	AuthorizationEndpoint             string   `json:"authorization_endpoint"`
-	TokenEndpoint                     string   `json:"token_endpoint"`
-	RegistrationEndpoint              string   `json:"registration_endpoint,omitempty"`
-	JwksURI                           string   `json:"jwks_uri,omitempty"`
-	ScopesSupported                   []string `json:"scopes_supported,omitempty"`
-	ResponseTypesSupported            []string `json:"response_types_supported"`
-	GrantTypesSupported               []string `json:"grant_types_supported,omitempty"`
-	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported,omitempty"`
+	Issuer                                             string   `json:"issuer"`
+	AuthorizationEndpoint                              string   `json:"authorization_endpoint"`
+	TokenEndpoint                                      string   `json:"token_endpoint"`
+	JwksURI                                            string   `json:"jwks_uri,omitempty"`
+	RegistrationEndpoint                               string   `json:"registration_endpoint,omitempty"`
+	ScopesSupported                                    []string `json:"scopes_supported,omitempty"`
+	ResponseTypesSupported                             []string `json:"response_types_supported"`
+	ResponseModesSupported                             []string `json:"response_modes_supported,omitempty"`
+	GrantTypesSupported                                []string `json:"grant_types_supported,omitempty"`
+	TokenEndpointAuthMethodsSupported                  []string `json:"token_endpoint_auth_methods_supported,omitempty"`
+	TokenEndpointAuthSigningAlgValuesSupported         []string `json:"token_endpoint_auth_signing_alg_values_supported,omitempty"`
+	ServiceDocumentation                               string   `json:"service_documentation,omitempty"`
+	UILocalesSupported                                 []string `json:"ui_locales_supported,omitempty"`
+	OpPolicyURI                                        string   `json:"op_policy_uri,omitempty"`
+	OpTOSURI                                           string   `json:"op_tos_uri,omitempty"`
+	RevocationEndpoint                                 string   `json:"revocation_endpoint,omitempty"`
+	RevocationEndpointAuthMethodsSupported             []string `json:"revocation_endpoint_auth_methods_supported,omitempty"`
+	RevocationEndpointAuthSigningAlgValuesSupported    []string `json:"revocation_endpoint_auth_signing_alg_values_supported,omitempty"`
+	IntrospectionEndpoint                              string   `json:"introspection_endpoint,omitempty"`
+	IntrospectionEndpointAuthMethodsSupported          []string `json:"introspection_endpoint_auth_methods_supported,omitempty"`
+	IntrospectionEndpointAuthSigningAlgValuesSupported []string `json:"introspection_endpoint_auth_signing_alg_values_supported,omitempty"`
+	CodeChallengeMethodsSupported                      []string `json:"code_challenge_methods_supported,omitempty"`
 }
 
 // OAuthHandler handles OAuth authentication for HTTP requests
@@ -449,14 +473,12 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 				h.metadataFetchErr = fmt.Errorf("protected resource metadata discovery failed for explicit URL %q: status %d", protectedResourceURL, resp.StatusCode)
 				return
 			}
-			authMetadataURL, err := buildWellKnownURL(baseURL, "oauth-authorization-server")
-			if err != nil {
-				h.metadataFetchErr = fmt.Errorf("failed to build authorization server metadata URL: %w", err)
-				return
-			}
-			h.fetchMetadataFromURL(ctx, authMetadataURL)
-			if h.serverMetadata != nil {
-				return
+			for _, u := range authorizationServerMetadataURLs(baseURL) {
+				h.fetchMetadataFromURL(ctx, u)
+				if h.serverMetadata != nil {
+					h.metadataFetchErr = nil
+					return
+				}
 			}
 			// If that also fails, fall back to default endpoints
 			metadata, err := h.getDefaultEndpoints(baseURL)
@@ -465,6 +487,7 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 				return
 			}
 			h.serverMetadata = metadata
+			h.metadataFetchErr = nil
 			return
 		}
 
@@ -493,32 +516,21 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 				return
 			}
 			h.serverMetadata = metadata
+			h.metadataFetchErr = nil
 			return
 		}
 
 		// Use the first authorization server
 		authServerURL := protectedResource.AuthorizationServers[0]
 
-		// Try OAuth Authorization Server Metadata first
-		authMetadataURL, err := buildWellKnownURL(authServerURL, "oauth-authorization-server")
-		if err != nil {
-			h.metadataFetchErr = fmt.Errorf("failed to build authorization server metadata URL: %w", err)
-			return
-		}
-		h.fetchMetadataFromURL(ctx, authMetadataURL)
-		if h.serverMetadata != nil {
-			return
-		}
-
-		// If OAuth Authorization Server Metadata discovery fails, try OpenID Connect discovery
-		openidMetadataURL, err := buildWellKnownURL(authServerURL, "openid-configuration")
-		if err != nil {
-			h.metadataFetchErr = fmt.Errorf("failed to build openid metadata URL: %w", err)
-			return
-		}
-		h.fetchMetadataFromURL(ctx, openidMetadataURL)
-		if h.serverMetadata != nil {
-			return
+		// Try the MCP-specified discovery URLs in order (RFC 8414 with path
+		// insertion, plus OpenID Connect Discovery variants).
+		for _, u := range authorizationServerMetadataURLs(authServerURL) {
+			h.fetchMetadataFromURL(ctx, u)
+			if h.serverMetadata != nil {
+				h.metadataFetchErr = nil
+				return
+			}
 		}
 
 		// If both discovery methods fail, use default endpoints based on the authorization server URL
@@ -528,6 +540,7 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 			return
 		}
 		h.serverMetadata = metadata
+		h.metadataFetchErr = nil
 	})
 
 	if h.metadataFetchErr != nil {
@@ -537,6 +550,9 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 	return h.serverMetadata, nil
 }
 
+// buildWellKnownURL constructs a well-known discovery URL by inserting the
+// given suffix between the authority and path of baseURL (RFC 8414 §3 /
+// RFC 9728 path-insertion semantics).
 func buildWellKnownURL(baseURL string, suffix string) (string, error) {
 	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
@@ -556,7 +572,9 @@ func buildWellKnownURL(baseURL string, suffix string) (string, error) {
 	return root + "/.well-known/" + suffix + path, nil
 }
 
-// fetchMetadataFromURL fetches and parses OAuth server metadata from a URL
+// fetchMetadataFromURL fetches and parses OAuth server metadata from a URL.
+// Non-200 responses are skipped silently so the caller can try the next
+// candidate URL.
 func (h *OAuthHandler) fetchMetadataFromURL(ctx context.Context, metadataURL string) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataURL, nil)
 	if err != nil {
@@ -575,17 +593,94 @@ func (h *OAuthHandler) fetchMetadataFromURL(ctx context.Context, metadataURL str
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		// If metadata discovery fails, don't set any metadata
 		return
 	}
 
 	var metadata AuthServerMetadata
-	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
+	dec := json.NewDecoder(io.LimitReader(resp.Body, maxMetadataBodyBytes))
+	if err := dec.Decode(&metadata); err != nil {
 		h.metadataFetchErr = fmt.Errorf("failed to decode metadata response: %w", err)
 		return
 	}
 
+	if err := validateAuthServerMetadataURLs(&metadata); err != nil {
+		h.metadataFetchErr = fmt.Errorf("invalid authorization server metadata from %s: %w", metadataURL, err)
+		return
+	}
+
 	h.serverMetadata = &metadata
+}
+
+// validateAuthServerMetadataURLs ensures every URL-bearing field in m uses an
+// http or https scheme. This prevents a hostile authorization server from
+// advertising values like "javascript:..." or "file:..." that could be
+// reflected into a browser or the local file system by downstream consumers.
+// Empty optional fields are permitted.
+func validateAuthServerMetadataURLs(m *AuthServerMetadata) error {
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{"issuer", m.Issuer},
+		{"authorization_endpoint", m.AuthorizationEndpoint},
+		{"token_endpoint", m.TokenEndpoint},
+		{"jwks_uri", m.JwksURI},
+		{"registration_endpoint", m.RegistrationEndpoint},
+		{"service_documentation", m.ServiceDocumentation},
+		{"op_policy_uri", m.OpPolicyURI},
+		{"op_tos_uri", m.OpTOSURI},
+		{"revocation_endpoint", m.RevocationEndpoint},
+		{"introspection_endpoint", m.IntrospectionEndpoint},
+	}
+	for _, f := range fields {
+		if f.value == "" {
+			continue
+		}
+		u, err := url.Parse(f.value)
+		if err != nil {
+			return fmt.Errorf("%s: %w", f.name, err)
+		}
+		scheme := strings.ToLower(u.Scheme)
+		if scheme != "http" && scheme != "https" {
+			return fmt.Errorf("%s has disallowed scheme %q", f.name, u.Scheme)
+		}
+		if u.Host == "" {
+			return fmt.Errorf("%s is missing host", f.name)
+		}
+	}
+	return nil
+}
+
+// authorizationServerMetadataURLs returns the ordered list of discovery URLs to
+// try for a given issuer URL, following the MCP authorization spec. This
+// implements RFC 8414 §3 path-insertion semantics (the well-known segment is
+// inserted between the authority and the issuer path, not appended), plus
+// OpenID Connect Discovery 1.0 fallbacks.
+func authorizationServerMetadataURLs(issuerURL string) []string {
+	u, err := url.Parse(issuerURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return nil
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+
+	originalPath := strings.Trim(u.Path, "/")
+
+	var urls []string
+	if originalPath == "" {
+		u.Path = "/.well-known/oauth-authorization-server"
+		urls = append(urls, u.String())
+		u.Path = "/.well-known/openid-configuration"
+		urls = append(urls, u.String())
+		return urls
+	}
+	u.Path = "/.well-known/oauth-authorization-server/" + originalPath
+	urls = append(urls, u.String())
+	u.Path = "/.well-known/openid-configuration/" + originalPath
+	urls = append(urls, u.String())
+	u.Path = "/" + originalPath + "/.well-known/openid-configuration"
+	urls = append(urls, u.String())
+	return urls
 }
 
 // extractBaseURL extracts the base URL from the first request
@@ -668,7 +763,7 @@ func (h *OAuthHandler) RegisterClient(ctx context.Context, clientName string) er
 
 	// Add client_secret if this is a confidential client
 	if h.config.ClientSecret != "" {
-		regRequest["token_endpoint_auth_method"] = "client_secret_basic"
+		regRequest["token_endpoint_auth_method"] = "client_secret_post"
 	}
 
 	// RFC 8707: Include resource parameter in client registration

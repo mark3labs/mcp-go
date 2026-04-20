@@ -43,12 +43,13 @@ type Server struct {
 }
 
 // NewServer starts a new MCP server with the provided tools and returns the server instance.
+// The server's lifetime is managed by Close(), not by the test context, so it can be
+// safely created in setup helpers and used across multiple subtests.
 func NewServer(t *testing.T, tools ...server.ServerTool) (*Server, error) {
 	server := NewUnstartedServer(t)
 	server.AddTools(tools...)
 
-	// TODO: use t.Context() once go.mod is upgraded to go 1.24+
-	if err := server.Start(context.TODO()); err != nil {
+	if err := server.Start(t.Context()); err != nil {
 		return nil, err
 	}
 

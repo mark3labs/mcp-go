@@ -11,7 +11,7 @@ import (
 )
 
 func TestSSE_WithOAuth(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	// Track request count to simulate 401 on first request, then success
 	requestCount := 0
 	authHeaderReceived := ""
@@ -112,7 +112,7 @@ func TestSSE_WithOAuth(t *testing.T) {
 
 	// First start attempt should fail with OAuthAuthorizationRequiredError
 	// Use a context with a short timeout to avoid hanging
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	err = transport.Start(ctx)
 
@@ -138,7 +138,7 @@ func TestSSE_WithOAuth(t *testing.T) {
 
 	// Second start attempt should succeed
 	// Use a context with a short timeout to avoid hanging
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx2, cancel2 := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel2()
 	err = transport.Start(ctx2)
 	if err != nil {
@@ -194,7 +194,7 @@ func TestSSE_WithOAuth_Unauthorized(t *testing.T) {
 
 	// Start should fail with OAuthAuthorizationRequiredError
 	// Use a context with a short timeout to avoid hanging
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	err = transport.Start(ctx)
 

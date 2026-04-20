@@ -259,7 +259,7 @@ func TestSSEServer(t *testing.T) {
 		}
 
 		// Test SSE endpoint with proper cleanup
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
 		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/sse", ts.URL), nil)
@@ -308,7 +308,7 @@ func TestSSEServer(t *testing.T) {
 		ts := httptest.NewServer(middleware(sseServer))
 		defer ts.Close()
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
 		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/sse", ts.URL), nil)
@@ -355,7 +355,7 @@ func TestSSEServer(t *testing.T) {
 
 		sseServer.baseURL = ts.URL + "/mcp"
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
 		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/mcp/sse", ts.URL), nil)
@@ -427,7 +427,7 @@ func TestSSEServer(t *testing.T) {
 
 		sseServer.baseURL = ts.URL + "/mcp"
 		sseServer.useFullURLForMessageEndpoint = false
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
 		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/sse", sseServer.baseURL), nil)
@@ -516,7 +516,7 @@ func TestSSEServer(t *testing.T) {
 		}
 
 		// Test SSE endpoint with proper cleanup
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
 		sseURL := fmt.Sprintf("%s/sse", ts.URL+sseServer.basePath)
@@ -1383,7 +1383,7 @@ func TestSSEServer(t *testing.T) {
 		requestBody, err := json.Marshal(messageRequest)
 		require.NoError(t, err, "Failed to marshal request")
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		req, err := http.NewRequestWithContext(ctx, "POST", messageURL, bytes.NewBuffer(requestBody))
 		require.NoError(t, err, "Failed to create request")
 		req.Header.Set("Content-Type", "application/json")
@@ -1427,7 +1427,7 @@ func TestSSEServer(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		shutdownDone := make(chan error, 1)
-		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 		defer cancel()
 		go func() {
 			err := sseServer.Shutdown(ctx)

@@ -41,7 +41,7 @@ func TestStdioServer(t *testing.T) {
 		stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
 
 		// Create context with cancel
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
 		// Create error channel to catch server errors
@@ -153,7 +153,7 @@ func TestStdioServer(t *testing.T) {
 		stdioServer.SetContextFunc(setTestValFromEnv)
 
 		// Create context with cancel
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
 		// Create error channel to catch server errors
@@ -306,7 +306,7 @@ func TestStdioServer(t *testing.T) {
 		stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
 
 		// Create context with cancel
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
 		// Start server

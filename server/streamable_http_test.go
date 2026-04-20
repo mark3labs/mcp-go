@@ -505,7 +505,7 @@ func TestStreamableHTTP_GET(t *testing.T) {
 	addSSETool(mcpServer)
 	server := NewTestStreamableHTTPServer(mcpServer)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 1*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "GET", server.URL, nil)
 	if err != nil {
@@ -747,7 +747,7 @@ func TestStreamableHTTP_SessionWithTools(t *testing.T) {
 
 		// Watch the notification to ensure the session is registered
 		// (Normal http request (post) will not trigger the session registration)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 		defer cancel()
 		go func() {
 			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, testServer.URL, nil)
@@ -876,7 +876,7 @@ func TestStreamableHTTP_SessionWithResources(t *testing.T) {
 
 		// Watch the notification to ensure the session is registered
 		// (Normal http request (post) will not trigger the session registration)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 		defer cancel()
 		go func() {
 			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, testServer.URL, nil)
@@ -1189,7 +1189,12 @@ func TestStreamableHTTP_PongResponseHandling(t *testing.T) {
 		}
 	})
 
-	t.Run("Pong response with null result should not be treated as sampling response", func(t *testing.T) {
+	t.Run("Pong response with omitted result should return 202 and not be treated as sampling response", func(t *testing.T) {
+		// Some MCP clients (e.g. VS Code Copilot Chat) send ping responses without
+		// the result field: {"jsonrpc":"2.0","id":N}. While this is not strictly
+		// compliant with JSON-RPC 2.0 (which requires result or error), the server
+		// should accept it leniently and return 202 Accepted per the MCP spec
+		// (Streamable HTTP transport, rule 4).
 		pongResponse := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      124,
@@ -1211,12 +1216,12 @@ func TestStreamableHTTP_PongResponseHandling(t *testing.T) {
 			t.Errorf("Pong response with omitted result was incorrectly detected as sampling response. Response: %s", bodyStr)
 		}
 
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("Expected status 200 for pong response, got %d. Body: %s", resp.StatusCode, bodyStr)
+		if resp.StatusCode != http.StatusAccepted {
+			t.Errorf("Expected status 202 for pong response, got %d. Body: %s", resp.StatusCode, bodyStr)
 		}
 	})
 
-	t.Run("Response with empty error should not be treated as sampling response", func(t *testing.T) {
+	t.Run("Response with empty error should return 202 and not be treated as sampling response", func(t *testing.T) {
 		response := map[string]any{
 			"jsonrpc": "2.0",
 			"id":      125,
@@ -1239,8 +1244,8 @@ func TestStreamableHTTP_PongResponseHandling(t *testing.T) {
 			t.Errorf("Response with empty error was incorrectly detected as sampling response. Response: %s", bodyStr)
 		}
 
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("Expected status 200 for response with empty error, got %d. Body: %s", resp.StatusCode, bodyStr)
+		if resp.StatusCode != http.StatusAccepted {
+			t.Errorf("Expected status 202 for response with empty error, got %d. Body: %s", resp.StatusCode, bodyStr)
 		}
 	})
 }
@@ -1333,7 +1338,7 @@ func TestStreamableHTTPServer_WithDisableStreaming(t *testing.T) {
 		server := NewTestStreamableHTTPServer(mcpServer, WithDisableStreaming(false))
 		defer server.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 		defer cancel()
 
 		// GET request should work when streaming is enabled
@@ -2197,8 +2202,7 @@ func TestStreamableHTTP_SendNotificationToSpecificClient(t *testing.T) {
 		var toolResponse jsonRPCResponse
 		if strings.HasPrefix(bodyStr, "event: message") {
 			// Parse SSE format
-			lines := strings.Split(bodyStr, "\n")
-			for _, line := range lines {
+			for line := range strings.SplitSeq(bodyStr, "\n") {
 				if jsonData, ok := strings.CutPrefix(line, "data: "); ok {
 					if err := json.Unmarshal([]byte(jsonData), &toolResponse); err == nil {
 						break
@@ -2386,7 +2390,7 @@ func TestStreamableHTTP_GET_NonFlusherReturns405(t *testing.T) {
 		server := NewTestStreamableHTTPServer(mcpServer)
 		defer server.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
 		defer cancel()
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
@@ -2707,7 +2711,7 @@ func TestStreamableHTTP_SessionIdleTTLSweeper(t *testing.T) {
 			WithStateful(true),
 			WithSessionIdleTTL(100*time.Millisecond),
 		)
-		defer func() { _ = httpServer.Shutdown(context.Background()) }()
+		defer func() { _ = httpServer.Shutdown(t.Context()) }()
 		ts := httptest.NewServer(httpServer)
 		defer ts.Close()
 
@@ -2745,7 +2749,7 @@ func TestStreamableHTTP_SessionIdleTTLSweeper(t *testing.T) {
 			WithStateful(true),
 			WithSessionIdleTTL(200*time.Millisecond),
 		)
-		defer func() { _ = httpServer.Shutdown(context.Background()) }()
+		defer func() { _ = httpServer.Shutdown(t.Context()) }()
 		ts := httptest.NewServer(httpServer)
 		defer ts.Close()
 
@@ -2784,7 +2788,7 @@ func TestStreamableHTTP_SessionIdleTTLSweeper(t *testing.T) {
 			WithStateful(true),
 			// No WithSessionIdleTTL — sweeper disabled
 		)
-		defer func() { _ = httpServer.Shutdown(context.Background()) }()
+		defer func() { _ = httpServer.Shutdown(t.Context()) }()
 		ts := httptest.NewServer(httpServer)
 		defer ts.Close()
 
@@ -2812,7 +2816,7 @@ func TestStreamableHTTP_SessionIdleTTLSweeper(t *testing.T) {
 			WithStateful(true),
 			WithSessionIdleTTL(10*time.Second), // long TTL so sweeper won't fire
 		)
-		defer func() { _ = httpServer.Shutdown(context.Background()) }()
+		defer func() { _ = httpServer.Shutdown(t.Context()) }()
 		ts := httptest.NewServer(httpServer)
 		defer ts.Close()
 
@@ -2871,5 +2875,54 @@ func TestStreamableHTTPNotificationRace(t *testing.T) {
 		if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
 			t.Fatalf("iteration %d: expected 200 or 202, got %d", i, resp.StatusCode)
 		}
+	}
+}
+
+// TestStreamableHTTP_SessionRequestIDs_CleanedOnGetClose verifies that the
+// sessionRequestIDs entry is removed when a GET connection closes, preventing
+// unbounded growth in stateless/heartbeat scenarios.
+func TestStreamableHTTP_SessionRequestIDs_CleanedOnGetClose(t *testing.T) {
+	tests := []struct {
+		name string
+	}{
+		{name: "cleanup on GET close"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mcpServer := NewMCPServer("test", "1.0.0")
+			httpServer := NewStreamableHTTPServer(mcpServer,
+				WithHeartbeatInterval(50*time.Millisecond),
+			)
+			ts := httptest.NewServer(httpServer)
+			defer ts.Close()
+
+			// Open a GET (SSE) connection with a short-lived context.
+			ctx, cancel := context.WithCancel(context.Background())
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", "text/event-stream")
+
+			resp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+
+			countEntries := func() int {
+				n := 0
+				httpServer.sessionRequestIDs.Range(func(_, _ any) bool { n++; return true })
+				return n
+			}
+
+			// Poll until the heartbeat fires and populates sessionRequestIDs.
+			require.Eventually(t, func() bool { return countEntries() > 0 },
+				time.Second, 10*time.Millisecond,
+				"sessionRequestIDs should have an entry while GET is open")
+
+			// Close the connection and poll until the deferred cleanup runs.
+			cancel()
+			resp.Body.Close()
+			assert.Eventually(t, func() bool { return countEntries() == 0 },
+				time.Second, 10*time.Millisecond,
+				"sessionRequestIDs should be empty after GET connection closes")
+		})
 	}
 }

@@ -206,7 +206,7 @@ func NewMetaFromMap(m map[string]any) *Meta {
 
 type Request struct {
 	Method string        `json:"method"`
-	Params RequestParams `json:"params,omitempty"`
+	Params RequestParams `json:"params,omitzero"`
 }
 
 type RequestParams struct {
@@ -217,7 +217,7 @@ type Params map[string]any
 
 type Notification struct {
 	Method string             `json:"method"`
-	Params NotificationParams `json:"params,omitempty"`
+	Params NotificationParams `json:"params,omitzero"`
 }
 
 type NotificationParams struct {
@@ -635,7 +635,7 @@ type ProgressNotificationParams struct {
 
 type PaginatedRequest struct {
 	Request
-	Params PaginatedParams `json:"params,omitempty"`
+	Params PaginatedParams `json:"params,omitzero"`
 }
 
 type PaginatedParams struct {
@@ -1149,6 +1149,77 @@ type EmbeddedResource struct {
 
 func (EmbeddedResource) isContent() {}
 
+// ToolUseContent represents a request from the assistant to call a tool within a sampling message.
+// It must have Type set to "tool_use".
+type ToolUseContent struct {
+	Annotated
+	// Meta is a metadata object that is reserved by MCP for storing additional information.
+	Meta *Meta  `json:"_meta,omitempty"`
+	Type string `json:"type"` // Must be "tool_use"
+	// ID is a unique identifier for this tool use, used to match tool results to their corresponding tool uses.
+	ID string `json:"id"`
+	// Name is the name of the tool to call.
+	Name string `json:"name"`
+	// Input contains the arguments to pass to the tool, conforming to the tool's input schema.
+	Input any `json:"input"`
+}
+
+func (ToolUseContent) isContent() {}
+
+// ToolResultContent represents the result of a tool invocation within a sampling message.
+// It must have Type set to "tool_result".
+type ToolResultContent struct {
+	Annotated
+	// Meta is a metadata object that is reserved by MCP for storing additional information.
+	Meta *Meta  `json:"_meta,omitempty"`
+	Type string `json:"type"` // Must be "tool_result"
+	// ToolUseID is the ID of the tool use this result corresponds to.
+	// This MUST match the ID from a previous ToolUseContent.
+	ToolUseID string `json:"toolUseId"`
+	// Content is the unstructured result content of the tool use.
+	Content []Content `json:"content"`
+	// Whether the tool use resulted in an error.
+	IsError bool `json:"isError,omitempty"`
+}
+
+func (ToolResultContent) isContent() {}
+
+// toolResultContentJSON is a helper type for unmarshaling ToolResultContent.
+type toolResultContentJSON struct {
+	Annotated
+	Meta      *Meta             `json:"_meta,omitempty"`
+	Type      string            `json:"type"`
+	ToolUseID string            `json:"toolUseId"`
+	Content   []json.RawMessage `json:"content"`
+	IsError   bool              `json:"isError,omitempty"`
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling for ToolResultContent
+// to handle the nested Content interface slice.
+func (t *ToolResultContent) UnmarshalJSON(data []byte) error {
+	var raw toolResultContentJSON
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	t.Annotated = raw.Annotated
+	t.Meta = raw.Meta
+	t.Type = raw.Type
+	t.ToolUseID = raw.ToolUseID
+	t.IsError = raw.IsError
+
+	if len(raw.Content) > 0 {
+		t.Content = make([]Content, 0, len(raw.Content))
+		for _, rawContent := range raw.Content {
+			c, err := UnmarshalContent(rawContent)
+			if err != nil {
+				return fmt.Errorf("unmarshaling tool result content: %w", err)
+			}
+			t.Content = append(t.Content, c)
+		}
+	}
+	return nil
+}
+
 // ModelPreferences represents the server's preferences for model selection,
 // requested of the client during sampling.
 //
@@ -1579,6 +1650,14 @@ func UnmarshalContent(data []byte) (Content, error) {
 		return content, err
 	case ContentTypeResource:
 		var content EmbeddedResource
+		err := json.Unmarshal(data, &content)
+		return content, err
+	case ContentTypeToolUse:
+		var content ToolUseContent
+		err := json.Unmarshal(data, &content)
+		return content, err
+	case ContentTypeToolResult:
+		var content ToolResultContent
 		err := json.Unmarshal(data, &content)
 		return content, err
 	default:

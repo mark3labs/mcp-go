@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -14,7 +13,7 @@ import (
 )
 
 func TestStreamableHTTP_WithOAuth(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	// Track request count to simulate 401 on first request, then success
 	var requestCount atomic.Int32
 	authHeaderReceived := ""
@@ -91,7 +90,7 @@ func TestStreamableHTTP_WithOAuth(t *testing.T) {
 	}
 
 	// First request should fail with OAuthAuthorizationRequiredError
-	_, err = transport.SendRequest(context.Background(), JSONRPCRequest{
+	_, err = transport.SendRequest(t.Context(), JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      mcp.NewRequestId(1),
 		Method:  "test",
@@ -118,7 +117,7 @@ func TestStreamableHTTP_WithOAuth(t *testing.T) {
 	}
 
 	// Second request should succeed
-	response, err := transport.SendRequest(context.Background(), JSONRPCRequest{
+	response, err := transport.SendRequest(t.Context(), JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      mcp.NewRequestId(2),
 		Method:  "test",
@@ -171,7 +170,7 @@ func TestStreamableHTTP_WithOAuth_Unauthorized(t *testing.T) {
 	}
 
 	// Send a request
-	_, err = transport.SendRequest(context.Background(), JSONRPCRequest{
+	_, err = transport.SendRequest(t.Context(), JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      mcp.NewRequestId(1),
 		Method:  "test",
@@ -262,7 +261,7 @@ func TestStreamableHTTP_OAuthMetadataDiscovery(t *testing.T) {
 		ExpiresIn:    3600,
 		ExpiresAt:    time.Now().Add(1 * time.Hour), // Valid for 1 hour
 	}
-	if err := tokenStore.SaveToken(context.Background(), validToken); err != nil {
+	if err := tokenStore.SaveToken(t.Context(), validToken); err != nil {
 		t.Fatalf("Failed to save token: %v", err)
 	}
 
@@ -282,7 +281,7 @@ func TestStreamableHTTP_OAuthMetadataDiscovery(t *testing.T) {
 	}
 
 	// Send a request that will trigger 401
-	_, err = transport.SendRequest(context.Background(), JSONRPCRequest{
+	_, err = transport.SendRequest(t.Context(), JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      mcp.NewRequestId(1),
 		Method:  "test",
@@ -452,7 +451,7 @@ func TestStreamableHTTP_OAuthMetadataFeedback(t *testing.T) {
 	defer server.Close()
 
 	tokenStore := NewMemoryTokenStore()
-	_ = tokenStore.SaveToken(context.Background(), &Token{
+	_ = tokenStore.SaveToken(t.Context(), &Token{
 		AccessToken: "test-token",
 		TokenType:   "Bearer",
 		ExpiresAt:   time.Now().Add(1 * time.Hour),
@@ -469,7 +468,7 @@ func TestStreamableHTTP_OAuthMetadataFeedback(t *testing.T) {
 	}
 
 	// Send request that triggers 401
-	_, err = transport.SendRequest(context.Background(), JSONRPCRequest{
+	_, err = transport.SendRequest(t.Context(), JSONRPCRequest{
 		JSONRPC: "2.0",
 		ID:      mcp.NewRequestId(1),
 		Method:  "test",

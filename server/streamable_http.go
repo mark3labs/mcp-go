@@ -354,6 +354,11 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if isEmptyResponse {
+		// Per MCP spec (Streamable HTTP transport, rule 4): the server MUST return
+		// 202 Accepted for any accepted JSON-RPC response or notification, regardless
+		// of whether result is {} or omitted. HTTP 200 with no body has no defined
+		// meaning in this transport for POST requests carrying responses.
+		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 
@@ -607,6 +612,7 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		}
 		defer s.server.UnregisterSession(r.Context(), sessionID)
 		defer s.activeSessions.Delete(sessionID)
+		defer s.sessionRequestIDs.Delete(sessionID)
 	}
 
 	s.touchSession(sessionID)

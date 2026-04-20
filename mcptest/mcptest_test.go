@@ -15,7 +15,7 @@ import (
 )
 
 func TestServerWithTool(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	srv, err := mcptest.NewServer(t, server.ServerTool{
 		Tool: mcp.NewTool("hello",
@@ -82,7 +82,7 @@ func resultToString(result *mcp.CallToolResult) (string, error) {
 }
 
 func TestServerWithToolStructuredContent(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	srv, err := mcptest.NewServer(t, server.ServerTool{
 		Tool: mcp.NewTool("get_user",
@@ -171,7 +171,7 @@ func structuredContentHandler(ctx context.Context, request mcp.CallToolRequest) 
 }
 
 func TestServerWithPrompt(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	srv := mcptest.NewUnstartedServer(t)
 	defer srv.Close()
@@ -232,7 +232,7 @@ func TestServerWithPrompt(t *testing.T) {
 }
 
 func TestServerWithResource(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	srv := mcptest.NewUnstartedServer(t)
 	defer srv.Close()
@@ -281,7 +281,7 @@ func TestServerWithResource(t *testing.T) {
 }
 
 func TestServerWithResourceTemplate(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	srv := mcptest.NewUnstartedServer(t)
 	defer srv.Close()
@@ -391,7 +391,7 @@ func TestListToolsWithHeader(t *testing.T) {
 		t.Fatalf("Create client failed %v", err)
 		return
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := client.Start(ctx); err != nil {
 		t.Fatalf("Failed to start client: %v", err)
 		return
@@ -404,7 +404,7 @@ func TestListToolsWithHeader(t *testing.T) {
 	}
 
 	req := mcp.ListToolsRequest{Header: http.Header{"X-Test-Header": {expectedHeaderValue}}}
-	_, err = client.ListToolsByPage(context.Background(), req)
+	_, err = client.ListToolsByPage(t.Context(), req)
 	if err != nil {
 		t.Fatalf("Failed to ListTools: %v\n", err)
 	}
@@ -564,7 +564,7 @@ func TestServerWithToolHandlerMiddleware(t *testing.T) {
 }
 
 func TestSimulateClientInfo(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	srv := mcptest.NewUnstartedServer(t)
 	defer srv.Close()
