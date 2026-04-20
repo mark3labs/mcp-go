@@ -277,22 +277,23 @@ func NewEmbeddedResource(resource ResourceContents) EmbeddedResource {
 	}
 }
 
-// NewToolUseContent creates a new ToolUseContent with the given tool name and arguments.
-func NewToolUseContent(toolName string, arguments any) ToolUseContent {
+// NewToolUseContent creates a new ToolUseContent with the given id, tool name, and input arguments.
+func NewToolUseContent(id, name string, input any) ToolUseContent {
 	return ToolUseContent{
-		Type:      ContentTypeToolUse,
-		ToolName:  toolName,
-		Arguments: arguments,
+		Type:  ContentTypeToolUse,
+		ID:    id,
+		Name:  name,
+		Input: input,
 	}
 }
 
-// NewToolResultContent creates a new ToolResultContent with the given tool name, content, and error flag.
-func NewToolResultContent(toolName string, content []Content, isError bool) ToolResultContent {
+// NewToolResultContent creates a new ToolResultContent with the given tool use ID, content, and error flag.
+func NewToolResultContent(toolUseID string, content []Content, isError bool) ToolResultContent {
 	return ToolResultContent{
-		Type:     ContentTypeToolResult,
-		ToolName: toolName,
-		Content:  content,
-		IsError:  isError,
+		Type:      ContentTypeToolResult,
+		ToolUseID: toolUseID,
+		Content:   content,
+		IsError:   isError,
 	}
 }
 
@@ -685,20 +686,24 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		return c, nil
 
 	case ContentTypeToolUse:
-		toolName := ExtractString(contentMap, "toolName")
-		if toolName == "" {
-			return nil, fmt.Errorf("toolName is missing")
+		id := ExtractString(contentMap, "id")
+		if id == "" {
+			return nil, fmt.Errorf("tool_use id is missing")
 		}
-		arguments := contentMap["arguments"]
-		c := NewToolUseContent(toolName, arguments)
+		name := ExtractString(contentMap, "name")
+		if name == "" {
+			return nil, fmt.Errorf("tool_use name is missing")
+		}
+		input := contentMap["input"]
+		c := NewToolUseContent(id, name, input)
 		c.Annotations = annotations
 		c.Meta = meta
 		return c, nil
 
 	case ContentTypeToolResult:
-		toolName := ExtractString(contentMap, "toolName")
-		if toolName == "" {
-			return nil, fmt.Errorf("toolName is missing")
+		toolUseID := ExtractString(contentMap, "toolUseId")
+		if toolUseID == "" {
+			return nil, fmt.Errorf("tool_result toolUseId is missing")
 		}
 		isError, _ := contentMap["isError"].(bool)
 		var contentItems []Content
@@ -713,7 +718,7 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 				}
 			}
 		}
-		c := NewToolResultContent(toolName, contentItems, isError)
+		c := NewToolResultContent(toolUseID, contentItems, isError)
 		c.Annotations = annotations
 		c.Meta = meta
 		return c, nil

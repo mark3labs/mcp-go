@@ -418,16 +418,18 @@ func TestParseContent(t *testing.T) {
 		{
 			name: "tool_use content",
 			contentMap: map[string]any{
-				"type":     "tool_use",
-				"toolName": "get_weather",
-				"arguments": map[string]any{
+				"type": "tool_use",
+				"id":   "tu_1",
+				"name": "get_weather",
+				"input": map[string]any{
 					"city": "London",
 				},
 			},
 			expected: ToolUseContent{
-				Type:     ContentTypeToolUse,
-				ToolName: "get_weather",
-				Arguments: map[string]any{
+				Type: ContentTypeToolUse,
+				ID:   "tu_1",
+				Name: "get_weather",
+				Input: map[string]any{
 					"city": "London",
 				},
 			},
@@ -436,15 +438,19 @@ func TestParseContent(t *testing.T) {
 		{
 			name: "tool_use content with annotations",
 			contentMap: map[string]any{
-				"type":     "tool_use",
-				"toolName": "search",
+				"type":  "tool_use",
+				"id":    "tu_2",
+				"name":  "search",
+				"input": map[string]any{},
 				"annotations": map[string]any{
 					"priority": 1.0,
 				},
 			},
 			expected: ToolUseContent{
-				Type:     ContentTypeToolUse,
-				ToolName: "search",
+				Type:  ContentTypeToolUse,
+				ID:    "tu_2",
+				Name:  "search",
+				Input: map[string]any{},
 				Annotated: Annotated{
 					Annotations: &Annotations{
 						Priority: ptr(1.0),
@@ -454,9 +460,21 @@ func TestParseContent(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name: "tool_use content missing toolName",
+			name: "tool_use content missing id",
 			contentMap: map[string]any{
-				"type": "tool_use",
+				"type":  "tool_use",
+				"name":  "search",
+				"input": map[string]any{},
+			},
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			name: "tool_use content missing name",
+			contentMap: map[string]any{
+				"type":  "tool_use",
+				"id":    "tu_3",
+				"input": map[string]any{},
 			},
 			expected:    nil,
 			expectError: true,
@@ -464,8 +482,8 @@ func TestParseContent(t *testing.T) {
 		{
 			name: "tool_result content with nested text",
 			contentMap: map[string]any{
-				"type":     "tool_result",
-				"toolName": "get_weather",
+				"type":      "tool_result",
+				"toolUseId": "tu_1",
 				"content": []any{
 					map[string]any{
 						"type": "text",
@@ -474,18 +492,18 @@ func TestParseContent(t *testing.T) {
 				},
 			},
 			expected: ToolResultContent{
-				Type:     ContentTypeToolResult,
-				ToolName: "get_weather",
-				Content:  []Content{NewTextContent("Sunny, 22°C")},
+				Type:      ContentTypeToolResult,
+				ToolUseID: "tu_1",
+				Content:   []Content{NewTextContent("Sunny, 22°C")},
 			},
 			expectError: false,
 		},
 		{
 			name: "tool_result content with isError",
 			contentMap: map[string]any{
-				"type":     "tool_result",
-				"toolName": "failing_tool",
-				"isError":  true,
+				"type":      "tool_result",
+				"toolUseId": "tu_2",
+				"isError":   true,
 				"content": []any{
 					map[string]any{
 						"type": "text",
@@ -494,15 +512,15 @@ func TestParseContent(t *testing.T) {
 				},
 			},
 			expected: ToolResultContent{
-				Type:     ContentTypeToolResult,
-				ToolName: "failing_tool",
-				IsError:  true,
-				Content:  []Content{NewTextContent("something went wrong")},
+				Type:      ContentTypeToolResult,
+				ToolUseID: "tu_2",
+				IsError:   true,
+				Content:   []Content{NewTextContent("something went wrong")},
 			},
 			expectError: false,
 		},
 		{
-			name: "tool_result content missing toolName",
+			name: "tool_result content missing toolUseId",
 			contentMap: map[string]any{
 				"type": "tool_result",
 			},
@@ -512,12 +530,12 @@ func TestParseContent(t *testing.T) {
 		{
 			name: "tool_result content without nested content",
 			contentMap: map[string]any{
-				"type":     "tool_result",
-				"toolName": "simple_tool",
+				"type":      "tool_result",
+				"toolUseId": "tu_3",
 			},
 			expected: ToolResultContent{
-				Type:     ContentTypeToolResult,
-				ToolName: "simple_tool",
+				Type:      ContentTypeToolResult,
+				ToolUseID: "tu_3",
 			},
 			expectError: false,
 		},
@@ -578,15 +596,16 @@ func TestParseContent(t *testing.T) {
 					act, ok := result.(ToolUseContent)
 					assert.True(t, ok)
 					assert.Equal(t, exp.Type, act.Type)
-					assert.Equal(t, exp.ToolName, act.ToolName)
-					assert.Equal(t, exp.Arguments, act.Arguments)
+					assert.Equal(t, exp.ID, act.ID)
+					assert.Equal(t, exp.Name, act.Name)
+					assert.Equal(t, exp.Input, act.Input)
 					assert.Equal(t, exp.Annotations, act.Annotations)
 					assert.Equal(t, exp.Meta, act.Meta)
 				case ToolResultContent:
 					act, ok := result.(ToolResultContent)
 					assert.True(t, ok)
 					assert.Equal(t, exp.Type, act.Type)
-					assert.Equal(t, exp.ToolName, act.ToolName)
+					assert.Equal(t, exp.ToolUseID, act.ToolUseID)
 					assert.Equal(t, exp.IsError, act.IsError)
 					assert.Equal(t, exp.Annotations, act.Annotations)
 					assert.Equal(t, exp.Meta, act.Meta)

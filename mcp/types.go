@@ -1149,17 +1149,19 @@ type EmbeddedResource struct {
 
 func (EmbeddedResource) isContent() {}
 
-// ToolUseContent represents a tool invocation within a sampling message.
+// ToolUseContent represents a request from the assistant to call a tool within a sampling message.
 // It must have Type set to "tool_use".
 type ToolUseContent struct {
 	Annotated
 	// Meta is a metadata object that is reserved by MCP for storing additional information.
 	Meta *Meta  `json:"_meta,omitempty"`
 	Type string `json:"type"` // Must be "tool_use"
-	// The name of the tool being invoked.
-	ToolName string `json:"toolName"`
-	// The arguments to pass to the tool.
-	Arguments any `json:"arguments,omitempty"`
+	// ID is a unique identifier for this tool use, used to match tool results to their corresponding tool uses.
+	ID string `json:"id"`
+	// Name is the name of the tool to call.
+	Name string `json:"name"`
+	// Input contains the arguments to pass to the tool, conforming to the tool's input schema.
+	Input any `json:"input"`
 }
 
 func (ToolUseContent) isContent() {}
@@ -1171,11 +1173,12 @@ type ToolResultContent struct {
 	// Meta is a metadata object that is reserved by MCP for storing additional information.
 	Meta *Meta  `json:"_meta,omitempty"`
 	Type string `json:"type"` // Must be "tool_result"
-	// The name of the tool that produced this result.
-	ToolName string `json:"toolName"`
-	// The content of the tool result.
-	Content []Content `json:"content,omitempty"`
-	// Whether the tool invocation ended in an error.
+	// ToolUseID is the ID of the tool use this result corresponds to.
+	// This MUST match the ID from a previous ToolUseContent.
+	ToolUseID string `json:"toolUseId"`
+	// Content is the unstructured result content of the tool use.
+	Content []Content `json:"content"`
+	// Whether the tool use resulted in an error.
 	IsError bool `json:"isError,omitempty"`
 }
 
@@ -1184,11 +1187,11 @@ func (ToolResultContent) isContent() {}
 // toolResultContentJSON is a helper type for unmarshaling ToolResultContent.
 type toolResultContentJSON struct {
 	Annotated
-	Meta     *Meta              `json:"_meta,omitempty"`
-	Type     string             `json:"type"`
-	ToolName string             `json:"toolName"`
-	Content  []json.RawMessage  `json:"content,omitempty"`
-	IsError  bool               `json:"isError,omitempty"`
+	Meta      *Meta             `json:"_meta,omitempty"`
+	Type      string            `json:"type"`
+	ToolUseID string            `json:"toolUseId"`
+	Content   []json.RawMessage `json:"content"`
+	IsError   bool              `json:"isError,omitempty"`
 }
 
 // UnmarshalJSON implements custom JSON unmarshaling for ToolResultContent
@@ -1201,7 +1204,7 @@ func (t *ToolResultContent) UnmarshalJSON(data []byte) error {
 	t.Annotated = raw.Annotated
 	t.Meta = raw.Meta
 	t.Type = raw.Type
-	t.ToolName = raw.ToolName
+	t.ToolUseID = raw.ToolUseID
 	t.IsError = raw.IsError
 
 	if len(raw.Content) > 0 {
