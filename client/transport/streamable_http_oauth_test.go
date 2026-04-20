@@ -413,9 +413,12 @@ func TestExtractResourceMetadataURL(t *testing.T) {
 			expectedURL: "",
 		},
 		{
+			// Truncated quoted-strings are rejected outright — extracting a
+			// partial value from malformed input would let a hostile server
+			// dictate where discovery lands.
 			name:        "Malformed resource_metadata (no closing quote)",
 			wwwAuth:     `Bearer resource_metadata="https://example.com/metadata`,
-			expectedURL: "https://example.com/metadata",
+			expectedURL: "",
 		},
 		{
 			name:        "DPoP scheme with resource_metadata",
@@ -441,14 +444,17 @@ func TestExtractResourceMetadataURL(t *testing.T) {
 
 func TestStreamableHTTP_OAuthMetadataFeedback(t *testing.T) {
 	// Verify that after a 401 with resource_metadata, the OAuthHandler's
-	// ProtectedResourceMetadataURL has been updated
-	const expectedMetadataURL = "https://auth.example.com/.well-known/oauth-protected-resource"
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// ProtectedResourceMetadataURL has been updated. Origin validation
+	// requires the advertised URL to share scheme+host with the base URL,
+	// so the advertised PRM URL is a path under the same test server.
+	var server *httptest.Server
+	var expectedMetadataURL string
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+expectedMetadataURL+`"`)
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer server.Close()
+	expectedMetadataURL = server.URL + "/.well-known/oauth-protected-resource"
 
 	tokenStore := NewMemoryTokenStore()
 	_ = tokenStore.SaveToken(t.Context(), &Token{

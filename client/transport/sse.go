@@ -214,9 +214,11 @@ func (c *SSE) Start(ctx context.Context) error {
 			// Extract discovered metadata URL per RFC9728
 			metadataURL := extractResourceMetadataURL(resp.Header.Values("WWW-Authenticate"))
 
-			// Feed discovered URL back to OAuthHandler so next auth attempt uses it
-			if metadataURL != "" && c.oauthHandler != nil {
-				c.oauthHandler.SetProtectedResourceMetadataURL(metadataURL)
+			// Feed discovered URL back to OAuthHandler so next auth attempt uses it.
+			// HandleUnauthorizedResponse applies RFC 9728 origin validation — a
+			// compromised resource advertising a cross-origin PRM URL is ignored.
+			if c.oauthHandler != nil {
+				c.oauthHandler.HandleUnauthorizedResponse(resp)
 			}
 
 			// If OAuth handler exists, return OAuth-specific error
@@ -510,9 +512,11 @@ func (c *SSE) SendRequest(
 			// Extract discovered metadata URL per RFC9728
 			metadataURL := extractResourceMetadataURL(resp.Header.Values("WWW-Authenticate"))
 
-			// Feed discovered URL back to OAuthHandler so next auth attempt uses it
-			if metadataURL != "" && c.oauthHandler != nil {
-				c.oauthHandler.SetProtectedResourceMetadataURL(metadataURL)
+			// Feed discovered URL back to OAuthHandler so next auth attempt uses it.
+			// HandleUnauthorizedResponse applies RFC 9728 origin validation — a
+			// compromised resource advertising a cross-origin PRM URL is ignored.
+			if c.oauthHandler != nil {
+				c.oauthHandler.HandleUnauthorizedResponse(resp)
 			}
 
 			// If OAuth handler exists, return OAuth-specific error
@@ -677,9 +681,11 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 			// Extract discovered metadata URL per RFC9728
 			metadataURL := extractResourceMetadataURL(resp.Header.Values("WWW-Authenticate"))
 
-			// Feed discovered URL back to OAuthHandler so next auth attempt uses it
-			if metadataURL != "" && c.oauthHandler != nil {
-				c.oauthHandler.SetProtectedResourceMetadataURL(metadataURL)
+			// Feed discovered URL back to OAuthHandler so next auth attempt uses it.
+			// HandleUnauthorizedResponse applies RFC 9728 origin validation — a
+			// compromised resource advertising a cross-origin PRM URL is ignored.
+			if c.oauthHandler != nil {
+				c.oauthHandler.HandleUnauthorizedResponse(resp)
 			}
 
 			// If OAuth handler exists, return OAuth-specific error

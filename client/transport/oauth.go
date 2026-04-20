@@ -339,8 +339,11 @@ func extractOAuthError(body []byte, statusCode int, context string) error {
 
 // SetProtectedResourceMetadataURL updates the protected resource metadata URL
 // and resets the cached server metadata so it will be re-discovered on the next call.
-// This is used when a 401 response includes a resource_metadata parameter in the
-// WWW-Authenticate header per RFC 9728.
+//
+// This setter does not validate the URL; callers that pass values obtained
+// out of band are trusted. For values parsed from a 401 WWW-Authenticate
+// header, prefer HandleUnauthorizedResponse, which applies origin
+// validation before storing.
 func (h *OAuthHandler) SetProtectedResourceMetadataURL(u string) {
 	h.metadataMu.Lock()
 	defer h.metadataMu.Unlock()
@@ -349,6 +352,80 @@ func (h *OAuthHandler) SetProtectedResourceMetadataURL(u string) {
 	h.metadataFetchErr = nil
 	h.metadataOnce = sync.Once{}
 	h.resourceURL = ""
+}
+
+// HandleUnauthorizedResponse inspects a 401 response for RFC 9728 §5.1
+// WWW-Authenticate challenges and, when one carries a resource_metadata
+// parameter whose URL shares the protected resource's origin, stores it
+// so subsequent metadata discovery can use it. It iterates every
+// WWW-Authenticate header line (a response can carry multiple challenges
+// — Basic, Bearer, etc. — each on its own line) and every
+// resource_metadata parameter within each line, takes the first
+// candidate that validates, and silently ignores headers that are
+// absent, malformed, or advertise an unrelated origin.
+//
+// Origin validation rejects URLs whose scheme or host differs from the
+// OAuth handler's configured base URL. This prevents a compromised or
+// misconfigured resource from redirecting clients to an attacker's
+// metadata endpoint.
+//
+// It is safe to call with a nil response.
+func (h *OAuthHandler) HandleUnauthorizedResponse(resp *http.Response) {
+	if resp == nil {
+		return
+	}
+	for _, header := range resp.Header.Values("WWW-Authenticate") {
+		for _, candidate := range extractResourceMetadataURLs(header) {
+			if err := h.validateAdvertisedPRMURL(candidate); err != nil {
+				continue
+			}
+			h.SetProtectedResourceMetadataURL(candidate)
+			return
+		}
+	}
+}
+
+// validateAdvertisedPRMURL enforces that a PRM URL advertised by the
+// resource (i.e. parsed from an untrusted WWW-Authenticate header) shares
+// the configured base URL's scheme and host. Returns a non-nil error when
+// the candidate is unparseable, carries a different scheme or host, or
+// when no base URL has been configured to validate against.
+//
+// RFC 9728 §3.2 requires the protected resource to serve its own metadata;
+// this check rejects attempts to redirect discovery to an unrelated
+// origin, which would otherwise let the resource point the client at an
+// attacker-controlled OAuth metadata endpoint.
+func (h *OAuthHandler) validateAdvertisedPRMURL(candidate string) error {
+	h.metadataMu.Lock()
+	baseURL := h.baseURL
+	h.metadataMu.Unlock()
+	if baseURL == "" {
+		return errors.New("no base URL configured for origin validation")
+	}
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return fmt.Errorf("invalid base URL %q: %w", baseURL, err)
+	}
+	// url.Parse accepts relative references (empty Scheme and Host)
+	// without error. Reject those explicitly so two empty values do not
+	// EqualFold-match each other and bypass origin validation.
+	if base.Scheme == "" || base.Host == "" {
+		return fmt.Errorf("base URL %q is not absolute (missing scheme or host)", baseURL)
+	}
+	parsed, err := url.Parse(candidate)
+	if err != nil {
+		return fmt.Errorf("invalid advertised PRM URL %q: %w", candidate, err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("advertised PRM URL %q is not absolute (missing scheme or host)", candidate)
+	}
+	if !strings.EqualFold(parsed.Scheme, base.Scheme) {
+		return fmt.Errorf("advertised PRM URL scheme %q does not match base %q", parsed.Scheme, base.Scheme)
+	}
+	if !strings.EqualFold(parsed.Host, base.Host) {
+		return fmt.Errorf("advertised PRM URL host %q does not match base %q", parsed.Host, base.Host)
+	}
+	return nil
 }
 
 // getResourceURL returns the RFC 8707 resource indicator under metadataMu.
