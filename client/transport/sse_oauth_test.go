@@ -276,7 +276,7 @@ func TestSSE_OAuthMetadataFeedback(t *testing.T) {
 	expectedMetadataURL = server.URL + "/.well-known/oauth-protected-resource"
 
 	tokenStore := NewMemoryTokenStore()
-	_ = tokenStore.SaveToken(context.Background(), &Token{
+	_ = tokenStore.SaveToken(t.Context(), &Token{
 		AccessToken: "test-token",
 		TokenType:   "Bearer",
 		ExpiresAt:   time.Now().Add(1 * time.Hour),
@@ -293,7 +293,7 @@ func TestSSE_OAuthMetadataFeedback(t *testing.T) {
 	}
 
 	// Start SSE which will trigger 401
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	err = transport.Start(ctx)
 
@@ -334,7 +334,7 @@ func TestSSE_OAuthMetadataDiscovery(t *testing.T) {
 		ExpiresIn:    3600,
 		ExpiresAt:    time.Now().Add(1 * time.Hour), // Valid for 1 hour
 	}
-	if err := tokenStore.SaveToken(context.Background(), validToken); err != nil {
+	if err := tokenStore.SaveToken(t.Context(), validToken); err != nil {
 		t.Fatalf("Failed to save token: %v", err)
 	}
 
@@ -354,7 +354,7 @@ func TestSSE_OAuthMetadataDiscovery(t *testing.T) {
 	}
 
 	// Start SSE which will trigger 401
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	err = transport.Start(ctx)
 
