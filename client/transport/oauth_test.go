@@ -1435,12 +1435,12 @@ func TestOAuthHandler_SetProtectedResourceMetadataURL(t *testing.T) {
 		switch r.URL.Path {
 		case "/.well-known/oauth-protected-resource":
 			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
-				Resource:             "https://resource.example.com",
+				Resource:             serverURL,
 				AuthorizationServers: []string{serverURL},
 			})
 		case "/updated/.well-known/oauth-protected-resource":
 			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
-				Resource:             "https://resource.example.com",
+				Resource:             serverURL,
 				AuthorizationServers: []string{serverURL},
 			})
 		case "/.well-known/oauth-authorization-server":
@@ -2057,6 +2057,136 @@ func TestOAuthHandler_HandleUnauthorizedResponse_RelativeBaseURL(t *testing.T) {
 		},
 	})
 	assert.Equal(t, "", handler.config.ProtectedResourceMetadataURL)
+}
+
+// TestOAuthHandler_GetServerMetadata_RejectsMismatchedResourceFromAdvertisedPRM
+// verifies RFC 9728 §3.3/§7.3: an advertised PRM whose `resource` identifier
+// does not match the base URL MUST NOT be used.
+func TestOAuthHandler_GetServerMetadata_RejectsMismatchedResourceFromAdvertisedPRM(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/advertised-prm" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				Resource:             "https://impersonated.example/mcp",
+				AuthorizationServers: []string{"https://attacker.example/oauth"},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost/callback",
+		TokenStore:  NewMemoryTokenStore(),
+	})
+	handler.SetBaseURL(server.URL)
+	handler.SetProtectedResourceMetadataURL(server.URL + "/advertised-prm")
+
+	_, err := handler.GetServerMetadata(context.Background())
+	require.Error(t, err, "mismatched resource identifier must be rejected")
+	assert.Contains(t, err.Error(), "does not match base URL")
+}
+
+// TestOAuthHandler_GetServerMetadata_RejectsEmptyResourceFromAdvertisedPRM
+// verifies RFC 9728 compliance: because an advertised PRM URL may not share
+// an origin with the protected resource, the response MUST declare its
+// `resource` identifier explicitly. Omitting it leaves no way to bind the
+// metadata to the resource the client addressed.
+func TestOAuthHandler_GetServerMetadata_RejectsEmptyResourceFromAdvertisedPRM(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/advertised-prm" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				// Resource deliberately omitted
+				AuthorizationServers: []string{"https://attacker.example/oauth"},
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost/callback",
+		TokenStore:  NewMemoryTokenStore(),
+	})
+	handler.SetBaseURL(server.URL)
+	handler.SetProtectedResourceMetadataURL(server.URL + "/advertised-prm")
+
+	_, err := handler.GetServerMetadata(context.Background())
+	require.Error(t, err, "advertised PRM response without a resource field must be rejected")
+	assert.Contains(t, err.Error(), "omits required resource field")
+}
+
+// TestOAuthHandler_GetServerMetadata_AcceptsMatchingResourceFromAdvertisedPRM
+// verifies that an advertised PRM response whose `resource` matches the base
+// URL is accepted and drives downstream discovery normally.
+func TestOAuthHandler_GetServerMetadata_AcceptsMatchingResourceFromAdvertisedPRM(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/advertised-prm":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(OAuthProtectedResource{
+				Resource:             server.URL + "/",
+				AuthorizationServers: []string{server.URL},
+			})
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(AuthServerMetadata{
+				Issuer:                server.URL,
+				AuthorizationEndpoint: server.URL + "/authorize",
+				TokenEndpoint:         server.URL + "/token",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost/callback",
+		TokenStore:  NewMemoryTokenStore(),
+	})
+	handler.SetBaseURL(server.URL)
+	handler.SetProtectedResourceMetadataURL(server.URL + "/advertised-prm")
+
+	metadata, err := handler.GetServerMetadata(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, server.URL+"/token", metadata.TokenEndpoint)
+}
+
+// TestResourceIdentifiersEqual covers the RFC 9728 §3.3 equality helper:
+// case-insensitive scheme/host, trailing-slash tolerance on path, strict
+// matching of query/fragment/userinfo.
+func TestResourceIdentifiersEqual(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{"identical", "https://example.com/mcp", "https://example.com/mcp", true},
+		{"trailing slash on a", "https://example.com/mcp/", "https://example.com/mcp", true},
+		{"trailing slash on b", "https://example.com/mcp", "https://example.com/mcp/", true},
+		{"case-insensitive scheme", "HTTPS://example.com/mcp", "https://example.com/mcp", true},
+		{"case-insensitive host", "https://EXAMPLE.com/mcp", "https://example.com/mcp", true},
+		{"case-sensitive path", "https://example.com/MCP", "https://example.com/mcp", false},
+		{"different host", "https://a.example.com/mcp", "https://b.example.com/mcp", false},
+		{"different scheme", "http://example.com/mcp", "https://example.com/mcp", false},
+		{"query differs", "https://example.com/mcp?x=1", "https://example.com/mcp", false},
+		{"fragment differs", "https://example.com/mcp#a", "https://example.com/mcp", false},
+		{"userinfo differs", "https://u@example.com/mcp", "https://example.com/mcp", false},
+		{"encoded vs decoded path slash", "https://example.com/a%2Fb", "https://example.com/a/b", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, resourceIdentifiersEqual(tc.a, tc.b))
+		})
+	}
 }
 
 // TestExtractResourceMetadataURLs covers the plural extractor: a single

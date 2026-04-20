@@ -575,6 +575,36 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 			return
 		}
 
+		// RFC 9728 §3.3/§7.3: when metadata is fetched from a PRM URL the
+		// server advertised via WWW-Authenticate (an untrusted network
+		// input), the declared resource identifier MUST match the
+		// protected resource the client addressed — otherwise the
+		// response MUST NOT be used. An advertised PRM response that
+		// omits the resource field is also rejected: since the PRM
+		// endpoint may not share an origin with the protected resource,
+		// the response cannot be implicitly trusted without an explicit
+		// binding.
+		//
+		// The check is scoped to the advertised path because the
+		// well-known origin-constructed path is already bound to the
+		// protected resource by same-origin URL construction.
+		if explicitMetadataURL {
+			if protectedResource.Resource == "" {
+				h.metadataFetchErr = fmt.Errorf(
+					"advertised protected resource metadata from %q omits required resource field",
+					protectedResourceURL,
+				)
+				return
+			}
+			if !resourceIdentifiersEqual(protectedResource.Resource, baseURL) {
+				h.metadataFetchErr = fmt.Errorf(
+					"advertised protected resource metadata declares resource %q which does not match base URL %q",
+					protectedResource.Resource, baseURL,
+				)
+				return
+			}
+		}
+
 		// RFC 8707: Capture the resource identifier for use in authorization requests.
 		// If not provided in metadata, fall back to base URL per RFC 8707 Section 2:
 		// "The client SHOULD use the base URI of the API as the resource parameter value
@@ -647,6 +677,43 @@ func buildWellKnownURL(baseURL string, suffix string) (string, error) {
 	}
 
 	return root + "/.well-known/" + suffix + path, nil
+}
+
+// resourceIdentifiersEqual reports whether two OAuth protected resource
+// identifiers refer to the same resource for the purposes of RFC 9728 §3.3
+// equality checks. Scheme and host are compared case-insensitively per
+// RFC 3986 §3.1 / §3.2.2, and a single trailing slash on either path is
+// ignored because real-world OAuth deployments routinely emit the
+// resource with or without it for the same URL; rejecting that variant
+// would produce false positives on legitimate servers. Query, fragment,
+// and userinfo components are significant. Unparseable inputs fall back
+// to exact string equality.
+func resourceIdentifiersEqual(a, b string) bool {
+	ua, errA := url.Parse(a)
+	ub, errB := url.Parse(b)
+	if errA != nil || errB != nil {
+		return a == b
+	}
+	if !strings.EqualFold(ua.Scheme, ub.Scheme) {
+		return false
+	}
+	if !strings.EqualFold(ua.Host, ub.Host) {
+		return false
+	}
+	// Use EscapedPath rather than Path so percent-encoded reserved
+	// characters stay distinct from their decoded forms (e.g. "a%2Fb"
+	// must not compare equal to "a/b"), preserving RFC 3986 segment
+	// semantics.
+	if strings.TrimSuffix(ua.EscapedPath(), "/") != strings.TrimSuffix(ub.EscapedPath(), "/") {
+		return false
+	}
+	if ua.RawQuery != ub.RawQuery {
+		return false
+	}
+	if ua.Fragment != ub.Fragment {
+		return false
+	}
+	return ua.User.String() == ub.User.String()
 }
 
 // fetchMetadataFromURL fetches and parses OAuth server metadata from a URL.
