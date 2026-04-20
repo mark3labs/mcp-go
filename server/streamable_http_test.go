@@ -2687,7 +2687,7 @@ func TestStreamableHTTP_NotificationUpgradeDoesNotCorruptResponse(t *testing.T) 
 
 			// Every non-empty line must be valid SSE syntax — no raw JSON
 			// objects appended (which would indicate the corruption this test guards against).
-			for _, line := range strings.Split(strings.TrimSpace(bodyStr), "\n") {
+			for line := range strings.SplitSeq(strings.TrimSpace(bodyStr), "\n") {
 				if line == "" {
 					continue
 				}
@@ -2898,7 +2898,7 @@ func TestStreamableHTTP_SessionRequestIDs_CleanedOnGetClose(t *testing.T) {
 			defer ts.Close()
 
 			// Open a GET (SSE) connection with a short-lived context.
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
 			require.NoError(t, err)
 			req.Header.Set("Content-Type", "text/event-stream")

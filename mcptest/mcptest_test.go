@@ -414,7 +414,7 @@ func TestListToolsWithHeader(t *testing.T) {
 }
 
 func TestServerWithHooks(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	var callCount atomic.Int32
 	hooks := &server.Hooks{}
@@ -459,7 +459,7 @@ func TestServerWithHooks(t *testing.T) {
 }
 
 func TestServerWithToolFilter(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	srv := mcptest.NewUnstartedServer(t)
 	defer srv.Close()
@@ -507,7 +507,7 @@ func TestServerWithToolFilter(t *testing.T) {
 }
 
 func TestServerWithToolHandlerMiddleware(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	srv := mcptest.NewUnstartedServer(t)
 	defer srv.Close()

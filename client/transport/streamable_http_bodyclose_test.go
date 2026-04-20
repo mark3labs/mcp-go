@@ -174,7 +174,7 @@ func TestStreamableHTTP_CloseBlocksBeforeCancel(t *testing.T) {
 		WithHTTPBasicClient(client),
 	)
 	require.NoError(t, err)
-	require.NoError(t, transport.Start(context.Background()))
+	require.NoError(t, transport.Start(t.Context()))
 	defer transport.Close()
 
 	done := make(chan struct{})
@@ -183,7 +183,7 @@ func TestStreamableHTTP_CloseBlocksBeforeCancel(t *testing.T) {
 
 	go func() {
 		defer close(done)
-		resp, sendErr = transport.SendRequest(context.Background(), JSONRPCRequest{
+		resp, sendErr = transport.SendRequest(t.Context(), JSONRPCRequest{
 			JSONRPC: mcp.JSONRPC_VERSION,
 			ID:      mcp.NewRequestId(1),
 			Method:  "initialize",

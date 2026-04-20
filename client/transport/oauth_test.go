@@ -978,7 +978,7 @@ func TestOAuthHandler_GetServerMetadata_PathAwareDiscovery(t *testing.T) {
 	})
 	handler.SetBaseURL(server.URL + "/googledrive")
 
-	metadata, err := handler.GetServerMetadata(context.Background())
+	metadata, err := handler.GetServerMetadata(t.Context())
 	require.NoError(t, err)
 	assert.True(t, protectedResourceRequested)
 	assert.True(t, authServerRequested)
@@ -1462,7 +1462,7 @@ func TestOAuthHandler_RFC8707_ResourceParameter(t *testing.T) {
 		handler.SetBaseURL(server.URL)
 
 		// Trigger metadata discovery
-		_, err := handler.GetServerMetadata(context.Background())
+		_, err := handler.GetServerMetadata(t.Context())
 		require.NoError(t, err)
 
 		// Verify resourceURL was captured
@@ -1502,7 +1502,7 @@ func TestOAuthHandler_RFC8707_ResourceParameter(t *testing.T) {
 		handler.SetBaseURL(server.URL)
 
 		// Trigger metadata discovery
-		_, err := handler.GetServerMetadata(context.Background())
+		_, err := handler.GetServerMetadata(t.Context())
 		require.NoError(t, err)
 
 		// Per RFC 8707 Section 2: "The client SHOULD use the base URI of the API
@@ -1544,7 +1544,7 @@ func TestOAuthHandler_RFC8707_ResourceParameter(t *testing.T) {
 		handler := NewOAuthHandler(config)
 		handler.SetBaseURL(server.URL)
 
-		authURL, err := handler.GetAuthorizationURL(context.Background(), "test-state", "test-challenge")
+		authURL, err := handler.GetAuthorizationURL(t.Context(), "test-state", "test-challenge")
 		require.NoError(t, err)
 
 		// Verify resource parameter is in the URL
@@ -1596,7 +1596,7 @@ func TestOAuthHandler_RFC8707_ResourceParameter(t *testing.T) {
 		handler.SetBaseURL(server.URL)
 		handler.SetExpectedState("test-state")
 
-		err := handler.ProcessAuthorizationResponse(context.Background(), "test-code", "test-state", "test-verifier")
+		err := handler.ProcessAuthorizationResponse(t.Context(), "test-code", "test-state", "test-verifier")
 		require.NoError(t, err)
 
 		// Verify resource parameter was sent in token request
@@ -1646,7 +1646,7 @@ func TestOAuthHandler_RFC8707_ResourceParameter(t *testing.T) {
 		handler := NewOAuthHandler(config)
 		handler.SetBaseURL(server.URL)
 
-		_, err := handler.RefreshToken(context.Background(), "old-refresh-token")
+		_, err := handler.RefreshToken(t.Context(), "old-refresh-token")
 		require.NoError(t, err)
 
 		// Verify resource parameter was sent in refresh request
@@ -1697,7 +1697,7 @@ func TestOAuthHandler_RFC8707_ResourceParameter(t *testing.T) {
 		handler := NewOAuthHandler(config)
 		handler.SetBaseURL(server.URL)
 
-		_, err := handler.RefreshToken(context.Background(), "test-refresh-token")
+		_, err := handler.RefreshToken(t.Context(), "test-refresh-token")
 		require.NoError(t, err)
 
 		// Per RFC 8707 Section 2: resource SHOULD be sent, falling back to baseURL
@@ -1747,7 +1747,7 @@ func TestOAuthHandler_GetServerMetadata_AuthServerReturnsHTML(t *testing.T) {
 	handler := NewOAuthHandler(config)
 	handler.SetBaseURL(mcpServer.URL)
 
-	metadata, err := handler.GetServerMetadata(context.Background())
+	metadata, err := handler.GetServerMetadata(t.Context())
 	require.NoError(t, err, "Should fall back to default endpoints when auth server returns HTML")
 
 	// Verify default endpoints were derived from the auth server URL
@@ -1821,7 +1821,7 @@ func TestOAuthHandler_GetServerMetadata_RejectsDangerousSchemes(t *testing.T) {
 	})
 	handler.SetBaseURL(server.URL)
 
-	metadata, err := handler.GetServerMetadata(context.Background())
+	metadata, err := handler.GetServerMetadata(t.Context())
 	// The hostile endpoint should be rejected; we then fall back to default
 	// endpoints derived from the base URL, so metadata should still be valid.
 	require.NoError(t, err)

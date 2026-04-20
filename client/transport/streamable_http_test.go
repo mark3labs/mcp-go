@@ -1248,7 +1248,7 @@ func TestReadSSEContextCancellation(t *testing.T) {
 	pr, pw := io.Pipe()
 	defer pw.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	c := &StreamableHTTP{}
 
 	handlerCalled := make(chan struct{}, 1)
@@ -1292,11 +1292,11 @@ func TestSendRequestSSEStreamStaysOpen(t *testing.T) {
 	require.NoError(t, err)
 	defer trans.Close()
 
-	err = trans.Start(context.Background())
+	err = trans.Start(t.Context())
 	require.NoError(t, err)
 
 	// Initialize — server responds with SSE event but keeps stream open
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	initReq := JSONRPCRequest{
@@ -1344,7 +1344,7 @@ func TestContinuousListeningGoroutineExitsOnContextCancel(t *testing.T) {
 		trans, err := NewStreamableHTTP(srv.URL, WithContinuousListening())
 		require.NoError(t, err)
 
-		startCtx, cancel := context.WithCancel(context.Background())
+		startCtx, cancel := context.WithCancel(t.Context())
 
 		err = trans.Start(startCtx)
 		require.NoError(t, err)
@@ -1383,10 +1383,10 @@ func TestSendRequestSSEStreamStaysOpenWithContinuousListening(t *testing.T) {
 	require.NoError(t, err)
 	defer trans.Close()
 
-	err = trans.Start(context.Background())
+	err = trans.Start(t.Context())
 	require.NoError(t, err)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	// Initialize — triggers listenForever goroutine which opens a GET SSE
