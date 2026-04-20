@@ -1149,6 +1149,74 @@ type EmbeddedResource struct {
 
 func (EmbeddedResource) isContent() {}
 
+// ToolUseContent represents a tool invocation within a sampling message.
+// It must have Type set to "tool_use".
+type ToolUseContent struct {
+	Annotated
+	// Meta is a metadata object that is reserved by MCP for storing additional information.
+	Meta *Meta  `json:"_meta,omitempty"`
+	Type string `json:"type"` // Must be "tool_use"
+	// The name of the tool being invoked.
+	ToolName string `json:"toolName"`
+	// The arguments to pass to the tool.
+	Arguments any `json:"arguments,omitempty"`
+}
+
+func (ToolUseContent) isContent() {}
+
+// ToolResultContent represents the result of a tool invocation within a sampling message.
+// It must have Type set to "tool_result".
+type ToolResultContent struct {
+	Annotated
+	// Meta is a metadata object that is reserved by MCP for storing additional information.
+	Meta *Meta  `json:"_meta,omitempty"`
+	Type string `json:"type"` // Must be "tool_result"
+	// The name of the tool that produced this result.
+	ToolName string `json:"toolName"`
+	// The content of the tool result.
+	Content []Content `json:"content,omitempty"`
+	// Whether the tool invocation ended in an error.
+	IsError bool `json:"isError,omitempty"`
+}
+
+func (ToolResultContent) isContent() {}
+
+// toolResultContentJSON is a helper type for unmarshaling ToolResultContent.
+type toolResultContentJSON struct {
+	Annotated
+	Meta     *Meta              `json:"_meta,omitempty"`
+	Type     string             `json:"type"`
+	ToolName string             `json:"toolName"`
+	Content  []json.RawMessage  `json:"content,omitempty"`
+	IsError  bool               `json:"isError,omitempty"`
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling for ToolResultContent
+// to handle the nested Content interface slice.
+func (t *ToolResultContent) UnmarshalJSON(data []byte) error {
+	var raw toolResultContentJSON
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	t.Annotated = raw.Annotated
+	t.Meta = raw.Meta
+	t.Type = raw.Type
+	t.ToolName = raw.ToolName
+	t.IsError = raw.IsError
+
+	if len(raw.Content) > 0 {
+		t.Content = make([]Content, 0, len(raw.Content))
+		for _, rawContent := range raw.Content {
+			c, err := UnmarshalContent(rawContent)
+			if err != nil {
+				return fmt.Errorf("unmarshaling tool result content: %w", err)
+			}
+			t.Content = append(t.Content, c)
+		}
+	}
+	return nil
+}
+
 // ModelPreferences represents the server's preferences for model selection,
 // requested of the client during sampling.
 //
@@ -1579,6 +1647,14 @@ func UnmarshalContent(data []byte) (Content, error) {
 		return content, err
 	case ContentTypeResource:
 		var content EmbeddedResource
+		err := json.Unmarshal(data, &content)
+		return content, err
+	case ContentTypeToolUse:
+		var content ToolUseContent
+		err := json.Unmarshal(data, &content)
+		return content, err
+	case ContentTypeToolResult:
+		var content ToolResultContent
 		err := json.Unmarshal(data, &content)
 		return content, err
 	default:

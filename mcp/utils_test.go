@@ -415,6 +415,112 @@ func TestParseContent(t *testing.T) {
 			},
 			expectError: false,
 		},
+		{
+			name: "tool_use content",
+			contentMap: map[string]any{
+				"type":     "tool_use",
+				"toolName": "get_weather",
+				"arguments": map[string]any{
+					"city": "London",
+				},
+			},
+			expected: ToolUseContent{
+				Type:     ContentTypeToolUse,
+				ToolName: "get_weather",
+				Arguments: map[string]any{
+					"city": "London",
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "tool_use content with annotations",
+			contentMap: map[string]any{
+				"type":     "tool_use",
+				"toolName": "search",
+				"annotations": map[string]any{
+					"priority": 1.0,
+				},
+			},
+			expected: ToolUseContent{
+				Type:     ContentTypeToolUse,
+				ToolName: "search",
+				Annotated: Annotated{
+					Annotations: &Annotations{
+						Priority: ptr(1.0),
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "tool_use content missing toolName",
+			contentMap: map[string]any{
+				"type": "tool_use",
+			},
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			name: "tool_result content with nested text",
+			contentMap: map[string]any{
+				"type":     "tool_result",
+				"toolName": "get_weather",
+				"content": []any{
+					map[string]any{
+						"type": "text",
+						"text": "Sunny, 22°C",
+					},
+				},
+			},
+			expected: ToolResultContent{
+				Type:     ContentTypeToolResult,
+				ToolName: "get_weather",
+				Content:  []Content{NewTextContent("Sunny, 22°C")},
+			},
+			expectError: false,
+		},
+		{
+			name: "tool_result content with isError",
+			contentMap: map[string]any{
+				"type":     "tool_result",
+				"toolName": "failing_tool",
+				"isError":  true,
+				"content": []any{
+					map[string]any{
+						"type": "text",
+						"text": "something went wrong",
+					},
+				},
+			},
+			expected: ToolResultContent{
+				Type:     ContentTypeToolResult,
+				ToolName: "failing_tool",
+				IsError:  true,
+				Content:  []Content{NewTextContent("something went wrong")},
+			},
+			expectError: false,
+		},
+		{
+			name: "tool_result content missing toolName",
+			contentMap: map[string]any{
+				"type": "tool_result",
+			},
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			name: "tool_result content without nested content",
+			contentMap: map[string]any{
+				"type":     "tool_result",
+				"toolName": "simple_tool",
+			},
+			expected: ToolResultContent{
+				Type:     ContentTypeToolResult,
+				ToolName: "simple_tool",
+			},
+			expectError: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -468,6 +574,26 @@ func TestParseContent(t *testing.T) {
 					assert.Equal(t, exp.Resource, act.Resource)
 					assert.Equal(t, exp.Annotations, act.Annotations)
 					assert.Equal(t, exp.Meta, act.Meta)
+				case ToolUseContent:
+					act, ok := result.(ToolUseContent)
+					assert.True(t, ok)
+					assert.Equal(t, exp.Type, act.Type)
+					assert.Equal(t, exp.ToolName, act.ToolName)
+					assert.Equal(t, exp.Arguments, act.Arguments)
+					assert.Equal(t, exp.Annotations, act.Annotations)
+					assert.Equal(t, exp.Meta, act.Meta)
+				case ToolResultContent:
+					act, ok := result.(ToolResultContent)
+					assert.True(t, ok)
+					assert.Equal(t, exp.Type, act.Type)
+					assert.Equal(t, exp.ToolName, act.ToolName)
+					assert.Equal(t, exp.IsError, act.IsError)
+					assert.Equal(t, exp.Annotations, act.Annotations)
+					assert.Equal(t, exp.Meta, act.Meta)
+					require.Len(t, act.Content, len(exp.Content))
+					for i := range exp.Content {
+						assert.Equal(t, exp.Content[i], act.Content[i])
+					}
 				default:
 					assert.Equal(t, tt.expected, result)
 				}

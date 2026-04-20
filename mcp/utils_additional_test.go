@@ -602,3 +602,180 @@ func TestNewToolResultErrorFromErr_WithError(t *testing.T) {
 	assert.Contains(t, textContent.Text, "test error")
 	assert.Contains(t, textContent.Text, "underlying error")
 }
+
+// Test ToolUseContent and ToolResultContent
+
+func TestNewToolUseContent(t *testing.T) {
+	args := map[string]any{"city": "London"}
+	result := NewToolUseContent("get_weather", args)
+
+	assert.Equal(t, ContentTypeToolUse, result.Type)
+	assert.Equal(t, "get_weather", result.ToolName)
+	assert.Equal(t, args, result.Arguments)
+}
+
+func TestNewToolResultContent(t *testing.T) {
+	t.Run("with content", func(t *testing.T) {
+		content := []Content{NewTextContent("Sunny, 22°C")}
+		result := NewToolResultContent("get_weather", content, false)
+
+		assert.Equal(t, ContentTypeToolResult, result.Type)
+		assert.Equal(t, "get_weather", result.ToolName)
+		assert.False(t, result.IsError)
+		require.Len(t, result.Content, 1)
+		tc, ok := result.Content[0].(TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "Sunny, 22°C", tc.Text)
+	})
+
+	t.Run("with error", func(t *testing.T) {
+		content := []Content{NewTextContent("tool failed")}
+		result := NewToolResultContent("failing_tool", content, true)
+
+		assert.Equal(t, ContentTypeToolResult, result.Type)
+		assert.Equal(t, "failing_tool", result.ToolName)
+		assert.True(t, result.IsError)
+	})
+
+	t.Run("nil content", func(t *testing.T) {
+		result := NewToolResultContent("simple_tool", nil, false)
+
+		assert.Equal(t, ContentTypeToolResult, result.Type)
+		assert.Equal(t, "simple_tool", result.ToolName)
+		assert.Nil(t, result.Content)
+	})
+}
+
+func TestAsToolUseContent(t *testing.T) {
+	t.Run("valid ToolUseContent", func(t *testing.T) {
+		content := ToolUseContent{Type: ContentTypeToolUse, ToolName: "test_tool"}
+		result, ok := AsToolUseContent(content)
+		assert.True(t, ok)
+		require.NotNil(t, result)
+		assert.Equal(t, "test_tool", result.ToolName)
+	})
+
+	t.Run("invalid type", func(t *testing.T) {
+		content := TextContent{Type: ContentTypeText, Text: "text"}
+		result, ok := AsToolUseContent(content)
+		assert.False(t, ok)
+		assert.Nil(t, result)
+	})
+}
+
+func TestAsToolResultContent(t *testing.T) {
+	t.Run("valid ToolResultContent", func(t *testing.T) {
+		content := ToolResultContent{Type: ContentTypeToolResult, ToolName: "test_tool"}
+		result, ok := AsToolResultContent(content)
+		assert.True(t, ok)
+		require.NotNil(t, result)
+		assert.Equal(t, "test_tool", result.ToolName)
+	})
+
+	t.Run("invalid type", func(t *testing.T) {
+		content := TextContent{Type: ContentTypeText, Text: "text"}
+		result, ok := AsToolResultContent(content)
+		assert.False(t, ok)
+		assert.Nil(t, result)
+	})
+}
+
+func TestUnmarshalContent_ToolUse(t *testing.T) {
+	data := []byte(`{"type":"tool_use","toolName":"get_weather","arguments":{"city":"London"}}`)
+	result, err := UnmarshalContent(data)
+	require.NoError(t, err)
+
+	tc, ok := result.(ToolUseContent)
+	require.True(t, ok)
+	assert.Equal(t, ContentTypeToolUse, tc.Type)
+	assert.Equal(t, "get_weather", tc.ToolName)
+	args, ok := tc.Arguments.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "London", args["city"])
+}
+
+func TestUnmarshalContent_ToolResult(t *testing.T) {
+	t.Run("with nested content", func(t *testing.T) {
+		data := []byte(`{"type":"tool_result","toolName":"get_weather","content":[{"type":"text","text":"Sunny, 22°C"}],"isError":false}`)
+		result, err := UnmarshalContent(data)
+		require.NoError(t, err)
+
+		tc, ok := result.(ToolResultContent)
+		require.True(t, ok)
+		assert.Equal(t, ContentTypeToolResult, tc.Type)
+		assert.Equal(t, "get_weather", tc.ToolName)
+		assert.False(t, tc.IsError)
+		require.Len(t, tc.Content, 1)
+		text, ok := tc.Content[0].(TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "Sunny, 22°C", text.Text)
+	})
+
+	t.Run("with isError", func(t *testing.T) {
+		data := []byte(`{"type":"tool_result","toolName":"broken","isError":true,"content":[{"type":"text","text":"error occurred"}]}`)
+		result, err := UnmarshalContent(data)
+		require.NoError(t, err)
+
+		tc, ok := result.(ToolResultContent)
+		require.True(t, ok)
+		assert.True(t, tc.IsError)
+		assert.Equal(t, "broken", tc.ToolName)
+	})
+
+	t.Run("without content", func(t *testing.T) {
+		data := []byte(`{"type":"tool_result","toolName":"simple_tool"}`)
+		result, err := UnmarshalContent(data)
+		require.NoError(t, err)
+
+		tc, ok := result.(ToolResultContent)
+		require.True(t, ok)
+		assert.Equal(t, "simple_tool", tc.ToolName)
+		assert.Nil(t, tc.Content)
+	})
+}
+
+func TestToolUseContent_JSONRoundTrip(t *testing.T) {
+	original := NewToolUseContent("get_weather", map[string]any{"city": "London"})
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	result, err := UnmarshalContent(data)
+	require.NoError(t, err)
+
+	tc, ok := result.(ToolUseContent)
+	require.True(t, ok)
+	assert.Equal(t, original.Type, tc.Type)
+	assert.Equal(t, original.ToolName, tc.ToolName)
+	args, ok := tc.Arguments.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "London", args["city"])
+}
+
+func TestToolResultContent_JSONRoundTrip(t *testing.T) {
+	original := NewToolResultContent("get_weather", []Content{NewTextContent("Sunny, 22°C")}, false)
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	result, err := UnmarshalContent(data)
+	require.NoError(t, err)
+
+	tc, ok := result.(ToolResultContent)
+	require.True(t, ok)
+	assert.Equal(t, original.Type, tc.Type)
+	assert.Equal(t, original.ToolName, tc.ToolName)
+	assert.Equal(t, original.IsError, tc.IsError)
+	require.Len(t, tc.Content, 1)
+	text, ok := tc.Content[0].(TextContent)
+	require.True(t, ok)
+	assert.Equal(t, "Sunny, 22°C", text.Text)
+}
+
+func TestToolUseContent_IsContent(t *testing.T) {
+	var c Content = ToolUseContent{Type: ContentTypeToolUse, ToolName: "test"}
+	assert.NotNil(t, c)
+}
+
+func TestToolResultContent_IsContent(t *testing.T) {
+	var c Content = ToolResultContent{Type: ContentTypeToolResult, ToolName: "test"}
+	assert.NotNil(t, c)
+}

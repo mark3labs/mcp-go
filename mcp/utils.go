@@ -100,6 +100,16 @@ func AsEmbeddedResource(content any) (*EmbeddedResource, bool) {
 	return asType[EmbeddedResource](content)
 }
 
+// AsToolUseContent attempts to cast the given interface to ToolUseContent
+func AsToolUseContent(content any) (*ToolUseContent, bool) {
+	return asType[ToolUseContent](content)
+}
+
+// AsToolResultContent attempts to cast the given interface to ToolResultContent
+func AsToolResultContent(content any) (*ToolResultContent, bool) {
+	return asType[ToolResultContent](content)
+}
+
 // AsTextResourceContents attempts to cast the given interface to TextResourceContents
 func AsTextResourceContents(content any) (*TextResourceContents, bool) {
 	return asType[TextResourceContents](content)
@@ -264,6 +274,25 @@ func NewEmbeddedResource(resource ResourceContents) EmbeddedResource {
 	return EmbeddedResource{
 		Type:     ContentTypeResource,
 		Resource: resource,
+	}
+}
+
+// NewToolUseContent creates a new ToolUseContent with the given tool name and arguments.
+func NewToolUseContent(toolName string, arguments any) ToolUseContent {
+	return ToolUseContent{
+		Type:      ContentTypeToolUse,
+		ToolName:  toolName,
+		Arguments: arguments,
+	}
+}
+
+// NewToolResultContent creates a new ToolResultContent with the given tool name, content, and error flag.
+func NewToolResultContent(toolName string, content []Content, isError bool) ToolResultContent {
+	return ToolResultContent{
+		Type:     ContentTypeToolResult,
+		ToolName: toolName,
+		Content:  content,
+		IsError:  isError,
 	}
 }
 
@@ -651,6 +680,40 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		}
 
 		c := NewEmbeddedResource(resourceContents)
+		c.Annotations = annotations
+		c.Meta = meta
+		return c, nil
+
+	case ContentTypeToolUse:
+		toolName := ExtractString(contentMap, "toolName")
+		if toolName == "" {
+			return nil, fmt.Errorf("toolName is missing")
+		}
+		arguments := contentMap["arguments"]
+		c := NewToolUseContent(toolName, arguments)
+		c.Annotations = annotations
+		c.Meta = meta
+		return c, nil
+
+	case ContentTypeToolResult:
+		toolName := ExtractString(contentMap, "toolName")
+		if toolName == "" {
+			return nil, fmt.Errorf("toolName is missing")
+		}
+		isError, _ := contentMap["isError"].(bool)
+		var contentItems []Content
+		if rawContent, ok := contentMap["content"].([]any); ok {
+			for _, item := range rawContent {
+				if itemMap, ok := item.(map[string]any); ok {
+					parsed, err := ParseContent(itemMap)
+					if err != nil {
+						return nil, fmt.Errorf("parsing tool result content: %w", err)
+					}
+					contentItems = append(contentItems, parsed)
+				}
+			}
+		}
+		c := NewToolResultContent(toolName, contentItems, isError)
 		c.Annotations = annotations
 		c.Meta = meta
 		return c, nil
