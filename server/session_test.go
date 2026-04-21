@@ -996,7 +996,7 @@ func TestMCPServer_PromptFiltering(t *testing.T) {
 	server.AddPrompt(mcp.Prompt{Name: "deny-prompt-2"}, noopHandler)
 
 	// List prompts
-	ctx := context.Background()
+	ctx := t.Context()
 	response := server.HandleMessage(ctx, []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
@@ -1054,7 +1054,7 @@ func TestMCPServer_MultiplePromptFilters(t *testing.T) {
 	server.AddPrompt(mcp.Prompt{Name: "a-remove-this"}, noopHandler)
 	server.AddPrompt(mcp.Prompt{Name: "b-keep-this"}, noopHandler)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	response := server.HandleMessage(ctx, []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
@@ -1104,7 +1104,7 @@ func TestMCPServer_PromptHandlerMiddleware(t *testing.T) {
 		}, nil
 	})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	response := server.HandleMessage(ctx, []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
@@ -1153,7 +1153,7 @@ func TestMCPServer_MultiplePromptHandlerMiddlewares(t *testing.T) {
 		return &mcp.GetPromptResult{}, nil
 	})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	response := server.HandleMessage(ctx, []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,

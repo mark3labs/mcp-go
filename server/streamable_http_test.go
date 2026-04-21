@@ -2687,7 +2687,7 @@ func TestStreamableHTTP_NotificationUpgradeDoesNotCorruptResponse(t *testing.T) 
 
 			// Every non-empty line must be valid SSE syntax — no raw JSON
 			// objects appended (which would indicate the corruption this test guards against).
-			for _, line := range strings.Split(strings.TrimSpace(bodyStr), "\n") {
+			for line := range strings.SplitSeq(strings.TrimSpace(bodyStr), "\n") {
 				if line == "" {
 					continue
 				}
@@ -2898,7 +2898,7 @@ func TestStreamableHTTP_SessionRequestIDs_CleanedOnGetClose(t *testing.T) {
 			defer ts.Close()
 
 			// Open a GET (SSE) connection with a short-lived context.
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
 			require.NoError(t, err)
 			req.Header.Set("Content-Type", "text/event-stream")
@@ -2925,4 +2925,62 @@ func TestStreamableHTTP_SessionRequestIDs_CleanedOnGetClose(t *testing.T) {
 				"sessionRequestIDs should be empty after GET connection closes")
 		})
 	}
+}
+
+func TestStreamableHTTP_SamplingResponseErrors(t *testing.T) {
+	mcpServer := NewMCPServer("test", "1.0")
+	ts := NewTestStreamableHTTPServer(mcpServer, WithStateful(true))
+	defer ts.Close()
+
+	// Initialize a session to get a valid session ID
+	resp, err := postJSON(ts.URL, initRequest)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	sessionID := resp.Header.Get(HeaderKeySessionID)
+	require.NotEmpty(t, sessionID)
+
+	// A sampling response: has id + result, no method
+	samplingResponse := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      42,
+		"result": map[string]any{
+			"model": "test-model",
+			"role":  "assistant",
+			"content": map[string]any{
+				"type": "text",
+				"text": "hello",
+			},
+		},
+	}
+
+	t.Run("missing session ID returns 400", func(t *testing.T) {
+		// POST without session header
+		resp, err := postJSON(ts.URL, samplingResponse)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		assert.Contains(t, string(body), "Missing session ID")
+	})
+
+	t.Run("invalid session ID returns 404", func(t *testing.T) {
+		resp, err := postSessionJSON(ts.URL, "bogus-session-id", samplingResponse)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+
+	t.Run("valid session but no pending sampling request returns 400", func(t *testing.T) {
+		// Session exists but there is no pending sampling request with id=42
+		resp, err := postSessionJSON(ts.URL, sessionID, samplingResponse)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		assert.Contains(t, string(body), "No pending sampling request")
+	})
 }

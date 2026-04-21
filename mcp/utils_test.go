@@ -528,6 +528,18 @@ func TestParseContent(t *testing.T) {
 			expectError: true,
 		},
 		{
+			name: "tool_result content with non-object entry in content array",
+			contentMap: map[string]any{
+				"type":      "tool_result",
+				"toolUseId": "tu_bad",
+				"content": []any{
+					"not an object",
+				},
+			},
+			expected:    nil,
+			expectError: true,
+		},
+		{
 			name: "tool_result content without nested content",
 			contentMap: map[string]any{
 				"type":      "tool_result",

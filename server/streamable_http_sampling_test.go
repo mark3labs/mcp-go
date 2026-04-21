@@ -98,7 +98,7 @@ func TestStreamableHTTPServer_SamplingErrorHandling(t *testing.T) {
 				"id":      1,
 				"result":  "invalid-result",
 			},
-			expectedStatus: http.StatusInternalServerError,
+			expectedStatus: http.StatusNotFound,
 		},
 	}
 

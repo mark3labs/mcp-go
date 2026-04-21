@@ -191,7 +191,7 @@ func TestMCPServer_ImplementationMetadata(t *testing.T) {
 			messageBytes, err := json.Marshal(message)
 			require.NoError(t, err)
 
-			response := server.HandleMessage(context.Background(), messageBytes)
+			response := server.HandleMessage(t.Context(), messageBytes)
 			tt.validate(t, response)
 		})
 	}
@@ -224,7 +224,7 @@ func TestMCPServer_WithIcons_DefensiveCopy(t *testing.T) {
 	messageBytes, err := json.Marshal(message)
 	require.NoError(t, err)
 
-	response := server.HandleMessage(context.Background(), messageBytes)
+	response := server.HandleMessage(t.Context(), messageBytes)
 	resp, ok := response.(mcp.JSONRPCResponse)
 	require.True(t, ok)
 
@@ -4390,7 +4390,7 @@ func TestMCPServer_Use_AppliesMiddlewareToToolCall(t *testing.T) {
 	})
 	s.Use(countingMW)
 
-	resp := s.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{}}}`)) //nolint:lll
+	resp := s.HandleMessage(t.Context(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{}}}`)) //nolint:lll
 	_, ok := resp.(mcp.JSONRPCResponse)
 	require.True(t, ok)
 	assert.Equal(t, 1, called)
@@ -4413,7 +4413,7 @@ func TestMCPServer_Use_MultipleMiddlewaresExecuteInOrder(t *testing.T) {
 	})
 	s.Use(make("first"), make("second"))
 
-	resp := s.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{}}}`)) //nolint:lll
+	resp := s.HandleMessage(t.Context(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{}}}`)) //nolint:lll
 	_, ok := resp.(mcp.JSONRPCResponse)
 	require.True(t, ok)
 	// first registered runs outermost, so executes first
@@ -4428,13 +4428,11 @@ func TestMCPServer_Use_ConcurrentSafe(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			s.Use(func(next ToolHandlerFunc) ToolHandlerFunc {
 				return next
 			})
-		}()
+		})
 	}
 	wg.Wait()
 }
@@ -4461,7 +4459,7 @@ func TestMCPServer_Use_MiddlewareAppliedToRegularToolAsTask(t *testing.T) {
 	s.Use(countingMW)
 
 	// task param causes handleToolCall to route into executeRegularToolAsTask
-	s.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"hybrid_tool","task":{"ttl":3600}}}`)) //nolint:lll
+	s.HandleMessage(t.Context(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"hybrid_tool","task":{"ttl":3600}}}`)) //nolint:lll
 
 	select {
 	case <-mwCalled:

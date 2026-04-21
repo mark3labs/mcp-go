@@ -708,14 +708,16 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		isError, _ := contentMap["isError"].(bool)
 		var contentItems []Content
 		if rawContent, ok := contentMap["content"].([]any); ok {
-			for _, item := range rawContent {
-				if itemMap, ok := item.(map[string]any); ok {
-					parsed, err := ParseContent(itemMap)
-					if err != nil {
-						return nil, fmt.Errorf("parsing tool result content: %w", err)
-					}
-					contentItems = append(contentItems, parsed)
+			for i, item := range rawContent {
+				itemMap, ok := item.(map[string]any)
+				if !ok {
+					return nil, fmt.Errorf("tool_result content[%d]: expected object, got %T", i, item)
 				}
+				parsed, err := ParseContent(itemMap)
+				if err != nil {
+					return nil, fmt.Errorf("parsing tool result content[%d]: %w", i, err)
+				}
+				contentItems = append(contentItems, parsed)
 			}
 		}
 		c := NewToolResultContent(toolUseID, contentItems, isError)

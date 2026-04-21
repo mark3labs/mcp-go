@@ -812,7 +812,7 @@ func TestSSE_Start_CustomEndpointTimeout(t *testing.T) {
 	defer transport.Close()
 
 	// Use a generous parent context so only the endpoint timeout fires.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
 	start := time.Now()
@@ -1331,7 +1331,7 @@ func TestSSE_SendRequest_Timeout(t *testing.T) {
 		require.NoError(t, err)
 		defer transport.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 
 		err = transport.Start(ctx)
@@ -1339,7 +1339,7 @@ func TestSSE_SendRequest_Timeout(t *testing.T) {
 
 		// Use a context with a deadline far beyond our custom timeout
 		// so only the custom timeout can fire.
-		reqCtx, reqCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		reqCtx, reqCancel := context.WithTimeout(t.Context(), 10*time.Second)
 		defer reqCancel()
 
 		request := JSONRPCRequest{

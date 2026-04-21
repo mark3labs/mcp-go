@@ -566,7 +566,7 @@ func TestStdio_StartGuaranteesReaderReady(t *testing.T) {
 
 	stdio := NewIO(stdoutReader, stdinWriter, stderrReader)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	t.Cleanup(cancel)
 
 	require.NoError(t, stdio.Start(ctx))
@@ -605,7 +605,7 @@ func TestStdio_StartGuaranteesReaderReady(t *testing.T) {
 	// and will be lost — causing the request to time out.
 	const N = 20
 	for i := range N {
-		reqCtx, reqCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		reqCtx, reqCancel := context.WithTimeout(t.Context(), 2*time.Second)
 		req := JSONRPCRequest{
 			JSONRPC: "2.0",
 			ID:      mcp.NewRequestId(int64(i)),
@@ -769,7 +769,7 @@ func TestStdio_Close_ShutsDownHungChild(t *testing.T) {
 			stdio := NewStdio("sh", nil, "-c", tt.script)
 			require.NotNil(t, stdio)
 
-			err := stdio.spawnCommand(context.Background())
+			err := stdio.spawnCommand(t.Context())
 			require.NoError(t, err)
 
 			t.Cleanup(func() {
@@ -944,7 +944,7 @@ func TestStdio_ConcurrentWritesDoNotInterleave(t *testing.T) {
 	require.NoError(t, compileTestServer(mockServerPath))
 
 	stdio := NewStdio(mockServerPath, nil)
-	require.NoError(t, stdio.Start(context.Background()))
+	require.NoError(t, stdio.Start(t.Context()))
 	t.Cleanup(func() { _ = stdio.Close() })
 
 	// Payload well above PIPE_BUF so any interleaving would corrupt the frame.
@@ -963,7 +963,7 @@ func TestStdio_ConcurrentWritesDoNotInterleave(t *testing.T) {
 		go func(g int) {
 			defer wg.Done()
 			for r := range requestsPerGo {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 				id := int64(10_000 + g*requestsPerGo + r)
 				req := JSONRPCRequest{
 					JSONRPC: "2.0",

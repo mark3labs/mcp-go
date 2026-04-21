@@ -291,7 +291,7 @@ func TestTaskToolTracerBullet(t *testing.T) {
 			WithTaskCapabilities(true, true, true),
 		)
 
-		ctx := context.Background()
+		ctx := t.Context()
 		handlerCalled := false
 
 		optionalTool := mcp.NewTool("task_only_optional",
