@@ -199,6 +199,10 @@ type SSEServer struct {
 	keepAlive         bool
 	keepAliveInterval time.Duration
 
+	// protectedResourceMetadata, when non-nil, causes Start to automatically
+	// register /.well-known/oauth-protected-resource on the internal mux.
+	protectedResourceMetadata *OAuthProtectedResourceMetadata
+
 	mu sync.RWMutex
 }
 
@@ -354,11 +358,24 @@ func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
 	return s
 }
 
+// buildHandler returns the http.Handler used by Start and NewTestServer.
+// When protectedResourceMetadata is set it wraps the SSE server in a thin mux
+// that serves /.well-known/oauth-protected-resource alongside it.
+func (s *SSEServer) buildHandler() http.Handler {
+	if s.protectedResourceMetadata == nil {
+		return s
+	}
+	mux := http.NewServeMux()
+	mux.Handle("/.well-known/oauth-protected-resource",
+		NewProtectedResourceMetadataHandler(*s.protectedResourceMetadata))
+	mux.Handle("/", s)
+	return mux
+}
+
 // NewTestServer creates a test server for testing purposes
 func NewTestServer(server *MCPServer, opts ...SSEOption) *httptest.Server {
 	sseServer := NewSSEServer(server, opts...)
-
-	testServer := httptest.NewServer(sseServer)
+	testServer := httptest.NewServer(sseServer.buildHandler())
 	sseServer.baseURL = testServer.URL
 	return testServer
 }
@@ -370,9 +387,12 @@ func (s *SSEServer) Start(addr string) error {
 	if s.srv == nil {
 		s.srv = &http.Server{
 			Addr:    addr,
-			Handler: s,
+			Handler: s.buildHandler(),
 		}
 	} else {
+		if s.protectedResourceMetadata != nil {
+			log.Printf("INFO: WithSSEProtectedResourceMetadata has no effect when WithHTTPServer is used; register the handler manually via NewProtectedResourceMetadataHandler")
+		}
 		if s.srv.Addr == "" {
 			s.srv.Addr = addr
 		} else if s.srv.Addr != addr {

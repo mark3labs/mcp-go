@@ -207,6 +207,10 @@ type StreamableHTTPServer struct {
 	sessionIdleTTL    time.Duration
 	sessionLastActive sync.Map // sessionID → *atomic.Int64 (unix nanos)
 	sweeperCancel     context.CancelFunc
+
+	// protectedResourceMetadata, when non-nil, causes Start to automatically
+	// register /.well-known/oauth-protected-resource on the internal mux
+	protectedResourceMetadata *OAuthProtectedResourceMetadata
 }
 
 // NewStreamableHTTPServer creates a new streamable-http server instance
@@ -257,6 +261,17 @@ func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	}
 }
 
+// buildInternalMux constructs the ServeMux used by Start and NewTestStreamableHTTPServer.
+func (s *StreamableHTTPServer) buildInternalMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.Handle(s.endpointPath, s)
+	if s.protectedResourceMetadata != nil {
+		mux.Handle("/.well-known/oauth-protected-resource",
+			NewProtectedResourceMetadataHandler(*s.protectedResourceMetadata))
+	}
+	return mux
+}
+
 // Start begins serving the http server on the specified address and path
 // (endpointPath). like:
 //
@@ -264,13 +279,14 @@ func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request)
 func (s *StreamableHTTPServer) Start(addr string) error {
 	s.mu.Lock()
 	if s.httpServer == nil {
-		mux := http.NewServeMux()
-		mux.Handle(s.endpointPath, s)
 		s.httpServer = &http.Server{
 			Addr:    addr,
-			Handler: mux,
+			Handler: s.buildInternalMux(),
 		}
 	} else {
+		if s.protectedResourceMetadata != nil {
+			s.logger.Infof("WithProtectedResourceMetadata has no effect when WithStreamableHTTPServer is used; register the handler manually via NewProtectedResourceMetadataHandler")
+		}
 		if s.httpServer.Addr == "" {
 			s.httpServer.Addr = addr
 		} else if s.httpServer.Addr != addr {
@@ -1552,11 +1568,18 @@ func (s *InsecureStatefulSessionIdManager) Terminate(sessionID string) (isNotAll
 	return false, nil
 }
 
+// HTTPHandler returns the fully configured http.Handler that Start would use,
+// including the /.well-known/oauth-protected-resource route when
+// WithProtectedResourceMetadata is set. Useful for embedding the server
+// in a custom http.Server or for integration testing.
+func (s *StreamableHTTPServer) HTTPHandler() http.Handler {
+	return s.buildInternalMux()
+}
+
 // NewTestStreamableHTTPServer creates a test server for testing purposes
 func NewTestStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *httptest.Server {
-	sseServer := NewStreamableHTTPServer(server, opts...)
-	testServer := httptest.NewServer(sseServer)
-	return testServer
+	s := NewStreamableHTTPServer(server, opts...)
+	return httptest.NewServer(s)
 }
 
 // isJSONEmpty reports whether the provided JSON value is "empty":
