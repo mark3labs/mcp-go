@@ -845,7 +845,7 @@ func (s *StreamableHTTPServer) deliverSamplingResponse(w http.ResponseWriter, se
 	// Look up the active session
 	sessionInterface, ok := s.activeSessions.Load(sessionID)
 	if !ok {
-		http.Error(w, "No active session found for the given session ID", http.StatusBadRequest)
+		http.Error(w, "No active session found for the given session ID", http.StatusNotFound)
 		return fmt.Errorf("no active session found for session %s", sessionID)
 	}
 
