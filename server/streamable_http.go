@@ -830,9 +830,8 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w http.ResponseWriter, r *
 	// Find the corresponding session and deliver the response
 	// The response is delivered to the specific session identified by sessionID
 	if err := s.deliverSamplingResponse(w, sessionID, response); err != nil {
-		s.logger.Errorf("Failed to deliver sampling response: %v", err)
 		// HTTP Status code is already set in deliverSamplingResponse, just return here
-		return err
+		return fmt.Errorf("failed to deliver sampling response: %w", err)
 	}
 
 	// Acknowledge receipt
@@ -852,7 +851,7 @@ func (s *StreamableHTTPServer) deliverSamplingResponse(w http.ResponseWriter, se
 
 	session, ok := sessionInterface.(*streamableHttpSession)
 	if !ok {
-		http.Error(w, "Invalid session type for the given session ID", http.StatusBadRequest)
+		http.Error(w, "Invalid session type for the given session ID", http.StatusInternalServerError)
 		return fmt.Errorf("invalid session type for session %s", sessionID)
 	}
 
