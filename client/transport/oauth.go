@@ -129,7 +129,7 @@ type AuthServerMetadata struct {
 	AuthorizationEndpoint             string   `json:"authorization_endpoint"`
 	TokenEndpoint                     string   `json:"token_endpoint"`
 	RegistrationEndpoint              string   `json:"registration_endpoint,omitempty"`
-	JwksURI                           string   `json:"jwks_uri,omitempty"`
+	JWKSURI                           string   `json:"jwks_uri,omitempty"`
 	ScopesSupported                   []string `json:"scopes_supported,omitempty"`
 	ResponseTypesSupported            []string `json:"response_types_supported"`
 	GrantTypesSupported               []string `json:"grant_types_supported,omitempty"`

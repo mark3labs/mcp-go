@@ -814,7 +814,7 @@ func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	path := r.URL.Path
 
-	if s.protectedResourceMetadata != nil && path == "/.well-known/oauth-protected-resource" {
+	if s.protectedResourceMetadata != nil && path == ProtectedResourceMetadataPath(s.protectedResourceMetadata.Resource) {
 		ProtectedResourceMetadataHandler(s.protectedResourceMetadata).ServeHTTP(w, r)
 		return
 	}

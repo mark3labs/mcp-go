@@ -256,6 +256,11 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 
 // ServeHTTP implements the http.Handler interface.
 func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.protectedResourceMetadata != nil && r.URL.Path == ProtectedResourceMetadataPath(s.protectedResourceMetadata.Resource) {
+		ProtectedResourceMetadataHandler(s.protectedResourceMetadata).ServeHTTP(w, r)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPost:
 		s.handlePost(w, r)
@@ -278,7 +283,7 @@ func (s *StreamableHTTPServer) Start(addr string) error {
 		mux := http.NewServeMux()
 		mux.Handle(s.endpointPath, s)
 		if s.protectedResourceMetadata != nil {
-			mux.Handle("/.well-known/oauth-protected-resource", ProtectedResourceMetadataHandler(s.protectedResourceMetadata))
+			mux.Handle(ProtectedResourceMetadataPath(s.protectedResourceMetadata.Resource), ProtectedResourceMetadataHandler(s.protectedResourceMetadata))
 		}
 		s.httpServer = &http.Server{
 			Addr:    addr,

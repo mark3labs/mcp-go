@@ -3,6 +3,8 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"path"
 )
 
 // ProtectedResourceMetadata represents OAuth 2.0 Protected Resource Metadata
@@ -32,8 +34,21 @@ type ProtectedResourceMetadata struct {
 	// information for developers using the protected resource.
 	ResourceDocumentation string `json:"resource_documentation,omitempty"`
 
-	// JwksURI is the URL of the protected resource's JWK Set document.
-	JwksURI string `json:"jwks_uri,omitempty"`
+	// JWKSURI is the URL of the protected resource's JWK Set document.
+	JWKSURI string `json:"jwks_uri,omitempty"`
+}
+
+// ProtectedResourceMetadataPath returns the well-known path for the given
+// resource identifier per RFC 9728 § 3.1. For a resource like
+// "https://mcp.example.com/mcp" it returns
+// "/.well-known/oauth-protected-resource/mcp".
+func ProtectedResourceMetadataPath(resource string) string {
+	const wellKnownPrefix = "/.well-known/oauth-protected-resource"
+	u, err := url.Parse(resource)
+	if err != nil || u.Path == "" || u.Path == "/" {
+		return wellKnownPrefix
+	}
+	return path.Join(wellKnownPrefix, u.Path)
 }
 
 // ProtectedResourceMetadataHandler returns an http.Handler that serves
