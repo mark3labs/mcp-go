@@ -145,6 +145,58 @@ func TestUnmarshalToolWithoutRawSchema(t *testing.T) {
 	assert.Empty(t, toolUnmarshalled.RawInputSchema)
 }
 
+func TestToolWithStringInteger(t *testing.T) {
+	tool := NewTool("buy-item",
+		WithDescription("A tool for buying items"),
+		WithString("itemName",
+			Description("Name of the item to purchase"),
+			Required(),
+		),
+		WithInteger("itemCount",
+			Description("Number of copies of the item to purchase"),
+			Required(),
+			DefaultNumber(1),
+			Min(1),
+			Max(100),
+		),
+	)
+
+	data, err := json.Marshal(tool)
+	require.NoError(t, err)
+
+	var result map[string]any
+	err = json.Unmarshal(data, &result)
+	require.NoError(t, err)
+
+	assert.Equal(t, "buy-item", result["name"])
+	assert.Equal(t, "A tool for buying items", result["description"])
+
+	schema, ok := result["inputSchema"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "object", schema["type"])
+
+	properties, ok := schema["properties"].(map[string]any)
+	require.True(t, ok)
+
+	itemName, ok := properties["itemName"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "string", itemName["type"])
+	assert.Equal(t, "Name of the item to purchase", itemName["description"])
+
+	itemCount, ok := properties["itemCount"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "integer", itemCount["type"])
+	assert.Equal(t, "Number of copies of the item to purchase", itemCount["description"])
+	assert.Equal(t, float64(1), itemCount["default"])
+	assert.Equal(t, float64(1), itemCount["minimum"])
+	assert.Equal(t, float64(100), itemCount["maximum"])
+
+	required, ok := schema["required"].([]any)
+	require.True(t, ok)
+	assert.Contains(t, required, "itemName")
+	assert.Contains(t, required, "itemCount")
+}
+
 func TestToolWithObjectAndArray(t *testing.T) {
 	// Create a tool with both object and array properties
 	tool := NewTool("reading-list",
@@ -1483,6 +1535,46 @@ func TestNewItemsAPICompatibility(t *testing.T) {
 				WithArray("ratings",
 					Description("List of ratings"),
 					WithNumberItems(Min(0), Max(10)),
+				),
+			),
+		},
+		{
+			name: "WithIntegerItems basic",
+			oldTool: NewTool("old-integer-basic",
+				WithDescription("Tool with integer array using old API"),
+				WithArray("scores",
+					Description("List of scores"),
+					Items(map[string]any{
+						"type": "integer",
+					}),
+				),
+			),
+			newTool: NewTool("new-integer-basic",
+				WithDescription("Tool with integer array using new API"),
+				WithArray("scores",
+					Description("List of scores"),
+					WithIntegerItems(),
+				),
+			),
+		},
+		{
+			name: "WithIntegerItems with constraints",
+			oldTool: NewTool("old-integer-with-constraints",
+				WithDescription("Tool with constrained integer array using old API"),
+				WithArray("ratings",
+					Description("List of ratings"),
+					Items(map[string]any{
+						"type":    "integer",
+						"minimum": 0,
+						"maximum": 10,
+					}),
+				),
+			),
+			newTool: NewTool("new-integer-with-constraints",
+				WithDescription("Tool with constrained integer array using new API"),
+				WithArray("ratings",
+					Description("List of ratings"),
+					WithIntegerItems(Min(0), Max(10)),
 				),
 			),
 		},
