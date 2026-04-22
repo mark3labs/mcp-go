@@ -144,6 +144,16 @@ func WithTLSCert(certFile, keyFile string) StreamableHTTPOption {
 	}
 }
 
+// WithProtectedResourceMetadata configures the server to serve OAuth 2.0
+// Protected Resource Metadata (RFC 9728) at /.well-known/oauth-protected-resource.
+//
+// MCP servers MUST implement Protected Resource Metadata per the MCP authorization spec.
+func WithProtectedResourceMetadata(metadata *ProtectedResourceMetadata) StreamableHTTPOption {
+	return func(s *StreamableHTTPServer) {
+		s.protectedResourceMetadata = metadata
+	}
+}
+
 // WithSessionIdleTTL sets the idle TTL for per-session transport state.
 // When enabled, a background sweeper periodically removes entries from
 // per-session stores (tools, resources, resource templates, log levels,
@@ -202,6 +212,8 @@ type StreamableHTTPServer struct {
 
 	tlsCertFile string
 	tlsKeyFile  string
+
+	protectedResourceMetadata *ProtectedResourceMetadata
 
 	sessionIdleTTL    time.Duration
 	sessionLastActive sync.Map // sessionID → *atomic.Int64 (unix nanos)
@@ -265,6 +277,9 @@ func (s *StreamableHTTPServer) Start(addr string) error {
 	if s.httpServer == nil {
 		mux := http.NewServeMux()
 		mux.Handle(s.endpointPath, s)
+		if s.protectedResourceMetadata != nil {
+			mux.Handle("/.well-known/oauth-protected-resource", ProtectedResourceMetadataHandler(s.protectedResourceMetadata))
+		}
 		s.httpServer = &http.Server{
 			Addr:    addr,
 			Handler: mux,
@@ -310,6 +325,17 @@ func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 		return srv.Shutdown(ctx)
 	}
 	return nil
+}
+
+// ProtectedResourceMetadataEndpoint returns an http.Handler that serves
+// the server's Protected Resource Metadata (RFC 9728). Returns nil if no
+// metadata is configured. Use this when mounting the server as an http.Handler
+// to register the well-known endpoint yourself.
+func (s *StreamableHTTPServer) ProtectedResourceMetadataEndpoint() http.Handler {
+	if s.protectedResourceMetadata == nil {
+		return nil
+	}
+	return ProtectedResourceMetadataHandler(s.protectedResourceMetadata)
 }
 
 // --- internal methods ---
