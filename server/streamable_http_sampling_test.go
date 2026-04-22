@@ -6,12 +6,117 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
+
+func TestStreamableHTTPServer_ResponseErrorsUsePendingRequestContext(t *testing.T) {
+	tests := []struct {
+		name          string
+		expectedError string
+		startRequest  func(context.Context, *streamableHttpSession) (int64, <-chan error)
+	}{
+		{
+			name:          "sampling requests keep sampling label",
+			expectedError: "sampling error -32601: Method not found",
+			startRequest: func(ctx context.Context, session *streamableHttpSession) (int64, <-chan error) {
+				errCh := make(chan error, 1)
+				go func() {
+					_, err := session.RequestSampling(ctx, mcp.CreateMessageRequest{})
+					errCh <- err
+				}()
+
+				request := <-session.samplingRequestChan
+				return request.requestID, errCh
+			},
+		},
+		{
+			name:          "elicitation requests use elicitation label",
+			expectedError: "elicitation error -32601: Method not found",
+			startRequest: func(ctx context.Context, session *streamableHttpSession) (int64, <-chan error) {
+				errCh := make(chan error, 1)
+				go func() {
+					_, err := session.RequestElicitation(ctx, mcp.ElicitationRequest{
+						Params: mcp.ElicitationParams{
+							Message:         "Need input",
+							RequestedSchema: map[string]any{"type": "object"},
+						},
+					})
+					errCh <- err
+				}()
+
+				request := <-session.elicitationRequestChan
+				return request.requestID, errCh
+			},
+		},
+		{
+			name:          "roots requests use roots label",
+			expectedError: "roots/list error -32601: Method not found",
+			startRequest: func(ctx context.Context, session *streamableHttpSession) (int64, <-chan error) {
+				errCh := make(chan error, 1)
+				go func() {
+					_, err := session.ListRoots(ctx, mcp.ListRootsRequest{})
+					errCh <- err
+				}()
+
+				request := <-session.rootsRequestChan
+				return request.requestID, errCh
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mcpServer := NewMCPServer("test-server", "1.0.0")
+			httpServer := NewStreamableHTTPServer(mcpServer, WithStateLess(true))
+
+			sessionID := "test-session"
+			session := newStreamableHttpSession(sessionID, nil, nil, nil, nil)
+			httpServer.activeSessions.Store(sessionID, session)
+
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+
+			requestID, errCh := tt.startRequest(ctx, session)
+
+			recorder := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(nil))
+			req.Header.Set(HeaderKeySessionID, sessionID)
+
+			err := httpServer.handleSamplingResponse(recorder, req, struct {
+				ID     json.RawMessage `json:"id"`
+				Result json.RawMessage `json:"result,omitempty"`
+				Error  json.RawMessage `json:"error,omitempty"`
+				Method mcp.MCPMethod   `json:"method,omitempty"`
+			}{
+				ID:    []byte(strconv.FormatInt(requestID, 10)),
+				Error: []byte(`{"code":-32601,"message":"Method not found"}`),
+			})
+			if err != nil {
+				t.Fatalf("handleSamplingResponse returned error: %v", err)
+			}
+			if recorder.Code != http.StatusAccepted {
+				t.Fatalf("expected status %d, got %d", http.StatusAccepted, recorder.Code)
+			}
+
+			select {
+			case requestErr := <-errCh:
+				if requestErr == nil {
+					t.Fatal("expected request error, got nil")
+				}
+				if requestErr.Error() != tt.expectedError {
+					t.Fatalf("expected error %q, got %q", tt.expectedError, requestErr.Error())
+				}
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for request error")
+			}
+		})
+	}
+}
 
 // TestStreamableHTTPServer_SamplingBasic tests basic sampling session functionality
 func TestStreamableHTTPServer_SamplingBasic(t *testing.T) {
