@@ -165,6 +165,7 @@ func NewStreamableHTTP(serverURL string, options ...StreamableHTTPCOption) (*Str
 		// Extract base URL from server URL for metadata discovery
 		baseURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
 		smc.oauthHandler.SetBaseURL(baseURL)
+		smc.oauthHandler.SetServerURL(parsedURL.String())
 	}
 
 	return smc, nil

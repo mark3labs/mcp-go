@@ -143,7 +143,8 @@ type OAuthHandler struct {
 	serverMetadata   *AuthServerMetadata
 	metadataFetchErr error
 	metadataOnce     sync.Once
-	baseURL          string
+	baseURL          string // scheme://host for well-known discovery
+	serverURL        string // full MCP server URL including path
 	resourceURI      string // RFC 8707 resource parameter for token audience binding
 
 	mu            sync.RWMutex // Protects expectedState
@@ -318,9 +319,26 @@ func (h *OAuthHandler) GetResourceURI() string {
 	return h.resourceURI
 }
 
-// SetBaseURL sets the base URL for the API server
+// SetBaseURL sets the base URL (scheme://host) for well-known metadata discovery.
 func (h *OAuthHandler) SetBaseURL(baseURL string) {
 	h.baseURL = baseURL
+}
+
+// SetServerURL sets the full MCP server URL including path.
+// This is used as the default RFC 8707 resource parameter when Protected
+// Resource Metadata is not available.
+func (h *OAuthHandler) SetServerURL(serverURL string) {
+	h.serverURL = serverURL
+}
+
+// defaultResourceURI returns the best available resource URI when Protected
+// Resource Metadata is not available. Prefers the full server URL (including
+// path) over the base URL (scheme://host only).
+func (h *OAuthHandler) defaultResourceURI() string {
+	if h.serverURL != "" {
+		return h.serverURL
+	}
+	return h.baseURL
 }
 
 // GetExpectedState returns the expected state value (for testing purposes)
@@ -374,9 +392,7 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		// If AuthServerMetadataURL is explicitly provided, use it directly
 		if h.config.AuthServerMetadataURL != "" {
 			h.fetchMetadataFromURL(ctx, h.config.AuthServerMetadataURL)
-			if h.baseURL != "" {
-				h.resourceURI = h.baseURL
-			}
+			h.resourceURI = h.defaultResourceURI()
 			return
 		}
 
@@ -408,7 +424,7 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 
 		// If we can't get the protected resource metadata, try OAuth Authorization Server discovery
 		if resp.StatusCode != http.StatusOK {
-			h.resourceURI = baseURL
+			h.resourceURI = h.defaultResourceURI()
 			h.fetchMetadataFromURL(ctx, baseURL+"/.well-known/oauth-authorization-server")
 			if h.serverMetadata != nil {
 				return
@@ -431,11 +447,11 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		}
 
 		// Store the resource URI from PRM for RFC 8707 resource parameter.
-		// Fall back to baseURL if not present in the metadata.
+		// Fall back to the full server URL if not present in the metadata.
 		if protectedResource.Resource != "" {
 			h.resourceURI = protectedResource.Resource
 		} else {
-			h.resourceURI = baseURL
+			h.resourceURI = h.defaultResourceURI()
 		}
 
 		// If no authorization servers are specified, fall back to default endpoints

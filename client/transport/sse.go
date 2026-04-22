@@ -116,6 +116,7 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 		// Extract base URL from server URL for metadata discovery
 		baseURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
 		smc.oauthHandler.SetBaseURL(baseURL)
+		smc.oauthHandler.SetServerURL(parsedURL.String())
 	}
 
 	return smc, nil
