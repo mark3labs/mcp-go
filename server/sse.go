@@ -199,6 +199,8 @@ type SSEServer struct {
 	keepAlive         bool
 	keepAliveInterval time.Duration
 
+	protectedResourceMetadata *ProtectedResourceMetadata
+
 	mu sync.RWMutex
 }
 
@@ -312,6 +314,16 @@ func WithKeepAliveInterval(keepAliveInterval time.Duration) SSEOption {
 func WithKeepAlive(keepAlive bool) SSEOption {
 	return func(s *SSEServer) {
 		s.keepAlive = keepAlive
+	}
+}
+
+// WithSSEProtectedResourceMetadata configures the SSE server to serve OAuth 2.0
+// Protected Resource Metadata (RFC 9728) at /.well-known/oauth-protected-resource.
+//
+// MCP servers MUST implement Protected Resource Metadata per the MCP authorization spec.
+func WithSSEProtectedResourceMetadata(metadata *ProtectedResourceMetadata) SSEOption {
+	return func(s *SSEServer) {
+		s.protectedResourceMetadata = metadata
 	}
 }
 
@@ -779,6 +791,17 @@ func (s *SSEServer) MessageHandler() http.Handler {
 	return http.HandlerFunc(s.handleMessage)
 }
 
+// ProtectedResourceMetadataEndpoint returns an http.Handler that serves
+// the server's Protected Resource Metadata (RFC 9728). Returns nil if no
+// metadata is configured. Use this when mounting the server handlers
+// individually to register the well-known endpoint yourself.
+func (s *SSEServer) ProtectedResourceMetadataEndpoint() http.Handler {
+	if s.protectedResourceMetadata == nil {
+		return nil
+	}
+	return ProtectedResourceMetadataHandler(s.protectedResourceMetadata)
+}
+
 // ServeHTTP implements the http.Handler interface.
 func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.dynamicBasePathFunc != nil {
@@ -790,6 +813,12 @@ func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := r.URL.Path
+
+	if s.protectedResourceMetadata != nil && path == "/.well-known/oauth-protected-resource" {
+		ProtectedResourceMetadataHandler(s.protectedResourceMetadata).ServeHTTP(w, r)
+		return
+	}
+
 	// Use exact path matching rather than Contains
 	ssePath := s.CompleteSsePath()
 	if ssePath != "" && path == ssePath {
