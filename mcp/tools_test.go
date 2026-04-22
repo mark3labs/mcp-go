@@ -162,36 +162,37 @@ func TestToolWithStringInteger(t *testing.T) {
 	)
 
 	data, err := json.Marshal(tool)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	var result map[string]any
 	err = json.Unmarshal(data, &result)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	assert.Equal(t, "buy-item", result["name"])
 	assert.Equal(t, "A tool for buying items", result["description"])
 
 	schema, ok := result["inputSchema"].(map[string]any)
-	assert.True(t, ok)
+	require.True(t, ok)
 	assert.Equal(t, "object", schema["type"])
 
 	properties, ok := schema["properties"].(map[string]any)
-	assert.True(t, ok)
+	require.True(t, ok)
 
 	itemName, ok := properties["itemName"].(map[string]any)
-	assert.True(t, ok)
+	require.True(t, ok)
 	assert.Equal(t, "string", itemName["type"])
 	assert.Equal(t, "Name of the item to purchase", itemName["description"])
 
 	itemCount, ok := properties["itemCount"].(map[string]any)
-	assert.True(t, ok)
+	require.True(t, ok)
 	assert.Equal(t, "integer", itemCount["type"])
 	assert.Equal(t, "Number of copies of the item to purchase", itemCount["description"])
 	assert.Equal(t, float64(1), itemCount["default"])
 	assert.Equal(t, float64(1), itemCount["minimum"])
 	assert.Equal(t, float64(100), itemCount["maximum"])
 
-	required := schema["required"].([]any)
+	required, ok := schema["required"].([]any)
+	require.True(t, ok)
 	assert.Contains(t, required, "itemName")
 	assert.Contains(t, required, "itemCount")
 }

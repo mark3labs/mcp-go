@@ -1437,6 +1437,10 @@ func WithIntegerItems(opts ...PropertyOption) PropertyOption {
 			opt(itemSchema)
 		}
 
+		if required, ok := itemSchema["required"].(bool); ok && required {
+			delete(itemSchema, "required")
+		}
+
 		schema["items"] = itemSchema
 	}
 }
