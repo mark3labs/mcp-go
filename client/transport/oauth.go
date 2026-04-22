@@ -144,6 +144,7 @@ type OAuthHandler struct {
 	metadataFetchErr error
 	metadataOnce     sync.Once
 	baseURL          string
+	resourceURI      string // RFC 8707 resource parameter for token audience binding
 
 	mu            sync.RWMutex // Protects expectedState
 	expectedState string       // Expected state value for CSRF protection
@@ -216,6 +217,11 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken string) (*
 	data.Set("client_id", h.config.ClientID)
 	if h.config.ClientSecret != "" {
 		data.Set("client_secret", h.config.ClientSecret)
+	}
+
+	// RFC 8707: include the resource parameter to bind the token to the target MCP server
+	if h.resourceURI != "" {
+		data.Set("resource", h.resourceURI)
 	}
 
 	req, err := http.NewRequestWithContext(
@@ -305,6 +311,13 @@ func (h *OAuthHandler) GetClientSecret() string {
 	return h.config.ClientSecret
 }
 
+// GetResourceURI returns the RFC 8707 resource URI for the target MCP server.
+// This is populated during metadata discovery from the Protected Resource Metadata
+// document, or falls back to the base URL of the MCP server.
+func (h *OAuthHandler) GetResourceURI() string {
+	return h.resourceURI
+}
+
 // SetBaseURL sets the base URL for the API server
 func (h *OAuthHandler) SetBaseURL(baseURL string) {
 	h.baseURL = baseURL
@@ -361,6 +374,9 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		// If AuthServerMetadataURL is explicitly provided, use it directly
 		if h.config.AuthServerMetadataURL != "" {
 			h.fetchMetadataFromURL(ctx, h.config.AuthServerMetadataURL)
+			if h.baseURL != "" {
+				h.resourceURI = h.baseURL
+			}
 			return
 		}
 
@@ -392,6 +408,7 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 
 		// If we can't get the protected resource metadata, try OAuth Authorization Server discovery
 		if resp.StatusCode != http.StatusOK {
+			h.resourceURI = baseURL
 			h.fetchMetadataFromURL(ctx, baseURL+"/.well-known/oauth-authorization-server")
 			if h.serverMetadata != nil {
 				return
@@ -411,6 +428,14 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		if err := json.NewDecoder(resp.Body).Decode(&protectedResource); err != nil {
 			h.metadataFetchErr = fmt.Errorf("failed to decode protected resource response: %w", err)
 			return
+		}
+
+		// Store the resource URI from PRM for RFC 8707 resource parameter.
+		// Fall back to baseURL if not present in the metadata.
+		if protectedResource.Resource != "" {
+			h.resourceURI = protectedResource.Resource
+		} else {
+			h.resourceURI = baseURL
 		}
 
 		// If no authorization servers are specified, fall back to default endpoints
@@ -654,6 +679,11 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 		data.Set("code_verifier", codeVerifier)
 	}
 
+	// RFC 8707: include the resource parameter to bind the token to the target MCP server
+	if h.resourceURI != "" {
+		data.Set("resource", h.resourceURI)
+	}
+
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
@@ -732,6 +762,11 @@ func (h *OAuthHandler) GetAuthorizationURL(ctx context.Context, state, codeChall
 	if h.config.PKCEEnabled && codeChallenge != "" {
 		params.Set("code_challenge", codeChallenge)
 		params.Set("code_challenge_method", "S256")
+	}
+
+	// RFC 8707: include the resource parameter to bind the token to the target MCP server
+	if h.resourceURI != "" {
+		params.Set("resource", h.resourceURI)
 	}
 
 	return metadata.AuthorizationEndpoint + "?" + params.Encode(), nil
