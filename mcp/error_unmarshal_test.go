@@ -8,6 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestJSONRPCErrorDetails_UnmarshalJSON verifies that JSONRPCErrorDetails handles
+// both spec-compliant object errors and non-compliant string errors from servers like Slack.
 func TestJSONRPCErrorDetails_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -61,7 +63,8 @@ func TestJSONRPCErrorDetails_UnmarshalJSON(t *testing.T) {
 	}
 }
 
-// Verify that a full JSON-RPC response with a string error field unmarshals correctly.
+// TestJSONRPCResponse_StringError verifies that a full JSON-RPC response with a
+// string error field unmarshals correctly when using JSONRPCErrorDetails.
 func TestJSONRPCResponse_StringError(t *testing.T) {
 	raw := `{"jsonrpc":"2.0","id":1,"error":"cursor_invalid"}`
 
