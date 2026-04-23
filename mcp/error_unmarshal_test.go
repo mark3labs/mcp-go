@@ -3,6 +3,9 @@ package mcp
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestJSONRPCErrorDetails_UnmarshalJSON(t *testing.T) {
@@ -48,20 +51,12 @@ func TestJSONRPCErrorDetails_UnmarshalJSON(t *testing.T) {
 			var details JSONRPCErrorDetails
 			err := json.Unmarshal([]byte(tt.input), &details)
 			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("expected error, got nil")
-				}
+				require.Error(t, err)
 				return
 			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if details.Code != tt.wantCode {
-				t.Errorf("code = %d, want %d", details.Code, tt.wantCode)
-			}
-			if details.Message != tt.wantMessage {
-				t.Errorf("message = %q, want %q", details.Message, tt.wantMessage)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantCode, details.Code)
+			assert.Equal(t, tt.wantMessage, details.Message)
 		})
 	}
 }
@@ -71,22 +66,14 @@ func TestJSONRPCResponse_StringError(t *testing.T) {
 	raw := `{"jsonrpc":"2.0","id":1,"error":"cursor_invalid"}`
 
 	type response struct {
-		JSONRPC string                `json:"jsonrpc"`
-		ID      int                   `json:"id"`
-		Error   *JSONRPCErrorDetails  `json:"error"`
+		JSONRPC string               `json:"jsonrpc"`
+		ID      int                  `json:"id"`
+		Error   *JSONRPCErrorDetails `json:"error"`
 	}
 
 	var resp response
-	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
-		t.Fatalf("unmarshal failed: %v", err)
-	}
-	if resp.Error == nil {
-		t.Fatal("expected error to be non-nil")
-	}
-	if resp.Error.Code != INTERNAL_ERROR {
-		t.Errorf("code = %d, want %d", resp.Error.Code, INTERNAL_ERROR)
-	}
-	if resp.Error.Message != "cursor_invalid" {
-		t.Errorf("message = %q, want %q", resp.Error.Message, "cursor_invalid")
-	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &resp))
+	require.NotNil(t, resp.Error)
+	assert.Equal(t, INTERNAL_ERROR, resp.Error.Code)
+	assert.Equal(t, "cursor_invalid", resp.Error.Message)
 }
