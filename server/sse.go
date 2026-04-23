@@ -406,6 +406,21 @@ func (s *SSEServer) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+// CloseSessions manually closes all active SSE sessions without stopping
+// the HTTP server. This method is useful when the SSE server is embedded
+// within another HTTP service and you need to terminate SSE connections
+// independently from the main server lifecycle.
+func (s *SSEServer) CloseSessions(ctx context.Context) error {
+	s.sessions.Range(func(key, value any) bool {
+		if session, ok := value.(*sseSession); ok {
+			close(session.done)
+		}
+		s.sessions.Delete(key)
+		return true
+	})
+	return nil
+}
+
 // handleSSE handles incoming SSE connection requests.
 // It sets up appropriate headers and creates a new session for the client.
 func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
