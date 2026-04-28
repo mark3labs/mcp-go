@@ -634,6 +634,23 @@ func (s *MCPServer) DeleteResources(uris ...string) {
 	}
 }
 
+// ListResources returns a copy of the registered resources map.
+func (s *MCPServer) ListResources() map[string]ServerResource {
+	s.resourcesMu.RLock()
+	defer s.resourcesMu.RUnlock()
+	if len(s.resources) == 0 {
+		return nil
+	}
+	resourcesCopy := make(map[string]ServerResource, len(s.resources))
+	for uri, entry := range s.resources {
+		resourcesCopy[uri] = ServerResource{
+			Resource: entry.resource,
+			Handler:  entry.handler,
+		}
+	}
+	return resourcesCopy
+}
+
 // RemoveResource removes a resource from the server
 func (s *MCPServer) RemoveResource(uri string) {
 	s.resourcesMu.Lock()
@@ -735,6 +752,23 @@ func (s *MCPServer) DeletePrompts(names ...string) {
 		// Send notification to all initialized sessions
 		s.SendNotificationToAllClients(mcp.MethodNotificationPromptsListChanged, nil)
 	}
+}
+
+// ListPrompts returns a copy of the registered prompts map.
+func (s *MCPServer) ListPrompts() map[string]ServerPrompt {
+	s.promptsMu.RLock()
+	defer s.promptsMu.RUnlock()
+	if len(s.prompts) == 0 {
+		return nil
+	}
+	promptsCopy := make(map[string]ServerPrompt, len(s.prompts))
+	for name, prompt := range s.prompts {
+		promptsCopy[name] = ServerPrompt{
+			Prompt:  prompt,
+			Handler: s.promptHandlers[name],
+		}
+	}
+	return promptsCopy
 }
 
 // AddTool registers a new tool and its handler
