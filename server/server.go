@@ -834,10 +834,20 @@ func (s *MCPServer) AddTaskTools(taskTools ...ServerTaskTool) {
 
 // SetTools replaces all existing tools with the provided list
 func (s *MCPServer) SetTools(tools ...ServerTool) {
+	s.implicitlyRegisterToolCapabilities()
+
 	s.toolsMu.Lock()
 	s.tools = make(map[string]ServerTool, len(tools))
+	for _, entry := range tools {
+		s.tools[entry.Tool.Name] = entry
+	}
 	s.toolsMu.Unlock()
-	s.AddTools(tools...)
+
+	// When the list of available tools changes, servers that declared the listChanged capability SHOULD send a notification.
+	if s.capabilities.tools.listChanged {
+		// Send notification to all initialized sessions
+		s.SendNotificationToAllClients(mcp.MethodNotificationToolsListChanged, nil)
+	}
 }
 
 // GetTool retrieves the specified tool
