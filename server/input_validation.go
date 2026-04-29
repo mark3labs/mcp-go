@@ -3,7 +3,10 @@ package server
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -14,22 +17,24 @@ import (
 )
 
 // inputSchemaValidator compiles and caches JSON Schema validators for tool
-// input schemas. Compilation is performed lazily on first use of a given tool
-// and the resulting schema is cached for the lifetime of the server. Cache
-// invalidation is handled by AddTools/SetTools/DeleteTools by removing entries
-// from the cache.
+// input schemas. Compilation is performed lazily on first use and the
+// resulting schema is cached for the lifetime of the server.
+//
+// The cache is two-level: tool name -> schema digest -> compiled entry. Two
+// sessions can expose the same tool name with different schemas (via
+// SessionWithTools) and a global tool can be re-registered with a different
+// schema; each distinct schema is compiled once. Name-level invalidation
+// drops every entry registered for that name in a single map delete, which
+// keeps DeleteTools / SetTools cleanup cheap.
 type inputSchemaValidator struct {
 	mu     sync.RWMutex
-	cached map[string]*cachedToolSchema
+	cached map[string]map[string]*cachedToolSchema
 }
 
-// cachedToolSchema records the result of compiling a tool's input schema.
-// schemaJSON is the canonical JSON used to compile the schema; if it changes
-// between calls (for example because the tool was re-registered with a
-// different schema), the cached entry is rebuilt. compileErr is recorded so
-// that repeatedly invalid schemas don't get recompiled on every call.
+// cachedToolSchema records the result of compiling a single (toolName,
+// schemaDigest) pair. compileErr is stored alongside the compiled schema so
+// that a schema that fails to compile is not recompiled on every call.
 type cachedToolSchema struct {
-	schemaJSON []byte
 	compiled   *jsonschema.Schema
 	compileErr error
 }
@@ -37,7 +42,7 @@ type cachedToolSchema struct {
 // newInputSchemaValidator returns a fresh validator with an empty cache.
 func newInputSchemaValidator() *inputSchemaValidator {
 	return &inputSchemaValidator{
-		cached: make(map[string]*cachedToolSchema),
+		cached: make(map[string]map[string]*cachedToolSchema),
 	}
 }
 
@@ -88,31 +93,49 @@ func (v *inputSchemaValidator) invalidateAll() {
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	v.cached = make(map[string]*cachedToolSchema)
+	v.cached = make(map[string]map[string]*cachedToolSchema)
 }
 
 func (v *inputSchemaValidator) lookupOrCompile(toolName string, schemaJSON []byte) (*jsonschema.Schema, error) {
+	digest := schemaDigest(schemaJSON)
+
 	v.mu.RLock()
-	entry, ok := v.cached[toolName]
-	v.mu.RUnlock()
-	if ok && bytes.Equal(entry.schemaJSON, schemaJSON) {
-		return entry.compiled, entry.compileErr
+	if perName, ok := v.cached[toolName]; ok {
+		if entry, ok := perName[digest]; ok {
+			v.mu.RUnlock()
+			return entry.compiled, entry.compileErr
+		}
 	}
+	v.mu.RUnlock()
 
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	// Re-check under the write lock in case another goroutine compiled it.
-	if entry, ok := v.cached[toolName]; ok && bytes.Equal(entry.schemaJSON, schemaJSON) {
+	perName, ok := v.cached[toolName]
+	if !ok {
+		perName = make(map[string]*cachedToolSchema)
+		v.cached[toolName] = perName
+	}
+	if entry, ok := perName[digest]; ok {
 		return entry.compiled, entry.compileErr
 	}
 
 	compiled, compileErr := compileSchema(toolName, schemaJSON)
-	v.cached[toolName] = &cachedToolSchema{
-		schemaJSON: append([]byte(nil), schemaJSON...),
+	perName[digest] = &cachedToolSchema{
 		compiled:   compiled,
 		compileErr: compileErr,
 	}
 	return compiled, compileErr
+}
+
+// schemaDigest returns a stable hex-encoded SHA-256 of the canonical schema
+// bytes. We use a digest rather than the raw bytes as a map key so the cache
+// stays cheap to look up even for large schemas; collisions are not a
+// security concern because both sides of the comparison are produced by the
+// same mcp-go server process.
+func schemaDigest(schemaJSON []byte) string {
+	sum := sha256.Sum256(schemaJSON)
+	return hex.EncodeToString(sum[:])
 }
 
 // schemaJSONFor returns the JSON representation of the tool's input schema.
@@ -180,7 +203,7 @@ func normalizeArgumentsForValidation(rawArgs any) (any, error) {
 // violation is rendered as `<path>: <message>` and joined with semicolons.
 func formatValidationError(err error) error {
 	var verr *jsonschema.ValidationError
-	if !asValidationError(err, &verr) {
+	if !errors.As(err, &verr) {
 		return fmt.Errorf("input schema validation failed: %w", err)
 	}
 	parts := collectValidationMessages(verr)
@@ -188,25 +211,6 @@ func formatValidationError(err error) error {
 		return fmt.Errorf("input schema validation failed: %s", verr.Error())
 	}
 	return fmt.Errorf("input schema validation failed: %s", strings.Join(parts, "; "))
-}
-
-// asValidationError mirrors errors.As but kept tiny to avoid pulling in extra
-// dependencies. The validator either returns *jsonschema.ValidationError
-// directly or wraps it; both are handled here.
-func asValidationError(err error, target **jsonschema.ValidationError) bool {
-	for cur := err; cur != nil; {
-		if v, ok := cur.(*jsonschema.ValidationError); ok {
-			*target = v
-			return true
-		}
-		type unwrap interface{ Unwrap() error }
-		uw, ok := cur.(unwrap)
-		if !ok {
-			return false
-		}
-		cur = uw.Unwrap()
-	}
-	return false
 }
 
 // collectValidationMessages walks the leaf causes of a validation error tree

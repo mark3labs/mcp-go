@@ -74,144 +74,175 @@ func requireToolSuccess(t *testing.T, resp mcp.JSONRPCMessage) *mcp.CallToolResu
 	return result
 }
 
-// TestInputSchemaValidation_DisabledByDefault is the regression guard: the
-// kubernetes_list / cursor scenario from the bug report. With validation
-// disabled, the server silently accepts the unknown `cursor` parameter, which
-// is exactly what hides typos from the model today.
-func TestInputSchemaValidation_DisabledByDefault(t *testing.T) {
-	srv := NewMCPServer("test", "1.0.0")
-	srv.AddTool(fakeListTool(), okHandler)
-
-	resp := callTool(t, srv, "kubernetes_list", map[string]any{
-		"resourceType": "pods",
-		"cursor":       "abc",
-	})
-	requireToolSuccess(t, resp)
-}
-
-// TestInputSchemaValidation_RejectsUnknownProperty is the fix for the bug
-// report: with validation enabled and additionalProperties: false, an unknown
-// `cursor` parameter must surface as a tool execution error so the model can
-// retry with the correct `continue` parameter.
-func TestInputSchemaValidation_RejectsUnknownProperty(t *testing.T) {
-	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
-	srv.AddTool(fakeListTool(), okHandler)
-
-	resp := callTool(t, srv, "kubernetes_list", map[string]any{
-		"resourceType": "pods",
-		"cursor":       "abc",
-	})
-	requireToolErrorContaining(t, resp, "cursor")
-}
-
-// TestInputSchemaValidation_RejectsMissingRequired covers the second SEP-1303
-// scenario: a missing required argument should also become a tool execution
-// error rather than the JSON-RPC -32602 protocol error path.
-func TestInputSchemaValidation_RejectsMissingRequired(t *testing.T) {
-	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
-	srv.AddTool(fakeListTool(), okHandler)
-
-	resp := callTool(t, srv, "kubernetes_list", map[string]any{
-		"continue": "abc",
-	})
-	requireToolErrorContaining(t, resp, "resourceType")
-}
-
-// TestInputSchemaValidation_RejectsWrongType makes sure type mismatches (here,
-// passing a number where a string is required) are caught.
-func TestInputSchemaValidation_RejectsWrongType(t *testing.T) {
-	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
-	srv.AddTool(fakeListTool(), okHandler)
-
-	resp := callTool(t, srv, "kubernetes_list", map[string]any{
-		"resourceType": 123,
-	})
-	requireToolErrorContaining(t, resp, "resourceType")
-}
-
-// TestInputSchemaValidation_AcceptsValidCall is the happy path: a request
-// that satisfies the schema reaches the handler and returns its result.
-func TestInputSchemaValidation_AcceptsValidCall(t *testing.T) {
-	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
-	called := false
-	srv.AddTool(fakeListTool(), func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		called = true
-		assert.Equal(t, "pods", req.GetString("resourceType", ""))
-		assert.Equal(t, "abc", req.GetString("continue", ""))
-		return mcp.NewToolResultText("ok"), nil
-	})
-
-	resp := callTool(t, srv, "kubernetes_list", map[string]any{
-		"resourceType": "pods",
-		"continue":     "abc",
-	})
-	requireToolSuccess(t, resp)
-	assert.True(t, called, "handler was not invoked for a valid call")
-}
-
-// TestInputSchemaValidation_AllowsAdditionalWhenSchemaPermits documents that
-// validation only rejects unknown properties when the tool author has marked
-// the schema strict. Tools that omit additionalProperties: false continue to
-// accept extras, preserving back-compat with permissive schemas.
-func TestInputSchemaValidation_AllowsAdditionalWhenSchemaPermits(t *testing.T) {
-	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
-	tool := mcp.NewTool("permissive",
-		mcp.WithString("name", mcp.Required()),
-	)
-	srv.AddTool(tool, okHandler)
-
-	resp := callTool(t, srv, "permissive", map[string]any{
-		"name":  "alice",
-		"extra": "field",
-	})
-	requireToolSuccess(t, resp)
-}
-
-// TestInputSchemaValidation_BrokenSchemaIsNoOp guards against a malformed
-// schema accidentally blocking every call to that tool. A schema that fails
-// to compile should be silently skipped (and the handler invoked normally),
-// not surfaced as a permanent validation error to the model.
-func TestInputSchemaValidation_BrokenSchemaIsNoOp(t *testing.T) {
-	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
-	tool := mcp.Tool{
-		Name:           "broken",
-		Description:    "Tool with malformed schema",
-		RawInputSchema: json.RawMessage(`{"type": "object", "properties": {`), // unterminated JSON
-	}
-	srv.AddTool(tool, okHandler)
-
-	resp := callTool(t, srv, "broken", map[string]any{"anything": true})
-	requireToolSuccess(t, resp)
-}
-
-// TestInputSchemaValidation_RawInputSchema verifies that schemas supplied via
-// RawInputSchema (the alternative to the structured InputSchema) participate
-// in validation just like structured ones.
-func TestInputSchemaValidation_RawInputSchema(t *testing.T) {
-	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
-	tool := mcp.Tool{
+// TestInputSchemaValidation covers the matrix of validation outcomes for a
+// range of tools: strict, permissive, no schema, raw schema, broken schema.
+// Each row exercises exactly one server lifecycle, registers the listed
+// tools, makes a single tool call, and asserts on either success or an error
+// containing a specific substring.
+//
+// Scenarios that need multi-step setup (cache invalidation,
+// recompilation-on-schema-change) live in their own dedicated tests.
+func TestInputSchemaValidation(t *testing.T) {
+	rawStrictTool := mcp.Tool{
 		Name:        "raw",
 		Description: "Tool with raw JSON Schema",
 		RawInputSchema: json.RawMessage(`{
 			"type": "object",
-			"properties": {
-				"name": {"type": "string"}
-			},
+			"properties": {"name": {"type": "string"}},
 			"required": ["name"],
 			"additionalProperties": false
 		}`),
 	}
-	srv.AddTool(tool, okHandler)
+	brokenSchemaTool := mcp.Tool{
+		Name:           "broken",
+		Description:    "Tool with malformed schema",
+		RawInputSchema: json.RawMessage(`{"type": "object", "properties": {`),
+	}
+	noSchemaTool := mcp.Tool{Name: "noschema", Description: "no schema"}
+	permissiveTool := mcp.NewTool("permissive",
+		mcp.WithString("name", mcp.Required()),
+	)
+	nestedStrictTool := mcp.Tool{
+		Name: "nested",
+		RawInputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"filter": {
+					"type": "object",
+					"properties": {"label": {"type": "string"}},
+					"required": ["label"],
+					"additionalProperties": false
+				}
+			},
+			"required": ["filter"]
+		}`),
+	}
 
-	resp := callTool(t, srv, "raw", map[string]any{"name": "alice", "typo": 1})
-	requireToolErrorContaining(t, resp, "typo")
+	tests := []struct {
+		name              string
+		options           []ServerOption
+		tool              mcp.Tool
+		args              map[string]any
+		wantSuccess       bool
+		wantErrContains   string
+		wantHandlerCalled bool
+	}{
+		{
+			// Regression guard: with validation off, the kubernetes_list
+			// scenario from the bug report (sending `cursor` instead of
+			// `continue`) silently succeeds. Pinned so we never flip the
+			// default to strict and break existing servers.
+			name:              "disabled by default accepts unknown property",
+			options:           nil,
+			tool:              fakeListTool(),
+			args:              map[string]any{"resourceType": "pods", "cursor": "abc"},
+			wantSuccess:       true,
+			wantHandlerCalled: true,
+		},
+		{
+			// The motivating fix: with validation on and additionalProperties:
+			// false, an unknown `cursor` parameter must surface as a tool
+			// execution error so the model can retry with `continue`.
+			name:            "strict schema rejects unknown property",
+			options:         []ServerOption{WithInputSchemaValidation()},
+			tool:            fakeListTool(),
+			args:            map[string]any{"resourceType": "pods", "cursor": "abc"},
+			wantErrContains: "cursor",
+		},
+		{
+			name:            "strict schema rejects missing required",
+			options:         []ServerOption{WithInputSchemaValidation()},
+			tool:            fakeListTool(),
+			args:            map[string]any{"continue": "abc"},
+			wantErrContains: "resourceType",
+		},
+		{
+			name:            "strict schema rejects wrong type",
+			options:         []ServerOption{WithInputSchemaValidation()},
+			tool:            fakeListTool(),
+			args:            map[string]any{"resourceType": 123},
+			wantErrContains: "resourceType",
+		},
+		{
+			name:              "valid call passes through to handler",
+			options:           []ServerOption{WithInputSchemaValidation()},
+			tool:              fakeListTool(),
+			args:              map[string]any{"resourceType": "pods", "continue": "abc"},
+			wantSuccess:       true,
+			wantHandlerCalled: true,
+		},
+		{
+			// Tools that omit additionalProperties: false continue to accept
+			// extras even with validation enabled. This preserves back-compat
+			// with permissive schemas the author chose deliberately.
+			name:              "permissive schema accepts extras",
+			options:           []ServerOption{WithInputSchemaValidation()},
+			tool:              permissiveTool,
+			args:              map[string]any{"name": "alice", "extra": "field"},
+			wantSuccess:       true,
+			wantHandlerCalled: true,
+		},
+		{
+			// A schema that fails to compile must not block calls to the
+			// tool. The validator silently degrades and the handler runs.
+			name:              "malformed schema is silently skipped",
+			options:           []ServerOption{WithInputSchemaValidation()},
+			tool:              brokenSchemaTool,
+			args:              map[string]any{"anything": true},
+			wantSuccess:       true,
+			wantHandlerCalled: true,
+		},
+		{
+			name:            "raw input schema participates in validation",
+			options:         []ServerOption{WithInputSchemaValidation()},
+			tool:            rawStrictTool,
+			args:            map[string]any{"name": "alice", "typo": 1},
+			wantErrContains: "typo",
+		},
+		{
+			// Tools with no input schema at all (effectively zero-arg tools)
+			// are unaffected: there is nothing to validate against.
+			name:              "tool without schema is unaffected",
+			options:           []ServerOption{WithInputSchemaValidation()},
+			tool:              noSchemaTool,
+			args:              map[string]any{"anything": "goes"},
+			wantSuccess:       true,
+			wantHandlerCalled: true,
+		},
+		{
+			name:            "nested error message mentions field path",
+			options:         []ServerOption{WithInputSchemaValidation()},
+			tool:            nestedStrictTool,
+			args:            map[string]any{"filter": map[string]any{"label": "x", "extra": true}},
+			wantErrContains: "filter",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := NewMCPServer("test", "1.0.0", tt.options...)
+			handlerCalled := false
+			srv.AddTool(tt.tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				handlerCalled = true
+				return mcp.NewToolResultText("ok"), nil
+			})
+
+			resp := callTool(t, srv, tt.tool.Name, tt.args)
+
+			if tt.wantSuccess {
+				requireToolSuccess(t, resp)
+			} else {
+				requireToolErrorContaining(t, resp, tt.wantErrContains)
+			}
+			assert.Equal(t, tt.wantHandlerCalled, handlerCalled, "handler invocation expectation")
+		})
+	}
 }
 
-// TestInputSchemaValidation_ReusesCompiledSchema is a behavioural test that
-// confirms repeated calls reuse the cached compiled schema rather than
-// recompiling on every invocation. We can't observe compile counts directly,
-// so instead we re-register the tool with a different schema and check that
-// the new schema is honoured on the next call.
+// TestInputSchemaValidation_RecompilesOnSchemaChange documents that
+// re-registering a tool with a different schema honours the new schema on
+// the next call. The cache keys by name+digest, so a fresh schema produces a
+// fresh entry rather than colliding with the previous one.
 func TestInputSchemaValidation_RecompilesOnSchemaChange(t *testing.T) {
 	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
 	srv.AddTool(fakeListTool(), okHandler)
@@ -236,34 +267,47 @@ func TestInputSchemaValidation_RecompilesOnSchemaChange(t *testing.T) {
 	requireToolSuccess(t, resp)
 }
 
-// TestInputSchemaValidation_DeleteToolInvalidatesCache makes sure deleting
-// and re-adding a tool doesn't reuse the stale validator. We rely on the
-// content-hash check in the cache, but DeleteTools also drops the entry as a
-// belt-and-braces measure.
+// TestInputSchemaValidation_DeleteToolInvalidatesCache makes a validated
+// call first to populate the cache, then deletes the tool and asserts the
+// cache entry is gone. Without the warmup, the cache would be empty
+// regardless of whether DeleteTools invalidated it (compilation is lazy).
 func TestInputSchemaValidation_DeleteToolInvalidatesCache(t *testing.T) {
 	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
 	srv.AddTool(fakeListTool(), okHandler)
 
-	srv.DeleteTools("kubernetes_list")
-	require.Len(t, srv.inputValidator.cached, 0, "expected cache to be empty after DeleteTools")
-}
-
-// TestInputSchemaValidation_NoSchemaSkipsValidation covers tools that declare
-// no input schema at all (effectively a tool that accepts no arguments). The
-// validator should treat absence of a schema as "nothing to validate" and let
-// the call through.
-func TestInputSchemaValidation_NoSchemaSkipsValidation(t *testing.T) {
-	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
-	tool := mcp.Tool{Name: "noschema", Description: "no schema"}
-	srv.AddTool(tool, okHandler)
-
-	resp := callTool(t, srv, "noschema", map[string]any{"anything": "goes"})
+	resp := callTool(t, srv, "kubernetes_list", map[string]any{
+		"resourceType": "pods",
+		"continue":     "abc",
+	})
 	requireToolSuccess(t, resp)
+	require.Len(t, srv.inputValidator.cached, 1, "cache should be populated after a validated call")
+
+	srv.DeleteTools("kubernetes_list")
+	require.Len(t, srv.inputValidator.cached, 0, "cache should be empty after DeleteTools")
 }
 
-// TestInputSchemaValidation_NestedPathInError ensures the JSON pointer path
-// in the error message reaches into nested objects, so the model can
-// localise the failing field.
+// TestInputSchemaValidation_CachesPerSchemaDigest is the regression test for
+// the same-named-tool-with-different-schema scenario. Two compilations of the
+// same name with different schema bytes must coexist (one per digest), so
+// session-scoped tools that shadow global tools don't thrash the cache on
+// alternating calls.
+func TestInputSchemaValidation_CachesPerSchemaDigest(t *testing.T) {
+	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
+	srv.AddTool(fakeListTool(), okHandler)
+	_, err := srv.inputValidator.lookupOrCompile("kubernetes_list", []byte(`{"type":"object","additionalProperties":false}`))
+	require.NoError(t, err)
+	_, err = srv.inputValidator.lookupOrCompile("kubernetes_list", []byte(`{"type":"object","additionalProperties":true}`))
+	require.NoError(t, err)
+
+	require.Len(t, srv.inputValidator.cached, 1, "expected exactly one tool entry in the cache")
+	require.Len(t, srv.inputValidator.cached["kubernetes_list"], 2,
+		"expected two compiled schema entries for the same tool name")
+}
+
+// TestInputSchemaValidation_NestedPathInError keeps a focused assertion that
+// the validator's error message reaches into nested objects. It deliberately
+// duplicates one of the table cases above with extra path-substring checks
+// that would clutter the table assertions.
 func TestInputSchemaValidation_NestedPathInError(t *testing.T) {
 	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
 	tool := mcp.Tool{
@@ -273,9 +317,7 @@ func TestInputSchemaValidation_NestedPathInError(t *testing.T) {
 			"properties": {
 				"filter": {
 					"type": "object",
-					"properties": {
-						"label": {"type": "string"}
-					},
+					"properties": {"label": {"type": "string"}},
 					"required": ["label"],
 					"additionalProperties": false
 				}
