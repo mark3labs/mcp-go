@@ -5,7 +5,7 @@
 //
 //	go run .                                          # stdio transport
 //	go run . -transport http -addr :8080              # HTTP transport
-//	LORE_API_URL=http://localhost:3120 LORE_API_KEY=key go run .
+//	LORE_API_URL=http://localhost:3120 LORE_API_KEY=*** go run .
 package main
 
 import (
@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -30,10 +31,14 @@ type loreKey struct{}
 // loreURLKey is a context key for the Lore API base URL.
 type loreURLKey struct{}
 
+// loreClientKey is a context key for the shared HTTP client.
+type loreClientKey struct{}
+
 // withLoreConfig adds Lore API configuration to the context.
 func withLoreConfig(ctx context.Context, baseURL, apiKey string) context.Context {
 	ctx = context.WithValue(ctx, loreURLKey{}, baseURL)
-	return context.WithValue(ctx, loreKey{}, apiKey)
+	ctx = context.WithValue(ctx, loreKey{}, apiKey)
+	return context.WithValue(ctx, loreClientKey{}, &http.Client{Timeout: 30 * time.Second})
 }
 
 // loreConfigFromEnv injects Lore config from environment variables.
@@ -44,12 +49,44 @@ func loreConfigFromEnv(ctx context.Context) context.Context {
 	)
 }
 
-// loreConfigFromRequest extracts Lore config from HTTP request headers.
+// loreConfigFromRequest extracts the API key from HTTP request headers.
+// The base URL is always taken from the server-side environment variable
+// to prevent SSRF via client-supplied X-Lore-Api-Url headers.
 func loreConfigFromRequest(ctx context.Context, r *http.Request) context.Context {
 	return withLoreConfig(ctx,
-		r.Header.Get("X-Lore-Api-Url"),
+		os.Getenv("LORE_API_URL"),
 		r.Header.Get("X-Lore-Api-Key"),
 	)
+}
+
+// searchRequest is the outbound payload for lore_memory_search.
+type searchRequest struct {
+	Query     string `json:"query"`
+	TopK      int    `json:"top_k"`
+	ProjectID string `json:"project_id,omitempty"`
+}
+
+// writeRequest is the outbound payload for lore_memory_write.
+type writeRequest struct {
+	Content    string `json:"content"`
+	MemoryType string `json:"memory_type,omitempty"`
+	Concepts   string `json:"concepts,omitempty"`
+	ProjectID  string `json:"project_id,omitempty"`
+}
+
+// contextQueryRequest is the outbound payload for lore_context_query.
+type contextQueryRequest struct {
+	Query     string `json:"query"`
+	ProjectID string `json:"project_id,omitempty"`
+	Mode      string `json:"mode,omitempty"`
+}
+
+// loreClient returns the HTTP client from context.
+func loreClient(ctx context.Context) *http.Client {
+	if c, ok := ctx.Value(loreClientKey{}).(*http.Client); ok {
+		return c
+	}
+	return &http.Client{Timeout: 30 * time.Second}
 }
 
 // loreRequest makes an authenticated POST request to the Lore API.
@@ -75,7 +112,7 @@ func loreRequest(ctx context.Context, path string, body any) (map[string]any, er
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := loreClient(ctx).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("lore request: %w", err)
 	}
@@ -116,16 +153,15 @@ func loreMemorySearchTool(ctx context.Context, request mcp.CallToolRequest) (*mc
 		}
 	}
 
-	body := map[string]any{
-		"query": query,
-		"top_k": topK,
+	payload := searchRequest{
+		Query: query,
+		TopK:  topK,
 	}
-
 	if projectID, ok := request.GetArguments()["project_id"].(string); ok && projectID != "" {
-		body["project_id"] = projectID
+		payload.ProjectID = projectID
 	}
 
-	result, err := loreRequest(ctx, "/v1/memory/search", body)
+	result, err := loreRequest(ctx, "/v1/memory/search", payload)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -141,21 +177,20 @@ func loreMemoryWriteTool(ctx context.Context, request mcp.CallToolRequest) (*mcp
 		return mcp.NewToolResultError("missing required argument: content"), nil
 	}
 
-	body := map[string]any{
-		"content": content,
+	payload := writeRequest{
+		Content: content,
 	}
-
 	if memType, ok := request.GetArguments()["memory_type"].(string); ok && memType != "" {
-		body["memory_type"] = memType
+		payload.MemoryType = memType
 	}
 	if concepts, ok := request.GetArguments()["concepts"].(string); ok && concepts != "" {
-		body["concepts"] = concepts
+		payload.Concepts = concepts
 	}
 	if projectID, ok := request.GetArguments()["project_id"].(string); ok && projectID != "" {
-		body["project_id"] = projectID
+		payload.ProjectID = projectID
 	}
 
-	result, err := loreRequest(ctx, "/v1/memory/write", body)
+	result, err := loreRequest(ctx, "/v1/memory/write", payload)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -171,18 +206,17 @@ func loreContextQueryTool(ctx context.Context, request mcp.CallToolRequest) (*mc
 		return mcp.NewToolResultError("missing required argument: query"), nil
 	}
 
-	body := map[string]any{
-		"query": query,
+	payload := contextQueryRequest{
+		Query: query,
 	}
-
 	if projectID, ok := request.GetArguments()["project_id"].(string); ok && projectID != "" {
-		body["project_id"] = projectID
+		payload.ProjectID = projectID
 	}
 	if mode, ok := request.GetArguments()["mode"].(string); ok && mode != "" {
-		body["mode"] = mode
+		payload.Mode = mode
 	}
 
-	result, err := loreRequest(ctx, "/v1/context/query", body)
+	result, err := loreRequest(ctx, "/v1/context/query", payload)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -268,11 +302,13 @@ func main() {
 		if err := httpServer.Start(*addr); err != nil {
 			log.Fatalf("Server error: %v", err)
 		}
-	default:
+	case "stdio":
 		if err := server.ServeStdio(mcpServer,
 			server.WithStdioContextFunc(loreConfigFromEnv),
 		); err != nil {
 			log.Fatalf("Server error: %v", err)
 		}
+	default:
+		log.Fatalf("unsupported transport: %s (expected \"stdio\" or \"http\")", *transport)
 	}
 }
