@@ -261,18 +261,9 @@ func escapeJSONPointer(seg string) string {
 }
 
 // validationToolResult builds the SEP-1303 compliant tool execution error
-// surfaced when input schema validation fails. The error message is duplicated
-// into the structured field so that clients with structured-content support
-// can render it directly.
+// surfaced when input schema validation fails. It uses the standard
+// NewToolResultError helper so validation failures are shaped identically
+// to errors produced by tool handlers themselves.
 func validationToolResult(err error) *mcp.CallToolResult {
-	msg := err.Error()
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			mcp.TextContent{
-				Type: "text",
-				Text: msg,
-			},
-		},
-		IsError: true,
-	}
+	return mcp.NewToolResultError(err.Error())
 }
