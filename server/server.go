@@ -839,7 +839,13 @@ func (s *MCPServer) SetTools(tools ...ServerTool) {
 	s.toolsMu.Lock()
 	s.tools = make(map[string]ServerTool, len(tools))
 	for _, entry := range tools {
-		s.tools[entry.Tool.Name] = entry
+		name := entry.Tool.Name
+		// Check for collision with regular tools
+		if _, exists := s.tools[name]; exists {
+			s.toolsMu.Unlock()
+			panic(fmt.Sprintf("task tool name '%s' already registered as regular tool", name))
+		}
+		s.tools[name] = entry
 	}
 	s.toolsMu.Unlock()
 
