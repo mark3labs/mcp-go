@@ -896,7 +896,7 @@ func (s *MCPServer) SetTools(tools ...ServerTool) {
 	s.implicitlyRegisterToolCapabilities()
 
 	s.toolsMu.Lock()
-	s.tools = make(map[string]ServerTool, len(tools))
+	newTools := make(map[string]ServerTool, len(tools))
 	for _, entry := range tools {
 		name := entry.Tool.Name
 		// Check for collision with task tools
@@ -904,8 +904,9 @@ func (s *MCPServer) SetTools(tools ...ServerTool) {
 			s.toolsMu.Unlock()
 			panic(fmt.Sprintf("tool name '%s' already registered as task tool", name))
 		}
-		s.tools[name] = entry
+		newTools[name] = entry
 	}
+	s.tools = newTools
 	s.toolsMu.Unlock()
 	s.inputValidator.invalidateAll()
 
