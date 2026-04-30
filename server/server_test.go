@@ -3172,6 +3172,506 @@ func TestMCPServer_ListTools(t *testing.T) {
 	})
 }
 
+// TestMCPServer_ListResources verifies ListResources returns correct copies of registered resources.
+func TestMCPServer_ListResources(t *testing.T) {
+	t.Run("EmptyServer", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		resources := server.ListResources()
+
+		assert.Nil(t, resources)
+	})
+
+	t.Run("SingleResource", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithResourceCapabilities(false, false),
+		)
+
+		expectedResource := mcp.Resource{
+			URI:         "test://resource-1",
+			Name:        "Test Resource 1",
+			Description: "A test resource",
+			MIMEType:    "text/plain",
+		}
+
+		expectedHandler := func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+			return []mcp.ResourceContents{
+				mcp.TextResourceContents{
+					URI:  request.Params.URI,
+					Text: "test content",
+				},
+			}, nil
+		}
+
+		server.AddResource(expectedResource, expectedHandler)
+
+		resources := server.ListResources()
+
+		assert.NotNil(t, resources)
+		assert.Len(t, resources, 1)
+
+		serverResource, exists := resources["test://resource-1"]
+		assert.True(t, exists)
+		assert.Equal(t, expectedResource, serverResource.Resource)
+		assert.NotNil(t, serverResource.Handler)
+	})
+
+	t.Run("MultipleResources", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithResourceCapabilities(false, false),
+		)
+
+		resourceDefs := []struct {
+			resource mcp.Resource
+			handler  ResourceHandlerFunc
+		}{
+			{
+				resource: mcp.Resource{URI: "test://resource-1", Name: "Resource 1"},
+				handler: func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+					return nil, nil
+				},
+			},
+			{
+				resource: mcp.Resource{URI: "test://resource-2", Name: "Resource 2"},
+				handler: func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+					return nil, nil
+				},
+			},
+			{
+				resource: mcp.Resource{URI: "test://resource-3", Name: "Resource 3"},
+				handler: func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+					return nil, nil
+				},
+			},
+		}
+
+		for _, rd := range resourceDefs {
+			server.AddResource(rd.resource, rd.handler)
+		}
+
+		resources := server.ListResources()
+
+		assert.NotNil(t, resources)
+		assert.Len(t, resources, 3)
+
+		for _, expected := range resourceDefs {
+			serverResource, exists := resources[expected.resource.URI]
+			assert.True(t, exists, "Resource %s should exist", expected.resource.URI)
+			assert.Equal(t, expected.resource, serverResource.Resource)
+			assert.NotNil(t, serverResource.Handler)
+		}
+	})
+
+	t.Run("AfterResourceDeletion", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithResourceCapabilities(false, false),
+		)
+
+		server.AddResource(mcp.Resource{URI: "test://r1", Name: "R1"}, nil)
+		server.AddResource(mcp.Resource{URI: "test://r2", Name: "R2"}, nil)
+		server.AddResource(mcp.Resource{URI: "test://r3", Name: "R3"}, nil)
+
+		resources := server.ListResources()
+		assert.NotNil(t, resources)
+		assert.Len(t, resources, 3)
+
+		server.DeleteResources("test://r2")
+
+		resources = server.ListResources()
+		assert.NotNil(t, resources)
+		assert.Len(t, resources, 2)
+
+		_, exists := resources["test://r1"]
+		assert.True(t, exists)
+		_, exists = resources["test://r2"]
+		assert.False(t, exists)
+		_, exists = resources["test://r3"]
+		assert.True(t, exists)
+	})
+
+	t.Run("SetResourcesReplacesExisting", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithResourceCapabilities(false, false),
+		)
+
+		server.AddResource(mcp.Resource{URI: "test://old-1", Name: "Old 1"}, nil)
+		server.AddResource(mcp.Resource{URI: "test://old-2", Name: "Old 2"}, nil)
+
+		resources := server.ListResources()
+		assert.Len(t, resources, 2)
+
+		server.SetResources(
+			ServerResource{
+				Resource: mcp.Resource{URI: "test://new-1", Name: "New 1"},
+				Handler: func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+					return nil, nil
+				},
+			},
+			ServerResource{
+				Resource: mcp.Resource{URI: "test://new-2", Name: "New 2"},
+				Handler: func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+					return nil, nil
+				},
+			},
+		)
+
+		resources = server.ListResources()
+		assert.NotNil(t, resources)
+		assert.Len(t, resources, 2)
+
+		_, exists := resources["test://old-1"]
+		assert.False(t, exists)
+		_, exists = resources["test://old-2"]
+		assert.False(t, exists)
+		_, exists = resources["test://new-1"]
+		assert.True(t, exists)
+		_, exists = resources["test://new-2"]
+		assert.True(t, exists)
+	})
+
+	t.Run("ConcurrentAccess", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithResourceCapabilities(false, false),
+		)
+
+		for i := range 50 {
+			uri := fmt.Sprintf("test://resource-%d", i)
+			server.AddResource(mcp.Resource{URI: uri, Name: uri}, nil)
+		}
+
+		numGoroutines := 100
+		results := make(chan map[string]ServerResource, numGoroutines)
+		var wg sync.WaitGroup
+
+		for i := range numGoroutines {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				resources := server.ListResources()
+				results <- resources
+			}(i)
+		}
+
+		wg.Wait()
+		close(results)
+
+		var allResults []map[string]ServerResource
+		for result := range results {
+			allResults = append(allResults, result)
+		}
+
+		for i, result := range allResults {
+			assert.NotNil(t, result, "Result %d should not be nil", i)
+			assert.Equal(t, 50, len(result), "All concurrent reads should return same number of resources")
+		}
+	})
+
+	t.Run("ConsistentResults", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithResourceCapabilities(false, false),
+		)
+
+		server.AddResource(mcp.Resource{URI: "test://resource", Name: "Test Resource"}, nil)
+
+		resources1 := server.ListResources()
+		resources2 := server.ListResources()
+		resources3 := server.ListResources()
+
+		assert.NotNil(t, resources1)
+		assert.NotNil(t, resources2)
+		assert.NotNil(t, resources3)
+
+		assert.Len(t, resources1, 1)
+		assert.Len(t, resources2, 1)
+		assert.Len(t, resources3, 1)
+
+		assert.Contains(t, resources1, "test://resource")
+		assert.Contains(t, resources2, "test://resource")
+		assert.Contains(t, resources3, "test://resource")
+
+		assert.Equal(t, resources1["test://resource"].Resource, resources2["test://resource"].Resource)
+		assert.Equal(t, resources2["test://resource"].Resource, resources3["test://resource"].Resource)
+	})
+
+	t.Run("ReturnsCopiesNotReferences", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithResourceCapabilities(false, false),
+		)
+
+		server.AddResource(mcp.Resource{URI: "test://resource", Name: "Test Resource"}, nil)
+
+		resources1 := server.ListResources()
+		resources2 := server.ListResources()
+
+		assert.NotNil(t, resources1)
+		assert.NotNil(t, resources2)
+
+		delete(resources1, "test://resource")
+		assert.Len(t, resources1, 0, "Modified copy should be empty")
+		assert.Len(t, resources2, 1, "Original copy should be unchanged")
+		assert.Contains(t, resources2, "test://resource")
+
+		resources3 := server.ListResources()
+		assert.NotNil(t, resources3)
+		assert.Len(t, resources3, 1)
+		assert.Contains(t, resources3, "test://resource")
+	})
+}
+
+// TestMCPServer_ListPrompts verifies ListPrompts returns correct copies of registered prompts.
+func TestMCPServer_ListPrompts(t *testing.T) {
+	t.Run("EmptyServer", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		prompts := server.ListPrompts()
+
+		assert.Nil(t, prompts)
+	})
+
+	t.Run("SinglePrompt", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithPromptCapabilities(false),
+		)
+
+		expectedPrompt := mcp.Prompt{
+			Name:        "test-prompt",
+			Description: "A test prompt",
+			Arguments: []mcp.PromptArgument{
+				{
+					Name:        "arg1",
+					Description: "First argument",
+					Required:    true,
+				},
+			},
+		}
+
+		expectedHandler := func(ctx context.Context, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+			return &mcp.GetPromptResult{
+				Description: "test result",
+				Messages: []mcp.PromptMessage{
+					{
+						Role:    mcp.RoleUser,
+						Content: mcp.TextContent{Type: "text", Text: "test"},
+					},
+				},
+			}, nil
+		}
+
+		server.AddPrompt(expectedPrompt, expectedHandler)
+
+		prompts := server.ListPrompts()
+
+		assert.NotNil(t, prompts)
+		assert.Len(t, prompts, 1)
+
+		serverPrompt, exists := prompts["test-prompt"]
+		assert.True(t, exists)
+		assert.Equal(t, expectedPrompt, serverPrompt.Prompt)
+		assert.NotNil(t, serverPrompt.Handler)
+	})
+
+	t.Run("MultiplePrompts", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithPromptCapabilities(false),
+		)
+
+		promptDefs := []struct {
+			prompt  mcp.Prompt
+			handler PromptHandlerFunc
+		}{
+			{
+				prompt: mcp.Prompt{Name: "prompt-1", Description: "First prompt"},
+				handler: func(ctx context.Context, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+					return &mcp.GetPromptResult{}, nil
+				},
+			},
+			{
+				prompt: mcp.Prompt{Name: "prompt-2", Description: "Second prompt"},
+				handler: func(ctx context.Context, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+					return &mcp.GetPromptResult{}, nil
+				},
+			},
+			{
+				prompt: mcp.Prompt{Name: "prompt-3", Description: "Third prompt"},
+				handler: func(ctx context.Context, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+					return &mcp.GetPromptResult{}, nil
+				},
+			},
+		}
+
+		for _, pd := range promptDefs {
+			server.AddPrompt(pd.prompt, pd.handler)
+		}
+
+		prompts := server.ListPrompts()
+
+		assert.NotNil(t, prompts)
+		assert.Len(t, prompts, 3)
+
+		for _, expected := range promptDefs {
+			serverPrompt, exists := prompts[expected.prompt.Name]
+			assert.True(t, exists, "Prompt %s should exist", expected.prompt.Name)
+			assert.Equal(t, expected.prompt, serverPrompt.Prompt)
+			assert.NotNil(t, serverPrompt.Handler)
+		}
+	})
+
+	t.Run("AfterPromptDeletion", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithPromptCapabilities(false),
+		)
+
+		server.AddPrompt(mcp.Prompt{Name: "p1", Description: "P1"}, nil)
+		server.AddPrompt(mcp.Prompt{Name: "p2", Description: "P2"}, nil)
+		server.AddPrompt(mcp.Prompt{Name: "p3", Description: "P3"}, nil)
+
+		prompts := server.ListPrompts()
+		assert.NotNil(t, prompts)
+		assert.Len(t, prompts, 3)
+
+		server.DeletePrompts("p2")
+
+		prompts = server.ListPrompts()
+		assert.NotNil(t, prompts)
+		assert.Len(t, prompts, 2)
+
+		_, exists := prompts["p1"]
+		assert.True(t, exists)
+		_, exists = prompts["p2"]
+		assert.False(t, exists)
+		_, exists = prompts["p3"]
+		assert.True(t, exists)
+	})
+
+	t.Run("SetPromptsReplacesExisting", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithPromptCapabilities(false),
+		)
+
+		server.AddPrompt(mcp.Prompt{Name: "old-1", Description: "Old 1"}, nil)
+		server.AddPrompt(mcp.Prompt{Name: "old-2", Description: "Old 2"}, nil)
+
+		prompts := server.ListPrompts()
+		assert.Len(t, prompts, 2)
+
+		server.SetPrompts(
+			ServerPrompt{
+				Prompt: mcp.Prompt{Name: "new-1", Description: "New 1"},
+				Handler: func(ctx context.Context, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+					return &mcp.GetPromptResult{}, nil
+				},
+			},
+			ServerPrompt{
+				Prompt: mcp.Prompt{Name: "new-2", Description: "New 2"},
+				Handler: func(ctx context.Context, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+					return &mcp.GetPromptResult{}, nil
+				},
+			},
+		)
+
+		prompts = server.ListPrompts()
+		assert.NotNil(t, prompts)
+		assert.Len(t, prompts, 2)
+
+		_, exists := prompts["old-1"]
+		assert.False(t, exists)
+		_, exists = prompts["old-2"]
+		assert.False(t, exists)
+		_, exists = prompts["new-1"]
+		assert.True(t, exists)
+		_, exists = prompts["new-2"]
+		assert.True(t, exists)
+	})
+
+	t.Run("ConcurrentAccess", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithPromptCapabilities(false),
+		)
+
+		for i := range 50 {
+			name := fmt.Sprintf("prompt-%d", i)
+			server.AddPrompt(mcp.Prompt{Name: name, Description: name}, nil)
+		}
+
+		numGoroutines := 100
+		results := make(chan map[string]ServerPrompt, numGoroutines)
+		var wg sync.WaitGroup
+
+		for i := range numGoroutines {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				prompts := server.ListPrompts()
+				results <- prompts
+			}(i)
+		}
+
+		wg.Wait()
+		close(results)
+
+		var allResults []map[string]ServerPrompt
+		for result := range results {
+			allResults = append(allResults, result)
+		}
+
+		for i, result := range allResults {
+			assert.NotNil(t, result, "Result %d should not be nil", i)
+			assert.Equal(t, 50, len(result), "All concurrent reads should return same number of prompts")
+		}
+	})
+
+	t.Run("ConsistentResults", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithPromptCapabilities(false),
+		)
+
+		server.AddPrompt(mcp.Prompt{Name: "test-prompt", Description: "Test Prompt"}, nil)
+
+		prompts1 := server.ListPrompts()
+		prompts2 := server.ListPrompts()
+		prompts3 := server.ListPrompts()
+
+		assert.NotNil(t, prompts1)
+		assert.NotNil(t, prompts2)
+		assert.NotNil(t, prompts3)
+
+		assert.Len(t, prompts1, 1)
+		assert.Len(t, prompts2, 1)
+		assert.Len(t, prompts3, 1)
+
+		assert.Contains(t, prompts1, "test-prompt")
+		assert.Contains(t, prompts2, "test-prompt")
+		assert.Contains(t, prompts3, "test-prompt")
+
+		assert.Equal(t, prompts1["test-prompt"].Prompt, prompts2["test-prompt"].Prompt)
+		assert.Equal(t, prompts2["test-prompt"].Prompt, prompts3["test-prompt"].Prompt)
+	})
+
+	t.Run("ReturnsCopiesNotReferences", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithPromptCapabilities(false),
+		)
+
+		server.AddPrompt(mcp.Prompt{Name: "test-prompt", Description: "Test Prompt"}, nil)
+
+		prompts1 := server.ListPrompts()
+		prompts2 := server.ListPrompts()
+
+		assert.NotNil(t, prompts1)
+		assert.NotNil(t, prompts2)
+
+		delete(prompts1, "test-prompt")
+		assert.Len(t, prompts1, 0, "Modified copy should be empty")
+		assert.Len(t, prompts2, 1, "Original copy should be unchanged")
+		assert.Contains(t, prompts2, "test-prompt")
+
+		prompts3 := server.ListPrompts()
+		assert.NotNil(t, prompts3)
+		assert.Len(t, prompts3, 1)
+		assert.Contains(t, prompts3, "test-prompt")
+	})
+}
+
 func TestMCPServer_HandleListTools_IncludesTaskTools(t *testing.T) {
 	t.Run("list includes both regular and task tools", func(t *testing.T) {
 		server := NewMCPServer("test-server", "1.0.0")

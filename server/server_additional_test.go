@@ -146,6 +146,10 @@ func TestMCPServer_ConcurrentOperations(t *testing.T) {
 
 		wg.Wait()
 
+		// Verify all resources were added
+		resources := server.ListResources()
+		assert.Len(t, resources, numGoroutines*operationsPerGoroutine)
+
 		// Concurrent delete operations
 		wg = sync.WaitGroup{}
 		for i := range numGoroutines {
@@ -160,6 +164,10 @@ func TestMCPServer_ConcurrentOperations(t *testing.T) {
 		}
 
 		wg.Wait()
+
+		// Verify all resources were deleted
+		resources = server.ListResources()
+		assert.Nil(t, resources)
 	})
 
 	t.Run("concurrent prompt add/delete", func(t *testing.T) {
@@ -186,6 +194,10 @@ func TestMCPServer_ConcurrentOperations(t *testing.T) {
 
 		wg.Wait()
 
+		// Verify all prompts were added
+		prompts := server.ListPrompts()
+		assert.Len(t, prompts, numGoroutines*operationsPerGoroutine)
+
 		// Concurrent delete operations
 		wg = sync.WaitGroup{}
 		for i := range numGoroutines {
@@ -200,6 +212,10 @@ func TestMCPServer_ConcurrentOperations(t *testing.T) {
 		}
 
 		wg.Wait()
+
+		// Verify all prompts were deleted
+		prompts = server.ListPrompts()
+		assert.Nil(t, prompts)
 	})
 }
 
