@@ -400,6 +400,25 @@ type JSONRPCErrorDetails struct {
 	Data any `json:"data,omitempty"`
 }
 
+// UnmarshalJSON handles both the standard JSON-RPC error object
+// ({"code": -32600, "message": "..."}) and non-compliant servers that
+// return the error as a plain string (e.g. "cursor_invalid").
+func (e *JSONRPCErrorDetails) UnmarshalJSON(data []byte) error {
+	// Try the spec-compliant object shape first.
+	type plain JSONRPCErrorDetails
+	if err := json.Unmarshal(data, (*plain)(e)); err == nil {
+		return nil
+	}
+	// Some servers (e.g. Slack MCP) return a bare string.
+	var msg string
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return fmt.Errorf("error field is neither an object nor a string: %w", err)
+	}
+	e.Code = INTERNAL_ERROR
+	e.Message = msg
+	return nil
+}
+
 // Standard JSON-RPC error codes
 const (
 	// PARSE_ERROR indicates invalid JSON was received by the server.
