@@ -9124,21 +9124,21 @@ mcp.WithString("name",
 mcp.WithNumber("age",
     mcp.Required(),
     mcp.Description("User's age"),
-    mcp.Minimum(0),
-    mcp.Maximum(150),
+    mcp.Min(0),
+    mcp.Max(150),
 )
 
 // Integer parameters
 mcp.WithInteger("count",
-    mcp.Default(10),
+    mcp.DefaultNumber(10),
     mcp.Description("Number of items"),
-    mcp.Minimum(1),
-    mcp.Maximum(1000),
+    mcp.Min(1),
+    mcp.Max(1000),
 )
 
 // Boolean parameters
 mcp.WithBoolean("enabled",
-    mcp.Default(true),
+    mcp.DefaultBool(true),
     mcp.Description("Whether feature is enabled"),
 )
 
@@ -9178,8 +9178,8 @@ mcp.WithString("email",
 // Number constraints
 mcp.WithNumber("price",
     mcp.Required(),
-    mcp.Minimum(0),
-    mcp.ExclusiveMaximum(10000),
+    mcp.Min(0),
+    mcp.Max(10000),
     mcp.Description("Product price in USD"),
 )
 ```
@@ -9591,7 +9591,7 @@ func main() {
             mcp.Description("File content"),
         ),
         mcp.WithString("encoding",
-            mcp.Default("utf-8"),
+            mcp.DefaultString("utf-8"),
             mcp.Enum("utf-8", "ascii", "base64"),
             mcp.Description("File encoding"),
         ),
@@ -10060,8 +10060,8 @@ tool := mcp.NewTool("search_database",
     ),
     mcp.WithNumber("limit",
         mcp.DefaultNumber(10),
-        mcp.Minimum(1),
-        mcp.Maximum(100),
+        mcp.Min(1),
+        mcp.Max(100),
         mcp.Description("Maximum number of results to return"),
     ),
     mcp.WithArray("categories",
