@@ -356,7 +356,7 @@ func handleEchoTool(
 	arguments := request.GetArguments()
 	message, ok := arguments["message"].(string)
 	if !ok {
-		return nil, fmt.Errorf("invalid message argument")
+		return mcp.NewToolResultError("invalid message argument: expected string"), nil
 	}
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
@@ -376,7 +376,7 @@ func handleAddTool(
 	a, ok1 := arguments["a"].(float64)
 	b, ok2 := arguments["b"].(float64)
 	if !ok1 || !ok2 {
-		return nil, fmt.Errorf("invalid number arguments")
+		return mcp.NewToolResultError("invalid number arguments: expected numeric values for 'a' and 'b'"), nil
 	}
 	sum := a + b
 	return &mcp.CallToolResult{
