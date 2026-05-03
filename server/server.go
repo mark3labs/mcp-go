@@ -893,11 +893,28 @@ func (s *MCPServer) AddTaskTools(taskTools ...ServerTaskTool) {
 
 // SetTools replaces all existing tools with the provided list
 func (s *MCPServer) SetTools(tools ...ServerTool) {
+	s.implicitlyRegisterToolCapabilities()
+
 	s.toolsMu.Lock()
-	s.tools = make(map[string]ServerTool, len(tools))
+	newTools := make(map[string]ServerTool, len(tools))
+	for _, entry := range tools {
+		name := entry.Tool.Name
+		// Check for collision with task tools
+		if _, exists := s.taskTools[name]; exists {
+			s.toolsMu.Unlock()
+			panic(fmt.Sprintf("tool name '%s' already registered as task tool", name))
+		}
+		newTools[name] = entry
+	}
+	s.tools = newTools
 	s.toolsMu.Unlock()
 	s.inputValidator.invalidateAll()
-	s.AddTools(tools...)
+
+	// When the list of available tools changes, servers that declared the listChanged capability SHOULD send a notification.
+	if s.capabilities.tools.listChanged {
+		// Send notification to all initialized sessions
+		s.SendNotificationToAllClients(mcp.MethodNotificationToolsListChanged, nil)
+	}
 }
 
 // GetTool retrieves the specified tool
