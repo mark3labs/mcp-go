@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -894,9 +895,15 @@ func TestContinuousListeningMethodNotAllowed(t *testing.T) {
 }
 
 func TestContinuousListeningSessionTerminated(t *testing.T) {
+	// Use a short retry interval so we can verify no retries happen quickly.
+	origRetryInterval := retryInterval
+	retryInterval = 20 * time.Millisecond
+	t.Cleanup(func() { retryInterval = origRetryInterval })
+
 	// Start a server that returns 200 on POST (initialize) but 404 on GET
 	// (simulating a server restart where the session no longer exists).
 	sessionID := "test-session-123"
+	var getCalls int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			// Handle initialize
@@ -911,6 +918,7 @@ func TestContinuousListeningSessionTerminated(t *testing.T) {
 			return
 		}
 		if r.Method == http.MethodGet {
+			atomic.AddInt64(&getCalls, 1)
 			// Simulate session terminated: server restarted, session gone
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -949,7 +957,6 @@ func TestContinuousListeningSessionTerminated(t *testing.T) {
 	}
 
 	// Wait for the error log message that session was terminated.
-	// Before the fix, this would retry forever and never produce this message.
 	select {
 	case logMsg := <-logChan:
 		if !strings.Contains(logMsg, "session terminated") {
@@ -957,6 +964,13 @@ func TestContinuousListeningSessionTerminated(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Timeout waiting for session terminated log; listenForever did not stop retrying")
+	}
+
+	// Verify no further retries: wait several retry intervals and check GET count.
+	time.Sleep(5 * retryInterval)
+	calls := atomic.LoadInt64(&getCalls)
+	if calls != 1 {
+		t.Errorf("Expected exactly 1 GET attempt, got %d (listener retried after session termination)", calls)
 	}
 }
 
