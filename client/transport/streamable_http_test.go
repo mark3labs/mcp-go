@@ -907,7 +907,7 @@ func TestContinuousListeningSessionTerminated(t *testing.T) {
 				ID:      mcp.NewRequestId(int64(0)),
 				Result:  json.RawMessage(`{"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"test"}}`),
 			}
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 			return
 		}
 		if r.Method == http.MethodGet {
