@@ -914,6 +914,13 @@ func (c *StreamableHTTP) listenForever(ctx context.Context) {
 			c.logger.Errorf("server does not support listening")
 			return
 		}
+		if errors.Is(err, ErrSessionTerminated) {
+			// Server returned 404: the session no longer exists (server restarted
+			// or session expired). Retrying is pointless because the server won't
+			// recognize this session. The caller must re-initialize.
+			c.logger.Errorf("session terminated, stopping listener: %v", err)
+			return
+		}
 
 		select {
 		case <-ctx.Done():
