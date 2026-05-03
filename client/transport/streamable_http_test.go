@@ -893,6 +893,73 @@ func TestContinuousListeningMethodNotAllowed(t *testing.T) {
 	}
 }
 
+func TestContinuousListeningSessionTerminated(t *testing.T) {
+	// Start a server that returns 200 on POST (initialize) but 404 on GET
+	// (simulating a server restart where the session no longer exists).
+	sessionID := "test-session-123"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			// Handle initialize
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set(HeaderKeySessionID, sessionID)
+			resp := JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      mcp.NewRequestId(int64(0)),
+				Result:  json.RawMessage(`{"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"test"}}`),
+			}
+			json.NewEncoder(w).Encode(resp)
+			return
+		}
+		if r.Method == http.MethodGet {
+			// Simulate session terminated: server restarted, session gone
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}))
+	defer server.Close()
+
+	// Setup logger to capture log messages
+	logChan := make(chan string, 10)
+	testLogger := &testLogger{logChan: logChan}
+
+	// Create transport with continuous listening enabled
+	trans, err := NewStreamableHTTP(server.URL, WithContinuousListening(), WithLogger(testLogger))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer trans.Close()
+
+	// Start the transport
+	if err := trans.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initialize
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	initRequest := JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(int64(0)),
+		Method:  "initialize",
+	}
+	_, err = trans.SendRequest(ctx, initRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for the error log message that session was terminated.
+	// Before the fix, this would retry forever and never produce this message.
+	select {
+	case logMsg := <-logChan:
+		if !strings.Contains(logMsg, "session terminated") {
+			t.Errorf("Expected error log about session terminated, got: %s", logMsg)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Timeout waiting for session terminated log; listenForever did not stop retrying")
+	}
+}
+
 // testLogger is a simple logger for testing
 type testLogger struct {
 	logChan chan string
