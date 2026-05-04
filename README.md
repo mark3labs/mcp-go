@@ -95,6 +95,7 @@ MCP Go handles all the complex protocol details and server management, so you ca
 - [Examples](#examples)
 - [Extras](#extras)
   - [Transports](#transports)
+  - [OAuth Protected Resource Metadata](#oauth-protected-resource-metadata)
   - [Session Management](#session-management)
     - [Basic Session Handling](#basic-session-handling)
     - [Per-Session Tools](#per-session-tools)
@@ -655,6 +656,27 @@ Key examples include:
 ### Transports
 
 MCP-Go supports stdio, SSE and streamable-HTTP transport layers. For SSE transport, you can use `SetConnectionLostHandler()` to detect and handle disconnections for implementing reconnection logic.
+
+### OAuth Protected Resource Metadata
+
+Servers that require OAuth can advertise their authorization requirements
+via the [RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728)
+`/.well-known/oauth-protected-resource` endpoint referenced by the
+[MCP authorization spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization).
+Use `server.WithProtectedResourceMetadata` (or
+`server.WithSSEProtectedResourceMetadata`) to auto-mount the endpoint, or
+`server.NewProtectedResourceMetadataHandler` to wire it into a custom router.
+See the [HTTP transport docs](https://mcp-go.dev/transports/http#oauth-protected-resource-metadata-rfc-9728) for examples.
+
+```go
+httpServer := server.NewStreamableHTTPServer(mcpServer,
+    server.WithProtectedResourceMetadata(server.ProtectedResourceMetadataConfig{
+        Resource:             "https://my-mcp-server.com",
+        AuthorizationServers: []string{"https://auth.example.com"},
+        ScopesSupported:      []string{"mcp:read", "mcp:write"},
+    }),
+)
+```
 
 ### Session Management
 

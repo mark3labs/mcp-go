@@ -665,6 +665,100 @@ type Claims struct {
 }
 ```
 
+### OAuth Protected Resource Metadata (RFC 9728)
+
+When your MCP server requires OAuth, clients need a way to discover which
+authorization servers, scopes, and bearer methods are supported. The MCP
+[authorization spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization)
+points clients at a [RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728)
+`/.well-known/oauth-protected-resource` endpoint to do exactly that.
+
+`mcp-go` provides two ways to serve this metadata.
+
+#### Option A: Auto-mounted via a server option
+
+The simplest approach — the well-known endpoint is registered automatically
+by `Start()` and is also dispatched when the server is mounted as an
+`http.Handler` via `ServeHTTP`.
+
+```go
+mcpServer := server.NewMCPServer("my-server", "1.0.0")
+
+httpServer := server.NewStreamableHTTPServer(mcpServer,
+    server.WithProtectedResourceMetadata(server.ProtectedResourceMetadataConfig{
+        Resource:               "https://my-mcp-server.com",
+        AuthorizationServers:   []string{"https://auth.example.com"},
+        ScopesSupported:        []string{"mcp:read", "mcp:write"},
+        BearerMethodsSupported: []string{"header"},
+        ResourceName:           "My MCP Server",
+    }),
+)
+
+httpServer.Start(":8080")
+// GET http://localhost:8080/.well-known/oauth-protected-resource
+//   -> 200 application/json with the metadata above
+```
+
+For SSE servers, use the equivalent `WithSSEProtectedResourceMetadata`:
+
+```go
+sseServer := server.NewSSEServer(mcpServer,
+    server.WithSSEProtectedResourceMetadata(server.ProtectedResourceMetadataConfig{
+        Resource:             "https://my-mcp-server.com",
+        AuthorizationServers: []string{"https://auth.example.com"},
+    }),
+)
+```
+
+#### Option B: Standalone handler for custom routing
+
+If you build your own `http.ServeMux` (or use a router like `chi` / `gin`),
+use `NewProtectedResourceMetadataHandler` directly:
+
+```go
+mux := http.NewServeMux()
+mux.Handle("/mcp", mcpHandler)
+mux.Handle("/.well-known/oauth-protected-resource",
+    server.NewProtectedResourceMetadataHandler(server.ProtectedResourceMetadataConfig{
+        Resource:             "https://my-mcp-server.com",
+        AuthorizationServers: []string{"https://auth.example.com"},
+        ScopesSupported:      []string{"mcp:read", "mcp:write"},
+    }))
+http.ListenAndServe(":8080", mux)
+```
+
+#### Path-qualified resources (RFC 9728 §3.1)
+
+When your resource identifier has a path (e.g. `https://example.com/mcp`),
+the well-known URL must include that path suffix:
+`/.well-known/oauth-protected-resource/mcp`. Use
+`server.ProtectedResourceMetadataPath` to derive the correct path:
+
+```go
+cfg := server.ProtectedResourceMetadataConfig{
+    Resource:             "https://example.com/mcp",
+    AuthorizationServers: []string{"https://auth.example.com"},
+}
+mux.Handle(server.ProtectedResourceMetadataPath(cfg.Resource),
+    server.NewProtectedResourceMetadataHandler(cfg))
+// -> mounts at /.well-known/oauth-protected-resource/mcp
+```
+
+The auto-mount options (`WithProtectedResourceMetadata` /
+`WithSSEProtectedResourceMetadata`) apply this rule automatically.
+
+#### Handler behavior
+
+| Method  | Response                                                                |
+|---------|-------------------------------------------------------------------------|
+| `GET`   | `200` with `application/json` body, `Cache-Control: no-store`           |
+| `HEAD`  | `200` headers, no body                                                  |
+| `OPTIONS` | `204` (CORS preflight), permissive `Access-Control-Allow-*` headers   |
+| other   | `405` with `Allow: GET, HEAD, OPTIONS`                                  |
+
+CORS is enabled with `Access-Control-Allow-Origin: *` so browser-based MCP
+clients can perform discovery cross-origin.
+
 ### Request Headers
 
 The StreamableHTTP transport now passes HTTP request headers to MCP handlers. This allows you to access the original HTTP headers that were sent with the request in your tool and resource handlers.
