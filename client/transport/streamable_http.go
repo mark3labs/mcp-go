@@ -678,6 +678,7 @@ func (c *StreamableHTTP) sendHTTP(
 
 	// universal handling for session terminated
 	if resp.StatusCode == http.StatusNotFound {
+		resp.Body.Close()
 		c.sessionID.CompareAndSwap(sessionID, "")
 		return nil, ErrSessionTerminated
 	}
