@@ -199,6 +199,13 @@ type SSEServer struct {
 	keepAlive         bool
 	keepAliveInterval time.Duration
 
+	// protectedResourceMetadata, when non-nil, is served as RFC 9728 OAuth
+	// 2.0 Protected Resource Metadata. The well-known path is derived from
+	// the configured Resource via ProtectedResourceMetadataPath.
+	protectedResourceMetadata        *ProtectedResourceMetadataConfig
+	protectedResourceMetadataPath    string
+	protectedResourceMetadataHandler http.Handler
+
 	mu sync.RWMutex
 }
 
@@ -312,6 +319,24 @@ func WithKeepAliveInterval(keepAliveInterval time.Duration) SSEOption {
 func WithKeepAlive(keepAlive bool) SSEOption {
 	return func(s *SSEServer) {
 		s.keepAlive = keepAlive
+	}
+}
+
+// WithSSEProtectedResourceMetadata configures the SSEServer to serve OAuth
+// 2.0 Protected Resource Metadata (RFC 9728) at the well-known endpoint
+// derived from the configured Resource (see ProtectedResourceMetadataPath).
+//
+// The metadata is served both when the server is started via Start (the
+// well-known path is dispatched from ServeHTTP) and when the server is used
+// directly as an http.Handler. When using WithHTTPServer with a custom
+// http.Server whose Handler is not the SSEServer itself, mount the metadata
+// endpoint manually via NewProtectedResourceMetadataHandler.
+func WithSSEProtectedResourceMetadata(config ProtectedResourceMetadataConfig) SSEOption {
+	return func(s *SSEServer) {
+		cfg := config
+		s.protectedResourceMetadata = &cfg
+		s.protectedResourceMetadataPath = ProtectedResourceMetadataPath(cfg.Resource)
+		s.protectedResourceMetadataHandler = NewProtectedResourceMetadataHandler(cfg)
 	}
 }
 
@@ -790,6 +815,10 @@ func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := r.URL.Path
+	if s.protectedResourceMetadataHandler != nil && path == s.protectedResourceMetadataPath {
+		s.protectedResourceMetadataHandler.ServeHTTP(w, r)
+		return
+	}
 	// Use exact path matching rather than Contains
 	ssePath := s.CompleteSsePath()
 	if ssePath != "" && path == ssePath {
