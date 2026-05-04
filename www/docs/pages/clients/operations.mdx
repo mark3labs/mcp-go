@@ -975,14 +975,25 @@ Each iterator yields one item at a time and only fetches the next page when the
 current one is exhausted. Breaking out of the `range` stops further requests,
 so early-exit is cheap.
 
+:::note
+These methods are defined on the concrete `*client.Client` type, not on the
+`MCPClient` interface. The examples below use `c *client.Client` rather than
+the `c client.Client` you'll see elsewhere in this guide — if you're holding
+an interface value you'll need a type assertion (`c.(*client.Client)`) before
+calling them.
+:::
+
 ### Basic Usage
 
 ```go
-for tool, err := range c.IterTools(ctx, mcp.ListToolsRequest{}) {
-    if err != nil {
-        return fmt.Errorf("list tools: %w", err)
+func printToolNames(ctx context.Context, c *client.Client) error {
+    for tool, err := range c.IterTools(ctx, mcp.ListToolsRequest{}) {
+        if err != nil {
+            return fmt.Errorf("list tools: %w", err)
+        }
+        fmt.Println(tool.Name)
     }
-    fmt.Println(tool.Name)
+    return nil
 }
 ```
 
@@ -1012,12 +1023,15 @@ yields a single `(zero-value, err)` pair and then stops. Always check `err` on
 each iteration:
 
 ```go
-for resource, err := range c.IterResources(ctx, mcp.ListResourcesRequest{}) {
-    if err != nil {
-        // ctx.Err() or a transport / server error — iterator is now done.
-        return err
+func processResources(ctx context.Context, c *client.Client) error {
+    for resource, err := range c.IterResources(ctx, mcp.ListResourcesRequest{}) {
+        if err != nil {
+            // ctx.Err() or a transport / server error — iterator is now done.
+            return err
+        }
+        process(resource)
     }
-    process(resource)
+    return nil
 }
 ```
 
@@ -1029,9 +1043,9 @@ for resource, err := range c.IterResources(ctx, mcp.ListResourcesRequest{}) {
 | `ListToolsByPage` / `ListResourcesByPage` / ... | Fetches a **single** page; caller manages cursors. | Custom pagination UI, manual cursor control.        |
 | `IterTools` / `IterResources` / ...      | Lazily fetches pages as the iterator is consumed.         | Large result sets, searches, early-exit lookups.    |
 
-The iterator methods are defined on the concrete `*client.Client` type (not on
-the `MCPClient` interface), so the interface remains backwards-compatible for
-existing implementers.
+As mentioned above, the iterator methods live on the concrete `*client.Client`
+type rather than the `MCPClient` interface, so the interface remains
+backwards-compatible for existing implementers.
 
 ## Next Steps
 
