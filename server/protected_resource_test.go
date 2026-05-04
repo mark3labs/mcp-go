@@ -100,7 +100,7 @@ func TestNewProtectedResourceMetadataHandler_GET(t *testing.T) {
 	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
 	assert.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
 	assert.Equal(t, "*", rec.Header().Get("Access-Control-Allow-Origin"))
-	assert.Equal(t, "GET, OPTIONS", rec.Header().Get("Access-Control-Allow-Methods"))
+	assert.Equal(t, "GET, HEAD, OPTIONS", rec.Header().Get("Access-Control-Allow-Methods"))
 
 	var got server.ProtectedResourceMetadataConfig
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&got))
@@ -139,7 +139,7 @@ func TestNewProtectedResourceMetadataHandler_OPTIONS(t *testing.T) {
 
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 	assert.Equal(t, "*", rec.Header().Get("Access-Control-Allow-Origin"))
-	assert.Equal(t, "GET, OPTIONS", rec.Header().Get("Access-Control-Allow-Methods"))
+	assert.Equal(t, "GET, HEAD, OPTIONS", rec.Header().Get("Access-Control-Allow-Methods"))
 }
 
 func TestNewProtectedResourceMetadataHandler_MethodNotAllowed(t *testing.T) {
