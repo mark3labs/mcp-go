@@ -1558,7 +1558,7 @@ func (s *StreamableHTTPServer) HTTPHandler() http.Handler {
 // NewTestStreamableHTTPServer creates a test server for testing purposes
 func NewTestStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *httptest.Server {
 	s := NewStreamableHTTPServer(server, opts...)
-	return httptest.NewServer(s)
+	return httptest.NewServer(s.HTTPHandler())
 }
 
 // isJSONEmpty reports whether the provided JSON value is "empty":
