@@ -320,7 +320,9 @@ The cache key defaults to the package-qualified Go type name
 or package moves, use the explicit-key variants:
 
 ```go
-cache.Warm("weather.v1.input", mcp.SchemaFor[WeatherRequest]())
+if err := mcp.WarmFor[WeatherRequest](cache, "weather.v1.input"); err != nil {
+    log.Fatal(err)
+}
 
 mcp.WithCachedInputSchemaKey[WeatherRequest](cache, "weather.v1.input")
 ```

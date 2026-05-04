@@ -325,16 +325,29 @@ func WithCachedInputSchema[T any](cache *SchemaCache) ToolOption {
 // WithCachedInputSchemaKey is a variant of [WithCachedInputSchema] that uses
 // an explicit cache key instead of one derived from T's type name. Use this
 // when stability of the key across renames or package moves matters.
+//
+// An empty key disables the cache entirely for this call: the schema is
+// always reflected fresh and never read from or written to cache. This
+// mirrors [WarmFor] and prevents distinct types from colliding on a shared
+// empty-string cache slot.
 func WithCachedInputSchemaKey[T any](cache *SchemaCache, key string) ToolOption {
 	return func(t *Tool) {
-		raw, ok := cache.GetRaw(key)
+		var (
+			raw json.RawMessage
+			ok  bool
+		)
+		if key != "" {
+			raw, ok = cache.GetRaw(key)
+		}
 		if !ok {
 			fresh, err := SchemaForRaw[T]()
 			if err != nil {
 				return
 			}
 			raw = fresh
-			cache.WarmRaw(key, fresh)
+			if key != "" {
+				cache.WarmRaw(key, fresh)
+			}
 		}
 		t.InputSchema.Type = ""
 		t.RawInputSchema = raw
@@ -351,16 +364,29 @@ func WithCachedOutputSchema[T any](cache *SchemaCache) ToolOption {
 
 // WithCachedOutputSchemaKey is a variant of [WithCachedOutputSchema] that
 // uses an explicit cache key instead of one derived from T's type name.
+//
+// An empty key disables the cache entirely for this call: the schema is
+// always reflected fresh and never read from or written to cache. This
+// mirrors [WarmFor] and prevents distinct types from colliding on a shared
+// empty-string cache slot.
 func WithCachedOutputSchemaKey[T any](cache *SchemaCache, key string) ToolOption {
 	return func(t *Tool) {
-		raw, ok := cache.GetRaw(key)
+		var (
+			raw json.RawMessage
+			ok  bool
+		)
+		if key != "" {
+			raw, ok = cache.GetRaw(key)
+		}
 		if !ok {
 			fresh, err := SchemaForRaw[T]()
 			if err != nil {
 				return
 			}
 			raw = fresh
-			cache.WarmRaw(key, fresh)
+			if key != "" {
+				cache.WarmRaw(key, fresh)
+			}
 		}
 		if err := json.Unmarshal(raw, &t.OutputSchema); err != nil {
 			return

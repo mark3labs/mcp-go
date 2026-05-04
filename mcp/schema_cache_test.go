@@ -302,6 +302,46 @@ func TestWarmFor_NilCacheNoOp(t *testing.T) {
 	require.NoError(t, WarmFor[schemaCacheTestInput](nil))
 }
 
+func TestWithCachedInputSchemaKey_EmptyKeyBypassesCache(t *testing.T) {
+	cache := NewSchemaCache()
+
+	// Two distinct types both called with key="" must not share or pollute
+	// any cache entry. Empty key disables the cache entirely for the call.
+	tool1 := NewTool("t1", WithCachedInputSchemaKey[schemaCacheTestInput](cache, ""))
+	tool2 := NewTool("t2", WithCachedInputSchemaKey[schemaCacheTestOutput](cache, ""))
+
+	assert.NotEmpty(t, tool1.RawInputSchema)
+	assert.NotEmpty(t, tool2.RawInputSchema)
+
+	// Each tool must get its own (different) freshly reflected schema, not a
+	// shared cached entry that would cause type-2 to receive type-1's schema.
+	assert.NotEqual(t, string(tool1.RawInputSchema), string(tool2.RawInputSchema))
+
+	// Cache must remain empty: nothing was read from it and nothing was
+	// written to it under the empty key.
+	assert.Equal(t, 0, cache.Len())
+	assert.False(t, cache.Has(""))
+}
+
+func TestWithCachedOutputSchemaKey_EmptyKeyBypassesCache(t *testing.T) {
+	cache := NewSchemaCache()
+
+	tool1 := NewTool("t1", WithCachedOutputSchemaKey[schemaCacheTestInput](cache, ""))
+	tool2 := NewTool("t2", WithCachedOutputSchemaKey[schemaCacheTestOutput](cache, ""))
+
+	assert.Equal(t, "object", tool1.OutputSchema.Type)
+	assert.Equal(t, "object", tool2.OutputSchema.Type)
+	assert.NotEmpty(t, tool1.OutputSchema.Properties)
+	assert.NotEmpty(t, tool2.OutputSchema.Properties)
+
+	// Distinct types must produce distinct property sets even when called
+	// with the same empty key.
+	assert.NotEqual(t, tool1.OutputSchema.Properties, tool2.OutputSchema.Properties)
+
+	assert.Equal(t, 0, cache.Len())
+	assert.False(t, cache.Has(""))
+}
+
 func TestSchemaCache_ConcurrentAccess(t *testing.T) {
 	cache := NewSchemaCache()
 	var wg sync.WaitGroup
