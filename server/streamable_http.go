@@ -1555,8 +1555,12 @@ func (s *StreamableHTTPServer) HTTPHandler() http.Handler {
 	return s.buildInternalMux()
 }
 
-// NewTestStreamableHTTPServer creates a test server for testing purposes
+// NewTestStreamableHTTPServer creates a test server for testing purposes.
+// It defaults the endpoint path to "/" so that requests to the bare test
+// server URL are routed correctly. WithProtectedResourceMetadata is also
+// honoured because HTTPHandler() includes the full internal mux.
 func NewTestStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *httptest.Server {
+	opts = append([]StreamableHTTPOption{WithEndpointPath("/")}, opts...)
 	s := NewStreamableHTTPServer(server, opts...)
 	return httptest.NewServer(s.HTTPHandler())
 }
