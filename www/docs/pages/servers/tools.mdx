@@ -267,6 +267,67 @@ func listAssetsHandler(ctx context.Context, req mcp.CallToolRequest, args struct
 }
 ```
 
+### Caching Schemas for Stateless / Serverless Deployments
+
+Generating JSON schemas with `WithInputSchema[T]()` and `WithOutputSchema[T]()`
+uses reflection at server start-up. In long-running servers this is a one-time
+cost, but in serverless environments (AWS Lambda, Cloud Functions, Cloud Run
+with scale-to-zero) the server is reconstructed on every cold start and the
+reflection cost is paid again and again.
+
+Use `mcp.SchemaCache` to pre-compute schemas at build time, persist them to
+disk, and reload them at start-up:
+
+```go
+// build/warm-cache.go — run as part of your build pipeline
+func main() {
+    cache := mcp.NewSchemaCache()
+    if err := mcp.WarmFor[WeatherRequest](cache); err != nil {
+        log.Fatal(err)
+    }
+    if err := mcp.WarmFor[WeatherResponse](cache); err != nil {
+        log.Fatal(err)
+    }
+    if err := cache.Save("schemas.json"); err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+At runtime, load the cache once and pass it to the cache-aware tool options.
+On a cache hit the schema is served straight from memory; on a miss the cache
+falls back to reflection and stores the result for next time, so the same
+code works locally without a pre-built cache file:
+
+```go
+var cache = func() *mcp.SchemaCache {
+    c, err := mcp.LoadSchemaCache("schemas.json")
+    if err != nil {
+        return mcp.NewSchemaCache() // fall back to live reflection
+    }
+    return c
+}()
+
+weatherTool := mcp.NewTool("get_weather",
+    mcp.WithDescription("Get current weather"),
+    mcp.WithCachedInputSchema[WeatherRequest](cache),
+    mcp.WithCachedOutputSchema[WeatherResponse](cache),
+)
+```
+
+The cache key defaults to the package-qualified Go type name
+(e.g. `main.WeatherRequest`). If you need a stable key that survives renames
+or package moves, use the explicit-key variants:
+
+```go
+cache.Warm("weather.v1.input", mcp.SchemaFor[WeatherRequest]())
+
+mcp.WithCachedInputSchemaKey[WeatherRequest](cache, "weather.v1.input")
+```
+
+`SchemaCache` is safe for concurrent use, marshals to deterministic JSON
+(sorted keys), and writes via an atomic temp-file-and-rename in `Save`.
+
 ### Schema Tags Reference
 
 MCP-Go uses the [`google/jsonschema-go`](https://github.com/google/jsonschema-go) library with the `jsonschema` struct tag for schema generation:
