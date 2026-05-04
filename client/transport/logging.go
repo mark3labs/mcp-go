@@ -27,9 +27,10 @@ func WithLoggingLevel(level slog.Level) LoggingOption {
 }
 
 // WithLoggingPayloads controls whether full JSON-RPC payloads (params,
-// result, error) are included in the structured log records. When disabled,
-// only message metadata (direction, method, id, duration) is logged. The
-// default is true.
+// result and JSON-RPC error code/message) are included in the structured
+// log records. When disabled, only message metadata (direction, method,
+// id, duration and the bare "← response error" / "→ response error"
+// marker for failed calls) is logged. The default is true.
 func WithLoggingPayloads(enabled bool) LoggingOption {
 	return func(c *loggingConfig) {
 		c.payloads = enabled
@@ -56,6 +57,14 @@ type LoggingTransport struct {
 // is used. If inner additionally implements BidirectionalInterface and/or
 // HTTPConnection, the returned wrapper also implements those interfaces, so
 // it can be used as a drop-in replacement.
+//
+// NewLogging installs its own notification handler on the inner transport
+// so that incoming notifications can be logged. Because [Interface] does
+// not expose a way to read the previously-registered handler, NewLogging
+// must be applied before any handler is registered on the inner transport;
+// otherwise the previously-registered handler will be displaced. Callers
+// that need to receive notifications should register their handler on the
+// returned wrapper, which will both log the notification and forward it.
 func NewLogging(inner Interface, logger *slog.Logger, opts ...LoggingOption) Interface {
 	base := newLoggingTransport(inner, logger, opts...)
 
@@ -130,10 +139,12 @@ func (l *LoggingTransport) SendRequest(ctx context.Context, request JSONRPCReque
 		return nil, err
 	}
 	if resp != nil && resp.Error != nil {
-		respAttrs = append(respAttrs,
-			slog.Int("code", resp.Error.Code),
-			slog.String("error", resp.Error.Message),
-		)
+		if l.logRaw {
+			respAttrs = append(respAttrs,
+				slog.Int("code", resp.Error.Code),
+				slog.String("error", resp.Error.Message),
+			)
+		}
 		l.log(ctx, "← response error", respAttrs...)
 		return resp, nil
 	}
@@ -248,10 +259,12 @@ func (l *loggingBidirTransport) SetRequestHandler(handler RequestHandler) {
 			return nil, err
 		}
 		if resp != nil && resp.Error != nil {
-			respAttrs = append(respAttrs,
-				slog.Int("code", resp.Error.Code),
-				slog.String("error", resp.Error.Message),
-			)
+			if l.logRaw {
+				respAttrs = append(respAttrs,
+					slog.Int("code", resp.Error.Code),
+					slog.String("error", resp.Error.Message),
+				)
+			}
 			l.log(ctx, "→ response error", respAttrs...)
 			return resp, nil
 		}

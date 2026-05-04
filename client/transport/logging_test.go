@@ -467,6 +467,76 @@ func TestLoggingTransport_DisablePayloads(t *testing.T) {
 	assert.False(t, hasResult, "result must be omitted when payloads are disabled")
 }
 
+func TestLoggingTransport_DisablePayloadsHidesJSONRPCError(t *testing.T) {
+	inner := &fakeTransport{
+		requestResp: &JSONRPCResponse{
+			JSONRPC: mcp.JSONRPC_VERSION,
+			ID:      mcp.NewRequestId(int64(1)),
+			Error: &mcp.JSONRPCErrorDetails{
+				Code:    mcp.METHOD_NOT_FOUND,
+				Message: "sensitive: user 'alice@example.com' not found",
+			},
+		},
+	}
+	handler := newCaptureHandler()
+	logger := slog.New(handler)
+	transport := NewLogging(inner, logger, WithLoggingPayloads(false))
+
+	resp, err := transport.SendRequest(t.Context(), JSONRPCRequest{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		ID:      mcp.NewRequestId(int64(1)),
+		Method:  "tools/missing",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.NotNil(t, resp.Error, "error must still be returned to the caller")
+
+	records := handler.snapshot()
+	require.Len(t, records, 2)
+	assert.Equal(t, "← response error", records[1].Message,
+		"the error marker should still be emitted so the failure is visible")
+	respAttrs := attrsOf(records[1])
+	_, hasCode := respAttrs["code"]
+	assert.False(t, hasCode, "JSON-RPC error code must be omitted when payloads are disabled")
+	_, hasErr := respAttrs["error"]
+	assert.False(t, hasErr, "JSON-RPC error message must be omitted when payloads are disabled")
+}
+
+func TestLoggingTransport_DisablePayloadsBidirectionalError(t *testing.T) {
+	inner := &fakeBidirTransport{}
+	handler := newCaptureHandler()
+	logger := slog.New(handler)
+	transport := NewLogging(inner, logger, WithLoggingPayloads(false)).(BidirectionalInterface)
+
+	transport.SetRequestHandler(func(_ context.Context, req JSONRPCRequest) (*JSONRPCResponse, error) {
+		return &JSONRPCResponse{
+			JSONRPC: mcp.JSONRPC_VERSION,
+			ID:      req.ID,
+			Error: &mcp.JSONRPCErrorDetails{
+				Code:    mcp.INVALID_PARAMS,
+				Message: "sensitive bidirectional error message",
+			},
+		}, nil
+	})
+	require.NotNil(t, inner.requestHandler)
+
+	_, err := inner.requestHandler(t.Context(), JSONRPCRequest{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		ID:      mcp.NewRequestId(int64(1)),
+		Method:  "sampling/createMessage",
+	})
+	require.NoError(t, err)
+
+	records := handler.snapshot()
+	require.Len(t, records, 2)
+	assert.Equal(t, "→ response error", records[1].Message)
+	respAttrs := attrsOf(records[1])
+	_, hasCode := respAttrs["code"]
+	assert.False(t, hasCode)
+	_, hasErr := respAttrs["error"]
+	assert.False(t, hasErr)
+}
+
 func TestLoggingTransport_LevelFilteredEarly(t *testing.T) {
 	// When the logger has a higher minimum level than the transport's level,
 	// no records should be emitted.
