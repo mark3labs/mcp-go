@@ -978,9 +978,21 @@ so early-exit is cheap.
 :::note
 These methods are defined on the concrete `*client.Client` type, not on the
 `MCPClient` interface. The examples below use `c *client.Client` rather than
-the `c client.Client` you'll see elsewhere in this guide — if you're holding
-an interface value you'll need a type assertion (`c.(*client.Client)`) before
-calling them.
+the `c client.Client` you'll see elsewhere in this guide. If you're holding
+an `MCPClient` interface value, use the **two-value type assertion** so a
+mismatched implementation doesn't panic:
+
+```go
+cc, ok := c.(*client.Client)
+if !ok {
+    return fmt.Errorf("iterators require *client.Client, got %T", c)
+}
+// safe to call cc.IterTools / cc.IterResources / ... here
+```
+
+Throughout the rest of this section, `c` refers to a `*client.Client` directly
+— substitute `cc` (or whatever you named the asserted value) when you arrive
+via the interface.
 :::
 
 ### Basic Usage
