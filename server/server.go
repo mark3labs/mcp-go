@@ -215,6 +215,7 @@ type MCPServer struct {
 	activeTasks                int                  // Current count of running (non-terminal) tasks
 	inflightCancels            sync.Map             // Maps request ID -> context.CancelFunc for in-flight requests
 	inputValidator             *inputSchemaValidator
+	outputValidator            *outputSchemaValidator
 }
 
 // WithPaginationLimit sets the pagination limit for the server.
@@ -408,6 +409,35 @@ func WithInputSchemaValidation() ServerOption {
 	return func(s *MCPServer) {
 		if s.inputValidator == nil {
 			s.inputValidator = newInputSchemaValidator()
+		}
+	}
+}
+
+// WithOutputSchemaValidation enables server-side validation of tool call
+// results against each tool's declared outputSchema. When a tool returns a
+// CallToolResult whose StructuredContent does not conform to the schema, the
+// server replaces the result with a tool execution error (CallToolResult with
+// IsError: true) so the client never sees a result that violates the
+// declared contract.
+//
+// The MCP tools specification states that when an outputSchema is provided,
+// the tool result MUST include structuredContent conforming to that schema.
+// Enabling this option enforces that contract at runtime.
+//
+// Validation is skipped for results whose StructuredContent is nil and for
+// error results (IsError: true). Tools whose output schemas cannot be
+// compiled (malformed JSON Schema) are silently skipped, matching the
+// behaviour of WithInputSchemaValidation, so a single broken schema cannot
+// block tool calls.
+//
+// This option is opt-in to preserve backwards compatibility with servers
+// whose hand-written output schemas may not perfectly describe the values
+// their handlers actually return. Enabling it is recommended for any server
+// whose schemas are accurate.
+func WithOutputSchemaValidation() ServerOption {
+	return func(s *MCPServer) {
+		if s.outputValidator == nil {
+			s.outputValidator = newOutputSchemaValidator()
 		}
 	}
 }
@@ -909,6 +939,7 @@ func (s *MCPServer) SetTools(tools ...ServerTool) {
 	s.tools = newTools
 	s.toolsMu.Unlock()
 	s.inputValidator.invalidateAll()
+	s.outputValidator.invalidateAll()
 
 	// When the list of available tools changes, servers that declared the listChanged capability SHOULD send a notification.
 	if s.capabilities.tools.listChanged {
@@ -953,9 +984,11 @@ func (s *MCPServer) DeleteTools(names ...string) {
 	}
 	s.toolsMu.Unlock()
 
-	// Drop any cached compiled input schemas for the removed tools so a tool
-	// re-added later under the same name does not reuse a stale compilation.
+	// Drop any cached compiled input/output schemas for the removed tools so
+	// a tool re-added later under the same name does not reuse a stale
+	// compilation.
 	s.inputValidator.invalidate(names...)
+	s.outputValidator.invalidate(names...)
 
 	// When the list of available tools changes, servers that declared the listChanged capability SHOULD send a notification.
 	if exists && s.capabilities.tools != nil && s.capabilities.tools.listChanged {
@@ -1743,6 +1776,17 @@ func (s *MCPServer) handleToolCall(
 			id:   id,
 			code: mcp.INTERNAL_ERROR,
 			err:  err,
+		}
+	}
+
+	// Validate the tool's StructuredContent against its declared output
+	// schema when output schema validation has been enabled via
+	// WithOutputSchemaValidation. A validation failure is surfaced as a
+	// tool execution error so the client cannot silently receive a result
+	// that violates the declared contract.
+	if s.outputValidator != nil {
+		if _, vErr := s.outputValidator.validate(tool.Tool, result); vErr != nil {
+			return validationToolResult(vErr), nil
 		}
 	}
 

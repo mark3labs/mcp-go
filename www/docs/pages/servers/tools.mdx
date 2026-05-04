@@ -215,6 +215,27 @@ func searchProductsHandler(ctx context.Context, req mcp.CallToolRequest, args Se
 }
 ```
 
+### Validating Output Against the Schema
+
+Declaring an output schema is a contract: clients can rely on the shape of
+`structuredContent` matching the schema you advertised. To enforce that
+contract at runtime, opt in to output schema validation when constructing
+the server:
+
+```go
+s := server.NewMCPServer("Product Search", "1.0.0",
+    server.WithToolCapabilities(false),
+    server.WithOutputSchemaValidation(), // reject results that don't match outputSchema
+)
+```
+
+When enabled, every tool result whose `StructuredContent` does not conform
+to the declared `outputSchema` is replaced with a tool execution error
+(`IsError: true`). This catches handler bugs server-side instead of letting
+them reach the client as a silent protocol violation. Tools without an
+output schema, results without `StructuredContent`, and error results are
+all passed through unchanged.
+
 ### Array Output Schema
 
 Tools can return arrays of structured data:

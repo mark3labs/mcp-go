@@ -16,9 +16,9 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// inputSchemaValidator compiles and caches JSON Schema validators for tool
-// input schemas. Compilation is performed lazily on first use and the
-// resulting schema is cached for the lifetime of the server.
+// compiledSchemaCache compiles and caches JSON Schema validators keyed by
+// tool name. Compilation is performed lazily on first use and the resulting
+// schema is cached for the lifetime of the cache.
 //
 // The cache is two-level: tool name -> schema digest -> compiled entry. Two
 // sessions can expose the same tool name with different schemas (via
@@ -26,7 +26,11 @@ import (
 // schema; each distinct schema is compiled once. Name-level invalidation
 // drops every entry registered for that name in a single map delete, which
 // keeps DeleteTools / SetTools cleanup cheap.
-type inputSchemaValidator struct {
+//
+// The same cache type backs both input and output schema validation; each
+// validator owns its own cache instance so input and output schemas with
+// the same digest do not collide.
+type compiledSchemaCache struct {
 	mu     sync.RWMutex
 	cached map[string]map[string]*cachedToolSchema
 }
@@ -39,11 +43,100 @@ type cachedToolSchema struct {
 	compileErr error
 }
 
-// newInputSchemaValidator returns a fresh validator with an empty cache.
-func newInputSchemaValidator() *inputSchemaValidator {
-	return &inputSchemaValidator{
+// newCompiledSchemaCache returns a fresh empty schema cache.
+func newCompiledSchemaCache() *compiledSchemaCache {
+	return &compiledSchemaCache{
 		cached: make(map[string]map[string]*cachedToolSchema),
 	}
+}
+
+// invalidate drops cached compilations for the given tool names. Used when
+// tools are re-registered or removed so that stale schemas are not reused.
+func (c *compiledSchemaCache) invalidate(names ...string) {
+	if c == nil || len(names) == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, name := range names {
+		delete(c.cached, name)
+	}
+}
+
+// invalidateAll drops the entire cache.
+func (c *compiledSchemaCache) invalidateAll() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cached = make(map[string]map[string]*cachedToolSchema)
+}
+
+// lookupOrCompile returns the compiled schema for the given (toolName,
+// schemaJSON) pair, compiling and caching it on first access. Compilation
+// errors are cached too so that a malformed schema is not recompiled on
+// every call.
+func (c *compiledSchemaCache) lookupOrCompile(toolName string, schemaJSON []byte) (*jsonschema.Schema, error) {
+	digest := schemaDigest(schemaJSON)
+
+	c.mu.RLock()
+	if perName, ok := c.cached[toolName]; ok {
+		if entry, ok := perName[digest]; ok {
+			c.mu.RUnlock()
+			return entry.compiled, entry.compileErr
+		}
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Re-check under the write lock in case another goroutine compiled it.
+	perName, ok := c.cached[toolName]
+	if !ok {
+		perName = make(map[string]*cachedToolSchema)
+		c.cached[toolName] = perName
+	}
+	if entry, ok := perName[digest]; ok {
+		return entry.compiled, entry.compileErr
+	}
+
+	compiled, compileErr := compileSchema(toolName, schemaJSON)
+	perName[digest] = &cachedToolSchema{
+		compiled:   compiled,
+		compileErr: compileErr,
+	}
+	return compiled, compileErr
+}
+
+// inputSchemaValidator validates tool call arguments against the tool's
+// declared input schema, reusing a compiledSchemaCache to amortize the
+// cost of JSON Schema compilation across calls.
+type inputSchemaValidator struct {
+	*compiledSchemaCache
+}
+
+// newInputSchemaValidator returns a fresh validator with an empty cache.
+func newInputSchemaValidator() *inputSchemaValidator {
+	return &inputSchemaValidator{compiledSchemaCache: newCompiledSchemaCache()}
+}
+
+// invalidate drops cached compilations for the given tool names. The
+// receiver-level method preserves the historical nil-safety guarantee: a
+// nil *inputSchemaValidator is a valid no-op.
+func (v *inputSchemaValidator) invalidate(names ...string) {
+	if v == nil {
+		return
+	}
+	v.compiledSchemaCache.invalidate(names...)
+}
+
+// invalidateAll drops the entire cache. Safe to call on a nil receiver.
+func (v *inputSchemaValidator) invalidateAll() {
+	if v == nil {
+		return
+	}
+	v.compiledSchemaCache.invalidateAll()
 }
 
 // validate validates raw arguments against the tool's input schema. If the
@@ -71,61 +164,6 @@ func (v *inputSchemaValidator) validate(tool mcp.Tool, rawArgs any) (bool, error
 		return true, formatValidationError(err)
 	}
 	return true, nil
-}
-
-// invalidate drops cached compilations for the given tool names. Used when
-// tools are re-registered or removed so that stale schemas are not reused.
-func (v *inputSchemaValidator) invalidate(names ...string) {
-	if v == nil || len(names) == 0 {
-		return
-	}
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	for _, name := range names {
-		delete(v.cached, name)
-	}
-}
-
-// invalidateAll drops the entire cache.
-func (v *inputSchemaValidator) invalidateAll() {
-	if v == nil {
-		return
-	}
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	v.cached = make(map[string]map[string]*cachedToolSchema)
-}
-
-func (v *inputSchemaValidator) lookupOrCompile(toolName string, schemaJSON []byte) (*jsonschema.Schema, error) {
-	digest := schemaDigest(schemaJSON)
-
-	v.mu.RLock()
-	if perName, ok := v.cached[toolName]; ok {
-		if entry, ok := perName[digest]; ok {
-			v.mu.RUnlock()
-			return entry.compiled, entry.compileErr
-		}
-	}
-	v.mu.RUnlock()
-
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	// Re-check under the write lock in case another goroutine compiled it.
-	perName, ok := v.cached[toolName]
-	if !ok {
-		perName = make(map[string]*cachedToolSchema)
-		v.cached[toolName] = perName
-	}
-	if entry, ok := perName[digest]; ok {
-		return entry.compiled, entry.compileErr
-	}
-
-	compiled, compileErr := compileSchema(toolName, schemaJSON)
-	perName[digest] = &cachedToolSchema{
-		compiled:   compiled,
-		compileErr: compileErr,
-	}
-	return compiled, compileErr
 }
 
 // schemaDigest returns a stable hex-encoded SHA-256 of the canonical schema
