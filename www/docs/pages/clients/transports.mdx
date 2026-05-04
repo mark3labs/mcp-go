@@ -1122,3 +1122,55 @@ func (myCustomLogger) Errorf(format string, args ...any) {
     // TODO
 }
 ```
+
+### JSON-RPC Tracing with `LoggingTransport`
+
+For debugging the wire protocol itself, wrap any transport with
+`transport.NewLogging`. The wrapper is a transparent decorator: it implements
+`transport.Interface` and additionally `BidirectionalInterface` /
+`HTTPConnection` whenever the inner transport does, so type assertions in the
+client continue to behave as expected.
+
+```go
+import (
+    "log/slog"
+    "os"
+
+    "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/client/transport"
+)
+
+func tracedClient() (*client.Client, error) {
+    inner, err := transport.NewStdio("my-server", nil)
+    if err != nil {
+        return nil, err
+    }
+
+    logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+        Level: slog.LevelDebug,
+    }))
+
+    // Wrap the transport so every JSON-RPC message is logged.
+    logged := transport.NewLogging(inner, logger,
+        transport.WithLoggingLevel(slog.LevelDebug),
+        transport.WithLoggingPayloads(true), // include params/result bodies
+    )
+
+    return client.NewClient(logged), nil
+}
+```
+
+Each record carries the message direction, method name, request id and (for
+responses) the duration of the round-trip:
+
+```text
+level=DEBUG msg="→ request"  method=initialize id=1
+level=DEBUG msg="← response" method=initialize id=1 duration=12ms
+level=DEBUG msg="→ request"  method=tools/list id=2
+level=DEBUG msg="← response" method=tools/list id=2 duration=3ms
+level=DEBUG msg="← notification" method=notifications/tools/list_changed
+```
+
+Use `WithLoggingPayloads(false)` to suppress message bodies when only the
+method/id metadata is required, and `WithLoggingLevel` to change the slog
+level at which records are emitted.
