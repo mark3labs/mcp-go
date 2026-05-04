@@ -2220,3 +2220,109 @@ func TestExtractResourceMetadataURLs(t *testing.T) {
 		})
 	}
 }
+
+// TestOAuthHandler_ProcessAuthorizationResponse_201Created verifies that token
+// exchange succeeds when the authorization server responds with HTTP 201
+// Created instead of 200 OK. Some authorization servers (e.g. Supabase MCP)
+// return 201 Created for successful token responses, which is allowed by RFC
+// 7231 / RFC 9110 but stricter implementations would reject it. See issue
+// #835.
+func TestOAuthHandler_ProcessAuthorizationResponse_201Created(t *testing.T) {
+	tokenStore := NewMemoryTokenStore()
+
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                 serverURL,
+				"authorization_endpoint": serverURL + "/authorize",
+				"token_endpoint":         serverURL + "/token",
+			})
+		case "/token":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated) // 201 Created instead of 200 OK
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token":  "test-access-token",
+				"refresh_token": "test-refresh-token",
+				"expires_in":    86400,
+				"token_type":    "Bearer",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	serverURL = server.URL
+	defer server.Close()
+
+	config := OAuthConfig{
+		ClientID:              "test-client",
+		ClientSecret:          "test-secret",
+		RedirectURI:           server.URL + "/callback",
+		TokenStore:            tokenStore,
+		AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
+		PKCEEnabled:           true,
+	}
+
+	handler := NewOAuthHandler(config)
+	ctx := t.Context()
+
+	const state = "test-state"
+	handler.SetExpectedState(state)
+
+	err := handler.ProcessAuthorizationResponse(ctx, "test-code", state, "test-verifier")
+	require.NoError(t, err, "token exchange should succeed for HTTP 201 Created")
+
+	saved, getErr := tokenStore.GetToken(ctx)
+	require.NoError(t, getErr, "token should be persisted")
+	assert.Equal(t, "test-access-token", saved.AccessToken)
+	assert.Equal(t, "test-refresh-token", saved.RefreshToken)
+}
+
+// TestOAuthHandler_RefreshToken_201Created verifies that the refresh token
+// exchange accepts HTTP 201 Created responses. See issue #835.
+func TestOAuthHandler_RefreshToken_201Created(t *testing.T) {
+	tokenStore := NewMemoryTokenStore()
+
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                 serverURL,
+				"authorization_endpoint": serverURL + "/authorize",
+				"token_endpoint":         serverURL + "/token",
+			})
+		case "/token":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated) // 201 Created instead of 200 OK
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token":  "refreshed-access-token",
+				"refresh_token": "refreshed-refresh-token",
+				"expires_in":    3600,
+				"token_type":    "Bearer",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	serverURL = server.URL
+	defer server.Close()
+
+	config := OAuthConfig{
+		ClientID:              "test-client",
+		ClientSecret:          "test-secret",
+		RedirectURI:           "http://localhost/callback",
+		TokenStore:            tokenStore,
+		AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
+	}
+
+	handler := NewOAuthHandler(config)
+
+	token, err := handler.RefreshToken(t.Context(), "old-refresh-token")
+	require.NoError(t, err, "refresh token exchange should succeed for HTTP 201 Created")
+	assert.Equal(t, "refreshed-access-token", token.AccessToken)
+	assert.Equal(t, "refreshed-refresh-token", token.RefreshToken)
+}

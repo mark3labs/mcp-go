@@ -274,7 +274,9 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken string) (*
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	// Accept any 2xx status; some authorization servers (e.g. Supabase) return
+	// 201 Created for successful token responses.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, extractOAuthError(body, resp.StatusCode, "refresh token request failed")
 	}
@@ -1027,7 +1029,9 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	// Accept any 2xx status; some authorization servers (e.g. Supabase) return
+	// 201 Created for successful token responses.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
 		return extractOAuthError(body, resp.StatusCode, "token request failed")
 	}
