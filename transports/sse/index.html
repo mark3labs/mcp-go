@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script src="/initializeTheme.iife.js"></script><link rel="preload" as="image" href="/logo.png"/><title>SSE Transport – MCP-Go</title><meta property="og:type" content="website"/><meta property="og:title" content="SSE Transport"/><meta property="og:url" content="https://mcp-go.dev"/><meta name="twitter:card" content="summary_large_image"/>
-    <script type="module" crossorigin src="/assets/index-CftM4I4h.js"></script>
+    <script type="module" crossorigin src="/assets/index-BqGZvfSU.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/style-3fK4AU4f.css">
   </head>
   <body>
@@ -284,7 +284,18 @@
 <span class="line vocs_Span"><span style="color:#6A737D;--shiki-dark:#768390" class="vocs_Span">        // Add custom context values from headers</span></span>
 <span class="line vocs_Span"><span style="color:#D73A49;--shiki-dark:#F47067" class="vocs_Span">        return</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span"> ctx</span></span>
 <span class="line vocs_Span"><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">    }),</span></span>
+<span class="line vocs_Span" data-empty-line="true"> </span>
+<span class="line vocs_Span"><span style="color:#6A737D;--shiki-dark:#768390" class="vocs_Span">    // Enable Cross-Origin Resource Sharing for browser-based clients</span></span>
+<span class="line vocs_Span"><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">    server.</span><span style="color:#6F42C1;--shiki-dark:#DCBDFB" class="vocs_Span">WithSSECORS</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">(</span></span>
+<span class="line vocs_Span"><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">        server.</span><span style="color:#6F42C1;--shiki-dark:#DCBDFB" class="vocs_Span">WithCORSAllowedOrigins</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">(</span><span style="color:#032F62;--shiki-dark:#96D0FF" class="vocs_Span">&quot;https://my-ai-app.com&quot;</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">),</span></span>
+<span class="line vocs_Span"><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">        server.</span><span style="color:#6F42C1;--shiki-dark:#DCBDFB" class="vocs_Span">WithCORSAllowCredentials</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">(),</span></span>
+<span class="line vocs_Span"><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">    ),</span></span>
 <span class="line vocs_Span"><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">)</span></span></code></pre></div></div>
+<p class="vocs_Paragraph">CORS handling is opt-in. Without <code class="vocs_Code">WithSSECORS</code>, the SSE stream falls back to
+the historical default of <code class="vocs_Code">Access-Control-Allow-Origin: *</code> for backwards
+compatibility, while the message endpoint emits no CORS headers.
+See the <a class="vocs_Anchor vocs_Link vocs_Link_accent" href="/transports/http#cross-origin-resource-sharing-cors" data-discover="true">Streamable HTTP CORS docs</a>
+for the full list of <code class="vocs_Code">CORSOption</code> helpers shared between both transports.</p>
 <strong class="vocs_Strong">Resulting endpoints:</strong>
 <ul class="vocs_List vocs_List_unordered">
 <li class="vocs_ListItem">SSE stream: <code class="vocs_Code">http://localhost:8080/api/mcp/sse</code></li>
