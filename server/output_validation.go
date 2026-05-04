@@ -62,12 +62,33 @@ func (v *outputSchemaValidator) validate(tool mcp.Tool, result *mcp.CallToolResu
 	if v == nil || result == nil {
 		return false, nil
 	}
-	// Error results carry diagnostic content that need not match the
-	// declared output schema.
-	if result.IsError {
+	return v.validateStructured(tool, result.StructuredContent, result.IsError)
+}
+
+// validateCreateTaskResult is the *mcp.CreateTaskResult counterpart to
+// validate. Task-augmented tool calls produce a CreateTaskResult whose
+// StructuredContent carries the structured payload that will eventually be
+// surfaced to the client via tasks/result; validating it before the result
+// is persisted to the task entry keeps the task path consistent with the
+// synchronous path's WithOutputSchemaValidation contract.
+func (v *outputSchemaValidator) validateCreateTaskResult(tool mcp.Tool, result *mcp.CreateTaskResult) (bool, error) {
+	if v == nil || result == nil {
 		return false, nil
 	}
-	if result.StructuredContent == nil {
+	return v.validateStructured(tool, result.StructuredContent, result.IsError)
+}
+
+// validateStructured runs the actual schema check against the structured
+// content and IsError flag extracted from a tool result. Both *CallToolResult
+// and *CreateTaskResult delegate here so the skip rules and error formatting
+// stay in one place.
+func (v *outputSchemaValidator) validateStructured(tool mcp.Tool, structured any, isError bool) (bool, error) {
+	// Error results carry diagnostic content that need not match the
+	// declared output schema.
+	if isError {
+		return false, nil
+	}
+	if structured == nil {
 		return false, nil
 	}
 	schemaJSON, ok := outputSchemaJSONFor(tool)
@@ -80,7 +101,7 @@ func (v *outputSchemaValidator) validate(tool mcp.Tool, result *mcp.CallToolResu
 		return false, nil
 	}
 
-	value, err := normalizeStructuredContentForValidation(result.StructuredContent)
+	value, err := normalizeStructuredContentForValidation(structured)
 	if err != nil {
 		return true, fmt.Errorf("invalid structured content: %w", err)
 	}

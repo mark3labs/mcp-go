@@ -1958,6 +1958,19 @@ func (s *MCPServer) executeTaskTool(
 
 	// Task succeeded - store the CreateTaskResult
 	// Note: The actual result will be retrieved later via tasks/result
+	//
+	// Validate the StructuredContent against the tool's declared output
+	// schema when WithOutputSchemaValidation is enabled. If validation fails,
+	// persist a tool execution error in place of the bad result so the
+	// client cannot retrieve a result that violates the schema via
+	// tasks/result. handleTaskResult accepts both *CallToolResult and
+	// *CreateTaskResult, so storing a *CallToolResult here is safe.
+	if s.outputValidator != nil {
+		if _, vErr := s.outputValidator.validateCreateTaskResult(taskTool.Tool, result); vErr != nil {
+			s.completeTask(entry, validationToolResult(vErr), nil)
+			return
+		}
+	}
 	s.completeTask(entry, result, nil)
 }
 
@@ -2046,6 +2059,18 @@ func (s *MCPServer) executeRegularToolAsTask(
 
 	// Task succeeded - store the CallToolResult directly
 	// When retrieved via tasks/result, this will be returned to the client
+	//
+	// Mirror the synchronous path: validate the result's StructuredContent
+	// against the tool's declared output schema when
+	// WithOutputSchemaValidation is enabled. A validation failure replaces
+	// the result with a tool execution error so the bad payload never
+	// reaches the client via tasks/result.
+	if s.outputValidator != nil {
+		if _, vErr := s.outputValidator.validate(regularTool.Tool, result); vErr != nil {
+			s.completeTask(entry, validationToolResult(vErr), nil)
+			return
+		}
+	}
 	s.completeTask(entry, result, nil)
 }
 

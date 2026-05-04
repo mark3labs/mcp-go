@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -259,4 +260,193 @@ func TestOutputSchemaValidation_TypedHandler(t *testing.T) {
 	})
 	resp = callTool(t, srv, "get_weather", map[string]any{"city": "London"})
 	requireToolErrorContaining(t, resp, "temperature")
+}
+
+// waitForTaskTerminal polls the server until the named task reaches a
+// terminal status or the deadline elapses, returning the latest observed
+// status. It exists to keep the task-validation tests focused on the
+// validation behaviour rather than retry plumbing.
+func waitForTaskTerminal(t *testing.T, srv *MCPServer, ctx context.Context, taskID string) mcp.TaskStatus {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var status mcp.TaskStatus
+	for time.Now().Before(deadline) {
+		task, _, err := srv.getTask(ctx, taskID)
+		require.NoError(t, err)
+		status = task.Status
+		if status.IsTerminal() {
+			return status
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("task %s did not reach terminal status (last: %s)", taskID, status)
+	return status
+}
+
+// TestOutputSchemaValidation_TaskAugmented_RegularTool exercises the
+// hybrid-mode path: a regular tool with TaskSupportOptional invoked with a
+// task param, whose handler returns non-conforming StructuredContent. The
+// validator must intercept the bad result before it is persisted to the
+// task entry, so that tasks/result surfaces a validation error instead of
+// the original payload.
+func TestOutputSchemaValidation_TaskAugmented_RegularTool(t *testing.T) {
+	srv := NewMCPServer("test", "1.0.0",
+		WithTaskCapabilities(true, true, true),
+		WithOutputSchemaValidation(),
+	)
+
+	tool := mcp.NewTool("get_weather",
+		mcp.WithDescription("Get the current weather"),
+		mcp.WithString("city", mcp.Required()),
+		mcp.WithOutputSchema[weatherOutput](),
+		mcp.WithTaskSupport(mcp.TaskSupportOptional),
+	)
+	srv.AddTool(tool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultStructuredOnly(map[string]any{
+			"temperature": "not-a-number",
+			"unit":        "C",
+		}), nil
+	})
+
+	ctx := t.Context()
+	createRes, reqErr := srv.handleToolCall(ctx, 1, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "get_weather",
+			Arguments: map[string]any{"city": "London"},
+			Task:      &mcp.TaskParams{},
+		},
+	})
+	require.Nil(t, reqErr)
+	created, ok := createRes.(*mcp.CreateTaskResult)
+	require.True(t, ok, "task-augmented call must return CreateTaskResult")
+	taskID := created.Task.TaskId
+	require.NotEmpty(t, taskID)
+
+	status := waitForTaskTerminal(t, srv, ctx, taskID)
+	assert.Equal(t, mcp.TaskStatusCompleted, status,
+		"task should complete (the validation error is recorded as a successful tool error result, not a task failure)")
+
+	taskResult, resErr := srv.handleTaskResult(ctx, 2, mcp.TaskResultRequest{
+		Params: mcp.TaskResultParams{TaskId: taskID},
+	})
+	require.Nil(t, resErr)
+	require.NotNil(t, taskResult)
+
+	assert.True(t, taskResult.IsError, "validation failure must surface as a tool execution error")
+	require.NotEmpty(t, taskResult.Content)
+	tc, ok := taskResult.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+	assert.Contains(t, tc.Text, "output schema validation failed")
+	assert.Contains(t, tc.Text, "temperature")
+	assert.Nil(t, taskResult.StructuredContent,
+		"the bad structured content must not survive to the client")
+}
+
+// TestOutputSchemaValidation_TaskTool exercises the task-only path: a tool
+// registered via AddTaskTool whose handler returns a *CreateTaskResult
+// carrying non-conforming StructuredContent. Validation must run on the
+// CreateTaskResult before the task is completed.
+func TestOutputSchemaValidation_TaskTool(t *testing.T) {
+	srv := NewMCPServer("test", "1.0.0",
+		WithTaskCapabilities(true, true, true),
+		WithOutputSchemaValidation(),
+	)
+
+	tool := mcp.Tool{
+		Name:        "compute_weather",
+		Description: "Compute weather asynchronously",
+		Execution:   &mcp.ToolExecution{TaskSupport: mcp.TaskSupportRequired},
+	}
+	// Reuse the WithOutputSchema helper by piggy-backing on a NewTool call,
+	// then merge its OutputSchema onto the task tool definition above so the
+	// task tool path validates the same shape.
+	template := mcp.NewTool("compute_weather",
+		mcp.WithDescription("Compute weather asynchronously"),
+		mcp.WithOutputSchema[weatherOutput](),
+		mcp.WithTaskSupport(mcp.TaskSupportRequired),
+	)
+	tool.OutputSchema = template.OutputSchema
+	tool.RawOutputSchema = template.RawOutputSchema
+
+	srv.AddTaskTool(tool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+		return &mcp.CreateTaskResult{
+			StructuredContent: map[string]any{
+				"temperature": "definitely-not-a-number",
+				"unit":        "C",
+			},
+		}, nil
+	})
+
+	ctx := t.Context()
+	createRes, reqErr := srv.handleToolCall(ctx, 1, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "compute_weather",
+			Task: &mcp.TaskParams{},
+		},
+	})
+	require.Nil(t, reqErr)
+	created, ok := createRes.(*mcp.CreateTaskResult)
+	require.True(t, ok)
+	taskID := created.Task.TaskId
+	require.NotEmpty(t, taskID)
+
+	status := waitForTaskTerminal(t, srv, ctx, taskID)
+	assert.Equal(t, mcp.TaskStatusCompleted, status)
+
+	taskResult, resErr := srv.handleTaskResult(ctx, 2, mcp.TaskResultRequest{
+		Params: mcp.TaskResultParams{TaskId: taskID},
+	})
+	require.Nil(t, resErr)
+	require.NotNil(t, taskResult)
+
+	assert.True(t, taskResult.IsError, "validation failure must surface as a tool execution error")
+	require.NotEmpty(t, taskResult.Content)
+	tc, ok := taskResult.Content[0].(mcp.TextContent)
+	require.True(t, ok)
+	assert.Contains(t, tc.Text, "output schema validation failed")
+	assert.Contains(t, tc.Text, "temperature")
+	assert.Nil(t, taskResult.StructuredContent)
+}
+
+// TestOutputSchemaValidation_TaskAugmented_HappyPath confirms a conforming
+// task result is left untouched: the structured payload reaches the client
+// through tasks/result and IsError remains false.
+func TestOutputSchemaValidation_TaskAugmented_HappyPath(t *testing.T) {
+	srv := NewMCPServer("test", "1.0.0",
+		WithTaskCapabilities(true, true, true),
+		WithOutputSchemaValidation(),
+	)
+
+	tool := mcp.NewTool("get_weather",
+		mcp.WithDescription("Get the current weather"),
+		mcp.WithString("city", mcp.Required()),
+		mcp.WithOutputSchema[weatherOutput](),
+		mcp.WithTaskSupport(mcp.TaskSupportOptional),
+	)
+	srv.AddTool(tool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultStructuredOnly(weatherOutput{Temperature: 21.5, Unit: "C"}), nil
+	})
+
+	ctx := t.Context()
+	createRes, reqErr := srv.handleToolCall(ctx, 1, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "get_weather",
+			Arguments: map[string]any{"city": "London"},
+			Task:      &mcp.TaskParams{},
+		},
+	})
+	require.Nil(t, reqErr)
+	created := createRes.(*mcp.CreateTaskResult)
+	taskID := created.Task.TaskId
+
+	status := waitForTaskTerminal(t, srv, ctx, taskID)
+	assert.Equal(t, mcp.TaskStatusCompleted, status)
+
+	taskResult, resErr := srv.handleTaskResult(ctx, 2, mcp.TaskResultRequest{
+		Params: mcp.TaskResultParams{TaskId: taskID},
+	})
+	require.Nil(t, resErr)
+	require.NotNil(t, taskResult)
+	assert.False(t, taskResult.IsError)
+	require.NotNil(t, taskResult.StructuredContent)
 }
