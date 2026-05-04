@@ -3431,6 +3431,110 @@ mcpClient, err := client.NewStdioClient(
 
 For complete sampling documentation, see **[Client Sampling Guide](/clients/advanced-sampling)**.
 
+### Streaming Pagination with Iterators
+
+MCP servers may return large result sets (tools, resources, resource templates,
+or prompts) across multiple pages. The standard `ListTools` / `ListResources` /
+`ListPrompts` / `ListResourceTemplates` methods auto-fetch every page and return
+an aggregated slice — convenient, but wasteful when you only need a few items
+or when the result set is very large.
+
+For these cases, the client also exposes Go 1.23 iterator methods that lazily
+fetch pages on demand:
+
+* `IterTools(ctx, mcp.ListToolsRequest) iter.Seq2[mcp.Tool, error]`
+* `IterResources(ctx, mcp.ListResourcesRequest) iter.Seq2[mcp.Resource, error]`
+* `IterResourceTemplates(ctx, mcp.ListResourceTemplatesRequest) iter.Seq2[mcp.ResourceTemplate, error]`
+* `IterPrompts(ctx, mcp.ListPromptsRequest) iter.Seq2[mcp.Prompt, error]`
+
+Each iterator yields one item at a time and only fetches the next page when the
+current one is exhausted. Breaking out of the `range` stops further requests,
+so early-exit is cheap.
+
+:::note
+These methods are defined on the concrete `*client.Client` type, not on the
+`MCPClient` interface. The examples below use `c *client.Client` rather than
+the `c client.Client` you'll see elsewhere in this guide. If you're holding
+an `MCPClient` interface value, use the **two-value type assertion** so a
+mismatched implementation doesn't panic:
+
+```go
+cc, ok := c.(*client.Client)
+if !ok {
+    return fmt.Errorf("iterators require *client.Client, got %T", c)
+}
+// safe to call cc.IterTools / cc.IterResources / ... here
+```
+
+Throughout the rest of this section, `c` refers to a `*client.Client` directly
+— substitute `cc` (or whatever you named the asserted value) when you arrive
+via the interface.
+:::
+
+#### Basic Usage
+
+```go
+func printToolNames(ctx context.Context, c *client.Client) error {
+    for tool, err := range c.IterTools(ctx, mcp.ListToolsRequest{}) {
+        if err != nil {
+            return fmt.Errorf("list tools: %w", err)
+        }
+        fmt.Println(tool.Name)
+    }
+    return nil
+}
+```
+
+#### Early Exit
+
+The iterator stops fetching pages as soon as the loop terminates, which is
+useful for searches or first-match lookups:
+
+```go
+func findTool(ctx context.Context, c *client.Client, name string) (*mcp.Tool, error) {
+    for tool, err := range c.IterTools(ctx, mcp.ListToolsRequest{}) {
+        if err != nil {
+            return nil, err
+        }
+        if tool.Name == name {
+            return &tool, nil // no further pages are fetched
+        }
+    }
+    return nil, fmt.Errorf("tool %q not found", name)
+}
+```
+
+#### Error Handling and Cancellation
+
+If a page fetch fails, or the context is cancelled between pages, the iterator
+yields a single `(zero-value, err)` pair and then stops. Always check `err` on
+each iteration:
+
+```go
+func processResources(ctx context.Context, c *client.Client) error {
+    for resource, err := range c.IterResources(ctx, mcp.ListResourcesRequest{}) {
+        if err != nil {
+            // ctx.Err() or a transport / server error — iterator is now done.
+            return err
+        }
+        process(resource)
+    }
+    return nil
+}
+```
+
+#### When to Use Which
+
+| Method                                          | Behavior                                                 | Best for                                         |
+| ----------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------ |
+| `ListTools` / `ListResources` / ...             | Auto-fetches **all** pages, returns an aggregated slice. | Small result sets, when you need the full list.  |
+| `ListToolsByPage` / `ListResourcesByPage` / ... | Fetches a **single** page; caller manages cursors.       | Custom pagination UI, manual cursor control.     |
+| `IterTools` / `IterResources` / ...             | Lazily fetches pages as the iterator is consumed.        | Large result sets, searches, early-exit lookups. |
+
+As mentioned above, the iterator methods live on the concrete `*client.Client`
+type rather than the `MCPClient` interface, so the interface remains
+backwards-compatible for existing implementers.
+
 ### Next Steps
 
 * **[Client Transports](/clients/transports)** - Learn transport-specific client features
