@@ -89,13 +89,17 @@ type ProtectedResourceMetadataConfig struct {
 // resource path is appended after the well-known segment, producing
 // "/.well-known/oauth-protected-resource/mcp".
 //
-// If resource cannot be parsed as a URL, the bare well-known path is returned.
+// If resource is empty, cannot be parsed as a URL, or is not an absolute URI
+// (i.e. lacks a scheme and host), the bare well-known path is returned. RFC
+// 9728 resource identifiers are absolute URIs, so a bare host like
+// "mcp.example.com" or a path-only value like "/mcp" is not a valid resource
+// and must not contribute a path suffix.
 func ProtectedResourceMetadataPath(resource string) string {
 	if resource == "" {
 		return WellKnownProtectedResourcePath
 	}
 	u, err := url.Parse(resource)
-	if err != nil {
+	if err != nil || !u.IsAbs() || u.Host == "" {
 		return WellKnownProtectedResourcePath
 	}
 	p := strings.Trim(u.Path, "/")

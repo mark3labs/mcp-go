@@ -55,6 +55,21 @@ func TestProtectedResourceMetadataPath(t *testing.T) {
 			resource: "://broken",
 			want:     "/.well-known/oauth-protected-resource",
 		},
+		{
+			name:     "bare host without scheme falls back to base path",
+			resource: "mcp.example.com",
+			want:     "/.well-known/oauth-protected-resource",
+		},
+		{
+			name:     "bare host with path but no scheme falls back to base path",
+			resource: "mcp.example.com/mcp",
+			want:     "/.well-known/oauth-protected-resource",
+		},
+		{
+			name:     "path-only resource falls back to base path",
+			resource: "/mcp",
+			want:     "/.well-known/oauth-protected-resource",
+		},
 	}
 
 	for _, tt := range tests {
