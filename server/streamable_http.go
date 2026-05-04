@@ -175,6 +175,37 @@ func WithSessionIdleTTL(ttl time.Duration) StreamableHTTPOption {
 	}
 }
 
+// WithStreamableHTTPCORS configures Cross-Origin Resource Sharing for the
+// Streamable HTTP server.
+//
+// CORS handling is opt-in: callers must specify at least one allowed origin
+// via WithCORSAllowedOrigins for any Access-Control-* headers to be emitted.
+// When enabled, preflight (OPTIONS) requests are answered directly by the
+// server and simple cross-origin responses are decorated with the configured
+// Allow-Origin, Allow-Credentials, Expose-Headers and Vary headers.
+//
+// Example:
+//
+//	srv := server.NewStreamableHTTPServer(mcpServer,
+//	    server.WithEndpointPath("/mcp"),
+//	    server.WithStreamableHTTPCORS(
+//	        server.WithCORSAllowedOrigins("https://my-ai-app.com"),
+//	        server.WithCORSAllowCredentials(),
+//	    ),
+//	)
+func WithStreamableHTTPCORS(opts ...CORSOption) StreamableHTTPOption {
+	return func(s *StreamableHTTPServer) {
+		if s.corsConfig == nil {
+			s.corsConfig = &CORSConfig{}
+		}
+		for _, opt := range opts {
+			if opt != nil {
+				opt(s.corsConfig)
+			}
+		}
+	}
+}
+
 // StreamableHTTPServer implements a Streamable-http based MCP server.
 // It communicates with clients over HTTP protocol, supporting both direct HTTP responses, and SSE streams.
 // https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http
@@ -231,6 +262,11 @@ type StreamableHTTPServer struct {
 	protectedResourceMetadata        *ProtectedResourceMetadataConfig
 	protectedResourceMetadataPath    string
 	protectedResourceMetadataHandler http.Handler
+
+	// corsConfig, when non-nil and with at least one allowed origin, makes
+	// the server emit CORS headers and answer preflight requests. See
+	// WithStreamableHTTPCORS.
+	corsConfig *CORSConfig
 }
 
 // NewStreamableHTTPServer creates a new streamable-http server instance
@@ -273,7 +309,17 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 // derived /.well-known/oauth-protected-resource path are dispatched to the
 // metadata handler so that the same StreamableHTTPServer can be mounted as a
 // single http.Handler while still exposing OAuth discovery metadata.
+//
+// When WithStreamableHTTPCORS has been configured, CORS preflight (OPTIONS)
+// requests are answered directly and simple cross-origin responses are
+// decorated with the configured Access-Control-* headers before dispatch.
 func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.corsConfig.enabled() {
+		if s.corsConfig.handlePreflight(w, r) {
+			return
+		}
+		s.corsConfig.applySimple(w, r)
+	}
 	if s.protectedResourceMetadataHandler != nil && r.URL.Path == s.protectedResourceMetadataPath {
 		s.protectedResourceMetadataHandler.ServeHTTP(w, r)
 		return

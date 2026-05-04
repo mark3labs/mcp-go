@@ -759,6 +759,46 @@ The auto-mount options (`WithProtectedResourceMetadata` /
 CORS is enabled with `Access-Control-Allow-Origin: *` so browser-based MCP
 clients can perform discovery cross-origin.
 
+### Cross-Origin Resource Sharing (CORS)
+
+The MCP endpoints themselves are **not** CORS-enabled by default — every
+deployment has different origin requirements, and emitting permissive
+headers unconditionally would be a security regression. Browser-based MCP
+clients hosted on a different origin than the server will be blocked unless
+you opt in.
+
+Use `server.WithStreamableHTTPCORS` (or `server.WithSSECORS` for the SSE
+transport) to enable CORS handling. The transport then answers preflight
+(`OPTIONS`) requests directly and decorates simple cross-origin responses
+with the appropriate `Access-Control-*` headers, including a `Vary: Origin`
+so downstream caches behave correctly.
+
+```go
+httpServer := server.NewStreamableHTTPServer(mcpServer,
+    server.WithEndpointPath("/mcp"),
+    server.WithStreamableHTTPCORS(
+        server.WithCORSAllowedOrigins("https://my-ai-app.com", "http://localhost:3000"),
+        server.WithCORSAllowCredentials(),
+        server.WithCORSMaxAge(300),
+    ),
+)
+```
+
+Available `CORSOption` helpers:
+
+| Option                          | Purpose                                                                |
+|---------------------------------|------------------------------------------------------------------------|
+| `WithCORSAllowedOrigins(...)`   | Origins permitted to access the server. `"*"` allows any origin.       |
+| `WithCORSAllowedMethods(...)`   | Methods advertised in preflight (defaults to `GET, POST, DELETE, OPTIONS`). |
+| `WithCORSAllowedHeaders(...)`   | Request headers advertised in preflight (defaults to `Content-Type, Mcp-Session-Id, Last-Event-ID, Authorization`). |
+| `WithCORSExposedHeaders(...)`   | Response headers exposed to JavaScript (defaults to `Mcp-Session-Id`). |
+| `WithCORSAllowCredentials()`    | Sends `Access-Control-Allow-Credentials: true`.                        |
+| `WithCORSMaxAge(seconds)`       | Sets `Access-Control-Max-Age` for preflight caching.                   |
+
+When `WithCORSAllowedOrigins("*")` is combined with `WithCORSAllowCredentials()`,
+the server echoes the request's `Origin` header instead of `*` to remain
+compliant with the CORS specification.
+
 ### Request Headers
 
 The StreamableHTTP transport now passes HTTP request headers to MCP handlers. This allows you to access the original HTTP headers that were sent with the request in your tool and resource handlers.

@@ -678,6 +678,34 @@ httpServer := server.NewStreamableHTTPServer(mcpServer,
 )
 ```
 
+### CORS for browser-based clients
+
+Servers exposed to browser-based MCP clients can opt into Cross-Origin
+Resource Sharing handling on either HTTP transport. CORS is disabled by
+default; configure it explicitly via `server.WithStreamableHTTPCORS` or
+`server.WithSSECORS`:
+
+```go
+httpServer := server.NewStreamableHTTPServer(mcpServer,
+    server.WithEndpointPath("/mcp"),
+    server.WithStreamableHTTPCORS(
+        server.WithCORSAllowedOrigins("https://my-ai-app.com", "http://localhost:3000"),
+        server.WithCORSAllowCredentials(),
+        server.WithCORSMaxAge(300),
+    ),
+)
+```
+
+The transport answers preflight (`OPTIONS`) requests directly and decorates
+simple responses with the appropriate `Access-Control-Allow-Origin`,
+`Access-Control-Allow-Credentials`, `Access-Control-Expose-Headers` and
+`Vary` headers. Sensible defaults are used when the corresponding option is
+omitted (`GET, POST, DELETE, OPTIONS` for methods; `Content-Type,
+Mcp-Session-Id, Last-Event-ID, Authorization` for request headers;
+`Mcp-Session-Id` for exposed headers). Combining `WithCORSAllowedOrigins("*")`
+with `WithCORSAllowCredentials()` echoes the request `Origin` to remain
+spec-compliant.
+
 ### Session Management
 
 MCP-Go provides a robust session management system that allows you to:

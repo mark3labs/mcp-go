@@ -289,8 +289,20 @@ sseServer := server.NewSSEServer(s,
         // Add custom context values from headers
         return ctx
     }),
+
+    // Enable Cross-Origin Resource Sharing for browser-based clients
+    server.WithSSECORS(
+        server.WithCORSAllowedOrigins("https://my-ai-app.com"),
+        server.WithCORSAllowCredentials(),
+    ),
 )
 ```
+
+CORS handling is opt-in. Without `WithSSECORS`, the SSE stream falls back to
+the historical default of `Access-Control-Allow-Origin: *` for backwards
+compatibility, while the message endpoint emits no CORS headers.
+See the [Streamable HTTP CORS docs](/transports/http#cross-origin-resource-sharing-cors)
+for the full list of `CORSOption` helpers shared between both transports.
 
 **Resulting endpoints:**
 - SSE stream: `http://localhost:8080/api/mcp/sse`
