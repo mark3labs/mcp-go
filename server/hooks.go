@@ -16,14 +16,24 @@ type OnUnregisterSessionHookFunc func(ctx context.Context, session ClientSession
 
 // BeforeAnyHookFunc is a function that is called after the request is
 // parsed but before the method is called.
+//
+// See the Hooks type-level documentation for the pairing contract between
+// OnBeforeAny, OnSuccess, and OnError.
 type BeforeAnyHookFunc func(ctx context.Context, id any, method mcp.MCPMethod, message any)
 
 // OnSuccessHookFunc is a hook that will be called after the request
 // successfully generates a result, but before the result is sent to the client.
+//
+// See the Hooks type-level documentation for the pairing contract between
+// OnBeforeAny, OnSuccess, and OnError.
 type OnSuccessHookFunc func(ctx context.Context, id any, method mcp.MCPMethod, message any, result any)
 
 // OnErrorHookFunc is a hook that will be called when an error occurs,
 // either during the request parsing or the method execution.
+//
+// See the Hooks type-level documentation for the pairing contract between
+// OnBeforeAny, OnSuccess, and OnError, including the cases in which OnError
+// may fire without a prior OnBeforeAny.
 //
 // Example usage:
 // ```
@@ -106,6 +116,40 @@ type OnAfterCancelTaskFunc func(ctx context.Context, id any, message *mcp.Cancel
 type OnBeforeCompleteFunc func(ctx context.Context, id any, message *mcp.CompleteRequest)
 type OnAfterCompleteFunc func(ctx context.Context, id any, message *mcp.CompleteRequest, result *mcp.CompleteResult)
 
+// Hooks is the registry of callbacks that fire around request handling.
+//
+// # Pairing contract
+//
+// For every invocation of OnBeforeAny for a given request id, exactly one of
+// OnSuccess or OnError will fire for the same id before the request handler
+// returns to the JSON-RPC dispatcher. This makes the OnBeforeAny / OnSuccess /
+// OnError trio safe to use as the building block for per-request bookkeeping
+// such as latency histograms, distributed tracing spans, or slow-request
+// logging.
+//
+// Two caveats apply:
+//
+//  1. OnError may fire without a prior OnBeforeAny when the dispatcher rejects
+//     a request before invoking the per-method handler. This happens for
+//     payload-parse failures (UnparsableMessageError) and capability-not-
+//     enabled errors (ErrUnsupported). Per-request bookkeeping consumers must
+//     therefore tolerate "id not found" on the OnError path; the natural
+//     sync.Map.LoadAndDelete ok-bool already covers this.
+//
+//  2. If a handler panics and neither WithRecovery nor WithResourceRecovery
+//     is installed at server construction, the panic unwinds past the
+//     dispatcher and skips both OnSuccess and OnError. OnBeforeAny will
+//     already have fired. The process is typically terminating in that case,
+//     so the leak is moot in practice; bookkeeping consumers that need to
+//     survive unrecovered panics should either install the recovery
+//     middleware or run a periodic sweeper. With recovery middleware
+//     installed, panics are converted to errors and the contract above
+//     holds.
+//
+// Hooks fire synchronously in the request goroutine, in the order they were
+// registered with the corresponding Add* method. A long-running hook will
+// delay the response to the client; offload heavy work to a separate
+// goroutine if needed.
 type Hooks struct {
 	OnRegisterSession             []OnRegisterSessionHookFunc
 	OnUnregisterSession           []OnUnregisterSessionHookFunc
