@@ -471,6 +471,7 @@ func (s *SSEServer) Shutdown(ctx context.Context) error {
 // server. This is useful when the SSE server is embedded within another HTTP
 // service and you need to disconnect all clients independently of the server
 // lifecycle (e.g., during a configuration reload or maintenance window).
+// This signals termination; in-flight handlers exit asynchronously.
 func (s *SSEServer) CloseSessions() {
 	s.sessions.Range(func(key, value any) bool {
 		if session, ok := value.(*sseSession); ok {
