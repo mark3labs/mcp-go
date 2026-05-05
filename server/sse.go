@@ -472,6 +472,7 @@ func (s *SSEServer) Shutdown(ctx context.Context) error {
 // service and you need to disconnect all clients independently of the server
 // lifecycle (e.g., during a configuration reload or maintenance window).
 // This signals termination; in-flight handlers exit asynchronously.
+// Sessions connecting concurrently with this call may not be terminated.
 func (s *SSEServer) CloseSessions() {
 	s.sessions.Range(func(key, value any) bool {
 		if session, ok := value.(*sseSession); ok {
