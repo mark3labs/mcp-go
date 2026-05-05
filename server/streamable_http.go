@@ -313,6 +313,9 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 // When WithStreamableHTTPCORS has been configured, CORS preflight (OPTIONS)
 // requests are answered directly and simple cross-origin responses are
 // decorated with the configured Access-Control-* headers before dispatch.
+//
+// ServeHTTP is the conventional net/http entry point; for non-net/http HTTP
+// frameworks (fasthttp, fiber, etc.), see Handle.
 func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.corsConfig.enabled() {
 		if s.corsConfig.handlePreflight(w, r) {
@@ -325,13 +328,38 @@ func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Read the request body up-front so the transport-agnostic core never
+	// needs to keep an io.Reader alive across SSE upgrades. Body errors are
+	// surfaced by the per-method handlers below for parity with the previous
+	// behavior (PARSE_ERROR JSON-RPC reply for POST, ignored for GET/DELETE).
+	var body []byte
+	var bodyErr error
+	if r.Method == http.MethodPost && r.Body != nil {
+		body, bodyErr = io.ReadAll(r.Body)
+	}
+
+	hr := &HTTPRequest{
+		Method:   r.Method,
+		URL:      r.URL,
+		Header:   r.Header,
+		Body:     body,
+		Context:  r.Context(),
+		original: r,
+	}
+	hw := newHTTPResponseWriterAdapter(w)
+
+	if bodyErr != nil && r.Method == http.MethodPost {
+		s.writeJSONRPCError(hw, nil, mcp.PARSE_ERROR, fmt.Sprintf("read request body error: %v", bodyErr))
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPost:
-		s.handlePost(w, r)
+		s.handlePost(hw, hr)
 	case http.MethodGet:
-		s.handleGet(w, r)
+		s.handleGet(hw, hr)
 	case http.MethodDelete:
-		s.handleDelete(w, r)
+		s.handleDelete(hw, hr)
 	default:
 		http.NotFound(w, r)
 	}
@@ -398,23 +426,19 @@ func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 
 // --- internal methods ---
 
-func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request) {
+func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) {
 	// post request carry request/notification message
 
 	// Check content type
-	contentType := r.Header.Get("Content-Type")
+	contentType := r.header().Get("Content-Type")
 	mediaType, _, err := mime.ParseMediaType(contentType)
 	if err != nil || mediaType != "application/json" {
-		http.Error(w, "Invalid content type: must be 'application/json'", http.StatusBadRequest)
+		writeHTTPError(w, "Invalid content type: must be 'application/json'", http.StatusBadRequest)
 		return
 	}
 
-	// Check the request body is valid json, meanwhile, get the request Method
-	rawData, err := io.ReadAll(r.Body)
-	if err != nil {
-		s.writeJSONRPCError(w, nil, mcp.PARSE_ERROR, fmt.Sprintf("read request body error: %v", err))
-		return
-	}
+	// Body has already been buffered by the caller (ServeHTTP or Handle).
+	rawData := r.Body
 	// First, try to parse as a response (sampling responses don't have a method field)
 	var jsonMessage struct {
 		ID     json.RawMessage `json:"id"`
@@ -465,21 +489,21 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	// The session is ephemeral. Its life is the same as the request. It's only created
 	// for interaction with the mcp server.
 	var sessionID string
-	sessionIdManager := s.sessionIdManagerResolver.ResolveSessionIdManager(r)
+	sessionIdManager := s.resolveSessionIdManager(r)
 	if isInitializeRequest {
 		// generate a new one for initialize request
 		sessionID = sessionIdManager.Generate()
 	} else {
 		// Get session ID from header.
 		// Stateful servers need the client to carry the session ID.
-		sessionID = r.Header.Get(HeaderKeySessionID)
+		sessionID = r.header().Get(HeaderKeySessionID)
 		isTerminated, err := sessionIdManager.Validate(sessionID)
 		if err != nil {
-			http.Error(w, "Invalid session ID", http.StatusNotFound)
+			writeHTTPError(w, "Invalid session ID", http.StatusNotFound)
 			return
 		}
 		if isTerminated {
-			http.Error(w, "Session terminated", http.StatusNotFound)
+			writeHTTPError(w, "Session terminated", http.StatusNotFound)
 			return
 		}
 	}
@@ -512,9 +536,9 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	}
 
 	// Set the client context before handling the message
-	ctx := s.server.WithContext(r.Context(), session)
+	ctx := s.server.WithContext(r.ctx(), session)
 	if s.contextFunc != nil {
-		ctx = s.contextFunc(ctx, r)
+		ctx = s.contextFunc(ctx, r.asHTTPRequest())
 	}
 
 	// handle potential notifications
@@ -522,7 +546,14 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 	upgradedHeader := false
 	done := make(chan struct{})
 
-	ctx = context.WithValue(ctx, requestHeader, r.Header)
+	ctx = context.WithValue(ctx, requestHeader, r.header())
+
+	// SSE upgrades require a streaming-capable response writer; if the
+	// underlying transport can't stream, we still attempt the request but
+	// any notifications will be buffered and flushed at the end as a single
+	// application/json response (the upgrade simply won't fire).
+	canStream := w.CanStream()
+
 	go func() {
 		for {
 			select {
@@ -536,12 +567,13 @@ func (s *StreamableHTTPServer) handlePost(w http.ResponseWriter, r *http.Request
 						return
 					default:
 					}
-					defer func() {
-						flusher, ok := w.(http.Flusher)
-						if ok {
-							flusher.Flush()
-						}
-					}()
+					if !canStream {
+						// Without streaming we can't deliver notifications mid-flight;
+						// they will be dropped on the floor here. The final response
+						// path remains the buffered JSON reply below.
+						return
+					}
+					defer w.Flush()
 
 					// if there's notifications, upgradedHeader to SSE response
 					if !upgradedHeader {
@@ -586,6 +618,9 @@ drainLoop:
 	for {
 		select {
 		case nt := <-session.notificationChannel:
+			if !canStream {
+				continue
+			}
 			if !upgradedHeader {
 				w.Header().Set("Content-Type", "text/event-stream")
 				w.Header().Set("Connection", "keep-alive")
@@ -596,9 +631,7 @@ drainLoop:
 			if err := writeSSEEvent(w, nt); err != nil {
 				s.logger.Errorf("Failed to write SSE event during drain: %v", err)
 			}
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
-			}
+			w.Flush()
 		default:
 			break drainLoop
 		}
@@ -614,7 +647,7 @@ drainLoop:
 	// Also check upgradedHeader: a notification during HandleMessage processing
 	// may have already written SSE headers on this response, so we must continue
 	// in SSE mode to avoid writing JSON on top of SSE data.
-	if session.upgradeToSSE.Load() || upgradedHeader {
+	if (session.upgradeToSSE.Load() && canStream) || upgradedHeader {
 		if !upgradedHeader {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Connection", "keep-alive")
@@ -654,29 +687,29 @@ drainLoop:
 	}
 }
 
-func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request) {
+func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 	// get request is for listening to notifications
 	// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
 	if s.disableStreaming {
-		s.logger.Infof("Rejected GET request: streaming is disabled (session: %s)", r.Header.Get(HeaderKeySessionID))
-		http.Error(w, "Streaming is disabled on this server", http.StatusMethodNotAllowed)
+		s.logger.Infof("Rejected GET request: streaming is disabled (session: %s)", r.header().Get(HeaderKeySessionID))
+		writeHTTPError(w, "Streaming is disabled on this server", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Check streaming support in the responseWriter. This can happen if the responseWriter has been overridden.
+	// Check streaming support in the responseWriter. This can happen if the responseWriter has been overridden,
+	// or the integrating framework cannot deliver SSE responses (CanStream returns false).
 	// If not supported, return 405 early.
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported", http.StatusMethodNotAllowed)
+	if !w.CanStream() {
+		writeHTTPError(w, "Streaming unsupported", http.StatusMethodNotAllowed)
 		return
 	}
 
-	sessionID := r.Header.Get(HeaderKeySessionID)
+	sessionID := r.header().Get(HeaderKeySessionID)
 	// The MCP specification doesn't require validating session ID for GET requests.
 	// If no session ID is provided by the client, generate one using the configured SessionIdManager
 	// so that custom session id generators are honored consistently across POST/GET flows.
 	if sessionID == "" {
-		sessionIdManager := s.sessionIdManagerResolver.ResolveSessionIdManager(r)
+		sessionIdManager := s.resolveSessionIdManager(r)
 		sessionID = sessionIdManager.Generate()
 	}
 
@@ -689,12 +722,12 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 
 	if !loaded {
 		// We created a new session, need to register it
-		if err := s.server.RegisterSession(r.Context(), session); err != nil {
+		if err := s.server.RegisterSession(r.ctx(), session); err != nil {
 			s.activeSessions.Delete(sessionID)
-			http.Error(w, fmt.Sprintf("Session registration failed: %v", err), http.StatusBadRequest)
+			writeHTTPErrorf(w, http.StatusBadRequest, "Session registration failed: %v", err)
 			return
 		}
-		defer s.server.UnregisterSession(r.Context(), sessionID)
+		defer s.server.UnregisterSession(r.ctx(), sessionID)
 		defer s.activeSessions.Delete(sessionID)
 		defer s.sessionRequestIDs.Delete(sessionID)
 	}
@@ -707,7 +740,7 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
-	flusher.Flush()
+	w.Flush()
 
 	// Start notification handler for this session
 	done := make(chan struct{})
@@ -800,6 +833,8 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 		}()
 	}
 
+	ctx := r.ctx()
+
 	// Keep the connection open until the client disconnects
 	//
 	// There's will a Available() check when handler ends, and it maybe race with Flush(),
@@ -814,29 +849,29 @@ func (s *StreamableHTTPServer) handleGet(w http.ResponseWriter, r *http.Request)
 				s.logger.Errorf("Failed to write SSE event: %v", err)
 				return
 			}
-			flusher.Flush()
+			w.Flush()
 			s.touchSession(sessionID)
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		}
 	}
 }
 
-func (s *StreamableHTTPServer) handleDelete(w http.ResponseWriter, r *http.Request) {
+func (s *StreamableHTTPServer) handleDelete(w HTTPResponseWriter, r *HTTPRequest) {
 	// delete request terminate the session
-	sessionID := r.Header.Get(HeaderKeySessionID)
-	sessionIdManager := s.sessionIdManagerResolver.ResolveSessionIdManager(r)
+	sessionID := r.header().Get(HeaderKeySessionID)
+	sessionIdManager := s.resolveSessionIdManager(r)
 	notAllowed, err := sessionIdManager.Terminate(sessionID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Session termination failed: %v", err), http.StatusInternalServerError)
+		writeHTTPErrorf(w, http.StatusInternalServerError, "Session termination failed: %v", err)
 		return
 	}
 	if notAllowed {
-		http.Error(w, "Session termination not allowed", http.StatusMethodNotAllowed)
+		writeHTTPError(w, "Session termination not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	s.cleanupSessionState(r.Context(), sessionID)
+	s.cleanupSessionState(r.ctx(), sessionID)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -854,35 +889,35 @@ func writeSSEEvent(w io.Writer, data any) error {
 }
 
 // handleSamplingResponse processes incoming sampling responses from clients
-func (s *StreamableHTTPServer) handleSamplingResponse(w http.ResponseWriter, r *http.Request, responseMessage struct {
+func (s *StreamableHTTPServer) handleSamplingResponse(w HTTPResponseWriter, r *HTTPRequest, responseMessage struct {
 	ID     json.RawMessage `json:"id"`
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  json.RawMessage `json:"error,omitempty"`
 	Method mcp.MCPMethod   `json:"method,omitempty"`
 }) error {
 	// Get session ID from header
-	sessionID := r.Header.Get(HeaderKeySessionID)
+	sessionID := r.header().Get(HeaderKeySessionID)
 	if sessionID == "" {
-		http.Error(w, "Missing session ID for sampling response", http.StatusBadRequest)
+		writeHTTPError(w, "Missing session ID for sampling response", http.StatusBadRequest)
 		return fmt.Errorf("missing session ID")
 	}
 
 	// Validate session
-	sessionIdManager := s.sessionIdManagerResolver.ResolveSessionIdManager(r)
+	sessionIdManager := s.resolveSessionIdManager(r)
 	isTerminated, err := sessionIdManager.Validate(sessionID)
 	if err != nil {
-		http.Error(w, "Invalid session ID", http.StatusNotFound)
+		writeHTTPError(w, "Invalid session ID", http.StatusNotFound)
 		return err
 	}
 	if isTerminated {
-		http.Error(w, "Session terminated", http.StatusNotFound)
+		writeHTTPError(w, "Session terminated", http.StatusNotFound)
 		return fmt.Errorf("session terminated")
 	}
 
 	// Parse the request ID
 	var requestID int64
 	if err := json.Unmarshal(responseMessage.ID, &requestID); err != nil {
-		http.Error(w, "Invalid request ID in sampling response", http.StatusBadRequest)
+		writeHTTPError(w, "Invalid request ID in sampling response", http.StatusBadRequest)
 		return err
 	}
 
@@ -924,30 +959,30 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w http.ResponseWriter, r *
 
 // deliverSamplingResponse delivers a sampling response to the appropriate session.
 // On failure it writes the HTTP error status directly to w.
-func (s *StreamableHTTPServer) deliverSamplingResponse(w http.ResponseWriter, sessionID string, response samplingResponseItem) error {
+func (s *StreamableHTTPServer) deliverSamplingResponse(w HTTPResponseWriter, sessionID string, response samplingResponseItem) error {
 	// Look up the active session
 	sessionInterface, ok := s.activeSessions.Load(sessionID)
 	if !ok {
-		http.Error(w, "No active session found for the given session ID", http.StatusNotFound)
+		writeHTTPError(w, "No active session found for the given session ID", http.StatusNotFound)
 		return fmt.Errorf("no active session found for session %s", sessionID)
 	}
 
 	session, ok := sessionInterface.(*streamableHttpSession)
 	if !ok {
-		http.Error(w, "Invalid session type for the given session ID", http.StatusInternalServerError)
+		writeHTTPError(w, "Invalid session type for the given session ID", http.StatusInternalServerError)
 		return fmt.Errorf("invalid session type for session %s", sessionID)
 	}
 
 	// Look up the dedicated response channel for this specific request
 	responseChannelInterface, exists := session.samplingRequests.Load(response.requestID)
 	if !exists {
-		http.Error(w, "No pending sampling request found for the given request ID", http.StatusBadRequest)
+		writeHTTPError(w, "No pending sampling request found for the given request ID", http.StatusBadRequest)
 		return fmt.Errorf("no pending request found for session %s, request %d", sessionID, response.requestID)
 	}
 
 	responseChan, ok := responseChannelInterface.(chan samplingResponseItem)
 	if !ok {
-		http.Error(w, "Failed to deliver response", http.StatusInternalServerError)
+		writeHTTPError(w, "Failed to deliver response", http.StatusInternalServerError)
 		return fmt.Errorf("invalid response channel type for session %s, request %d", sessionID, response.requestID)
 	}
 
@@ -957,14 +992,14 @@ func (s *StreamableHTTPServer) deliverSamplingResponse(w http.ResponseWriter, se
 		s.logger.Infof("Delivered sampling response for session %s, request %d", sessionID, response.requestID)
 		return nil
 	default:
-		http.Error(w, "Failed to deliver response", http.StatusInternalServerError)
+		writeHTTPError(w, "Failed to deliver response", http.StatusInternalServerError)
 		return fmt.Errorf("failed to deliver sampling response for session %s, request %d: channel full or blocked", sessionID, response.requestID)
 	}
 }
 
 // writeJSONRPCError writes a JSON-RPC error response with the given error details.
 func (s *StreamableHTTPServer) writeJSONRPCError(
-	w http.ResponseWriter,
+	w HTTPResponseWriter,
 	id any,
 	code int,
 	message string,
