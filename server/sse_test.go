@@ -1702,12 +1702,10 @@ func TestSSEServer_CloseSessionsConcurrent(t *testing.T) {
 
 	// Call CloseSessions concurrently to verify no double-close panic.
 	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 100 {
+		wg.Go(func() {
 			sseServer.CloseSessions()
-		}()
+		})
 	}
 	wg.Wait()
 }
