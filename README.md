@@ -657,6 +657,30 @@ Key examples include:
 
 MCP-Go supports stdio, SSE and streamable-HTTP transport layers. For SSE transport, you can use `SetConnectionLostHandler()` to detect and handle disconnections for implementing reconnection logic.
 
+### Embedding StreamableHTTP in non-net/http frameworks
+
+`StreamableHTTPServer` is an `http.Handler`, so it can be mounted in any
+router that speaks `net/http`. To embed it in a framework that does **not**
+go through `net/http` (e.g. [fasthttp](https://github.com/valyala/fasthttp)
+or [fiber](https://gofiber.io/)) without buffering the response through an
+adaptor, use the transport-agnostic `Handle` entry point:
+
+```go
+func (s *StreamableHTTPServer) Handle(w HTTPResponseWriter, r *HTTPRequest)
+```
+
+`HTTPRequest` is a plain struct (`Method`, `URL`, `Header`, `Body`,
+`Context`) and `HTTPResponseWriter` is a small interface (`Header`,
+`WriteHeader`, `Write`, `Flush`, `CanStream`). Implementations whose
+underlying transport cannot stream MUST return `false` from `CanStream`;
+the server will then reject GET (SSE listening) with `405 Method Not
+Allowed` and keep POST responses as buffered `application/json` instead of
+upgrading to `text/event-stream`.
+
+See the [HTTP transport docs](https://mcp-go.dev/transports/http#embedding-in-non-nethttp-frameworks)
+for a full fasthttp/fiber adapter example. `ServeHTTP` is unchanged and
+remains the conventional `net/http` entry point.
+
 ### OAuth Protected Resource Metadata
 
 Servers that require OAuth can advertise their authorization requirements

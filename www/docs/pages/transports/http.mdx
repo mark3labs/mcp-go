@@ -990,6 +990,179 @@ func (h *ApprovalSamplingHandler) CreateMessage(ctx context.Context, request mcp
 - Rejection at any stage returns an error to the server
 - The UI should clearly display what the server is requesting and why
 
+## Embedding in Non-net/http Frameworks
+
+`StreamableHTTPServer` exposes two equivalent entry points:
+
+- `ServeHTTP(w http.ResponseWriter, r *http.Request)` — the standard
+  `net/http` handler used by the examples above.
+- `Handle(w HTTPResponseWriter, r *HTTPRequest)` — a transport-agnostic
+  entry point that lets you embed MCP into HTTP frameworks that do **not**
+  go through `net/http` (e.g. [fasthttp](https://github.com/valyala/fasthttp)
+  or [fiber](https://gofiber.io/)) without round-tripping the response
+  through a buffering adaptor.
+
+Both methods drive the same internal state machine; `ServeHTTP` is
+implemented as a thin wrapper around `Handle`.
+
+### When to Use Which
+
+| Situation | Use |
+| --- | --- |
+| Standalone server, mounted in `http.ServeMux`, chi, gorilla/mux, etc. | `ServeHTTP` (or `srv.Start(":8080")`) |
+| Mounted in a fiber/echo/gin app via `adaptor.HTTPHandler` and you don't need streaming | `ServeHTTP` |
+| Mounted in fasthttp/fiber and you want native chunked SSE without an adaptor in the path | `Handle` |
+| Custom transport (test harness, in-memory dispatcher, alternative wire format on top of HTTP semantics) | `Handle` |
+
+:::tip
+If you only need request/response (no SSE notifications and no GET
+listening connection), the community workaround
+`fiberApp.Group("/mcp", adaptor.HTTPHandler(server.NewStreamableHTTPServer(s)))`
+is the simplest path and is fully supported.
+:::
+
+### API Surface
+
+```go
+// HTTPRequest is a transport-agnostic view of an incoming MCP HTTP request.
+type HTTPRequest struct {
+    Method  string          // "POST", "GET", "DELETE"
+    URL     *url.URL        // optional; only Path is consulted
+    Header  http.Header     // required; plain map[string][]string
+    Body    []byte          // already buffered; may be nil for GET/DELETE
+    Context context.Context // request context; cancellation is honored
+}
+
+// HTTPResponseWriter is the minimum surface mcp-go needs to write a
+// streamable HTTP response.
+type HTTPResponseWriter interface {
+    Header() http.Header
+    WriteHeader(statusCode int)
+    Write(p []byte) (int, error)
+    Flush()
+    CanStream() bool
+}
+
+func (s *StreamableHTTPServer) Handle(w HTTPResponseWriter, r *HTTPRequest)
+```
+
+### Streaming-Capability Contract
+
+The `CanStream()` bit on `HTTPResponseWriter` lets the server gracefully
+degrade when the underlying transport cannot deliver chunked responses:
+
+- **`CanStream()` returns `true`** — `Flush()` MUST forward bytes to the
+  client immediately. POST responses can upgrade to `text/event-stream`
+  when notifications fire mid-flight, and GET (the SSE listening channel)
+  is accepted.
+- **`CanStream()` returns `false`** — `Flush()` SHOULD be a no-op. POST
+  responses stay as a single buffered `application/json` reply (any
+  notifications produced during the request are dropped, since they cannot
+  be delivered without SSE). GET requests are rejected with `405 Method
+  Not Allowed`.
+
+### Adapter Example: fasthttp
+
+```go
+import (
+    "net/http"
+
+    "github.com/valyala/fasthttp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+// fasthttpResponseWriter implements server.HTTPResponseWriter on top of a
+// *fasthttp.RequestCtx. Streaming is supported via SetBodyStreamWriter.
+type fasthttpResponseWriter struct {
+    ctx     *fasthttp.RequestCtx
+    headers http.Header
+    status  int
+    written bool
+}
+
+func newFasthttpResponseWriter(ctx *fasthttp.RequestCtx) *fasthttpResponseWriter {
+    return &fasthttpResponseWriter{ctx: ctx, headers: http.Header{}, status: http.StatusOK}
+}
+
+func (w *fasthttpResponseWriter) Header() http.Header { return w.headers }
+
+func (w *fasthttpResponseWriter) WriteHeader(code int) {
+    if w.written {
+        return
+    }
+    w.status = code
+    for k, vv := range w.headers {
+        for _, v := range vv {
+            w.ctx.Response.Header.Add(k, v)
+        }
+    }
+    w.ctx.SetStatusCode(code)
+    w.written = true
+}
+
+func (w *fasthttpResponseWriter) Write(p []byte) (int, error) {
+    if !w.written {
+        w.WriteHeader(http.StatusOK)
+    }
+    return w.ctx.Write(p)
+}
+
+func (w *fasthttpResponseWriter) Flush() {
+    // fasthttp buffers the response body in-memory by default; flushing has
+    // no effect unless you hand the request off to SetBodyStreamWriter.
+}
+
+// CanStream reports false here because the simple buffered path above does
+// not deliver bytes mid-request. Wire it to true if you switch to
+// SetBodyStreamWriter for SSE.
+func (w *fasthttpResponseWriter) CanStream() bool { return false }
+
+// Bridging fasthttp headers to net/http's http.Header.
+func fromFasthttpHeader(h *fasthttp.RequestHeader) http.Header {
+    out := make(http.Header)
+    h.VisitAll(func(key, value []byte) {
+        out.Add(string(key), string(value))
+    })
+    return out
+}
+
+var mcpServer = server.NewStreamableHTTPServer(
+    server.NewMCPServer("my-server", "1.0.0"),
+)
+
+func mcpHandler(ctx *fasthttp.RequestCtx) {
+    w := newFasthttpResponseWriter(ctx)
+    r := &server.HTTPRequest{
+        Method:  string(ctx.Method()),
+        Header:  fromFasthttpHeader(&ctx.Request.Header),
+        Body:    ctx.PostBody(),
+        Context: ctx,
+    }
+    mcpServer.Handle(w, r)
+}
+```
+
+### Behavior Notes
+
+- **`WithStreamableHTTPCORS` is not applied** when entering through
+  `Handle`. Use the framework's native CORS middleware.
+- **`WithProtectedResourceMetadata` is not applied** when entering through
+  `Handle`. Mount the metadata route separately using
+  `NewProtectedResourceMetadataHandler`. See
+  [OAuth Protected Resource Metadata](#oauth-protected-resource-metadata-rfc-9728)
+  above.
+- **`WithHTTPContextFunc` is honored.** When the request entered through
+  `ServeHTTP` it receives the original `*http.Request`; when entered
+  through `Handle` it receives a synthetic `*http.Request` derived from
+  the `HTTPRequest`. Callers can also pre-decorate `r.Context` directly,
+  which is the recommended pattern for non-net/http integrations.
+- **`SessionIdManagerResolver`** still receives a `*http.Request` for
+  backwards compatibility; the synthetic request carries the headers and
+  URL needed by all built-in resolvers.
+- **Backwards compatibility:** every existing public API
+  (`NewStreamableHTTPServer`, `ServeHTTP`, `Start`, `Shutdown`, every
+  option, every session interface) is unchanged.
+
 ## Next Steps
 
 - **[In-Process Transport](/transports/inprocess)** - Learn about embedded scenarios
