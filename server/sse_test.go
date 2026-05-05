@@ -1617,6 +1617,101 @@ func readSSEEvent(sseResp *http.Response) (string, error) {
 	return string(buf[:n]), nil
 }
 
+func TestSSEServer_CloseSessions(t *testing.T) {
+	mcpServer := NewMCPServer("test", "1.0.0")
+	sseServer := NewSSEServer(mcpServer, WithBaseURL("http://localhost:0"))
+
+	ts := httptest.NewServer(sseServer)
+	defer ts.Close()
+	sseServer.baseURL = ts.URL
+
+	// Connect a client to the SSE endpoint.
+	sseResp, err := http.Get(ts.URL + "/sse")
+	if err != nil {
+		t.Fatalf("Failed to connect to SSE endpoint: %v", err)
+	}
+	defer sseResp.Body.Close()
+
+	// Read the initial endpoint event to confirm we're connected.
+	endpointEvent, err := readSSEEvent(sseResp)
+	if err != nil {
+		t.Fatalf("Failed to read endpoint event: %v", err)
+	}
+	if !strings.Contains(endpointEvent, "event: endpoint") {
+		t.Fatalf("Expected endpoint event, got: %s", endpointEvent)
+	}
+
+	// Verify at least one session exists.
+	sessionCount := 0
+	sseServer.sessions.Range(func(_, _ any) bool {
+		sessionCount++
+		return true
+	})
+	if sessionCount == 0 {
+		t.Fatal("Expected at least one active session")
+	}
+
+	// Close all sessions without stopping the HTTP server.
+	sseServer.CloseSessions()
+
+	// Verify sessions are cleaned up.
+	sessionCount = 0
+	sseServer.sessions.Range(func(_, _ any) bool {
+		sessionCount++
+		return true
+	})
+	if sessionCount != 0 {
+		t.Fatalf("Expected 0 sessions after CloseSessions, got %d", sessionCount)
+	}
+
+	// Verify the HTTP server is still running by connecting a new client.
+	sseResp2, err := http.Get(ts.URL + "/sse")
+	if err != nil {
+		t.Fatalf("HTTP server should still be running after CloseSessions: %v", err)
+	}
+	defer sseResp2.Body.Close()
+
+	endpointEvent2, err := readSSEEvent(sseResp2)
+	if err != nil {
+		t.Fatalf("Failed to read endpoint event from new connection: %v", err)
+	}
+	if !strings.Contains(endpointEvent2, "event: endpoint") {
+		t.Fatalf("Expected endpoint event on new connection, got: %s", endpointEvent2)
+	}
+}
+
+func TestSSEServer_CloseSessionsConcurrent(t *testing.T) {
+	mcpServer := NewMCPServer("test", "1.0.0")
+	sseServer := NewSSEServer(mcpServer, WithBaseURL("http://localhost:0"))
+
+	ts := httptest.NewServer(sseServer)
+	defer ts.Close()
+	sseServer.baseURL = ts.URL
+
+	// Connect a client.
+	sseResp, err := http.Get(ts.URL + "/sse")
+	if err != nil {
+		t.Fatalf("Failed to connect to SSE endpoint: %v", err)
+	}
+	defer sseResp.Body.Close()
+
+	_, err = readSSEEvent(sseResp)
+	if err != nil {
+		t.Fatalf("Failed to read endpoint event: %v", err)
+	}
+
+	// Call CloseSessions concurrently to verify no double-close panic.
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sseServer.CloseSessions()
+		}()
+	}
+	wg.Wait()
+}
+
 // addHeaderVerificationTool adds a tool that verifies HTTP headers are passed correctly
 func addHeaderVerificationTool(mcpServer *MCPServer) {
 	mcpServer.AddTool(

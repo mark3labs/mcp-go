@@ -22,6 +22,7 @@ import (
 // sseSession represents an active SSE connection.
 type sseSession struct {
 	done                chan struct{}
+	doneOnce            sync.Once
 	eventQueue          chan string // Channel for queuing events
 	sessionID           string
 	requestID           atomic.Int64
@@ -33,6 +34,14 @@ type sseSession struct {
 	resourceTemplates   sync.Map     // stores session-specific resource templates
 	clientInfo          atomic.Value // stores session-specific client info
 	clientCapabilities  atomic.Value // stores session-specific client capabilities
+}
+
+// closeDone safely closes the session's done channel exactly once,
+// preventing panics from concurrent close attempts.
+func (s *sseSession) closeDone() {
+	s.doneOnce.Do(func() {
+		close(s.done)
+	})
 }
 
 // SSEContextFunc is a function that takes an existing context and the current
@@ -454,7 +463,7 @@ func (s *SSEServer) Shutdown(ctx context.Context) error {
 	if srv != nil {
 		s.sessions.Range(func(key, value any) bool {
 			if session, ok := value.(*sseSession); ok {
-				close(session.done)
+				session.closeDone()
 			}
 			s.sessions.Delete(key)
 			return true
@@ -463,6 +472,20 @@ func (s *SSEServer) Shutdown(ctx context.Context) error {
 		return srv.Shutdown(ctx)
 	}
 	return nil
+}
+
+// CloseSessions terminates all active SSE sessions without stopping the HTTP
+// server. This is useful when the SSE server is embedded within another HTTP
+// service and you need to disconnect all clients independently of the server
+// lifecycle (e.g., during a configuration reload or maintenance window).
+func (s *SSEServer) CloseSessions() {
+	s.sessions.Range(func(key, value any) bool {
+		if session, ok := value.(*sseSession); ok {
+			session.closeDone()
+		}
+		s.sessions.Delete(key)
+		return true
+	})
 }
 
 // handleSSE handles incoming SSE connection requests.
@@ -590,7 +613,7 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprint(w, event)
 			flusher.Flush()
 		case <-r.Context().Done():
-			close(session.done)
+			session.closeDone()
 			return
 		case <-session.done:
 			return
