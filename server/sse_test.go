@@ -1708,6 +1708,16 @@ func TestSSEServer_CloseSessionsConcurrent(t *testing.T) {
 		})
 	}
 	wg.Wait()
+
+	// Sessions should be cleaned up regardless of which call ran first.
+	count := 0
+	sseServer.sessions.Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+	if count != 0 {
+		t.Fatalf("Expected 0 sessions after concurrent CloseSessions, got %d", count)
+	}
 }
 
 // addHeaderVerificationTool adds a tool that verifies HTTP headers are passed correctly

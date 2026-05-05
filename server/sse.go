@@ -461,14 +461,7 @@ func (s *SSEServer) Shutdown(ctx context.Context) error {
 	s.mu.RUnlock()
 
 	if srv != nil {
-		s.sessions.Range(func(key, value any) bool {
-			if session, ok := value.(*sseSession); ok {
-				session.closeDone()
-			}
-			s.sessions.Delete(key)
-			return true
-		})
-
+		s.CloseSessions()
 		return srv.Shutdown(ctx)
 	}
 	return nil
