@@ -455,3 +455,56 @@ func TestCompleteParamsUnmarshalJSON(t *testing.T) {
 		})
 	}
 }
+
+func TestPaginatedParamsMetaMarshalling(t *testing.T) {
+	t.Run("ListToolsRequest with _meta serializes the meta field", func(t *testing.T) {
+		req := ListToolsRequest{}
+		req.Params.Cursor = "page-2"
+		req.Params.Meta = &Meta{
+			AdditionalFields: map[string]any{"orgId": "org-1", "appId": "app-7"},
+		}
+
+		data, err := json.Marshal(req.Params)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"cursor":"page-2","_meta":{"orgId":"org-1","appId":"app-7"}}`, string(data))
+	})
+
+	t.Run("ListToolsRequest without _meta omits the meta field", func(t *testing.T) {
+		req := ListToolsRequest{}
+		req.Params.Cursor = "page-2"
+
+		data, err := json.Marshal(req.Params)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"cursor":"page-2"}`, string(data))
+	})
+
+	t.Run("ListToolsRequest with only _meta omits cursor", func(t *testing.T) {
+		req := ListToolsRequest{}
+		req.Params.Meta = &Meta{
+			AdditionalFields: map[string]any{"orgId": "org-1"},
+		}
+
+		data, err := json.Marshal(req.Params)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"_meta":{"orgId":"org-1"}}`, string(data))
+	})
+
+	t.Run("PaginatedParams round-trips _meta via JSON", func(t *testing.T) {
+		original := PaginatedParams{
+			Cursor: "abc",
+			Meta: &Meta{
+				ProgressToken:    "tok-1",
+				AdditionalFields: map[string]any{"k": "v"},
+			},
+		}
+		data, err := json.Marshal(original)
+		require.NoError(t, err)
+
+		var got PaginatedParams
+		require.NoError(t, json.Unmarshal(data, &got))
+		assert.Equal(t, original.Cursor, got.Cursor)
+		require.NotNil(t, got.Meta)
+		assert.Equal(t, original.Meta.ProgressToken, got.Meta.ProgressToken)
+		assert.Equal(t, "v", got.Meta.AdditionalFields["k"])
+	})
+}

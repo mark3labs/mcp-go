@@ -661,6 +661,11 @@ type PaginatedParams struct {
 	// An opaque token representing the current pagination position.
 	// If provided, the server should return results starting after this cursor.
 	Cursor Cursor `json:"cursor,omitempty"`
+	// Meta carries protocol-level metadata. PaginatedRequest embeds Request
+	// and shadows its Params with this type, so Meta must be declared here
+	// to be marshaled on paginated requests (tools/list, resources/list,
+	// prompts/list, resources/templates/list, roots/list).
+	Meta *Meta `json:"_meta,omitempty"`
 }
 
 type PaginatedResult struct {
