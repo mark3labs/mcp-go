@@ -216,6 +216,7 @@ type MCPServer struct {
 	inflightCancels            sync.Map             // Maps request ID -> context.CancelFunc for in-flight requests
 	inputValidator             *inputSchemaValidator
 	outputValidator            *outputSchemaValidator
+	strictInputSchemaDefault   bool
 }
 
 // WithPaginationLimit sets the pagination limit for the server.
@@ -410,6 +411,28 @@ func WithInputSchemaValidation() ServerOption {
 		if s.inputValidator == nil {
 			s.inputValidator = newInputSchemaValidator()
 		}
+	}
+}
+
+// WithStrictInputSchemaDefault sets additionalProperties:false on every
+// registered tool's input schema when the tool author has not configured the
+// field explicitly. Tools published by such a server reject unknown property
+// names — at the client (which sees the strict schema in tools/list) and at
+// the server when [WithInputSchemaValidation] is also enabled.
+//
+// Tools that supply [mcp.Tool.RawInputSchema] are not modified: those authors
+// have opted out of the structured-schema helpers and own additionalProperties
+// themselves. Tools that explicitly call
+// [mcp.WithSchemaAdditionalProperties] are left untouched, so a single tool
+// can opt back into permissive behaviour while the server default stays
+// strict.
+//
+// The option is independent of [WithInputSchemaValidation]: setting strict
+// schemas without server-side enforcement still steers schema-aware clients
+// and language models away from unknown arguments.
+func WithStrictInputSchemaDefault() ServerOption {
+	return func(s *MCPServer) {
+		s.strictInputSchemaDefault = true
 	}
 }
 
@@ -826,6 +849,24 @@ func (s *MCPServer) ListPrompts() map[string]ServerPrompt {
 	return promptsCopy
 }
 
+// applyStrictInputSchemaDefault fills in additionalProperties:false on a
+// registered tool's structured input schema when WithStrictInputSchemaDefault
+// is set and the author has not configured the field. Tools that ship a
+// RawInputSchema are skipped — those bypass the structured-schema helpers
+// and own additionalProperties themselves.
+func (s *MCPServer) applyStrictInputSchemaDefault(tool *mcp.Tool) {
+	if !s.strictInputSchemaDefault {
+		return
+	}
+	if len(tool.RawInputSchema) > 0 {
+		return
+	}
+	if tool.InputSchema.AdditionalProperties != nil {
+		return
+	}
+	tool.InputSchema.AdditionalProperties = false
+}
+
 // AddTool registers a new tool and its handler
 func (s *MCPServer) AddTool(tool mcp.Tool, handler ToolHandlerFunc) {
 	s.AddTools(ServerTool{Tool: tool, Handler: handler})
@@ -887,6 +928,7 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 			s.toolsMu.Unlock()
 			panic(fmt.Sprintf("tool name '%s' already registered as task tool", name))
 		}
+		s.applyStrictInputSchemaDefault(&entry.Tool)
 		s.tools[name] = entry
 	}
 	s.toolsMu.Unlock()
@@ -910,6 +952,7 @@ func (s *MCPServer) AddTaskTools(taskTools ...ServerTaskTool) {
 			s.toolsMu.Unlock()
 			panic(fmt.Sprintf("task tool name '%s' already registered as regular tool", name))
 		}
+		s.applyStrictInputSchemaDefault(&entry.Tool)
 		s.taskTools[name] = entry
 	}
 	s.toolsMu.Unlock()
@@ -934,6 +977,7 @@ func (s *MCPServer) SetTools(tools ...ServerTool) {
 			s.toolsMu.Unlock()
 			panic(fmt.Sprintf("tool name '%s' already registered as task tool", name))
 		}
+		s.applyStrictInputSchemaDefault(&entry.Tool)
 		newTools[name] = entry
 	}
 	s.tools = newTools
