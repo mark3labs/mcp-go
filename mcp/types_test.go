@@ -457,36 +457,65 @@ func TestCompleteParamsUnmarshalJSON(t *testing.T) {
 }
 
 func TestPaginatedParamsMetaMarshalling(t *testing.T) {
-	t.Run("ListToolsRequest with _meta serializes the meta field", func(t *testing.T) {
+	// Marshalling the full request (rather than just req.Params) is what
+	// exercises the embedding/shadowing in PaginatedRequest -> Request.
+	// Without Meta on PaginatedParams, the inner Request.Params.Meta would
+	// be silently dropped at the outer-struct level.
+	t.Run("ListToolsRequest with _meta serializes the meta field on params", func(t *testing.T) {
 		req := ListToolsRequest{}
 		req.Params.Cursor = "page-2"
 		req.Params.Meta = &Meta{
 			AdditionalFields: map[string]any{"orgId": "org-1", "appId": "app-7"},
 		}
 
-		data, err := json.Marshal(req.Params)
+		data, err := json.Marshal(req)
 		require.NoError(t, err)
-		assert.JSONEq(t, `{"cursor":"page-2","_meta":{"orgId":"org-1","appId":"app-7"}}`, string(data))
+
+		var got map[string]any
+		require.NoError(t, json.Unmarshal(data, &got))
+		params, ok := got["params"].(map[string]any)
+		require.True(t, ok, "params object missing from marshaled request: %s", data)
+		assert.Equal(t, "page-2", params["cursor"])
+		meta, ok := params["_meta"].(map[string]any)
+		require.True(t, ok, "_meta object missing from marshaled params: %s", data)
+		assert.Equal(t, "org-1", meta["orgId"])
+		assert.Equal(t, "app-7", meta["appId"])
 	})
 
-	t.Run("ListToolsRequest without _meta omits the meta field", func(t *testing.T) {
+	t.Run("ListToolsRequest without _meta omits the meta field on params", func(t *testing.T) {
 		req := ListToolsRequest{}
 		req.Params.Cursor = "page-2"
 
-		data, err := json.Marshal(req.Params)
+		data, err := json.Marshal(req)
 		require.NoError(t, err)
-		assert.JSONEq(t, `{"cursor":"page-2"}`, string(data))
+
+		var got map[string]any
+		require.NoError(t, json.Unmarshal(data, &got))
+		params, ok := got["params"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, "page-2", params["cursor"])
+		_, hasMeta := params["_meta"]
+		assert.False(t, hasMeta, "_meta should be omitted: %s", data)
 	})
 
-	t.Run("ListToolsRequest with only _meta omits cursor", func(t *testing.T) {
+	t.Run("ListToolsRequest with only _meta serializes _meta and omits cursor", func(t *testing.T) {
 		req := ListToolsRequest{}
 		req.Params.Meta = &Meta{
 			AdditionalFields: map[string]any{"orgId": "org-1"},
 		}
 
-		data, err := json.Marshal(req.Params)
+		data, err := json.Marshal(req)
 		require.NoError(t, err)
-		assert.JSONEq(t, `{"_meta":{"orgId":"org-1"}}`, string(data))
+
+		var got map[string]any
+		require.NoError(t, json.Unmarshal(data, &got))
+		params, ok := got["params"].(map[string]any)
+		require.True(t, ok)
+		_, hasCursor := params["cursor"]
+		assert.False(t, hasCursor, "cursor should be omitted: %s", data)
+		meta, ok := params["_meta"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, "org-1", meta["orgId"])
 	})
 
 	t.Run("PaginatedParams round-trips _meta via JSON", func(t *testing.T) {

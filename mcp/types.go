@@ -664,7 +664,7 @@ type PaginatedParams struct {
 	// Meta carries protocol-level metadata. PaginatedRequest embeds Request
 	// and shadows its Params with this type, so Meta must be declared here
 	// to be marshaled on paginated requests (tools/list, resources/list,
-	// prompts/list, resources/templates/list, roots/list).
+	// resources/templates/list, prompts/list, tasks/list).
 	Meta *Meta `json:"_meta,omitempty"`
 }
 
