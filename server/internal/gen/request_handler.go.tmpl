@@ -15,7 +15,7 @@ import (
 func (s *MCPServer) HandleMessage(
 	ctx context.Context,
 	message json.RawMessage,
-) mcp.JSONRPCMessage {
+) (resp mcp.JSONRPCMessage) {
 	// Add server to context
 	ctx = context.WithValue(ctx, serverKey{}, s)
 	var err *requestError
@@ -91,6 +91,9 @@ func (s *MCPServer) HandleMessage(
 		s.inflightCancels.Store(key, cancel)
 		defer s.inflightCancels.Delete(key)
 	}
+
+	ctx, endSpan := s.startMessageSpan(ctx, headers, string(baseMessage.Method))
+	defer func() { endSpan(resp) }()
 
 	switch baseMessage.Method {
 	{{- range .}}

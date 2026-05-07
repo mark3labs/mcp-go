@@ -16,6 +16,16 @@ jobs:
           go-version-file: "go.mod"
       - run: go test ./... -race
 
+  test-otel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: "otel/go.mod"
+      - run: go test ./... -race
+        working-directory: otel
+
   verify-codegen:
     runs-on: ubuntu-latest
     steps:

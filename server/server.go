@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/tracing"
 )
 
 // resourceEntry holds both a resource and its handler
@@ -217,6 +219,8 @@ type MCPServer struct {
 	inputValidator             *inputSchemaValidator
 	outputValidator            *outputSchemaValidator
 	strictInputSchemaDefault   bool
+	tracer                     tracing.Tracer
+	propagator                 tracing.Propagator
 }
 
 // WithPaginationLimit sets the pagination limit for the server.
@@ -644,6 +648,8 @@ func NewMCPServer(
 			tasks:       nil,
 			completions: nil,
 		},
+		tracer:     tracing.NoopTracer(),
+		propagator: tracing.NoopPropagator(),
 	}
 
 	for _, opt := range opts {

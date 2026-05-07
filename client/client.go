@@ -11,6 +11,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/tracing"
 )
 
 // Client implements the MCP client.
@@ -27,6 +28,8 @@ type Client struct {
 	samplingHandler    SamplingHandler
 	rootsHandler       RootsHandler
 	elicitationHandler ElicitationHandler
+	tracer             tracing.Tracer
+	propagator         tracing.Propagator
 }
 
 type ClientOption func(*Client)
@@ -80,7 +83,9 @@ func WithSession() ClientOption {
 //	}
 func NewClient(transport transport.Interface, options ...ClientOption) *Client {
 	client := &Client{
-		transport: transport,
+		transport:  transport,
+		tracer:     tracing.NoopTracer(),
+		propagator: tracing.NoopPropagator(),
 	}
 
 	for _, opt := range options {
@@ -159,6 +164,8 @@ func (c *Client) sendRequest(
 
 	id := c.requestID.Add(1)
 
+	ctx, header, span := c.startSendSpan(ctx, method, header)
+
 	request := transport.JSONRPCRequest{
 		JSONRPC: mcp.JSONRPC_VERSION,
 		ID:      mcp.NewRequestId(id),
@@ -169,13 +176,18 @@ func (c *Client) sendRequest(
 
 	response, err := c.transport.SendRequest(ctx, request)
 	if err != nil {
-		return nil, transport.NewError(err)
+		err = transport.NewError(err)
+		endSendSpan(span, err)
+		return nil, err
 	}
 
 	if response.Error != nil {
-		return nil, response.Error.AsError()
+		err := response.Error.AsError()
+		endSendSpan(span, err)
+		return nil, err
 	}
 
+	endSendSpan(span, nil)
 	return &response.Result, nil
 }
 

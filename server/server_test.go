@@ -3155,7 +3155,10 @@ func TestMCPServer_ListTools(t *testing.T) {
 		// They should NOT be the same reference (different memory addresses)
 		// This verifies that ListTools returns copies, not shared references
 		if len(tools1) > 0 && len(tools2) > 0 {
-			assert.NotSame(t, tools1, tools2, "ListTools should return copies, not shared references")
+			assert.NotEqual(t,
+				reflect.ValueOf(tools1).Pointer(),
+				reflect.ValueOf(tools2).Pointer(),
+				"ListTools should return copies, not shared references")
 		}
 
 		// Modifying one should not affect the other

@@ -12,6 +12,9 @@ jobs:
   golangci:
     name: lint
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module: ['.', 'otel']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -21,3 +24,4 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.8
+          working-directory: ${{ matrix.module }}
