@@ -713,15 +713,15 @@ func (s *MCPServer) DeleteResources(uris ...string) {
 }
 
 // ListResources returns a copy of the registered resources map.
-func (s *MCPServer) ListResources() map[string]ServerResource {
+func (s *MCPServer) ListResources() map[string]*ServerResource {
 	s.resourcesMu.RLock()
 	defer s.resourcesMu.RUnlock()
 	if len(s.resources) == 0 {
 		return nil
 	}
-	resourcesCopy := make(map[string]ServerResource, len(s.resources))
+	resourcesCopy := make(map[string]*ServerResource, len(s.resources))
 	for uri, entry := range s.resources {
-		resourcesCopy[uri] = ServerResource{
+		resourcesCopy[uri] = &ServerResource{
 			Resource: entry.resource,
 			Handler:  entry.handler,
 		}
@@ -833,15 +833,15 @@ func (s *MCPServer) DeletePrompts(names ...string) {
 }
 
 // ListPrompts returns a copy of the registered prompts map.
-func (s *MCPServer) ListPrompts() map[string]ServerPrompt {
+func (s *MCPServer) ListPrompts() map[string]*ServerPrompt {
 	s.promptsMu.RLock()
 	defer s.promptsMu.RUnlock()
 	if len(s.prompts) == 0 {
 		return nil
 	}
-	promptsCopy := make(map[string]ServerPrompt, len(s.prompts))
+	promptsCopy := make(map[string]*ServerPrompt, len(s.prompts))
 	for name, prompt := range s.prompts {
-		promptsCopy[name] = ServerPrompt{
+		promptsCopy[name] = &ServerPrompt{
 			Prompt:  prompt,
 			Handler: s.promptHandlers[name],
 		}

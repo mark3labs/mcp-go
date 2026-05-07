@@ -3340,7 +3340,7 @@ func TestMCPServer_ListResources(t *testing.T) {
 		}
 
 		numGoroutines := 100
-		results := make(chan map[string]ServerResource, numGoroutines)
+		results := make(chan map[string]*ServerResource, numGoroutines)
 		var wg sync.WaitGroup
 
 		for i := range numGoroutines {
@@ -3355,7 +3355,7 @@ func TestMCPServer_ListResources(t *testing.T) {
 		wg.Wait()
 		close(results)
 
-		var allResults []map[string]ServerResource
+		var allResults []map[string]*ServerResource
 		for result := range results {
 			allResults = append(allResults, result)
 		}
@@ -3594,7 +3594,7 @@ func TestMCPServer_ListPrompts(t *testing.T) {
 		}
 
 		numGoroutines := 100
-		results := make(chan map[string]ServerPrompt, numGoroutines)
+		results := make(chan map[string]*ServerPrompt, numGoroutines)
 		var wg sync.WaitGroup
 
 		for i := range numGoroutines {
@@ -3609,7 +3609,7 @@ func TestMCPServer_ListPrompts(t *testing.T) {
 		wg.Wait()
 		close(results)
 
-		var allResults []map[string]ServerPrompt
+		var allResults []map[string]*ServerPrompt
 		for result := range results {
 			allResults = append(allResults, result)
 		}
