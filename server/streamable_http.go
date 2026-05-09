@@ -921,6 +921,11 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w HTTPResponseWriter, r *H
 		return err
 	}
 
+	pendingResponse, err := s.getPendingResponseRequest(w, sessionID, requestID)
+	if err != nil {
+		return err
+	}
+
 	// Create the sampling response item
 	response := samplingResponseItem{
 		requestID: requestID,
@@ -934,20 +939,20 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w HTTPResponseWriter, r *H
 			Message string `json:"message"`
 		}
 		if err := json.Unmarshal(responseMessage.Error, &jsonrpcError); err != nil {
-			response.err = fmt.Errorf("failed to parse error: %v", err)
+			response.err = fmt.Errorf("failed to parse %s error: %v", pendingResponse.methodName, err)
 		} else {
-			response.err = fmt.Errorf("sampling error %d: %s", jsonrpcError.Code, jsonrpcError.Message)
+			response.err = fmt.Errorf("%s error %d: %s", pendingResponse.methodName, jsonrpcError.Code, jsonrpcError.Message)
 		}
 	} else if responseMessage.Result != nil {
 		// Store the result to be unmarshaled later
 		response.result = responseMessage.Result
 	} else {
-		response.err = fmt.Errorf("sampling response has neither result nor error")
+		response.err = fmt.Errorf("%s response has neither result nor error", pendingResponse.methodName)
 	}
 
 	// Find the corresponding session and deliver the response
 	// The response is delivered to the specific session identified by sessionID
-	if err := s.deliverSamplingResponse(w, sessionID, response); err != nil {
+	if err := s.deliverSamplingResponse(w, pendingResponse.response, response); err != nil {
 		// HTTP Status code is already set in deliverSamplingResponse, just return here
 		return fmt.Errorf("failed to deliver sampling response: %w", err)
 	}
@@ -957,43 +962,51 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w HTTPResponseWriter, r *H
 	return nil
 }
 
-// deliverSamplingResponse delivers a sampling response to the appropriate session.
-// On failure it writes the HTTP error status directly to w.
-func (s *StreamableHTTPServer) deliverSamplingResponse(w HTTPResponseWriter, sessionID string, response samplingResponseItem) error {
+func (s *StreamableHTTPServer) getPendingResponseRequest(w HTTPResponseWriter, sessionID string, requestID int64) (pendingResponseRequest, error) {
 	// Look up the active session
 	sessionInterface, ok := s.activeSessions.Load(sessionID)
 	if !ok {
 		writeHTTPError(w, "No active session found for the given session ID", http.StatusNotFound)
-		return fmt.Errorf("no active session found for session %s", sessionID)
+		return pendingResponseRequest{}, fmt.Errorf("no active session found for session %s", sessionID)
 	}
 
 	session, ok := sessionInterface.(*streamableHttpSession)
 	if !ok {
 		writeHTTPError(w, "Invalid session type for the given session ID", http.StatusInternalServerError)
-		return fmt.Errorf("invalid session type for session %s", sessionID)
+		return pendingResponseRequest{}, fmt.Errorf("invalid session type for session %s", sessionID)
 	}
 
-	// Look up the dedicated response channel for this specific request
-	responseChannelInterface, exists := session.samplingRequests.Load(response.requestID)
+	pendingResponseInterface, exists := session.samplingRequests.Load(requestID)
 	if !exists {
-		writeHTTPError(w, "No pending sampling request found for the given request ID", http.StatusBadRequest)
-		return fmt.Errorf("no pending request found for session %s, request %d", sessionID, response.requestID)
+		writeHTTPError(w, "No pending request found for the given request ID", http.StatusBadRequest)
+		return pendingResponseRequest{}, fmt.Errorf("no pending request found for session %s, request %d", sessionID, requestID)
 	}
 
-	responseChan, ok := responseChannelInterface.(chan samplingResponseItem)
+	pendingResponse, ok := pendingResponseInterface.(pendingResponseRequest)
 	if !ok {
 		writeHTTPError(w, "Failed to deliver response", http.StatusInternalServerError)
-		return fmt.Errorf("invalid response channel type for session %s, request %d", sessionID, response.requestID)
+		return pendingResponseRequest{}, fmt.Errorf("invalid pending response type for session %s, request %d", sessionID, requestID)
+	}
+
+	return pendingResponse, nil
+}
+
+// deliverSamplingResponse delivers a response to the appropriate pending request.
+// On failure it writes the HTTP error status directly to w.
+func (s *StreamableHTTPServer) deliverSamplingResponse(w HTTPResponseWriter, responseChan chan samplingResponseItem, response samplingResponseItem) error {
+	if responseChan == nil {
+		writeHTTPError(w, "Failed to deliver response", http.StatusInternalServerError)
+		return fmt.Errorf("invalid response channel for request %d", response.requestID)
 	}
 
 	// Attempt to deliver the response with timeout to prevent indefinite blocking
 	select {
 	case responseChan <- response:
-		s.logger.Infof("Delivered sampling response for session %s, request %d", sessionID, response.requestID)
+		s.logger.Infof("Delivered client response for request %d", response.requestID)
 		return nil
 	default:
 		writeHTTPError(w, "Failed to deliver response", http.StatusInternalServerError)
-		return fmt.Errorf("failed to deliver sampling response for session %s, request %d: channel full or blocked", sessionID, response.requestID)
+		return fmt.Errorf("failed to deliver client response for request %d: channel full or blocked", response.requestID)
 	}
 }
 
@@ -1252,6 +1265,11 @@ type samplingResponseItem struct {
 	err       error
 }
 
+type pendingResponseRequest struct {
+	methodName mcp.MCPMethod
+	response   chan samplingResponseItem
+}
+
 // Elicitation support types for HTTP transport
 type elicitationRequestItem struct {
 	requestID int64
@@ -1285,7 +1303,7 @@ type streamableHttpSession struct {
 	elicitationRequestChan chan elicitationRequestItem // server -> client elicitation requests
 	rootsRequestChan       chan rootsRequestItem       // server -> client list roots requests
 
-	samplingRequests sync.Map     // requestID -> pending sampling request context
+	samplingRequests sync.Map     // requestID -> pending client response context
 	requestIDCounter atomic.Int64 // for generating unique request IDs
 }
 
@@ -1412,7 +1430,10 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 	}
 
 	// Store the pending request
-	s.samplingRequests.Store(requestID, responseChan)
+	s.samplingRequests.Store(requestID, pendingResponseRequest{
+		methodName: mcp.MethodSamplingCreateMessage,
+		response:   responseChan,
+	})
 	defer s.samplingRequests.Delete(requestID)
 
 	// Send the sampling request via the channel (non-blocking)
@@ -1469,7 +1490,10 @@ func (s *streamableHttpSession) ListRoots(ctx context.Context, request mcp.ListR
 	}
 
 	// Store the pending request
-	s.samplingRequests.Store(requestID, responseChan)
+	s.samplingRequests.Store(requestID, pendingResponseRequest{
+		methodName: mcp.MethodListRoots,
+		response:   responseChan,
+	})
 	defer s.samplingRequests.Delete(requestID)
 
 	// Send the list roots request via the channel (non-blocking)
@@ -1514,7 +1538,10 @@ func (s *streamableHttpSession) RequestElicitation(ctx context.Context, request 
 	}
 
 	// Store the pending request
-	s.samplingRequests.Store(requestID, responseChan)
+	s.samplingRequests.Store(requestID, pendingResponseRequest{
+		methodName: mcp.MethodElicitationCreate,
+		response:   responseChan,
+	})
 	defer s.samplingRequests.Delete(requestID)
 
 	// Send the sampling request via the channel (non-blocking)

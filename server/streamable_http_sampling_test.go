@@ -214,3 +214,75 @@ func TestStreamableHTTPServer_SamplingQueueFull(t *testing.T) {
 		t.Errorf("Expected queue full error, got: %v", err)
 	}
 }
+
+func TestStreamableHTTPServer_ResponseErrorUsesRequestMethodName(t *testing.T) {
+	tests := []struct {
+		name       string
+		methodName mcp.MCPMethod
+		wantErr    string
+	}{
+		{
+			name:       "sampling",
+			methodName: mcp.MethodSamplingCreateMessage,
+			wantErr:    "sampling/createMessage error 123: boom",
+		},
+		{
+			name:       "elicitation",
+			methodName: mcp.MethodElicitationCreate,
+			wantErr:    "elicitation/create error 123: boom",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			httpServer := NewStreamableHTTPServer(NewMCPServer("test-server", "1.0.0"), WithStateLess(true))
+			const sessionID = "test-session"
+			const requestID int64 = 1
+
+			session := newStreamableHttpSession(sessionID, httpServer.sessionTools, httpServer.sessionResources, httpServer.sessionResourceTemplates, httpServer.sessionLogLevels)
+			httpServer.activeSessions.Store(sessionID, session)
+
+			responseChan := make(chan samplingResponseItem, 1)
+			session.samplingRequests.Store(requestID, pendingResponseRequest{
+				methodName: tt.methodName,
+				response:   responseChan,
+			})
+
+			recorder := httptest.NewRecorder()
+			req := &HTTPRequest{
+				Header:  http.Header{HeaderKeySessionID: []string{sessionID}},
+				Context: t.Context(),
+			}
+
+			responseMessage := struct {
+				ID     json.RawMessage `json:"id"`
+				Result json.RawMessage `json:"result,omitempty"`
+				Error  json.RawMessage `json:"error,omitempty"`
+				Method mcp.MCPMethod   `json:"method,omitempty"`
+			}{
+				ID:    json.RawMessage("1"),
+				Error: json.RawMessage(`{"code":123,"message":"boom"}`),
+			}
+
+			if err := httpServer.handleSamplingResponse(newHTTPResponseWriterAdapter(recorder), req, responseMessage); err != nil {
+				t.Fatalf("handleSamplingResponse returned error: %v", err)
+			}
+
+			if recorder.Code != http.StatusAccepted {
+				t.Fatalf("expected status %d, got %d", http.StatusAccepted, recorder.Code)
+			}
+
+			select {
+			case response := <-responseChan:
+				if response.err == nil {
+					t.Fatal("expected response error, got nil")
+				}
+				if response.err.Error() != tt.wantErr {
+					t.Fatalf("expected error %q, got %q", tt.wantErr, response.err.Error())
+				}
+			default:
+				t.Fatal("expected response to be delivered")
+			}
+		})
+	}
+}
