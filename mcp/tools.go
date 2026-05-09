@@ -667,17 +667,20 @@ type ToolArgumentsSchema struct {
 	AdditionalProperties any            `json:"additionalProperties,omitempty"`
 }
 
-type ToolInputSchema ToolArgumentsSchema // For retro-compatibility
+// ToolInputSchema remains a named type for retro-compatibility, so its JSON
+// methods explicitly forward to ToolArgumentsSchema.
+type ToolInputSchema ToolArgumentsSchema
+
 type ToolOutputSchema ToolArgumentsSchema
 
 // MarshalJSON implements the json.Marshaler interface for ToolInputSchema.
 func (tis ToolInputSchema) MarshalJSON() ([]byte, error) {
-	return toolArgumentsSchemaMarshalJSON(ToolArgumentsSchema(tis))
+	return ToolArgumentsSchema(tis).MarshalJSON()
 }
 
 // MarshalJSON implements the json.Marshaler interface for ToolOutputSchema.
 func (tis ToolOutputSchema) MarshalJSON() ([]byte, error) {
-	return toolArgumentsSchemaMarshalJSON(ToolArgumentsSchema(tis))
+	return ToolArgumentsSchema(tis).MarshalJSON()
 }
 
 // MarshalJSON implements the json.Marshaler interface for ToolArgumentsSchema.
@@ -687,12 +690,12 @@ func (tis ToolArgumentsSchema) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements the json.Unmarshaler interface for ToolInputSchema.
 func (tis *ToolInputSchema) UnmarshalJSON(data []byte) error {
-	return toolArgumentsSchemaUnmarshalJSON(data, (*ToolArgumentsSchema)(tis))
+	return (*ToolArgumentsSchema)(tis).UnmarshalJSON(data)
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface for ToolOutputSchema.
 func (tis *ToolOutputSchema) UnmarshalJSON(data []byte) error {
-	return toolArgumentsSchemaUnmarshalJSON(data, (*ToolArgumentsSchema)(tis))
+	return (*ToolArgumentsSchema)(tis).UnmarshalJSON(data)
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface for ToolArgumentsSchema.

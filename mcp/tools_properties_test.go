@@ -156,6 +156,29 @@ func TestWithRawInputSchema(t *testing.T) {
 	assert.Contains(t, properties, "custom")
 }
 
+func TestToolMarshalPreservesEmptyInputSchemaProperties_Issue694(t *testing.T) {
+	tool := Tool{
+		Name:        "test",
+		Description: "Tool with empty input schema properties",
+		InputSchema: ToolInputSchema{
+			Type:       "object",
+			Properties: map[string]any{},
+		},
+	}
+
+	data, err := json.Marshal(tool)
+	require.NoError(t, err)
+
+	var result map[string]any
+	err = json.Unmarshal(data, &result)
+	require.NoError(t, err)
+
+	inputSchema := result["inputSchema"].(map[string]any)
+	assert.Equal(t, "object", inputSchema["type"])
+	assert.Contains(t, inputSchema, "properties")
+	assert.Equal(t, map[string]any{}, inputSchema["properties"])
+}
+
 func TestWithRawInputSchemaOption(t *testing.T) {
 	// Test the WithRawInputSchema option function directly
 	rawSchema := json.RawMessage(`{"type": "string"}`)
