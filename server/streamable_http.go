@@ -555,6 +555,11 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	canStream := w.CanStream()
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.logger.Errorf("panic in notification forwarder: %v", r)
+			}
+		}()
 		for {
 			select {
 			case nt := <-session.notificationChannel:
@@ -748,6 +753,11 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 	writeChan := make(chan any, 16)
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.logger.Errorf("panic in SSE notification writer: %v", r)
+			}
+		}()
 		for {
 			select {
 			case nt := <-session.notificationChannel:
@@ -809,6 +819,11 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 	if s.listenHeartbeatInterval > 0 {
 		// heartbeat to keep the connection alive
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					s.logger.Errorf("panic in heartbeat goroutine: %v", r)
+				}
+			}()
 			ticker := time.NewTicker(s.listenHeartbeatInterval)
 			defer ticker.Stop()
 			for {
@@ -1050,6 +1065,11 @@ func (s *StreamableHTTPServer) startSessionSweeper(ctx context.Context) {
 	interval := max(s.sessionIdleTTL/2, time.Second)
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.logger.Errorf("panic in session cleanup goroutine: %v", r)
+			}
+		}()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 

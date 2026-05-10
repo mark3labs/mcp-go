@@ -184,6 +184,11 @@ func (c *StreamableHTTP) Start(ctx context.Context) error {
 	// For Streamable HTTP, we don't need to establish a persistent connection by default
 	if c.getListeningEnabled {
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					c.logger.Errorf("panic in listener goroutine: %v", r)
+				}
+			}()
 			select {
 			case <-c.initialized:
 				ctx, cancel := c.contextAwareOfClientClose(ctx)
@@ -698,6 +703,11 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 
 	// Start a goroutine to process the SSE stream
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				c.logger.Errorf("panic in SSE stream reader: %v", r)
+			}
+		}()
 		// Ensure this goroutine respects the context
 		defer close(responseChan)
 
@@ -766,6 +776,11 @@ func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, hand
 	// This ensures ReadString returns immediately with an error instead of
 	// blocking indefinitely when the SSE stream is open but idle.
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				c.logger.Errorf("panic closing SSE reader: %v", r)
+			}
+		}()
 		<-ctx.Done()
 		reader.Close()
 	}()
@@ -1010,6 +1025,28 @@ func (c *StreamableHTTP) handleIncomingRequest(ctx context.Context, request JSON
 
 	// Handle the request in a goroutine to avoid blocking the SSE reader
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				c.logger.Errorf("panic handling server request %s: %v", request.Method, r)
+				// Attempt to send an internal error response so the server doesn't hang.
+				// Use a nested recover to prevent sendResponseToServer from propagating
+				// a secondary panic (e.g., nil serverURL during shutdown).
+				func() {
+					defer func() {
+						if r2 := recover(); r2 != nil {
+							c.logger.Errorf("failed to send error response after panic: %v", r2)
+						}
+					}()
+					errorResponse := NewJSONRPCErrorResponse(
+						request.ID,
+						mcp.INTERNAL_ERROR,
+						fmt.Sprintf("internal error: panic in request handler: %v", r),
+						nil,
+					)
+					c.sendResponseToServer(ctx, errorResponse)
+				}()
+			}
+		}()
 		// Create a new context with timeout for request handling, respecting parent context
 		requestCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
@@ -1085,6 +1122,11 @@ func (c *StreamableHTTP) sendResponseToServer(ctx context.Context, response *JSO
 func (c *StreamableHTTP) contextAwareOfClientClose(ctx context.Context) (context.Context, context.CancelFunc) {
 	newCtx, cancel := context.WithCancel(ctx)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				c.logger.Errorf("panic in context-close watcher: %v", r)
+			}
+		}()
 		select {
 		case <-c.closed:
 			cancel()
