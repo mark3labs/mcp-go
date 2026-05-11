@@ -92,14 +92,19 @@ func TestContextAwareOfClientClose_CleanShutdown(t *testing.T) {
 		closed: make(chan struct{}),
 	}
 
-	_, childCancel := c.contextAwareOfClientClose(t.Context())
+	childCtx, childCancel := c.contextAwareOfClientClose(t.Context())
 	defer childCancel()
 
 	// Close the client channel to trigger the goroutine's select case
 	close(c.closed)
 
-	// Give goroutine time to complete (short; this path is fast)
-	time.Sleep(20 * time.Millisecond)
+	// Wait for the goroutine to cancel the child context (proves it ran)
+	select {
+	case <-childCtx.Done():
+		// Goroutine fired cancel() as expected
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for context cancellation")
+	}
 
 	// No panic means the recovery defer is in place and the goroutine exits cleanly
 	assert.False(t, logger.hasMessageContaining("panic"),

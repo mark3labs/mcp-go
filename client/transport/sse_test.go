@@ -410,11 +410,11 @@ func TestSSE(t *testing.T) {
 		// The request should fail because the context is canceled
 		reps, err := trans.SendRequest(ctx, request)
 		if err != nil {
-			t.Errorf("SendRequest failed: %v", err)
+			t.Fatalf("SendRequest failed: %v", err)
 		}
 
 		if reps.Error == nil {
-			t.Errorf("Expected error, got nil")
+			t.Fatalf("Expected error, got nil")
 		}
 
 		var responseError JSONRPCRequest
