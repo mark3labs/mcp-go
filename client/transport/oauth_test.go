@@ -9,9 +9,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -2325,4 +2327,118 @@ func TestOAuthHandler_RefreshToken_201Created(t *testing.T) {
 	require.NoError(t, err, "refresh token exchange should succeed for HTTP 201 Created")
 	assert.Equal(t, "refreshed-access-token", token.AccessToken)
 	assert.Equal(t, "refreshed-refresh-token", token.RefreshToken)
+}
+
+// TestOAuthHandler_MetadataDiscovery_SendsLatestProtocolVersion verifies that
+// the OAuth metadata discovery code paths advertise mcp.LATEST_PROTOCOL_VERSION
+// in the MCP-Protocol-Version request header. Regression test for #868, where
+// the header was hardcoded to "2025-03-26".
+func TestOAuthHandler_MetadataDiscovery_SendsLatestProtocolVersion(t *testing.T) {
+	t.Run("ProtectedResourceDiscovery", func(t *testing.T) {
+		var (
+			mu             sync.Mutex
+			seenByPath     = map[string]string{}
+			serverURL      string
+		)
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			seenByPath[r.URL.Path] = r.Header.Get("MCP-Protocol-Version")
+			mu.Unlock()
+
+			switch r.URL.Path {
+			case "/.well-known/oauth-protected-resource":
+				metadata := map[string]any{
+					"resource":              serverURL,
+					"authorization_servers": []string{serverURL},
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(metadata)
+
+			case "/.well-known/oauth-authorization-server":
+				metadata := AuthServerMetadata{
+					Issuer:                serverURL,
+					AuthorizationEndpoint: serverURL + "/authorize",
+					TokenEndpoint:         serverURL + "/token",
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(metadata)
+
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+		serverURL = server.URL
+
+		handler := NewOAuthHandler(OAuthConfig{
+			ClientID:    "test-client",
+			RedirectURI: server.URL + "/callback",
+			TokenStore:  NewMemoryTokenStore(),
+			PKCEEnabled: true,
+		})
+		handler.SetBaseURL(server.URL)
+
+		_, err := handler.GetServerMetadata(t.Context())
+		require.NoError(t, err)
+
+		mu.Lock()
+		defer mu.Unlock()
+		got, ok := seenByPath["/.well-known/oauth-protected-resource"]
+		require.True(t, ok, "expected protected-resource discovery request")
+		assert.Equal(t, mcp.LATEST_PROTOCOL_VERSION, got,
+			"protected-resource discovery should advertise the latest protocol version")
+		assert.NotEqual(t, "2025-03-26", got,
+			"protected-resource discovery must not hardcode the legacy protocol version")
+	})
+
+	t.Run("AuthServerMetadataDiscovery", func(t *testing.T) {
+		var (
+			mu             sync.Mutex
+			authServerVer  string
+			authServerSeen bool
+			serverURL      string
+		)
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/.well-known/oauth-authorization-server":
+				mu.Lock()
+				authServerSeen = true
+				authServerVer = r.Header.Get("MCP-Protocol-Version")
+				mu.Unlock()
+				metadata := AuthServerMetadata{
+					Issuer:                serverURL,
+					AuthorizationEndpoint: serverURL + "/authorize",
+					TokenEndpoint:         serverURL + "/token",
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(metadata)
+
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer server.Close()
+		serverURL = server.URL
+
+		handler := NewOAuthHandler(OAuthConfig{
+			ClientID:              "test-client",
+			RedirectURI:           server.URL + "/callback",
+			TokenStore:            NewMemoryTokenStore(),
+			AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
+			PKCEEnabled:           true,
+		})
+
+		_, err := handler.GetServerMetadata(t.Context())
+		require.NoError(t, err)
+
+		mu.Lock()
+		defer mu.Unlock()
+		require.True(t, authServerSeen, "expected oauth-authorization-server discovery request")
+		assert.Equal(t, mcp.LATEST_PROTOCOL_VERSION, authServerVer,
+			"oauth-authorization-server discovery should advertise the latest protocol version")
+		assert.NotEqual(t, "2025-03-26", authServerVer,
+			"oauth-authorization-server discovery must not hardcode the legacy protocol version")
+	})
 }
