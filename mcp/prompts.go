@@ -26,6 +26,7 @@ type GetPromptRequest struct {
 	Header http.Header     `json:"-"`
 }
 
+// GetPromptParams contains parameters for a prompts/get request.
 type GetPromptParams struct {
 	// The name of the prompt or prompt template.
 	Name string `json:"name"`

@@ -8,14 +8,17 @@ import (
 	"github.com/mark3labs/mcp-go/client/transport"
 )
 
+// WithHeaders sets static headers for the SSE client.
 func WithHeaders(headers map[string]string) transport.ClientOption {
 	return transport.WithHeaders(headers)
 }
 
+// WithHeaderFunc sets a function that returns headers for each SSE request.
 func WithHeaderFunc(headerFunc transport.HTTPHeaderFunc) transport.ClientOption {
 	return transport.WithHeaderFunc(headerFunc)
 }
 
+// WithHTTPClient sets a custom HTTP client for the SSE transport.
 func WithHTTPClient(httpClient *http.Client) transport.ClientOption {
 	return transport.WithHTTPClient(httpClient)
 }

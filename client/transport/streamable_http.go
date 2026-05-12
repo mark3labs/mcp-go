@@ -20,6 +20,7 @@ import (
 	"github.com/mark3labs/mcp-go/util"
 )
 
+// StreamableHTTPCOption configures a StreamableHTTP transport client.
 type StreamableHTTPCOption func(*StreamableHTTP)
 
 // WithContinuousListening enables receiving server-to-client notifications when no request is in flight.
@@ -35,19 +36,21 @@ func WithContinuousListening() StreamableHTTPCOption {
 	}
 }
 
-// WithHTTPClient sets a custom HTTP client on the StreamableHTTP transport.
+// WithHTTPBasicClient sets a custom HTTP client on the StreamableHTTP transport.
 func WithHTTPBasicClient(client *http.Client) StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
 		sc.httpClient = client
 	}
 }
 
+// WithHTTPHeaders sets static headers for StreamableHTTP requests.
 func WithHTTPHeaders(headers map[string]string) StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
 		sc.headers = headers
 	}
 }
 
+// WithHTTPHeaderFunc sets a function that returns headers for StreamableHTTP requests.
 func WithHTTPHeaderFunc(headerFunc HTTPHeaderFunc) StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
 		sc.headerFunc = headerFunc
@@ -75,6 +78,8 @@ func WithHTTPLogger(logger util.Logger) StreamableHTTPCOption {
 	}
 }
 
+// WithLogger sets a custom logger for the StreamableHTTP transport.
+//
 // Deprecated: Use [WithHTTPLogger] instead.
 func WithLogger(logger util.Logger) StreamableHTTPCOption {
 	return WithHTTPLogger(logger)
@@ -832,6 +837,7 @@ func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, hand
 	}
 }
 
+// SendNotification sends a JSON-RPC notification to the server without expecting a response.
 func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.JSONRPCNotification) error {
 	// Marshal request
 	requestBody, err := json.Marshal(notification)
@@ -887,6 +893,7 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	}
 }
 
+// SetNotificationHandler sets the handler for incoming JSON-RPC notifications.
 func (c *StreamableHTTP) SetNotificationHandler(handler func(mcp.JSONRPCNotification)) {
 	c.notifyMu.Lock()
 	defer c.notifyMu.Unlock()
@@ -900,6 +907,7 @@ func (c *StreamableHTTP) SetRequestHandler(handler RequestHandler) {
 	c.requestHandler = handler
 }
 
+// GetSessionId returns the current StreamableHTTP session ID.
 func (c *StreamableHTTP) GetSessionId() string {
 	return c.sessionID.Load().(string)
 }
@@ -958,6 +966,7 @@ func (c *StreamableHTTP) listenForever(ctx context.Context) {
 }
 
 var (
+	// ErrSessionTerminated indicates the server no longer recognizes the current session.
 	ErrSessionTerminated   = fmt.Errorf("session terminated (404). need to re-initialize")
 	ErrGetMethodNotAllowed = fmt.Errorf("GET method not allowed")
 	ErrUnauthorized        = fmt.Errorf("unauthorized (401)")

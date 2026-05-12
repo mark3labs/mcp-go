@@ -51,6 +51,7 @@ type SSE struct {
 	oauthHandler *OAuthHandler
 }
 
+// ClientOption configures an SSE transport client.
 type ClientOption func(*SSE)
 
 // WithSSELogger sets a custom logger for the SSE client.
@@ -60,24 +61,28 @@ func WithSSELogger(logger util.Logger) ClientOption {
 	}
 }
 
+// WithHeaders sets static headers for SSE HTTP requests.
 func WithHeaders(headers map[string]string) ClientOption {
 	return func(sc *SSE) {
 		sc.headers = headers
 	}
 }
 
+// WithHeaderFunc sets a function that returns headers for SSE HTTP requests.
 func WithHeaderFunc(headerFunc HTTPHeaderFunc) ClientOption {
 	return func(sc *SSE) {
 		sc.headerFunc = headerFunc
 	}
 }
 
+// WithHTTPClient sets a custom HTTP client for the SSE transport.
 func WithHTTPClient(httpClient *http.Client) ClientOption {
 	return func(sc *SSE) {
 		sc.httpClient = httpClient
 	}
 }
 
+// WithOAuth enables OAuth authentication for the SSE transport.
 func WithOAuth(config OAuthConfig) ClientOption {
 	return func(sc *SSE) {
 		sc.oauthHandler = NewOAuthHandler(config)
@@ -386,12 +391,14 @@ func (c *SSE) handleSSEEvent(event, data string) {
 	}
 }
 
+// SetNotificationHandler sets the handler for incoming JSON-RPC notifications.
 func (c *SSE) SetNotificationHandler(handler func(notification mcp.JSONRPCNotification)) {
 	c.notifyMu.Lock()
 	defer c.notifyMu.Unlock()
 	c.onNotification = handler
 }
 
+// SetConnectionLostHandler sets the handler called when the SSE connection is lost.
 func (c *SSE) SetConnectionLostHandler(handler func(error)) {
 	c.connectionLostMu.Lock()
 	defer c.connectionLostMu.Unlock()

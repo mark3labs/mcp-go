@@ -12,7 +12,7 @@ type Logger interface {
 
 // --- Standard Library Logger Wrapper ---
 
-// DefaultStdLogger implements Logger using the standard library's log.Logger.
+// DefaultLogger implements Logger using the standard library's log.Logger.
 func DefaultLogger() Logger {
 	return &stdLogger{
 		logger: log.Default(),

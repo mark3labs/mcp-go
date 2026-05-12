@@ -29,6 +29,7 @@ type Client struct {
 	elicitationHandler ElicitationHandler
 }
 
+// ClientOption configures a Client during construction.
 type ClientOption func(*Client)
 
 // WithClientCapabilities sets the client capabilities for the client.
@@ -262,6 +263,7 @@ func (c *Client) Initialize(
 	return &result, nil
 }
 
+// Ping sends a ping request to verify the server is responsive.
 func (c *Client) Ping(ctx context.Context) error {
 	_, err := c.sendRequest(ctx, "ping", nil, nil)
 	return err
@@ -279,6 +281,7 @@ func (c *Client) ListResourcesByPage(
 	return result, nil
 }
 
+// ListResources lists all resources by following paginated responses.
 func (c *Client) ListResources(
 	ctx context.Context,
 	request mcp.ListResourcesRequest,
@@ -304,6 +307,7 @@ func (c *Client) ListResources(
 	return result, nil
 }
 
+// ListResourceTemplatesByPage manually lists resource templates by page.
 func (c *Client) ListResourceTemplatesByPage(
 	ctx context.Context,
 	request mcp.ListResourceTemplatesRequest,
@@ -315,6 +319,7 @@ func (c *Client) ListResourceTemplatesByPage(
 	return result, nil
 }
 
+// ListResourceTemplates lists all resource templates by following paginated responses.
 func (c *Client) ListResourceTemplates(
 	ctx context.Context,
 	request mcp.ListResourceTemplatesRequest,
@@ -340,6 +345,7 @@ func (c *Client) ListResourceTemplates(
 	return result, nil
 }
 
+// ReadResource reads the contents of a resource from the server.
 func (c *Client) ReadResource(
 	ctx context.Context,
 	request mcp.ReadResourceRequest,
@@ -352,6 +358,7 @@ func (c *Client) ReadResource(
 	return mcp.ParseReadResourceResult(response)
 }
 
+// Subscribe subscribes to updates for a resource.
 func (c *Client) Subscribe(
 	ctx context.Context,
 	request mcp.SubscribeRequest,
@@ -360,6 +367,7 @@ func (c *Client) Subscribe(
 	return err
 }
 
+// Unsubscribe removes a resource update subscription.
 func (c *Client) Unsubscribe(
 	ctx context.Context,
 	request mcp.UnsubscribeRequest,
@@ -368,6 +376,7 @@ func (c *Client) Unsubscribe(
 	return err
 }
 
+// ListPromptsByPage manually lists prompts by page.
 func (c *Client) ListPromptsByPage(
 	ctx context.Context,
 	request mcp.ListPromptsRequest,
@@ -379,6 +388,7 @@ func (c *Client) ListPromptsByPage(
 	return result, nil
 }
 
+// ListPrompts lists all prompts by following paginated responses.
 func (c *Client) ListPrompts(
 	ctx context.Context,
 	request mcp.ListPromptsRequest,
@@ -404,6 +414,7 @@ func (c *Client) ListPrompts(
 	return result, nil
 }
 
+// GetPrompt gets a prompt and renders it with the provided arguments.
 func (c *Client) GetPrompt(
 	ctx context.Context,
 	request mcp.GetPromptRequest,
@@ -416,6 +427,7 @@ func (c *Client) GetPrompt(
 	return mcp.ParseGetPromptResult(response)
 }
 
+// ListToolsByPage manually lists tools by page.
 func (c *Client) ListToolsByPage(
 	ctx context.Context,
 	request mcp.ListToolsRequest,
@@ -427,6 +439,7 @@ func (c *Client) ListToolsByPage(
 	return result, nil
 }
 
+// ListTools lists all tools by following paginated responses.
 func (c *Client) ListTools(
 	ctx context.Context,
 	request mcp.ListToolsRequest,
@@ -452,6 +465,7 @@ func (c *Client) ListTools(
 	return result, nil
 }
 
+// CallTool invokes a tool on the server.
 func (c *Client) CallTool(
 	ctx context.Context,
 	request mcp.CallToolRequest,
@@ -464,6 +478,7 @@ func (c *Client) CallTool(
 	return mcp.ParseCallToolResult(response)
 }
 
+// SetLevel sets the server logging level.
 func (c *Client) SetLevel(
 	ctx context.Context,
 	request mcp.SetLevelRequest,
@@ -472,6 +487,7 @@ func (c *Client) SetLevel(
 	return err
 }
 
+// Complete requests completion suggestions from the server.
 func (c *Client) Complete(
 	ctx context.Context,
 	request mcp.CompleteRequest,
