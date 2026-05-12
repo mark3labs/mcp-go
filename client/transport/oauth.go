@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // maxMetadataBodyBytes caps the size of an OAuth metadata document we are
@@ -545,6 +547,14 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		result, err := h.fetchServerMetadata(ctx)
 		h.metadataMu.Lock()
 		defer h.metadataMu.Unlock()
+		// If SetProtectedResourceMetadataURL swapped in a fresh sync.Once
+		// while the fetch was in flight, the configuration that produced
+		// `result` is now stale. Discard the result instead of letting it
+		// clobber the newer state; the next getServerMetadata call will
+		// drive re-discovery through the new once.
+		if h.metadataOnce != once {
+			return
+		}
 		if err != nil {
 			h.metadataFetchErr = err
 			return
@@ -618,7 +628,11 @@ func (h *OAuthHandler) fetchServerMetadata(ctx context.Context) (metadataDiscove
 	}
 
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("MCP-Protocol-Version", "2025-03-26")
+	// Advertise the latest protocol version this client supports. Metadata
+	// discovery happens before the MCP initialize handshake, so no negotiated
+	// version is available yet; servers that don't recognise it can fall back
+	// per the MCP spec.
+	req.Header.Set("MCP-Protocol-Version", mcp.LATEST_PROTOCOL_VERSION)
 
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
@@ -796,7 +810,11 @@ func (h *OAuthHandler) fetchMetadataFromURL(ctx context.Context, metadataURL str
 	}
 
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("MCP-Protocol-Version", "2025-03-26")
+	// Advertise the latest protocol version this client supports. Metadata
+	// discovery happens before the MCP initialize handshake, so no negotiated
+	// version is available yet; servers that don't recognise it can fall back
+	// per the MCP spec.
+	req.Header.Set("MCP-Protocol-Version", mcp.LATEST_PROTOCOL_VERSION)
 
 	resp, err := h.httpClient.Do(req)
 	if err != nil {

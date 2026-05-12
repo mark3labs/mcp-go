@@ -562,6 +562,132 @@ func (h *CachedResourceHandler) HandleResource(ctx context.Context, req mcp.Read
 }
 ```
 
+## Resource Subscriptions
+
+MCP lets clients subscribe to updates for individual resources via `resources/subscribe`, then cancel with `resources/unsubscribe`. The server later pushes `notifications/resources/updated` whenever a subscribed resource changes.
+
+Enable the capability with the first argument to `WithResourceCapabilities`:
+
+```go
+s := server.NewMCPServer("Resource Server", "1.0.0",
+    // (subscribe, listChanged)
+    server.WithResourceCapabilities(true, true),
+)
+```
+
+Once the `subscribe` capability is advertised, the server accepts `resources/subscribe` and `resources/unsubscribe` requests and acknowledges them with an empty result. If a client calls either method while the capability is disabled (or no resource capabilities are configured), the server responds with `METHOD_NOT_FOUND`.
+
+### Tracking subscriptions per session
+
+The default handlers acknowledge the request but do not store any subscription state on their own. To remember which session is interested in which URI, implement the optional `SessionWithResourceSubscriptions` interface on your custom session type — the dispatcher will call into it automatically:
+
+```go
+type mySession struct {
+    server.ClientSession
+    mu   sync.Mutex
+    subs map[string]struct{}
+}
+
+func (s *mySession) SubscribeToResource(uri string) {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    if s.subs == nil {
+        s.subs = make(map[string]struct{})
+    }
+    s.subs[uri] = struct{}{}
+}
+
+func (s *mySession) UnsubscribeFromResource(uri string) {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    delete(s.subs, uri)
+}
+
+func (s *mySession) SubscribedResources() []string {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    out := make([]string, 0, len(s.subs))
+    for uri := range s.subs {
+        out = append(out, uri)
+    }
+    return out
+}
+
+func (s *mySession) IsSubscribedToResource(uri string) bool {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    _, ok := s.subs[uri]
+    return ok
+}
+```
+
+Duplicate subscribes and unsubscribes for unknown URIs are treated as no-ops, matching the spec.
+
+### Pushing `resources/updated` notifications
+
+When a resource changes, deliver the update only to clients that asked for it. The simplest approach is to track sessions yourself via the `OnRegisterSession` / `OnUnregisterSession` hooks, then look up the ones subscribed to the URI you're updating and call `SendNotificationToSpecificClient`:
+
+```go
+var (
+    sessionsMu sync.Mutex
+    sessions   = map[string]server.ClientSession{}
+)
+
+hooks := &server.Hooks{}
+hooks.AddOnRegisterSession(func(ctx context.Context, session server.ClientSession) {
+    sessionsMu.Lock()
+    defer sessionsMu.Unlock()
+    sessions[session.SessionID()] = session
+})
+hooks.AddOnUnregisterSession(func(ctx context.Context, session server.ClientSession) {
+    sessionsMu.Lock()
+    defer sessionsMu.Unlock()
+    delete(sessions, session.SessionID())
+})
+
+func notifyResourceUpdated(s *server.MCPServer, uri string) {
+    sessionsMu.Lock()
+    snapshot := make([]server.ClientSession, 0, len(sessions))
+    for _, sess := range sessions {
+        snapshot = append(snapshot, sess)
+    }
+    sessionsMu.Unlock()
+
+    for _, sess := range snapshot {
+        subs, ok := sess.(server.SessionWithResourceSubscriptions)
+        if !ok || !subs.IsSubscribedToResource(uri) {
+            continue
+        }
+        _ = s.SendNotificationToSpecificClient(
+            sess.SessionID(),
+            "notifications/resources/updated",
+            map[string]any{"uri": uri},
+        )
+    }
+}
+```
+
+### Subscription hooks
+
+If you only need to observe subscribe / unsubscribe traffic (for metrics, audit logging, or to drive an external pub/sub system) without maintaining per-session state, attach hooks:
+
+```go
+hooks := &server.Hooks{}
+hooks.AddBeforeSubscribe(func(ctx context.Context, id any, req *mcp.SubscribeRequest) {
+    log.Printf("subscribe: %s", req.Params.URI)
+})
+hooks.AddAfterUnsubscribe(func(ctx context.Context, id any, req *mcp.UnsubscribeRequest, _ *mcp.EmptyResult) {
+    log.Printf("unsubscribed: %s", req.Params.URI)
+})
+
+s := server.NewMCPServer("Resource Server", "1.0.0",
+    server.WithResourceCapabilities(true, true),
+    server.WithHooks(hooks),
+)
+```
+
+The matching `AddAfterSubscribe` and `AddBeforeUnsubscribe` hooks are also available. See [Hooks](/servers/advanced#hooks) for the broader hook contract.
+
 ## Advanced Resource Patterns
 
 ### Session-specific Resources

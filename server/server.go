@@ -1190,6 +1190,77 @@ func (s *MCPServer) handlePing(
 	return &mcp.EmptyResult{}, nil
 }
 
+// handleSubscribe processes a resources/subscribe request. Servers that opt in
+// to the resources.subscribe capability via WithResourceCapabilities must
+// accept this request; otherwise it is rejected as unsupported. The default
+// implementation only validates input and acknowledges the request. Users that
+// need to react to subscriptions (for example to track which sessions should
+// receive notifications/resources/updated) should register Hooks.AddBeforeSubscribe
+// or Hooks.AddAfterSubscribe, or implement an optional SessionWithResourceSubscriptions
+// interface on their ClientSession.
+func (s *MCPServer) handleSubscribe(
+	ctx context.Context,
+	id any,
+	request mcp.SubscribeRequest,
+) (*mcp.EmptyResult, *requestError) {
+	if s.capabilities.resources == nil || !s.capabilities.resources.subscribe {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.METHOD_NOT_FOUND,
+			err:  fmt.Errorf("resources subscribe %w", ErrUnsupported),
+		}
+	}
+	if request.Params.URI == "" {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  errors.New("uri is required"),
+		}
+	}
+
+	if session := ClientSessionFromContext(ctx); session != nil {
+		if subs, ok := session.(SessionWithResourceSubscriptions); ok {
+			subs.SubscribeToResource(request.Params.URI)
+		}
+	}
+
+	return &mcp.EmptyResult{}, nil
+}
+
+// handleUnsubscribe processes a resources/unsubscribe request. The default
+// implementation validates input, removes any tracked subscription on the
+// current session if it implements SessionWithResourceSubscriptions, and
+// acknowledges the request. Unsubscribing a URI that was never subscribed to
+// is treated as a no-op for spec compatibility.
+func (s *MCPServer) handleUnsubscribe(
+	ctx context.Context,
+	id any,
+	request mcp.UnsubscribeRequest,
+) (*mcp.EmptyResult, *requestError) {
+	if s.capabilities.resources == nil || !s.capabilities.resources.subscribe {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.METHOD_NOT_FOUND,
+			err:  fmt.Errorf("resources unsubscribe %w", ErrUnsupported),
+		}
+	}
+	if request.Params.URI == "" {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  errors.New("uri is required"),
+		}
+	}
+
+	if session := ClientSessionFromContext(ctx); session != nil {
+		if subs, ok := session.(SessionWithResourceSubscriptions); ok {
+			subs.UnsubscribeFromResource(request.Params.URI)
+		}
+	}
+
+	return &mcp.EmptyResult{}, nil
+}
+
 func (s *MCPServer) handleSetLevel(
 	ctx context.Context,
 	id any,

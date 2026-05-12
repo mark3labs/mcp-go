@@ -237,6 +237,58 @@ func (s *MCPServer) HandleMessage(
 		}
 		s.hooks.afterReadResource(ctx, baseMessage.ID, &request, result)
 		return createResponse(baseMessage.ID, *result)
+	case mcp.MethodResourcesSubscribe:
+		var request mcp.SubscribeRequest
+		var result *mcp.EmptyResult
+		if s.capabilities.resources == nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.METHOD_NOT_FOUND,
+				err:  fmt.Errorf("resources %w", ErrUnsupported),
+			}
+		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.INVALID_REQUEST,
+				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
+			}
+		} else {
+			request.Header = headers
+			s.hooks.beforeSubscribe(ctx, baseMessage.ID, &request)
+			result, err = s.handleSubscribe(ctx, baseMessage.ID, request)
+		}
+		if err != nil {
+			s.hooks.onError(ctx, baseMessage.ID, baseMessage.Method, &request, err)
+			return err.ToJSONRPCError()
+		}
+		s.hooks.afterSubscribe(ctx, baseMessage.ID, &request, result)
+		return createResponse(baseMessage.ID, *result)
+	case mcp.MethodResourcesUnsubscribe:
+		var request mcp.UnsubscribeRequest
+		var result *mcp.EmptyResult
+		if s.capabilities.resources == nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.METHOD_NOT_FOUND,
+				err:  fmt.Errorf("resources %w", ErrUnsupported),
+			}
+		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.INVALID_REQUEST,
+				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
+			}
+		} else {
+			request.Header = headers
+			s.hooks.beforeUnsubscribe(ctx, baseMessage.ID, &request)
+			result, err = s.handleUnsubscribe(ctx, baseMessage.ID, request)
+		}
+		if err != nil {
+			s.hooks.onError(ctx, baseMessage.ID, baseMessage.Method, &request, err)
+			return err.ToJSONRPCError()
+		}
+		s.hooks.afterUnsubscribe(ctx, baseMessage.ID, &request, result)
+		return createResponse(baseMessage.ID, *result)
 	case mcp.MethodPromptsList:
 		var request mcp.ListPromptsRequest
 		var result *mcp.ListPromptsResult

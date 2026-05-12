@@ -52,6 +52,33 @@ type SessionWithResources interface {
 	SetSessionResources(resources map[string]ServerResource)
 }
 
+// SessionWithResourceSubscriptions is an optional extension of ClientSession
+// implemented by sessions that track resources/subscribe state. When the
+// default subscribe/unsubscribe handlers in MCPServer service a request, they
+// will invoke SubscribeToResource or UnsubscribeFromResource on the active
+// session if it implements this interface, allowing servers to later target
+// notifications/resources/updated only at sessions that asked for updates.
+//
+// Implementations must be safe for concurrent use because requests and
+// notifications may run on independent goroutines.
+type SessionWithResourceSubscriptions interface {
+	ClientSession
+	// SubscribeToResource records that this session has subscribed to updates
+	// for the given resource URI. Subscribing the same URI twice is a no-op.
+	SubscribeToResource(uri string)
+	// UnsubscribeFromResource removes a previously recorded subscription for
+	// the given resource URI. Unsubscribing a URI that was never subscribed
+	// to is a no-op.
+	UnsubscribeFromResource(uri string)
+	// SubscribedResources returns a snapshot of the URIs this session is
+	// currently subscribed to. The returned slice is owned by the caller and
+	// safe to mutate.
+	SubscribedResources() []string
+	// IsSubscribedToResource reports whether the session is currently
+	// subscribed to updates for the given resource URI.
+	IsSubscribedToResource(uri string) bool
+}
+
 // SessionWithResourceTemplates is an extension of ClientSession that can store session-specific resource template data
 type SessionWithResourceTemplates interface {
 	ClientSession
