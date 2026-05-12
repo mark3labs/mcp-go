@@ -1241,7 +1241,7 @@ func (s *MCPServer) handleUnsubscribe(
 		return nil, &requestError{
 			id:   id,
 			code: mcp.METHOD_NOT_FOUND,
-			err:  fmt.Errorf("resources subscribe %w", ErrUnsupported),
+			err:  fmt.Errorf("resources unsubscribe %w", ErrUnsupported),
 		}
 	}
 	if request.Params.URI == "" {
