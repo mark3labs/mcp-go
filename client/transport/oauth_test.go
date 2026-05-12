@@ -2326,3 +2326,78 @@ func TestOAuthHandler_RefreshToken_201Created(t *testing.T) {
 	assert.Equal(t, "refreshed-access-token", token.AccessToken)
 	assert.Equal(t, "refreshed-refresh-token", token.RefreshToken)
 }
+
+// TestOAuthHandler_GetServerMetadata_DoesNotHoldLockAcrossHTTP is a
+// regression test for #871. It verifies that an in-flight
+// getServerMetadata call does not hold metadataMu while waiting on HTTP
+// I/O, so concurrent callers of other metadataMu-guarded methods (here
+// SetProtectedResourceMetadataURL) are not blocked on network round
+// trips.
+func TestOAuthHandler_GetServerMetadata_DoesNotHoldLockAcrossHTTP(t *testing.T) {
+	t.Parallel()
+
+	// The metadata server blocks until released, simulating a slow
+	// upstream so we can observe whether the second call can acquire
+	// metadataMu while the first call is mid-fetch.
+	release := make(chan struct{})
+	hit := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case hit <- struct{}{}:
+		default:
+		}
+		<-release
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(server.Close)
+
+	handler := NewOAuthHandler(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost/callback",
+		Scopes:      []string{"read"},
+		HTTPClient:  &http.Client{Timeout: 5 * time.Second},
+	})
+	handler.SetBaseURL(server.URL)
+
+	metadataDone := make(chan struct{})
+	go func() {
+		defer close(metadataDone)
+		// We don't care about the result; we only need the call to be
+		// in flight long enough for the assertion below.
+		_, _ = handler.GetServerMetadata(t.Context())
+	}()
+
+	// Wait until the metadata fetch has actually entered the slow HTTP
+	// handler so we know getServerMetadata is mid-request.
+	select {
+	case <-hit:
+	case <-time.After(2 * time.Second):
+		close(release)
+		<-metadataDone
+		t.Fatal("metadata server never received a request")
+	}
+
+	// SetProtectedResourceMetadataURL takes metadataMu. Before #871 it
+	// would block here waiting for the in-flight HTTP call inside
+	// metadataOnce.Do to complete; after the fix it must return
+	// promptly.
+	setDone := make(chan struct{})
+	go func() {
+		defer close(setDone)
+		handler.SetProtectedResourceMetadataURL(server.URL + "/.well-known/oauth-protected-resource")
+	}()
+
+	select {
+	case <-setDone:
+		// success: lock was not held across the HTTP call
+	case <-time.After(500 * time.Millisecond):
+		close(release)
+		<-metadataDone
+		<-setDone
+		t.Fatal("SetProtectedResourceMetadataURL was blocked on metadataMu while getServerMetadata held it across an HTTP request (regression of #871)")
+	}
+
+	// Release the HTTP request so the test cleans up promptly.
+	close(release)
+	<-metadataDone
+}
