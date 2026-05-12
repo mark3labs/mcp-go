@@ -3,7 +3,7 @@ module github.com/mark3labs/mcp-go/otel
 go 1.25.5
 
 require (
-	github.com/mark3labs/mcp-go v0.0.0
+	github.com/mark3labs/mcp-go v0.53.0
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/sdk v1.43.0
