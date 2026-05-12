@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"strings"
@@ -344,7 +345,7 @@ func (c *Stdio) readResponses(ready chan struct{}) {
 		default:
 			line, err := c.stdout.ReadString('\n')
 			if err != nil {
-				if err != io.EOF && !errors.Is(err, context.Canceled) {
+				if err != io.EOF && !errors.Is(err, context.Canceled) && !errors.Is(err, fs.ErrClosed) {
 					c.logger.Errorf("Error reading from stdout: %v", err)
 				}
 				// Signal done so in-flight SendRequest calls unblock

@@ -1,11 +1,13 @@
 package transport
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -553,6 +555,39 @@ func TestStdioErrors(t *testing.T) {
 		}
 	})
 }
+
+func TestStdio_ReadResponses_SuppressesClosedPipeShutdownNoise(t *testing.T) {
+	logChan := make(chan string, 1)
+	stdio := NewIO(io.NopCloser(strings.NewReader("")), nopWriteCloser{Writer: io.Discard}, io.NopCloser(strings.NewReader("")))
+	stdio.logger = &testLogger{logChan: logChan}
+	stdio.stdout = bufio.NewReader(errReader{err: &fs.PathError{Op: "read", Path: "|0", Err: fs.ErrClosed}})
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	t.Cleanup(cancel)
+
+	require.NoError(t, stdio.Start(ctx))
+
+	select {
+	case msg := <-logChan:
+		t.Fatalf("expected closed-pipe shutdown to be silent, got log %q", msg)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+type nopWriteCloser struct {
+	io.Writer
+}
+
+func (nopWriteCloser) Close() error { return nil }
+
+type errReader struct {
+	err error
+}
+
+func (r errReader) Read(_ []byte) (int, error) {
+	return 0, r.err
+}
+
 
 func TestStdio_StartGuaranteesReaderReady(t *testing.T) {
 	stdoutReader, stdoutWriter := io.Pipe()
