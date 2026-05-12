@@ -601,7 +601,7 @@ func (s *StdioServer) processMessage(
 	var baseMessage struct {
 		Method string `json:"method"`
 	}
-	if json.Unmarshal(rawMessage, &baseMessage) == nil && baseMessage.Method == "tools/call" {
+	if json.Unmarshal(rawMessage, &baseMessage) == nil && baseMessage.Method == string(mcp.MethodToolsCall) {
 		// Queue tool calls for processing by workers
 		select {
 		case s.toolCallQueue <- &toolCallWork{

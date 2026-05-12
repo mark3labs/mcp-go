@@ -90,6 +90,22 @@ const (
 	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
 	MethodTasksCancel MCPMethod = "tasks/cancel"
 
+	// MethodNotificationInitialized indicates that the client completed initialization.
+	// https://modelcontextprotocol.io/specification/2024-11-05/basic/lifecycle/#initialization
+	MethodNotificationInitialized MCPMethod = "notifications/initialized"
+
+	// MethodNotificationCancelled cancels an in-flight request.
+	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/cancellation
+	MethodNotificationCancelled MCPMethod = "notifications/cancelled"
+
+	// MethodNotificationProgress reports progress for a long-running request.
+	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/progress
+	MethodNotificationProgress MCPMethod = "notifications/progress"
+
+	// MethodNotificationMessage is a server-pushed log message.
+	// https://modelcontextprotocol.io/specification/2025-11-25/server/utilities/logging
+	MethodNotificationMessage MCPMethod = "notifications/message"
+
 	// MethodNotificationResourcesListChanged notifies when the list of available resources changes.
 	// https://modelcontextprotocol.io/specification/2025-03-26/server/resources#list-changed-notification
 	MethodNotificationResourcesListChanged = "notifications/resources/list_changed"

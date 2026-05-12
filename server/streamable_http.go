@@ -833,7 +833,7 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 						JSONRPC: "2.0",
 						ID:      mcp.NewRequestId(s.nextRequestID(sessionID)),
 						Request: mcp.Request{
-							Method: "ping",
+							Method: string(mcp.MethodPing),
 						},
 					}
 					select {

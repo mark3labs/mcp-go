@@ -246,7 +246,7 @@ func (c *Client) Initialize(
 	notification := mcp.JSONRPCNotification{
 		JSONRPC: mcp.JSONRPC_VERSION,
 		Notification: mcp.Notification{
-			Method: "notifications/initialized",
+			Method: string(mcp.MethodNotificationInitialized),
 		},
 	}
 
@@ -263,7 +263,7 @@ func (c *Client) Initialize(
 }
 
 func (c *Client) Ping(ctx context.Context) error {
-	_, err := c.sendRequest(ctx, "ping", nil, nil)
+	_, err := c.sendRequest(ctx, string(mcp.MethodPing), nil, nil)
 	return err
 }
 
@@ -272,7 +272,7 @@ func (c *Client) ListResourcesByPage(
 	ctx context.Context,
 	request mcp.ListResourcesRequest,
 ) (*mcp.ListResourcesResult, error) {
-	result, err := listByPage[mcp.ListResourcesResult](ctx, c, request.PaginatedRequest, request.Header, "resources/list")
+	result, err := listByPage[mcp.ListResourcesResult](ctx, c, request.PaginatedRequest, request.Header, string(mcp.MethodResourcesList))
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +308,7 @@ func (c *Client) ListResourceTemplatesByPage(
 	ctx context.Context,
 	request mcp.ListResourceTemplatesRequest,
 ) (*mcp.ListResourceTemplatesResult, error) {
-	result, err := listByPage[mcp.ListResourceTemplatesResult](ctx, c, request.PaginatedRequest, request.Header, "resources/templates/list")
+	result, err := listByPage[mcp.ListResourceTemplatesResult](ctx, c, request.PaginatedRequest, request.Header, string(mcp.MethodResourcesTemplatesList))
 	if err != nil {
 		return nil, err
 	}
@@ -344,7 +344,7 @@ func (c *Client) ReadResource(
 	ctx context.Context,
 	request mcp.ReadResourceRequest,
 ) (*mcp.ReadResourceResult, error) {
-	response, err := c.sendRequest(ctx, "resources/read", request.Params, request.Header)
+	response, err := c.sendRequest(ctx, string(mcp.MethodResourcesRead), request.Params, request.Header)
 	if err != nil {
 		return nil, err
 	}
@@ -356,7 +356,7 @@ func (c *Client) Subscribe(
 	ctx context.Context,
 	request mcp.SubscribeRequest,
 ) error {
-	_, err := c.sendRequest(ctx, "resources/subscribe", request.Params, request.Header)
+	_, err := c.sendRequest(ctx, string(mcp.MethodResourcesSubscribe), request.Params, request.Header)
 	return err
 }
 
@@ -364,7 +364,7 @@ func (c *Client) Unsubscribe(
 	ctx context.Context,
 	request mcp.UnsubscribeRequest,
 ) error {
-	_, err := c.sendRequest(ctx, "resources/unsubscribe", request.Params, request.Header)
+	_, err := c.sendRequest(ctx, string(mcp.MethodResourcesUnsubscribe), request.Params, request.Header)
 	return err
 }
 
@@ -372,7 +372,7 @@ func (c *Client) ListPromptsByPage(
 	ctx context.Context,
 	request mcp.ListPromptsRequest,
 ) (*mcp.ListPromptsResult, error) {
-	result, err := listByPage[mcp.ListPromptsResult](ctx, c, request.PaginatedRequest, request.Header, "prompts/list")
+	result, err := listByPage[mcp.ListPromptsResult](ctx, c, request.PaginatedRequest, request.Header, string(mcp.MethodPromptsList))
 	if err != nil {
 		return nil, err
 	}
@@ -408,7 +408,7 @@ func (c *Client) GetPrompt(
 	ctx context.Context,
 	request mcp.GetPromptRequest,
 ) (*mcp.GetPromptResult, error) {
-	response, err := c.sendRequest(ctx, "prompts/get", request.Params, request.Header)
+	response, err := c.sendRequest(ctx, string(mcp.MethodPromptsGet), request.Params, request.Header)
 	if err != nil {
 		return nil, err
 	}
@@ -420,7 +420,7 @@ func (c *Client) ListToolsByPage(
 	ctx context.Context,
 	request mcp.ListToolsRequest,
 ) (*mcp.ListToolsResult, error) {
-	result, err := listByPage[mcp.ListToolsResult](ctx, c, request.PaginatedRequest, request.Header, "tools/list")
+	result, err := listByPage[mcp.ListToolsResult](ctx, c, request.PaginatedRequest, request.Header, string(mcp.MethodToolsList))
 	if err != nil {
 		return nil, err
 	}
@@ -456,7 +456,7 @@ func (c *Client) CallTool(
 	ctx context.Context,
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	response, err := c.sendRequest(ctx, "tools/call", request.Params, request.Header)
+	response, err := c.sendRequest(ctx, string(mcp.MethodToolsCall), request.Params, request.Header)
 	if err != nil {
 		return nil, err
 	}

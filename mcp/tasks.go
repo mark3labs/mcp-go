@@ -111,7 +111,7 @@ func NewCancelTaskResult(task Task) CancelTaskResult {
 func NewTaskStatusNotification(task Task) TaskStatusNotification {
 	return TaskStatusNotification{
 		Notification: Notification{
-			Method: string(MethodNotificationTasksStatus),
+			Method: MethodNotificationTasksStatus,
 		},
 		Params: TaskStatusNotificationParams{
 			Task: task,

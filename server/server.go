@@ -2197,7 +2197,7 @@ func (s *MCPServer) handleNotification(
 	notification mcp.JSONRPCNotification,
 ) mcp.JSONRPCMessage {
 	// Handle cancellation notifications per MCP spec
-	if notification.Method == "notifications/cancelled" {
+	if notification.Method == string(mcp.MethodNotificationCancelled) {
 		if reqID, ok := notification.Params.AdditionalFields["requestId"]; ok {
 			key := inflightKey(ctx, reqID)
 			if cancel, loaded := s.inflightCancels.LoadAndDelete(key); loaded {

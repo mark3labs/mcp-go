@@ -572,7 +572,7 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 						JSONRPC: "2.0",
 						ID:      mcp.NewRequestId(session.requestID.Add(1)),
 						Request: mcp.Request{
-							Method: "ping",
+							Method: string(mcp.MethodPing),
 						},
 					}
 					messageBytes, _ := json.Marshal(message)
