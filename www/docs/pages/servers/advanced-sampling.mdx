@@ -144,24 +144,82 @@ samplingRequest := mcp.CreateMessageRequest{
                 },
             },
         },
-        
+
         // Optional: System prompt for context
         SystemPrompt: "You are a helpful assistant.",
-        
+
         // Optional: Maximum tokens to generate
         MaxTokens: 1000,
-        
+
         // Optional: Temperature for randomness (0.0 to 1.0)
         Temperature: 0.7,
-        
-        // Optional: Top-p sampling parameter
-        TopP: 0.9,
-        
+
         // Optional: Stop sequences
         StopSequences: []string{"\\n\\n"},
+
+        // Optional (2025-11-25): Context inclusion hint. Only send a value other
+        // than "none" when the client advertised `sampling.context` — see
+        // [Capability Gating](#capability-gating-2025-11-25) below.
+        IncludeContext: "thisServer",
+
+        // Optional (2025-11-25): Tools the model may use during generation, and
+        // how aggressively the model should reach for them. Only send these when
+        // the client advertised `sampling.tools`.
+        Tools: []mcp.Tool{ /* ... */ },
+        ToolChoice: &mcp.ToolChoice{Mode: mcp.ToolChoiceModeAuto},
     },
 }
 ```
+
+## Capability Gating (2025-11-25)
+
+The 2025-11-25 protocol revision splits sampling into a baseline capability and two opt-in sub-capabilities. Inspect the connected session's [`ClientCapabilities.Sampling`](https://pkg.go.dev/github.com/mark3labs/mcp-go/mcp#SamplingCapability) before sending the gated fields — a conforming client MUST reject a request that violates the matrix below.
+
+| Field on `CreateMessageParams` | Required client sub-capability | Sub-capability is `nil` ⇒ |
+|--------------------------------|--------------------------------|---------------------------|
+| `IncludeContext` (any value other than `"none"`) | `Sampling.Context` | Omit the field or send `"none"` |
+| `Tools`                        | `Sampling.Tools`               | Omit the field            |
+| `ToolChoice`                   | `Sampling.Tools`               | Omit the field            |
+
+A typical pattern inside a tool handler:
+
+```go
+func askLLMWithTools(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    session := server.ClientSessionFromContext(ctx)
+    sessionWithClient, ok := session.(server.SessionWithClientInfo)
+    if !ok {
+        return mcp.NewToolResultError("client session is not capability-aware"), nil
+    }
+    caps := sessionWithClient.GetClientCapabilities()
+
+    params := mcp.CreateMessageParams{
+        Messages:  []mcp.SamplingMessage{ /* ... */ },
+        MaxTokens: 1000,
+    }
+
+    // Only attach Tools / ToolChoice if the client opted in.
+    if caps.Sampling != nil && caps.Sampling.Tools != nil {
+        params.Tools = []mcp.Tool{ /* ... */ }
+        params.ToolChoice = &mcp.ToolChoice{Mode: mcp.ToolChoiceModeAuto}
+    }
+
+    // Only ask for context inclusion if the client opted in.
+    if caps.Sampling != nil && caps.Sampling.Context != nil {
+        params.IncludeContext = "thisServer"
+    }
+
+    result, err := mcpServer.RequestSampling(ctx, mcp.CreateMessageRequest{CreateMessageParams: params})
+    // ...
+}
+```
+
+`ToolChoiceMode` accepts three constants:
+
+| Constant | Wire value | Meaning |
+|----------|-----------|---------|
+| `mcp.ToolChoiceModeAuto`     | `"auto"`     | Model decides (default when `ToolChoice` is omitted). |
+| `mcp.ToolChoiceModeRequired` | `"required"` | Model must call at least one tool. |
+| `mcp.ToolChoiceModeNone`     | `"none"`     | Tool use is disabled for this request. |
 
 ## Message Types
 
@@ -209,6 +267,32 @@ mcp.ImageContent{
     MimeType: "image/jpeg",
 }
 ```
+
+#### Tool-Use and Tool-Result Content (2025-11-25)
+
+When sampling with tools is in play, intermediate messages in the conversation
+can also carry `ToolUseContent` (the model asked to call a tool) and
+`ToolResultContent` (the result of that call) — these flow through the same
+`SamplingMessage.Content` field:
+
+```go
+// Assistant requesting a tool call
+mcp.ToolUseContent{
+    Type:  "tool_use",
+    ID:    "tu_1",
+    Name:  "get_weather",
+    Input: map[string]any{"city": "London"},
+}
+
+// User-role message carrying the tool's output
+mcp.ToolResultContent{
+    Type:      "tool_result",
+    ToolUseID: "tu_1",
+    Content:   []mcp.Content{mcp.NewTextContent("Sunny, 22°C")},
+}
+```
+
+Use the constructors `mcp.NewToolUseContent` and `mcp.NewToolResultContent` to build these without writing the `Type` discriminator by hand.
 
 ## Error Handling
 

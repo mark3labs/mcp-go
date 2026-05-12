@@ -418,6 +418,74 @@ The client will include this in the initialization request:
 }
 ```
 
+### Sampling Sub-Capabilities (2025-11-25)
+
+The 2025-11-25 protocol revision splits sampling into a baseline capability (the empty `"sampling": {}` object above) plus two opt-in sub-capabilities that a client uses to advertise which optional `CreateMessageParams` fields it actually understands:
+
+```go
+type SamplingCapability struct {
+    // Context advertises that the client honours CreateMessageParams.IncludeContext.
+    // If nil, servers SHOULD only send IncludeContext "none" (or omit it).
+    Context *struct{} `json:"context,omitempty"`
+    // Tools advertises that the client honours CreateMessageParams.Tools and
+    // CreateMessageParams.ToolChoice (sampling with tools).
+    Tools   *struct{} `json:"tools,omitempty"`
+}
+```
+
+The corresponding wire shape when both sub-capabilities are declared:
+
+```json
+{
+  "capabilities": {
+    "sampling": { "context": {}, "tools": {} }
+  }
+}
+```
+
+`client.WithSamplingHandler` advertises only the baseline (`"sampling": {}`). Advertising the optional `Context` / `Tools` sub-capabilities through the high-level client is not yet exposed — the `Initialize` flow overrides the `Sampling` field on the supplied request when a sampling handler is registered. Until a dedicated option is added, code that needs the sub-capabilities on the wire must declare them at a lower layer (for example by sending its own `initialize` request through the transport). The type is in place so that:
+
+- **Servers** can inspect what their connected client advertised via `session.GetClientCapabilities().Sampling` (see [Capability Gating](/servers/advanced-sampling#capability-gating-2025-11-25) on the server page).
+- **Custom client integrations** that build initialize requests directly can populate the sub-capabilities today.
+
+:::warning[Compile-time break]
+`ClientCapabilities.Sampling` and `ServerCapabilities.Sampling` are now `*mcp.SamplingCapability` (previously `*struct{}`). Code that constructed the capability with a `&struct{}{}` literal must be updated to `&mcp.SamplingCapability{}`. The JSON wire format for the baseline case is unchanged.
+:::
+
+### Handling Sampling-With-Tools Requests
+
+If your handler declared `Sampling.Tools`, incoming `mcp.CreateMessageRequest` values may include `request.Tools` (a list of tools the model is allowed to call) and `request.ToolChoice` (controls how aggressively the model should reach for them). Inspect them in your handler and surface them to your LLM:
+
+```go
+func (h *MySamplingHandler) CreateMessage(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
+    var allowedTools []mcp.Tool
+    if len(request.Tools) > 0 {
+        allowedTools = request.Tools
+    }
+
+    mode := mcp.ToolChoiceModeAuto // spec default when ToolChoice is omitted
+    if request.ToolChoice != nil && request.ToolChoice.Mode != "" {
+        mode = request.ToolChoice.Mode
+    }
+
+    switch mode {
+    case mcp.ToolChoiceModeNone:
+        // Tool use is disabled for this request.
+    case mcp.ToolChoiceModeRequired:
+        // Model must call at least one tool.
+    case mcp.ToolChoiceModeAuto:
+        // Model decides.
+    }
+
+    // ... forward `allowedTools` and `mode` to your LLM client and return the
+    // response as a SamplingMessage (which may carry ToolUseContent /
+    // ToolResultContent in addition to TextContent / ImageContent / AudioContent).
+    return nil, nil
+}
+```
+
+The constructors `mcp.NewToolUseContent` and `mcp.NewToolResultContent` build the corresponding `SamplingMessage.Content` values without manually setting the `Type` discriminator.
+
 ## Error Handling
 
 Handle errors gracefully in your sampling handler:
