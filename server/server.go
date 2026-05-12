@@ -1011,7 +1011,10 @@ func (s *MCPServer) ListTools() map[string]*ServerTool {
 	// Create a copy to prevent external modification
 	toolsCopy := make(map[string]*ServerTool, len(s.tools))
 	for name, tool := range s.tools {
-		toolsCopy[name] = &tool
+		toolsCopy[name] = &ServerTool{
+			Tool:    tool.Tool,
+			Handler: tool.Handler,
+		}
 	}
 	return toolsCopy
 }
