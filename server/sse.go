@@ -679,6 +679,21 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 
 	go func(ctx context.Context) {
 		defer cancel()
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("panic recovered in SSE message handler for session %s: %v", sessionID, r)
+				// Send error response so the client doesn't hang waiting.
+				errResp := createErrorResponse(nil, mcp.INTERNAL_ERROR, fmt.Sprintf("internal panic: %v", r))
+				if eventData, err := json.Marshal(errResp); err == nil {
+					message := fmt.Sprintf("event: message\ndata: %s\n\n", eventData)
+					select {
+					case session.eventQueue <- message:
+					case <-session.done:
+					default:
+					}
+				}
+			}
+		}()
 		// Use the context that will be canceled when session is done
 		// Process message through MCPServer
 		response := s.server.HandleMessage(ctx, rawMessage)
