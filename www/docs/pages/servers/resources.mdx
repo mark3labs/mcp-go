@@ -591,6 +591,9 @@ type mySession struct {
 func (s *mySession) SubscribeToResource(uri string) {
     s.mu.Lock()
     defer s.mu.Unlock()
+    if s.subs == nil {
+        s.subs = make(map[string]struct{})
+    }
     s.subs[uri] = struct{}{}
 }
 
