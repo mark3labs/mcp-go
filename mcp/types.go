@@ -35,6 +35,14 @@ const (
 	// https://modelcontextprotocol.io/specification/2024-11-05/server/resources/
 	MethodResourcesRead MCPMethod = "resources/read"
 
+	// MethodResourcesSubscribe subscribes the client to updates for a resource.
+	// https://modelcontextprotocol.io/specification/2025-11-25/server/resources
+	MethodResourcesSubscribe MCPMethod = "resources/subscribe"
+
+	// MethodResourcesUnsubscribe cancels a previous resources/subscribe request.
+	// https://modelcontextprotocol.io/specification/2025-11-25/server/resources
+	MethodResourcesUnsubscribe MCPMethod = "resources/unsubscribe"
+
 	// MethodPromptsList lists all available prompt templates.
 	// https://modelcontextprotocol.io/specification/2024-11-05/server/prompts/
 	MethodPromptsList MCPMethod = "prompts/list"

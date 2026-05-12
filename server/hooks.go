@@ -89,6 +89,12 @@ type OnAfterListResourceTemplatesFunc func(ctx context.Context, id any, message 
 type OnBeforeReadResourceFunc func(ctx context.Context, id any, message *mcp.ReadResourceRequest)
 type OnAfterReadResourceFunc func(ctx context.Context, id any, message *mcp.ReadResourceRequest, result *mcp.ReadResourceResult)
 
+type OnBeforeSubscribeFunc func(ctx context.Context, id any, message *mcp.SubscribeRequest)
+type OnAfterSubscribeFunc func(ctx context.Context, id any, message *mcp.SubscribeRequest, result *mcp.EmptyResult)
+
+type OnBeforeUnsubscribeFunc func(ctx context.Context, id any, message *mcp.UnsubscribeRequest)
+type OnAfterUnsubscribeFunc func(ctx context.Context, id any, message *mcp.UnsubscribeRequest, result *mcp.EmptyResult)
+
 type OnBeforeListPromptsFunc func(ctx context.Context, id any, message *mcp.ListPromptsRequest)
 type OnAfterListPromptsFunc func(ctx context.Context, id any, message *mcp.ListPromptsRequest, result *mcp.ListPromptsResult)
 
@@ -169,6 +175,10 @@ type Hooks struct {
 	OnAfterListResourceTemplates  []OnAfterListResourceTemplatesFunc
 	OnBeforeReadResource          []OnBeforeReadResourceFunc
 	OnAfterReadResource           []OnAfterReadResourceFunc
+	OnBeforeSubscribe             []OnBeforeSubscribeFunc
+	OnAfterSubscribe              []OnAfterSubscribeFunc
+	OnBeforeUnsubscribe           []OnBeforeUnsubscribeFunc
+	OnAfterUnsubscribe            []OnAfterUnsubscribeFunc
 	OnBeforeListPrompts           []OnBeforeListPromptsFunc
 	OnAfterListPrompts            []OnAfterListPromptsFunc
 	OnBeforeGetPrompt             []OnBeforeGetPromptFunc
@@ -488,6 +498,60 @@ func (c *Hooks) afterReadResource(ctx context.Context, id any, message *mcp.Read
 		return
 	}
 	for _, hook := range c.OnAfterReadResource {
+		hook(ctx, id, message, result)
+	}
+}
+func (c *Hooks) AddBeforeSubscribe(hook OnBeforeSubscribeFunc) {
+	c.OnBeforeSubscribe = append(c.OnBeforeSubscribe, hook)
+}
+
+func (c *Hooks) AddAfterSubscribe(hook OnAfterSubscribeFunc) {
+	c.OnAfterSubscribe = append(c.OnAfterSubscribe, hook)
+}
+
+func (c *Hooks) beforeSubscribe(ctx context.Context, id any, message *mcp.SubscribeRequest) {
+	c.beforeAny(ctx, id, mcp.MethodResourcesSubscribe, message)
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnBeforeSubscribe {
+		hook(ctx, id, message)
+	}
+}
+
+func (c *Hooks) afterSubscribe(ctx context.Context, id any, message *mcp.SubscribeRequest, result *mcp.EmptyResult) {
+	c.onSuccess(ctx, id, mcp.MethodResourcesSubscribe, message, result)
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnAfterSubscribe {
+		hook(ctx, id, message, result)
+	}
+}
+func (c *Hooks) AddBeforeUnsubscribe(hook OnBeforeUnsubscribeFunc) {
+	c.OnBeforeUnsubscribe = append(c.OnBeforeUnsubscribe, hook)
+}
+
+func (c *Hooks) AddAfterUnsubscribe(hook OnAfterUnsubscribeFunc) {
+	c.OnAfterUnsubscribe = append(c.OnAfterUnsubscribe, hook)
+}
+
+func (c *Hooks) beforeUnsubscribe(ctx context.Context, id any, message *mcp.UnsubscribeRequest) {
+	c.beforeAny(ctx, id, mcp.MethodResourcesUnsubscribe, message)
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnBeforeUnsubscribe {
+		hook(ctx, id, message)
+	}
+}
+
+func (c *Hooks) afterUnsubscribe(ctx context.Context, id any, message *mcp.UnsubscribeRequest, result *mcp.EmptyResult) {
+	c.onSuccess(ctx, id, mcp.MethodResourcesUnsubscribe, message, result)
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnAfterUnsubscribe {
 		hook(ctx, id, message, result)
 	}
 }
