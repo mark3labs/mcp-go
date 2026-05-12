@@ -537,3 +537,122 @@ func TestPaginatedParamsMetaMarshalling(t *testing.T) {
 		assert.Equal(t, "v", got.Meta.AdditionalFields["k"])
 	})
 }
+
+func TestSamplingCapability_JSON(t *testing.T) {
+	t.Run("empty capability marshals as empty object", func(t *testing.T) {
+		caps := ClientCapabilities{Sampling: &SamplingCapability{}}
+		data, err := json.Marshal(caps)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"sampling":{}}`, string(data))
+	})
+
+	t.Run("nil sampling field is omitted", func(t *testing.T) {
+		caps := ClientCapabilities{}
+		data, err := json.Marshal(caps)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{}`, string(data))
+	})
+
+	t.Run("context sub-capability marshals nested", func(t *testing.T) {
+		caps := ClientCapabilities{Sampling: &SamplingCapability{
+			Context: &struct{}{},
+		}}
+		data, err := json.Marshal(caps)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"sampling":{"context":{}}}`, string(data))
+	})
+
+	t.Run("tools sub-capability marshals nested", func(t *testing.T) {
+		caps := ClientCapabilities{Sampling: &SamplingCapability{
+			Tools: &struct{}{},
+		}}
+		data, err := json.Marshal(caps)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"sampling":{"tools":{}}}`, string(data))
+	})
+
+	t.Run("both sub-capabilities round-trip", func(t *testing.T) {
+		original := ClientCapabilities{Sampling: &SamplingCapability{
+			Context: &struct{}{},
+			Tools:   &struct{}{},
+		}}
+		data, err := json.Marshal(original)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"sampling":{"context":{},"tools":{}}}`, string(data))
+
+		var got ClientCapabilities
+		require.NoError(t, json.Unmarshal(data, &got))
+		require.NotNil(t, got.Sampling)
+		require.NotNil(t, got.Sampling.Context)
+		require.NotNil(t, got.Sampling.Tools)
+	})
+
+	t.Run("unmarshalling bare sampling object yields empty capability", func(t *testing.T) {
+		var got ClientCapabilities
+		require.NoError(t, json.Unmarshal([]byte(`{"sampling":{}}`), &got))
+		require.NotNil(t, got.Sampling)
+		assert.Nil(t, got.Sampling.Context)
+		assert.Nil(t, got.Sampling.Tools)
+	})
+
+	t.Run("server capability uses the same shape", func(t *testing.T) {
+		caps := ServerCapabilities{Sampling: &SamplingCapability{
+			Context: &struct{}{},
+		}}
+		data, err := json.Marshal(caps)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"sampling":{"context":{}}}`, string(data))
+	})
+}
+
+func TestCreateMessageParams_ToolsJSON(t *testing.T) {
+	t.Run("tools and toolChoice are omitted when nil", func(t *testing.T) {
+		params := CreateMessageParams{
+			Messages:  []SamplingMessage{{Role: RoleUser, Content: NewTextContent("hi")}},
+			MaxTokens: 10,
+		}
+		data, err := json.Marshal(params)
+		require.NoError(t, err)
+		assert.NotContains(t, string(data), "tools")
+		assert.NotContains(t, string(data), "toolChoice")
+	})
+
+	t.Run("tools and toolChoice marshal and round-trip", func(t *testing.T) {
+		params := CreateMessageParams{
+			Messages:  []SamplingMessage{{Role: RoleUser, Content: NewTextContent("hi")}},
+			MaxTokens: 10,
+			Tools: []Tool{
+				{Name: "get_weather", Description: "Look up weather"},
+			},
+			ToolChoice: &ToolChoice{Mode: ToolChoiceModeRequired},
+		}
+		data, err := json.Marshal(params)
+		require.NoError(t, err)
+		assert.Contains(t, string(data), `"tools"`)
+		assert.Contains(t, string(data), `"toolChoice":{"mode":"required"}`)
+
+		var got CreateMessageParams
+		require.NoError(t, json.Unmarshal(data, &got))
+		require.Len(t, got.Tools, 1)
+		assert.Equal(t, "get_weather", got.Tools[0].Name)
+		require.NotNil(t, got.ToolChoice)
+		assert.Equal(t, ToolChoiceModeRequired, got.ToolChoice.Mode)
+	})
+
+	t.Run("empty ToolChoice marshals as empty object", func(t *testing.T) {
+		params := CreateMessageParams{
+			Messages:   []SamplingMessage{{Role: RoleUser, Content: NewTextContent("hi")}},
+			MaxTokens:  10,
+			ToolChoice: &ToolChoice{},
+		}
+		data, err := json.Marshal(params)
+		require.NoError(t, err)
+		assert.Contains(t, string(data), `"toolChoice":{}`)
+	})
+
+	t.Run("tool choice mode constants match spec", func(t *testing.T) {
+		assert.Equal(t, ToolChoiceMode("auto"), ToolChoiceModeAuto)
+		assert.Equal(t, ToolChoiceMode("required"), ToolChoiceModeRequired)
+		assert.Equal(t, ToolChoiceMode("none"), ToolChoiceModeNone)
+	})
+}

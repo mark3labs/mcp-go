@@ -49,7 +49,7 @@ func TestStreamableHttpSessionImplementsSessionWithClientInfo(t *testing.T) {
 
 	// Test SetClientCapabilities and GetClientCapabilities
 	expectedCapabilities := mcp.ClientCapabilities{
-		Sampling: &struct{}{},
+		Sampling: &mcp.SamplingCapability{},
 	}
 	clientInfoSession.SetClientCapabilities(expectedCapabilities)
 

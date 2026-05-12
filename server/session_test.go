@@ -1541,7 +1541,7 @@ func TestSessionWithClientInfo_Integration(t *testing.T) {
 	}
 
 	clientCapability := mcp.ClientCapabilities{
-		Sampling: &struct{}{},
+		Sampling: &mcp.SamplingCapability{},
 	}
 
 	initRequest := mcp.InitializeRequest{}

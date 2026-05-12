@@ -548,7 +548,7 @@ type ClientCapabilities struct {
 		ListChanged bool `json:"listChanged,omitempty"`
 	} `json:"roots,omitempty"`
 	// Present if the client supports sampling from an LLM.
-	Sampling *struct{} `json:"sampling,omitempty"`
+	Sampling *SamplingCapability `json:"sampling,omitempty"`
 	// Present if the client supports elicitation requests from the server.
 	Elicitation *ElicitationCapability `json:"elicitation,omitempty"`
 	// Present if the client supports task-based execution.
@@ -579,7 +579,7 @@ type ServerCapabilities struct {
 		ListChanged bool `json:"listChanged,omitempty"`
 	} `json:"resources,omitempty"`
 	// Present if the server supports sending sampling requests to clients.
-	Sampling *struct{} `json:"sampling,omitempty"`
+	Sampling *SamplingCapability `json:"sampling,omitempty"`
 	// Present if the server offers any tools to call.
 	Tools *struct {
 		// Whether this server supports notifications for changes to the tool list.
@@ -1058,6 +1058,38 @@ type CreateMessageParams struct {
 	MaxTokens        int               `json:"maxTokens"`
 	StopSequences    []string          `json:"stopSequences,omitempty"`
 	Metadata         any               `json:"metadata,omitempty"`
+	// Tools the model may use during generation.
+	//
+	// Per the 2025-11-25 spec, the client MUST return an error if this field
+	// is provided but ClientCapabilities.Sampling.Tools is not declared.
+	Tools []Tool `json:"tools,omitempty"`
+	// ToolChoice controls how the model uses tools during generation.
+	//
+	// Per the 2025-11-25 spec, the client MUST return an error if this field
+	// is provided but ClientCapabilities.Sampling.Tools is not declared.
+	// When omitted the client defaults to {Mode: ToolChoiceModeAuto}.
+	ToolChoice *ToolChoice `json:"toolChoice,omitempty"`
+}
+
+// ToolChoiceMode controls tool selection behaviour during sampling.
+type ToolChoiceMode string
+
+const (
+	// ToolChoiceModeAuto lets the model decide whether to use tools. This is
+	// the default when ToolChoice is omitted.
+	ToolChoiceModeAuto ToolChoiceMode = "auto"
+	// ToolChoiceModeRequired forces the model to call at least one tool.
+	ToolChoiceModeRequired ToolChoiceMode = "required"
+	// ToolChoiceModeNone disables tool use for this sampling request.
+	ToolChoiceModeNone ToolChoiceMode = "none"
+)
+
+// ToolChoice controls tool selection behaviour for a sampling request as
+// defined by the 2025-11-25 protocol revision.
+type ToolChoice struct {
+	// Mode controls tool selection. Empty is treated as ToolChoiceModeAuto by
+	// the client.
+	Mode ToolChoiceMode `json:"mode,omitempty"`
 }
 
 // CreateMessageResult is the client's response to a sampling/create_message
@@ -1076,7 +1108,7 @@ type CreateMessageResult struct {
 // SamplingMessage describes a message issued to or received from an LLM API.
 type SamplingMessage struct {
 	Role    Role `json:"role"`
-	Content any  `json:"content"` // Can be TextContent, ImageContent or AudioContent
+	Content any  `json:"content"` // Can be TextContent, ImageContent, AudioContent, ToolUseContent or ToolResultContent
 }
 
 type Annotations struct {
@@ -1701,6 +1733,24 @@ func UnmarshalContent(data []byte) (Content, error) {
 type ElicitationCapability struct {
 	Form *struct{} `json:"form,omitempty"` // Supports form mode
 	URL  *struct{} `json:"url,omitempty"`  // Supports URL mode
+}
+
+// SamplingCapability represents the sampling capabilities of a client or server
+// as defined by the 2025-11-25 protocol revision.
+//
+// A nil pointer means the peer does not support sampling at all. A non-nil but
+// empty value (the zero value) advertises baseline sampling support without the
+// optional context-inclusion or tool-use extensions.
+type SamplingCapability struct {
+	// Context, if non-nil, advertises that the client honours the
+	// CreateMessageParams.IncludeContext field. If a peer does not declare this
+	// sub-capability, servers SHOULD only use IncludeContext "none" or omit it.
+	Context *struct{} `json:"context,omitempty"`
+	// Tools, if non-nil, advertises that the client honours the
+	// CreateMessageParams.Tools and CreateMessageParams.ToolChoice fields
+	// (sampling with tools). Servers MUST NOT send those fields unless this
+	// sub-capability is declared.
+	Tools *struct{} `json:"tools,omitempty"`
 }
 
 // NewElicitationCompleteNotification creates a new elicitation complete notification.

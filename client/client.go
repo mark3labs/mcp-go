@@ -188,7 +188,7 @@ func (c *Client) Initialize(
 	// Merge client capabilities with sampling capability if handler is configured
 	capabilities := request.Params.Capabilities
 	if c.samplingHandler != nil {
-		capabilities.Sampling = &struct{}{}
+		capabilities.Sampling = &mcp.SamplingCapability{}
 	}
 	if c.rootsHandler != nil {
 		capabilities.Roots = &struct {

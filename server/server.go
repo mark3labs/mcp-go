@@ -1095,7 +1095,7 @@ func (s *MCPServer) handleInitialize(
 	}
 
 	if s.capabilities.sampling != nil && *s.capabilities.sampling {
-		capabilities.Sampling = &struct{}{}
+		capabilities.Sampling = &mcp.SamplingCapability{}
 	}
 
 	if s.capabilities.elicitation != nil && *s.capabilities.elicitation {
