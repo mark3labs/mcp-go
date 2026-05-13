@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -87,7 +88,7 @@ func TestSessionHookGoroutine_PanicRecoveryLogged(t *testing.T) {
 	server.sessions.Store(session.SessionID(), session)
 
 	// Send 3 notifications - each should trigger the hook goroutine
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		server.SendNotificationToAllClients("notifications/test", nil)
 	}
 
@@ -219,9 +220,7 @@ func (m *mockSessionForPanicWithTools) GetSessionTools() map[string]ServerTool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	cp := make(map[string]ServerTool, len(m.tools))
-	for k, v := range m.tools {
-		cp[k] = v
-	}
+	maps.Copy(cp, m.tools)
 	return cp
 }
 
