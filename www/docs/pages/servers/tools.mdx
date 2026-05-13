@@ -24,6 +24,26 @@ tool := mcp.NewTool("calculate",
 
 ## Tool Definition
 
+### Display Title
+
+Tools can carry a human-readable display title separate from their programmatic `name`. Clients display titles in tool pickers and UI surfaces; the `name` is reserved for model-facing identifiers.
+
+```go
+tool := mcp.NewTool("calculate_arithmetic",
+    mcp.WithToolTitle("Calculator"),               // Shown in UI
+    mcp.WithDescription("Perform arithmetic operations"),
+    // ... parameters
+)
+```
+
+Per the [MCP spec](https://modelcontextprotocol.io/specification/2025-06-18/server/tools), clients should resolve the display label in this order:
+
+1. `Title` (the top-level field set by `WithToolTitle`)
+2. `Annotations.Title` (legacy hint set by `WithTitleAnnotation`, see [Tool Annotations](#tool-annotations))
+3. `Name`
+
+Both fields are optional; omitting them falls back to the next candidate.
+
 ### Tool Icons
 
 Tools can include visual identifiers using icons. Icons must use HTTPS or data URIs:

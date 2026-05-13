@@ -37,6 +37,46 @@ resource := mcp.NewResource(
 )
 ```
 
+### Display Title
+
+Resources and resource templates can carry a human-readable display title separate from the `name`. Clients show the title in file browsers and pickers; `name` remains a stable identifier suitable for programmatic lookup.
+
+```go
+resource := mcp.NewResource(
+    "docs://readme",
+    "readme.md",                                          // name (stable identifier)
+    mcp.WithResourceTitle("Project README"),              // Shown in UI
+    mcp.WithResourceDescription("Main project documentation"),
+    mcp.WithMIMEType("text/markdown"),
+)
+
+// Same option exists on resource templates
+template := mcp.NewResourceTemplate(
+    "users://{user_id}",
+    "user-profile",
+    mcp.WithTemplateTitle("User Profile"),
+    mcp.WithTemplateDescription("Profile information for a specific user"),
+)
+```
+
+If `Title` is empty, clients fall back to `Name`. The field serialises with `omitempty`, so resources that don't set a title are unchanged on the wire.
+
+### Resource Size
+
+When the raw byte size of a resource is known in advance, set it so hosts can render file sizes and pre-budget context-window usage without fetching the body:
+
+```go
+resource := mcp.NewResource(
+    "file:///var/log/app.log",
+    "app.log",
+    mcp.WithResourceTitle("Application Log"),
+    mcp.WithMIMEType("text/plain"),
+    mcp.WithResourceSize(2_048_576),    // 2 MiB, measured before base64 encoding
+)
+```
+
+`Size` is exposed as `*int64` on the `Resource` struct so an explicit zero-byte resource is distinguishable from an unknown size. Omit `WithResourceSize` entirely when the size is unknown.
+
 ## Static Resources
 
 Static resources have fixed URIs and typically serve predetermined content.

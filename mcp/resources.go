@@ -34,6 +34,23 @@ func WithResourceDescription(description string) ResourceOption {
 	}
 }
 
+// WithResourceTitle sets the optional human-readable display title for the Resource.
+// Per the MCP spec, clients should prefer Title over Name for display.
+func WithResourceTitle(title string) ResourceOption {
+	return func(r *Resource) {
+		r.Title = title
+	}
+}
+
+// WithResourceSize sets the size of the raw resource content in bytes.
+// This is the size before base64 encoding or any tokenization, and is used
+// by hosts to display file sizes and estimate context window usage.
+func WithResourceSize(size int64) ResourceOption {
+	return func(r *Resource) {
+		r.Size = &size
+	}
+}
+
 // WithMIMEType sets the MIME type for the Resource.
 // This should indicate the format of the resource's contents.
 func WithMIMEType(mimeType string) ResourceOption {
@@ -93,6 +110,14 @@ func NewResourceTemplate(uriTemplate string, name string, opts ...ResourceTempla
 func WithTemplateDescription(description string) ResourceTemplateOption {
 	return func(t *ResourceTemplate) {
 		t.Description = description
+	}
+}
+
+// WithTemplateTitle sets the optional human-readable display title for the ResourceTemplate.
+// Per the MCP spec, clients should prefer Title over Name for display.
+func WithTemplateTitle(title string) ResourceTemplateOption {
+	return func(t *ResourceTemplate) {
+		t.Title = title
 	}
 }
 

@@ -611,6 +611,16 @@ type ServerCapabilities struct {
 	Completions *struct{} `json:"completions,omitempty"`
 }
 
+// IconTheme is the background theme an icon is designed to be displayed on.
+type IconTheme string
+
+const (
+	// IconThemeLight indicates the icon is designed for use with a light background.
+	IconThemeLight IconTheme = "light"
+	// IconThemeDark indicates the icon is designed for use with a dark background.
+	IconThemeDark IconTheme = "dark"
+)
+
 // Icon represents a visual identifier for MCP entities.
 //
 // Security considerations:
@@ -628,6 +638,10 @@ type Icon struct {
 
 	// Optional size specifications (e.g., ["48x48"], ["any"] for SVG)
 	Sizes []string `json:"sizes,omitempty"`
+
+	// Theme is an optional specifier for the background theme this icon is designed for.
+	// Use IconThemeLight for light backgrounds or IconThemeDark for dark backgrounds.
+	Theme IconTheme `json:"theme,omitempty"`
 }
 
 // Implementation describes the name and version of an MCP implementation.
@@ -813,6 +827,9 @@ type Resource struct {
 	//
 	// This can be used by clients to populate UI elements.
 	Name string `json:"name"`
+	// Title is an optional human-readable, UI-friendly display name for this resource.
+	// If not provided, clients should fall back to Name.
+	Title string `json:"title,omitempty"`
 	// A description of what this resource represents.
 	//
 	// This can be used by clients to improve the LLM's understanding of
@@ -822,6 +839,13 @@ type Resource struct {
 	MIMEType string `json:"mimeType,omitempty"`
 	// Icons provides visual identifiers for the resource
 	Icons []Icon `json:"icons,omitempty"`
+	// Size is the size of the raw resource content, in bytes (i.e., before base64
+	// encoding or any tokenization), if known. This can be used by hosts to
+	// display file sizes and estimate context window usage.
+	//
+	// A pointer is used so that an explicit zero size remains distinguishable
+	// from an unset value.
+	Size *int64 `json:"size,omitempty"`
 }
 
 // GetName returns the name of the resource.
@@ -842,6 +866,9 @@ type ResourceTemplate struct {
 	//
 	// This can be used by clients to populate UI elements.
 	Name string `json:"name"`
+	// Title is an optional human-readable, UI-friendly display name for this resource template.
+	// If not provided, clients should fall back to Name.
+	Title string `json:"title,omitempty"`
 	// A description of what this template is for.
 	//
 	// This can be used by clients to improve the LLM's understanding of

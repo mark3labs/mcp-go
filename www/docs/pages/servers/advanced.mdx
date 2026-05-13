@@ -20,7 +20,26 @@ mcp.Icon{
 }
 ```
 
+### Theme-Specific Icons
 
+Icons can optionally declare which background theme they're designed for. Clients use the hint to pick the right asset when rendering against a light or dark UI:
+
+```go
+icons := []mcp.Icon{
+    {
+        Src:      "https://example.com/icons/tool-light.svg",
+        MIMEType: "image/svg+xml",
+        Theme:    mcp.IconThemeLight,    // Designed for light backgrounds
+    },
+    {
+        Src:      "https://example.com/icons/tool-dark.svg",
+        MIMEType: "image/svg+xml",
+        Theme:    mcp.IconThemeDark,     // Designed for dark backgrounds
+    },
+}
+```
+
+The `Theme` field is optional — an icon without a theme is treated as theme-agnostic. The supported constants are `mcp.IconThemeLight` and `mcp.IconThemeDark`; unknown values are passed through unchanged for forward compatibility.
 
 Explore powerful features that make MCP-Go servers production-ready: typed tools, session management, middleware, hooks, and more.
 

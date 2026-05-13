@@ -40,6 +40,24 @@ prompt := mcp.NewPrompt("code_review",
 )
 ```
 
+### Display Title
+
+Prompts and their arguments can carry a human-readable display title. Clients render the title in pickers and UI surfaces; the `name` stays a stable programmatic identifier.
+
+```go
+prompt := mcp.NewPrompt("code_review",
+    mcp.WithPromptTitle("Code Review"),                            // Shown in UI
+    mcp.WithPromptDescription("Review code for best practices"),
+    mcp.WithArgument("code",
+        mcp.ArgumentTitle("Source Code"),                          // Argument display name
+        mcp.ArgumentDescription("The code to review"),
+        mcp.RequiredArgument(),
+    ),
+)
+```
+
+When `Title` is empty, clients fall back to `Name`. Both fields serialise with `omitempty`, so existing prompts that don't set a title are unchanged on the wire.
+
 ## Prompt Templates
 
 ### Basic Code Review Prompt
