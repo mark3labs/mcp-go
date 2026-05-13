@@ -136,6 +136,28 @@ func TestResourceTitleAndSize(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, string(data), `"size":0`)
 	})
+
+	t.Run("negative size is ignored", func(t *testing.T) {
+		// Size is a byte count per the MCP schema; negative values are nonsensical
+		// and silently dropped rather than serialised back to clients.
+		r := NewResource("file:///x.txt", "x.txt",
+			WithResourceSize(-1),
+		)
+		assert.Nil(t, r.Size)
+
+		data, err := json.Marshal(r)
+		require.NoError(t, err)
+		assert.NotContains(t, string(data), `"size"`)
+	})
+
+	t.Run("negative size does not overwrite a previously set size", func(t *testing.T) {
+		r := NewResource("file:///x.txt", "x.txt",
+			WithResourceSize(100),
+			WithResourceSize(-5),
+		)
+		require.NotNil(t, r.Size)
+		assert.Equal(t, int64(100), *r.Size)
+	})
 }
 
 // TestResourceTemplateTitle verifies that ResourceTemplate.Title round-trips.

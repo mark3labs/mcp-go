@@ -45,8 +45,13 @@ func WithResourceTitle(title string) ResourceOption {
 // WithResourceSize sets the size of the raw resource content in bytes.
 // This is the size before base64 encoding or any tokenization, and is used
 // by hosts to display file sizes and estimate context window usage.
+// Negative values are ignored, since the MCP schema defines size as a byte
+// count which is necessarily non-negative.
 func WithResourceSize(size int64) ResourceOption {
 	return func(r *Resource) {
+		if size < 0 {
+			return
+		}
 		r.Size = &size
 	}
 }
