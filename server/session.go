@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"log"
 	"maps"
 	"net/url"
 
@@ -212,6 +213,11 @@ func (s *MCPServer) sendNotificationToAllClients(notification mcp.JSONRPCNotific
 					// Copy hooks pointer to local variable to avoid race condition
 					hooks := s.hooks
 					go func(sessionID string, hooks *Hooks) {
+						defer func() {
+							if r := recover(); r != nil {
+								log.Printf("mcp-go: panic in OnError hook (notification blocked, session %s): %v", sessionID, r)
+							}
+						}()
 						ctx := context.Background()
 						// Use the error hook to report the blocked channel
 						hooks.onError(ctx, nil, "notification", map[string]any{
@@ -242,6 +248,11 @@ func (s *MCPServer) sendNotificationToSpecificClient(session ClientSession, noti
 			// Copy hooks pointer to local variable to avoid race condition
 			hooks := s.hooks
 			go func(sID string, hooks *Hooks) {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("mcp-go: panic in OnError hook (notification blocked, session %s): %v", sID, r)
+					}
+				}()
 				// Use the error hook to report the blocked channel
 				hooks.onError(ctx, nil, "notification", map[string]any{
 					"method":    notification.Method,
@@ -324,6 +335,11 @@ func (s *MCPServer) sendNotificationCore(
 			// Copy hooks pointer to local variable to avoid race condition
 			hooks := s.hooks
 			go func(sessionID string, hooks *Hooks) {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("mcp-go: panic in OnError hook (notification blocked, session %s): %v", sessionID, r)
+					}
+				}()
 				// Use the error hook to report the blocked channel
 				hooks.onError(ctx, nil, "notification", map[string]any{
 					"method":    method,
@@ -435,6 +451,11 @@ func (s *MCPServer) AddSessionTools(sessionID string, tools ...ServerTool) error
 			if s.hooks != nil && len(s.hooks.OnError) > 0 {
 				hooks := s.hooks
 				go func(sID string, hooks *Hooks) {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("mcp-go: panic in OnError hook (tools added, session %s): %v", sID, r)
+						}
+					}()
 					ctx := context.Background()
 					hooks.onError(ctx, nil, "notification", map[string]any{
 						"method":    "notifications/tools/list_changed",
@@ -495,6 +516,11 @@ func (s *MCPServer) DeleteSessionTools(sessionID string, names ...string) error 
 			if s.hooks != nil && len(s.hooks.OnError) > 0 {
 				hooks := s.hooks
 				go func(sID string, hooks *Hooks) {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("mcp-go: panic in OnError hook (tools deleted, session %s): %v", sID, r)
+						}
+					}()
 					ctx := context.Background()
 					hooks.onError(ctx, nil, "notification", map[string]any{
 						"method":    "notifications/tools/list_changed",
@@ -573,6 +599,11 @@ func (s *MCPServer) AddSessionResources(sessionID string, resources ...ServerRes
 			if s.hooks != nil && len(s.hooks.OnError) > 0 {
 				hooks := s.hooks
 				go func(sID string, hooks *Hooks) {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("mcp-go: panic in OnError hook (resources added, session %s): %v", sID, r)
+						}
+					}()
 					ctx := context.Background()
 					hooks.onError(ctx, nil, "notification", map[string]any{
 						"method":    "notifications/resources/list_changed",
@@ -643,6 +674,11 @@ func (s *MCPServer) DeleteSessionResources(sessionID string, uris ...string) err
 			if s.hooks != nil && len(s.hooks.OnError) > 0 {
 				hooks := s.hooks
 				go func(sID string, hooks *Hooks) {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("mcp-go: panic in OnError hook (resources deleted, session %s): %v", sID, r)
+						}
+					}()
 					ctx := context.Background()
 					hooks.onError(ctx, nil, "notification", map[string]any{
 						"method":    "notifications/resources/list_changed",
@@ -717,6 +753,11 @@ func (s *MCPServer) AddSessionResourceTemplates(sessionID string, templates ...S
 			if s.hooks != nil && len(s.hooks.OnError) > 0 {
 				hooks := s.hooks
 				go func(sID string, hooks *Hooks) {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("mcp-go: panic in OnError hook (resource templates added, session %s): %v", sID, r)
+						}
+					}()
 					ctx := context.Background()
 					hooks.onError(ctx, nil, "notification", map[string]any{
 						"method":    "notifications/resources/list_changed",
@@ -772,6 +813,11 @@ func (s *MCPServer) DeleteSessionResourceTemplates(sessionID string, uriTemplate
 				if s.hooks != nil && len(s.hooks.OnError) > 0 {
 					hooks := s.hooks
 					go func(sID string, hooks *Hooks) {
+						defer func() {
+							if r := recover(); r != nil {
+								log.Printf("mcp-go: panic in OnError hook (resource templates deleted, session %s): %v", sID, r)
+							}
+						}()
 						ctx := context.Background()
 						hooks.onError(ctx, nil, "notification", map[string]any{
 							"method":    "notifications/resources/list_changed",
