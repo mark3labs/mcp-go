@@ -54,9 +54,6 @@ func TestSessionHookGoroutine_PanicsWithoutRecovery(t *testing.T) {
 
 	// If we reach this point, the panic was recovered (or the test would have crashed)
 	panicRecovered.Store(true)
-	if !panicRecovered.Load() {
-		t.Fatal("should not reach here if panic was not recovered")
-	}
 }
 
 // TestSessionHookGoroutine_PanicRecoveryLogged verifies that after the fix,
