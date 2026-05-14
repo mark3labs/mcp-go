@@ -704,11 +704,11 @@ func (s *SSEServer) writeJSONRPCError(
 	message string,
 ) {
 	writeJSONRPCError(w, id, code, message, func(err error) {
-		http.Error(
-			w,
-			fmt.Sprintf("Failed to encode response: %v", err),
-			http.StatusInternalServerError,
-		)
+		// The 400 status and partial JSON body have already been written
+		// by writeJSONRPCError, so we cannot escalate to a different HTTP
+		// status here without producing a malformed response. Log instead,
+		// matching the streamable HTTP transport's behavior.
+		log.Printf("Failed to encode response: %v", err)
 	})
 }
 
