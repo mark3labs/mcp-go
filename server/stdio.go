@@ -92,11 +92,11 @@ func WithQueueSize(size int) StdioOption {
 
 // stdioSession is a static client session, since stdio has only one client.
 type stdioSession struct {
+	clientInfoStore // provides Get/SetClientInfo and Get/SetClientCapabilities via method promotion
+
 	notifications       chan mcp.JSONRPCNotification
 	initialized         atomic.Bool
 	loggingLevel        atomic.Value
-	clientInfo          atomic.Value                        // stores session-specific client info
-	clientCapabilities  atomic.Value                        // stores session-specific client capabilities
 	writer              io.Writer                           // for sending requests to client
 	requestID           atomic.Int64                        // for generating unique request IDs
 	mu                  sync.RWMutex                        // protects writer
@@ -140,32 +140,6 @@ func (s *stdioSession) Initialize() {
 
 func (s *stdioSession) Initialized() bool {
 	return s.initialized.Load()
-}
-
-func (s *stdioSession) GetClientInfo() mcp.Implementation {
-	if value := s.clientInfo.Load(); value != nil {
-		if clientInfo, ok := value.(mcp.Implementation); ok {
-			return clientInfo
-		}
-	}
-	return mcp.Implementation{}
-}
-
-func (s *stdioSession) SetClientInfo(clientInfo mcp.Implementation) {
-	s.clientInfo.Store(clientInfo)
-}
-
-func (s *stdioSession) GetClientCapabilities() mcp.ClientCapabilities {
-	if value := s.clientCapabilities.Load(); value != nil {
-		if clientCapabilities, ok := value.(mcp.ClientCapabilities); ok {
-			return clientCapabilities
-		}
-	}
-	return mcp.ClientCapabilities{}
-}
-
-func (s *stdioSession) SetClientCapabilities(clientCapabilities mcp.ClientCapabilities) {
-	s.clientCapabilities.Store(clientCapabilities)
 }
 
 func (s *stdioSession) SetLogLevel(level mcp.LoggingLevel) {

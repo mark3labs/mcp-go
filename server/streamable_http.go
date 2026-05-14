@@ -1019,13 +1019,9 @@ func (s *StreamableHTTPServer) writeJSONRPCError(
 	code int,
 	message string,
 ) {
-	response := createErrorResponse(id, code, message)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusBadRequest)
-	err := json.NewEncoder(w).Encode(response)
-	if err != nil {
+	writeJSONRPCError(w, id, code, message, func(err error) {
 		s.logger.Errorf("Failed to write JSONRPCError: %v", err)
-	}
+	})
 }
 
 // nextRequestID gets the next incrementing requestID for the current session
@@ -1290,6 +1286,8 @@ type rootsRequestItem struct {
 // When in POST handlers(request/notification), it's ephemeral, and only exists in the life of the request handler.
 // When in GET handlers(listening), it's a real session, and will be registered in the MCP server.
 type streamableHttpSession struct {
+	clientInfoStore // provides Get/SetClientInfo and Get/SetClientCapabilities via method promotion
+
 	sessionID           string
 	notificationChannel chan mcp.JSONRPCNotification // server -> client notifications
 	tools               *sessionToolsStore
@@ -1297,8 +1295,6 @@ type streamableHttpSession struct {
 	resourceTemplates   *sessionResourceTemplatesStore
 	upgradeToSSE        atomic.Bool
 	logLevels           *sessionLogLevelsStore
-	clientInfo          atomic.Value // stores session-specific client info
-	clientCapabilities  atomic.Value // stores session-specific client capabilities
 
 	// Sampling support for bidirectional communication
 	samplingRequestChan    chan samplingRequestItem    // server -> client sampling requests
@@ -1374,32 +1370,6 @@ func (s *streamableHttpSession) GetSessionResourceTemplates() map[string]ServerR
 
 func (s *streamableHttpSession) SetSessionResourceTemplates(templates map[string]ServerResourceTemplate) {
 	s.resourceTemplates.set(s.sessionID, templates)
-}
-
-func (s *streamableHttpSession) GetClientInfo() mcp.Implementation {
-	if value := s.clientInfo.Load(); value != nil {
-		if clientInfo, ok := value.(mcp.Implementation); ok {
-			return clientInfo
-		}
-	}
-	return mcp.Implementation{}
-}
-
-func (s *streamableHttpSession) SetClientInfo(clientInfo mcp.Implementation) {
-	s.clientInfo.Store(clientInfo)
-}
-
-func (s *streamableHttpSession) GetClientCapabilities() mcp.ClientCapabilities {
-	if value := s.clientCapabilities.Load(); value != nil {
-		if clientCapabilities, ok := value.(mcp.ClientCapabilities); ok {
-			return clientCapabilities
-		}
-	}
-	return mcp.ClientCapabilities{}
-}
-
-func (s *streamableHttpSession) SetClientCapabilities(clientCapabilities mcp.ClientCapabilities) {
-	s.clientCapabilities.Store(clientCapabilities)
 }
 
 var (

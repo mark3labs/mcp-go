@@ -26,12 +26,12 @@ type RootsHandler interface {
 }
 
 type InProcessSession struct {
+	clientInfoStore // provides Get/SetClientInfo and Get/SetClientCapabilities via method promotion
+
 	sessionID          string
 	notifications      chan mcp.JSONRPCNotification
 	initialized        atomic.Bool
 	loggingLevel       atomic.Value
-	clientInfo         atomic.Value
-	clientCapabilities atomic.Value
 	samplingHandler    SamplingHandler
 	elicitationHandler ElicitationHandler
 	rootsHandler       RootsHandler
@@ -71,32 +71,6 @@ func (s *InProcessSession) Initialize() {
 
 func (s *InProcessSession) Initialized() bool {
 	return s.initialized.Load()
-}
-
-func (s *InProcessSession) GetClientInfo() mcp.Implementation {
-	if value := s.clientInfo.Load(); value != nil {
-		if clientInfo, ok := value.(mcp.Implementation); ok {
-			return clientInfo
-		}
-	}
-	return mcp.Implementation{}
-}
-
-func (s *InProcessSession) SetClientInfo(clientInfo mcp.Implementation) {
-	s.clientInfo.Store(clientInfo)
-}
-
-func (s *InProcessSession) GetClientCapabilities() mcp.ClientCapabilities {
-	if value := s.clientCapabilities.Load(); value != nil {
-		if clientCapabilities, ok := value.(mcp.ClientCapabilities); ok {
-			return clientCapabilities
-		}
-	}
-	return mcp.ClientCapabilities{}
-}
-
-func (s *InProcessSession) SetClientCapabilities(clientCapabilities mcp.ClientCapabilities) {
-	s.clientCapabilities.Store(clientCapabilities)
 }
 
 func (s *InProcessSession) SetLogLevel(level mcp.LoggingLevel) {

@@ -21,6 +21,8 @@ import (
 
 // sseSession represents an active SSE connection.
 type sseSession struct {
+	clientInfoStore // provides Get/SetClientInfo and Get/SetClientCapabilities via method promotion
+
 	done                chan struct{}
 	doneOnce            sync.Once
 	eventQueue          chan string // Channel for queuing events
@@ -29,11 +31,9 @@ type sseSession struct {
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         atomic.Bool
 	loggingLevel        atomic.Value
-	tools               sync.Map     // stores session-specific tools
-	resources           sync.Map     // stores session-specific resources
-	resourceTemplates   sync.Map     // stores session-specific resource templates
-	clientInfo          atomic.Value // stores session-specific client info
-	clientCapabilities  atomic.Value // stores session-specific client capabilities
+	tools               sync.Map // stores session-specific tools
+	resources           sync.Map // stores session-specific resources
+	resourceTemplates   sync.Map // stores session-specific resource templates
 }
 
 // closeDone safely closes the session's done channel exactly once,
@@ -152,32 +152,6 @@ func (s *sseSession) SetSessionTools(tools map[string]ServerTool) {
 	for name, tool := range tools {
 		s.tools.Store(name, tool)
 	}
-}
-
-func (s *sseSession) GetClientInfo() mcp.Implementation {
-	if value := s.clientInfo.Load(); value != nil {
-		if clientInfo, ok := value.(mcp.Implementation); ok {
-			return clientInfo
-		}
-	}
-	return mcp.Implementation{}
-}
-
-func (s *sseSession) SetClientInfo(clientInfo mcp.Implementation) {
-	s.clientInfo.Store(clientInfo)
-}
-
-func (s *sseSession) SetClientCapabilities(clientCapabilities mcp.ClientCapabilities) {
-	s.clientCapabilities.Store(clientCapabilities)
-}
-
-func (s *sseSession) GetClientCapabilities() mcp.ClientCapabilities {
-	if value := s.clientCapabilities.Load(); value != nil {
-		if clientCapabilities, ok := value.(mcp.ClientCapabilities); ok {
-			return clientCapabilities
-		}
-	}
-	return mcp.ClientCapabilities{}
 }
 
 var (
@@ -729,17 +703,13 @@ func (s *SSEServer) writeJSONRPCError(
 	code int,
 	message string,
 ) {
-	response := createErrorResponse(id, code, message)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusBadRequest)
-	if err := json.NewEncoder(w).Encode(response); err != nil {
+	writeJSONRPCError(w, id, code, message, func(err error) {
 		http.Error(
 			w,
 			fmt.Sprintf("Failed to encode response: %v", err),
 			http.StatusInternalServerError,
 		)
-		return
-	}
+	})
 }
 
 // SendEventToSession sends an event to a specific SSE session identified by sessionID.
