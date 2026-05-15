@@ -96,51 +96,55 @@ func TestResourceLinkSerialization(t *testing.T) {
 
 // TestResourceLinkTitleAndSize mirrors TestResourceTitleAndSize: per the MCP
 // spec a ResourceLink carries the same metadata as a Resource, so Title and
-// Size must round-trip through JSON the same way they do for Resource.
+// Size must round-trip through JSON the same way they do for Resource. The
+// pointer Size lets an explicit zero stay distinguishable from an unset value.
 func TestResourceLinkTitleAndSize(t *testing.T) {
-	t.Run("title and size omitted when unset", func(t *testing.T) {
-		rl := NewResourceLink("file:///x.txt", "x.txt", "", "")
-		data, err := json.Marshal(rl)
-		require.NoError(t, err)
-		s := string(data)
-		assert.NotContains(t, s, `"title"`)
-		assert.NotContains(t, s, `"size"`)
-	})
+	tests := []struct {
+		name        string
+		title       string
+		size        *int64
+		wantJSON    []string
+		notWantJSON []string
+	}{
+		{
+			name:        "title and size omitted when unset",
+			notWantJSON: []string{`"title"`, `"size"`},
+		},
+		{
+			name:     "title and size round-trip when set",
+			title:    "X File",
+			size:     ToInt64Ptr(1024),
+			wantJSON: []string{`"title":"X File"`, `"size":1024`},
+		},
+		{
+			name:     "explicit zero size is preserved",
+			size:     ToInt64Ptr(0),
+			wantJSON: []string{`"size":0`},
+		},
+	}
 
-	t.Run("title and size round-trip when set", func(t *testing.T) {
-		size := int64(1024)
-		rl := NewResourceLink("file:///x.txt", "x.txt", "desc", "text/plain")
-		rl.Title = "X File"
-		rl.Size = &size
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rl := NewResourceLink("file:///x.txt", "x.txt", "", "")
+			rl.Title = tt.title
+			rl.Size = tt.size
 
-		data, err := json.Marshal(rl)
-		require.NoError(t, err)
-		assert.Contains(t, string(data), `"title":"X File"`)
-		assert.Contains(t, string(data), `"size":1024`)
+			data, err := json.Marshal(rl)
+			require.NoError(t, err)
+			s := string(data)
+			for _, want := range tt.wantJSON {
+				assert.Contains(t, s, want)
+			}
+			for _, notWant := range tt.notWantJSON {
+				assert.NotContains(t, s, notWant)
+			}
 
-		var rt ResourceLink
-		require.NoError(t, json.Unmarshal(data, &rt))
-		assert.Equal(t, "X File", rt.Title)
-		require.NotNil(t, rt.Size)
-		assert.Equal(t, int64(1024), *rt.Size)
-	})
-
-	t.Run("explicit zero size is preserved", func(t *testing.T) {
-		// Pointer semantics let us distinguish a known-zero-byte resource from
-		// an unknown/unset size.
-		size := int64(0)
-		rl := NewResourceLink("file:///empty.txt", "empty.txt", "", "")
-		rl.Size = &size
-
-		data, err := json.Marshal(rl)
-		require.NoError(t, err)
-		assert.Contains(t, string(data), `"size":0`)
-
-		var rt ResourceLink
-		require.NoError(t, json.Unmarshal(data, &rt))
-		require.NotNil(t, rt.Size)
-		assert.Equal(t, int64(0), *rt.Size)
-	})
+			var rt ResourceLink
+			require.NoError(t, json.Unmarshal(data, &rt))
+			assert.Equal(t, tt.title, rt.Title)
+			assert.Equal(t, tt.size, rt.Size)
+		})
+	}
 }
 
 func TestCallToolResultWithResourceLink(t *testing.T) {
