@@ -229,6 +229,38 @@ func TestParseContent(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name: "resource link with zero size is preserved",
+			contentMap: map[string]any{
+				"type": "resource_link",
+				"uri":  "file:///empty.txt",
+				"name": "empty.txt",
+				"size": float64(0),
+			},
+			expected: ResourceLink{
+				Type: ContentTypeLink,
+				URI:  "file:///empty.txt",
+				Name: "empty.txt",
+				Size: ToInt64Ptr(0),
+			},
+			expectError: false,
+		},
+		{
+			name: "resource link with negative size is rejected",
+			contentMap: map[string]any{
+				"type": "resource_link",
+				"uri":  "file:///x.txt",
+				"name": "x.txt",
+				"size": float64(-1),
+			},
+			expected: ResourceLink{
+				Type: ContentTypeLink,
+				URI:  "file:///x.txt",
+				Name: "x.txt",
+				Size: nil,
+			},
+			expectError: false,
+		},
+		{
 			name: "embedded resource with annotations",
 			contentMap: map[string]any{
 				"type": "resource",
@@ -617,8 +649,10 @@ func TestParseContent(t *testing.T) {
 					assert.Equal(t, exp.Type, act.Type)
 					assert.Equal(t, exp.URI, act.URI)
 					assert.Equal(t, exp.Name, act.Name)
+					assert.Equal(t, exp.Title, act.Title)
 					assert.Equal(t, exp.Description, act.Description)
 					assert.Equal(t, exp.MIMEType, act.MIMEType)
+					assert.Equal(t, exp.Size, act.Size)
 					assert.Equal(t, exp.Annotations, act.Annotations)
 				case EmbeddedResource:
 					act, ok := result.(EmbeddedResource)
