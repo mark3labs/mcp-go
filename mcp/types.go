@@ -1234,10 +1234,20 @@ type ResourceLink struct {
 	URI string `json:"uri"`
 	// The name of the resource.
 	Name string `json:"name"`
+	// Title is an optional human-readable, UI-friendly display name for this resource.
+	// If not provided, clients should fall back to Name.
+	Title string `json:"title,omitempty"`
 	// The description of the resource.
 	Description string `json:"description"`
 	// The MIME type of the resource.
 	MIMEType string `json:"mimeType"`
+	// Size is the size of the raw resource content, in bytes (i.e., before base64
+	// encoding or any tokenization), if known. This can be used by hosts to
+	// display file sizes and estimate context window usage.
+	//
+	// A pointer is used so that an explicit zero size remains distinguishable
+	// from an unset value.
+	Size *int64 `json:"size,omitempty"`
 }
 
 func (ResourceLink) isContent() {}

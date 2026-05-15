@@ -666,6 +666,12 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 			return nil, fmt.Errorf("resource_link uri or name is missing")
 		}
 		c := NewResourceLink(uri, name, description, mimeType)
+		c.Title = ExtractString(contentMap, "title")
+		if value, ok := contentMap["size"]; ok && value != nil {
+			if size, err := cast.ToInt64E(value); err == nil && size >= 0 {
+				c.Size = &size
+			}
+		}
 		c.Annotations = annotations
 		return c, nil
 

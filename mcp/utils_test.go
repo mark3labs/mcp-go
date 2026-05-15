@@ -206,6 +206,29 @@ func TestParseContent(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name: "resource link with title and size",
+			contentMap: map[string]any{
+				"type":        "resource_link",
+				"uri":         "file:///test.txt",
+				"name":        "test.txt",
+				"title":       "Test File",
+				"description": "A test file",
+				"mimeType":    "text/plain",
+				// json.Unmarshal into map[string]any decodes numbers as float64.
+				"size": float64(42),
+			},
+			expected: ResourceLink{
+				Type:        ContentTypeLink,
+				URI:         "file:///test.txt",
+				Name:        "test.txt",
+				Title:       "Test File",
+				Description: "A test file",
+				MIMEType:    "text/plain",
+				Size:        ToInt64Ptr(42),
+			},
+			expectError: false,
+		},
+		{
 			name: "embedded resource with annotations",
 			contentMap: map[string]any{
 				"type": "resource",

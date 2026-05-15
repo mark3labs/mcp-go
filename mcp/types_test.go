@@ -94,6 +94,55 @@ func TestResourceLinkSerialization(t *testing.T) {
 	assert.Equal(t, "application/pdf", unmarshaled.MIMEType)
 }
 
+// TestResourceLinkTitleAndSize mirrors TestResourceTitleAndSize: per the MCP
+// spec a ResourceLink carries the same metadata as a Resource, so Title and
+// Size must round-trip through JSON the same way they do for Resource.
+func TestResourceLinkTitleAndSize(t *testing.T) {
+	t.Run("title and size omitted when unset", func(t *testing.T) {
+		rl := NewResourceLink("file:///x.txt", "x.txt", "", "")
+		data, err := json.Marshal(rl)
+		require.NoError(t, err)
+		s := string(data)
+		assert.NotContains(t, s, `"title"`)
+		assert.NotContains(t, s, `"size"`)
+	})
+
+	t.Run("title and size round-trip when set", func(t *testing.T) {
+		size := int64(1024)
+		rl := NewResourceLink("file:///x.txt", "x.txt", "desc", "text/plain")
+		rl.Title = "X File"
+		rl.Size = &size
+
+		data, err := json.Marshal(rl)
+		require.NoError(t, err)
+		assert.Contains(t, string(data), `"title":"X File"`)
+		assert.Contains(t, string(data), `"size":1024`)
+
+		var rt ResourceLink
+		require.NoError(t, json.Unmarshal(data, &rt))
+		assert.Equal(t, "X File", rt.Title)
+		require.NotNil(t, rt.Size)
+		assert.Equal(t, int64(1024), *rt.Size)
+	})
+
+	t.Run("explicit zero size is preserved", func(t *testing.T) {
+		// Pointer semantics let us distinguish a known-zero-byte resource from
+		// an unknown/unset size.
+		size := int64(0)
+		rl := NewResourceLink("file:///empty.txt", "empty.txt", "", "")
+		rl.Size = &size
+
+		data, err := json.Marshal(rl)
+		require.NoError(t, err)
+		assert.Contains(t, string(data), `"size":0`)
+
+		var rt ResourceLink
+		require.NoError(t, json.Unmarshal(data, &rt))
+		require.NotNil(t, rt.Size)
+		assert.Equal(t, int64(0), *rt.Size)
+	})
+}
+
 func TestCallToolResultWithResourceLink(t *testing.T) {
 	result := &CallToolResult{
 		Content: []Content{
