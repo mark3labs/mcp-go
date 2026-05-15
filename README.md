@@ -419,6 +419,17 @@ When the limit is reached, new task creation requests will fail with an error. C
 
 For traditional synchronous tools that execute and return results immediately:
 
+If you do not want to send the default tool annotations, opt out and add only the ones you have metadata for:
+
+```go
+searchTool := mcp.NewTool("search",
+    mcp.WithDescription("Search internal documents"),
+    mcp.WithoutDefaultAnnotations(),
+    mcp.WithString("query", mcp.Required()),
+    mcp.WithReadOnlyHintAnnotation(true),
+)
+```
+
 Simple calculation example:
 ```go
 calculatorTool := mcp.NewTool("calculate",

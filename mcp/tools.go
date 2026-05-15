@@ -593,6 +593,8 @@ type Tool struct {
 	RawOutputSchema json.RawMessage `json:"-"` // Hide this from JSON marshaling
 	// Optional properties describing tool behavior
 	Annotations ToolAnnotation `json:"annotations"`
+	// omitAnnotations suppresses the annotations field during JSON marshaling.
+	omitAnnotations bool
 	// Support for deferred loading
 	DeferLoading bool `json:"defer_loading,omitempty"`
 	// Icons provides visual identifiers for the tool
@@ -642,7 +644,9 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 		m["outputSchema"] = t.OutputSchema
 	}
 
-	m["annotations"] = t.Annotations
+	if !t.omitAnnotations {
+		m["annotations"] = t.Annotations
+	}
 
 	if t.DeferLoading {
 		m["defer_loading"] = t.DeferLoading
@@ -941,10 +945,20 @@ func WithRawOutputSchema(schema json.RawMessage) ToolOption {
 	}
 }
 
+// WithoutDefaultAnnotations omits the annotations field during marshaling until
+// annotation metadata is explicitly provided by a later option.
+func WithoutDefaultAnnotations() ToolOption {
+	return func(t *Tool) {
+		t.Annotations = ToolAnnotation{}
+		t.omitAnnotations = true
+	}
+}
+
 // WithToolAnnotation adds optional hints about the Tool.
 func WithToolAnnotation(annotation ToolAnnotation) ToolOption {
 	return func(t *Tool) {
 		t.Annotations = annotation
+		t.omitAnnotations = false
 	}
 }
 
@@ -953,6 +967,7 @@ func WithToolAnnotation(annotation ToolAnnotation) ToolOption {
 func WithTitleAnnotation(title string) ToolOption {
 	return func(t *Tool) {
 		t.Annotations.Title = title
+		t.omitAnnotations = false
 	}
 }
 
@@ -961,6 +976,7 @@ func WithTitleAnnotation(title string) ToolOption {
 func WithReadOnlyHintAnnotation(value bool) ToolOption {
 	return func(t *Tool) {
 		t.Annotations.ReadOnlyHint = &value
+		t.omitAnnotations = false
 	}
 }
 
@@ -969,6 +985,7 @@ func WithReadOnlyHintAnnotation(value bool) ToolOption {
 func WithDestructiveHintAnnotation(value bool) ToolOption {
 	return func(t *Tool) {
 		t.Annotations.DestructiveHint = &value
+		t.omitAnnotations = false
 	}
 }
 
@@ -977,6 +994,7 @@ func WithDestructiveHintAnnotation(value bool) ToolOption {
 func WithIdempotentHintAnnotation(value bool) ToolOption {
 	return func(t *Tool) {
 		t.Annotations.IdempotentHint = &value
+		t.omitAnnotations = false
 	}
 }
 
@@ -985,6 +1003,7 @@ func WithIdempotentHintAnnotation(value bool) ToolOption {
 func WithOpenWorldHintAnnotation(value bool) ToolOption {
 	return func(t *Tool) {
 		t.Annotations.OpenWorldHint = &value
+		t.omitAnnotations = false
 	}
 }
 
