@@ -2326,6 +2326,14 @@ func TestStreamableHTTP_TaskAugmentedToolSurvivesRequestCompletion(t *testing.T)
 	mcpServer := NewMCPServer("test-mcp-server", "1.0", WithTaskCapabilities(true, true, true))
 
 	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseTool := func() {
+		releaseOnce.Do(func() {
+			close(release)
+		})
+	}
+	t.Cleanup(releaseTool)
+
 	mcpServer.AddTool(mcp.NewTool("async_tool",
 		mcp.WithDescription("A tool that completes asynchronously"),
 		mcp.WithTaskSupport(mcp.TaskSupportOptional),
@@ -2404,7 +2412,7 @@ func TestStreamableHTTP_TaskAugmentedToolSurvivesRequestCompletion(t *testing.T)
 	require.NoError(t, json.Unmarshal(getBody, &taskStatus), "decode tasks/get response: %s", string(getBody))
 	assert.Equal(t, string(mcp.TaskStatusWorking), taskStatus.Result["status"])
 
-	close(release)
+	releaseTool()
 }
 
 // nonFlushingResponseWriter wraps an http.ResponseWriter but does NOT implement http.Flusher.
