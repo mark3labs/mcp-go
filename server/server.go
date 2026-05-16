@@ -1985,13 +1985,18 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 		}
 	}
 
+	taskExecutionCtx := ctx
+	if detachedCtx, ok := ctx.Value(taskExecutionParentContext).(context.Context); ok && detachedCtx != nil {
+		taskExecutionCtx = detachedCtx
+	}
+
 	// Execute tool asynchronously
 	// For regular tools being used as tasks, we need different execution logic
 	if hasTaskHandler {
-		go s.executeTaskTool(ctx, entry, toolToUse, request)
+		go s.executeTaskTool(taskExecutionCtx, entry, toolToUse, request)
 	} else {
 		// Execute regular tool wrapped as a task
-		go s.executeRegularToolAsTask(ctx, entry, regularTool, request)
+		go s.executeRegularToolAsTask(taskExecutionCtx, entry, regularTool, request)
 	}
 
 	// Return CreateTaskResult immediately with task as top-level field

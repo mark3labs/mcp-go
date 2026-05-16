@@ -2322,6 +2322,91 @@ func TestStreamableHTTP_AddToolDuringToolCall(t *testing.T) {
 	}
 }
 
+func TestStreamableHTTP_TaskAugmentedToolSurvivesRequestCompletion(t *testing.T) {
+	mcpServer := NewMCPServer("test-mcp-server", "1.0", WithTaskCapabilities(true, true, true))
+
+	release := make(chan struct{})
+	mcpServer.AddTool(mcp.NewTool("async_tool",
+		mcp.WithDescription("A tool that completes asynchronously"),
+		mcp.WithTaskSupport(mcp.TaskSupportOptional),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-release:
+		}
+		return mcp.NewToolResultStructured(map[string]any{"status": "ok"}, "ok"), nil
+	})
+
+	server := NewTestStreamableHTTPServer(mcpServer, WithStateful(true))
+	defer server.Close()
+
+	resp, err := postJSON(server.URL, initRequest)
+	require.NoError(t, err)
+	sessionID := resp.Header.Get(HeaderKeySessionID)
+	resp.Body.Close()
+	require.NotEmpty(t, sessionID)
+
+	callResp, err := postSessionJSON(server.URL, sessionID, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "async_tool",
+			"task": map[string]any{
+				"ttl": 60_000,
+			},
+		},
+	})
+	require.NoError(t, err)
+	defer callResp.Body.Close()
+
+	var created struct {
+		Result struct {
+			Task map[string]any `json:"task"`
+		} `json:"result"`
+	}
+	callBody, err := io.ReadAll(callResp.Body)
+	require.NoError(t, err)
+	if err := json.Unmarshal(callBody, &created); err != nil {
+		var decoded bool
+		for _, line := range strings.Split(string(callBody), "\n") {
+			if data, ok := strings.CutPrefix(line, "data: "); ok {
+				if json.Unmarshal([]byte(data), &created) == nil {
+					decoded = true
+					break
+				}
+			}
+		}
+		require.True(t, decoded, "decode task create response: %s", string(callBody))
+	}
+
+	taskID, _ := created.Result.Task["taskId"].(string)
+	require.NotEmpty(t, taskID)
+	assert.Equal(t, string(mcp.TaskStatusWorking), created.Result.Task["status"])
+
+	getResp, err := postSessionJSON(server.URL, sessionID, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      3,
+		"method":  "tasks/get",
+		"params": map[string]any{
+			"taskId": taskID,
+		},
+	})
+	require.NoError(t, err)
+	defer getResp.Body.Close()
+
+	var taskStatus struct {
+		Result map[string]any `json:"result"`
+	}
+	getBody, err := io.ReadAll(getResp.Body)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(getBody, &taskStatus), "decode tasks/get response: %s", string(getBody))
+	assert.Equal(t, string(mcp.TaskStatusWorking), taskStatus.Result["status"])
+
+	close(release)
+}
+
 // nonFlushingResponseWriter wraps an http.ResponseWriter but does NOT implement http.Flusher.
 // This is used to test the fix for servers/proxies that don't support streaming.
 type nonFlushingResponseWriter struct {
