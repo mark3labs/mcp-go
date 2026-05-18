@@ -95,6 +95,9 @@ func (s *MCPServer) HandleMessage(
 	ctx, endSpan := s.startMessageSpan(ctx, headers, string(baseMessage.Method))
 	defer func() { endSpan(resp) }()
 
+	endMetric := s.startMessageMetric(ctx, string(baseMessage.Method), headers.Get(HeaderKeyProtocolVersion))
+	defer func() { endMetric(resp) }()
+
 	switch baseMessage.Method {
 	{{- range .}}
 	case mcp.{{.MethodName}}:
