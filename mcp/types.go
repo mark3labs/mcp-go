@@ -1728,12 +1728,14 @@ func MarshalContent(content Content) ([]byte, error) {
 
 // UnmarshalContent implements custom JSON unmarshaling for Content interface
 func UnmarshalContent(data []byte) (Content, error) {
-	var raw map[string]any
+	var raw struct {
+		Type any `json:"type"`
+	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, err
 	}
 
-	contentType, ok := raw["type"].(string)
+	contentType, ok := raw.Type.(string)
 	if !ok {
 		return nil, fmt.Errorf("missing or invalid type field")
 	}
