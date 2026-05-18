@@ -2,7 +2,7 @@ package transport
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -13,21 +13,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// panicTestLogger captures log output for test assertions.
+// panicTestLogger captures log output for test assertions. It satisfies
+// slog.Handler so it can back a *slog.Logger while exposing convenience
+// helpers for asserting on captured messages.
 type panicTestLogger struct {
 	mu       sync.Mutex
 	messages []string
 }
 
-// Infof is a no-op for test logging.
-func (l *panicTestLogger) Infof(_ string, _ ...any) {}
+// slogger returns a *slog.Logger that records error-level entries into l.
+func (l *panicTestLogger) slogger() *slog.Logger { return slog.New(l) }
 
-// Errorf captures formatted error messages for later assertion.
-func (l *panicTestLogger) Errorf(format string, v ...any) {
+// Enabled implements slog.Handler; capture all levels.
+func (l *panicTestLogger) Enabled(context.Context, slog.Level) bool { return true }
+
+// Handle implements slog.Handler; records the message text only.
+func (l *panicTestLogger) Handle(_ context.Context, r slog.Record) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.messages = append(l.messages, fmt.Sprintf(format, v...))
+	l.messages = append(l.messages, r.Message)
+	return nil
 }
+
+// WithAttrs / WithGroup are required by slog.Handler; we don't care about
+// structured attributes here.
+func (l *panicTestLogger) WithAttrs([]slog.Attr) slog.Handler { return l }
+func (l *panicTestLogger) WithGroup(string) slog.Handler      { return l }
 
 // hasMessageContaining reports whether any captured message contains substr.
 // Safe for concurrent use.
@@ -60,7 +71,7 @@ func TestPanicRecovery_HandleIncomingRequest(t *testing.T) {
 	logger := &panicTestLogger{}
 
 	c := &StreamableHTTP{
-		logger: logger,
+		logger: logger.slogger(),
 		closed: make(chan struct{}),
 	}
 
@@ -88,7 +99,7 @@ func TestContextAwareOfClientClose_CleanShutdown(t *testing.T) {
 	logger := &panicTestLogger{}
 
 	c := &StreamableHTTP{
-		logger: logger,
+		logger: logger.slogger(),
 		closed: make(chan struct{}),
 	}
 

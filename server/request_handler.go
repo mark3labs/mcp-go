@@ -108,6 +108,9 @@ func (s *MCPServer) HandleMessage(
 	ctx, endSpan := s.startMessageSpan(ctx, headers, string(baseMessage.Method))
 	defer func() { endSpan(resp) }()
 
+	endLog := s.startMessageLog(ctx, headers, string(baseMessage.Method))
+	defer func() { endLog(resp) }()
+
 	switch baseMessage.Method {
 	case mcp.MethodInitialize:
 		var request mcp.InitializeRequest

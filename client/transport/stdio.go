@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -16,7 +17,6 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/util"
 )
 
 var (
@@ -54,7 +54,7 @@ type Stdio struct {
 	requestMu        sync.RWMutex
 	ctx              context.Context
 	ctxMu            sync.RWMutex
-	logger           util.Logger
+	logger           *slog.Logger
 	started          bool
 	startedMu        sync.Mutex
 }
@@ -91,9 +91,14 @@ func WithCommandFunc(f CommandFunc) StdioOption {
 	}
 }
 
-// WithCommandLogger sets a custom logger for the stdio transport.
-func WithCommandLogger(logger util.Logger) StdioOption {
+// WithCommandLogger sets a custom structured logger for the stdio transport.
+// A nil logger falls back to slog.Default().
+func WithCommandLogger(logger *slog.Logger) StdioOption {
 	return func(s *Stdio) {
+		if logger == nil {
+			s.logger = slog.Default()
+			return
+		}
 		s.logger = logger
 	}
 }
@@ -110,7 +115,7 @@ func NewIO(input io.Reader, output io.WriteCloser, logging io.ReadCloser) *Stdio
 		responses: make(map[string]chan *JSONRPCResponse),
 		done:      make(chan struct{}),
 		ctx:       context.Background(),
-		logger:    util.DefaultLogger(),
+		logger:    slog.Default(),
 	}
 }
 
@@ -144,7 +149,7 @@ func NewStdioWithOptions(
 		responses: make(map[string]chan *JSONRPCResponse),
 		done:      make(chan struct{}),
 		ctx:       context.Background(),
-		logger:    util.DefaultLogger(),
+		logger:    slog.Default(),
 	}
 
 	for _, opt := range opts {
@@ -346,7 +351,7 @@ func (c *Stdio) readResponses(ready chan struct{}) {
 			line, err := c.stdout.ReadString('\n')
 			if err != nil {
 				if err != io.EOF && !errors.Is(err, context.Canceled) && !errors.Is(err, fs.ErrClosed) {
-					c.logger.Errorf("Error reading from stdout: %v", err)
+					c.logger.Error("Error reading from stdout", "err", err)
 				}
 				// Signal done so in-flight SendRequest calls unblock
 				// instead of hanging forever when the server dies.
@@ -567,7 +572,7 @@ func (c *Stdio) handleIncomingRequest(request JSONRPCRequest) {
 func (c *Stdio) sendResponse(response JSONRPCResponse) {
 	responseBytes, err := json.Marshal(response)
 	if err != nil {
-		c.logger.Errorf("Error marshaling response: %v", err)
+		c.logger.Error("Error marshaling response", "err", err)
 		return
 	}
 	responseBytes = append(responseBytes, '\n')
@@ -576,7 +581,7 @@ func (c *Stdio) sendResponse(response JSONRPCResponse) {
 	_, err = c.stdin.Write(responseBytes)
 	c.stdinMu.Unlock()
 	if err != nil {
-		c.logger.Errorf("Error writing response: %v", err)
+		c.logger.Error("Error writing response", "err", err)
 	}
 }
 

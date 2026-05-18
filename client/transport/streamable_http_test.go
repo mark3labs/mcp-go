@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -849,7 +850,7 @@ func TestContinuousListeningMethodNotAllowed(t *testing.T) {
 
 	// Setup logger to capture log messages
 	logChan := make(chan string, 10)
-	testLogger := &testLogger{logChan: logChan}
+	testLogger := newTestLogger(logChan)
 
 	// Create transport with continuous listening enabled and custom logger
 	trans, err := NewStreamableHTTP(url, WithContinuousListening(), WithLogger(testLogger))
@@ -928,7 +929,7 @@ func TestContinuousListeningSessionTerminated(t *testing.T) {
 
 	// Setup logger to capture log messages
 	logChan := make(chan string, 10)
-	testLogger := &testLogger{logChan: logChan}
+	testLogger := newTestLogger(logChan)
 
 	// Create transport with continuous listening enabled
 	trans, err := NewStreamableHTTP(server.URL, WithContinuousListening(), WithLogger(testLogger))
@@ -974,17 +975,29 @@ func TestContinuousListeningSessionTerminated(t *testing.T) {
 	}
 }
 
-// testLogger is a simple logger for testing
-type testLogger struct {
+// channelHandler is a slog.Handler that forwards every ERROR record's
+// message into a channel so tests can assert on emitted errors without
+// scraping stderr.
+type channelHandler struct {
 	logChan chan string
 }
 
-func (l *testLogger) Infof(format string, args ...any) {
-	// Intentionally left empty
+func (h *channelHandler) Enabled(_ context.Context, level slog.Level) bool {
+	return level >= slog.LevelError
 }
 
-func (l *testLogger) Errorf(format string, args ...any) {
-	l.logChan <- fmt.Sprintf(format, args...)
+func (h *channelHandler) Handle(_ context.Context, r slog.Record) error {
+	h.logChan <- r.Message
+	return nil
+}
+
+func (h *channelHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
+func (h *channelHandler) WithGroup(_ string) slog.Handler      { return h }
+
+// newTestLogger returns a *slog.Logger that pushes error messages onto the
+// given channel; matches the old testLogger semantics.
+func newTestLogger(logChan chan string) *slog.Logger {
+	return slog.New(&channelHandler{logChan: logChan})
 }
 
 func TestStreamableHTTP_Unauthorized_StaticToken(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -16,7 +17,6 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/util"
 )
 
 // SSE implements the transport layer of the MCP protocol using Server-Sent Events (SSE).
@@ -35,7 +35,7 @@ type SSE struct {
 	headers        map[string]string
 	headerFunc     HTTPHeaderFunc
 	host           string
-	logger         util.Logger
+	logger         *slog.Logger
 
 	started          atomic.Bool
 	closed           atomic.Bool
@@ -54,9 +54,14 @@ type SSE struct {
 // ClientOption configures an SSE transport client.
 type ClientOption func(*SSE)
 
-// WithSSELogger sets a custom logger for the SSE client.
-func WithSSELogger(logger util.Logger) ClientOption {
+// WithSSELogger sets a custom structured logger for the SSE client.
+// A nil logger falls back to slog.Default().
+func WithSSELogger(logger *slog.Logger) ClientOption {
 	return func(sc *SSE) {
+		if logger == nil {
+			sc.logger = slog.Default()
+			return
+		}
 		sc.logger = logger
 	}
 }
@@ -134,7 +139,7 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 		responses:       make(map[string]chan *JSONRPCResponse),
 		endpointChan:    make(chan struct{}),
 		headers:         make(map[string]string),
-		logger:          util.DefaultLogger(),
+		logger:          slog.Default(),
 		endpointTimeout: 30 * time.Second,
 		responseTimeout: 60 * time.Second,
 	}
@@ -308,7 +313,7 @@ func (c *SSE) readSSE(reader io.ReadCloser) {
 				// Notify that the connection will be closed due to an error
 				handler(err)
 			} else if err == io.EOF && !c.closed.Load() {
-				c.logger.Errorf("SSE stream error: %v", err)
+				c.logger.Error("SSE stream error", "err", err)
 			}
 			return
 		}
@@ -344,11 +349,11 @@ func (c *SSE) handleSSEEvent(event, data string) {
 	case "endpoint":
 		endpoint, err := c.baseURL.Parse(data)
 		if err != nil {
-			c.logger.Errorf("Error parsing endpoint URL: %v", err)
+			c.logger.Error("Error parsing endpoint URL", "err", err)
 			return
 		}
 		if endpoint.Host != c.baseURL.Host {
-			c.logger.Errorf("Endpoint origin does not match connection origin")
+			c.logger.Error("Endpoint origin does not match connection origin")
 			return
 		}
 		c.endpoint = endpoint
@@ -357,7 +362,7 @@ func (c *SSE) handleSSEEvent(event, data string) {
 	case "message":
 		var baseMessage JSONRPCResponse
 		if err := json.Unmarshal([]byte(data), &baseMessage); err != nil {
-			c.logger.Errorf("Error unmarshaling message: %v", err)
+			c.logger.Error("Error unmarshaling message", "err", err)
 			return
 		}
 

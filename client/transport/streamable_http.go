@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -17,7 +18,6 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/util"
 )
 
 // StreamableHTTPCOption configures a StreamableHTTP transport client.
@@ -71,17 +71,22 @@ func WithHTTPOAuth(config OAuthConfig) StreamableHTTPCOption {
 	}
 }
 
-// WithHTTPLogger sets a custom logger for the StreamableHTTP transport.
-func WithHTTPLogger(logger util.Logger) StreamableHTTPCOption {
+// WithHTTPLogger sets a custom structured logger for the StreamableHTTP
+// transport. A nil logger falls back to slog.Default().
+func WithHTTPLogger(logger *slog.Logger) StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
+		if logger == nil {
+			sc.logger = slog.Default()
+			return
+		}
 		sc.logger = logger
 	}
 }
 
-// WithLogger sets a custom logger for the StreamableHTTP transport.
+// WithLogger sets a custom structured logger for the StreamableHTTP transport.
 //
 // Deprecated: Use [WithHTTPLogger] instead.
-func WithLogger(logger util.Logger) StreamableHTTPCOption {
+func WithLogger(logger *slog.Logger) StreamableHTTPCOption {
 	return WithHTTPLogger(logger)
 }
 
@@ -118,7 +123,7 @@ type StreamableHTTP struct {
 	headers             map[string]string
 	headerFunc          HTTPHeaderFunc
 	host                string
-	logger              util.Logger
+	logger              *slog.Logger
 	getListeningEnabled bool
 
 	sessionID       atomic.Value // string
@@ -154,7 +159,7 @@ func NewStreamableHTTP(serverURL string, options ...StreamableHTTPCOption) (*Str
 		httpClient:  &http.Client{},
 		headers:     make(map[string]string),
 		closed:      make(chan struct{}),
-		logger:      util.DefaultLogger(),
+		logger:      slog.Default(),
 		initialized: make(chan struct{}),
 	}
 	smc.sessionID.Store("") // set initial value to simplify later usage
@@ -191,7 +196,7 @@ func (c *StreamableHTTP) Start(ctx context.Context) error {
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
-					c.logger.Errorf("panic in listener goroutine: %v", r)
+					c.logger.Error("panic in listener goroutine", "panic", r)
 				}
 			}()
 			select {
@@ -224,7 +229,7 @@ func (c *StreamableHTTP) Close() error {
 			defer cancel()
 			req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.serverURL.String(), nil)
 			if err != nil {
-				c.logger.Errorf("failed to create close request: %v", err)
+				c.logger.Error("failed to create close request", "err", err)
 				return
 			}
 			req.Header.Set(HeaderKeySessionID, sessionId)
@@ -241,7 +246,7 @@ func (c *StreamableHTTP) Close() error {
 			}
 			res, err := c.httpClient.Do(req)
 			if err != nil {
-				c.logger.Errorf("failed to send close request: %v", err)
+				c.logger.Error("failed to send close request", "err", err)
 				return
 			}
 			res.Body.Close()
@@ -710,7 +715,7 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				c.logger.Errorf("panic in SSE stream reader: %v", r)
+				c.logger.Error("panic in SSE stream reader", "panic", r)
 			}
 		}()
 		// Ensure this goroutine respects the context
@@ -720,7 +725,7 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 			// Try to unmarshal as a response first
 			var message JSONRPCResponse
 			if err := json.Unmarshal([]byte(data), &message); err != nil {
-				c.logger.Infof("failed to unmarshal message (non-fatal): %v", err, "message", data)
+				c.logger.Info("failed to unmarshal message (non-fatal)", "err", err, "message_len", len(data))
 				return
 			}
 
@@ -728,7 +733,7 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 			if message.ID.IsNil() {
 				var notification mcp.JSONRPCNotification
 				if err := json.Unmarshal([]byte(data), &notification); err != nil {
-					c.logger.Errorf("failed to unmarshal notification: %v", err)
+					c.logger.Error("failed to unmarshal notification", "err", err)
 					return
 				}
 				c.notifyMu.RLock()
@@ -783,7 +788,7 @@ func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, hand
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				c.logger.Errorf("panic closing SSE reader: %v", r)
+				c.logger.Error("panic closing SSE reader", "panic", r)
 			}
 		}()
 		<-ctx.Done()
@@ -810,7 +815,7 @@ func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, hand
 				}
 				return
 			}
-			c.logger.Errorf("SSE stream error: %v", err)
+			c.logger.Error("SSE stream error", "err", err)
 			return
 		}
 
@@ -923,7 +928,7 @@ func (c *StreamableHTTP) IsOAuthEnabled() bool {
 }
 
 func (c *StreamableHTTP) listenForever(ctx context.Context) {
-	c.logger.Infof("listening to server forever")
+	c.logger.Info("listening to server forever")
 	for {
 		// Use the original context for continuous listening - no per-iteration timeout
 		// The SSE connection itself will detect disconnections via the underlying HTTP transport,
@@ -935,14 +940,14 @@ func (c *StreamableHTTP) listenForever(ctx context.Context) {
 		err := c.createGETConnectionToServer(ctx)
 		if errors.Is(err, ErrGetMethodNotAllowed) {
 			// server does not support listening
-			c.logger.Errorf("server does not support listening")
+			c.logger.Error("server does not support listening")
 			return
 		}
 		if errors.Is(err, ErrSessionTerminated) {
 			// Server returned 404: the session no longer exists (server restarted
 			// or session expired). Retrying is pointless because the server won't
 			// recognize this session. The caller must re-initialize.
-			c.logger.Errorf("session terminated, stopping listener: %v", err)
+			c.logger.Error("session terminated, stopping listener", "err", err)
 			return
 		}
 
@@ -953,7 +958,7 @@ func (c *StreamableHTTP) listenForever(ctx context.Context) {
 		}
 
 		if err != nil {
-			c.logger.Errorf("failed to listen to server. retry in 1 second: %v", err)
+			c.logger.Error("failed to listen to server. retry in 1 second", "err", err)
 		}
 
 		// Use context-aware sleep
@@ -1020,7 +1025,7 @@ func (c *StreamableHTTP) handleIncomingRequest(ctx context.Context, request JSON
 	c.requestMu.RUnlock()
 
 	if handler == nil {
-		c.logger.Errorf("received request from server but no handler set: %s", request.Method)
+		c.logger.Error("received request from server but no handler set", "method", request.Method)
 		// Send method not found error
 		errorResponse := NewJSONRPCErrorResponse(
 			request.ID,
@@ -1036,14 +1041,14 @@ func (c *StreamableHTTP) handleIncomingRequest(ctx context.Context, request JSON
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				c.logger.Errorf("panic handling server request %s: %v", request.Method, r)
+				c.logger.Error("panic handling server request", "method", request.Method, "panic", r)
 				// Attempt to send an internal error response so the server doesn't hang.
 				// Use a nested recover to prevent sendResponseToServer from propagating
 				// a secondary panic (e.g., nil serverURL during shutdown).
 				func() {
 					defer func() {
 						if r2 := recover(); r2 != nil {
-							c.logger.Errorf("failed to send error response after panic: %v", r2)
+							c.logger.Error("failed to send error response after panic", "err", r2)
 						}
 					}()
 					errorResponse := NewJSONRPCErrorResponse(
@@ -1062,7 +1067,7 @@ func (c *StreamableHTTP) handleIncomingRequest(ctx context.Context, request JSON
 
 		response, err := handler(requestCtx, request)
 		if err != nil {
-			c.logger.Errorf("error handling request %s: %v", request.Method, err)
+			c.logger.Error("error handling request", "method", request.Method, "err", err)
 
 			// Determine appropriate JSON-RPC error code based on error type
 			var errorCode int
@@ -1102,13 +1107,13 @@ func (c *StreamableHTTP) handleIncomingRequest(ctx context.Context, request JSON
 // sendResponseToServer sends a response back to the server via HTTP POST
 func (c *StreamableHTTP) sendResponseToServer(ctx context.Context, response *JSONRPCResponse) {
 	if response == nil {
-		c.logger.Errorf("cannot send nil response to server")
+		c.logger.Error("cannot send nil response to server")
 		return
 	}
 
 	responseBody, err := json.Marshal(response)
 	if err != nil {
-		c.logger.Errorf("failed to marshal response: %v", err)
+		c.logger.Error("failed to marshal response", "err", err)
 		return
 	}
 
@@ -1117,14 +1122,14 @@ func (c *StreamableHTTP) sendResponseToServer(ctx context.Context, response *JSO
 	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(responseBody), "application/json, text/event-stream", nil)
 	if err != nil {
 		cancel()
-		c.logger.Errorf("failed to send response to server: %v", err)
+		c.logger.Error("failed to send response to server", "err", err)
 		return
 	}
 	defer func() { cancel(); resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		body, _ := io.ReadAll(resp.Body)
-		c.logger.Errorf("server rejected response with status %d: %s", resp.StatusCode, body)
+		c.logger.Error("server rejected response", "status", resp.StatusCode, "body_len", len(body))
 	}
 }
 
@@ -1133,7 +1138,7 @@ func (c *StreamableHTTP) contextAwareOfClientClose(ctx context.Context) (context
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				c.logger.Errorf("panic in context-close watcher: %v", r)
+				c.logger.Error("panic in context-close watcher", "panic", r)
 			}
 		}()
 		select {

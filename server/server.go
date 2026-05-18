@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 	"sort"
@@ -228,6 +229,7 @@ type MCPServer struct {
 	tracer                     tracing.Tracer
 	propagator                 tracing.Propagator
 	metaPropagator             tracing.MetaPropagator
+	requestLogger              *slog.Logger
 }
 
 // WithPaginationLimit sets the pagination limit for the server.

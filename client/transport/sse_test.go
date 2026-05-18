@@ -749,7 +749,7 @@ func TestSSEErrors(t *testing.T) {
 
 	t.Run("SSEStreamErrorLogging", func(t *testing.T) {
 		logChan := make(chan string, 10)
-		testLogger := &testLogger{logChan: logChan}
+		testLogger := newTestLogger(logChan)
 
 		sseHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/event-stream")
@@ -785,11 +785,9 @@ func TestSSEErrors(t *testing.T) {
 		// Wait for the error log message about unmarshaling
 		select {
 		case logMsg := <-logChan:
-			if !strings.Contains(logMsg, "Error unmarshaling message") {
-				t.Errorf("Expected error log about unmarshaling message, got: %s", logMsg)
-			}
+			require.Contains(t, logMsg, "Error unmarshaling message")
 		case <-time.After(3 * time.Second):
-			t.Fatal("Timeout waiting for error log message")
+			require.Fail(t, "Timeout waiting for error log message")
 		}
 	})
 }

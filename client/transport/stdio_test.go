@@ -497,7 +497,7 @@ func TestStdioErrors(t *testing.T) {
 
 	t.Run("StdioResponseWritingErrorLogging", func(t *testing.T) {
 		logChan := make(chan string, 10)
-		testLogger := &testLogger{logChan: logChan}
+		testLogger := newTestLogger(logChan)
 
 		_, stdinWriter := io.Pipe()
 		stdoutReader, stdoutWriter := io.Pipe()
@@ -559,7 +559,7 @@ func TestStdioErrors(t *testing.T) {
 func TestStdio_ReadResponses_SuppressesClosedPipeShutdownNoise(t *testing.T) {
 	logChan := make(chan string, 1)
 	stdio := NewIO(io.NopCloser(strings.NewReader("")), nopWriteCloser{Writer: io.Discard}, io.NopCloser(strings.NewReader("")))
-	stdio.logger = &testLogger{logChan: logChan}
+	stdio.logger = newTestLogger(logChan)
 	stdio.stdout = bufio.NewReader(errReader{err: &fs.PathError{Op: "read", Path: "|0", Err: fs.ErrClosed}})
 
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
