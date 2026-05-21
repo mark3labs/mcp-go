@@ -797,6 +797,8 @@ func TestToolWithInputSchemaJsonSchemaTagError(t *testing.T) {
 	// Read stderr output into buffer
 	_, err = io.Copy(&buf, r)
 	require.NoError(t, err)
+	err = r.Close()
+	require.NoError(t, err)
 
 	if !strings.HasPrefix(buf.String(), expectedStderrPrefix) {
 		t.Errorf("expected stderr to have prefix %q, got %q", expectedStderrPrefix, buf.String())
@@ -929,6 +931,8 @@ func TestToolWithOutputSchemaJsonSchemaTagError(t *testing.T) {
 
 	// Read stderr output into buffer
 	_, err = io.Copy(&buf, r)
+	require.NoError(t, err)
+	err = r.Close()
 	require.NoError(t, err)
 
 	if !strings.HasPrefix(buf.String(), expectedStderrPrefix) {
