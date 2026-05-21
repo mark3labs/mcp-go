@@ -1,8 +1,12 @@
 package mcp
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -758,6 +762,47 @@ func TestToolWithInputSchema(t *testing.T) {
 	assert.Equal(t, false, schemaMap["additionalProperties"])
 }
 
+// TestToolWithInputSchemaJsonSchemaTagError tests that the WithInputSchema
+// function prints an error to stderr if a jsonschema tag is invalid.
+func TestToolWithInputSchemaJsonSchemaTagError(t *testing.T) {
+	type TestInput struct {
+		Name  string `json:"name" jsonschema:"description=Person's name"` // Invalid jsonschema tag
+		Age   int    `json:"age" jsonschema:"Person's age"`
+		Email string `json:"email,omitempty" jsonschema:"Email address"`
+	}
+
+	var (
+		expectedStderrPrefix = "For[mcp.TestInput]():" // jsonschema.For[T] error prefix
+		buf                  bytes.Buffer
+		origStderr, r, w     *os.File
+		err                  error
+	)
+
+	// Redirect stderr
+	origStderr = os.Stderr
+	r, w, err = os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+
+	_ = NewTool("test_tool",
+		WithDescription("Test tool with input schema that has an invalid jsonschema tag"),
+		WithInputSchema[TestInput](),
+	)
+
+	// Restore stderr
+	err = w.Close()
+	require.NoError(t, err)
+	os.Stderr = origStderr
+
+	// Read stderr output into buffer
+	_, err = io.Copy(&buf, r)
+	require.NoError(t, err)
+
+	if !strings.HasPrefix(buf.String(), expectedStderrPrefix) {
+		t.Errorf("expected stderr to have prefix %q, got %q", expectedStderrPrefix, buf.String())
+	}
+}
+
 // TestToolWithOutputSchema tests that the WithOutputSchema function
 // generates an MCP-compatible JSON output schema for a tool
 func TestToolWithOutputSchema(t *testing.T) {
@@ -847,6 +892,47 @@ func TestToolWithOutputSchema(t *testing.T) {
 				assert.Nil(t, outputSchema)
 			}
 		})
+	}
+}
+
+// TestToolWithOutputSchemaJsonSchemaTagError tests that the WithOutputSchema
+// function prints an error to stderr if a jsonschema tag is invalid.
+func TestToolWithOutputSchemaJsonSchemaTagError(t *testing.T) {
+	type TestOutput struct {
+		Name  string `json:"name" jsonschema:"description=Person's name"` // Invalid jsonschema tag
+		Age   int    `json:"age" jsonschema:"Person's age"`
+		Email string `json:"email,omitempty" jsonschema:"Email address"`
+	}
+
+	var (
+		expectedStderrPrefix = "For[mcp.TestOutput]():" // jsonschema.For[T] error prefix
+		buf                  bytes.Buffer
+		origStderr, r, w     *os.File
+		err                  error
+	)
+
+	// Redirect stderr
+	origStderr = os.Stderr
+	r, w, err = os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+
+	_ = NewTool("test_tool",
+		WithDescription("Test tool with output schema that has an invalid jsonschema tag"),
+		WithOutputSchema[TestOutput](),
+	)
+
+	// Restore stderr
+	err = w.Close()
+	require.NoError(t, err)
+	os.Stderr = origStderr
+
+	// Read stderr output into buffer
+	_, err = io.Copy(&buf, r)
+	require.NoError(t, err)
+
+	if !strings.HasPrefix(buf.String(), expectedStderrPrefix) {
+		t.Errorf("expected stderr to have prefix %q, got %q", expectedStderrPrefix, buf.String())
 	}
 }
 

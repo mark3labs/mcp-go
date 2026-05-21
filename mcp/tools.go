@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"reflect"
 	"strconv"
 
@@ -862,6 +863,7 @@ func WithInputSchema[T any]() ToolOption {
 	return func(t *Tool) {
 		schema, err := jsonschema.For[T](&jsonschema.ForOptions{IgnoreInvalidTypes: true})
 		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			return
 		}
 
@@ -912,6 +914,7 @@ func WithOutputSchema[T any]() ToolOption {
 	return func(t *Tool) {
 		schema, err := jsonschema.For[T](&jsonschema.ForOptions{IgnoreInvalidTypes: true})
 		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			return
 		}
 
