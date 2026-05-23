@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/metrics"
 	"github.com/mark3labs/mcp-go/tracing"
 )
 
@@ -221,6 +222,9 @@ type MCPServer struct {
 	strictInputSchemaDefault   bool
 	tracer                     tracing.Tracer
 	propagator                 tracing.Propagator
+	meter                      metrics.Meter
+	requestCallsCounter        metrics.Counter
+	requestDurationHistogram   metrics.Histogram
 }
 
 // WithPaginationLimit sets the pagination limit for the server.

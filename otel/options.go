@@ -1,12 +1,21 @@
 package otel
 
 import (
+	otelmetric "go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/server"
 )
+
+// WithServerMetrics installs an OpenTelemetry meter on the server. The
+// server emits mcp.request.calls / mcp.request.duration and
+// mcp.tool.calls / mcp.tool.duration; see server.WithMeter for the full
+// attribute schema.
+func WithServerMetrics(m otelmetric.Meter) server.ServerOption {
+	return server.WithMeter(NewMeter(m))
+}
 
 // WithServerTracing installs an OpenTelemetry tracer and a W3C TraceContext
 // propagator on the server.
