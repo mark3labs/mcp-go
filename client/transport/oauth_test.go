@@ -2203,6 +2203,7 @@ func TestExtractResourceMetadataURLs(t *testing.T) {
 		{"empty header", "", nil},
 		{"no resource_metadata", `Bearer realm="mcp"`, nil},
 		{"single quoted value", `Bearer resource_metadata="https://example.com/prm"`, []string{"https://example.com/prm"}},
+		{"whitespace around equals", `Bearer resource_metadata = "https://example.com/prm"`, []string{"https://example.com/prm"}},
 		{"case-insensitive name", `Bearer Resource_Metadata="https://example.com/prm"`, []string{"https://example.com/prm"}},
 		{
 			"two challenges, both carrying resource_metadata",
