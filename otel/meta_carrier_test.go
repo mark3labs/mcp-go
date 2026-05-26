@@ -98,19 +98,38 @@ func TestMetaPropagator_ExtractPopulatesContext(t *testing.T) {
 		"child span parent should be the injected span")
 }
 
-// TestMetaPropagator_ExtractNilMetaIsNoop checks that nil *mcp.Meta doesn't panic.
-func TestMetaPropagator_ExtractNilMetaIsNoop(t *testing.T) {
-	p := otelmcp.WrapMetaPropagator(propagation.TraceContext{})
-	ctx := p.ExtractMeta(t.Context(), nil)
-	assert.NotNil(t, ctx)
-}
-
-// TestMetaPropagator_InjectNilPropagatorIsNoop checks that WrapMetaPropagator(nil)
-// returns a no-op that doesn't panic.
-func TestMetaPropagator_InjectNilPropagatorIsNoop(t *testing.T) {
-	p := otelmcp.WrapMetaPropagator(nil)
-	meta := p.InjectMeta(t.Context(), nil)
-	assert.Nil(t, meta)
+// TestMetaPropagator_NilEdgeCases checks nil-safety for both extract and inject.
+func TestMetaPropagator_NilEdgeCases(t *testing.T) {
+	tests := []struct {
+		name           string
+		propagator     propagation.TextMapPropagator
+		wantNonNilCtx  bool
+		wantNilMeta    bool
+	}{
+		{
+			name:          "extract nil meta returns non-nil context",
+			propagator:    propagation.TraceContext{},
+			wantNonNilCtx: true,
+		},
+		{
+			name:        "nil propagator inject returns nil meta",
+			propagator:  nil,
+			wantNilMeta: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := otelmcp.WrapMetaPropagator(tc.propagator)
+			if tc.wantNonNilCtx {
+				ctx := p.ExtractMeta(t.Context(), nil)
+				assert.NotNil(t, ctx)
+			}
+			if tc.wantNilMeta {
+				meta := p.InjectMeta(t.Context(), nil)
+				assert.Nil(t, meta)
+			}
+		})
+	}
 }
 
 // TestClientMetaPropagator_CallToolInjectsMeta confirms the client injects
@@ -148,16 +167,17 @@ func TestClientMetaPropagator_CallToolInjectsMeta(t *testing.T) {
 	assert.Equal(t, parentSpan.SpanContext().TraceID().String(), traceIDFromTraceparent(t, tpStr))
 }
 
-// TestClientMetaPropagator_NoTracerDoesNotInjectMeta checks that without a
-// tracer (no active span), no traceparent is injected into _meta.
+// TestClientMetaPropagator_NoTracerDoesNotInjectMeta checks that with a
+// propagator installed but no active span, no traceparent is injected into _meta.
 func TestClientMetaPropagator_NoTracerDoesNotInjectMeta(t *testing.T) {
+	tracer, _ := newTestTracer(t)
 	srv := server.NewMCPServer("srv", "1.0")
 	srv.AddTool(mcp.Tool{Name: "echo"}, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return mcp.NewToolResultText("ok"), nil
 	})
 
-	// No tracing option — no active span, propagator should not inject invalid traceparent.
-	c, cap := startTracedClient(t, srv)
+	// Propagator installed but context has no active span — must not inject an invalid traceparent.
+	c, cap := startTracedClient(t, srv, otelmcp.WithClientTracing(tracer))
 
 	callReq := mcp.CallToolRequest{}
 	callReq.Params.Name = "echo"
