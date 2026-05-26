@@ -6,6 +6,8 @@ package tracing
 import (
 	"context"
 	"net/http"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // SpanKind identifies the role of a span in a trace.
@@ -57,6 +59,25 @@ type Propagator interface {
 	Extract(ctx context.Context, headers http.Header) context.Context
 }
 
+// MetaPropagator carries tracing context through the MCP _meta property bag
+// (per SEP-414). Unlike Propagator it operates on mcp.Meta rather than HTTP
+// headers, so it works on every MCP transport including stdio.
+//
+// InjectMeta writes the active span context into meta.AdditionalFields.
+// It allocates a new mcp.Meta when meta is nil and the propagator has
+// something to write. It returns nil when meta would remain empty.
+//
+// ExtractMeta reads traceparent/tracestate/baggage from meta.AdditionalFields
+// and returns a context that carries the extracted span context.
+// It returns ctx unchanged when meta is nil.
+type MetaPropagator interface {
+	InjectMeta(ctx context.Context, meta *mcp.Meta) *mcp.Meta
+	ExtractMeta(ctx context.Context, meta *mcp.Meta) context.Context
+}
+
+// NoopMetaPropagator returns a MetaPropagator whose methods are no-ops.
+func NoopMetaPropagator() MetaPropagator { return noopMetaPropagator{} }
+
 type spanContextKey struct{}
 
 // ContextWithSpan returns ctx annotated with span so SpanFromContext can
@@ -97,3 +118,10 @@ type noopPropagator struct{}
 
 func (noopPropagator) Inject(context.Context, http.Header)                        {}
 func (noopPropagator) Extract(ctx context.Context, _ http.Header) context.Context { return ctx }
+
+type noopMetaPropagator struct{}
+
+func (noopMetaPropagator) InjectMeta(_ context.Context, meta *mcp.Meta) *mcp.Meta { return meta }
+func (noopMetaPropagator) ExtractMeta(ctx context.Context, _ *mcp.Meta) context.Context {
+	return ctx
+}

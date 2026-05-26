@@ -758,6 +758,8 @@ type ReadResourceParams struct {
 	URI string `json:"uri"`
 	// Arguments to pass to the resource handler
 	Arguments map[string]any `json:"arguments,omitempty"`
+	// Meta carries protocol-level metadata (e.g. W3C traceparent, progressToken).
+	Meta *Meta `json:"_meta,omitempty"`
 }
 
 // ReadResourceResult is the server's response to a resources/read request

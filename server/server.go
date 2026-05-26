@@ -221,6 +221,7 @@ type MCPServer struct {
 	strictInputSchemaDefault   bool
 	tracer                     tracing.Tracer
 	propagator                 tracing.Propagator
+	metaPropagator             tracing.MetaPropagator
 }
 
 // WithPaginationLimit sets the pagination limit for the server.

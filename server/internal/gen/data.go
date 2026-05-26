@@ -11,6 +11,7 @@ type MCPRequestType struct {
 	UnmarshalError string
 	HandlerFunc    string
 	ResultIsAny    bool // If true, result type is 'any' instead of '*mcp.ResultType'
+	HasMeta        bool // If true, request.Params.Meta holds _meta and is extracted into ctx
 }
 
 var MCPRequestTypes = []MCPRequestType{
@@ -48,6 +49,7 @@ var MCPRequestTypes = []MCPRequestType{
 		HookName:       "ListResources",
 		UnmarshalError: "invalid list resources request",
 		HandlerFunc:    "handleListResources",
+		HasMeta:        true,
 	}, {
 		MethodName:     "MethodResourcesTemplatesList",
 		ParamType:      "ListResourceTemplatesRequest",
@@ -58,6 +60,7 @@ var MCPRequestTypes = []MCPRequestType{
 		HookName:       "ListResourceTemplates",
 		UnmarshalError: "invalid list resource templates request",
 		HandlerFunc:    "handleListResourceTemplates",
+		HasMeta:        true,
 	}, {
 		MethodName:     "MethodResourcesRead",
 		ParamType:      "ReadResourceRequest",
@@ -68,6 +71,7 @@ var MCPRequestTypes = []MCPRequestType{
 		HookName:       "ReadResource",
 		UnmarshalError: "invalid read resource request",
 		HandlerFunc:    "handleReadResource",
+		HasMeta:        true,
 	}, {
 		MethodName:     "MethodResourcesSubscribe",
 		ParamType:      "SubscribeRequest",
@@ -98,6 +102,7 @@ var MCPRequestTypes = []MCPRequestType{
 		HookName:       "ListPrompts",
 		UnmarshalError: "invalid list prompts request",
 		HandlerFunc:    "handleListPrompts",
+		HasMeta:        true,
 	}, {
 		MethodName:     "MethodPromptsGet",
 		ParamType:      "GetPromptRequest",
@@ -108,6 +113,7 @@ var MCPRequestTypes = []MCPRequestType{
 		HookName:       "GetPrompt",
 		UnmarshalError: "invalid get prompt request",
 		HandlerFunc:    "handleGetPrompt",
+		HasMeta:        true,
 	}, {
 		MethodName:     "MethodToolsList",
 		ParamType:      "ListToolsRequest",
@@ -118,6 +124,7 @@ var MCPRequestTypes = []MCPRequestType{
 		HookName:       "ListTools",
 		UnmarshalError: "invalid list tools request",
 		HandlerFunc:    "handleListTools",
+		HasMeta:        true,
 	}, {
 		MethodName:     "MethodToolsCall",
 		ParamType:      "CallToolRequest",
@@ -129,6 +136,7 @@ var MCPRequestTypes = []MCPRequestType{
 		UnmarshalError: "invalid call tool request",
 		HandlerFunc:    "handleToolCall",
 		ResultIsAny:    true, // Returns 'any' to support both CallToolResult and CreateTaskResult
+		HasMeta:        true,
 	}, {
 		MethodName:     "MethodTasksGet",
 		ParamType:      "GetTaskRequest",

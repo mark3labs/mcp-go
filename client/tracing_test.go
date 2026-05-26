@@ -34,6 +34,11 @@ func TestWithPropagator_NilFallsBackToNoop(t *testing.T) {
 	require.NotNil(t, c.propagator)
 }
 
+func TestWithMetaPropagator_NilFallsBackToNoop(t *testing.T) {
+	c := NewClient(transport.NewInProcessTransport(server.NewMCPServer("srv", "1")), WithMetaPropagator(nil))
+	require.NotNil(t, c.metaPropagator)
+}
+
 type recordingTracer struct {
 	spans []string
 }

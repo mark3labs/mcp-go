@@ -92,6 +92,19 @@ func (s *MCPServer) HandleMessage(
 		defer s.inflightCancels.Delete(key)
 	}
 
+	// Extract trace context from _meta before opening the server span so the span
+	// inherits the correct parent (SEP-414, transport-agnostic propagation).
+	{
+		var metaWrapper struct {
+			Params struct {
+				Meta *mcp.Meta `json:"_meta"`
+			} `json:"params"`
+		}
+		if json.Unmarshal(message, &metaWrapper) == nil {
+			ctx = s.extractMeta(ctx, metaWrapper.Params.Meta)
+		}
+	}
+
 	ctx, endSpan := s.startMessageSpan(ctx, headers, string(baseMessage.Method))
 	defer func() { endSpan(resp) }()
 

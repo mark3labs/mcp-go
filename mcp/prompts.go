@@ -32,6 +32,8 @@ type GetPromptParams struct {
 	Name string `json:"name"`
 	// Arguments to use for templating the prompt.
 	Arguments map[string]string `json:"arguments,omitempty"`
+	// Meta carries protocol-level metadata (e.g. W3C traceparent, progressToken).
+	Meta *Meta `json:"_meta,omitempty"`
 }
 
 // GetPromptResult is the server's response to a prompts/get request from the

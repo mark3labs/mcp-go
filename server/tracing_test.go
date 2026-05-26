@@ -21,6 +21,37 @@ func TestWithPropagator_NilFallsBackToNoop(t *testing.T) {
 	require.NotNil(t, s.propagator)
 }
 
+func TestWithMetaPropagator_NilFallsBackToNoop(t *testing.T) {
+	s := NewMCPServer("trace-srv", "1.0", WithMetaPropagator(nil))
+	require.NotNil(t, s.metaPropagator)
+}
+
+func TestWithMetaPropagator_ExtractCalledWithNilMeta(t *testing.T) {
+	extracted := false
+	mp := &stubMetaPropagator{onExtract: func() { extracted = true }}
+	s := NewMCPServer("trace-srv", "1.0", WithMetaPropagator(mp))
+
+	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"t","version":"1"},"capabilities":{}}}`)
+	resp := s.HandleMessage(t.Context(), body)
+	require.NotNil(t, resp)
+	assert.True(t, extracted, "extractMeta must be called even when _meta is absent")
+}
+
+type stubMetaPropagator struct {
+	onExtract func()
+}
+
+func (p *stubMetaPropagator) InjectMeta(ctx context.Context, meta *mcp.Meta) *mcp.Meta {
+	return meta
+}
+
+func (p *stubMetaPropagator) ExtractMeta(ctx context.Context, _ *mcp.Meta) context.Context {
+	if p.onExtract != nil {
+		p.onExtract()
+	}
+	return ctx
+}
+
 type recordingTracer struct {
 	spans []string
 }

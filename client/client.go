@@ -30,6 +30,7 @@ type Client struct {
 	elicitationHandler ElicitationHandler
 	tracer             tracing.Tracer
 	propagator         tracing.Propagator
+	metaPropagator     tracing.MetaPropagator
 }
 
 // ClientOption configures a Client during construction.
@@ -362,6 +363,7 @@ func (c *Client) ReadResource(
 	ctx context.Context,
 	request mcp.ReadResourceRequest,
 ) (*mcp.ReadResourceResult, error) {
+	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
 	response, err := c.sendRequest(ctx, string(mcp.MethodResourcesRead), request.Params, request.Header)
 	if err != nil {
 		return nil, err
@@ -431,6 +433,7 @@ func (c *Client) GetPrompt(
 	ctx context.Context,
 	request mcp.GetPromptRequest,
 ) (*mcp.GetPromptResult, error) {
+	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
 	response, err := c.sendRequest(ctx, string(mcp.MethodPromptsGet), request.Params, request.Header)
 	if err != nil {
 		return nil, err
@@ -482,6 +485,7 @@ func (c *Client) CallTool(
 	ctx context.Context,
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
+	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
 	response, err := c.sendRequest(ctx, string(mcp.MethodToolsCall), request.Params, request.Header)
 	if err != nil {
 		return nil, err
