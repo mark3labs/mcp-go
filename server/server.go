@@ -1619,11 +1619,11 @@ func matchesTemplate(uri string, template *mcp.URITemplate) bool {
 	return template.Regexp().MatchString(uri)
 }
 
-func (s *MCPServer) handleListPrompts(
-	ctx context.Context,
-	id any,
-	request mcp.ListPromptsRequest,
-) (*mcp.ListPromptsResult, *requestError) {
+// filteredPrompts builds the full prompt candidate set and applies all
+// registered prompt filters. This is the single source of truth for which
+// prompts are visible in a given context, used by both handleListPrompts
+// and handleGetPrompt to guarantee consistent behavior.
+func (s *MCPServer) filteredPrompts(ctx context.Context) []mcp.Prompt {
 	s.promptsMu.RLock()
 	prompts := make([]mcp.Prompt, 0, len(s.prompts))
 	for _, prompt := range s.prompts {
@@ -1644,6 +1644,16 @@ func (s *MCPServer) handleListPrompts(
 		}
 	}
 	s.promptFiltersMu.RUnlock()
+
+	return prompts
+}
+
+func (s *MCPServer) handleListPrompts(
+	ctx context.Context,
+	id any,
+	request mcp.ListPromptsRequest,
+) (*mcp.ListPromptsResult, *requestError) {
+	prompts := s.filteredPrompts(ctx)
 
 	promptsToReturn, nextCursor, err := listByPagination(
 		ctx,
@@ -1684,30 +1694,29 @@ func (s *MCPServer) handleGetPrompt(
 		}
 	}
 
-	// Enforce prompt filters at get time to prevent access to filtered-out prompts.
-	// Without this check, a client that knows a prompt's name could bypass the
-	// visibility restrictions applied in prompts/list.
+	// Enforce prompt filters at get time to prevent access to filtered-out
+	// prompts. Uses the same filteredPrompts helper as prompts/list so that
+	// filters see the identical full candidate set.
 	s.promptFiltersMu.RLock()
-	if len(s.promptFilters) > 0 {
-		s.promptsMu.RLock()
-		prompt, promptExists := s.prompts[request.Params.Name]
-		s.promptsMu.RUnlock()
-		if promptExists {
-			visible := []mcp.Prompt{prompt}
-			for _, filter := range s.promptFilters {
-				visible = filter(ctx, visible)
+	hasFilters := len(s.promptFilters) > 0
+	s.promptFiltersMu.RUnlock()
+	if hasFilters {
+		visible := s.filteredPrompts(ctx)
+		found := false
+		for _, p := range visible {
+			if p.Name == request.Params.Name {
+				found = true
+				break
 			}
-			if len(visible) == 0 {
-				s.promptFiltersMu.RUnlock()
-				return nil, &requestError{
-					id:   id,
-					code: mcp.INVALID_PARAMS,
-					err:  fmt.Errorf("prompt '%s' not found: %w", request.Params.Name, ErrPromptNotFound),
-				}
+		}
+		if !found {
+			return nil, &requestError{
+				id:   id,
+				code: mcp.INVALID_PARAMS,
+				err:  fmt.Errorf("prompt '%s' not found: %w", request.Params.Name, ErrPromptNotFound),
 			}
 		}
 	}
-	s.promptFiltersMu.RUnlock()
 
 	finalHandler := handler
 
@@ -1732,11 +1741,11 @@ func (s *MCPServer) handleGetPrompt(
 	return result, nil
 }
 
-func (s *MCPServer) handleListTools(
-	ctx context.Context,
-	id any,
-	request mcp.ListToolsRequest,
-) (*mcp.ListToolsResult, *requestError) {
+// filteredTools builds the full tool candidate set (global + task + session)
+// and applies all registered tool filters. This is the single source of truth
+// for which tools are visible in a given context, used by both handleListTools
+// and handleToolCall to guarantee consistent behavior.
+func (s *MCPServer) filteredTools(ctx context.Context) []mcp.Tool {
 	// Get the base tools from the server (both regular and task tools)
 	s.toolsMu.RLock()
 	tools := make([]mcp.Tool, 0, len(s.tools)+len(s.taskTools))
@@ -1804,6 +1813,16 @@ func (s *MCPServer) handleListTools(
 		}
 	}
 	s.toolFiltersMu.RUnlock()
+
+	return tools
+}
+
+func (s *MCPServer) handleListTools(
+	ctx context.Context,
+	id any,
+	request mcp.ListToolsRequest,
+) (*mcp.ListToolsResult, *requestError) {
+	tools := s.filteredTools(ctx)
 
 	// Apply pagination
 	toolsToReturn, nextCursor, err := listByPagination(
@@ -1880,17 +1899,22 @@ func (s *MCPServer) handleToolCall(
 		}
 	}
 
-	// Enforce tool filters at call time to prevent access to filtered-out tools.
-	// Without this check, a client that knows a tool's name could bypass the
-	// visibility restrictions applied in tools/list.
+	// Enforce tool filters at call time to prevent access to filtered-out
+	// tools. Uses the same filteredTools helper as tools/list so that filters
+	// see the identical full candidate set (global + task + session tools).
 	s.toolFiltersMu.RLock()
-	if len(s.toolFilters) > 0 {
-		visible := []mcp.Tool{tool.Tool}
-		for _, filter := range s.toolFilters {
-			visible = filter(ctx, visible)
+	hasFilters := len(s.toolFilters) > 0
+	s.toolFiltersMu.RUnlock()
+	if hasFilters {
+		visible := s.filteredTools(ctx)
+		found := false
+		for _, t := range visible {
+			if t.Name == request.Params.Name {
+				found = true
+				break
+			}
 		}
-		if len(visible) == 0 {
-			s.toolFiltersMu.RUnlock()
+		if !found {
 			return nil, &requestError{
 				id:   id,
 				code: mcp.INVALID_PARAMS,
@@ -1898,7 +1922,6 @@ func (s *MCPServer) handleToolCall(
 			}
 		}
 	}
-	s.toolFiltersMu.RUnlock()
 
 	// Validate task support requirements
 	if tool.Tool.Execution != nil && tool.Tool.Execution.TaskSupport == mcp.TaskSupportRequired {
