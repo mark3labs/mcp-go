@@ -71,13 +71,19 @@ type ToolHandlerMiddleware func(ToolHandlerFunc) ToolHandlerFunc
 // ResourceHandlerMiddleware is a middleware function that wraps a ResourceHandlerFunc.
 type ResourceHandlerMiddleware func(ResourceHandlerFunc) ResourceHandlerFunc
 
-// ToolFilterFunc is a function that filters tools based on context, typically using session information.
+// ToolFilterFunc is a function that filters tools based on context, typically
+// using session information. Filters are applied both when listing tools
+// (tools/list) and when calling tools (tools/call), so a filtered-out tool
+// cannot be discovered or invoked.
 type ToolFilterFunc func(ctx context.Context, tools []mcp.Tool) []mcp.Tool
 
 // PromptHandlerMiddleware is a middleware function that wraps a PromptHandlerFunc.
 type PromptHandlerMiddleware func(PromptHandlerFunc) PromptHandlerFunc
 
-// PromptFilterFunc is a function that filters prompts based on context, typically using session information.
+// PromptFilterFunc is a function that filters prompts based on context,
+// typically using session information. Filters are applied both when listing
+// prompts (prompts/list) and when retrieving prompts (prompts/get), so a
+// filtered-out prompt cannot be discovered or accessed.
 type PromptFilterFunc func(ctx context.Context, prompts []mcp.Prompt) []mcp.Prompt
 
 // ServerTool combines a Tool with its ToolHandlerFunc.
@@ -342,7 +348,11 @@ func WithResourceRecovery() ServerOption {
 	})
 }
 
-// WithToolFilter adds a filter function that will be applied to tools before they are returned in list_tools
+// WithToolFilter adds a filter function that controls tool visibility and access.
+// The filter is applied both when listing tools (tools/list) and when calling
+// tools (tools/call). A tool that is filtered out cannot be discovered or
+// invoked, ensuring that filters act as an access control boundary rather than
+// just a visibility hint.
 func WithToolFilter(
 	toolFilter ToolFilterFunc,
 ) ServerOption {
@@ -365,7 +375,10 @@ func WithPromptHandlerMiddleware(
 	}
 }
 
-// WithPromptFilter adds a filter function that will be applied to prompts before they are returned in list_prompts
+// WithPromptFilter adds a filter function that controls prompt visibility and
+// access. The filter is applied both when listing prompts (prompts/list) and
+// when retrieving a prompt (prompts/get). A prompt that is filtered out cannot
+// be discovered or accessed.
 func WithPromptFilter(
 	promptFilter PromptFilterFunc,
 ) ServerOption {
@@ -1671,6 +1684,31 @@ func (s *MCPServer) handleGetPrompt(
 		}
 	}
 
+	// Enforce prompt filters at get time to prevent access to filtered-out prompts.
+	// Without this check, a client that knows a prompt's name could bypass the
+	// visibility restrictions applied in prompts/list.
+	s.promptFiltersMu.RLock()
+	if len(s.promptFilters) > 0 {
+		s.promptsMu.RLock()
+		prompt, promptExists := s.prompts[request.Params.Name]
+		s.promptsMu.RUnlock()
+		if promptExists {
+			visible := []mcp.Prompt{prompt}
+			for _, filter := range s.promptFilters {
+				visible = filter(ctx, visible)
+			}
+			if len(visible) == 0 {
+				s.promptFiltersMu.RUnlock()
+				return nil, &requestError{
+					id:   id,
+					code: mcp.INVALID_PARAMS,
+					err:  fmt.Errorf("prompt '%s' not found: %w", request.Params.Name, ErrPromptNotFound),
+				}
+			}
+		}
+	}
+	s.promptFiltersMu.RUnlock()
+
 	finalHandler := handler
 
 	s.promptMiddlewareMu.RLock()
@@ -1841,6 +1879,26 @@ func (s *MCPServer) handleToolCall(
 			err:  fmt.Errorf("tool '%s' not found: %w", request.Params.Name, ErrToolNotFound),
 		}
 	}
+
+	// Enforce tool filters at call time to prevent access to filtered-out tools.
+	// Without this check, a client that knows a tool's name could bypass the
+	// visibility restrictions applied in tools/list.
+	s.toolFiltersMu.RLock()
+	if len(s.toolFilters) > 0 {
+		visible := []mcp.Tool{tool.Tool}
+		for _, filter := range s.toolFilters {
+			visible = filter(ctx, visible)
+		}
+		if len(visible) == 0 {
+			s.toolFiltersMu.RUnlock()
+			return nil, &requestError{
+				id:   id,
+				code: mcp.INVALID_PARAMS,
+				err:  fmt.Errorf("tool '%s' not found: %w", request.Params.Name, ErrToolNotFound),
+			}
+		}
+	}
+	s.toolFiltersMu.RUnlock()
 
 	// Validate task support requirements
 	if tool.Tool.Execution != nil && tool.Tool.Execution.TaskSupport == mcp.TaskSupportRequired {
