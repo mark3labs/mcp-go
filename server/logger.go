@@ -42,10 +42,7 @@ const (
 // so handlers that read trace context (e.g. the OpenTelemetry slog bridge
 // at go.opentelemetry.io/contrib/bridges/otelslog) automatically annotate
 // records with the active span's TraceID/SpanID when a Tracer is also
-// installed via WithTracer. To route the server's log records into an
-// OpenTelemetry log pipeline, use the convenience wrapper at
-// github.com/mark3labs/mcp-go/otel.WithServerLogging instead of plumbing
-// the bridge by hand.
+// installed via WithTracer.
 func WithLogger(logger *slog.Logger) ServerOption {
 	return func(s *MCPServer) {
 		s.requestLogger = logger
