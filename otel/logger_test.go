@@ -45,7 +45,8 @@ func newTestLoggerProvider(t *testing.T) (log.LoggerProvider, *captureExporter) 
 	t.Helper()
 	exp := &captureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(exp)))
-	t.Cleanup(func() { _ = lp.Shutdown(context.Background()) })
+	// context.Background() is intentional: t.Context() is canceled before t.Cleanup runs.
+	t.Cleanup(func() { _ = lp.Shutdown(context.Background()) }) //nolint:usetesting
 	return lp, exp
 }
 
