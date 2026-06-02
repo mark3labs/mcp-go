@@ -27,6 +27,9 @@ type Server struct {
 	serverOpts        []server.ServerOption
 	clientInfo        mcp.Implementation
 
+	samplingHandler    client.SamplingHandler
+	elicitationHandler client.ElicitationHandler
+
 	cancel func()
 
 	serverReader *io.PipeReader
@@ -135,12 +138,32 @@ func (s *Server) SetClientInfo(info mcp.Implementation) {
 	s.clientInfo = info
 }
 
+// SetSamplingHandler registers a handler that responds to sampling requests
+// (server.RequestSampling) made by tools under test. Must be called before Start().
+// The test client will advertise the sampling capability during initialization so
+// that the server is allowed to issue sampling requests.
+func (s *Server) SetSamplingHandler(h client.SamplingHandler) {
+	s.samplingHandler = h
+}
+
+// SetElicitationHandler registers a handler that responds to elicitation requests
+// (server.RequestElicitation) made by tools under test. Must be called before Start().
+// The test client will advertise the elicitation capability during initialization so
+// that the server is allowed to issue elicitation requests.
+func (s *Server) SetElicitationHandler(h client.ElicitationHandler) {
+	s.elicitationHandler = h
+}
+
 // Start starts the server in a goroutine. Make sure to defer Close() after Start().
 // When using NewServer(), the returned server is already started.
 func (s *Server) Start(ctx context.Context) error {
 	s.wg.Add(1)
 
 	ctx, s.cancel = context.WithCancel(ctx)
+
+	// Capture handler state for the goroutine. Start must be called after any
+	// SetSamplingHandler / SetElicitationHandler calls, so there is no data race.
+	samplingHandler := s.samplingHandler
 
 	// Start the MCP server in a goroutine
 	go func() {
@@ -153,6 +176,13 @@ func (s *Server) Start(ctx context.Context) error {
 		mcpServer.AddResources(s.resources...)
 		mcpServer.AddResourceTemplates(s.resourceTemplates...)
 
+		// Automatically enable sampling on the server when the test supplies a
+		// sampling handler, so tools can call server.RequestSampling without
+		// any additional server-side setup.
+		if samplingHandler != nil {
+			mcpServer.EnableSampling()
+		}
+
 		logger := log.New(&s.logBuffer, "", 0)
 
 		stdioServer := server.NewStdioServer(mcpServer)
@@ -164,11 +194,23 @@ func (s *Server) Start(ctx context.Context) error {
 	}()
 
 	s.transport = transport.NewIO(s.clientReader, s.clientWriter, io.NopCloser(&s.logBuffer))
-	if err := s.transport.Start(ctx); err != nil {
-		return fmt.Errorf("transport.Start(): %w", err)
+
+	// Build client options from registered handlers.
+	var clientOpts []client.ClientOption
+	if s.samplingHandler != nil {
+		clientOpts = append(clientOpts, client.WithSamplingHandler(s.samplingHandler))
+	}
+	if s.elicitationHandler != nil {
+		clientOpts = append(clientOpts, client.WithElicitationHandler(s.elicitationHandler))
 	}
 
-	s.client = client.NewClient(s.transport)
+	s.client = client.NewClient(s.transport, clientOpts...)
+
+	// Use client.Start instead of transport.Start so that bidirectional request
+	// handlers (sampling, elicitation) are registered before the Initialize handshake.
+	if err := s.client.Start(ctx); err != nil {
+		return fmt.Errorf("client.Start(): %w", err)
+	}
 
 	var initReq mcp.InitializeRequest
 	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
