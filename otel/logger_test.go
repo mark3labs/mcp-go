@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/log/global"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
 	otelmcp "github.com/mark3labs/mcp-go/otel"
@@ -42,14 +43,23 @@ func newTestLoggerProvider(t *testing.T) (log.LoggerProvider, *captureExporter) 
 	t.Helper()
 	exp := &captureExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(exp)))
-	t.Cleanup(func() { _ = lp.Shutdown(t.Context()) })
+	t.Cleanup(func() { _ = lp.Shutdown(context.Background()) })
 	return lp, exp
 }
 
 func TestNewSlogLogger_NilProviderUsesGlobal(t *testing.T) {
-	// Just verify the call returns a non-nil logger; the global provider's
-	// records are out-of-scope for this test.
-	require.NotNil(t, otelmcp.NewSlogLogger(nil, "mcp"))
+	lp, exp := newTestLoggerProvider(t)
+
+	prev := global.GetLoggerProvider()
+	global.SetLoggerProvider(lp)
+	t.Cleanup(func() { global.SetLoggerProvider(prev) })
+
+	logger := otelmcp.NewSlogLogger(nil, "mcp")
+	require.NotNil(t, logger)
+
+	logger.LogAttrs(t.Context(), slog.LevelInfo, "mcp.global.probe")
+
+	require.Len(t, exp.snapshot(), 1, "expected global provider to receive the record")
 }
 
 func TestNewSlogLogger_RoutesRecordsToProvider(t *testing.T) {
