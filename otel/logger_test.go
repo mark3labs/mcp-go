@@ -24,7 +24,9 @@ type captureExporter struct {
 func (e *captureExporter) Export(_ context.Context, records []sdklog.Record) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.records = append(e.records, records...)
+	for _, r := range records {
+		e.records = append(e.records, r.Clone())
+	}
 	return nil
 }
 
