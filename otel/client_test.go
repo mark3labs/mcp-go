@@ -174,4 +174,3 @@ func TestRoundTrip_TraceparentSpansClientAndServer(t *testing.T) {
 		assert.Equal(t, mcp.LATEST_PROTOCOL_VERSION, v)
 	}
 }
-

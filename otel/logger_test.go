@@ -30,7 +30,7 @@ func (e *captureExporter) Export(_ context.Context, records []sdklog.Record) err
 	return nil
 }
 
-func (e *captureExporter) Shutdown(context.Context) error  { return nil }
+func (e *captureExporter) Shutdown(context.Context) error   { return nil }
 func (e *captureExporter) ForceFlush(context.Context) error { return nil }
 
 func (e *captureExporter) snapshot() []sdklog.Record {

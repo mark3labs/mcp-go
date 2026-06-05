@@ -205,4 +205,3 @@ func TestServerTracing_UnknownMethodMarksParentErrored(t *testing.T) {
 	assert.Equal(t, "mcp.does/not/exist", spans[0].Name())
 	assert.Equal(t, codes.Error, spans[0].Status().Code)
 }
-

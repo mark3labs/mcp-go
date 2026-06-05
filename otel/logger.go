@@ -15,9 +15,9 @@ import (
 // span's TraceID/SpanID automatically and the slog attributes become OTEL
 // log record attributes.
 //
-// A nil provider falls back to OpenTelemetry's global log provider so
-// callers that have wired their LoggerProvider through otel.SetLoggerProvider
-// don't have to pass it explicitly.
+// A nil provider falls back to OpenTelemetry's global log provider. The
+// lookup is deferred to record-emission time by the bridge, so a provider
+// registered after this call is still picked up.
 func NewSlogLogger(provider otellog.LoggerProvider, scope string) *slog.Logger {
 	var opts []otelslog.Option
 	if provider != nil {
@@ -29,21 +29,22 @@ func NewSlogLogger(provider otellog.LoggerProvider, scope string) *slog.Logger {
 // WithServerLogging installs an OTEL-bridged *slog.Logger on the server.
 // Use this when you want the server's mcp.request / mcp.tool emission
 // (see server.WithLogger) to flow through OTEL's log pipeline alongside
-// the spans and metrics emitted via WithServerTracing / WithServerMetrics.
+// the spans emitted via WithServerTracing.
 //
 // The scope is passed to the slog bridge as the OTEL instrumentation
 // scope (typically "github.com/mark3labs/mcp-go" or the host service
-// name). A nil provider falls back to the global OTEL log provider.
+// name). A nil provider falls back to the global OTEL log provider;
+// the global lookup happens at record-emission time, so a provider
+// registered after this option is applied is still picked up.
 //
 // Equivalent to:
 //
 //	server.WithLogger(otel.NewSlogLogger(provider, scope))
 //
-// Provided so the otel adapter exposes one option per signal:
+// Example:
 //
 //	srv := server.NewMCPServer("svc", "1.0",
 //	    otel.WithServerTracing(tp.Tracer("mcp")),
-//	    otel.WithServerMetrics(mp.Meter("mcp")),
 //	    otel.WithServerLogging(lp, "mcp"),
 //	)
 //

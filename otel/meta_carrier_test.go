@@ -101,10 +101,10 @@ func TestMetaPropagator_ExtractPopulatesContext(t *testing.T) {
 // TestMetaPropagator_NilEdgeCases checks nil-safety for both extract and inject.
 func TestMetaPropagator_NilEdgeCases(t *testing.T) {
 	tests := []struct {
-		name           string
-		propagator     propagation.TextMapPropagator
-		wantNonNilCtx  bool
-		wantNilMeta    bool
+		name          string
+		propagator    propagation.TextMapPropagator
+		wantNonNilCtx bool
+		wantNilMeta   bool
 	}{
 		{
 			name:          "extract nil meta returns non-nil context",
@@ -284,4 +284,3 @@ func splitTraceparent(s string) []string {
 	parts = append(parts, s[start:])
 	return parts
 }
-
