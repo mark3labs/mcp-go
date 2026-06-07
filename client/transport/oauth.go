@@ -577,6 +577,13 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 	if h.metadataFetchErr != nil {
 		return nil, h.metadataFetchErr
 	}
+	// A "no-op" discovery (e.g. a non-2xx response handled by
+	// fetchMetadataFromURL) leaves serverMetadata nil without recording an
+	// error. Returning (nil, nil) here makes every caller dereference a nil
+	// *AuthServerMetadata and panic, so surface an explicit error instead.
+	if h.serverMetadata == nil {
+		return nil, fmt.Errorf("authorization server metadata unavailable: discovery returned no metadata")
+	}
 	return h.serverMetadata, nil
 }
 
