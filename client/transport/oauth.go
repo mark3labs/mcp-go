@@ -577,6 +577,9 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 	if h.metadataFetchErr != nil {
 		return nil, h.metadataFetchErr
 	}
+	if h.serverMetadata == nil {
+		return nil, errors.New("server metadata not available")
+	}
 	return h.serverMetadata, nil
 }
 
