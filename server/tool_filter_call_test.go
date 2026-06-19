@@ -394,6 +394,56 @@ func TestToolFilterCallTimeNoFilters(t *testing.T) {
 	assert.Equal(t, "works", textContent.Text)
 }
 
+func TestToolFilterCallTimeFiltersOnlyRequestedTool(t *testing.T) {
+	var filterInputs [][]string
+	allowVisibleFilter := func(ctx context.Context, tools []mcp.Tool) []mcp.Tool {
+		names := make([]string, 0, len(tools))
+		filtered := make([]mcp.Tool, 0, len(tools))
+		for _, tool := range tools {
+			names = append(names, tool.Name)
+			if strings.HasPrefix(tool.Name, "visible-") {
+				filtered = append(filtered, tool)
+			}
+		}
+		filterInputs = append(filterInputs, names)
+		return filtered
+	}
+
+	server := NewMCPServer("test-server", "1.0.0",
+		WithToolCapabilities(true),
+		WithToolFilter(allowVisibleFilter),
+	)
+
+	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("ok:" + request.Params.Name), nil
+	}
+
+	server.AddTool(mcp.NewTool("visible-tool-1"), handler)
+	server.AddTool(mcp.NewTool("visible-tool-2"), handler)
+	server.AddTool(mcp.NewTool("visible-tool-3"), handler)
+	server.AddTool(mcp.NewTool("hidden-tool-1"), handler)
+	server.AddTool(mcp.NewTool("hidden-tool-2"), handler)
+	server.AddTool(mcp.NewTool("hidden-tool-3"), handler)
+
+	callRequest := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "visible-tool-3",
+		},
+	}
+	requestBytes, err := json.Marshal(callRequest)
+	require.NoError(t, err)
+
+	response := server.HandleMessage(t.Context(), requestBytes)
+	_, ok := response.(mcp.JSONRPCResponse)
+	require.True(t, ok, "Expected success for visible tool, got %T", response)
+
+	require.Len(t, filterInputs, 1)
+	assert.Equal(t, []string{"visible-tool-3"}, filterInputs[0])
+}
+
 // TestToolFilterCallTimeErrorType verifies that the error returned for a
 // filtered-out tool contains ErrToolNotFound, allowing callers to use
 // errors.Is for programmatic inspection via hooks.
@@ -552,6 +602,61 @@ func TestToolFilterCallTimeContextAware(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPromptFilterGetTimeFiltersOnlyRequestedPrompt(t *testing.T) {
+	var filterInputs [][]string
+	allowVisibleFilter := func(ctx context.Context, prompts []mcp.Prompt) []mcp.Prompt {
+		names := make([]string, 0, len(prompts))
+		filtered := make([]mcp.Prompt, 0, len(prompts))
+		for _, prompt := range prompts {
+			names = append(names, prompt.Name)
+			if strings.HasPrefix(prompt.Name, "visible-") {
+				filtered = append(filtered, prompt)
+			}
+		}
+		filterInputs = append(filterInputs, names)
+		return filtered
+	}
+
+	server := NewMCPServer("test-server", "1.0.0",
+		WithPromptCapabilities(true),
+		WithPromptFilter(allowVisibleFilter),
+	)
+
+	handler := func(ctx context.Context, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		return &mcp.GetPromptResult{
+			Messages: []mcp.PromptMessage{
+				{
+					Role:    mcp.RoleUser,
+					Content: mcp.TextContent{Type: "text", Text: "result:" + request.Params.Name},
+				},
+			},
+		}, nil
+	}
+
+	server.AddPrompt(mcp.Prompt{Name: "visible-prompt-1"}, handler)
+	server.AddPrompt(mcp.Prompt{Name: "visible-prompt-2"}, handler)
+	server.AddPrompt(mcp.Prompt{Name: "hidden-prompt-1"}, handler)
+	server.AddPrompt(mcp.Prompt{Name: "hidden-prompt-2"}, handler)
+
+	getRequest := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "prompts/get",
+		"params": map[string]any{
+			"name": "visible-prompt-2",
+		},
+	}
+	requestBytes, err := json.Marshal(getRequest)
+	require.NoError(t, err)
+
+	response := server.HandleMessage(t.Context(), requestBytes)
+	_, ok := response.(mcp.JSONRPCResponse)
+	require.True(t, ok, "Expected success for visible prompt, got %T", response)
+
+	require.Len(t, filterInputs, 1)
+	assert.Equal(t, []string{"visible-prompt-2"}, filterInputs[0])
 }
 
 // TestPromptFilterGetTimeEnforcement verifies that prompt filters are enforced
