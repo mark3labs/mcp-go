@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHTTPClient(t *testing.T) {
@@ -201,6 +203,102 @@ func TestHTTPClient(t *testing.T) {
 		})
 
 	})
+}
+
+func TestHTTPClientDoesNotForwardServerReceivedHeaders(t *testing.T) {
+	backendServer := server.NewMCPServer(
+		"backend",
+		"1.0.0",
+		server.WithToolCapabilities(true),
+	)
+
+	var received http.Header
+	backendServer.AddTool(
+		mcp.NewTool("echo"),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			received = request.Header.Clone()
+			return mcp.NewToolResultText("ok"), nil
+		},
+	)
+
+	backendHTTP := server.NewTestStreamableHTTPServer(backendServer)
+	defer backendHTTP.Close()
+
+	backendClient, err := NewStreamableHttpClient(backendHTTP.URL)
+	require.NoError(t, err)
+	defer backendClient.Close()
+	require.NoError(t, backendClient.Start(t.Context()))
+	_, err = backendClient.Initialize(t.Context(), mcp.InitializeRequest{
+		Params: mcp.InitializeParams{
+			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+			ClientInfo: mcp.Implementation{
+				Name:    "proxy-client",
+				Version: "1.0.0",
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	proxyServer := server.NewMCPServer(
+		"proxy",
+		"1.0.0",
+		server.WithToolCapabilities(true),
+	)
+	proxyServer.AddTool(
+		mcp.NewTool("echo"),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return backendClient.CallTool(ctx, request)
+		},
+	)
+	proxyHTTP := server.NewTestStreamableHTTPServer(proxyServer)
+	defer proxyHTTP.Close()
+
+	endClient, err := NewStreamableHttpClient(proxyHTTP.URL)
+	require.NoError(t, err)
+	defer endClient.Close()
+	require.NoError(t, endClient.Start(t.Context()))
+	_, err = endClient.Initialize(t.Context(), mcp.InitializeRequest{
+		Params: mcp.InitializeParams{
+			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+			ClientInfo: mcp.Implementation{
+				Name:    "end-client",
+				Version: "1.0.0",
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = endClient.CallTool(t.Context(), mcp.CallToolRequest{
+		Header: http.Header{
+			"Accept-Encoding": {"gzip, deflate"},
+			"Authorization":   {"Bearer inbound-token"},
+			"Cookie":          {"session=inbound"},
+			"X-Proxy-Auth":    {"proxy-secret"},
+		},
+		Params: mcp.CallToolParams{
+			Name: "echo",
+		},
+	})
+	require.NoError(t, err)
+
+	require.NotContains(t, received.Values("Accept-Encoding"), "gzip, deflate")
+	require.Empty(t, received.Values("Authorization"))
+	require.Empty(t, received.Values("Cookie"))
+	require.Empty(t, received.Values("X-Proxy-Auth"))
+	require.Equal(t, "application/json", received.Get("Content-Type"))
+
+	explicitRequest := mcp.CallToolRequest{
+		Header: http.Header{
+			"X-Backend-Auth": {"allowed"},
+		},
+		Params: mcp.CallToolParams{
+			Name: "echo",
+		},
+	}
+
+	_, err = backendClient.CallTool(t.Context(), explicitRequest)
+	require.NoError(t, err)
+	require.Equal(t, "allowed", received.Get("X-Backend-Auth"))
 }
 
 type SafeMap struct {

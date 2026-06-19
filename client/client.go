@@ -193,6 +193,16 @@ func (c *Client) sendRequest(
 	return &response.Result, nil
 }
 
+func outboundHeader(header http.Header, requestMethod string) http.Header {
+	// A typed request with Method set was decoded from an inbound JSON-RPC
+	// message. Its Header contains received HTTP metadata, not opt-in outbound
+	// headers for a new client call.
+	if requestMethod != "" {
+		return nil
+	}
+	return header
+}
+
 // Initialize negotiates with the server.
 // Must be called after Start, and before any request methods.
 func (c *Client) Initialize(
@@ -232,7 +242,7 @@ func (c *Client) Initialize(
 		params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
 	}
 
-	response, err := c.sendRequest(ctx, "initialize", params, request.Header)
+	response, err := c.sendRequest(ctx, "initialize", params, outboundHeader(request.Header, request.Method))
 	if err != nil {
 		return nil, err
 	}
@@ -364,7 +374,7 @@ func (c *Client) ReadResource(
 	request mcp.ReadResourceRequest,
 ) (*mcp.ReadResourceResult, error) {
 	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
-	response, err := c.sendRequest(ctx, string(mcp.MethodResourcesRead), request.Params, request.Header)
+	response, err := c.sendRequest(ctx, string(mcp.MethodResourcesRead), request.Params, outboundHeader(request.Header, request.Method))
 	if err != nil {
 		return nil, err
 	}
@@ -377,7 +387,7 @@ func (c *Client) Subscribe(
 	ctx context.Context,
 	request mcp.SubscribeRequest,
 ) error {
-	_, err := c.sendRequest(ctx, string(mcp.MethodResourcesSubscribe), request.Params, request.Header)
+	_, err := c.sendRequest(ctx, string(mcp.MethodResourcesSubscribe), request.Params, outboundHeader(request.Header, request.Method))
 	return err
 }
 
@@ -386,7 +396,7 @@ func (c *Client) Unsubscribe(
 	ctx context.Context,
 	request mcp.UnsubscribeRequest,
 ) error {
-	_, err := c.sendRequest(ctx, string(mcp.MethodResourcesUnsubscribe), request.Params, request.Header)
+	_, err := c.sendRequest(ctx, string(mcp.MethodResourcesUnsubscribe), request.Params, outboundHeader(request.Header, request.Method))
 	return err
 }
 
@@ -434,7 +444,7 @@ func (c *Client) GetPrompt(
 	request mcp.GetPromptRequest,
 ) (*mcp.GetPromptResult, error) {
 	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
-	response, err := c.sendRequest(ctx, string(mcp.MethodPromptsGet), request.Params, request.Header)
+	response, err := c.sendRequest(ctx, string(mcp.MethodPromptsGet), request.Params, outboundHeader(request.Header, request.Method))
 	if err != nil {
 		return nil, err
 	}
@@ -486,7 +496,7 @@ func (c *Client) CallTool(
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
-	response, err := c.sendRequest(ctx, string(mcp.MethodToolsCall), request.Params, request.Header)
+	response, err := c.sendRequest(ctx, string(mcp.MethodToolsCall), request.Params, outboundHeader(request.Header, request.Method))
 	if err != nil {
 		return nil, err
 	}
@@ -499,7 +509,7 @@ func (c *Client) SetLevel(
 	ctx context.Context,
 	request mcp.SetLevelRequest,
 ) error {
-	_, err := c.sendRequest(ctx, "logging/setLevel", request.Params, request.Header)
+	_, err := c.sendRequest(ctx, "logging/setLevel", request.Params, outboundHeader(request.Header, request.Method))
 	return err
 }
 
@@ -508,7 +518,7 @@ func (c *Client) Complete(
 	ctx context.Context,
 	request mcp.CompleteRequest,
 ) (*mcp.CompleteResult, error) {
-	response, err := c.sendRequest(ctx, "completion/complete", request.Params, request.Header)
+	response, err := c.sendRequest(ctx, "completion/complete", request.Params, outboundHeader(request.Header, request.Method))
 	if err != nil {
 		return nil, err
 	}
@@ -708,7 +718,7 @@ func listByPage[T any](
 	header http.Header,
 	method string,
 ) (*T, error) {
-	response, err := client.sendRequest(ctx, method, request.Params, header)
+	response, err := client.sendRequest(ctx, method, request.Params, outboundHeader(header, request.Method))
 	if err != nil {
 		return nil, err
 	}
@@ -756,7 +766,7 @@ func (c *Client) CancelTask(
 	ctx context.Context,
 	request mcp.CancelTaskRequest,
 ) (*mcp.CancelTaskResult, error) {
-	response, err := c.sendRequest(ctx, string(mcp.MethodTasksCancel), request.Params, request.Header)
+	response, err := c.sendRequest(ctx, string(mcp.MethodTasksCancel), request.Params, outboundHeader(request.Header, request.Method))
 	if err != nil {
 		return nil, err
 	}
@@ -769,7 +779,7 @@ func (c *Client) ListTasks(
 	ctx context.Context,
 	request mcp.ListTasksRequest,
 ) (*mcp.ListTasksResult, error) {
-	response, err := c.sendRequest(ctx, string(mcp.MethodTasksList), request.Params, request.Header)
+	response, err := c.sendRequest(ctx, string(mcp.MethodTasksList), request.Params, outboundHeader(request.Header, request.Method))
 	if err != nil {
 		return nil, err
 	}
@@ -782,7 +792,7 @@ func (c *Client) TaskResult(
 	ctx context.Context,
 	request mcp.TaskResultRequest,
 ) (*mcp.TaskResultResult, error) {
-	response, err := c.sendRequest(ctx, string(mcp.MethodTasksResult), request.Params, request.Header)
+	response, err := c.sendRequest(ctx, string(mcp.MethodTasksResult), request.Params, outboundHeader(request.Header, request.Method))
 	if err != nil {
 		return nil, err
 	}
@@ -795,7 +805,7 @@ func (c *Client) GetTask(
 	ctx context.Context,
 	request mcp.GetTaskRequest,
 ) (*mcp.GetTaskResult, error) {
-	response, err := c.sendRequest(ctx, string(mcp.MethodTasksGet), request.Params, request.Header)
+	response, err := c.sendRequest(ctx, string(mcp.MethodTasksGet), request.Params, outboundHeader(request.Header, request.Method))
 	if err != nil {
 		return nil, err
 	}
