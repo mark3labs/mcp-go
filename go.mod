@@ -9,6 +9,7 @@ require (
 	github.com/spf13/cast v1.7.1
 	github.com/stretchr/testify v1.11.1
 	github.com/yosida95/uritemplate/v3 v3.0.2
+	golang.org/x/time v0.15.0
 )
 
 require (
