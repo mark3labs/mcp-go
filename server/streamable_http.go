@@ -959,7 +959,17 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w HTTPResponseWriter, r *H
 		if err := json.Unmarshal(responseMessage.Error, &jsonrpcError); err != nil {
 			response.err = fmt.Errorf("failed to parse error: %v", err)
 		} else {
-			response.err = fmt.Errorf("sampling error %d: %s", jsonrpcError.Code, jsonrpcError.Message)
+			method := mcp.MethodSamplingCreateMessage
+			if sessionInterface, ok := s.activeSessions.Load(sessionID); ok {
+				if session, ok := sessionInterface.(*streamableHttpSession); ok {
+					if pendingInterface, exists := session.samplingRequests.Load(requestID); exists {
+						if pending, ok := pendingInterface.(pendingClientRequest); ok {
+							method = pending.method
+						}
+					}
+				}
+			}
+			response.err = fmt.Errorf("%s error %d: %s", method, jsonrpcError.Code, jsonrpcError.Message)
 		}
 	} else if responseMessage.Result != nil {
 		// Store the result to be unmarshaled later
@@ -997,17 +1007,19 @@ func (s *StreamableHTTPServer) deliverSamplingResponse(w HTTPResponseWriter, ses
 	}
 
 	// Look up the dedicated response channel for this specific request
-	responseChannelInterface, exists := session.samplingRequests.Load(response.requestID)
+	pendingInterface, exists := session.samplingRequests.Load(response.requestID)
 	if !exists {
 		writeHTTPError(w, "No pending sampling request found for the given request ID", http.StatusBadRequest)
 		return fmt.Errorf("no pending request found for session %s, request %d", sessionID, response.requestID)
 	}
 
-	responseChan, ok := responseChannelInterface.(chan samplingResponseItem)
+	pending, ok := pendingInterface.(pendingClientRequest)
 	if !ok {
 		writeHTTPError(w, "Failed to deliver response", http.StatusInternalServerError)
-		return fmt.Errorf("invalid response channel type for session %s, request %d", sessionID, response.requestID)
+		return fmt.Errorf("invalid pending request type for session %s, request %d", sessionID, response.requestID)
 	}
+
+	responseChan := pending.response
 
 	// Attempt to deliver the response with timeout to prevent indefinite blocking
 	select {
@@ -1270,6 +1282,11 @@ type samplingRequestItem struct {
 	response  chan samplingResponseItem
 }
 
+type pendingClientRequest struct {
+	response chan samplingResponseItem
+	method   mcp.MCPMethod
+}
+
 type samplingResponseItem struct {
 	requestID int64
 	result    json.RawMessage
@@ -1410,7 +1427,10 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 	}
 
 	// Store the pending request
-	s.samplingRequests.Store(requestID, responseChan)
+	s.samplingRequests.Store(requestID, pendingClientRequest{
+		response: responseChan,
+		method:   mcp.MethodSamplingCreateMessage,
+	})
 	defer s.samplingRequests.Delete(requestID)
 
 	// Send the sampling request via the channel (non-blocking)
@@ -1467,7 +1487,10 @@ func (s *streamableHttpSession) ListRoots(ctx context.Context, request mcp.ListR
 	}
 
 	// Store the pending request
-	s.samplingRequests.Store(requestID, responseChan)
+	s.samplingRequests.Store(requestID, pendingClientRequest{
+		response: responseChan,
+		method:   mcp.MethodListRoots,
+	})
 	defer s.samplingRequests.Delete(requestID)
 
 	// Send the list roots request via the channel (non-blocking)
@@ -1512,7 +1535,10 @@ func (s *streamableHttpSession) RequestElicitation(ctx context.Context, request 
 	}
 
 	// Store the pending request
-	s.samplingRequests.Store(requestID, responseChan)
+	s.samplingRequests.Store(requestID, pendingClientRequest{
+		response: responseChan,
+		method:   mcp.MethodElicitationCreate,
+	})
 	defer s.samplingRequests.Delete(requestID)
 
 	// Send the sampling request via the channel (non-blocking)

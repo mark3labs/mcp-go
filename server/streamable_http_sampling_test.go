@@ -214,3 +214,68 @@ func TestStreamableHTTPServer_SamplingQueueFull(t *testing.T) {
 		t.Errorf("Expected queue full error, got: %v", err)
 	}
 }
+
+// TestStreamableHTTPServer_ClientRequestErrorIncludesMethod verifies JSON-RPC client
+// errors include the originating MCP method (e.g. elicitation/create vs sampling/createMessage).
+func TestStreamableHTTPServer_ClientRequestErrorIncludesMethod(t *testing.T) {
+	mcpServer := NewMCPServer("test-server", "1.0.0")
+	mcpServer.EnableSampling()
+
+	httpServer := NewStreamableHTTPServer(mcpServer, WithStateLess(true))
+	testServer := httptest.NewServer(httpServer)
+	defer testServer.Close()
+
+	sessionID := "test-session-elicitation-error"
+	session := newStreamableHttpSession(sessionID, httpServer.sessionTools, httpServer.sessionResources, httpServer.sessionResourceTemplates, httpServer.sessionLogLevels)
+	httpServer.activeSessions.Store(sessionID, session)
+
+	requestID := int64(99)
+	responseChan := make(chan samplingResponseItem, 1)
+	session.samplingRequests.Store(requestID, pendingClientRequest{
+		response: responseChan,
+		method:   mcp.MethodElicitationCreate,
+	})
+
+	body := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      requestID,
+		"error": map[string]any{
+			"code":    -32601,
+			"message": "Method not found",
+		},
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("Failed to marshal body: %v", err)
+	}
+
+	req, err := http.NewRequest("POST", testServer.URL, bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Mcp-Session-Id", sessionID)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Failed to send request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("Expected status %d, got %d", http.StatusAccepted, resp.StatusCode)
+	}
+
+	select {
+	case response := <-responseChan:
+		if response.err == nil {
+			t.Fatal("Expected error response, got nil")
+		}
+		expected := "elicitation/create error -32601: Method not found"
+		if response.err.Error() != expected {
+			t.Errorf("Expected error %q, got %q", expected, response.err.Error())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for elicitation error response")
+	}
+}
