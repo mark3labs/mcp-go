@@ -141,11 +141,10 @@ type rateLimitStore struct {
 
 	global *rate.Limiter // nil when GlobalRPS <= 0
 
-	mu         sync.Mutex
-	entries    map[string]*rateLimitEntry
-	reaperOn   bool             // whether a reaper goroutine is currently running
-	reaperStop chan struct{}    // closed to ask the running reaper to exit
-	now        func() time.Time // injectable clock; defaults to time.Now
+	mu       sync.Mutex
+	entries  map[string]*rateLimitEntry
+	reaperOn bool             // whether a reaper goroutine is currently running
+	now      func() time.Time // injectable clock; defaults to time.Now
 }
 
 func newRateLimitStore(opts RateLimitOpts) *rateLimitStore {
@@ -259,25 +258,19 @@ func (st *rateLimitStore) maybeStartReaperLocked() {
 		return
 	}
 	st.reaperOn = true
-	st.reaperStop = make(chan struct{})
-	go st.reap(st.reapInterval, st.staleTTL, st.reaperStop)
+	go st.reap(st.reapInterval, st.staleTTL)
 }
 
 // reap periodically evicts idle limiters. It exits once the store is empty so an
 // idle server retains no background goroutine; touch restarts it when a new key
-// appears. The stop channel lets a future store owner halt it explicitly.
-func (st *rateLimitStore) reap(interval, ttl time.Duration, stop <-chan struct{}) {
+// appears.
+func (st *rateLimitStore) reap(interval, ttl time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-stop:
-			return
-		case <-ticker.C:
-			if st.sweep(ttl) {
-				return // store drained: stop until traffic resumes
-			}
+	for range ticker.C {
+		if st.sweep(ttl) {
+			return // store drained: stop until traffic resumes
 		}
 	}
 }
