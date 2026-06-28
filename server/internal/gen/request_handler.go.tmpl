@@ -80,9 +80,12 @@ func (s *MCPServer) HandleMessage(
 		headers = make(http.Header)
 	}
 
+	taskExecutionCtx := context.WithoutCancel(ctx)
+
 	// Wrap context with cancel for in-flight request cancellation (MCP spec: notifications/cancelled)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	ctx = context.WithValue(ctx, taskExecutionParentContext, taskExecutionCtx)
 
 	// Store cancel func so notifications/cancelled can cancel this request.
 	// Use session-scoped keys to prevent cross-session request ID collisions.
