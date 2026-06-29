@@ -294,6 +294,96 @@ func TestToolAnnotations(t *testing.T) {
 	})
 }
 
+func TestToolAnnotationsMarshalJSON(t *testing.T) {
+	rawSchema := json.RawMessage(`{"type":"object","properties":{}}`)
+
+	tests := []struct {
+		name            string
+		tool            Tool
+		wantAnnotations bool
+		wantContains    string
+		wantNotContains string
+		checkAnnotations func(t *testing.T, annotations map[string]any)
+	}{
+		{
+			name:            "NewTool includes default annotations",
+			tool:            NewTool("test", WithDescription("desc")),
+			wantAnnotations: true,
+			checkAnnotations: func(t *testing.T, annotations map[string]any) {
+				t.Helper()
+				assert.Equal(t, false, annotations["readOnlyHint"])
+				assert.Equal(t, true, annotations["destructiveHint"])
+			},
+		},
+		{
+			name: "WithoutDefaultAnnotations omits annotations field",
+			tool: NewTool("test",
+				WithoutDefaultAnnotations(),
+				WithDescription("desc"),
+			),
+			wantAnnotations: false,
+			wantNotContains: `"annotations"`,
+		},
+		{
+			name: "WithoutDefaultAnnotations with explicit hint includes annotations",
+			tool: NewTool("test",
+				WithoutDefaultAnnotations(),
+				WithReadOnlyHintAnnotation(true),
+			),
+			wantAnnotations: true,
+			checkAnnotations: func(t *testing.T, annotations map[string]any) {
+				t.Helper()
+				assert.Equal(t, true, annotations["readOnlyHint"])
+				assert.NotContains(t, annotations, "destructiveHint")
+			},
+		},
+		{
+			name:            "NewToolWithRawSchema omits annotations when unset",
+			tool:            NewToolWithRawSchema("raw-tool", "Raw tool", rawSchema),
+			wantAnnotations: false,
+			wantNotContains: `"annotations"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(tt.tool)
+			require.NoError(t, err)
+
+			if tt.wantContains != "" {
+				assert.Contains(t, string(data), tt.wantContains)
+			}
+			if tt.wantNotContains != "" {
+				assert.NotContains(t, string(data), tt.wantNotContains)
+			}
+
+			var parsed map[string]any
+			require.NoError(t, json.Unmarshal(data, &parsed))
+
+			annotations, ok := parsed["annotations"].(map[string]any)
+			if tt.wantAnnotations {
+				require.True(t, ok)
+				if tt.checkAnnotations != nil {
+					tt.checkAnnotations(t, annotations)
+				}
+				return
+			}
+
+			_, hasAnnotations := parsed["annotations"]
+			assert.False(t, hasAnnotations)
+		})
+	}
+
+	t.Run("zero-value ToolAnnotation HasAny is false", func(t *testing.T) {
+		assert.False(t, ToolAnnotation{}.HasAny())
+	})
+
+	t.Run("ToolAnnotation HasAny detects explicit fields", func(t *testing.T) {
+		assert.True(t, ToolAnnotation{Title: "x"}.HasAny())
+		assert.True(t, ToolAnnotation{ReadOnlyHint: ToBoolPtr(false)}.HasAny())
+	})
+}
+
 // Test Tool with both InputSchema and OutputSchema
 
 func TestToolWithBothSchemas(t *testing.T) {
