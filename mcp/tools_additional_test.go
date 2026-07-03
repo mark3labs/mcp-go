@@ -231,6 +231,28 @@ func TestArrayOptions(t *testing.T) {
 // Test Tool Annotations
 
 func TestToolAnnotations(t *testing.T) {
+	t.Run("WithoutDefaultAnnotations", func(t *testing.T) {
+		tool := NewTool("test", WithoutDefaultAnnotations())
+		data, err := json.Marshal(tool)
+		require.NoError(t, err)
+
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(data, &result))
+		assert.NotContains(t, result, "annotations")
+	})
+
+	t.Run("WithoutDefaultAnnotationsWithExplicitAnnotation", func(t *testing.T) {
+		tool := NewTool("test", WithoutDefaultAnnotations(), WithReadOnlyHintAnnotation(true))
+		data, err := json.Marshal(tool)
+		require.NoError(t, err)
+
+		var result map[string]any
+		require.NoError(t, json.Unmarshal(data, &result))
+		annotations, ok := result["annotations"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, true, annotations["readOnlyHint"])
+	})
+
 	t.Run("WithTitleAnnotation", func(t *testing.T) {
 		tool := NewTool("test")
 		opt := WithTitleAnnotation("Test Tool")
