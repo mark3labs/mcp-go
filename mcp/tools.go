@@ -45,6 +45,9 @@ type CallToolResult struct {
 	// For backwards compatibility, a tool that returns structured content SHOULD also return
 	// functionally equivalent unstructured content.
 	StructuredContent any `json:"structuredContent,omitempty"`
+	// RawStructuredContent preserves the original JSON bytes for structuredContent when
+	// unmarshaled from a wire message.
+	RawStructuredContent json.RawMessage `json:"-"`
 	// Whether the tool call ended in an error.
 	//
 	// If not set, this is assumed to be false (the call was successful).
@@ -63,6 +66,9 @@ type CallToolParams struct {
 	Arguments any         `json:"arguments,omitempty"`
 	Meta      *Meta       `json:"_meta,omitempty"`
 	Task      *TaskParams `json:"task,omitempty"`
+	// RawArguments preserves the original JSON bytes for arguments when unmarshaled
+	// from a wire message. This avoids precision loss for integers above 2^53.
+	RawArguments json.RawMessage `json:"-"`
 }
 
 // GetArguments returns the Arguments as map[string]any for backward compatibility
@@ -74,9 +80,12 @@ func (r CallToolRequest) GetArguments() map[string]any {
 	return nil
 }
 
-// GetRawArguments returns the Arguments as-is without type conversion
-// This allows users to access the raw arguments in any format
+// GetRawArguments returns the original arguments payload when available.
+// For JSON-RPC requests this is json.RawMessage; otherwise it falls back to Arguments.
 func (r CallToolRequest) GetRawArguments() any {
+	if len(r.Params.RawArguments) > 0 {
+		return r.Params.RawArguments
+	}
 	return r.Params.Arguments
 }
 
@@ -85,6 +94,10 @@ func (r CallToolRequest) GetRawArguments() any {
 func (r CallToolRequest) BindArguments(target any) error {
 	if target == nil || reflect.ValueOf(target).Kind() != reflect.Ptr {
 		return fmt.Errorf("target must be a non-nil pointer")
+	}
+
+	if len(r.Params.RawArguments) > 0 {
+		return json.Unmarshal(r.Params.RawArguments, target)
 	}
 
 	// Fast-path: already raw JSON
@@ -109,6 +122,53 @@ func (r CallToolRequest) GetString(key string, defaultValue string) string {
 		}
 	}
 	return defaultValue
+}
+
+// UnmarshalJSON preserves the original arguments JSON while also populating Arguments.
+func (p *CallToolParams) UnmarshalJSON(data []byte) error {
+	type params struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+		Meta      *Meta           `json:"_meta,omitempty"`
+		Task      *TaskParams     `json:"task,omitempty"`
+	}
+
+	var raw params
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	p.Name = raw.Name
+	p.Meta = raw.Meta
+	p.Task = raw.Task
+
+	if len(raw.Arguments) == 0 {
+		return nil
+	}
+
+	p.RawArguments = append(json.RawMessage(nil), raw.Arguments...)
+	return json.Unmarshal(raw.Arguments, &p.Arguments)
+}
+
+// MarshalJSON re-emits preserved raw arguments when available.
+func (p CallToolParams) MarshalJSON() ([]byte, error) {
+	if len(p.RawArguments) > 0 {
+		type params struct {
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments,omitempty"`
+			Meta      *Meta           `json:"_meta,omitempty"`
+			Task      *TaskParams     `json:"task,omitempty"`
+		}
+		return json.Marshal(params{
+			Name:      p.Name,
+			Arguments: p.RawArguments,
+			Meta:      p.Meta,
+			Task:      p.Task,
+		})
+	}
+
+	type alias CallToolParams
+	return json.Marshal(alias(p))
 }
 
 // RequireString returns a string argument by key, or an error if not found or not a string
@@ -489,7 +549,9 @@ func (r CallToolResult) MarshalJSON() ([]byte, error) {
 	m["content"] = content
 
 	// Marshal StructuredContent if present
-	if r.StructuredContent != nil {
+	if len(r.RawStructuredContent) > 0 {
+		m["structuredContent"] = json.RawMessage(r.RawStructuredContent)
+	} else if r.StructuredContent != nil {
 		m["structuredContent"] = r.StructuredContent
 	}
 
@@ -503,45 +565,36 @@ func (r CallToolResult) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements custom JSON unmarshaling for CallToolResult
 func (r *CallToolResult) UnmarshalJSON(data []byte) error {
-	var raw map[string]any
+	type result struct {
+		Meta                *Meta             `json:"_meta,omitempty"`
+		Content             []json.RawMessage `json:"content"`
+		StructuredContent   json.RawMessage   `json:"structuredContent,omitempty"`
+		IsError             bool              `json:"isError,omitempty"`
+	}
+
+	var raw result
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 
-	// Unmarshal Meta
-	if meta, ok := raw["_meta"]; ok {
-		if metaMap, ok := meta.(map[string]any); ok {
-			r.Meta = NewMetaFromMap(metaMap)
-		}
-	}
+	r.Meta = raw.Meta
+	r.IsError = raw.IsError
 
-	// Unmarshal Content array
-	if contentRaw, ok := raw["content"]; ok {
-		if contentArray, ok := contentRaw.([]any); ok {
-			r.Content = make([]Content, len(contentArray))
-			for i, item := range contentArray {
-				itemBytes, err := json.Marshal(item)
-				if err != nil {
-					return err
-				}
-				content, err := UnmarshalContent(itemBytes)
-				if err != nil {
-					return err
-				}
-				r.Content[i] = content
+	if len(raw.Content) > 0 {
+		r.Content = make([]Content, len(raw.Content))
+		for i, item := range raw.Content {
+			content, err := UnmarshalContent(item)
+			if err != nil {
+				return err
 			}
+			r.Content[i] = content
 		}
 	}
 
-	// Unmarshal StructuredContent if present
-	if structured, ok := raw["structuredContent"]; ok {
-		r.StructuredContent = structured
-	}
-
-	// Unmarshal IsError
-	if isError, ok := raw["isError"]; ok {
-		if isErrorBool, ok := isError.(bool); ok {
-			r.IsError = isErrorBool
+	if len(raw.StructuredContent) > 0 {
+		r.RawStructuredContent = append(json.RawMessage(nil), raw.StructuredContent...)
+		if err := json.Unmarshal(raw.StructuredContent, &r.StructuredContent); err != nil {
+			return err
 		}
 	}
 

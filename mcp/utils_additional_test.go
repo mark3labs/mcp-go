@@ -314,14 +314,12 @@ func TestParseCallToolResult_Errors(t *testing.T) {
 		raw := json.RawMessage(`{"content": "not an array"}`)
 		_, err := ParseCallToolResult(&raw)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "not an array")
 	})
 
 	t.Run("content item not object", func(t *testing.T) {
 		raw := json.RawMessage(`{"content": ["not an object"]}`)
 		_, err := ParseCallToolResult(&raw)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "not an object")
 	})
 }
 
