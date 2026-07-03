@@ -274,7 +274,7 @@ func formatLeafMessage(verr *jsonschema.ValidationError) string {
 	if location == "" {
 		location = "<root>"
 	}
-	return fmt.Sprintf("%s: %s", location, verr.ErrorKind)
+	return fmt.Sprintf("%s: %+v", location, verr.ErrorKind)
 }
 
 // jsonPointer renders a list of path segments as a RFC 6901 JSON Pointer.

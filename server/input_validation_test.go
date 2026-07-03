@@ -339,3 +339,66 @@ func TestInputSchemaValidation_NestedPathInError(t *testing.T) {
 	require.True(t, strings.Contains(tc.Text, "/filter") || strings.Contains(tc.Text, "filter"),
 		"error message should reference the nested path: %s", tc.Text)
 }
+
+// TestInputSchemaValidation_ErrorKindReadable asserts that validation error
+// messages render jsonschema ErrorKind values with named struct fields
+// instead of fmt %s fallback noise like %!s(int=0).
+func TestInputSchemaValidation_ErrorKindReadable(t *testing.T) {
+	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
+	tool := mcp.Tool{
+		Name: "validated",
+		RawInputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"id": {"type": "number"},
+				"fields": {"type": "object", "minProperties": 1}
+			},
+			"required": ["id", "fields"]
+		}`),
+	}
+	srv.AddTool(tool, okHandler)
+
+	tests := []struct {
+		name          string
+		args          map[string]any
+		wantContains  []string
+		wantNotContains []string
+	}{
+		{
+			name: "minProperties renders Got/Want",
+			args: map[string]any{"id": 23582, "fields": map[string]any{}},
+			wantContains:    []string{"/fields:", "Got:0", "Want:1"},
+			wantNotContains: []string{"%!s"},
+		},
+		{
+			name: "required renders Missing field names",
+			args: map[string]any{"id": 23582},
+			wantContains:    []string{"Missing:[fields]"},
+			wantNotContains: []string{"%!s"},
+		},
+		{
+			name: "type renders Got/Want",
+			args: map[string]any{"id": "abc"},
+			wantContains:    []string{"/id:", "Got:string", "Want:[number]"},
+			wantNotContains: []string{"%!s"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := callTool(t, srv, tool.Name, tt.args)
+			jr, ok := resp.(mcp.JSONRPCResponse)
+			require.True(t, ok)
+			result, ok := jr.Result.(*mcp.CallToolResult)
+			require.True(t, ok)
+			require.True(t, result.IsError)
+			tc := result.Content[0].(mcp.TextContent)
+			for _, want := range tt.wantContains {
+				require.Contains(t, tc.Text, want, "full message: %s", tc.Text)
+			}
+			for _, omit := range tt.wantNotContains {
+				require.NotContains(t, tc.Text, omit, "full message: %s", tc.Text)
+			}
+		})
+	}
+}
