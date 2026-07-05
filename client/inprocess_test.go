@@ -2,10 +2,16 @@ package client
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"runtime"
 	"testing"
+	"time"
 
+	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/stretchr/testify/require"
 )
 
 func TestInProcessMCPClient(t *testing.T) {
@@ -418,4 +424,157 @@ func TestInProcessMCPClient(t *testing.T) {
 			t.Errorf("Expected 1 tool, got %d", len(result.Tools))
 		}
 	})
+}
+
+// TestInProcessMCPClient_Notifications verifies that server-to-client
+// notifications sent during a tool call (e.g. notifications/progress) are
+// actually delivered to the in-process client's registered handler. This is
+// the round-trip regression test for the in-process transport's
+// notification-forwarding goroutine.
+func TestInProcessMCPClient_Notifications(t *testing.T) {
+	mcpServer := server.NewMCPServer(
+		"test-server",
+		"1.0.0",
+		server.WithToolCapabilities(true),
+	)
+
+	mcpServer.AddTool(
+		mcp.NewTool("notify"),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			srv := server.ServerFromContext(ctx)
+			err := srv.SendNotificationToClient(
+				ctx,
+				"notifications/progress",
+				map[string]any{
+					"progress":      10,
+					"total":         10,
+					"progressToken": 0,
+				},
+			)
+			if err != nil {
+				return nil, fmt.Errorf("failed to send notification: %w", err)
+			}
+			return mcp.NewToolResultText("notification sent successfully"), nil
+		},
+	)
+
+	client, err := NewInProcessClient(mcpServer)
+	if err != nil {
+		t.Fatalf("Failed to create client: %v", err)
+	}
+	defer client.Close()
+
+	received := make(chan mcp.JSONRPCNotification, 1)
+	client.OnNotification(func(notification mcp.JSONRPCNotification) {
+		received <- notification
+	})
+
+	if err := client.Start(t.Context()); err != nil {
+		t.Fatalf("Failed to start client: %v", err)
+	}
+
+	initRequest := mcp.InitializeRequest{}
+	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initRequest.Params.ClientInfo = mcp.Implementation{
+		Name:    "test-client",
+		Version: "1.0.0",
+	}
+	if _, err := client.Initialize(t.Context(), initRequest); err != nil {
+		t.Fatalf("Failed to initialize: %v", err)
+	}
+
+	request := mcp.CallToolRequest{}
+	request.Params.Name = "notify"
+	if _, err := client.CallTool(t.Context(), request); err != nil {
+		t.Fatalf("CallTool failed: %v", err)
+	}
+
+	select {
+	case notification := <-received:
+		if notification.Method != "notifications/progress" {
+			t.Errorf("Expected notifications/progress, got %s", notification.Method)
+		}
+		progress, ok := notification.Params.AdditionalFields["progress"]
+		if !ok {
+			t.Errorf("Expected progress field in notification params")
+		}
+		if fmt.Sprintf("%v", progress) != "10" {
+			t.Errorf("Expected progress 10, got %v", progress)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timed out waiting for notification from in-process transport")
+	}
+}
+
+// TestInProcessMCPClient_CloseStopsNotificationForwarding verifies that
+// Close() stops the notification-forwarding goroutine (no leak) and is
+// safe to call more than once.
+func TestInProcessMCPClient_CloseStopsNotificationForwarding(t *testing.T) {
+	mcpServer := server.NewMCPServer("test-server", "1.0.0")
+
+	const cycles = 5
+	before := runtime.NumGoroutine()
+
+	for range cycles {
+		client, err := NewInProcessClient(mcpServer)
+		if err != nil {
+			t.Fatalf("Failed to create client: %v", err)
+		}
+
+		if err := client.Start(t.Context()); err != nil {
+			t.Fatalf("Failed to start client: %v", err)
+		}
+
+		if err := client.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+
+		// Closing a second time must not panic and must not double-close
+		// the done channel.
+		if err := client.Close(); err != nil {
+			t.Fatalf("Second Close failed: %v", err)
+		}
+	}
+
+	require.Eventually(t, func() bool {
+		runtime.Gosched()
+		return runtime.NumGoroutine()-before <= 1
+	}, 2*time.Second, 20*time.Millisecond, "notification-forwarding goroutine leaked after Close")
+}
+
+// TestInProcessMCPClient_CloseBeforeStart verifies that calling Close()
+// before Start() does not leak the notification-forwarding goroutine. Prior
+// to the fix, Close() called before Start() would find a nil done channel
+// (created lazily in Start()) and no-op, but still consume the sync.Once —
+// so a subsequent Start() would spawn forwardNotifications with no way to
+// ever stop it.
+func TestInProcessMCPClient_CloseBeforeStart(t *testing.T) {
+	mcpServer := server.NewMCPServer("test-server", "1.0.0")
+
+	const cycles = 5
+	before := runtime.NumGoroutine()
+
+	for range cycles {
+		client, err := NewInProcessClient(mcpServer)
+		if err != nil {
+			t.Fatalf("Failed to create client: %v", err)
+		}
+
+		// Close before Start.
+		if err := client.Close(); err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+
+		// Start after Close should not spawn a forwarding goroutine that
+		// can never be stopped, and must report the documented
+		// ErrTransportClosed contract.
+		if err := client.Start(t.Context()); !errors.Is(err, transport.ErrTransportClosed) {
+			t.Fatalf("expected ErrTransportClosed from Start after Close, got %v", err)
+		}
+	}
+
+	require.Eventually(t, func() bool {
+		runtime.Gosched()
+		return runtime.NumGoroutine()-before <= 1
+	}, 2*time.Second, 20*time.Millisecond, "notification-forwarding goroutine leaked after Close-before-Start")
 }
