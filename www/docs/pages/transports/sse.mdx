@@ -304,6 +304,17 @@ compatibility, while the message endpoint emits no CORS headers.
 See the [Streamable HTTP CORS docs](/transports/http#cross-origin-resource-sharing-cors)
 for the full list of `CORSOption` helpers shared between both transports.
 
+The SSE server also ships with automatic
+[DNS rebinding protection](/transports/http#dns-rebinding-protection):
+requests arriving over a loopback connection (`127.0.0.1`, `[::1]`) whose
+`Host` header is not a localhost value are rejected with `403 Forbidden`.
+This is enabled by default and covers `ServeHTTP` as well as the
+`SSEHandler()`/`MessageHandler()` sub-handlers. Use
+`server.WithSSEDisableLocalhostProtection(true)` to opt out, for example
+behind a same-host reverse proxy that preserves the original `Host` header
+(prefer configuring the proxy to rewrite the `Host` header to localhost
+instead).
+
 **Resulting endpoints:**
 - SSE stream: `http://localhost:8080/api/mcp/sse`
 - Message endpoint: `http://localhost:8080/api/mcp/message`

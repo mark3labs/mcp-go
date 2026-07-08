@@ -759,6 +759,50 @@ The auto-mount options (`WithProtectedResourceMetadata` /
 CORS is enabled with `Access-Control-Allow-Origin: *` so browser-based MCP
 clients can perform discovery cross-origin.
 
+### DNS Rebinding Protection
+
+Local MCP servers are a prime target for [DNS rebinding attacks](https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#local-mcp-server-compromise):
+a malicious website rebinds its own domain to `127.0.0.1`, letting the
+victim's browser issue what it considers same-origin requests against a
+server running on the victim's machine. CORS does not stop this — after
+rebinding, the browser sees a same-origin request and applies no
+cross-origin restrictions.
+
+Both HTTP transports therefore validate the `Host` header automatically.
+When a request arrives over a loopback connection (`127.0.0.1`, `[::1]`)
+but its `Host` header is not a localhost value (`localhost`, a `127.0.0.0/8`
+address, or `[::1]`, with or without a port), the request is rejected with
+`403 Forbidden`.
+
+The protection is enabled by default and requires no configuration:
+
+- It is detected at runtime from the connection's local address
+  (`http.LocalAddrContextKey`), so it applies whether the server listens on
+  `localhost` or `0.0.0.0`.
+- Requests arriving via non-loopback addresses (external traffic) are
+  never affected.
+
+**Reverse proxies:** if a proxy (nginx, Envoy, ...) on the same host
+forwards requests to the MCP server via localhost while preserving the
+original `Host` header, those requests would be rejected. Prefer
+configuring the proxy to rewrite the `Host` header to localhost;
+alternatively, opt out explicitly:
+
+```go
+httpServer := server.NewStreamableHTTPServer(mcpServer,
+    // Only disable this if you understand the security implications.
+    server.WithDisableLocalhostProtection(true),
+)
+```
+
+Use `server.WithSSEDisableLocalhostProtection(true)` for the
+[SSE transport](/transports/sse#sse-server-options).
+
+The protection applies to `ServeHTTP` (and the SSE handlers) only. The
+framework-agnostic [`Handle`](#embedding-in-non-nethttp-frameworks) entry
+point has no access to the connection's local address, so adapters must
+enforce the check themselves — see [Behavior Notes](#behavior-notes).
+
 ### Cross-Origin Resource Sharing (CORS)
 
 The MCP endpoints themselves are **not** CORS-enabled by default — every
@@ -1146,6 +1190,12 @@ func mcpHandler(ctx *fasthttp.RequestCtx) {
 
 - **`WithStreamableHTTPCORS` is not applied** when entering through
   `Handle`. Use the framework's native CORS middleware.
+- **DNS rebinding protection is not applied** when entering through
+  `Handle`, because it has no access to the connection's local address.
+  Adapters for localhost-reachable servers should reject requests that
+  arrive on a loopback connection with a non-loopback `Host` header,
+  answering `403 Forbidden`. See
+  [DNS Rebinding Protection](#dns-rebinding-protection) above.
 - **`WithProtectedResourceMetadata` is not applied** when entering through
   `Handle`. Mount the metadata route separately using
   `NewProtectedResourceMetadataHandler`. See

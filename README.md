@@ -730,6 +730,31 @@ Mcp-Session-Id, Last-Event-ID, Authorization` for request headers;
 with `WithCORSAllowCredentials()` echoes the request `Origin` to remain
 spec-compliant.
 
+### DNS rebinding protection for localhost servers
+
+Both HTTP transports automatically protect local servers against
+[DNS rebinding attacks](https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#local-mcp-server-compromise):
+requests arriving over a loopback connection (`127.0.0.1`, `[::1]`) whose
+`Host` header is not a localhost value are rejected with `403 Forbidden`.
+The check is derived from the connection's local address at runtime, so it
+applies whether the server listens on `localhost` or `0.0.0.0`, and never
+affects requests arriving via non-loopback addresses.
+
+If a reverse proxy on the same host forwards requests via localhost while
+preserving the original `Host` header, configure the proxy to rewrite the
+`Host` header to localhost, or opt out explicitly:
+
+```go
+httpServer := server.NewStreamableHTTPServer(mcpServer,
+    // Or server.WithSSEDisableLocalhostProtection(true) on NewSSEServer.
+    server.WithDisableLocalhostProtection(true),
+)
+```
+
+See the [HTTP transport docs](https://mcp-go.dev/transports/http#dns-rebinding-protection)
+for details, including the caveat for the framework-agnostic `Handle` entry
+point.
+
 ### Session Management
 
 MCP-Go provides a robust session management system that allows you to:
