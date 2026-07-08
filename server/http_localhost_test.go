@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -88,15 +89,22 @@ var localhostProtectionTests = []struct {
 }
 
 // startLoopbackServer serves handler on a real loopback listener so that
-// http.LocalAddrContextKey reflects an actual 127.0.0.1 connection.
-func startLoopbackServer(t *testing.T, handler http.Handler) string {
+// http.LocalAddrContextKey reflects an actual 127.0.0.1 connection. The
+// server and the returned client both carry explicit timeouts so a stalled
+// handler or connection cannot hang the test run.
+func startLoopbackServer(t *testing.T, handler http.Handler) (addr string, client *http.Client) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	srv := &http.Server{Handler: handler}
+	srv := &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+	}
 	go func() { _ = srv.Serve(listener) }()
 	t.Cleanup(func() { _ = srv.Close() })
-	return listener.Addr().String()
+	return listener.Addr().String(), &http.Client{Timeout: 5 * time.Second}
 }
 
 // TestStreamableHTTP_LocalhostProtection verifies that DNS rebinding
@@ -110,7 +118,7 @@ func TestStreamableHTTP_LocalhostProtection(t *testing.T) {
 				WithStateLess(true),
 				WithDisableLocalhostProtection(tt.disableProtection),
 			)
-			addr := startLoopbackServer(t, httpServer)
+			addr, client := startLoopbackServer(t, httpServer)
 
 			body, err := json.Marshal(initRequest)
 			require.NoError(t, err)
@@ -120,7 +128,7 @@ func TestStreamableHTTP_LocalhostProtection(t *testing.T) {
 			req.Host = tt.hostHeader
 			req.Header.Set("Content-Type", "application/json")
 
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := client.Do(req)
 			require.NoError(t, err)
 			defer resp.Body.Close()
 
@@ -146,7 +154,7 @@ func TestSSE_LocalhostProtection(t *testing.T) {
 			sseServer := NewSSEServer(mcpServer,
 				WithSSEDisableLocalhostProtection(tt.disableProtection),
 			)
-			addr := startLoopbackServer(t, sseServer)
+			addr, client := startLoopbackServer(t, sseServer)
 
 			// A POST to the message endpoint without a session is enough to
 			// distinguish the 403 protection response from normal handling
@@ -155,7 +163,7 @@ func TestSSE_LocalhostProtection(t *testing.T) {
 			require.NoError(t, err)
 			req.Host = tt.hostHeader
 
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := client.Do(req)
 			require.NoError(t, err)
 			defer resp.Body.Close()
 
