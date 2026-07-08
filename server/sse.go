@@ -194,6 +194,11 @@ type SSEServer struct {
 	// WithSSECORS.
 	corsConfig *CORSConfig
 
+	// disableLocalhostProtection, when true, turns off the automatic DNS
+	// rebinding protection applied to requests arriving over loopback
+	// connections. See WithSSEDisableLocalhostProtection.
+	disableLocalhostProtection bool
+
 	mu sync.RWMutex
 }
 
@@ -354,6 +359,30 @@ func WithSSECORS(opts ...CORSOption) SSEOption {
 				opt(s.corsConfig)
 			}
 		}
+	}
+}
+
+// WithSSEDisableLocalhostProtection disables the automatic DNS rebinding
+// protection of the SSE server.
+//
+// By default, requests arriving over a loopback connection (127.0.0.1,
+// [::1]) whose Host header is not a localhost value are rejected with 403
+// Forbidden. This protects local MCP servers against DNS rebinding attacks,
+// where a malicious website rebinds its own domain to 127.0.0.1 to make a
+// victim's browser issue requests against a local server. The protection
+// applies regardless of whether the server listens on localhost specifically
+// or on 0.0.0.0, and never affects requests arriving via non-loopback
+// addresses.
+//
+// Disable it only if you understand the security implications, for example
+// when a reverse proxy on the same host forwards requests via localhost
+// while preserving the original Host header. In that case, prefer
+// configuring the proxy to rewrite the Host header to localhost instead.
+//
+// See https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#local-mcp-server-compromise
+func WithSSEDisableLocalhostProtection(disable bool) SSEOption {
+	return func(s *SSEServer) {
+		s.disableLocalhostProtection = disable
 	}
 }
 
@@ -851,10 +880,14 @@ func (s *SSEServer) MessageHandler() http.Handler {
 	return s.withCORS(http.HandlerFunc(s.handleMessage))
 }
 
-// withCORS wraps next with CORS preflight and header handling using the
-// SSE server's configured CORSConfig. It is a no-op when CORS is disabled.
+// withCORS wraps next with DNS rebinding protection plus CORS preflight and
+// header handling using the SSE server's configured CORSConfig. The CORS
+// portion is a no-op when CORS is disabled.
 func (s *SSEServer) withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.disableLocalhostProtection && rejectDNSRebinding(w, r) {
+			return
+		}
 		if s.corsConfig.enabled() {
 			if s.corsConfig.handlePreflight(w, r) {
 				return
@@ -871,7 +904,14 @@ func (s *SSEServer) withCORS(next http.Handler) http.Handler {
 // answered directly and simple cross-origin responses are decorated with the
 // configured Access-Control-* headers before being dispatched to the SSE or
 // message handlers.
+//
+// Requests arriving over a loopback connection with a non-localhost Host
+// header are rejected with 403 Forbidden to protect against DNS rebinding
+// attacks, unless WithSSEDisableLocalhostProtection is set.
 func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !s.disableLocalhostProtection && rejectDNSRebinding(w, r) {
+		return
+	}
 	if s.corsConfig.enabled() {
 		if s.corsConfig.handlePreflight(w, r) {
 			return

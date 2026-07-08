@@ -111,6 +111,30 @@ func WithDisableStreaming(disable bool) StreamableHTTPOption {
 	}
 }
 
+// WithDisableLocalhostProtection disables the automatic DNS rebinding
+// protection of the streamable HTTP server.
+//
+// By default, requests arriving over a loopback connection (127.0.0.1,
+// [::1]) whose Host header is not a localhost value are rejected with 403
+// Forbidden. This protects local MCP servers against DNS rebinding attacks,
+// where a malicious website rebinds its own domain to 127.0.0.1 to make a
+// victim's browser issue requests against a local server. The protection
+// applies regardless of whether the server listens on localhost specifically
+// or on 0.0.0.0, and never affects requests arriving via non-loopback
+// addresses.
+//
+// Disable it only if you understand the security implications, for example
+// when a reverse proxy on the same host forwards requests via localhost
+// while preserving the original Host header. In that case, prefer
+// configuring the proxy to rewrite the Host header to localhost instead.
+//
+// See https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#local-mcp-server-compromise
+func WithDisableLocalhostProtection(disable bool) StreamableHTTPOption {
+	return func(s *StreamableHTTPServer) {
+		s.disableLocalhostProtection = disable
+	}
+}
+
 // WithHTTPContextFunc sets a function that will be called to customise the context
 // to the server using the incoming request.
 // This can be used to inject context values from headers, for example.
@@ -257,6 +281,11 @@ type StreamableHTTPServer struct {
 	sessionLogLevels         *sessionLogLevelsStore
 	disableStreaming         bool
 
+	// disableLocalhostProtection, when true, turns off the automatic DNS
+	// rebinding protection applied to requests arriving over loopback
+	// connections. See WithDisableLocalhostProtection.
+	disableLocalhostProtection bool
+
 	tlsCertFile string
 	tlsKeyFile  string
 
@@ -322,9 +351,16 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 // requests are answered directly and simple cross-origin responses are
 // decorated with the configured Access-Control-* headers before dispatch.
 //
+// Requests arriving over a loopback connection with a non-localhost Host
+// header are rejected with 403 Forbidden to protect against DNS rebinding
+// attacks, unless WithDisableLocalhostProtection is set.
+//
 // ServeHTTP is the conventional net/http entry point; for non-net/http HTTP
 // frameworks (fasthttp, fiber, etc.), see Handle.
 func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !s.disableLocalhostProtection && rejectDNSRebinding(w, r) {
+		return
+	}
 	if s.corsConfig.enabled() {
 		if s.corsConfig.handlePreflight(w, r) {
 			return

@@ -175,6 +175,10 @@ func writeHTTPErrorf(w HTTPResponseWriter, code int, format string, args ...any)
 //
 //   - WithStreamableHTTPCORS is NOT applied. Frameworks should use their
 //     native CORS middleware.
+//   - DNS rebinding protection is NOT applied, because Handle has no access
+//     to the connection's local address. Adapters for localhost-reachable
+//     servers should validate the Host header themselves (reject non-loopback
+//     Host values on loopback connections with 403 Forbidden).
 //   - WithProtectedResourceMetadata is NOT applied. The caller should mount
 //     the metadata route separately if needed (see ProtectedResourceMetadataHandler).
 //   - WithHTTPContextFunc is honored for backwards compatibility; it receives
