@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script src="/initializeTheme.iife.js"></script><link rel="preload" as="image" href="/logo.png"/><title>StreamableHTTP Transport – MCP-Go</title><meta property="og:type" content="website"/><meta property="og:title" content="StreamableHTTP Transport"/><meta property="og:url" content="https://mcp-go.dev"/><meta name="twitter:card" content="summary_large_image"/>
-    <script type="module" crossorigin src="/assets/index-ByC3SWga.js"></script>
+    <script type="module" crossorigin src="/assets/index-6z3M4SCc.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/style-3fK4AU4f.css">
   </head>
   <body>
@@ -683,6 +683,41 @@ the well-known URL must include that path suffix:
 <table class="vocs_Table"><thead><tr class="vocs_TableRow"><th class="vocs_TableHeader">Method</th><th class="vocs_TableHeader">Response</th></tr></thead><tbody><tr class="vocs_TableRow"><td class="vocs_TableCell"><code class="vocs_Code">GET</code></td><td class="vocs_TableCell"><code class="vocs_Code">200</code> with <code class="vocs_Code">application/json</code> body, <code class="vocs_Code">Cache-Control: no-store</code></td></tr><tr class="vocs_TableRow"><td class="vocs_TableCell"><code class="vocs_Code">HEAD</code></td><td class="vocs_TableCell"><code class="vocs_Code">200</code> headers, no body</td></tr><tr class="vocs_TableRow"><td class="vocs_TableCell"><code class="vocs_Code">OPTIONS</code></td><td class="vocs_TableCell"><code class="vocs_Code">204</code> (CORS preflight), permissive <code class="vocs_Code">Access-Control-Allow-*</code> headers</td></tr><tr class="vocs_TableRow"><td class="vocs_TableCell">other</td><td class="vocs_TableCell"><code class="vocs_Code">405</code> with <code class="vocs_Code">Allow: GET, HEAD, OPTIONS</code></td></tr></tbody></table>
 <p class="vocs_Paragraph">CORS is enabled with <code class="vocs_Code">Access-Control-Allow-Origin: *</code> so browser-based MCP
 clients can perform discovery cross-origin.</p>
+<h3 class="vocs_H3 vocs_Heading"><div id="dns-rebinding-protection" class="vocs_Heading_slugTarget"></div>DNS Rebinding Protection<a class="vocs_Anchor vocs_Autolink" aria-hidden="true" tabindex="-1" href="/transports/http#dns-rebinding-protection" data-discover="true"><div data-autolink-icon="true" class="vocs_Div vocs_AutolinkIcon" style="--vocs_AutolinkIcon_iconUrl:url(/.vocs/icons/link.svg)"></div></a></h3>
+<p class="vocs_Paragraph">Local MCP servers are a prime target for <a class="vocs_Anchor vocs_Link vocs_Link_accent" href="https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#local-mcp-server-compromise" target="_blank" rel="noopener noreferrer" style="--vocs_ExternalLink_iconUrl:url(/.vocs/icons/arrow-diagonal.svg)">DNS rebinding attacks</a>:
+a malicious website rebinds its own domain to <code class="vocs_Code">127.0.0.1</code>, letting the
+victim&#x27;s browser issue what it considers same-origin requests against a
+server running on the victim&#x27;s machine. CORS does not stop this — after
+rebinding, the browser sees a same-origin request and applies no
+cross-origin restrictions.</p>
+<p class="vocs_Paragraph">Both HTTP transports therefore validate the <code class="vocs_Code">Host</code> header automatically.
+When a request arrives over a loopback connection (<code class="vocs_Code">127.0.0.1</code>, <code class="vocs_Code">[::1]</code>)
+but its <code class="vocs_Code">Host</code> header is not a localhost value (<code class="vocs_Code">localhost</code>, a <code class="vocs_Code">127.0.0.0/8</code>
+address, or <code class="vocs_Code">[::1]</code>, with or without a port), the request is rejected with
+<code class="vocs_Code">403 Forbidden</code>.</p>
+<p class="vocs_Paragraph">The protection is enabled by default and requires no configuration:</p>
+<ul class="vocs_List vocs_List_unordered">
+<li class="vocs_ListItem">It is detected at runtime from the connection&#x27;s local address
+(<code class="vocs_Code">http.LocalAddrContextKey</code>), so it applies whether the server listens on
+<code class="vocs_Code">localhost</code> or <code class="vocs_Code">0.0.0.0</code>.</li>
+<li class="vocs_ListItem">Requests arriving via non-loopback addresses (external traffic) are
+never affected.</li>
+</ul>
+<p class="vocs_Paragraph"><strong class="vocs_Strong">Reverse proxies:</strong> if a proxy (nginx, Envoy, ...) on the same host
+forwards requests to the MCP server via localhost while preserving the
+original <code class="vocs_Code">Host</code> header, those requests would be rejected. Prefer
+configuring the proxy to rewrite the <code class="vocs_Code">Host</code> header to localhost;
+alternatively, opt out explicitly:</p>
+<div class="vocs_CodeBlock"><div class="vocs_Pre_wrapper"><pre style="background-color:#fff;--shiki-dark-bg:#22272e;color:#24292e;--shiki-dark:#adbac7" tabindex="0" class="shiki shiki-themes github-light github-dark-dimmed vocs_Pre"><button class="vocs_CopyButton" data-copied="false" type="button"><div aria-label="Copy" class="vocs_Icon" role="img" style="--vocs_Icon_size:18px"><svg width="100%" height="100%" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><title>Copy</title><path d="M5 2V1H10V2H5ZM4.75 0C4.33579 0 4 0.335786 4 0.75V1H3.5C2.67157 1 2 1.67157 2 2.5V12.5C2 13.3284 2.67157 14 3.5 14H7V13H3.5C3.22386 13 3 12.7761 3 12.5V2.5C3 2.22386 3.22386 2 3.5 2H4V2.25C4 2.66421 4.33579 3 4.75 3H10.25C10.6642 3 11 2.66421 11 2.25V2H11.5C11.7761 2 12 2.22386 12 2.5V7H13V2.5C13 1.67157 12.3284 1 11.5 1H11V0.75C11 0.335786 10.6642 0 10.25 0H4.75ZM9 8.5C9 8.77614 8.77614 9 8.5 9C8.22386 9 8 8.77614 8 8.5C8 8.22386 8.22386 8 8.5 8C8.77614 8 9 8.22386 9 8.5ZM10.5 9C10.7761 9 11 8.77614 11 8.5C11 8.22386 10.7761 8 10.5 8C10.2239 8 10 8.22386 10 8.5C10 8.77614 10.2239 9 10.5 9ZM13 8.5C13 8.77614 12.7761 9 12.5 9C12.2239 9 12 8.77614 12 8.5C12 8.22386 12.2239 8 12.5 8C12.7761 8 13 8.22386 13 8.5ZM14.5 9C14.7761 9 15 8.77614 15 8.5C15 8.22386 14.7761 8 14.5 8C14.2239 8 14 8.22386 14 8.5C14 8.77614 14.2239 9 14.5 9ZM15 10.5C15 10.7761 14.7761 11 14.5 11C14.2239 11 14 10.7761 14 10.5C14 10.2239 14.2239 10 14.5 10C14.7761 10 15 10.2239 15 10.5ZM14.5 13C14.7761 13 15 12.7761 15 12.5C15 12.2239 14.7761 12 14.5 12C14.2239 12 14 12.2239 14 12.5C14 12.7761 14.2239 13 14.5 13ZM14.5 15C14.7761 15 15 14.7761 15 14.5C15 14.2239 14.7761 14 14.5 14C14.2239 14 14 14.2239 14 14.5C14 14.7761 14.2239 15 14.5 15ZM8.5 11C8.77614 11 9 10.7761 9 10.5C9 10.2239 8.77614 10 8.5 10C8.22386 10 8 10.2239 8 10.5C8 10.7761 8.22386 11 8.5 11ZM9 12.5C9 12.7761 8.77614 13 8.5 13C8.22386 13 8 12.7761 8 12.5C8 12.2239 8.22386 12 8.5 12C8.77614 12 9 12.2239 9 12.5ZM8.5 15C8.77614 15 9 14.7761 9 14.5C9 14.2239 8.77614 14 8.5 14C8.22386 14 8 14.2239 8 14.5C8 14.7761 8.22386 15 8.5 15ZM11 14.5C11 14.7761 10.7761 15 10.5 15C10.2239 15 10 14.7761 10 14.5C10 14.2239 10.2239 14 10.5 14C10.7761 14 11 14.2239 11 14.5ZM12.5 15C12.7761 15 13 14.7761 13 14.5C13 14.2239 12.7761 14 12.5 14C12.2239 14 12 14.2239 12 14.5C12 14.7761 12.2239 15 12.5 15Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"></path></svg></div></button><code class="vocs_Code"><span class="line vocs_Span"><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">httpServer </span><span style="color:#D73A49;--shiki-dark:#F47067" class="vocs_Span">:=</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span"> server.</span><span style="color:#6F42C1;--shiki-dark:#DCBDFB" class="vocs_Span">NewStreamableHTTPServer</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">(mcpServer,</span></span>
+<span class="line vocs_Span"><span style="color:#6A737D;--shiki-dark:#768390" class="vocs_Span">    // Only disable this if you understand the security implications.</span></span>
+<span class="line vocs_Span"><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">    server.</span><span style="color:#6F42C1;--shiki-dark:#DCBDFB" class="vocs_Span">WithDisableLocalhostProtection</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">(</span><span style="color:#005CC5;--shiki-dark:#6CB6FF" class="vocs_Span">true</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">),</span></span>
+<span class="line vocs_Span"><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">)</span></span></code></pre></div></div>
+<p class="vocs_Paragraph">Use <code class="vocs_Code">server.WithSSEDisableLocalhostProtection(true)</code> for the
+<a class="vocs_Anchor vocs_Link vocs_Link_accent" href="/transports/sse#sse-server-options" data-discover="true">SSE transport</a>.</p>
+<p class="vocs_Paragraph">The protection applies to <code class="vocs_Code">ServeHTTP</code> (and the SSE handlers) only. The
+framework-agnostic <a class="vocs_Anchor" href="/transports/http#embedding-in-non-nethttp-frameworks"><code class="vocs_Code">Handle</code></a> entry
+point has no access to the connection&#x27;s local address, so adapters must
+enforce the check themselves — see <a class="vocs_Anchor" href="/transports/http#behavior-notes">Behavior Notes</a>.</p>
 <h3 class="vocs_H3 vocs_Heading"><div id="cross-origin-resource-sharing-cors" class="vocs_Heading_slugTarget"></div>Cross-Origin Resource Sharing (CORS)<a class="vocs_Anchor vocs_Autolink" aria-hidden="true" tabindex="-1" href="/transports/http#cross-origin-resource-sharing-cors" data-discover="true"><div data-autolink-icon="true" class="vocs_Div vocs_AutolinkIcon" style="--vocs_AutolinkIcon_iconUrl:url(/.vocs/icons/link.svg)"></div></a></h3>
 <p class="vocs_Paragraph">The MCP endpoints themselves are <strong class="vocs_Strong">not</strong> CORS-enabled by default — every
 deployment has different origin requirements, and emitting permissive
@@ -1001,6 +1036,12 @@ be delivered without SSE). GET requests are rejected with <code class="vocs_Code
 <ul class="vocs_List vocs_List_unordered">
 <li class="vocs_ListItem"><strong class="vocs_Strong"><code class="vocs_Code">WithStreamableHTTPCORS</code> is not applied</strong> when entering through
 <code class="vocs_Code">Handle</code>. Use the framework&#x27;s native CORS middleware.</li>
+<li class="vocs_ListItem"><strong class="vocs_Strong">DNS rebinding protection is not applied</strong> when entering through
+<code class="vocs_Code">Handle</code>, because it has no access to the connection&#x27;s local address.
+Adapters for localhost-reachable servers should reject requests that
+arrive on a loopback connection with a non-loopback <code class="vocs_Code">Host</code> header,
+answering <code class="vocs_Code">403 Forbidden</code>. See
+<a class="vocs_Anchor" href="/transports/http#dns-rebinding-protection">DNS Rebinding Protection</a> above.</li>
 <li class="vocs_ListItem"><strong class="vocs_Strong"><code class="vocs_Code">WithProtectedResourceMetadata</code> is not applied</strong> when entering through
 <code class="vocs_Code">Handle</code>. Mount the metadata route separately using
 <code class="vocs_Code">NewProtectedResourceMetadataHandler</code>. See

@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script src="/initializeTheme.iife.js"></script><link rel="preload" as="image" href="/logo.png"/><title>SSE Transport – MCP-Go</title><meta property="og:type" content="website"/><meta property="og:title" content="SSE Transport"/><meta property="og:url" content="https://mcp-go.dev"/><meta name="twitter:card" content="summary_large_image"/>
-    <script type="module" crossorigin src="/assets/index-ByC3SWga.js"></script>
+    <script type="module" crossorigin src="/assets/index-6z3M4SCc.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/style-3fK4AU4f.css">
   </head>
   <body>
@@ -296,6 +296,16 @@ the historical default of <code class="vocs_Code">Access-Control-Allow-Origin: *
 compatibility, while the message endpoint emits no CORS headers.
 See the <a class="vocs_Anchor vocs_Link vocs_Link_accent" href="/transports/http#cross-origin-resource-sharing-cors" data-discover="true">Streamable HTTP CORS docs</a>
 for the full list of <code class="vocs_Code">CORSOption</code> helpers shared between both transports.</p>
+<p class="vocs_Paragraph">The SSE server also ships with automatic
+<a class="vocs_Anchor vocs_Link vocs_Link_accent" href="/transports/http#dns-rebinding-protection" data-discover="true">DNS rebinding protection</a>:
+requests arriving over a loopback connection (<code class="vocs_Code">127.0.0.1</code>, <code class="vocs_Code">[::1]</code>) whose
+<code class="vocs_Code">Host</code> header is not a localhost value are rejected with <code class="vocs_Code">403 Forbidden</code>.
+This is enabled by default and covers <code class="vocs_Code">ServeHTTP</code> as well as the
+<code class="vocs_Code">SSEHandler()</code>/<code class="vocs_Code">MessageHandler()</code> sub-handlers. Use
+<code class="vocs_Code">server.WithSSEDisableLocalhostProtection(true)</code> to opt out, for example
+behind a same-host reverse proxy that preserves the original <code class="vocs_Code">Host</code> header
+(prefer configuring the proxy to rewrite the <code class="vocs_Code">Host</code> header to localhost
+instead).</p>
 <strong class="vocs_Strong">Resulting endpoints:</strong>
 <ul class="vocs_List vocs_List_unordered">
 <li class="vocs_ListItem">SSE stream: <code class="vocs_Code">http://localhost:8080/api/mcp/sse</code></li>
