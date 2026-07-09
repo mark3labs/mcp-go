@@ -46,7 +46,7 @@ import (
 // exactly as the composed handler (incl. rate-limit middleware) produced them.
 func rlCall(t *testing.T, s *MCPServer, sessionID, toolName string) (*mcp.CallToolResult, error) {
 	t.Helper()
-	ctx := s.WithContext(context.Background(), fakeSession{
+	ctx := s.WithContext(t.Context(), fakeSession{
 		sessionID:           sessionID,
 		notificationChannel: make(chan mcp.JSONRPCNotification, 1),
 		initialized:         true,
@@ -109,7 +109,7 @@ func TestRateLimit_DenyAfterBurst(t *testing.T) {
 	countingTool(s, "tool", &count)
 
 	// First `burst` calls must all reach the handler.
-	for i := 0; i < burst; i++ {
+	for i := range burst {
 		res, err := rlCall(t, s, "sess-A", "tool")
 		require.Falsef(t, denied(res, err), "call %d should be allowed (res=%v err=%v)", i+1, res, err)
 	}
@@ -134,7 +134,7 @@ func TestRateLimit_PerKeyIsolation(t *testing.T) {
 	countingTool(s, "tool", &count)
 
 	// Exhaust session A.
-	for i := 0; i < burst; i++ {
+	for i := range burst {
 		res, err := rlCall(t, s, "A", "tool")
 		require.False(t, denied(res, err), "A allowed call %d", i+1)
 	}
@@ -142,7 +142,7 @@ func TestRateLimit_PerKeyIsolation(t *testing.T) {
 	require.True(t, denied(res, err), "A should now be denied")
 
 	// Session B must still have its full burst available.
-	for i := 0; i < burst; i++ {
+	for i := range burst {
 		res, err := rlCall(t, s, "B", "tool")
 		require.Falsef(t, denied(res, err), "B should be unaffected by A's exhaustion (call %d)", i+1)
 	}
@@ -168,7 +168,7 @@ func TestRateLimit_GlobalCeiling(t *testing.T) {
 	// Use a distinct session per call so per-key buckets are all fresh/full.
 	allowed := 0
 	deniedCount := 0
-	for i := 0; i < globalBurst+3; i++ {
+	for i := range globalBurst + 3 {
 		res, err := rlCall(t, s, fmt.Sprintf("sess-%d", i), "tool")
 		if denied(res, err) {
 			deniedCount++
@@ -196,7 +196,7 @@ func TestRateLimit_CustomKeyFunc(t *testing.T) {
 
 	// Even though sessions differ, they all share one bucket.
 	allowed := 0
-	for i := 0; i < burst+2; i++ {
+	for i := range burst + 2 {
 		res, err := rlCall(t, s, fmt.Sprintf("diff-%d", i), "tool")
 		if !denied(res, err) {
 			allowed++
@@ -211,7 +211,7 @@ func TestRateLimit_CustomKeyFunc(t *testing.T) {
 func TestRateLimit_CustomOnDeny(t *testing.T) {
 	const burst = 1
 	var count int64
-	var onDenyCalls int64
+	var onDenyCalls atomic.Int64
 	sentinelErr := errors.New("sentinel-denied")
 	var gotKey string
 
@@ -220,7 +220,7 @@ func TestRateLimit_CustomOnDeny(t *testing.T) {
 			RPS:   rate.Limit(0.0001),
 			Burst: burst,
 			OnDeny: func(ctx context.Context, req mcp.CallToolRequest, key string) (*mcp.CallToolResult, error) {
-				atomic.AddInt64(&onDenyCalls, 1)
+				onDenyCalls.Add(1)
 				gotKey = key
 				return mcp.NewToolResultText("custom-denied-payload"), sentinelErr
 			},
@@ -234,7 +234,7 @@ func TestRateLimit_CustomOnDeny(t *testing.T) {
 
 	// Second call denied -> our custom OnDeny must fire and surface its values.
 	res, err = rlCall(t, s, "k1", "tool")
-	require.Equal(t, int64(1), atomic.LoadInt64(&onDenyCalls), "custom OnDeny must be invoked exactly once on denial")
+	require.Equal(t, int64(1), onDenyCalls.Load(), "custom OnDeny must be invoked exactly once on denial")
 	require.ErrorIs(t, err, sentinelErr, "caller should see the error returned by custom OnDeny")
 	require.Equal(t, "k1", gotKey, "OnDeny should receive the denied key")
 	// The handler must not have run for the denied call.
@@ -287,7 +287,7 @@ func TestRateLimit_Concurrency(t *testing.T) {
 		goroutines = sessions * perSession
 	)
 	var allowed [sessions]int64
-	var handlerCount int64
+	var handlerCount atomic.Int64
 
 	s := NewMCPServer("x", "1.0",
 		WithRateLimit(RateLimitOpts{
@@ -300,14 +300,14 @@ func TestRateLimit_Concurrency(t *testing.T) {
 		Description: "counting tool",
 		InputSchema: mcp.ToolInputSchema{Type: "object", Properties: map[string]any{}},
 	}, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		atomic.AddInt64(&handlerCount, 1)
+		handlerCount.Add(1)
 		return mcp.NewToolResultText("ok"), nil
 	})
 
 	var wg sync.WaitGroup
-	for si := 0; si < sessions; si++ {
+	for si := range sessions {
 		sessID := fmt.Sprintf("s-%d", si)
-		for c := 0; c < perSession; c++ {
+		for range perSession {
 			wg.Add(1)
 			go func(si int, sessID string) {
 				defer wg.Done()
@@ -321,7 +321,7 @@ func TestRateLimit_Concurrency(t *testing.T) {
 	wg.Wait()
 
 	var totalAllowed int64
-	for si := 0; si < sessions; si++ {
+	for si := range sessions {
 		got := atomic.LoadInt64(&allowed[si])
 		require.LessOrEqualf(t, got, int64(burst),
 			"session %d allowed %d > burst %d", si, got, burst)
@@ -330,7 +330,7 @@ func TestRateLimit_Concurrency(t *testing.T) {
 	// Total allowed across all keys must never exceed the summed capacity.
 	require.LessOrEqual(t, totalAllowed, int64(sessions*burst),
 		"total allowed must not exceed combined per-key burst capacity")
-	require.Equal(t, totalAllowed, atomic.LoadInt64(&handlerCount),
+	require.Equal(t, totalAllowed, handlerCount.Load(),
 		"every allowed call (and only those) should have reached the handler")
 }
 
@@ -355,7 +355,7 @@ func TestRateLimit_ReaperEvictsIdleKey(t *testing.T) {
 	countingTool(s, "tool", &count)
 
 	// Exhaust the key's bucket.
-	for i := 0; i < burst; i++ {
+	for i := range burst {
 		res, err := rlCall(t, s, "idle-key", "tool")
 		require.False(t, denied(res, err), "warmup call %d allowed", i+1)
 	}

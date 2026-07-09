@@ -17,7 +17,6 @@ func TestRateLimit_PanicsOnBadOpts(t *testing.T) {
 		{RPS: 10, Burst: 5, GlobalRPS: 10, GlobalBurst: 0}, // GlobalBurst must be >= 1 when GlobalRPS > 0
 	}
 	for _, opts := range bad {
-		opts := opts
 		require.Panics(t, func() { WithRateLimit(opts) })
 	}
 }
@@ -31,8 +30,8 @@ func TestRateLimit_NoSessionFallbackBucket(t *testing.T) {
 		calls++
 		return &mcp.CallToolResult{}, nil
 	})
-	ctx := context.Background() // no session in context → fallback "-" key
-	for i := 0; i < 3; i++ {
+	ctx := t.Context() // no session in context → fallback "-" key
+	for range 3 {
 		_, _ = h(ctx, mcp.CallToolRequest{})
 	}
 	require.Equal(t, 2, calls, "no-session calls share the fallback bucket (burst 2)")
@@ -44,7 +43,7 @@ func TestRateLimit_ReaperDisabled(t *testing.T) {
 	h := st.middleware()(func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return &mcp.CallToolResult{}, nil
 	})
-	_, _ = h(context.Background(), mcp.CallToolRequest{})
+	_, _ = h(t.Context(), mcp.CallToolRequest{})
 	st.mu.Lock()
 	on := st.reaperOn
 	st.mu.Unlock()
