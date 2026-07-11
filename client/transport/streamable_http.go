@@ -999,10 +999,11 @@ func (c *StreamableHTTP) createGETConnectionToServer(ctx context.Context) error 
 		return fmt.Errorf("request failed with status %d: %s", resp.StatusCode, body)
 	}
 
-	// handle SSE response
-	contentType := resp.Header.Get("Content-Type")
-	if contentType != "text/event-stream" {
-		return fmt.Errorf("unexpected content type: %s", contentType)
+	// handle SSE response. Parse the media type to tolerate parameters such as
+	// "text/event-stream; charset=utf-8" (same handling as SendRequest).
+	mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if mediaType != "text/event-stream" {
+		return fmt.Errorf("unexpected content type: %s", resp.Header.Get("Content-Type"))
 	}
 
 	// When ignoreResponse is true, the function will never return expect context is done.

@@ -895,6 +895,111 @@ func TestContinuousListeningMethodNotAllowed(t *testing.T) {
 	}
 }
 
+// TestContinuousListeningContentTypeWithCharset verifies that the GET
+// listening stream accepts a Content-Type carrying media-type parameters
+// (e.g. "text/event-stream; charset=utf-8"). Servers built on frameworks
+// that append a charset to text/* responses (such as the Python MCP SDK,
+// via Starlette) send exactly this header, and the stream must still be
+// treated as SSE rather than rejected as an unexpected content type.
+func TestContinuousListeningContentTypeWithCharset(t *testing.T) {
+	origRetryInterval := retryInterval
+	retryInterval = 10 * time.Millisecond
+	defer func() { retryInterval = origRetryInterval }()
+
+	var mu sync.Mutex
+	var sessionID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			var request map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+				return
+			}
+			mu.Lock()
+			sessionID = "charset-test-session"
+			mu.Unlock()
+			w.Header().Set("Mcp-Session-Id", sessionID)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			if err := json.NewEncoder(w).Encode(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      request["id"],
+				"result":  "initialized",
+			}); err != nil {
+				http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+			}
+		case http.MethodGet:
+			mu.Lock()
+			expected := sessionID
+			mu.Unlock()
+			if recvSessionID := r.Header.Get("Mcp-Session-Id"); recvSessionID != expected {
+				http.Error(w, "Invalid session ID", http.StatusNotFound)
+				return
+			}
+			// Include a charset parameter, as Starlette-based servers do.
+			w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+				return
+			}
+			notification := map[string]any{
+				"jsonrpc": "2.0",
+				"method":  "test/notification",
+				"params":  map[string]any{"message": "Hello from server"},
+			}
+			notificationData, _ := json.Marshal(notification)
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", notificationData)
+			flusher.Flush()
+			<-r.Context().Done()
+		}
+	}))
+
+	trans, err := NewStreamableHTTP(server.URL, WithContinuousListening())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		trans.Close()
+		server.Close()
+	}()
+
+	notificationReceived := make(chan struct{}, 1)
+	trans.SetNotificationHandler(func(notification mcp.JSONRPCNotification) {
+		select {
+		case notificationReceived <- struct{}{}:
+		default:
+		}
+	})
+
+	if err := trans.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	initRequest := JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(int64(0)),
+		Method:  "initialize",
+	}
+	if _, err := trans.SendRequest(ctx, initRequest); err != nil {
+		t.Fatal(err)
+	}
+
+	// The notification only arrives if the GET stream was accepted despite
+	// the charset parameter in the Content-Type header.
+	select {
+	case <-notificationReceived:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Timed out waiting for notification: GET stream with " +
+			"\"text/event-stream; charset=utf-8\" was not accepted")
+	}
+}
+
 func TestContinuousListeningSessionTerminated(t *testing.T) {
 	// Use a short retry interval so we can verify no retries happen quickly.
 	origRetryInterval := retryInterval
