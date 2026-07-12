@@ -2984,3 +2984,78 @@ func TestStreamableHTTP_SamplingResponseErrors(t *testing.T) {
 		assert.Contains(t, string(body), "No pending sampling request")
 	})
 }
+
+func TestStreamableHTTP_ShutdownWithActiveConnection(t *testing.T) {
+	mcpServer := NewMCPServer("test", "1.0.0")
+	httpServer := NewStreamableHTTPServer(mcpServer, WithStateful(true))
+
+	ts := httptest.NewServer(httpServer)
+	defer ts.Close()
+
+	ctx := t.Context()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	sessionCount := 0
+	httpServer.activeSessions.Range(func(_, _ any) bool {
+		sessionCount++
+		return true
+	})
+	require.Greater(t, sessionCount, 0)
+
+	shutdownDone := make(chan error, 1)
+	shutdownCtx, shutdownCancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer shutdownCancel()
+	go func() {
+		shutdownDone <- httpServer.Shutdown(shutdownCtx)
+	}()
+
+	select {
+	case err := <-shutdownDone:
+		if shutdownCtx.Err() == context.DeadlineExceeded {
+			t.Fatalf("Shutdown deadlocked (timed out): %v", err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("Shutdown did not return in time (likely deadlocked)")
+	}
+}
+
+func TestStreamableHTTP_CloseSessions(t *testing.T) {
+	mcpServer := NewMCPServer("test", "1.0.0")
+	httpServer := NewStreamableHTTPServer(mcpServer, WithStateful(true))
+
+	ts := httptest.NewServer(httpServer)
+	defer ts.Close()
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL, nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	sessionCount := 0
+	httpServer.activeSessions.Range(func(_, _ any) bool {
+		sessionCount++
+		return true
+	})
+	require.Greater(t, sessionCount, 0)
+
+	httpServer.CloseSessions()
+
+	sessionCount = 0
+	httpServer.activeSessions.Range(func(_, _ any) bool {
+		sessionCount++
+		return true
+	})
+	require.Equal(t, 0, sessionCount)
+
+	resp2, err := http.Get(ts.URL)
+	require.NoError(t, err)
+	defer resp2.Body.Close()
+	require.Equal(t, http.StatusOK, resp2.StatusCode)
+}

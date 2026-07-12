@@ -458,6 +458,8 @@ func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 		s.sweeperCancel()
 	}
 
+	s.CloseSessions()
+
 	// shutdown the server if needed (may use as a http.Handler)
 	s.mu.RLock()
 	srv := s.httpServer
@@ -466,6 +468,35 @@ func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 		return srv.Shutdown(ctx)
 	}
 	return nil
+}
+
+// CloseSessions terminates all active streamable HTTP listening sessions
+// without stopping the HTTP server. This unblocks long-lived GET handlers so
+// Shutdown can complete while clients are still connected.
+func (s *StreamableHTTPServer) CloseSessions() {
+	sessionIDs := make([]string, 0)
+	s.activeSessions.Range(func(key, value any) bool {
+		sessionID, ok := key.(string)
+		if !ok {
+			return true
+		}
+		if session, ok := value.(*streamableHttpSession); ok {
+			session.closeDone()
+		}
+		sessionIDs = append(sessionIDs, sessionID)
+		return true
+	})
+
+	mgr := s.sessionIdManager
+	if mgr == nil {
+		mgr = s.sessionIdManagerResolver.ResolveSessionIdManager(nil)
+	}
+
+	ctx := context.Background()
+	for _, sessionID := range sessionIDs {
+		_, _ = mgr.Terminate(sessionID)
+		s.cleanupSessionState(ctx, sessionID)
+	}
 }
 
 // --- internal methods ---
@@ -912,6 +943,8 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 			s.touchSession(sessionID)
 		case <-ctx.Done():
 			return
+		case <-session.done:
+			return
 		}
 	}
 }
@@ -1332,6 +1365,8 @@ type rootsRequestItem struct {
 type streamableHttpSession struct {
 	clientInfoStore // provides Get/SetClientInfo and Get/SetClientCapabilities via method promotion
 
+	done                chan struct{}
+	doneOnce            sync.Once
 	sessionID           string
 	notificationChannel chan mcp.JSONRPCNotification // server -> client notifications
 	tools               *sessionToolsStore
@@ -1351,6 +1386,7 @@ type streamableHttpSession struct {
 
 func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, resourcesStore *sessionResourcesStore, templatesStore *sessionResourceTemplatesStore, levels *sessionLogLevelsStore) *streamableHttpSession {
 	s := &streamableHttpSession{
+		done:                   make(chan struct{}),
 		sessionID:              sessionID,
 		notificationChannel:    make(chan mcp.JSONRPCNotification, 100),
 		tools:                  toolStore,
@@ -1362,6 +1398,14 @@ func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, re
 		rootsRequestChan:       make(chan rootsRequestItem, 10),
 	}
 	return s
+}
+
+// closeDone safely closes the session's done channel exactly once,
+// allowing long-lived GET handlers to exit during server shutdown.
+func (s *streamableHttpSession) closeDone() {
+	s.doneOnce.Do(func() {
+		close(s.done)
+	})
 }
 
 func (s *streamableHttpSession) SessionID() string {
