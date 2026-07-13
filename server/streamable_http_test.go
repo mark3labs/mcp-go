@@ -3006,7 +3006,7 @@ func TestStreamableHTTP_ShutdownWithActiveConnection(t *testing.T) {
 		serveDone <- customServer.Serve(listener)
 	}()
 	t.Cleanup(func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 		defer cancel()
 		_ = httpServer.Shutdown(shutdownCtx)
 		select {
