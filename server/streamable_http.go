@@ -458,22 +458,41 @@ func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 		s.sweeperCancel()
 	}
 
-	s.CloseSessions()
+	s.CloseSessions(ctx)
 
 	// shutdown the server if needed (may use as a http.Handler)
 	s.mu.RLock()
 	srv := s.httpServer
 	s.mu.RUnlock()
-	if srv != nil {
-		return srv.Shutdown(ctx)
+	if srv == nil {
+		return nil
 	}
-	return nil
+
+	shutdownDone := make(chan error, 1)
+	go func() {
+		shutdownDone <- srv.Shutdown(ctx)
+	}()
+
+	drainTicker := time.NewTicker(5 * time.Millisecond)
+	defer drainTicker.Stop()
+
+	for {
+		select {
+		case err := <-shutdownDone:
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-drainTicker.C:
+			// Drain sessions registered after the initial CloseSessions snapshot.
+			s.CloseSessions(ctx)
+		}
+	}
 }
 
 // CloseSessions terminates all active streamable HTTP listening sessions
 // without stopping the HTTP server. This unblocks long-lived GET handlers so
 // Shutdown can complete while clients are still connected.
-func (s *StreamableHTTPServer) CloseSessions() {
+func (s *StreamableHTTPServer) CloseSessions(ctx context.Context) {
 	sessionIDs := make([]string, 0)
 	s.activeSessions.Range(func(key, value any) bool {
 		sessionID, ok := key.(string)
@@ -492,9 +511,10 @@ func (s *StreamableHTTPServer) CloseSessions() {
 		mgr = s.sessionIdManagerResolver.ResolveSessionIdManager(nil)
 	}
 
-	ctx := context.Background()
 	for _, sessionID := range sessionIDs {
-		_, _ = mgr.Terminate(sessionID)
+		if _, err := mgr.Terminate(sessionID); err != nil {
+			s.logger.Warn("failed to terminate session during CloseSessions", "sessionID", sessionID, "err", err)
+		}
 		s.cleanupSessionState(ctx, sessionID)
 	}
 }

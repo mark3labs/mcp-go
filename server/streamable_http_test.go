@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -2987,13 +2989,39 @@ func TestStreamableHTTP_SamplingResponseErrors(t *testing.T) {
 
 func TestStreamableHTTP_ShutdownWithActiveConnection(t *testing.T) {
 	mcpServer := NewMCPServer("test", "1.0.0")
-	httpServer := NewStreamableHTTPServer(mcpServer, WithStateful(true))
+	mux := http.NewServeMux()
+	customServer := &http.Server{Handler: mux}
+	httpServer := NewStreamableHTTPServer(
+		mcpServer,
+		WithStateful(true),
+		WithStreamableHTTPServer(customServer),
+	)
+	mux.Handle(httpServer.endpointPath, httpServer)
 
-	ts := httptest.NewServer(httpServer)
-	defer ts.Close()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	serveDone := make(chan error, 1)
+	go func() {
+		serveDone <- customServer.Serve(listener)
+	}()
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = httpServer.Shutdown(shutdownCtx)
+		select {
+		case err := <-serveDone:
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				t.Logf("Serve returned: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+		}
+	})
+
+	baseURL := "http://" + listener.Addr().String() + httpServer.endpointPath
 
 	ctx := t.Context()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL, nil)
 	require.NoError(t, err)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
@@ -3045,7 +3073,7 @@ func TestStreamableHTTP_CloseSessions(t *testing.T) {
 	})
 	require.Greater(t, sessionCount, 0)
 
-	httpServer.CloseSessions()
+	httpServer.CloseSessions(t.Context())
 
 	sessionCount = 0
 	httpServer.activeSessions.Range(func(_, _ any) bool {
