@@ -3082,7 +3082,9 @@ func TestStreamableHTTP_CloseSessions(t *testing.T) {
 	})
 	require.Equal(t, 0, sessionCount)
 
-	resp2, err := http.Get(ts.URL)
+	req2, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL, nil)
+	require.NoError(t, err)
+	resp2, err := http.DefaultClient.Do(req2)
 	require.NoError(t, err)
 	defer resp2.Body.Close()
 	require.Equal(t, http.StatusOK, resp2.StatusCode)
