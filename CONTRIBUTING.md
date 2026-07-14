@@ -6,7 +6,7 @@ Thank you for your interest in contributing to the MCP Go SDK! We welcome contri
 
 ### Prerequisites
 
-Make sure you have Go 1.23 or later installed on your machine. You can check your Go version by running:
+Make sure you have Go 1.25 or later installed on your machine. You can check your Go version by running:
 
 ```bash
 go version
