@@ -502,7 +502,7 @@ httpServer := server.NewStreamableHTTPServer(s,
 
 With a store configured, each SSE event carries an `id` field issued by the store. To resume, a client reconnects with a `GET` request carrying the standard `Last-Event-ID` header (alongside its `Mcp-Session-Id`); the server replays the messages recorded after that event on the same stream, then continues live delivery. This also covers messages produced while nobody was connected: a tool call whose POST connection broke keeps recording its notifications and final response, all of which are redelivered on resume. Unknown event IDs, or event IDs belonging to a different session, are rejected with `400 Bad Request`.
 
-`NewInMemoryEventStore` keeps events in process memory and retains them for the lifetime of the store, which suits single-process deployments. For multi-node deployments or bounded retention, implement the two-method `EventStore` interface against shared storage (Redis, a database, etc.) and pass it to `WithEventStore`.
+`NewInMemoryEventStore` keeps events in process memory, which suits single-process deployments. A session's events are purged when the session terminates — an explicit `DELETE` or, with `WithSessionIdleTTL` configured, an idle sweep — after which its event IDs can no longer be resumed from. For multi-node deployments, implement the `EventStore` interface against shared storage (Redis, a database, etc.) and pass it to `WithEventStore`.
 
 ### Stateful vs Stateless
 

@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,15 +16,23 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// replayWriteTimeout bounds how long a resume replay may block writing to a
+// slow client while the stream's lock is held.
+const replayWriteTimeout = 30 * time.Second
+
 // resumableStream tracks one SSE stream whose events are recorded in the
 // configured EventStore. A stream outlives any single HTTP connection: while
 // no connection is attached, deliveries are recorded only, and a later GET
 // carrying Last-Event-ID replays the missed events and takes the stream over.
 //
-// All delivery for a stream is serialized through mu, which is what makes
-// resumption gap-free: a connection attaching under mu first replays from the
-// store and then installs itself, so an event is either included in the
-// replay or delivered live, never both and never neither.
+// Recording is serialized through mu, and a connection attaching under mu
+// first replays from the store and then installs itself, so an event reaches
+// the attaching connection either through the replay or live afterwards,
+// never both and never neither. Writes to an attached connection happen
+// outside mu so that a stalled client can never block stream takeover or
+// session cleanup; they cannot reorder because each stream has a single
+// producer (the session's listening pump, or the originating POST handler
+// under its own mutex).
 type resumableStream struct {
 	server    *StreamableHTTPServer
 	sessionID string
@@ -88,8 +98,6 @@ func (st *resumableStream) deliver(ctx context.Context, message any, last bool) 
 	}
 
 	st.mu.Lock()
-	defer st.mu.Unlock()
-
 	eventID, err := st.server.eventStore.StoreEvent(ctx, st.sessionID, st.id, data)
 	if err != nil {
 		// Recording failed; deliver live without an ID rather than dropping.
@@ -99,20 +107,47 @@ func (st *resumableStream) deliver(ctx context.Context, message any, last bool) 
 	if last {
 		st.closed = true
 	}
+	conn, postW := st.conn, st.postW
+	st.mu.Unlock()
 
 	switch {
-	case st.conn != nil:
+	case conn != nil:
 		select {
-		case st.conn.sink <- resumableEvent{eventID: eventID, message: data, last: last}:
-		case <-st.conn.gone:
+		case conn.sink <- resumableEvent{eventID: eventID, message: data, last: last}:
+		case <-conn.gone:
+			// The connection died or was superseded while we were blocked; the
+			// event is recorded and reaches the client on resume (or already
+			// reached the successor through its replay).
 		}
-	case st.postW != nil:
-		if err := writeSSEEventRaw(st.postW, eventID, data); err != nil {
+	case postW != nil:
+		if err := writeSSEEventRaw(postW, eventID, data); err != nil {
 			st.server.logger.Error("Failed to write SSE event", "err", err)
-			st.postW = nil
+			st.clearPostWriterIf(postW)
 			return
 		}
-		st.postW.Flush()
+		postW.Flush()
+	}
+}
+
+// deliverTransient writes message to the attached connection without
+// recording it. Keepalive pings use this: they check connection liveness
+// rather than carry session history, so they get no event ID (the client's
+// Last-Event-ID does not advance) and are dropped while nothing is attached.
+func (st *resumableStream) deliverTransient(message any) {
+	data, err := json.Marshal(message)
+	if err != nil {
+		st.server.logger.Error("Failed to marshal SSE event", "err", err)
+		return
+	}
+	st.mu.Lock()
+	conn := st.conn
+	st.mu.Unlock()
+	if conn == nil {
+		return
+	}
+	select {
+	case conn.sink <- resumableEvent{message: data}:
+	case <-conn.gone:
 	}
 }
 
@@ -122,6 +157,16 @@ func (st *resumableStream) clearPostWriter() {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	st.postW = nil
+}
+
+// clearPostWriterIf stops direct writes to w if it is still the stream's
+// originating POST writer.
+func (st *resumableStream) clearPostWriterIf(w HTTPResponseWriter) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.postW == w {
+		st.postW = nil
+	}
 }
 
 // detachLocked supersedes whatever is currently attached. Callers must hold mu.
@@ -158,13 +203,16 @@ func (st *resumableStream) attach() *resumableConn {
 // connection as the stream's live writer. Replay happens under mu, so no
 // event can be recorded while the store is scanned: an event is either part
 // of the replay or delivered live afterwards, never both and never neither.
-// It returns nil if the stream is complete (or replay failed) and there is
-// nothing further to serve. SSE response headers must already be written.
+// A write deadline (where the transport supports one) bounds how long a slow
+// client can hold the lock during replay. It returns nil if the stream is
+// complete (or replay failed) and there is nothing further to serve. SSE
+// response headers must already be written.
 func (st *resumableStream) replayAndAttach(w HTTPResponseWriter, r *HTTPRequest, lastEventID string) *resumableConn {
 	conn := newResumableConn()
 
 	st.mu.Lock()
 	st.detachLocked()
+	restoreDeadline := setWriteDeadline(w, replayWriteTimeout)
 	_, err := st.server.eventStore.ReplayEventsAfter(r.ctx(), st.sessionID, lastEventID, func(eventID string, message json.RawMessage) error {
 		if err := writeSSEEventRaw(w, eventID, message); err != nil {
 			return err
@@ -172,6 +220,7 @@ func (st *resumableStream) replayAndAttach(w HTTPResponseWriter, r *HTTPRequest,
 		w.Flush()
 		return nil
 	})
+	restoreDeadline()
 	if err != nil {
 		st.mu.Unlock()
 		st.server.logger.Error("Failed to replay SSE events", "err", err, "stream", st.id)
@@ -327,7 +376,12 @@ func (s *StreamableHTTPServer) handleResumeGet(w HTTPResponseWriter, r *HTTPRequ
 	// stores pay two reads per resume.
 	streamID, err := s.eventStore.ReplayEventsAfter(r.ctx(), sessionID, lastEventID, func(string, json.RawMessage) error { return nil })
 	if err != nil {
-		writeHTTPError(w, "Unknown Last-Event-ID", http.StatusBadRequest)
+		if errors.Is(err, ErrUnknownEventID) {
+			writeHTTPError(w, "Unknown Last-Event-ID", http.StatusBadRequest)
+		} else {
+			s.logger.Error("Failed to resume stream", "err", err, "session", sessionID)
+			writeHTTPError(w, "Failed to resume stream", http.StatusInternalServerError)
+		}
 		return
 	}
 	s.touchSession(sessionID)
@@ -349,6 +403,7 @@ func (s *StreamableHTTPServer) handleResumeGet(w HTTPResponseWriter, r *HTTPRequ
 	if st == nil {
 		// The stream is no longer tracked (e.g. its session state was cleaned
 		// up); replay what the store has and finish.
+		restoreDeadline := setWriteDeadline(w, replayWriteTimeout)
 		_, err := s.eventStore.ReplayEventsAfter(r.ctx(), sessionID, lastEventID, func(eventID string, message json.RawMessage) error {
 			if err := writeSSEEventRaw(w, eventID, message); err != nil {
 				return err
@@ -356,6 +411,7 @@ func (s *StreamableHTTPServer) handleResumeGet(w HTTPResponseWriter, r *HTTPRequ
 			w.Flush()
 			return nil
 		})
+		restoreDeadline()
 		if err != nil {
 			s.logger.Error("Failed to replay SSE events", "err", err, "stream", streamID)
 		}
@@ -372,7 +428,8 @@ func (s *StreamableHTTPServer) handleResumeGet(w HTTPResponseWriter, r *HTTPRequ
 }
 
 // startConnHeartbeat delivers periodic ping requests to the stream for as
-// long as ctx (the attached connection's context) lasts.
+// long as ctx (the attached connection's context) lasts. Pings are transient:
+// they are never recorded for replay.
 func (s *StreamableHTTPServer) startConnHeartbeat(ctx context.Context, st *resumableStream, sessionID string) {
 	go func() {
 		defer func() {
@@ -385,13 +442,13 @@ func (s *StreamableHTTPServer) startConnHeartbeat(ctx context.Context, st *resum
 		for {
 			select {
 			case <-ticker.C:
-				st.deliver(context.Background(), mcp.JSONRPCRequest{
+				st.deliverTransient(mcp.JSONRPCRequest{
 					JSONRPC: "2.0",
 					ID:      mcp.NewRequestId(s.nextRequestID(sessionID)),
 					Request: mcp.Request{
 						Method: string(mcp.MethodPing),
 					},
-				}, false)
+				})
 			case <-ctx.Done():
 				return
 			}
@@ -399,9 +456,10 @@ func (s *StreamableHTTPServer) startConnHeartbeat(ctx context.Context, st *resum
 	}()
 }
 
-// cleanupResumableState tears down the session's streams and pump. Any
-// connection still attached to one of its streams is closed.
-func (s *StreamableHTTPServer) cleanupResumableState(sessionID string) {
+// cleanupResumableState tears down the session's streams and pump and purges
+// the session's events from the store, so none of its event IDs can be
+// resumed from. Any connection still attached to one of its streams is closed.
+func (s *StreamableHTTPServer) cleanupResumableState(ctx context.Context, sessionID string) {
 	if stop, ok := s.listeningPumpStops.LoadAndDelete(sessionID); ok {
 		close(stop.(chan struct{}))
 	}
@@ -416,12 +474,37 @@ func (s *StreamableHTTPServer) cleanupResumableState(sessionID string) {
 		}
 		return true
 	})
+	if err := s.eventStore.PurgeSession(ctx, sessionID); err != nil {
+		s.logger.Error("Failed to purge session events", "err", err, "session", sessionID)
+	}
+}
+
+// setWriteDeadline applies a write deadline to w when the underlying
+// transport supports one (net/http does, via http.ResponseController) and
+// returns a func that clears it again. Writers without deadline support,
+// e.g. adapters for other frameworks, are left untouched.
+func setWriteDeadline(w HTTPResponseWriter, d time.Duration) (restore func()) {
+	dw, ok := w.(interface{ SetWriteDeadline(time.Time) error })
+	if !ok {
+		return func() {}
+	}
+	if err := dw.SetWriteDeadline(time.Now().Add(d)); err != nil {
+		return func() {}
+	}
+	return func() {
+		_ = dw.SetWriteDeadline(time.Time{})
+	}
 }
 
 // writeSSEEventRaw writes an already-marshaled message as an SSE event,
-// prefixed with an id field when eventID is non-empty.
+// prefixed with an id field when eventID is non-empty. IDs containing line
+// breaks are rejected: interpolating one into the id field would corrupt the
+// SSE framing.
 func writeSSEEventRaw(w io.Writer, eventID string, data json.RawMessage) error {
 	if eventID != "" {
+		if strings.ContainsAny(eventID, "\r\n") {
+			return fmt.Errorf("invalid SSE event id %q: contains line breaks", eventID)
+		}
 		if _, err := fmt.Fprintf(w, "id: %s\n", eventID); err != nil {
 			return fmt.Errorf("failed to write SSE event id: %w", err)
 		}

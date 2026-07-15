@@ -67,6 +67,10 @@ func (r *recordingStore) ReplayEventsAfter(ctx context.Context, sessionID, lastE
 	return r.inner.ReplayEventsAfter(ctx, sessionID, lastEventID, send)
 }
 
+func (r *recordingStore) PurgeSession(ctx context.Context, sessionID string) error {
+	return r.inner.PurgeSession(ctx, sessionID)
+}
+
 // waitTotalStored blocks until at least n events have been recorded in total.
 func (r *recordingStore) waitTotalStored(t *testing.T, n int) {
 	t.Helper()
@@ -293,7 +297,7 @@ func openGET(t *testing.T, ts *httptest.Server, sessionID, lastEventID string) (
 // startToolCall POSTs a tools/call for the emitter tool and returns a channel
 // yielding the response once its headers arrive (i.e. once the response
 // upgrades to SSE or completes).
-func startToolCall(t *testing.T, ts *httptest.Server, sessionID string, requestID int) (<-chan *http.Response, context.CancelFunc) {
+func startToolCall(t *testing.T, ts *httptest.Server, sessionID string, requestID int) (<-chan postResult, context.CancelFunc) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
@@ -303,23 +307,28 @@ func startToolCall(t *testing.T, ts *httptest.Server, sessionID string, requestI
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(sessionHeader, sessionID)
 
-	ch := make(chan *http.Response, 1)
+	ch := make(chan postResult, 1)
 	go func() {
 		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return
-		}
-		ch <- resp
+		ch <- postResult{resp: resp, err: err}
 	}()
 	return ch, cancel
 }
 
-func waitResponse(t *testing.T, ch <-chan *http.Response) *http.Response {
+// postResult carries the outcome of an asynchronous POST: the response once
+// its headers arrived, or the request error.
+type postResult struct {
+	resp *http.Response
+	err  error
+}
+
+func waitResponse(t *testing.T, ch <-chan postResult) *http.Response {
 	t.Helper()
 	select {
-	case resp := <-ch:
-		t.Cleanup(func() { _ = resp.Body.Close() })
-		return resp
+	case r := <-ch:
+		require.NoError(t, r.err, "tools/call request failed")
+		t.Cleanup(func() { _ = r.resp.Body.Close() })
+		return r.resp
 	case <-time.After(waitTimeout):
 		t.Fatal("timed out waiting for HTTP response headers")
 		return nil
@@ -559,6 +568,40 @@ func TestResumability_UnknownLastEventID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp2.StatusCode)
 }
 
+// Terminating a session purges its recorded events: an event id that resumed
+// fine while the session lived is rejected after DELETE.
+func TestResumability_TerminatedSessionCannotResume(t *testing.T) {
+	mcpServer, ts, _ := startServer(t, server.NewInMemoryEventStore())
+	sid := initSession(t, ts)
+
+	resp, cancelGET := openGET(t, ts, sid, "")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	br := bufio.NewReader(resp.Body)
+
+	sendNotification(t, mcpServer, sid, "n1")
+	sendNotification(t, mcpServer, sid, "n2")
+	ev := requireEvent(t, br)
+	require.NotEmpty(t, ev.id)
+	cancelGET()
+
+	// While the session lives, ev.id resumes and redelivers n2.
+	resumed, cancelResumed := openGET(t, ts, sid, ev.id)
+	require.Equal(t, http.StatusOK, resumed.StatusCode)
+	require.Equal(t, "n2", notificationData(t, requireEvent(t, bufio.NewReader(resumed.Body)).data))
+	cancelResumed()
+
+	req, err := http.NewRequest(http.MethodDelete, ts.URL, nil)
+	require.NoError(t, err)
+	req.Header.Set(sessionHeader, sid)
+	delResp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer delResp.Body.Close()
+	require.Equal(t, http.StatusOK, delResp.StatusCode)
+
+	rejected, _ := openGET(t, ts, sid, ev.id)
+	assert.Equal(t, http.StatusBadRequest, rejected.StatusCode)
+}
+
 // An event id recorded for one session cannot be used to resume from another
 // session.
 func TestResumability_CrossSessionRejected(t *testing.T) {
@@ -701,9 +744,11 @@ func (f *fakeStore) StoreEvent(_ context.Context, sessionID, streamID string, me
 	return id, nil
 }
 
+func (f *fakeStore) PurgeSession(context.Context, string) error { return nil }
+
 func (f *fakeStore) ReplayEventsAfter(_ context.Context, _ string, lastEventID string, send func(eventID string, message json.RawMessage) error) (string, error) {
 	if lastEventID != "custom~1*id" {
-		return "", fmt.Errorf("unknown event id %q", lastEventID)
+		return "", fmt.Errorf("%w: %q", server.ErrUnknownEventID, lastEventID)
 	}
 	f.mu.Lock()
 	events := make([]sseEvent, len(f.replayEvents))

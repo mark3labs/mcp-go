@@ -3,19 +3,25 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
 )
+
+// ErrUnknownEventID indicates that a lastEventID passed to
+// EventStore.ReplayEventsAfter is not known for the given session.
+var ErrUnknownEventID = errors.New("unknown event ID")
 
 // EventStore records the JSON-RPC messages delivered on a session's SSE
 // streams so that a client can resume a broken stream and be redelivered the
 // messages it missed, per the "Resumability and Redelivery" section of the
 // MCP Streamable HTTP transport specification.
 //
-// The transport treats event IDs as opaque strings: any non-empty value is
-// acceptable, as long as IDs are unique within a session across all of its
-// streams. Implementations must be safe for concurrent use.
+// The transport treats event IDs as opaque strings: any non-empty value that
+// contains no carriage returns or newlines is acceptable, as long as IDs are
+// unique within a session across all of its streams. Implementations must be
+// safe for concurrent use.
 type EventStore interface {
 	// StoreEvent records message as the next event on the given stream and
 	// returns the event ID assigned to it. The returned ID is attached to the
@@ -24,16 +30,23 @@ type EventStore interface {
 
 	// ReplayEventsAfter invokes send, in insertion order, for every event
 	// stored after lastEventID on the same stream as lastEventID, and returns
-	// the ID of that stream. It returns an error if lastEventID is not known
-	// for the given session, or if send returns an error.
+	// the ID of that stream. It returns an error wrapping ErrUnknownEventID if
+	// lastEventID is not known for the given session, or the error returned by
+	// send if send fails.
 	ReplayEventsAfter(ctx context.Context, sessionID, lastEventID string, send func(eventID string, message json.RawMessage) error) (string, error)
+
+	// PurgeSession removes every event recorded for the given session. It is
+	// called when the session terminates (an explicit DELETE or an idle
+	// sweep), after which none of the session's event IDs can be resumed from.
+	PurgeSession(ctx context.Context, sessionID string) error
 }
 
 // InMemoryEventStore is an EventStore that keeps events in process memory.
 // It is suitable for single-process deployments; multi-node deployments
 // should implement EventStore on top of shared storage instead.
 //
-// Events are retained for the lifetime of the store.
+// A session's events are retained until PurgeSession is called for it, which
+// the streamable HTTP server does when the session terminates.
 type InMemoryEventStore struct {
 	mu       sync.RWMutex
 	seq      int64
@@ -62,6 +75,8 @@ func NewInMemoryEventStore() *InMemoryEventStore {
 	return &InMemoryEventStore{sessions: make(map[string]*sessionEventLog)}
 }
 
+// StoreEvent records message as the next event on the given stream and
+// returns the store-wide sequence number assigned to it as the event ID.
 func (s *InMemoryEventStore) StoreEvent(_ context.Context, sessionID, streamID string, message json.RawMessage) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -90,17 +105,21 @@ func (s *InMemoryEventStore) StoreEvent(_ context.Context, sessionID, streamID s
 	return id, nil
 }
 
+// ReplayEventsAfter invokes send for every event stored after lastEventID on
+// the stream that produced it, in insertion order, and returns that stream's
+// ID. It returns an error wrapping ErrUnknownEventID if lastEventID was never
+// issued for the given session or the session's events have been purged.
 func (s *InMemoryEventStore) ReplayEventsAfter(_ context.Context, sessionID, lastEventID string, send func(eventID string, message json.RawMessage) error) (string, error) {
 	s.mu.RLock()
 	log := s.sessions[sessionID]
 	if log == nil {
 		s.mu.RUnlock()
-		return "", fmt.Errorf("unknown event ID: %s", lastEventID)
+		return "", fmt.Errorf("%w: %s", ErrUnknownEventID, lastEventID)
 	}
 	ref, ok := log.index[lastEventID]
 	if !ok {
 		s.mu.RUnlock()
-		return "", fmt.Errorf("unknown event ID: %s", lastEventID)
+		return "", fmt.Errorf("%w: %s", ErrUnknownEventID, lastEventID)
 	}
 	events := log.streams[ref.streamID][ref.pos+1:]
 	tail := make([]storedEvent, len(events))
@@ -113,4 +132,12 @@ func (s *InMemoryEventStore) ReplayEventsAfter(_ context.Context, sessionID, las
 		}
 	}
 	return ref.streamID, nil
+}
+
+// PurgeSession removes every event recorded for the given session.
+func (s *InMemoryEventStore) PurgeSession(_ context.Context, sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, sessionID)
+	return nil
 }

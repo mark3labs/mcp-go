@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 // HTTPRequest is a transport-agnostic view of an incoming MCP HTTP request.
@@ -135,6 +136,13 @@ func (a *httpResponseWriterAdapter) Flush() {
 	if a.flusher != nil {
 		a.flusher.Flush()
 	}
+}
+
+// SetWriteDeadline sets a deadline for future writes via
+// http.ResponseController, bounding how long a stalled client can block the
+// server. A zero time clears the deadline.
+func (a *httpResponseWriterAdapter) SetWriteDeadline(t time.Time) error {
+	return http.NewResponseController(a.w).SetWriteDeadline(t)
 }
 
 func (a *httpResponseWriterAdapter) CanStream() bool { return a.flusher != nil }
