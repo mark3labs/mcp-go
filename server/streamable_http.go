@@ -101,6 +101,25 @@ func WithHeartbeatInterval(interval time.Duration) StreamableHTTPOption {
 	}
 }
 
+// WithEventStore enables stream resumability, per the "Resumability and
+// Redelivery" section of the MCP Streamable HTTP transport specification.
+//
+// Every JSON-RPC message delivered on an SSE stream is recorded in store
+// before it is sent and carries the store-issued event ID in the SSE id
+// field. A client whose connection broke can then reconnect with a GET
+// carrying the standard Last-Event-ID header to be redelivered everything it
+// missed on that stream and keep receiving from it.
+//
+// With an event store configured, session transport state survives client
+// disconnects so that messages produced while no client is connected can
+// still be recorded. It is reclaimed when the session is terminated (DELETE)
+// or, with WithSessionIdleTTL configured, when the session idles out.
+func WithEventStore(store EventStore) StreamableHTTPOption {
+	return func(s *StreamableHTTPServer) {
+		s.eventStore = store
+	}
+}
+
 // WithDisableStreaming prevents the server from responding to GET requests with
 // a streaming response. Instead, it will respond with a 405 Method Not Allowed status.
 // This can be useful in scenarios where streaming is not desired or supported.
@@ -259,8 +278,8 @@ func WithStreamableHTTPCORS(opts ...CORSOption) StreamableHTTPOption {
 // not trigger the session registration. So the methods like `SendNotificationToSpecificClient`
 // or `hooks.onRegisterSession` will not be triggered for POST messages.
 //
-// The current implementation does not support the following features from the specification:
-//   - Stream Resumability
+// Stream resumability (redelivery of the messages a client missed while its
+// SSE connection was broken) is opt-in via WithEventStore.
 type StreamableHTTPServer struct {
 	server                   *MCPServer
 	sessionTools             *sessionToolsStore
@@ -268,6 +287,11 @@ type StreamableHTTPServer struct {
 	sessionResourceTemplates *sessionResourceTemplatesStore
 	sessionRequestIDs        sync.Map // sessionId --> last requestID(*atomic.Int64)
 	activeSessions           sync.Map // sessionId --> *streamableHttpSession (for sampling responses)
+
+	eventStore         EventStore
+	resumableStreams   sync.Map // streamID --> *resumableStream
+	listeningStreams   sync.Map // sessionID --> *resumableStream (the standalone listening stream)
+	listeningPumpStops sync.Map // sessionID --> chan struct{} (stops the session's pump)
 
 	httpServer *http.Server
 	mu         sync.RWMutex
@@ -598,7 +622,17 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	// application/json response (the upgrade simply won't fire).
 	canStream := w.CanStream()
 
+	// Request stream for resumability, created lazily when the first SSE
+	// message for this request is delivered. Guarded by mu. Stored events
+	// must outlive the request context, which ends with the connection.
+	var rst *resumableStream
+	storeCtx := context.WithoutCancel(ctx)
+
+	// forwarderExited lets the response path wait until the forwarder can no
+	// longer be holding an undelivered notification.
+	forwarderExited := make(chan struct{})
 	go func() {
+		defer close(forwarderExited)
 		defer func() {
 			if r := recover(); r != nil {
 				s.logger.Error("panic in notification forwarder", "panic", r)
@@ -613,6 +647,23 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 					// if the done chan is closed, as the request is terminated, just return
 					select {
 					case <-done:
+						// The notification is already off the channel; with an
+						// event store it must still be recorded.
+						if s.eventStore != nil && canStream {
+							if rst == nil {
+								rst = s.newResumableStream(sessionID, w)
+							}
+							if ctx.Err() != nil {
+								rst.clearPostWriter()
+							} else if !upgradedHeader {
+								w.Header().Set("Content-Type", "text/event-stream")
+								w.Header().Set("Connection", "keep-alive")
+								w.Header().Set("Cache-Control", "no-cache")
+								w.WriteHeader(http.StatusOK)
+								upgradedHeader = true
+							}
+							rst.deliver(storeCtx, nt, false)
+						}
 						return
 					default:
 					}
@@ -623,6 +674,23 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 						return
 					}
 					defer w.Flush()
+
+					if s.eventStore != nil {
+						if rst == nil {
+							rst = s.newResumableStream(sessionID, w)
+						}
+						if ctx.Err() != nil {
+							rst.clearPostWriter()
+						} else if !upgradedHeader {
+							w.Header().Set("Content-Type", "text/event-stream")
+							w.Header().Set("Connection", "keep-alive")
+							w.Header().Set("Cache-Control", "no-cache")
+							w.WriteHeader(http.StatusOK)
+							upgradedHeader = true
+						}
+						rst.deliver(storeCtx, nt, false)
+						return
+					}
 
 					// if there's notifications, upgradedHeader to SSE response
 					if !upgradedHeader {
@@ -661,6 +729,14 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	}
 
 	// Write response
+	//
+	// With an event store, stop the forwarder before draining so that exactly
+	// one consumer records whatever notifications remain, preserving their
+	// order ahead of the response.
+	if s.eventStore != nil {
+		close(done)
+		<-forwarderExited
+	}
 	mu.Lock()
 
 drainLoop:
@@ -668,6 +744,23 @@ drainLoop:
 		select {
 		case nt := <-session.notificationChannel:
 			if !canStream {
+				continue
+			}
+			if s.eventStore != nil {
+				if rst == nil {
+					rst = s.newResumableStream(sessionID, w)
+				}
+				if ctx.Err() != nil {
+					rst.clearPostWriter()
+				} else if !upgradedHeader {
+					w.Header().Set("Content-Type", "text/event-stream")
+					w.Header().Set("Connection", "keep-alive")
+					w.Header().Set("Cache-Control", "no-cache")
+					w.WriteHeader(http.StatusOK)
+					upgradedHeader = true
+				}
+				rst.deliver(storeCtx, nt, false)
+				w.Flush()
 				continue
 			}
 			if !upgradedHeader {
@@ -687,16 +780,40 @@ drainLoop:
 	}
 
 	// close the done chan before unlocking to signal the goroutine to stop
-	close(done)
+	if s.eventStore == nil {
+		close(done)
+	}
 	mu.Unlock()
 	if ctx.Err() != nil {
+		// The connection is gone, but with an event store the response of an
+		// interrupted SSE request is still recorded so that a resuming client
+		// can be redelivered it.
+		if s.eventStore != nil && (rst != nil || (session.upgradeToSSE.Load() && canStream)) {
+			if rst == nil {
+				rst = s.newResumableStream(sessionID, w)
+			}
+			rst.clearPostWriter()
+			rst.deliver(storeCtx, response, true)
+		}
 		return
 	}
 	// If client-server communication already upgraded to SSE stream
 	// Also check upgradedHeader: a notification during HandleMessage processing
 	// may have already written SSE headers on this response, so we must continue
 	// in SSE mode to avoid writing JSON on top of SSE data.
-	if (session.upgradeToSSE.Load() && canStream) || upgradedHeader {
+	if s.eventStore != nil && (rst != nil || (session.upgradeToSSE.Load() && canStream)) {
+		if rst == nil {
+			rst = s.newResumableStream(sessionID, w)
+		}
+		if !upgradedHeader {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Connection", "keep-alive")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.WriteHeader(http.StatusOK)
+			upgradedHeader = true
+		}
+		rst.deliver(storeCtx, response, true)
+	} else if (session.upgradeToSSE.Load() && canStream) || upgradedHeader {
 		if !upgradedHeader {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Connection", "keep-alive")
@@ -753,6 +870,15 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 		return
 	}
 
+	// A GET carrying Last-Event-ID resumes a previously broken SSE stream
+	// rather than opening a fresh listening stream.
+	if s.eventStore != nil {
+		if lastEventID := r.header().Get("Last-Event-ID"); lastEventID != "" {
+			s.handleResumeGet(w, r, lastEventID)
+			return
+		}
+	}
+
 	sessionID := r.header().Get(HeaderKeySessionID)
 	// The MCP specification doesn't require validating session ID for GET requests.
 	// If no session ID is provided by the client, generate one using the configured SessionIdManager
@@ -776,12 +902,22 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 			writeHTTPErrorf(w, http.StatusBadRequest, "Session registration failed: %v", err)
 			return
 		}
-		defer s.server.UnregisterSession(r.ctx(), sessionID)
-		defer s.activeSessions.Delete(sessionID)
-		defer s.sessionRequestIDs.Delete(sessionID)
+		if s.eventStore == nil {
+			defer s.server.UnregisterSession(r.ctx(), sessionID)
+			defer s.activeSessions.Delete(sessionID)
+			defer s.sessionRequestIDs.Delete(sessionID)
+		}
+		// With an event store, the session outlives the connection so that
+		// messages produced while the client is away are recorded for
+		// replay; it is cleaned up on DELETE or by the idle sweeper.
 	}
 
 	s.touchSession(sessionID)
+
+	if s.eventStore != nil {
+		s.serveListeningStream(w, r, sessionID, session)
+		return
+	}
 
 	// Set the client context before handling the message
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -1088,6 +1224,9 @@ func (s *StreamableHTTPServer) touchSession(sessionID string) {
 
 // cleanupSessionState removes all per-session transport state for the given session ID.
 func (s *StreamableHTTPServer) cleanupSessionState(ctx context.Context, sessionID string) {
+	if s.eventStore != nil {
+		s.cleanupResumableState(sessionID)
+	}
 	// Unregister first to stop notification routing before deleting data.
 	s.server.UnregisterSession(ctx, sessionID)
 	s.activeSessions.Delete(sessionID)
