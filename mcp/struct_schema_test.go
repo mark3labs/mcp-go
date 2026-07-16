@@ -50,7 +50,7 @@ func TestSchemaFor_JSONSchemaEnumTagWithoutLeadingSpace(t *testing.T) {
 
 func TestSchemaFor_StructuredInputOutputExampleTags(t *testing.T) {
 	type WeatherRequest struct {
-		Location string `json:"location,required" jsonschema_description:"City or location"`
+		Location string `json:"location,required" jsonschema_description:"City or location"` //nolint:staticcheck // required is interpreted by schemaFor, not encoding/json
 		Units    string `json:"units,omitempty" jsonschema_description:"celsius or fahrenheit" jsonschema:"enum=celsius,enum=fahrenheit"`
 	}
 

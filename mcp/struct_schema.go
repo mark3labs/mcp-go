@@ -189,8 +189,8 @@ func parseJSONSchemaTag(tag string) (string, []any) {
 			continue
 		}
 
-		if strings.HasPrefix(part, "enum=") {
-			enums = append(enums, strings.TrimPrefix(part, "enum="))
+		if enumValue, ok := strings.CutPrefix(part, "enum="); ok {
+			enums = append(enums, enumValue)
 			continue
 		}
 
@@ -226,7 +226,7 @@ func fieldJSONInfo(field reflect.StructField) jsonFieldInfo {
 	}
 	if rest != "" {
 		info.settings = map[string]bool{}
-		for _, setting := range strings.Split(rest, ",") {
+		for setting := range strings.SplitSeq(rest, ",") {
 			info.settings[setting] = true
 		}
 	}
