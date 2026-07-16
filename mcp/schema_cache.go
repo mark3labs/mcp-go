@@ -8,8 +8,6 @@ import (
 	"reflect"
 	"sort"
 	"sync"
-
-	"github.com/google/jsonschema-go/jsonschema"
 )
 
 // SchemaCache stores pre-computed JSON schemas for tool input/output types.
@@ -279,15 +277,7 @@ func SchemaFor[T any]() map[string]any {
 // JSON. It is the lower-level building block underlying [SchemaFor],
 // [WithInputSchema] and [WithOutputSchema].
 func SchemaForRaw[T any]() (json.RawMessage, error) {
-	schema, err := jsonschema.For[T](&jsonschema.ForOptions{IgnoreInvalidTypes: true})
-	if err != nil {
-		return nil, fmt.Errorf("generate schema: %w", err)
-	}
-	raw, err := json.Marshal(schema)
-	if err != nil {
-		return nil, fmt.Errorf("marshal schema: %w", err)
-	}
-	return raw, nil
+	return schemaForRawMessage[T]()
 }
 
 // WarmFor computes the schema for T via reflection and stores it in cache.
