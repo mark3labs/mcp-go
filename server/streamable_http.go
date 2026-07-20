@@ -1607,9 +1607,12 @@ type requestScopedSSE struct {
 }
 
 // trySend queues the request for the originating POST stream. It reports
-// false when the POST has already finished, so the caller can fall back to
-// the standalone GET stream.
-func (r *requestScopedSSE) trySend(request mcp.JSONRPCRequest) bool {
+// false when the POST has already finished or ctx expires, so the caller can
+// fall back to the standalone GET stream. While the POST stream is active it
+// waits for buffer space instead of treating backpressure as absence:
+// spilling to the GET stream mid-request would reintroduce the cross-stream
+// routing this type exists to avoid.
+func (r *requestScopedSSE) trySend(ctx context.Context, request mcp.JSONRPCRequest) bool {
 	select {
 	case <-r.done:
 		return false
@@ -1621,7 +1624,7 @@ func (r *requestScopedSSE) trySend(request mcp.JSONRPCRequest) bool {
 		return true
 	case <-r.done:
 		return false
-	default:
+	case <-ctx.Done():
 		return false
 	}
 }
@@ -1884,7 +1887,7 @@ func (s *streamableHttpSession) RequestElicitation(ctx context.Context, request 
 		Params: request.Params,
 	}
 	scoped, hasScoped := ctx.Value(requestScopedSSEKey{}).(*requestScopedSSE)
-	if !hasScoped || !scoped.trySend(jsonrpcRequest) {
+	if !hasScoped || !scoped.trySend(ctx, jsonrpcRequest) {
 		// Send the elicitation request via the channel (non-blocking)
 		select {
 		case s.elicitationRequestChan <- elicitationRequest:

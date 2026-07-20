@@ -2967,6 +2967,52 @@ func TestStreamableHTTP_ServerRequestIDsDoNotCollide(t *testing.T) {
 	}
 }
 
+// TestStreamableHTTP_TrySendWaitsForBufferSpace verifies that transient
+// backpressure on an active POST stream makes trySend wait rather than spill
+// the request to the standalone GET stream, and that it still gives up when
+// the caller's context ends or the POST stream finishes.
+func TestStreamableHTTP_TrySendWaitsForBufferSpace(t *testing.T) {
+	requests := make(chan mcp.JSONRPCRequest, 1)
+	done := make(chan struct{})
+	scoped := &requestScopedSSE{requests: requests, done: done, register: func() {}}
+
+	// Fill the buffer so the next send hits backpressure.
+	require.True(t, scoped.trySend(context.Background(), mcp.JSONRPCRequest{}))
+
+	result := make(chan bool, 1)
+	go func() { result <- scoped.trySend(context.Background(), mcp.JSONRPCRequest{}) }()
+
+	select {
+	case r := <-result:
+		t.Fatalf("expected trySend to wait for buffer space, returned %v immediately", r)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// Draining the stream frees a slot and the waiting send completes.
+	<-requests
+	select {
+	case r := <-result:
+		require.True(t, r, "expected the waiting send to succeed after the stream drained")
+	case <-time.After(2 * time.Second):
+		t.Fatal("trySend did not complete after buffer space freed")
+	}
+
+	// The waiting send refilled the buffer; drain it so the next refill is
+	// deterministic.
+	<-requests
+
+	// With the buffer full again, an ended caller context falls back instead
+	// of waiting forever.
+	require.True(t, scoped.trySend(context.Background(), mcp.JSONRPCRequest{}))
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.False(t, scoped.trySend(cancelled, mcp.JSONRPCRequest{}))
+
+	// A finished POST stream still reports false immediately.
+	close(done)
+	require.False(t, scoped.trySend(context.Background(), mcp.JSONRPCRequest{}))
+}
+
 func TestStreamableHTTP_SamplingResponseErrors(t *testing.T) {
 	mcpServer := NewMCPServer("test", "1.0")
 	ts := NewTestStreamableHTTPServer(mcpServer, WithStateful(true))
