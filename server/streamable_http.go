@@ -286,7 +286,6 @@ type StreamableHTTPServer struct {
 	sessionTools             *sessionToolsStore
 	sessionResources         *sessionResourcesStore
 	sessionResourceTemplates *sessionResourceTemplatesStore
-	sessionRequestIDs        sync.Map     // sessionId --> last requestID(*atomic.Int64)
 	activeSessions           sync.Map     // sessionId --> *streamableHttpSession (for sampling responses)
 	requestIDCounter         atomic.Int64 // server -> client request IDs, shared across sessions
 
@@ -997,7 +996,6 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 		if s.eventStore == nil {
 			defer s.server.UnregisterSession(r.ctx(), sessionID)
 			defer s.activeSessions.Delete(sessionID)
-			defer s.sessionRequestIDs.Delete(sessionID)
 		}
 		// With an event store, the session outlives the connection so that
 		// messages produced while the client is away are recorded for
@@ -1314,11 +1312,11 @@ func (s *StreamableHTTPServer) writeJSONRPCError(
 	})
 }
 
-// nextRequestID gets the next incrementing requestID for the current session
+// nextRequestID gets the next requestID for a server-initiated request. The
+// counter is shared with sampling, elicitation and roots requests so IDs never
+// collide within a session.
 func (s *StreamableHTTPServer) nextRequestID(sessionID string) int64 {
-	actual, _ := s.sessionRequestIDs.LoadOrStore(sessionID, new(atomic.Int64))
-	counter := actual.(*atomic.Int64)
-	return counter.Add(1)
+	return s.requestIDCounter.Add(1)
 }
 
 // touchSession records the current time as the last activity for the given session.
@@ -1344,7 +1342,6 @@ func (s *StreamableHTTPServer) cleanupSessionState(ctx context.Context, sessionI
 	s.sessionResources.delete(sessionID)
 	s.sessionResourceTemplates.delete(sessionID)
 	s.sessionLogLevels.delete(sessionID)
-	s.sessionRequestIDs.Delete(sessionID)
 	s.sessionLastActive.Delete(sessionID)
 }
 
