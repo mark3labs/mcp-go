@@ -2895,7 +2895,7 @@ func TestStreamableHTTP_ServerRequestIDsDoNotCollide(t *testing.T) {
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
 	require.NoError(t, err)
-	req.Header.Set("Content-Type", "text/event-stream")
+	req.Header.Set("Accept", "text/event-stream")
 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
