@@ -702,6 +702,39 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	// forwarderExited lets the response path wait until the forwarder can no
 	// longer be holding an undelivered notification.
 	forwarderExited := make(chan struct{})
+
+	// When the response can stream, server requests issued while this message
+	// is being handled (for example elicitation/create from a tool handler)
+	// are written to this POST's SSE stream, per the Streamable HTTP guidance
+	// that server requests on a POST stream should relate to the originating
+	// request. The standalone GET stream remains the path for everything else.
+	var scopedRequests chan mcp.JSONRPCRequest
+	if canStream {
+		scopedRequests = make(chan mcp.JSONRPCRequest, 8)
+		// Registration makes responses to request-scoped server requests
+		// routable when nothing else has registered the session (stateless
+		// mode without a standalone GET stream). It only happens once a
+		// request is actually sent on this stream, and only the POST that
+		// stored the registration removes it, so registrations made by the
+		// GET handler or by stateful initialization are never touched.
+		var ownsRegistration atomic.Bool
+		register := sync.OnceFunc(func() {
+			if _, loaded := s.activeSessions.LoadOrStore(sessionID, session); !loaded {
+				ownsRegistration.Store(true)
+			}
+		})
+		defer func() {
+			if ownsRegistration.Load() {
+				s.activeSessions.CompareAndDelete(sessionID, session)
+			}
+		}()
+		ctx = context.WithValue(ctx, requestScopedSSEKey{}, &requestScopedSSE{
+			requests: scopedRequests,
+			done:     done,
+			register: register,
+		})
+	}
+
 	go func() {
 		defer close(forwarderExited)
 		defer func() {
@@ -751,6 +784,39 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 					if err != nil {
 						s.logger.Error("Failed to write SSE event", "err", err)
 						return
+					}
+				}()
+			case req := <-scopedRequests:
+				func() {
+					mu.Lock()
+					defer mu.Unlock()
+					select {
+					case <-done:
+						// The request is already off the channel; with an
+						// event store it must still be recorded so a resuming
+						// client sees it.
+						if s.eventStore != nil {
+							deliverResumable(req, false)
+						}
+						return
+					default:
+					}
+					defer w.Flush()
+
+					if s.eventStore != nil {
+						deliverResumable(req, false)
+						return
+					}
+
+					if !upgradedHeader {
+						w.Header().Set("Content-Type", "text/event-stream")
+						w.Header().Set("Connection", "keep-alive")
+						w.Header().Set("Cache-Control", "no-cache")
+						w.WriteHeader(http.StatusOK)
+						upgradedHeader = true
+					}
+					if err := writeSSEEvent(w, req); err != nil {
+						s.logger.Error("Failed to write SSE event", "err", err)
 					}
 				}()
 			case <-done:
@@ -1529,6 +1595,39 @@ type rootsRequestItem struct {
 }
 
 // streamableHttpSession is a session for streamable-http transport
+// requestScopedSSEKey carries a requestScopedSSE in the context of a POST
+// message handler whose response supports SSE.
+type requestScopedSSEKey struct{}
+
+// requestScopedSSE lets server requests issued while a POST message is being
+// handled be written to that POST's SSE response instead of the standalone
+// GET stream.
+type requestScopedSSE struct {
+	requests chan<- mcp.JSONRPCRequest
+	done     <-chan struct{}
+	register func()
+}
+
+// trySend queues the request for the originating POST stream. It reports
+// false when the POST has already finished, so the caller can fall back to
+// the standalone GET stream.
+func (r *requestScopedSSE) trySend(request mcp.JSONRPCRequest) bool {
+	select {
+	case <-r.done:
+		return false
+	default:
+	}
+	r.register()
+	select {
+	case r.requests <- request:
+		return true
+	case <-r.done:
+		return false
+	default:
+		return false
+	}
+}
+
 // When in POST handlers(request/notification), it's ephemeral, and only exists in the life of the request handler.
 // When in GET handlers(listening), it's a real session, and will be registered in the MCP server.
 type streamableHttpSession struct {
@@ -1773,14 +1872,29 @@ func (s *streamableHttpSession) RequestElicitation(ctx context.Context, request 
 	})
 	defer s.samplingRequests.Delete(requestID)
 
-	// Send the sampling request via the channel (non-blocking)
-	select {
-	case s.elicitationRequestChan <- elicitationRequest:
-		// Request queued successfully
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-		return nil, fmt.Errorf("elicitation request queue is full - server overloaded")
+	// Prefer the originating POST's SSE stream when this call comes from an
+	// active POST handler with a streaming response, so a client that only
+	// dispatches server requests from that stream sees the elicitation before
+	// the final response. Fall back to the standalone GET stream otherwise.
+	jsonrpcRequest := mcp.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(requestID),
+		Request: mcp.Request{
+			Method: string(mcp.MethodElicitationCreate),
+		},
+		Params: request.Params,
+	}
+	scoped, hasScoped := ctx.Value(requestScopedSSEKey{}).(*requestScopedSSE)
+	if !hasScoped || !scoped.trySend(jsonrpcRequest) {
+		// Send the elicitation request via the channel (non-blocking)
+		select {
+		case s.elicitationRequestChan <- elicitationRequest:
+			// Request queued successfully
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			return nil, fmt.Errorf("elicitation request queue is full - server overloaded")
+		}
 	}
 
 	// Wait for response or context cancellation
