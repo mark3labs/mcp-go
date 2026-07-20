@@ -286,8 +286,9 @@ type StreamableHTTPServer struct {
 	sessionTools             *sessionToolsStore
 	sessionResources         *sessionResourcesStore
 	sessionResourceTemplates *sessionResourceTemplatesStore
-	sessionRequestIDs        sync.Map // sessionId --> last requestID(*atomic.Int64)
-	activeSessions           sync.Map // sessionId --> *streamableHttpSession (for sampling responses)
+	sessionRequestIDs        sync.Map     // sessionId --> last requestID(*atomic.Int64)
+	activeSessions           sync.Map     // sessionId --> *streamableHttpSession (for sampling responses)
+	requestIDCounter         atomic.Int64 // server -> client request IDs, shared across sessions
 
 	eventStore         EventStore
 	resumableStreams   sync.Map // streamID --> *resumableStream
@@ -652,7 +653,7 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 
 	// Create ephemeral session if no persistent session exists
 	if session == nil {
-		session = newStreamableHttpSession(sessionID, s.sessionTools, s.sessionResources, s.sessionResourceTemplates, s.sessionLogLevels)
+		session = newStreamableHttpSession(sessionID, s.sessionTools, s.sessionResources, s.sessionResourceTemplates, s.sessionLogLevels, &s.requestIDCounter)
 	}
 
 	// Set the client context before handling the message
@@ -982,7 +983,7 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 	// Get or create session atomically to prevent TOCTOU races
 	// where concurrent GETs could both create and register duplicate sessions
 	var session *streamableHttpSession
-	newSession := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionResources, s.sessionResourceTemplates, s.sessionLogLevels)
+	newSession := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionResources, s.sessionResourceTemplates, s.sessionLogLevels, &s.requestIDCounter)
 	actual, loaded := s.activeSessions.LoadOrStore(sessionID, newSession)
 	session = actual.(*streamableHttpSession)
 
@@ -1648,11 +1649,11 @@ type streamableHttpSession struct {
 	elicitationRequestChan chan elicitationRequestItem // server -> client elicitation requests
 	rootsRequestChan       chan rootsRequestItem       // server -> client list roots requests
 
-	samplingRequests sync.Map     // requestID -> pending sampling request context
-	requestIDCounter atomic.Int64 // for generating unique request IDs
+	samplingRequests sync.Map      // requestID -> pending sampling request context
+	requestIDCounter *atomic.Int64 // shared per server so IDs stay unique across sessions with the same session ID
 }
 
-func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, resourcesStore *sessionResourcesStore, templatesStore *sessionResourceTemplatesStore, levels *sessionLogLevelsStore) *streamableHttpSession {
+func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, resourcesStore *sessionResourcesStore, templatesStore *sessionResourceTemplatesStore, levels *sessionLogLevelsStore, requestIDCounter *atomic.Int64) *streamableHttpSession {
 	s := &streamableHttpSession{
 		done:                   make(chan struct{}),
 		sessionID:              sessionID,
@@ -1664,6 +1665,7 @@ func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, re
 		samplingRequestChan:    make(chan samplingRequestItem, 10),
 		elicitationRequestChan: make(chan elicitationRequestItem, 10),
 		rootsRequestChan:       make(chan rootsRequestItem, 10),
+		requestIDCounter:       requestIDCounter,
 	}
 	return s
 }

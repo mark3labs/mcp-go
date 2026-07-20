@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -125,7 +126,7 @@ func TestStreamableHTTPServer_ElicitationOnOriginatingPOSTStream(t *testing.T) {
 // Without a request-scoped stream in the context, elicitation still goes to
 // the standalone GET stream path.
 func TestStreamableHttpSession_ElicitationFallsBackToSessionChannel(t *testing.T) {
-	session := newStreamableHttpSession("s1", nil, nil, nil, nil)
+	session := newStreamableHttpSession("s1", nil, nil, nil, nil, new(atomic.Int64))
 
 	go func() {
 		item := <-session.elicitationRequestChan
@@ -197,5 +198,45 @@ func readSSEData(t *testing.T, reader *bufio.Reader, v any) {
 			}
 			return
 		}
+	}
+}
+
+// Two POST-scoped sessions created for the same session ID share the server
+// counter, so concurrently issued server requests can never collide.
+func TestStreamableHttpSession_RequestIDsUniqueAcrossInstances(t *testing.T) {
+	counter := new(atomic.Int64)
+	s1 := newStreamableHttpSession("shared", nil, nil, nil, nil, counter)
+	s2 := newStreamableHttpSession("shared", nil, nil, nil, nil, counter)
+
+	ids := make(chan int64, 2)
+	for _, s := range []*streamableHttpSession{s1, s2} {
+		go func(s *streamableHttpSession) {
+			item := <-s.elicitationRequestChan
+			ids <- item.requestID
+			item.response <- samplingResponseItem{
+				requestID: item.requestID,
+				result:    json.RawMessage(`{"action":"decline"}`),
+			}
+		}(s)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req := mcp.ElicitationRequest{
+		Params: mcp.ElicitationParams{
+			Message:         "collision",
+			RequestedSchema: map[string]any{"type": "object"},
+		},
+	}
+	if _, err := s1.RequestElicitation(ctx, req); err != nil {
+		t.Fatalf("s1 elicitation failed: %v", err)
+	}
+	if _, err := s2.RequestElicitation(ctx, req); err != nil {
+		t.Fatalf("s2 elicitation failed: %v", err)
+	}
+
+	a, b := <-ids, <-ids
+	if a == b {
+		t.Fatalf("request IDs collided across session instances: %d", a)
 	}
 }
