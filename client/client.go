@@ -18,7 +18,7 @@ import (
 type Client struct {
 	transport transport.Interface
 
-	initialized        bool
+	initialized        atomic.Bool
 	notifications      []func(mcp.JSONRPCNotification)
 	notifyMu           sync.RWMutex
 	requestID          atomic.Int64
@@ -71,7 +71,7 @@ func WithElicitationHandler(handler ElicitationHandler) ClientOption {
 // WithSession assumes a MCP Session has already been initialized
 func WithSession() ClientOption {
 	return func(c *Client) {
-		c.initialized = true
+		c.initialized.Store(true)
 	}
 }
 
@@ -160,7 +160,7 @@ func (c *Client) sendRequest(
 	params any,
 	header http.Header,
 ) (*json.RawMessage, error) {
-	if !c.initialized && method != "initialize" {
+	if !c.initialized.Load() && method != "initialize" {
 		return nil, fmt.Errorf("client not initialized")
 	}
 
@@ -282,7 +282,7 @@ func (c *Client) Initialize(
 		)
 	}
 
-	c.initialized = true
+	c.initialized.Store(true)
 	return &result, nil
 }
 
@@ -758,7 +758,7 @@ func (c *Client) GetSessionId() string {
 
 // IsInitialized returns true if the client has been initialized.
 func (c *Client) IsInitialized() bool {
-	return c.initialized
+	return c.initialized.Load()
 }
 
 // CancelTask returns canceled task result
