@@ -8,8 +8,6 @@ import (
 	"os"
 	"reflect"
 	"strconv"
-
-	"github.com/google/jsonschema-go/jsonschema"
 )
 
 var errToolSchemaConflict = errors.New("provide either InputSchema or RawInputSchema, not both")
@@ -914,7 +912,7 @@ func WithDeferLoading(deferLoading bool) ToolOption {
 // It accepts any Go type, usually a struct, and automatically generates a JSON schema from it.
 func WithInputSchema[T any]() ToolOption {
 	return func(t *Tool) {
-		schema, err := jsonschema.For[T](&jsonschema.ForOptions{IgnoreInvalidTypes: true})
+		schema, err := schemaFor[T]()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return
@@ -965,7 +963,7 @@ func WithRawInputSchema(schema json.RawMessage) ToolOption {
 // It accepts any Go type, usually a struct, and automatically generates a JSON schema from it.
 func WithOutputSchema[T any]() ToolOption {
 	return func(t *Tool) {
-		schema, err := jsonschema.For[T](&jsonschema.ForOptions{IgnoreInvalidTypes: true})
+		schema, err := schemaFor[T]()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return
