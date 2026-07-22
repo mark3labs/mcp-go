@@ -1048,7 +1048,10 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w HTTPResponseWriter, r *H
 		if err := json.Unmarshal(responseMessage.Error, &jsonrpcError); err != nil {
 			response.err = fmt.Errorf("failed to parse error: %v", err)
 		} else {
-			response.err = fmt.Errorf("sampling error %d: %s", jsonrpcError.Code, jsonrpcError.Message)
+			// Defer building the final error to deliverSamplingResponse, which
+			// knows which method (sampling/createMessage, elicitation/create, or
+			// roots/list) this response corresponds to.
+			response.clientError = &clientJSONRPCError{code: jsonrpcError.Code, message: jsonrpcError.Message}
 		}
 	} else if responseMessage.Result != nil {
 		// Store the result to be unmarshaled later
@@ -1085,17 +1088,30 @@ func (s *StreamableHTTPServer) deliverSamplingResponse(w HTTPResponseWriter, ses
 		return fmt.Errorf("invalid session type for session %s", sessionID)
 	}
 
-	// Look up the dedicated response channel for this specific request
-	responseChannelInterface, exists := session.samplingRequests.Load(response.requestID)
+	// Look up the dedicated pending request for this specific request ID.
+	pendingInterface, exists := session.samplingRequests.Load(response.requestID)
 	if !exists {
 		writeHTTPError(w, "No pending sampling request found for the given request ID", http.StatusBadRequest)
 		return fmt.Errorf("no pending request found for session %s, request %d", sessionID, response.requestID)
 	}
 
-	responseChan, ok := responseChannelInterface.(chan samplingResponseItem)
+	pending, ok := pendingInterface.(pendingClientRequest)
 	if !ok {
 		writeHTTPError(w, "Failed to deliver response", http.StatusInternalServerError)
-		return fmt.Errorf("invalid response channel type for session %s, request %d", sessionID, response.requestID)
+		return fmt.Errorf("invalid pending request type for session %s, request %d", sessionID, response.requestID)
+	}
+	responseChan := pending.response
+
+	// If the client returned a JSON-RPC error, label it with the method that
+	// actually failed. This shared path serves sampling/createMessage,
+	// elicitation/create and roots/list, so a generic "sampling error" prefix
+	// would misattribute elicitation and roots failures (see #817).
+	if response.clientError != nil {
+		method := pending.method
+		if method == "" {
+			method = mcp.MethodSamplingCreateMessage
+		}
+		response.err = fmt.Errorf("%s error %d: %s", method, response.clientError.code, response.clientError.message)
 	}
 
 	// Attempt to deliver the response with timeout to prevent indefinite blocking
@@ -1363,6 +1379,26 @@ type samplingResponseItem struct {
 	requestID int64
 	result    json.RawMessage
 	err       error
+	// clientError is set when the client returned a JSON-RPC error object.
+	// deliverSamplingResponse turns it into err, labeled with the pending
+	// request's method (sampling/createMessage, elicitation/create, roots/list).
+	clientError *clientJSONRPCError
+}
+
+// clientJSONRPCError holds a JSON-RPC error returned by the client in response
+// to a server-initiated request (sampling, elicitation, or roots).
+type clientJSONRPCError struct {
+	code    int
+	message string
+}
+
+// pendingClientRequest tracks a server-initiated request that is awaiting a
+// client response. Recording the method alongside the response channel lets
+// deliverSamplingResponse attribute a client-returned JSON-RPC error to the
+// method that actually failed instead of always reporting "sampling".
+type pendingClientRequest struct {
+	method   mcp.MCPMethod
+	response chan samplingResponseItem
 }
 
 // Elicitation support types for HTTP transport
@@ -1510,7 +1546,10 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 	}
 
 	// Store the pending request
-	s.samplingRequests.Store(requestID, responseChan)
+	s.samplingRequests.Store(requestID, pendingClientRequest{
+		method:   mcp.MethodSamplingCreateMessage,
+		response: responseChan,
+	})
 	defer s.samplingRequests.Delete(requestID)
 
 	// Send the sampling request via the channel (non-blocking)
@@ -1567,7 +1606,10 @@ func (s *streamableHttpSession) ListRoots(ctx context.Context, request mcp.ListR
 	}
 
 	// Store the pending request
-	s.samplingRequests.Store(requestID, responseChan)
+	s.samplingRequests.Store(requestID, pendingClientRequest{
+		method:   mcp.MethodListRoots,
+		response: responseChan,
+	})
 	defer s.samplingRequests.Delete(requestID)
 
 	// Send the list roots request via the channel (non-blocking)
@@ -1612,7 +1654,10 @@ func (s *streamableHttpSession) RequestElicitation(ctx context.Context, request 
 	}
 
 	// Store the pending request
-	s.samplingRequests.Store(requestID, responseChan)
+	s.samplingRequests.Store(requestID, pendingClientRequest{
+		method:   mcp.MethodElicitationCreate,
+		response: responseChan,
+	})
 	defer s.samplingRequests.Delete(requestID)
 
 	// Send the sampling request via the channel (non-blocking)
