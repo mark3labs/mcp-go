@@ -203,6 +203,25 @@ func TestStreamableHTTPServer_Handle_UnknownMethod(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.status)
 }
 
+func TestStreamableHTTPServer_Handle_HeadReturns200(t *testing.T) {
+	mcpServer := NewMCPServer("test-mcp-server", "1.0")
+	srv := NewStreamableHTTPServer(mcpServer)
+
+	w := newBufferingHTTPResponseWriter()
+	r := &HTTPRequest{
+		Method:  http.MethodHead,
+		URL:     &url.URL{Path: "/mcp"},
+		Header:  http.Header{},
+		Context: t.Context(),
+	}
+
+	srv.Handle(w, r)
+
+	assert.Equal(t, http.StatusOK, w.status)
+	assert.True(t, w.wrote)
+	assert.Empty(t, w.body)
+}
+
 func TestStreamableHTTPServer_Handle_FlushableWriterMatchesServeHTTP(t *testing.T) {
 	// A streamable HTTPResponseWriter going through Handle should produce
 	// the same JSON body as net/http's default writer going through ServeHTTP

@@ -404,6 +404,8 @@ func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		s.handleGet(hw, hr)
 	case http.MethodDelete:
 		s.handleDelete(hw, hr)
+	case http.MethodHead:
+		w.WriteHeader(http.StatusOK)
 	default:
 		http.NotFound(w, r)
 	}
