@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -2983,4 +2985,107 @@ func TestStreamableHTTP_SamplingResponseErrors(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		assert.Contains(t, string(body), "No pending sampling request")
 	})
+}
+
+func TestStreamableHTTP_ShutdownWithActiveConnection(t *testing.T) {
+	mcpServer := NewMCPServer("test", "1.0.0")
+	mux := http.NewServeMux()
+	customServer := &http.Server{Handler: mux}
+	httpServer := NewStreamableHTTPServer(
+		mcpServer,
+		WithStateful(true),
+		WithStreamableHTTPServer(customServer),
+	)
+	mux.Handle(httpServer.endpointPath, httpServer)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	serveDone := make(chan error, 1)
+	go func() {
+		serveDone <- customServer.Serve(listener)
+	}()
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+		defer cancel()
+		_ = httpServer.Shutdown(shutdownCtx)
+		select {
+		case err := <-serveDone:
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				t.Logf("Serve returned: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+		}
+	})
+
+	baseURL := "http://" + listener.Addr().String() + httpServer.endpointPath
+
+	ctx := t.Context()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL, nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	sessionCount := 0
+	httpServer.activeSessions.Range(func(_, _ any) bool {
+		sessionCount++
+		return true
+	})
+	require.Greater(t, sessionCount, 0)
+
+	shutdownDone := make(chan error, 1)
+	shutdownCtx, shutdownCancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer shutdownCancel()
+	go func() {
+		shutdownDone <- httpServer.Shutdown(shutdownCtx)
+	}()
+
+	select {
+	case err := <-shutdownDone:
+		if shutdownCtx.Err() == context.DeadlineExceeded {
+			t.Fatalf("Shutdown deadlocked (timed out): %v", err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("Shutdown did not return in time (likely deadlocked)")
+	}
+}
+
+func TestStreamableHTTP_CloseSessions(t *testing.T) {
+	mcpServer := NewMCPServer("test", "1.0.0")
+	httpServer := NewStreamableHTTPServer(mcpServer, WithStateful(true))
+
+	ts := httptest.NewServer(httpServer)
+	defer ts.Close()
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL, nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	sessionCount := 0
+	httpServer.activeSessions.Range(func(_, _ any) bool {
+		sessionCount++
+		return true
+	})
+	require.Greater(t, sessionCount, 0)
+
+	httpServer.CloseSessions(t.Context())
+
+	sessionCount = 0
+	httpServer.activeSessions.Range(func(_, _ any) bool {
+		sessionCount++
+		return true
+	})
+	require.Equal(t, 0, sessionCount)
+
+	req2, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL, nil)
+	require.NoError(t, err)
+	resp2, err := http.DefaultClient.Do(req2)
+	require.NoError(t, err)
+	defer resp2.Body.Close()
+	require.Equal(t, http.StatusOK, resp2.StatusCode)
 }
