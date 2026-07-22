@@ -419,6 +419,7 @@ func TestEmbeddedResourceUnmarshalJSON_Errors(t *testing.T) {
 		name       string
 		jsonData   string
 		errMessage string
+		sentinel   error
 	}{
 		{
 			name:       "resource is not an object",
@@ -429,11 +430,19 @@ func TestEmbeddedResourceUnmarshalJSON_Errors(t *testing.T) {
 			name:       "resource variant is missing",
 			jsonData:   `{"type":"resource","resource":{"uri":"file:///missing"}}`,
 			errMessage: "missing text or blob field",
+			sentinel:   ErrEmbeddedResourceMissingVariant,
 		},
 		{
-			name:       "resource uri is missing",
+			name:       "text resource uri is missing",
 			jsonData:   `{"type":"resource","resource":{"text":"content"}}`,
 			errMessage: "resource uri is missing",
+			sentinel:   ErrEmbeddedResourceMissingURI,
+		},
+		{
+			name:       "blob resource uri is missing",
+			jsonData:   `{"type":"resource","resource":{"blob":"YmxvYg=="}}`,
+			errMessage: "resource uri is missing",
+			sentinel:   ErrEmbeddedResourceMissingURI,
 		},
 		{
 			name:       "text has invalid type",
@@ -453,6 +462,9 @@ func TestEmbeddedResourceUnmarshalJSON_Errors(t *testing.T) {
 			err := json.Unmarshal([]byte(tt.jsonData), &result)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.errMessage)
+			if tt.sentinel != nil {
+				assert.True(t, errors.Is(err, tt.sentinel))
+			}
 		})
 	}
 }

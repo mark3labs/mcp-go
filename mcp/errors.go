@@ -28,6 +28,12 @@ var (
 
 	// ErrResourceNotFound indicates a requested resource was not found (code: RESOURCE_NOT_FOUND).
 	ErrResourceNotFound = errors.New("resource not found")
+
+	// ErrEmbeddedResourceMissingVariant indicates an embedded resource has neither text nor blob content.
+	ErrEmbeddedResourceMissingVariant = errors.New("missing text or blob field")
+
+	// ErrEmbeddedResourceMissingURI indicates an embedded resource content variant has no URI.
+	ErrEmbeddedResourceMissingURI = errors.New("resource uri is missing")
 )
 
 // URLElicitationRequiredError is returned when the server requires URL elicitation to proceed.

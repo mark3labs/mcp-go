@@ -1293,7 +1293,7 @@ func (e *EmbeddedResource) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("unmarshaling embedded text resource: %w", err)
 		}
 		if textResource.URI == "" {
-			return fmt.Errorf("unmarshaling embedded text resource: resource uri is missing")
+			return fmt.Errorf("unmarshaling embedded text resource: %w", ErrEmbeddedResourceMissingURI)
 		}
 		resource = textResource
 	} else if _, ok := resourceFields["blob"]; ok {
@@ -1302,11 +1302,11 @@ func (e *EmbeddedResource) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("unmarshaling embedded blob resource: %w", err)
 		}
 		if blobResource.URI == "" {
-			return fmt.Errorf("unmarshaling embedded blob resource: resource uri is missing")
+			return fmt.Errorf("unmarshaling embedded blob resource: %w", ErrEmbeddedResourceMissingURI)
 		}
 		resource = blobResource
 	} else {
-		return fmt.Errorf("unmarshaling embedded resource: missing text or blob field")
+		return fmt.Errorf("unmarshaling embedded resource: %w", ErrEmbeddedResourceMissingVariant)
 	}
 
 	e.Annotated = raw.Annotated
