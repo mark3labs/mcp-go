@@ -288,6 +288,191 @@ func TestParseGetPromptResult_Errors(t *testing.T) {
 	})
 }
 
+func TestParseCallToolResult_EmbeddedResource(t *testing.T) {
+	raw := json.RawMessage(`{
+		"content": [{
+			"type": "resource",
+			"resource": {
+				"uri": "file:///main.go",
+				"mimeType": "text/x-go",
+				"text": "package main"
+			}
+		}]
+	}`)
+
+	result, err := ParseCallToolResult(&raw)
+	require.NoError(t, err)
+	require.Len(t, result.Content, 1)
+
+	embedded, ok := result.Content[0].(EmbeddedResource)
+	require.True(t, ok)
+	resource, ok := embedded.Resource.(TextResourceContents)
+	require.True(t, ok)
+	assert.Equal(t, "file:///main.go", resource.URI)
+	assert.Equal(t, "text/x-go", resource.MIMEType)
+	assert.Equal(t, "package main", resource.Text)
+}
+
+func TestEmbeddedResourceUnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		jsonData string
+		expected EmbeddedResource
+	}{
+		{
+			name: "text resource with metadata and annotations",
+			jsonData: `{
+				"type": "resource",
+				"annotations": {
+					"audience": ["user"],
+					"lastModified": "2026-07-22T00:00:00Z"
+				},
+				"_meta": {"source": "github"},
+				"resource": {
+					"uri": "file:///README.md",
+					"mimeType": "text/markdown",
+					"text": "# Project",
+					"_meta": {"etag": "abc123"}
+				}
+			}`,
+			expected: EmbeddedResource{
+				Annotated: Annotated{Annotations: &Annotations{
+					Audience:     []Role{RoleUser},
+					LastModified: "2026-07-22T00:00:00Z",
+				}},
+				Meta: NewMetaFromMap(map[string]any{"source": "github"}),
+				Type: ContentTypeResource,
+				Resource: TextResourceContents{
+					Meta:     map[string]any{"etag": "abc123"},
+					URI:      "file:///README.md",
+					MIMEType: "text/markdown",
+					Text:     "# Project",
+				},
+			},
+		},
+		{
+			name: "blob resource",
+			jsonData: `{
+				"type": "resource",
+				"resource": {
+					"uri": "file:///image.png",
+					"mimeType": "image/png",
+					"blob": "aGVsbG8="
+				}
+			}`,
+			expected: EmbeddedResource{
+				Type: ContentTypeResource,
+				Resource: BlobResourceContents{
+					URI:      "file:///image.png",
+					MIMEType: "image/png",
+					Blob:     "aGVsbG8=",
+				},
+			},
+		},
+		{
+			name:     "empty text resource",
+			jsonData: `{"type":"resource","resource":{"uri":"file:///empty.txt","text":""}}`,
+			expected: EmbeddedResource{
+				Type: ContentTypeResource,
+				Resource: TextResourceContents{
+					URI:  "file:///empty.txt",
+					Text: "",
+				},
+			},
+		},
+		{
+			name:     "empty blob resource",
+			jsonData: `{"type":"resource","resource":{"uri":"file:///empty.bin","blob":""}}`,
+			expected: EmbeddedResource{
+				Type: ContentTypeResource,
+				Resource: BlobResourceContents{
+					URI:  "file:///empty.bin",
+					Blob: "",
+				},
+			},
+		},
+		{
+			name:     "text takes precedence when both variants are present",
+			jsonData: `{"type":"resource","resource":{"uri":"file:///both","text":"text","blob":"YmxvYg=="}}`,
+			expected: EmbeddedResource{
+				Type: ContentTypeResource,
+				Resource: TextResourceContents{
+					URI:  "file:///both",
+					Text: "text",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result EmbeddedResource
+			err := json.Unmarshal([]byte(tt.jsonData), &result)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestEmbeddedResourceUnmarshalJSON_Errors(t *testing.T) {
+	tests := []struct {
+		name       string
+		jsonData   string
+		errMessage string
+	}{
+		{
+			name:       "resource is not an object",
+			jsonData:   `{"type":"resource","resource":"not an object"}`,
+			errMessage: "unmarshaling embedded resource",
+		},
+		{
+			name:       "resource variant is missing",
+			jsonData:   `{"type":"resource","resource":{"uri":"file:///missing"}}`,
+			errMessage: "missing text or blob field",
+		},
+		{
+			name:       "resource uri is missing",
+			jsonData:   `{"type":"resource","resource":{"text":"content"}}`,
+			errMessage: "resource uri is missing",
+		},
+		{
+			name:       "text has invalid type",
+			jsonData:   `{"type":"resource","resource":{"uri":"file:///invalid","text":42}}`,
+			errMessage: "unmarshaling embedded text resource",
+		},
+		{
+			name:       "blob has invalid type",
+			jsonData:   `{"type":"resource","resource":{"uri":"file:///invalid","blob":42}}`,
+			errMessage: "unmarshaling embedded blob resource",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result EmbeddedResource
+			err := json.Unmarshal([]byte(tt.jsonData), &result)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errMessage)
+		})
+	}
+}
+
+func TestEmbeddedResourceJSONRoundTrip(t *testing.T) {
+	original := NewEmbeddedResource(TextResourceContents{
+		Meta:     map[string]any{"etag": "abc123"},
+		URI:      "file:///README.md",
+		MIMEType: "text/markdown",
+		Text:     "# Project",
+	})
+
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	var result EmbeddedResource
+	require.NoError(t, json.Unmarshal(data, &result))
+	assert.Equal(t, original, result)
+}
+
 // Test ParseCallToolResult with malformed JSON
 
 func TestParseCallToolResult_Errors(t *testing.T) {
