@@ -1781,7 +1781,7 @@ type Named interface {
 	GetName() string
 }
 
-// MarshalJSON implements custom JSON marshaling for Content interface
+// MarshalContent marshals MCP content as JSON.
 func MarshalContent(content Content) ([]byte, error) {
 	return json.Marshal(content)
 }
