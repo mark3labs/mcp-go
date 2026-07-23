@@ -2928,7 +2928,7 @@ func TestStreamableHTTP_ServerRequestIDsDoNotCollide(t *testing.T) {
 	scanner := bufio.NewScanner(resp.Body)
 	deadline := time.After(5 * time.Second)
 	var sawPing, sawElicitation bool
-	for !(sawPing && sawElicitation) {
+	for !sawPing || !sawElicitation {
 		select {
 		case <-deadline:
 			t.Fatal("timed out waiting for ping and elicitation events")
@@ -2977,10 +2977,10 @@ func TestStreamableHTTP_TrySendWaitsForBufferSpace(t *testing.T) {
 	scoped := &requestScopedSSE{requests: requests, done: done, register: func() {}}
 
 	// Fill the buffer so the next send hits backpressure.
-	require.True(t, scoped.trySend(context.Background(), mcp.JSONRPCRequest{}))
+	require.True(t, scoped.trySend(t.Context(), mcp.JSONRPCRequest{}))
 
 	result := make(chan bool, 1)
-	go func() { result <- scoped.trySend(context.Background(), mcp.JSONRPCRequest{}) }()
+	go func() { result <- scoped.trySend(t.Context(), mcp.JSONRPCRequest{}) }()
 
 	select {
 	case r := <-result:
@@ -3003,14 +3003,14 @@ func TestStreamableHTTP_TrySendWaitsForBufferSpace(t *testing.T) {
 
 	// With the buffer full again, an ended caller context falls back instead
 	// of waiting forever.
-	require.True(t, scoped.trySend(context.Background(), mcp.JSONRPCRequest{}))
-	cancelled, cancel := context.WithCancel(context.Background())
+	require.True(t, scoped.trySend(t.Context(), mcp.JSONRPCRequest{}))
+	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
 	require.False(t, scoped.trySend(cancelled, mcp.JSONRPCRequest{}))
 
 	// A finished POST stream still reports false immediately.
 	close(done)
-	require.False(t, scoped.trySend(context.Background(), mcp.JSONRPCRequest{}))
+	require.False(t, scoped.trySend(t.Context(), mcp.JSONRPCRequest{}))
 }
 
 func TestStreamableHTTP_SamplingResponseErrors(t *testing.T) {

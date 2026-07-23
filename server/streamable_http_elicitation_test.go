@@ -136,7 +136,7 @@ func TestStreamableHttpSession_ElicitationFallsBackToSessionChannel(t *testing.T
 		}
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	result, err := session.RequestElicitation(ctx, mcp.ElicitationRequest{
 		Params: mcp.ElicitationParams{
@@ -220,7 +220,7 @@ func TestStreamableHttpSession_RequestIDsUniqueAcrossInstances(t *testing.T) {
 		}(s)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	req := mcp.ElicitationRequest{
 		Params: mcp.ElicitationParams{
