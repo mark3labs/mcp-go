@@ -2222,6 +2222,12 @@ func (s *MCPServer) executeRegularToolAsTask(
 	regularTool ServerTool,
 	request mcp.CallToolRequest,
 ) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.completeTask(entry, nil, fmt.Errorf("panic in task tool handler %s: %v", request.Params.Name, r))
+		}
+	}()
+
 	// Create cancellable context for this task execution
 	taskCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
