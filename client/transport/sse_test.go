@@ -164,6 +164,53 @@ func startMockSSEEchoServer() (string, func()) {
 	return testServer.URL, testServer.Close
 }
 
+func TestAppendSSEData(t *testing.T) {
+	tests := []struct {
+		name  string
+		lines []string // successive "data:" field values for one event
+		want  string
+	}{
+		{
+			name:  "single line drops one leading space",
+			lines: []string{` {"jsonrpc":"2.0"}`},
+			want:  `{"jsonrpc":"2.0"}`,
+		},
+		{
+			name:  "multiple lines joined with newline",
+			lines: []string{` {"jsonrpc":"2.0",`, ` "id":1,`, ` "result":{"ok":true}}`},
+			want:  "{\"jsonrpc\":\"2.0\",\n\"id\":1,\n\"result\":{\"ok\":true}}",
+		},
+		{
+			name:  "only one leading space removed, other whitespace preserved",
+			lines: []string{`  two leading`, "trailing  "},
+			want:  " two leading\ntrailing  ",
+		},
+		{
+			name:  "no leading space is preserved as-is",
+			lines: []string{`{"a":1}`},
+			want:  `{"a":1}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := ""
+			for _, line := range tt.lines {
+				data = appendSSEData(data, line)
+			}
+			require.Equal(t, tt.want, data)
+		})
+	}
+
+	// The reassembled multi-line JSON-RPC payload must still be valid JSON.
+	data := ""
+	for _, line := range []string{` {"jsonrpc":"2.0",`, ` "id":1,`, ` "result":{"ok":true}}`} {
+		data = appendSSEData(data, line)
+	}
+	var msg map[string]any
+	require.NoError(t, json.Unmarshal([]byte(data), &msg))
+}
+
 func TestSSE(t *testing.T) {
 	// Compile mock server
 	url, closeF := startMockSSEEchoServer()

@@ -837,7 +837,7 @@ func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, hand
 		if eventStr, ok := strings.CutPrefix(line, "event:"); ok {
 			event = strings.TrimSpace(eventStr)
 		} else if dataStr, ok := strings.CutPrefix(line, "data:"); ok {
-			data = strings.TrimSpace(dataStr)
+			data = appendSSEData(data, dataStr)
 		}
 	}
 }
