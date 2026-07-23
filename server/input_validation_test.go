@@ -359,26 +359,26 @@ func TestInputSchemaValidation_ErrorKindReadable(t *testing.T) {
 	srv.AddTool(tool, okHandler)
 
 	tests := []struct {
-		name          string
-		args          map[string]any
-		wantContains  []string
+		name            string
+		args            map[string]any
+		wantContains    []string
 		wantNotContains []string
 	}{
 		{
-			name: "minProperties renders Got/Want",
-			args: map[string]any{"id": 23582, "fields": map[string]any{}},
+			name:            "minProperties renders Got/Want",
+			args:            map[string]any{"id": 23582, "fields": map[string]any{}},
 			wantContains:    []string{"/fields:", "Got:0", "Want:1"},
 			wantNotContains: []string{"%!s"},
 		},
 		{
-			name: "required renders Missing field names",
-			args: map[string]any{"id": 23582},
+			name:            "required renders Missing field names",
+			args:            map[string]any{"id": 23582},
 			wantContains:    []string{"Missing:[fields]"},
 			wantNotContains: []string{"%!s"},
 		},
 		{
-			name: "type renders Got/Want",
-			args: map[string]any{"id": "abc"},
+			name:            "type renders Got/Want",
+			args:            map[string]any{"id": "abc"},
 			wantContains:    []string{"/id:", "Got:string", "Want:[number]"},
 			wantNotContains: []string{"%!s"},
 		},

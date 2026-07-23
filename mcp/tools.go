@@ -564,10 +564,10 @@ func (r CallToolResult) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON implements custom JSON unmarshaling for CallToolResult
 func (r *CallToolResult) UnmarshalJSON(data []byte) error {
 	type result struct {
-		Meta                *Meta             `json:"_meta,omitempty"`
-		Content             []json.RawMessage `json:"content"`
-		StructuredContent   json.RawMessage   `json:"structuredContent,omitempty"`
-		IsError             bool              `json:"isError,omitempty"`
+		Meta              *Meta             `json:"_meta,omitempty"`
+		Content           []json.RawMessage `json:"content"`
+		StructuredContent json.RawMessage   `json:"structuredContent,omitempty"`
+		IsError           bool              `json:"isError,omitempty"`
 	}
 
 	var raw result
