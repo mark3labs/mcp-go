@@ -48,6 +48,52 @@ func TestSchemaFor_JSONSchemaEnumTagWithoutLeadingSpace(t *testing.T) {
 	assert.ElementsMatch(t, []any{"Alice", "Bob"}, nameProp["enum"])
 }
 
+func TestSchemaFor_NestedStructTags(t *testing.T) {
+	type mode struct {
+		Name string `json:"name" jsonschema_description:"Run mode" jsonschema:"enum=fast,enum=safe"`
+	}
+	type request struct {
+		Primary   mode            `json:"primary"`
+		Secondary mode            `json:"secondary"`
+		Optional  *mode           `json:"optional"`
+		Modes     []mode          `json:"modes"`
+		ByName    map[string]mode `json:"byName"`
+	}
+
+	raw, err := SchemaForRaw[request]()
+	require.NoError(t, err)
+
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(raw, &schema))
+
+	properties, ok := schema["properties"].(map[string]any)
+	require.True(t, ok)
+
+	assertModeSchema := func(t *testing.T, nested any) {
+		t.Helper()
+		nestedSchema, ok := nested.(map[string]any)
+		require.True(t, ok)
+		nestedProperties, ok := nestedSchema["properties"].(map[string]any)
+		require.True(t, ok)
+		modeName, ok := nestedProperties["name"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, "Run mode", modeName["description"])
+		assert.ElementsMatch(t, []any{"fast", "safe"}, modeName["enum"])
+	}
+
+	for _, name := range []string{"primary", "secondary", "optional"} {
+		assertModeSchema(t, properties[name])
+	}
+
+	modes, ok := properties["modes"].(map[string]any)
+	require.True(t, ok)
+	assertModeSchema(t, modes["items"])
+
+	byName, ok := properties["byName"].(map[string]any)
+	require.True(t, ok)
+	assertModeSchema(t, byName["additionalProperties"])
+}
+
 func TestSchemaFor_StructuredInputOutputExampleTags(t *testing.T) {
 	type WeatherRequest struct {
 		Location string `json:"location,required" jsonschema_description:"City or location"` //nolint:staticcheck // required is interpreted by schemaFor, not encoding/json

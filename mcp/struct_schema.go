@@ -75,7 +75,7 @@ func schemaForStructFields(t reflect.Type, opts *jsonschema.ForOptions) (*jsonsc
 				continue
 			}
 
-			fieldSchema, err := jsonschema.ForType(fieldType, opts)
+			fieldSchema, err := schemaForFieldType(fieldType, opts)
 			if err != nil {
 				if opts.IgnoreInvalidTypes {
 					continue
@@ -100,6 +100,37 @@ func schemaForStructFields(t reflect.Type, opts *jsonschema.ForOptions) (*jsonsc
 		return nil, err
 	}
 	return schema, nil
+}
+
+func schemaForFieldType(t reflect.Type, opts *jsonschema.ForOptions) (*jsonschema.Schema, error) {
+	schema, err := jsonschema.ForType(t, opts)
+	if err == nil || !isJSONSchemaTagOptionError(err) {
+		return schema, err
+	}
+
+	switch t.Kind() {
+	case reflect.Pointer:
+		return schemaForFieldType(t.Elem(), opts)
+	case reflect.Struct:
+		return schemaForStructFields(t, opts)
+	case reflect.Array, reflect.Slice:
+		items, itemErr := schemaForFieldType(t.Elem(), opts)
+		if itemErr != nil {
+			return nil, itemErr
+		}
+		return &jsonschema.Schema{Type: "array", Items: items}, nil
+	case reflect.Map:
+		if t.Key().Kind() != reflect.String {
+			return nil, err
+		}
+		values, valueErr := schemaForFieldType(t.Elem(), opts)
+		if valueErr != nil {
+			return nil, valueErr
+		}
+		return &jsonschema.Schema{Type: "object", AdditionalProperties: values}, nil
+	default:
+		return nil, err
+	}
 }
 
 func applyStructFieldTags(t reflect.Type, schema *jsonschema.Schema) {
@@ -146,10 +177,30 @@ func applyStructFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 			if len(enums) > 0 {
 				prop.Enum = enums
 			}
+			applyStructFieldTagsToType(fieldType, prop)
 		}
 	}
 
 	walk(t)
+}
+
+func applyStructFieldTagsToType(t reflect.Type, schema *jsonschema.Schema) {
+	if schema == nil {
+		return
+	}
+
+	switch t.Kind() {
+	case reflect.Pointer:
+		applyStructFieldTagsToType(t.Elem(), schema)
+	case reflect.Struct:
+		applyStructFieldTags(t, schema)
+	case reflect.Array, reflect.Slice:
+		applyStructFieldTagsToType(t.Elem(), schema.Items)
+	case reflect.Map:
+		if t.Key().Kind() == reflect.String {
+			applyStructFieldTagsToType(t.Elem(), schema.AdditionalProperties)
+		}
+	}
 }
 
 func fieldSchemaAnnotations(field reflect.StructField) (string, []any) {
