@@ -8,44 +8,96 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSchemaFor_JSONSchemaDescriptionTag(t *testing.T) {
-	type GetUserInfoRequest struct {
+func TestSchemaFor_JSONSchemaEnumTagSpacing(t *testing.T) {
+	type withLeadingSpace struct {
 		Name string `json:"name" jsonschema_description:"User name to query" jsonschema:" enum=Alice,enum=Bob"`
 	}
-
-	tool := NewTool("get_user_info",
-		WithInputSchema[GetUserInfoRequest](),
-	)
-	require.NotNil(t, tool.RawInputSchema)
-
-	var schema map[string]any
-	require.NoError(t, json.Unmarshal(tool.RawInputSchema, &schema))
-
-	properties := schema["properties"].(map[string]any)
-	nameProp := properties["name"].(map[string]any)
-
-	assert.Equal(t, "User name to query", nameProp["description"])
-	assert.ElementsMatch(t, []any{"Alice", "Bob"}, nameProp["enum"])
-}
-
-func TestSchemaFor_JSONSchemaEnumTagWithoutLeadingSpace(t *testing.T) {
-	type GetUserInfoRequest struct {
+	type withoutLeadingSpace struct {
 		Name string `json:"name" jsonschema_description:"User name to query" jsonschema:"enum=Alice,enum=Bob"`
 	}
 
-	tool := NewTool("get_user_info",
-		WithInputSchema[GetUserInfoRequest](),
-	)
-	require.NotNil(t, tool.RawInputSchema)
+	tests := []struct {
+		name   string
+		schema func() json.RawMessage
+	}{
+		{
+			name: "leading space",
+			schema: func() json.RawMessage {
+				return NewTool("get_user_info", WithInputSchema[withLeadingSpace]()).RawInputSchema
+			},
+		},
+		{
+			name: "no leading space",
+			schema: func() json.RawMessage {
+				return NewTool("get_user_info", WithInputSchema[withoutLeadingSpace]()).RawInputSchema
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := test.schema()
+			require.NotNil(t, raw)
+
+			var schema map[string]any
+			require.NoError(t, json.Unmarshal(raw, &schema))
+
+			properties := schema["properties"].(map[string]any)
+			nameProp := properties["name"].(map[string]any)
+			assert.Equal(t, "User name to query", nameProp["description"])
+			assert.ElementsMatch(t, []any{"Alice", "Bob"}, nameProp["enum"])
+		})
+	}
+}
+
+func TestSchemaFor_UnsupportedJSONSchemaOptionReturnsError(t *testing.T) {
+	type request struct {
+		Name string `json:"name" jsonschema:"description=User name"`
+	}
+
+	_, err := SchemaForRaw[request]()
+	require.ErrorContains(t, err, "tag must not begin with 'WORD='")
+}
+
+func TestSchemaFor_NamedAnonymousStructTags(t *testing.T) {
+	type Embedded struct {
+		Mode string `json:"mode" jsonschema_description:"Run mode" jsonschema:"enum=fast,enum=safe"`
+	}
+	type request struct {
+		Embedded `json:"embedded"`
+	}
+
+	raw, err := SchemaForRaw[request]()
+	require.NoError(t, err)
 
 	var schema map[string]any
-	require.NoError(t, json.Unmarshal(tool.RawInputSchema, &schema))
+	require.NoError(t, json.Unmarshal(raw, &schema))
 
 	properties := schema["properties"].(map[string]any)
-	nameProp := properties["name"].(map[string]any)
+	assert.NotContains(t, properties, "mode")
+	embedded := properties["embedded"].(map[string]any)
+	embeddedProperties := embedded["properties"].(map[string]any)
+	mode := embeddedProperties["mode"].(map[string]any)
+	assert.Equal(t, "Run mode", mode["description"])
+	assert.ElementsMatch(t, []any{"fast", "safe"}, mode["enum"])
+}
 
-	assert.Equal(t, "User name to query", nameProp["description"])
-	assert.ElementsMatch(t, []any{"Alice", "Bob"}, nameProp["enum"])
+func TestSchemaFor_RecursiveTaggedStructReturnsError(t *testing.T) {
+	type node struct {
+		Kind string `json:"kind" jsonschema:"enum=branch,enum=leaf"`
+		Next *node  `json:"next,omitempty"`
+	}
+
+	_, err := SchemaForRaw[node]()
+	require.ErrorIs(t, err, errRecursiveSchemaFallback)
+
+	type EmbeddedNode struct {
+		Kind string `json:"kind" jsonschema:"enum=branch,enum=leaf"`
+		*EmbeddedNode
+	}
+
+	_, err = SchemaForRaw[EmbeddedNode]()
+	require.ErrorIs(t, err, errRecursiveSchemaFallback)
 }
 
 func TestSchemaFor_NestedStructTags(t *testing.T) {
