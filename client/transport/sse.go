@@ -337,9 +337,27 @@ func (c *SSE) readSSE(reader io.ReadCloser) {
 		if after, ok := strings.CutPrefix(line, "event:"); ok {
 			event = strings.TrimSpace(after)
 		} else if after, ok := strings.CutPrefix(line, "data:"); ok {
-			data = strings.TrimSpace(after)
+			data = appendSSEData(data, after)
 		}
 	}
+}
+
+// appendSSEData joins the value of an SSE "data:" field onto any data already
+// accumulated for the current event. Per the Server-Sent Events specification,
+// a single event may carry multiple "data:" lines and they must be
+// concatenated with a newline. The previous implementation overwrote the
+// buffer on every line, silently truncating multi-line payloads to their final
+// line and corrupting JSON-RPC messages that span more than one data line.
+//
+// Only a single optional leading space after "data:" is removed, as the spec
+// requires; any other leading or trailing whitespace in the value is
+// significant and preserved.
+func appendSSEData(existing, line string) string {
+	value := strings.TrimPrefix(line, " ")
+	if existing == "" {
+		return value
+	}
+	return existing + "\n" + value
 }
 
 // handleSSEEvent processes SSE events based on their type.

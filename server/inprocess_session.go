@@ -64,6 +64,15 @@ func (s *InProcessSession) NotificationChannel() chan<- mcp.JSONRPCNotification 
 	return s.notifications
 }
 
+// ClientNotifications returns the receive-only endpoint of the session's
+// notification channel. In-process transports use this to drain
+// server-to-client notifications (progress, list-changed, resource
+// updates, etc.) queued via NotificationChannel and forward them to the
+// client's registered notification handler.
+func (s *InProcessSession) ClientNotifications() <-chan mcp.JSONRPCNotification {
+	return s.notifications
+}
+
 func (s *InProcessSession) Initialize() {
 	s.loggingLevel.Store(mcp.LoggingLevelError)
 	s.initialized.Store(true)

@@ -766,7 +766,7 @@ func TestToolWithInputSchema(t *testing.T) {
 // function prints an error to stderr if a jsonschema tag is invalid.
 func TestToolWithInputSchemaJsonSchemaTagError(t *testing.T) {
 	type TestInput struct {
-		Name  string `json:"name" jsonschema:"description=Person's name"` // Invalid jsonschema tag
+		Name  string `json:"name" jsonschema:""` // Invalid jsonschema tag
 		Age   int    `json:"age" jsonschema:"Person's age"`
 		Email string `json:"email,omitempty" jsonschema:"Email address"`
 	}
@@ -901,7 +901,7 @@ func TestToolWithOutputSchema(t *testing.T) {
 // function prints an error to stderr if a jsonschema tag is invalid.
 func TestToolWithOutputSchemaJsonSchemaTagError(t *testing.T) {
 	type TestOutput struct {
-		Name  string `json:"name" jsonschema:"description=Person's name"` // Invalid jsonschema tag
+		Name  string `json:"name" jsonschema:""` // Invalid jsonschema tag
 		Age   int    `json:"age" jsonschema:"Person's age"`
 		Email string `json:"email,omitempty" jsonschema:"Email address"`
 	}

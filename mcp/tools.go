@@ -8,8 +8,6 @@ import (
 	"os"
 	"reflect"
 	"strconv"
-
-	"github.com/google/jsonschema-go/jsonschema"
 )
 
 var errToolSchemaConflict = errors.New("provide either InputSchema or RawInputSchema, not both")
@@ -566,10 +564,10 @@ func (r CallToolResult) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON implements custom JSON unmarshaling for CallToolResult
 func (r *CallToolResult) UnmarshalJSON(data []byte) error {
 	type result struct {
-		Meta                *Meta             `json:"_meta,omitempty"`
-		Content             []json.RawMessage `json:"content"`
-		StructuredContent   json.RawMessage   `json:"structuredContent,omitempty"`
-		IsError             bool              `json:"isError,omitempty"`
+		Meta              *Meta             `json:"_meta,omitempty"`
+		Content           []json.RawMessage `json:"content"`
+		StructuredContent json.RawMessage   `json:"structuredContent,omitempty"`
+		IsError           bool              `json:"isError,omitempty"`
 	}
 
 	var raw result
@@ -914,7 +912,7 @@ func WithDeferLoading(deferLoading bool) ToolOption {
 // It accepts any Go type, usually a struct, and automatically generates a JSON schema from it.
 func WithInputSchema[T any]() ToolOption {
 	return func(t *Tool) {
-		schema, err := jsonschema.For[T](&jsonschema.ForOptions{IgnoreInvalidTypes: true})
+		schema, err := schemaFor[T]()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return
@@ -965,7 +963,7 @@ func WithRawInputSchema(schema json.RawMessage) ToolOption {
 // It accepts any Go type, usually a struct, and automatically generates a JSON schema from it.
 func WithOutputSchema[T any]() ToolOption {
 	return func(t *Tool) {
-		schema, err := jsonschema.For[T](&jsonschema.ForOptions{IgnoreInvalidTypes: true})
+		schema, err := schemaFor[T]()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return

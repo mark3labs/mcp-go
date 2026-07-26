@@ -1268,6 +1268,54 @@ type EmbeddedResource struct {
 
 func (EmbeddedResource) isContent() {}
 
+// UnmarshalJSON implements custom JSON unmarshaling for EmbeddedResource
+// to handle the nested ResourceContents interface.
+func (e *EmbeddedResource) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Annotated
+		Meta     *Meta           `json:"_meta,omitempty"`
+		Type     string          `json:"type"`
+		Resource json.RawMessage `json:"resource"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	var resourceFields map[string]json.RawMessage
+	if err := json.Unmarshal(raw.Resource, &resourceFields); err != nil {
+		return fmt.Errorf("unmarshaling embedded resource: %w", err)
+	}
+
+	var resource ResourceContents
+	if _, ok := resourceFields["text"]; ok {
+		var textResource TextResourceContents
+		if err := json.Unmarshal(raw.Resource, &textResource); err != nil {
+			return fmt.Errorf("unmarshaling embedded text resource: %w", err)
+		}
+		if textResource.URI == "" {
+			return fmt.Errorf("unmarshaling embedded text resource: %w", ErrEmbeddedResourceMissingURI)
+		}
+		resource = textResource
+	} else if _, ok := resourceFields["blob"]; ok {
+		var blobResource BlobResourceContents
+		if err := json.Unmarshal(raw.Resource, &blobResource); err != nil {
+			return fmt.Errorf("unmarshaling embedded blob resource: %w", err)
+		}
+		if blobResource.URI == "" {
+			return fmt.Errorf("unmarshaling embedded blob resource: %w", ErrEmbeddedResourceMissingURI)
+		}
+		resource = blobResource
+	} else {
+		return fmt.Errorf("unmarshaling embedded resource: %w", ErrEmbeddedResourceMissingVariant)
+	}
+
+	e.Annotated = raw.Annotated
+	e.Meta = raw.Meta
+	e.Type = raw.Type
+	e.Resource = resource
+	return nil
+}
+
 // ToolUseContent represents a request from the assistant to call a tool within a sampling message.
 // It must have Type set to "tool_use".
 type ToolUseContent struct {
