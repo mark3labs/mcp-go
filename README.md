@@ -1,3 +1,5 @@
+[![MCP Toplist](https://mcptoplist.com/badge/mcp.so%2Fmcp-go%2Fmark3labs.svg)](https://mcptoplist.com/server/mcp.so%2Fmcp-go%2Fmark3labs)
+
 <!-- omit in toc -->
 <div align="center">
 <img src="./logo.png" alt="MCP Go Logo">
