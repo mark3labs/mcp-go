@@ -1,6 +1,7 @@
 package server
 
 import (
+	"sync/atomic"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -14,7 +15,7 @@ func TestStreamableHttpSessionImplementsSessionWithClientInfo(t *testing.T) {
 	logStore := newSessionLogLevelsStore()
 
 	// Create a streamable HTTP session
-	session := newStreamableHttpSession("test-session", toolStore, resourceStore, templatesStore, logStore)
+	session := newStreamableHttpSession("test-session", toolStore, resourceStore, templatesStore, logStore, new(atomic.Int64))
 
 	// Verify it implements SessionWithClientInfo
 	var clientSession ClientSession = session
