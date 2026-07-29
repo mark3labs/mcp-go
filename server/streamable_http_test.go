@@ -2525,6 +2525,20 @@ func TestStreamableHTTP_Delete(t *testing.T) {
 	assert.Equal(t, sessionID, hookSession.SessionID())
 }
 
+func TestStreamableHTTP_HeadReturns200(t *testing.T) {
+	mcpServer := NewMCPServer("test-mcp-server", "1.0")
+	sseServer := NewStreamableHTTPServer(mcpServer)
+	testServer := httptest.NewServer(sseServer)
+	defer testServer.Close()
+
+	req, _ := http.NewRequest(http.MethodHead, testServer.URL, nil)
+	resp, err := testServer.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
 func TestStreamableHTTP_DrainNotifications(t *testing.T) {
 	t.Run("drain pending notifications after response is computed", func(t *testing.T) {
 		mcpServer := NewMCPServer("test-mcp-server", "1.0")

@@ -207,6 +207,8 @@ func (s *StreamableHTTPServer) Handle(w HTTPResponseWriter, r *HTTPRequest) {
 		s.handleGet(w, r)
 	case http.MethodDelete:
 		s.handleDelete(w, r)
+	case http.MethodHead:
+		w.WriteHeader(http.StatusOK)
 	default:
 		writeHTTPError(w, "404 page not found", http.StatusNotFound)
 	}
