@@ -851,6 +851,7 @@ drainLoop:
 		if err := writeSSEEvent(w, response); err != nil {
 			s.logger.Error("Failed to write final SSE response event", "err", err)
 		}
+		w.Flush()
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 		if isInitializeRequest && sessionID != "" {
