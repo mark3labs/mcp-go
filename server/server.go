@@ -2130,8 +2130,11 @@ func (s *MCPServer) executeTaskTool(
 		}
 	}()
 
-	// Create cancellable context for this task execution
-	taskCtx, cancel := context.WithCancel(ctx)
+	// Create cancellable context for this task execution.
+	// Use WithoutCancel to detach from the HTTP request lifecycle so the task
+	// continues running after the HTTP handler returns. Context values (session
+	// metadata, etc.) are preserved.
+	taskCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancel()
 
 	// Store cancel func in entry so it can be cancelled via tasks/cancel
@@ -2222,8 +2225,11 @@ func (s *MCPServer) executeRegularToolAsTask(
 	regularTool ServerTool,
 	request mcp.CallToolRequest,
 ) {
-	// Create cancellable context for this task execution
-	taskCtx, cancel := context.WithCancel(ctx)
+	// Create cancellable context for this task execution.
+	// Use WithoutCancel to detach from the HTTP request lifecycle so the task
+	// continues running after the HTTP handler returns. Context values (session
+	// metadata, etc.) are preserved.
+	taskCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancel()
 
 	// Store cancel func in entry so it can be cancelled via tasks/cancel
