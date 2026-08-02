@@ -44,6 +44,30 @@ func NewStdioMCPClientWithOptions(
 	return NewClient(stdioTransport), nil
 }
 
+// NewStdioClient creates a new stdio-based MCP client that communicates with
+// a subprocess. It launches the specified command with the given environment
+// variables and arguments, starts the underlying transport, and applies the
+// supplied client-level options (e.g. WithTracer, WithPropagator) to the
+// returned client.
+//
+// Callers that need transport-level options (e.g. a custom command function)
+// should fall back to NewStdioMCPClientWithOptions or construct the transport
+// directly with transport.NewStdioWithOptions and call NewClient.
+func NewStdioClient(
+	command string,
+	env []string,
+	args []string,
+	opts ...ClientOption,
+) (*Client, error) {
+	stdioTransport := transport.NewStdioWithOptions(command, env, args)
+
+	if err := stdioTransport.Start(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to start stdio transport: %w", err)
+	}
+
+	return NewClient(stdioTransport, opts...), nil
+}
+
 // GetStderr returns a reader for the stderr output of the subprocess.
 // This can be used to capture error messages or logs from the subprocess.
 //
