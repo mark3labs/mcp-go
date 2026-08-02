@@ -80,6 +80,22 @@ type SessionWithResourceSubscriptions interface {
 	IsSubscribedToResource(uri string) bool
 }
 
+// SessionWithResourceSubscriptionsErr is an optional extension of
+// SessionWithResourceSubscriptions whose SubscribeToResourceErr method can
+// reject a subscription. When a session implements this interface, MCPServer
+// uses SubscribeToResourceErr in preference to SubscribeToResource and returns
+// RESOURCE_NOT_FOUND if it reports an error.
+//
+// Implementations must be safe for concurrent use because requests and
+// notifications may run on independent goroutines.
+type SessionWithResourceSubscriptionsErr interface {
+	SessionWithResourceSubscriptions
+	// SubscribeToResourceErr records that this session has subscribed to updates
+	// for the given resource URI, or returns an error if the URI cannot be
+	// subscribed to.
+	SubscribeToResourceErr(uri string) error
+}
+
 // SessionWithResourceTemplates is an extension of ClientSession that can store session-specific resource template data
 type SessionWithResourceTemplates interface {
 	ClientSession
