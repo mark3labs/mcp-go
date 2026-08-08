@@ -1832,6 +1832,53 @@ func TestToolArgumentsSchema_UnmarshalWithDefinitions(t *testing.T) {
 	assert.NotNil(t, operationType["enum"])
 }
 
+func TestToolArgumentsSchema_DefinitionsRoundTripKeepsRefsResolvable(t *testing.T) {
+	// A draft-07 schema whose properties $ref into "definitions". Marshaling
+	// re-emits Defs as "$defs", so unmarshal must rewrite local refs or the
+	// round-tripped schema carries dangling "#/definitions/..." pointers that
+	// strict validators (e.g. xAI) reject.
+	jsonData := `{
+		"type": "object",
+		"properties": {
+			"body": {
+				"allOf": [{"$ref": "#/definitions/json_value"}]
+			}
+		},
+		"definitions": {
+			"json_value": {
+				"anyOf": [
+					{"type": "string"},
+					{"type": "array", "items": {"$ref": "#/definitions/json_value"}}
+				]
+			}
+		}
+	}`
+
+	var schema ToolArgumentsSchema
+	require.NoError(t, json.Unmarshal([]byte(jsonData), &schema))
+
+	out, err := json.Marshal(schema)
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), "#/definitions/",
+		"round-tripped schema must not reference the renamed definitions key")
+
+	var roundTripped map[string]any
+	require.NoError(t, json.Unmarshal(out, &roundTripped))
+	defs, ok := roundTripped["$defs"].(map[string]any)
+	require.True(t, ok, "definitions must be re-emitted as $defs")
+	assert.Contains(t, defs, "json_value")
+
+	properties, ok := roundTripped["properties"].(map[string]any)
+	require.True(t, ok)
+	body, ok := properties["body"].(map[string]any)
+	require.True(t, ok)
+	allOf, ok := body["allOf"].([]any)
+	require.True(t, ok)
+	ref, ok := allOf[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "#/$defs/json_value", ref["$ref"])
+}
+
 func TestToolArgumentsSchema_UnmarshalWithDefs(t *testing.T) {
 	// Test that "$defs" (JSON Schema 2019-09+) is properly unmarshaled into Defs field
 	jsonData := `{
