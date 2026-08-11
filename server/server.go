@@ -1246,7 +1246,16 @@ func (s *MCPServer) handleSubscribe(
 	}
 
 	if session := ClientSessionFromContext(ctx); session != nil {
-		if subs, ok := session.(SessionWithResourceSubscriptions); ok {
+		switch subs := session.(type) {
+		case SessionWithResourceSubscriptionsErr:
+			if err := subs.SubscribeToResourceErr(request.Params.URI); err != nil {
+				return nil, &requestError{
+					id:   id,
+					code: mcp.RESOURCE_NOT_FOUND,
+					err:  err,
+				}
+			}
+		case SessionWithResourceSubscriptions:
 			subs.SubscribeToResource(request.Params.URI)
 		}
 	}

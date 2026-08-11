@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"sync"
 	"testing"
@@ -69,6 +70,21 @@ func (s *sessionWithSubscriptions) IsSubscribedToResource(uri string) bool {
 
 // Compile-time check.
 var _ SessionWithResourceSubscriptions = (*sessionWithSubscriptions)(nil)
+
+type sessionWithSubscriptionErrors struct {
+	*sessionWithSubscriptions
+	allowed map[string]struct{}
+}
+
+func (s *sessionWithSubscriptionErrors) SubscribeToResourceErr(uri string) error {
+	if _, ok := s.allowed[uri]; !ok {
+		return errors.New("resource is not subscribable")
+	}
+	s.SubscribeToResource(uri)
+	return nil
+}
+
+var _ SessionWithResourceSubscriptionsErr = (*sessionWithSubscriptionErrors)(nil)
 
 // TestMCPServer_SubscribeUnsubscribe_DispatcherWiring is the regression test
 // for https://github.com/mark3labs/mcp-go/issues/865. It verifies that
@@ -223,6 +239,41 @@ func TestMCPServer_Subscribe_TracksSessionState(t *testing.T) {
 	got = session.SubscribedResources()
 	assert.Equal(t, []string{"file:///b"}, got)
 	assert.False(t, session.IsSubscribedToResource("file:///a"))
+}
+
+func TestMCPServer_Subscribe_SessionCanRejectURI(t *testing.T) {
+	t.Parallel()
+
+	srv := NewMCPServer("test", "0.0.1", WithResourceCapabilities(true, false))
+	session := &sessionWithSubscriptionErrors{
+		sessionWithSubscriptions: newSessionWithSubscriptions("sess-1"),
+		allowed:                  map[string]struct{}{"file:///allowed": {}},
+	}
+	require.NoError(t, srv.RegisterSession(t.Context(), session))
+
+	ctx := srv.WithContext(t.Context(), session)
+	request := func(uri string) mcp.JSONRPCMessage {
+		t.Helper()
+		msg, err := json.Marshal(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "resources/subscribe",
+			"params":  map[string]string{"uri": uri},
+		})
+		require.NoError(t, err)
+		return srv.HandleMessage(ctx, msg)
+	}
+
+	response := request("file:///not-found")
+	errResponse, ok := response.(mcp.JSONRPCError)
+	require.True(t, ok, "expected JSONRPCError, got %T: %#v", response, response)
+	assert.Equal(t, mcp.RESOURCE_NOT_FOUND, errResponse.Error.Code)
+	assert.False(t, session.IsSubscribedToResource("file:///not-found"))
+
+	response = request("file:///allowed")
+	_, ok = response.(mcp.JSONRPCResponse)
+	require.True(t, ok, "expected JSONRPCResponse, got %T: %#v", response, response)
+	assert.True(t, session.IsSubscribedToResource("file:///allowed"))
 }
 
 // TestMCPServer_Subscribe_HooksFire confirms the generator wired up
