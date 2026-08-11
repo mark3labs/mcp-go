@@ -622,14 +622,14 @@ func TestMCPServer_UnsupportedProtocolVersions(t *testing.T) {
 		{
 			name:            "ancient unsupported version",
 			clientVersion:   "2020-01-01",
-			expectedVersion: mcp.LATEST_PROTOCOL_VERSION,
-			description:     "Server should respond with its latest version",
+			expectedVersion: mcp.LATEST_LEGACY_PROTOCOL_VERSION,
+			description:     "Server should respond with its latest legacy version",
 		},
 		{
 			name:            "future unsupported version",
 			clientVersion:   "2030-12-31",
-			expectedVersion: mcp.LATEST_PROTOCOL_VERSION,
-			description:     "Server should respond with its latest version",
+			expectedVersion: mcp.LATEST_LEGACY_PROTOCOL_VERSION,
+			description:     "Server should respond with its latest legacy version",
 		},
 		{
 			name:            "supported version",
@@ -638,10 +638,16 @@ func TestMCPServer_UnsupportedProtocolVersions(t *testing.T) {
 			description:     "Server should respond with client's version if supported",
 		},
 		{
-			name:            "latest supported version",
-			clientVersion:   mcp.LATEST_PROTOCOL_VERSION,
-			expectedVersion: mcp.LATEST_PROTOCOL_VERSION,
+			name:            "latest legacy version",
+			clientVersion:   mcp.LATEST_LEGACY_PROTOCOL_VERSION,
+			expectedVersion: mcp.LATEST_LEGACY_PROTOCOL_VERSION,
 			description:     "Server should respond with matching version",
+		},
+		{
+			name:            "modern version over initialize is capped",
+			clientVersion:   mcp.LATEST_PROTOCOL_VERSION,
+			expectedVersion: mcp.LATEST_LEGACY_PROTOCOL_VERSION,
+			description:     "initialize was removed in 2026-07-28, so it cannot negotiate that version",
 		},
 		{
 			name:            "empty version defaults to 2025-03-26",

@@ -2562,19 +2562,27 @@ func TestMCPServer_ProtocolNegotiation(t *testing.T) {
 			expectedVersion: "2024-11-05", // Server must respond with client's version if supported
 		},
 		{
-			name:            "Client requests current latest - should respond with same version",
-			clientVersion:   mcp.LATEST_PROTOCOL_VERSION, // "2025-03-26"
-			expectedVersion: mcp.LATEST_PROTOCOL_VERSION,
+			// initialize was removed in 2026-07-28, so the handshake can
+			// never negotiate the latest version: it is capped at the newest
+			// legacy revision.
+			name:            "Client requests latest legacy - should respond with same version",
+			clientVersion:   mcp.LATEST_LEGACY_PROTOCOL_VERSION,
+			expectedVersion: mcp.LATEST_LEGACY_PROTOCOL_VERSION,
 		},
 		{
-			name:            "Client requests unsupported future version - should respond with server's latest",
-			clientVersion:   "2026-01-01",                // Future unsupported version
-			expectedVersion: mcp.LATEST_PROTOCOL_VERSION, // Server responds with its latest supported
+			name:            "Client requests modern version over initialize - should be capped at latest legacy",
+			clientVersion:   mcp.LATEST_PROTOCOL_VERSION,
+			expectedVersion: mcp.LATEST_LEGACY_PROTOCOL_VERSION,
 		},
 		{
-			name:            "Client requests unsupported old version - should respond with server's latest",
-			clientVersion:   "2023-01-01",                // Very old unsupported version
-			expectedVersion: mcp.LATEST_PROTOCOL_VERSION, // Server responds with its latest supported
+			name:            "Client requests unsupported future version - should respond with server's latest legacy",
+			clientVersion:   "2027-01-01",                       // Future unsupported version
+			expectedVersion: mcp.LATEST_LEGACY_PROTOCOL_VERSION, // Server responds with its latest legacy version
+		},
+		{
+			name:            "Client requests unsupported old version - should respond with server's latest legacy",
+			clientVersion:   "2023-01-01",                       // Very old unsupported version
+			expectedVersion: mcp.LATEST_LEGACY_PROTOCOL_VERSION, // Server responds with its latest legacy version
 		},
 	}
 

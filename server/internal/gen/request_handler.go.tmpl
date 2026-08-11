@@ -80,6 +80,34 @@ func (s *MCPServer) HandleMessage(
 		headers = make(http.Header)
 	}
 
+	// Determine which protocol era this request belongs to. Protocol version
+	// 2026-07-28 removed the initialize handshake: a modern request carries
+	// its protocol version, client identity, and client capabilities in _meta
+	// (SEP-2575). Anything else is served through the legacy path.
+	protocolInfo, protocolErr := extractRequestProtocolInfo(message)
+	if protocolErr != nil {
+		return errorResponseForProtocolError(baseMessage.ID, protocolErr)
+	}
+	ctx = WithRequestProtocolInfo(ctx, protocolInfo)
+
+	if protocolInfo.Modern {
+		if !mcp.IsValidProtocolVersion(protocolInfo.ProtocolVersion) {
+			return errorResponseForProtocolError(baseMessage.ID, mcp.UnsupportedProtocolVersionError{
+				Version:   protocolInfo.ProtocolVersion,
+				Supported: SupportedProtocolVersionsFromContext(ctx),
+			})
+		}
+		if err := validateStandardHeadersForMessage(headers, protocolInfo.ProtocolVersion, baseMessage.Method, message); err != nil {
+			return errorResponseForProtocolError(baseMessage.ID, err)
+		}
+		// Synthesize the session state the handshake used to establish, so
+		// that hooks and handlers observing the session behave identically in
+		// both eras.
+		if session := ClientSessionFromContext(ctx); session != nil {
+			applyRequestProtocolInfoToSession(session, protocolInfo)
+		}
+	}
+
 	// Wrap context with cancel for in-flight request cancellation (MCP spec: notifications/cancelled)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -111,12 +139,28 @@ func (s *MCPServer) HandleMessage(
 	endLog := s.startMessageLog(ctx, headers, string(baseMessage.Method))
 	defer func() { endLog(resp) }()
 
+	// Decorate outgoing results with the metadata required by protocol version
+	// 2026-07-28: resultType, serverInfo, and caching hints.
+	defer func() { resp = s.decorateResponse(ctx, protocolInfo, baseMessage.Method, resp) }()
+
 	switch baseMessage.Method {
 	{{- range .}}
 	case mcp.{{.MethodName}}:
 		var request mcp.{{.ParamType}}
 		{{ if .ResultIsAny }}var result any{{ else }}var result *mcp.{{.ResultType}}{{ end }}
-		{{ if .Group }}if s.capabilities.{{.Group}} == nil {
+		{{ if .RemovedInModern }}if protocolInfo.Modern {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.METHOD_NOT_FOUND,
+				err:  fmt.Errorf("%q %w", baseMessage.Method, ErrRemovedInProtocolVersion),
+			}
+		} else {{ end }}{{ if .RequiresModern }}if !protocolInfo.Modern {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.METHOD_NOT_FOUND,
+				err:  fmt.Errorf("%q %w", baseMessage.Method, ErrRequiresModernProtocol),
+			}
+		} else {{ end }}{{ if .Group }}if s.capabilities.{{.Group}} == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,

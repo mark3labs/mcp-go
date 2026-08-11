@@ -148,8 +148,8 @@ func TestStreamableHTTP_POST_SendAndReceive(t *testing.T) {
 		if err := json.Unmarshal(bodyBytes, &responseMessage); err != nil {
 			t.Fatalf("Failed to unmarshal response: %v", err)
 		}
-		if responseMessage.Result["protocolVersion"] != mcp.LATEST_PROTOCOL_VERSION {
-			t.Errorf("Expected protocol version %s, got %s", mcp.LATEST_PROTOCOL_VERSION, responseMessage.Result["protocolVersion"])
+		if responseMessage.Result["protocolVersion"] != mcp.LATEST_LEGACY_PROTOCOL_VERSION {
+			t.Errorf("Expected protocol version %s, got %s", mcp.LATEST_LEGACY_PROTOCOL_VERSION, responseMessage.Result["protocolVersion"])
 		}
 
 		// get session id from header
@@ -339,8 +339,8 @@ func TestStreamableHTTP_POST_SendAndReceive_stateless(t *testing.T) {
 		if err := json.Unmarshal(bodyBytes, &responseMessage); err != nil {
 			t.Fatalf("Failed to unmarshal response: %v", err)
 		}
-		if responseMessage.Result["protocolVersion"] != mcp.LATEST_PROTOCOL_VERSION {
-			t.Errorf("Expected protocol version %s, got %s", mcp.LATEST_PROTOCOL_VERSION, responseMessage.Result["protocolVersion"])
+		if responseMessage.Result["protocolVersion"] != mcp.LATEST_LEGACY_PROTOCOL_VERSION {
+			t.Errorf("Expected protocol version %s, got %s", mcp.LATEST_LEGACY_PROTOCOL_VERSION, responseMessage.Result["protocolVersion"])
 		}
 
 		// no session id from header
@@ -585,8 +585,8 @@ func TestStreamableHTTP_HttpHandler(t *testing.T) {
 		if err := json.Unmarshal(bodyBytes, &responseMessage); err != nil {
 			t.Fatalf("Failed to unmarshal response: %v", err)
 		}
-		if responseMessage.Result["protocolVersion"] != mcp.LATEST_PROTOCOL_VERSION {
-			t.Errorf("Expected protocol version %s, got %s", mcp.LATEST_PROTOCOL_VERSION, responseMessage.Result["protocolVersion"])
+		if responseMessage.Result["protocolVersion"] != mcp.LATEST_LEGACY_PROTOCOL_VERSION {
+			t.Errorf("Expected protocol version %s, got %s", mcp.LATEST_LEGACY_PROTOCOL_VERSION, responseMessage.Result["protocolVersion"])
 		}
 	})
 }
@@ -1330,8 +1330,8 @@ func TestStreamableHTTPServer_WithDisableStreaming(t *testing.T) {
 		if err := json.Unmarshal(bodyBytes, &responseMessage); err != nil {
 			t.Fatalf("Failed to unmarshal response: %v", err)
 		}
-		if responseMessage.Result["protocolVersion"] != mcp.LATEST_PROTOCOL_VERSION {
-			t.Errorf("Expected protocol version %s, got %s", mcp.LATEST_PROTOCOL_VERSION, responseMessage.Result["protocolVersion"])
+		if responseMessage.Result["protocolVersion"] != mcp.LATEST_LEGACY_PROTOCOL_VERSION {
+			t.Errorf("Expected protocol version %s, got %s", mcp.LATEST_LEGACY_PROTOCOL_VERSION, responseMessage.Result["protocolVersion"])
 		}
 	})
 

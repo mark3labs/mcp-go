@@ -17,10 +17,18 @@ type MCPMethod string
 const (
 	// MethodInitialize initiates connection and negotiates protocol capabilities.
 	// https://modelcontextprotocol.io/specification/2024-11-05/basic/lifecycle/#initialization
+	//
+	// Deprecated: removed in protocol version 2026-07-28 (SEP-2575), which
+	// carries the protocol version, client identity, and client capabilities in
+	// each request's _meta instead. Use [MethodServerDiscover] to learn a
+	// server's capabilities up front.
 	MethodInitialize MCPMethod = "initialize"
 
 	// MethodPing verifies connection liveness between client and server.
 	// https://modelcontextprotocol.io/specification/2024-11-05/basic/utilities/ping/
+	//
+	// Deprecated: removed in protocol version 2026-07-28 (SEP-2575). Servers
+	// reject it on requests using that version or later.
 	MethodPing MCPMethod = "ping"
 
 	// MethodResourcesList lists all available server resources.
@@ -37,10 +45,16 @@ const (
 
 	// MethodResourcesSubscribe subscribes the client to updates for a resource.
 	// https://modelcontextprotocol.io/specification/2025-11-25/server/resources
+	//
+	// Deprecated: removed in protocol version 2026-07-28 (SEP-2575). Use the
+	// ResourceSubscriptions field of a [MethodSubscriptionsListen] request.
 	MethodResourcesSubscribe MCPMethod = "resources/subscribe"
 
 	// MethodResourcesUnsubscribe cancels a previous resources/subscribe request.
 	// https://modelcontextprotocol.io/specification/2025-11-25/server/resources
+	//
+	// Deprecated: removed in protocol version 2026-07-28 (SEP-2575). Close the
+	// [MethodSubscriptionsListen] stream instead.
 	MethodResourcesUnsubscribe MCPMethod = "resources/unsubscribe"
 
 	// MethodPromptsList lists all available prompt templates.
@@ -61,6 +75,9 @@ const (
 
 	// MethodSetLogLevel configures the minimum log level for client
 	// https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging
+	//
+	// Deprecated: removed in protocol version 2026-07-28 (SEP-2575). Set
+	// [MetaKeyLogLevel] in each request's _meta instead.
 	MethodSetLogLevel MCPMethod = "logging/setLevel"
 
 	// MethodElicitationCreate requests additional information from the user during interactions.
@@ -131,6 +148,22 @@ const (
 	// MethodCompletionComplete returns completion suggestions for a given argument
 	// https://modelcontextprotocol.io/specification/2025-11-25/server/utilities/completion
 	MethodCompletionComplete MCPMethod = "completion/complete"
+
+	// MethodServerDiscover advertises the server's supported protocol versions,
+	// capabilities, and identity. Servers implementing protocol version
+	// 2026-07-28 or later MUST support it; it replaces the initialize handshake.
+	// https://modelcontextprotocol.io/specification/2026-07-28/server/discover
+	MethodServerDiscover MCPMethod = "server/discover"
+
+	// MethodSubscriptionsListen opens a long-lived stream for server-to-client
+	// notifications. It replaces the HTTP GET endpoint and the
+	// resources/subscribe and resources/unsubscribe RPCs.
+	// https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http
+	MethodSubscriptionsListen MCPMethod = "subscriptions/listen"
+
+	// MethodNotificationSubscriptionsAcknowledged reports which subscriptions a
+	// server established in response to a subscriptions/listen request.
+	MethodNotificationSubscriptionsAcknowledged = "notifications/subscriptions/acknowledged"
 )
 
 type URITemplate struct {
@@ -159,19 +192,8 @@ func (t *URITemplate) UnmarshalJSON(data []byte) error {
 // JSONRPCMessage represents either a JSONRPCRequest, JSONRPCNotification, JSONRPCResponse, or JSONRPCError
 type JSONRPCMessage any
 
-// LATEST_PROTOCOL_VERSION is the most recent version of the MCP protocol.
-const LATEST_PROTOCOL_VERSION = "2025-11-25"
-
-// ValidProtocolVersions lists all known valid MCP protocol versions.
-var ValidProtocolVersions = []string{
-	LATEST_PROTOCOL_VERSION,
-	"2025-06-18",
-	"2025-03-26",
-	"2024-11-05",
-}
-
-// JSONRPC_VERSION is the version of JSON-RPC used by MCP.
-const JSONRPC_VERSION = "2.0"
+// Protocol version constants, negotiation helpers, and JSONRPC_VERSION live
+// in version.go.
 
 // ProgressToken is used to associate progress notifications with the original request.
 type ProgressToken any
@@ -310,6 +332,14 @@ type Result struct {
 	// This result property is reserved by the protocol to allow clients and
 	// servers to attach additional metadata to their responses.
 	Meta *Meta `json:"_meta,omitempty"`
+
+	// ResultType indicates how the client should interpret this result.
+	//
+	// Servers implementing protocol version 2026-07-28 or later MUST populate
+	// it. It is omitted when responding to a request that used an earlier
+	// protocol version; clients MUST treat an absent value as
+	// [ResultTypeComplete].
+	ResultType ResultType `json:"resultType,omitempty"`
 }
 
 // RequestId is a uniquely identifying ID for a request in JSON-RPC.
@@ -465,12 +495,34 @@ const (
 )
 
 // MCP error codes
+//
+// Protocol version 2026-07-28 partitions the JSON-RPC server-error range:
+// -32000 to -32019 remains implementation-defined (existing SDK usage is
+// grandfathered) and -32020 to -32099 is reserved for the MCP specification.
 const (
 	// RESOURCE_NOT_FOUND indicates that the requested resource was not found.
+	//
+	// Deprecated: protocol version 2026-07-28 aligns this condition with
+	// JSON-RPC by using [INVALID_PARAMS] instead. This code is still accepted
+	// from older servers.
 	RESOURCE_NOT_FOUND = -32002
 
 	// URL_ELICITATION_REQUIRED is the error code for when URL elicitation is required.
 	URL_ELICITATION_REQUIRED = -32042
+
+	// HEADER_MISMATCH indicates that a standard MCP HTTP header is missing,
+	// malformed, or does not match the corresponding value in the request body
+	// (SEP-2243).
+	HEADER_MISMATCH = -32020
+
+	// MISSING_REQUIRED_CLIENT_CAPABILITY indicates the client did not declare a
+	// capability the server requires to serve the request (SEP-2575).
+	MISSING_REQUIRED_CLIENT_CAPABILITY = -32021
+
+	// UNSUPPORTED_PROTOCOL_VERSION indicates the server does not implement the
+	// protocol version the request declared (SEP-2575). The error data carries
+	// an [UnsupportedProtocolVersionData].
+	UNSUPPORTED_PROTOCOL_VERSION = -32022
 )
 
 /* Empty result */
@@ -707,7 +759,7 @@ type PaginatedParams struct {
 }
 
 type PaginatedResult struct {
-	Result
+	CacheableResult
 	// An opaque token representing the pagination position after the last
 	// returned result.
 	// If present, there may be more results available.
@@ -760,12 +812,14 @@ type ReadResourceParams struct {
 	Arguments map[string]any `json:"arguments,omitempty"`
 	// Meta carries protocol-level metadata (e.g. W3C traceparent, progressToken).
 	Meta *Meta `json:"_meta,omitempty"`
+	MultiRoundTripParams
 }
 
 // ReadResourceResult is the server's response to a resources/read request
 // from the client.
 type ReadResourceResult struct {
-	Result
+	CacheableResult
+	MultiRoundTripResult
 	Contents []ResourceContents `json:"contents"` // Can be TextResourceContents or BlobResourceContents
 }
 

@@ -34,12 +34,14 @@ type GetPromptParams struct {
 	Arguments map[string]string `json:"arguments,omitempty"`
 	// Meta carries protocol-level metadata (e.g. W3C traceparent, progressToken).
 	Meta *Meta `json:"_meta,omitempty"`
+	MultiRoundTripParams
 }
 
 // GetPromptResult is the server's response to a prompts/get request from the
 // client.
 type GetPromptResult struct {
 	Result
+	MultiRoundTripResult
 	// An optional description for the prompt.
 	Description string          `json:"description,omitempty"`
 	Messages    []PromptMessage `json:"messages"`
