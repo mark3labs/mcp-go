@@ -1323,7 +1323,7 @@ func (s *MCPServer) handleSubscribe(
 			if err := subs.SubscribeToResourceErr(request.Params.URI); err != nil {
 				return nil, &requestError{
 					id:   id,
-					code: mcp.RESOURCE_NOT_FOUND,
+					code: resourceNotFoundCode(ctx),
 					err:  err,
 				}
 			}
@@ -1694,7 +1694,7 @@ func (s *MCPServer) handleReadResource(
 
 	return nil, &requestError{
 		id:   id,
-		code: mcp.RESOURCE_NOT_FOUND,
+		code: resourceNotFoundCode(ctx),
 		err: fmt.Errorf(
 			"handler not found for resource URI '%s': %w",
 			request.Params.URI,

@@ -96,7 +96,14 @@ func (s *MCPServer) handleDiscover(
 
 // applyRequestProtocolInfoToSession copies the per-request client identity and
 // capabilities onto the session, synthesizing the state that the initialize
-// handshake used to establish.
+// handshake used to establish. Handlers and hooks that inspect the session
+// therefore behave identically in both protocol eras.
+//
+// The protocol version is deliberately not written to the session. It is a
+// property of the request, not of the connection: a session is long-lived on
+// stdio and in-process, and recording a modern version there would leak it
+// into a subsequent request from a client using an earlier revision.
+// RequestProtocolVersion reads the per-request value first for that reason.
 func applyRequestProtocolInfoToSession(session ClientSession, info *RequestProtocolInfo) {
 	if session == nil || info == nil || !info.Modern {
 		return
@@ -108,9 +115,6 @@ func applyRequestProtocolInfoToSession(session ClientSession, info *RequestProto
 		if info.ClientCapabilities != nil {
 			withInfo.SetClientCapabilities(*info.ClientCapabilities)
 		}
-	}
-	if versioned, ok := session.(sessionProtocolVersionSetter); ok {
-		versioned.SetProtocolVersion(info.ProtocolVersion)
 	}
 	if !session.Initialized() {
 		session.Initialize()
