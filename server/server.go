@@ -315,6 +315,7 @@ type serverCapabilities struct {
 	tasks        *taskCapabilities
 	completions  *bool
 	experimental map[string]any
+	extensions   map[string]any
 }
 
 // resourceCapabilities defines the supported resource-related features
@@ -656,6 +657,24 @@ func WithCompletions() ServerOption {
 func WithExperimental(experimental map[string]any) ServerOption {
 	return func(s *MCPServer) {
 		s.capabilities.experimental = experimental
+	}
+}
+
+// WithExtensions advertises support for optional MCP extensions beyond the
+// core protocol, as a map of extension identifier to that extension's settings
+// object. An empty object means the extension is supported with no additional
+// settings.
+//
+// Extension identifiers follow the _meta key naming rules, so they carry a
+// mandatory prefix - for example "io.modelcontextprotocol/tasks" for the Tasks
+// extension, or "io.modelcontextprotocol/ui" for MCP Apps.
+//
+// Extensions were formalized in protocol version 2026-07-28. When one party
+// supports an extension and the other does not, the supporting party must
+// either fall back to core protocol behaviour or reject the request.
+func WithExtensions(extensions map[string]any) ServerOption {
+	return func(s *MCPServer) {
+		s.capabilities.extensions = extensions
 	}
 }
 
@@ -1231,6 +1250,10 @@ func (s *MCPServer) serverCapabilitiesSnapshot() mcp.ServerCapabilities {
 
 	if s.capabilities.experimental != nil {
 		capabilities.Experimental = s.capabilities.experimental
+	}
+
+	if s.capabilities.extensions != nil {
+		capabilities.Extensions = s.capabilities.extensions
 	}
 
 	return capabilities

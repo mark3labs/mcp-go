@@ -247,3 +247,69 @@ func TestSubscriptionsListen_LegacySessionsAreUnfiltered(t *testing.T) {
 	assert.True(t, subscriptionAllowsNotification(session, mcp.MethodNotificationToolsListChanged))
 	assert.True(t, subscriptionAllowsNotification(session, mcp.MethodNotificationPromptsListChanged))
 }
+
+func TestPerRequestLogLevel(t *testing.T) {
+	srv := NewMCPServer("log-test", "1.0.0", WithLogging())
+
+	// Protocol version 2026-07-28 replaced logging/setLevel with a per-request
+	// _meta field, and forbids emitting log notifications for a request that
+	// did not ask for them.
+	tests := []struct {
+		name     string
+		info     *RequestProtocolInfo
+		level    mcp.LoggingLevel
+		wantSent bool
+	}{
+		{
+			name:     "no level requested means no notifications",
+			info:     &RequestProtocolInfo{Modern: true, ProtocolVersion: mcp.ProtocolVersion20260728},
+			level:    mcp.LoggingLevelError,
+			wantSent: false,
+		},
+		{
+			name: "a message at the requested level is sent",
+			info: &RequestProtocolInfo{
+				Modern:          true,
+				ProtocolVersion: mcp.ProtocolVersion20260728,
+				LogLevel:        mcp.LoggingLevelInfo,
+			},
+			level:    mcp.LoggingLevelError,
+			wantSent: true,
+		},
+		{
+			name: "a message below the requested level is dropped",
+			info: &RequestProtocolInfo{
+				Modern:          true,
+				ProtocolVersion: mcp.ProtocolVersion20260728,
+				LogLevel:        mcp.LoggingLevelError,
+			},
+			level:    mcp.LoggingLevelDebug,
+			wantSent: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := newListenSession()
+			require.NoError(t, srv.RegisterSession(t.Context(), session))
+			defer srv.UnregisterSession(t.Context(), session.SessionID())
+
+			ctx := WithRequestProtocolInfo(srv.WithContext(t.Context(), session), tt.info)
+			err := srv.SendLogMessageToClient(ctx, mcp.LoggingMessageNotification{
+				Notification: mcp.Notification{Method: string(mcp.MethodNotificationMessage)},
+				Params: mcp.LoggingMessageNotificationParams{
+					Level: tt.level,
+					Data:  "hello",
+				},
+			})
+			require.NoError(t, err)
+
+			select {
+			case notification := <-session.notify:
+				assert.True(t, tt.wantSent, "unexpected notification %s", notification.Method)
+			default:
+				assert.False(t, tt.wantSent, "expected a log notification")
+			}
+		})
+	}
+}

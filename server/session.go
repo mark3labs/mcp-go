@@ -203,6 +203,19 @@ func (s *MCPServer) SendLogMessageToClient(ctx context.Context, notification mcp
 	if session == nil || !session.Initialized() {
 		return ErrNotificationNotInitialized
 	}
+	// Protocol version 2026-07-28 removed logging/setLevel: the level is
+	// declared per request, and a server MUST NOT emit log notifications for a
+	// request that did not ask for them (SEP-2575).
+	if info := RequestProtocolInfoFromContext(ctx); info != nil && info.Modern {
+		if info.LogLevel == "" {
+			return nil
+		}
+		if !notification.Params.Level.ShouldSendTo(info.LogLevel) {
+			return nil
+		}
+		return s.sendNotificationCore(ctx, session, s.buildLogNotification(notification))
+	}
+
 	sessionLogging, ok := session.(SessionWithLogging)
 	if !ok {
 		return ErrSessionDoesNotSupportLogging
