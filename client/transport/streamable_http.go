@@ -30,6 +30,11 @@ type StreamableHTTPCOption func(*StreamableHTTP)
 // It will establish a standalone long-live GET HTTP connection to the server.
 // https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
 // NOTICE: Even enabled, the server may not support this feature.
+//
+// Deprecated: protocol version 2026-07-28 removed the standalone GET stream
+// (SEP-2575). A transport with this option enabled keeps the connection on a
+// legacy protocol version; use Client.Listen to open a subscriptions/listen
+// stream instead.
 func WithContinuousListening() StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
 		sc.getListeningEnabled = true
@@ -284,6 +289,15 @@ func (c *StreamableHTTP) negotiatedProtocolVersion() string {
 // introduced in 2026-07-28, where the transport carries no session state.
 func (c *StreamableHTTP) isModern() bool {
 	return mcp.IsModernProtocol(c.negotiatedProtocolVersion())
+}
+
+// RequiresLegacyProtocol reports whether this transport has been configured in
+// a way that only protocol versions before 2026-07-28 can satisfy.
+//
+// Continuous listening depends on the standalone GET stream, which that
+// revision removed, so a transport using it must stay on a legacy version.
+func (c *StreamableHTTP) RequiresLegacyProtocol() bool {
+	return c.getListeningEnabled
 }
 
 // ErrOAuthAuthorizationRequired is a sentinel error for OAuth authorization required

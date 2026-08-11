@@ -31,6 +31,20 @@ func (c *Client) isModern() bool {
 	return mcp.IsModernProtocol(c.protocolVersion)
 }
 
+// legacyRequiringTransport is implemented by transports that have been
+// configured in a way only protocol versions before 2026-07-28 can satisfy,
+// such as a Streamable HTTP transport using continuous listening.
+type legacyRequiringTransport interface {
+	RequiresLegacyProtocol() bool
+}
+
+// transportRequiresLegacyProtocol reports whether the transport rules out the
+// stateless protocol core.
+func (c *Client) transportRequiresLegacyProtocol() bool {
+	legacy, ok := c.transport.(legacyRequiringTransport)
+	return ok && legacy.RequiresLegacyProtocol()
+}
+
 // ProtocolVersion returns the protocol version in effect for this client, or
 // "" before the connection has been established.
 func (c *Client) ProtocolVersion() string {
@@ -222,10 +236,11 @@ func (c *Client) negotiateModern(ctx context.Context, preferred string) (*mcp.Di
 		defer cancel()
 	}
 
-	// The version travels in each request's _meta, so it must be in place
-	// before the probe is sent. It is reset by the caller on failure.
+	// The version travels in each request's _meta and, over HTTP, in the
+	// Mcp-Protocol-Version header, which must agree. Both must therefore be in
+	// place before the probe is sent; they are restored on failure.
 	previous := c.protocolVersion
-	c.protocolVersion = preferred
+	c.applyNegotiatedVersion(preferred)
 
 	for attempt := 0; attempt < 2; attempt++ {
 		result, err := c.Discover(probeCtx, mcp.DiscoverRequest{})
@@ -239,16 +254,16 @@ func (c *Client) negotiateModern(ctx context.Context, preferred string) (*mcp.Di
 		if errors.As(err, &unsupported) && len(unsupported.Supported) > 0 {
 			negotiated := mcp.NegotiateMutuallySupportedVersion(unsupported.Supported)
 			if negotiated != "" && mcp.IsModernProtocol(negotiated) && negotiated != c.protocolVersion {
-				c.protocolVersion = negotiated
+				c.applyNegotiatedVersion(negotiated)
 				continue
 			}
 		}
 
-		c.protocolVersion = previous
+		c.applyNegotiatedVersion(previous)
 		return nil, err
 	}
 
-	c.protocolVersion = previous
+	c.applyNegotiatedVersion(previous)
 	return nil, fmt.Errorf("server/discover: exhausted version negotiation attempts")
 }
 

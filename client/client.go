@@ -313,8 +313,9 @@ func (c *Client) Initialize(
 	}
 
 	// Try the stateless protocol core first, unless the caller pinned an
-	// earlier revision.
-	if !c.legacyOnly && (preferred == "" || mcp.IsModernProtocol(preferred)) {
+	// earlier revision or configured the transport in a way that rules it out.
+	if !c.legacyOnly && !c.transportRequiresLegacyProtocol() &&
+		(preferred == "" || mcp.IsModernProtocol(preferred)) {
 		discovered, err := c.negotiateModern(ctx, preferred)
 		if err == nil {
 			c.serverCapabilities = discovered.Capabilities
