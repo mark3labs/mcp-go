@@ -546,6 +546,12 @@ func (r CallToolResult) MarshalJSON() ([]byte, error) {
 		m["_meta"] = r.Meta
 	}
 
+	// resultType is required from protocol version 2026-07-28 onward, and
+	// omitted when replying to a client using an earlier version.
+	if r.ResultType != "" {
+		m["resultType"] = r.ResultType
+	}
+
 	// Marshal Content array
 	content := make([]any, len(r.Content))
 	for i, c := range r.Content {
@@ -565,6 +571,15 @@ func (r CallToolResult) MarshalJSON() ([]byte, error) {
 		m["isError"] = r.IsError
 	}
 
+	// Multi round-trip fields, present only when the server is asking the
+	// client for more input before it can complete the call (SEP-2322).
+	if len(r.InputRequests) > 0 {
+		m["inputRequests"] = r.InputRequests
+	}
+	if r.RequestState != "" {
+		m["requestState"] = r.RequestState
+	}
+
 	return json.Marshal(m)
 }
 
@@ -572,9 +587,12 @@ func (r CallToolResult) MarshalJSON() ([]byte, error) {
 func (r *CallToolResult) UnmarshalJSON(data []byte) error {
 	type result struct {
 		Meta              *Meta             `json:"_meta,omitempty"`
+		ResultType        ResultType        `json:"resultType,omitempty"`
 		Content           []json.RawMessage `json:"content"`
 		StructuredContent json.RawMessage   `json:"structuredContent,omitempty"`
 		IsError           bool              `json:"isError,omitempty"`
+		InputRequests     InputRequests     `json:"inputRequests,omitempty"`
+		RequestState      string            `json:"requestState,omitempty"`
 	}
 
 	var raw result
@@ -583,7 +601,10 @@ func (r *CallToolResult) UnmarshalJSON(data []byte) error {
 	}
 
 	r.Meta = raw.Meta
+	r.ResultType = raw.ResultType
 	r.IsError = raw.IsError
+	r.InputRequests = raw.InputRequests
+	r.RequestState = raw.RequestState
 
 	if len(raw.Content) > 0 {
 		r.Content = make([]Content, len(raw.Content))

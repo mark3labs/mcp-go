@@ -329,6 +329,10 @@ type StreamableHTTPServer struct {
 	// the server emit CORS headers and answer preflight requests. See
 	// WithStreamableHTTPCORS.
 	corsConfig *CORSConfig
+
+	// protocolVersions restricts the protocol versions advertised through
+	// server/discover. Empty means every version this SDK implements.
+	protocolVersions []string
 }
 
 // NewStreamableHTTPServer creates a new streamable-http server instance
@@ -607,34 +611,52 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 		return
 	}
 
+	// Decide which protocol era this request belongs to. Protocol version
+	// 2026-07-28 removed protocol-level sessions, so a modern request never
+	// carries, mints, or echoes a session ID (SEP-2567).
+	era := detectRequestEra(r.header(), rawData)
+	var requestID any
+	if len(jsonMessage.ID) > 0 {
+		_ = json.Unmarshal(jsonMessage.ID, &requestID)
+	}
+
 	// Prepare the session for the mcp server
 	// The session is ephemeral. Its life is the same as the request. It's only created
 	// for interaction with the mcp server.
 	var sessionID string
-	sessionIdManager := s.resolveSessionIdManager(r)
-	if isInitializeRequest {
-		// generate a new one for initialize request
-		sessionID = sessionIdManager.Generate()
+	if era.modern {
+		if !s.validateModernRequest(w, r, era, requestID) {
+			return
+		}
+		// The Mcp-Session-Id header is ignored, and no session ID is minted.
+		// Each modern request is served by its own ephemeral session.
+		isInitializeRequest = false
 	} else {
-		// Get session ID from header.
-		// Stateful servers need the client to carry the session ID.
-		sessionID = r.header().Get(HeaderKeySessionID)
-		isTerminated, err := sessionIdManager.Validate(sessionID)
-		if err != nil {
-			writeHTTPError(w, "Invalid session ID", http.StatusNotFound)
-			return
+		sessionIdManager := s.resolveSessionIdManager(r)
+		if isInitializeRequest {
+			// generate a new one for initialize request
+			sessionID = sessionIdManager.Generate()
+		} else {
+			// Get session ID from header.
+			// Stateful servers need the client to carry the session ID.
+			sessionID = r.header().Get(HeaderKeySessionID)
+			isTerminated, err := sessionIdManager.Validate(sessionID)
+			if err != nil {
+				writeHTTPError(w, "Invalid session ID", http.StatusNotFound)
+				return
+			}
+			if isTerminated {
+				writeHTTPError(w, "Session terminated", http.StatusNotFound)
+				return
+			}
 		}
-		if isTerminated {
-			writeHTTPError(w, "Session terminated", http.StatusNotFound)
-			return
-		}
-	}
 
-	s.touchSession(sessionID)
+		s.touchSession(sessionID)
+	}
 
 	// For non-initialize requests, try to reuse existing registered session
 	var session *streamableHttpSession
-	if !isInitializeRequest {
+	if !isInitializeRequest && !era.modern {
 		if sessionValue, ok := s.server.sessions.Load(sessionID); ok {
 			if existingSession, ok := sessionValue.(*streamableHttpSession); ok {
 				session = existingSession
@@ -644,7 +666,7 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 
 	// Check if a persistent session exists (for sampling support), otherwise create ephemeral session
 	// Persistent sessions are created by GET (continuous listening) connections
-	if session == nil {
+	if session == nil && !era.modern {
 		if sessionInterface, exists := s.activeSessions.Load(sessionID); exists {
 			if persistentSession, ok := sessionInterface.(*streamableHttpSession); ok {
 				session = persistentSession
@@ -659,6 +681,7 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 
 	// Set the client context before handling the message
 	ctx := s.server.WithContext(r.ctx(), session)
+	ctx = WithSupportedProtocolVersions(ctx, s.supportedProtocolVersions())
 	if s.contextFunc != nil {
 		ctx = s.contextFunc(ctx, r.asHTTPRequest())
 	}
@@ -924,7 +947,16 @@ drainLoop:
 			// send the session ID back to the client
 			w.Header().Set(HeaderKeySessionID, sessionID)
 		}
-		w.WriteHeader(http.StatusOK)
+		// Protocol version 2026-07-28 maps JSON-RPC error codes onto HTTP
+		// status codes, so that intermediaries can act on failures without
+		// parsing the body.
+		status := http.StatusOK
+		if era.modern {
+			if errResponse, ok := response.(mcp.JSONRPCError); ok {
+				status = httpStatusForJSONRPCError(errResponse.Error.Code)
+			}
+		}
+		w.WriteHeader(status)
 		err := json.NewEncoder(w).Encode(response)
 		if err != nil {
 			s.logger.Error("Failed to write response", "err", err)
@@ -948,6 +980,13 @@ drainLoop:
 }
 
 func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
+	// Protocol version 2026-07-28 removed the standalone GET stream: clients
+	// receive server-initiated messages through subscriptions/listen instead.
+	if isModernHTTPRequest(r) {
+		s.rejectModernSessionMethod(w, http.MethodGet)
+		return
+	}
+
 	// get request is for listening to notifications
 	// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
 	if s.disableStreaming {
@@ -1148,6 +1187,13 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 }
 
 func (s *StreamableHTTPServer) handleDelete(w HTTPResponseWriter, r *HTTPRequest) {
+	// Protocol version 2026-07-28 removed protocol-level sessions, so there is
+	// nothing for a DELETE to terminate.
+	if isModernHTTPRequest(r) {
+		s.rejectModernSessionMethod(w, http.MethodDelete)
+		return
+	}
+
 	// delete request terminate the session
 	sessionID := r.header().Get(HeaderKeySessionID)
 	sessionIdManager := s.resolveSessionIdManager(r)
