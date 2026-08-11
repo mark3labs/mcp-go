@@ -18,6 +18,10 @@ var (
 // The client must have declared elicitation capability during initialization.
 // The session must implement SessionWithElicitation to support this operation.
 func (s *MCPServer) RequestElicitation(ctx context.Context, request mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
+	if err := s.assertServerInitiatedRequestAllowed(ctx, mcp.MethodElicitationCreate); err != nil {
+		return nil, err
+	}
+
 	session := ClientSessionFromContext(ctx)
 	if session == nil {
 		return nil, ErrNoActiveSession
