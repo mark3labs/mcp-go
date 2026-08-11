@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,7 +35,7 @@ func TestStreamableHTTPServer_ClientErrorLabeledByMethod(t *testing.T) {
 			httpServer := NewStreamableHTTPServer(mcpServer, WithStateLess(true)) // any session ID validates
 
 			const sessionID = "test-session"
-			session := newStreamableHttpSession(sessionID, nil, nil, nil, nil)
+			session := newStreamableHttpSession(sessionID, nil, nil, nil, nil, new(atomic.Int64))
 			httpServer.activeSessions.Store(sessionID, session)
 
 			const requestID int64 = 1

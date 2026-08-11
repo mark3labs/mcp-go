@@ -2894,53 +2894,137 @@ func TestStreamableHTTPNotificationRace(t *testing.T) {
 	}
 }
 
-// TestStreamableHTTP_SessionRequestIDs_CleanedOnGetClose verifies that the
-// sessionRequestIDs entry is removed when a GET connection closes, preventing
-// unbounded growth in stateless/heartbeat scenarios.
-func TestStreamableHTTP_SessionRequestIDs_CleanedOnGetClose(t *testing.T) {
-	tests := []struct {
-		name string
-	}{
-		{name: "cleanup on GET close"},
-	}
+// TestStreamableHTTP_ServerRequestIDsDoNotCollide verifies that heartbeat
+// pings and server-to-client requests draw from the same counter, so two
+// requests on one session never share a JSON-RPC ID.
+func TestStreamableHTTP_ServerRequestIDsDoNotCollide(t *testing.T) {
+	mcpServer := NewMCPServer("test", "1.0.0")
+	httpServer := NewStreamableHTTPServer(mcpServer,
+		WithHeartbeatInterval(50*time.Millisecond),
+	)
+	ts := httptest.NewServer(httpServer)
+	defer ts.Close()
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mcpServer := NewMCPServer("test", "1.0.0")
-			httpServer := NewStreamableHTTPServer(mcpServer,
-				WithHeartbeatInterval(50*time.Millisecond),
-			)
-			ts := httptest.NewServer(httpServer)
-			defer ts.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
+	require.NoError(t, err)
+	req.Header.Set("Accept", "text/event-stream")
 
-			// Open a GET (SSE) connection with a short-lived context.
-			ctx, cancel := context.WithCancel(t.Context())
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
-			require.NoError(t, err)
-			req.Header.Set("Content-Type", "text/event-stream")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
 
-			resp, err := http.DefaultClient.Do(req)
-			require.NoError(t, err)
-
-			countEntries := func() int {
-				n := 0
-				httpServer.sessionRequestIDs.Range(func(_, _ any) bool { n++; return true })
-				return n
-			}
-
-			// Poll until the heartbeat fires and populates sessionRequestIDs.
-			require.Eventually(t, func() bool { return countEntries() > 0 },
-				time.Second, 10*time.Millisecond,
-				"sessionRequestIDs should have an entry while GET is open")
-
-			// Close the connection and poll until the deferred cleanup runs.
-			cancel()
-			resp.Body.Close()
-			assert.Eventually(t, func() bool { return countEntries() == 0 },
-				time.Second, 10*time.Millisecond,
-				"sessionRequestIDs should be empty after GET connection closes")
+	// The GET handler registers the session; grab it and issue an elicitation
+	// that will be written to the same SSE stream as the heartbeat pings.
+	var session *streamableHttpSession
+	require.Eventually(t, func() bool {
+		httpServer.activeSessions.Range(func(_, v any) bool {
+			session, _ = v.(*streamableHttpSession)
+			return false
 		})
+		return session != nil
+	}, time.Second, 10*time.Millisecond)
+
+	elicitationCtx, cancelElicitation := context.WithCancel(t.Context())
+	defer cancelElicitation()
+	go func() {
+		_, _ = session.RequestElicitation(elicitationCtx, mcp.ElicitationRequest{
+			Params: mcp.ElicitationParams{
+				Message:         "id collision probe",
+				RequestedSchema: map[string]any{"type": "object"},
+			},
+		})
+	}()
+
+	// Read SSE events until we have seen a ping and the elicitation request.
+	ids := make(map[int64][]string)
+	scanner := bufio.NewScanner(resp.Body)
+	deadline := time.After(5 * time.Second)
+	var sawPing, sawElicitation bool
+	for !sawPing || !sawElicitation {
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for ping and elicitation events")
+		default:
+		}
+		if !scanner.Scan() {
+			t.Fatalf("SSE stream ended early: %v", scanner.Err())
+		}
+		line := scanner.Text()
+		data, ok := strings.CutPrefix(line, "data: ")
+		if !ok {
+			continue
+		}
+		var event struct {
+			ID     *int64 `json:"id"`
+			Method string `json:"method"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(data), &event))
+		if event.ID == nil {
+			continue
+		}
+		switch event.Method {
+		case "ping":
+			sawPing = true
+		case string(mcp.MethodElicitationCreate):
+			sawElicitation = true
+		default:
+			continue
+		}
+		ids[*event.ID] = append(ids[*event.ID], event.Method)
 	}
+
+	for id, methods := range ids {
+		require.Len(t, methods, 1,
+			"request ID %d used by more than one request: %v", id, methods)
+	}
+}
+
+// TestStreamableHTTP_TrySendWaitsForBufferSpace verifies that transient
+// backpressure on an active POST stream makes trySend wait rather than spill
+// the request to the standalone GET stream, and that it still gives up when
+// the caller's context ends or the POST stream finishes.
+func TestStreamableHTTP_TrySendWaitsForBufferSpace(t *testing.T) {
+	requests := make(chan mcp.JSONRPCRequest, 1)
+	done := make(chan struct{})
+	scoped := &requestScopedSSE{requests: requests, done: done, register: func() {}}
+
+	// Fill the buffer so the next send hits backpressure.
+	require.True(t, scoped.trySend(t.Context(), mcp.JSONRPCRequest{}))
+
+	result := make(chan bool, 1)
+	go func() { result <- scoped.trySend(t.Context(), mcp.JSONRPCRequest{}) }()
+
+	select {
+	case r := <-result:
+		t.Fatalf("expected trySend to wait for buffer space, returned %v immediately", r)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// Draining the stream frees a slot and the waiting send completes.
+	<-requests
+	select {
+	case r := <-result:
+		require.True(t, r, "expected the waiting send to succeed after the stream drained")
+	case <-time.After(2 * time.Second):
+		t.Fatal("trySend did not complete after buffer space freed")
+	}
+
+	// The waiting send refilled the buffer; drain it so the next refill is
+	// deterministic.
+	<-requests
+
+	// With the buffer full again, an ended caller context falls back instead
+	// of waiting forever.
+	require.True(t, scoped.trySend(t.Context(), mcp.JSONRPCRequest{}))
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.False(t, scoped.trySend(cancelled, mcp.JSONRPCRequest{}))
+
+	// A finished POST stream still reports false immediately.
+	close(done)
+	require.False(t, scoped.trySend(t.Context(), mcp.JSONRPCRequest{}))
 }
 
 func TestStreamableHTTP_SamplingResponseErrors(t *testing.T) {
