@@ -97,7 +97,7 @@ func (s *MCPServer) HandleMessage(
 				Supported: SupportedProtocolVersionsFromContext(ctx),
 			})
 		}
-		if err := validateStandardHeadersForMessage(headers, protocolInfo.ProtocolVersion, baseMessage.Method, message); err != nil {
+		if err := s.validateStandardHeadersForMessage(ctx, headers, protocolInfo.ProtocolVersion, baseMessage.Method, message); err != nil {
 			return errorResponseForProtocolError(baseMessage.ID, err)
 		}
 		// Synthesize the session state the handshake used to establish, so

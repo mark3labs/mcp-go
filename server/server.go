@@ -1017,6 +1017,13 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 			panic(fmt.Sprintf("tool name '%s' already registered as task tool", name))
 		}
 		s.applyStrictInputSchemaDefault(&entry.Tool)
+		// Servers MUST reject tool definitions whose x-mcp-header annotations
+		// violate the SEP-2243 constraints, rather than emitting headers that
+		// gateways cannot route on.
+		if err := mcp.ValidateParamHeaderAnnotations(&entry.Tool); err != nil {
+			s.toolsMu.Unlock()
+			panic(fmt.Sprintf("tool %q has invalid x-mcp-header annotations: %v", name, err))
+		}
 		s.tools[name] = entry
 	}
 	s.toolsMu.Unlock()

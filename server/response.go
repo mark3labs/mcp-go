@@ -171,13 +171,14 @@ func errorResponseForProtocolError(id any, err error) mcp.JSONRPCMessage {
 	return createErrorResponse(id, mcp.INVALID_PARAMS, err.Error())
 }
 
-// validateStandardHeadersForMessage checks the Mcp-Method and Mcp-Name headers
-// against the JSON-RPC message body, as required from protocol version
-// 2026-07-28 (SEP-2243).
+// validateStandardHeadersForMessage checks the Mcp-Method, Mcp-Name, and
+// Mcp-Param-* headers against the JSON-RPC message body, as required from
+// protocol version 2026-07-28 (SEP-2243).
 //
 // Requests that did not arrive over HTTP carry no headers, so validation is
 // skipped: the header contract binds the Streamable HTTP transport only.
-func validateStandardHeadersForMessage(
+func (s *MCPServer) validateStandardHeadersForMessage(
+	ctx context.Context,
 	headers http.Header,
 	protocolVersion string,
 	method mcp.MCPMethod,
@@ -194,5 +195,51 @@ func validateStandardHeadersForMessage(
 		return nil
 	}
 
-	return mcp.ValidateStandardHeaders(headers.Get, protocolVersion, method, wrapper.Params)
+	if err := mcp.ValidateStandardHeaders(headers.Get, protocolVersion, method, wrapper.Params); err != nil {
+		return err
+	}
+
+	// Tool parameters annotated with x-mcp-header travel in headers as well as
+	// in the body, and the two must agree.
+	if method != mcp.MethodToolsCall {
+		return nil
+	}
+	tool := s.toolForHeaderValidation(ctx, wrapper.Params)
+	if tool == nil {
+		return nil
+	}
+	return mcp.ValidateParamHeaders(headers.Get, tool, wrapper.Params)
+}
+
+// toolForHeaderValidation resolves the tool named by a tools/call request, so
+// its x-mcp-header annotations can be checked against the request headers. It
+// returns nil when the tool is unknown, leaving the not-found error to the
+// handler.
+func (s *MCPServer) toolForHeaderValidation(ctx context.Context, params json.RawMessage) *mcp.Tool {
+	var call struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(params, &call); err != nil || call.Name == "" {
+		return nil
+	}
+
+	if session := ClientSessionFromContext(ctx); session != nil {
+		if withTools, ok := session.(SessionWithTools); ok {
+			if sessionTools := withTools.GetSessionTools(); sessionTools != nil {
+				if tool, ok := sessionTools[call.Name]; ok {
+					return &tool.Tool
+				}
+			}
+		}
+	}
+
+	s.toolsMu.RLock()
+	defer s.toolsMu.RUnlock()
+	if tool, ok := s.tools[call.Name]; ok {
+		return &tool.Tool
+	}
+	if taskTool, ok := s.taskTools[call.Name]; ok {
+		return &taskTool.Tool
+	}
+	return nil
 }
