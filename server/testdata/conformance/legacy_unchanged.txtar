@@ -1,0 +1,104 @@
+A client using an earlier protocol version sees exactly the responses it saw
+before: the initialize handshake still works, still negotiates a legacy
+version, and results carry neither resultType nor the caching hints introduced
+in 2026-07-28.
+
+-- client --
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2025-06-18",
+    "capabilities": {},
+    "clientInfo": { "name": "ExampleClient", "version": "1.0.0" }
+  }
+}
+{ "jsonrpc": "2.0", "method": "notifications/initialized" }
+{ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }
+{ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "greet", "arguments": { "name": "world" } } }
+-- server --
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"capabilities": {
+			"elicitation": {},
+			"prompts": {
+				"listChanged": true
+			},
+			"resources": {
+				"listChanged": true,
+				"subscribe": true
+			},
+			"tools": {
+				"listChanged": true
+			}
+		},
+		"instructions": "a server for conformance testing",
+		"protocolVersion": "2025-06-18",
+		"serverInfo": {
+			"name": "testServer",
+			"version": "v1.0.0"
+		}
+	}
+}
+
+{
+	"id": 2,
+	"jsonrpc": "2.0",
+	"result": {
+		"tools": [
+			{
+				"annotations": {
+					"destructiveHint": true,
+					"idempotentHint": false,
+					"openWorldHint": true,
+					"readOnlyHint": false
+				},
+				"description": "greets after confirming a name",
+				"inputSchema": {
+					"properties": {},
+					"required": [],
+					"type": "object"
+				},
+				"name": "confirmThenGreet"
+			},
+			{
+				"annotations": {
+					"destructiveHint": true,
+					"idempotentHint": false,
+					"openWorldHint": true,
+					"readOnlyHint": false
+				},
+				"description": "greets the caller",
+				"inputSchema": {
+					"properties": {
+						"name": {
+							"description": "who to greet",
+							"type": "string"
+						}
+					},
+					"required": [
+						"name"
+					],
+					"type": "object"
+				},
+				"name": "greet"
+			}
+		]
+	}
+}
+
+{
+	"id": 3,
+	"jsonrpc": "2.0",
+	"result": {
+		"content": [
+			{
+				"text": "hello world",
+				"type": "text"
+			}
+		]
+	}
+}

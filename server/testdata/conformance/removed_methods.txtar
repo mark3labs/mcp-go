@@ -1,0 +1,85 @@
+Methods removed in protocol version 2026-07-28 (SEP-2575) are rejected with
+MethodNotFound when the request declares that version, while remaining
+available to clients using an earlier one. Methods introduced by that revision
+are conversely unavailable to legacy requests.
+
+-- client --
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "ping",
+  "params": {
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {}
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "logging/setLevel",
+  "params": {
+    "level": "info",
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {}
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "resources/subscribe",
+  "params": {
+    "uri": "file:///example",
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {}
+    }
+  }
+}
+{ "jsonrpc": "2.0", "id": 4, "method": "server/discover", "params": {} }
+{ "jsonrpc": "2.0", "id": 5, "method": "ping" }
+-- server --
+{
+	"error": {
+		"code": -32601,
+		"message": "\"ping\" was removed in protocol version 2026-07-28"
+	},
+	"id": 1,
+	"jsonrpc": "2.0"
+}
+
+{
+	"error": {
+		"code": -32601,
+		"message": "\"logging/setLevel\" was removed in protocol version 2026-07-28"
+	},
+	"id": 2,
+	"jsonrpc": "2.0"
+}
+
+{
+	"error": {
+		"code": -32601,
+		"message": "\"resources/subscribe\" was removed in protocol version 2026-07-28"
+	},
+	"id": 3,
+	"jsonrpc": "2.0"
+}
+
+{
+	"error": {
+		"code": -32601,
+		"message": "\"server/discover\" requires protocol version 2026-07-28 or later"
+	},
+	"id": 4,
+	"jsonrpc": "2.0"
+}
+
+{
+	"id": 5,
+	"jsonrpc": "2.0",
+	"result": {}
+}
