@@ -137,6 +137,14 @@ func TestWithElicitationHandler(t *testing.T) {
 func TestClient_Initialize_WithElicitationHandler(t *testing.T) {
 	mockTransport := &mockElicitationTransport{
 		sendRequestFunc: func(ctx context.Context, request transport.JSONRPCRequest) (*transport.JSONRPCResponse, error) {
+			// A server predating protocol version 2026-07-28 rejects the
+			// server/discover probe, and the client falls back to the
+			// initialize handshake.
+			if request.Method == string(mcp.MethodServerDiscover) {
+				return transport.NewJSONRPCErrorResponse(
+					request.ID, mcp.METHOD_NOT_FOUND, "method not found", nil), nil
+			}
+
 			// Verify that elicitation capability is included
 			// The client internally converts the typed params to a map for transport
 			// So we check if we're getting the initialize request
@@ -146,7 +154,7 @@ func TestClient_Initialize_WithElicitationHandler(t *testing.T) {
 
 			// Return successful initialization response
 			result := mcp.InitializeResult{
-				ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+				ProtocolVersion: mcp.LATEST_LEGACY_PROTOCOL_VERSION,
 				ServerInfo: mcp.Implementation{
 					Name:    "test-server",
 					Version: "1.0.0",

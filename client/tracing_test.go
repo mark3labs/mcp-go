@@ -86,7 +86,9 @@ func TestWithTracer_EmitsClientSpan(t *testing.T) {
 	_, err = c.CallTool(t.Context(), callReq)
 	require.NoError(t, err)
 
-	assert.Contains(t, tr.spans, "mcp.initialize")
+	// The server speaks protocol version 2026-07-28, so the connection is
+	// established with server/discover rather than the initialize handshake.
+	assert.Contains(t, tr.spans, "mcp."+string(mcp.MethodServerDiscover))
 	assert.Contains(t, tr.spans, "mcp.tools/call")
 }
 

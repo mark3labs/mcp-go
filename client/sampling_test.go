@@ -165,6 +165,8 @@ func TestClient_Initialize_WithSampling(t *testing.T) {
 	client := &Client{
 		transport:       mockTransport,
 		samplingHandler: handler,
+		// This test exercises the legacy initialize handshake directly.
+		legacyOnly: true,
 	}
 
 	// Start the client
@@ -249,8 +251,10 @@ func TestClient_Initialize_WithSampling(t *testing.T) {
 		}
 
 		// Verify other expected fields
-		if params.ProtocolVersion != mcp.LATEST_PROTOCOL_VERSION {
-			t.Errorf("Expected protocol version '%s', got '%s'", mcp.LATEST_PROTOCOL_VERSION, params.ProtocolVersion)
+		// The handshake cannot negotiate 2026-07-28 or later, so the client
+		// asks for the newest revision that still uses it.
+		if params.ProtocolVersion != mcp.LATEST_LEGACY_PROTOCOL_VERSION {
+			t.Errorf("Expected protocol version '%s', got '%s'", mcp.LATEST_LEGACY_PROTOCOL_VERSION, params.ProtocolVersion)
 		}
 
 		if params.ClientInfo.Name != "test-client" {

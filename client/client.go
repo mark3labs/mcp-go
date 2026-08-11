@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"slices"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -31,6 +31,36 @@ type Client struct {
 	tracer             tracing.Tracer
 	propagator         tracing.Propagator
 	metaPropagator     tracing.MetaPropagator
+
+	// clientInfo identifies this client. Protocol version 2026-07-28 asks
+	// clients to repeat it in the _meta of every request.
+	clientInfo mcp.Implementation
+
+	// preferredVersion pins the protocol version to negotiate. Empty means
+	// "prefer the newest this SDK implements".
+	preferredVersion string
+
+	// legacyOnly disables the server/discover probe, keeping the client on the
+	// initialize handshake.
+	legacyOnly bool
+
+	// logLevel is the per-request log level sent in _meta, replacing the
+	// logging/setLevel RPC removed in 2026-07-28.
+	logLevel mcp.LoggingLevel
+
+	// knownTools caches tool definitions so that tools/call requests can
+	// mirror x-mcp-header annotated parameters into HTTP headers (SEP-2243).
+	knownTools map[string]mcp.Tool
+	toolsMu    sync.RWMutex
+
+	// maxInputRoundTrips bounds the multi round-trip retry loop.
+	maxInputRoundTrips int
+
+	// discoverTimeout bounds the server/discover probe sent during Initialize.
+	discoverTimeout time.Duration
+
+	// subscriptions tracks the subscriptions/listen filter and stream.
+	subscriptions subscriptionState
 }
 
 // ClientOption configures a Client during construction.
@@ -72,6 +102,53 @@ func WithElicitationHandler(handler ElicitationHandler) ClientOption {
 func WithSession() ClientOption {
 	return func(c *Client) {
 		c.initialized.Store(true)
+	}
+}
+
+// WithProtocolVersion pins the protocol version the client negotiates.
+//
+// By default the client prefers the newest version this SDK implements and
+// negotiates down when the server asks it to. Pinning a version earlier than
+// 2026-07-28 keeps the client on the initialize handshake.
+func WithProtocolVersion(version string) ClientOption {
+	return func(c *Client) {
+		c.preferredVersion = version
+		if version != "" && !mcp.IsModernProtocol(version) {
+			c.legacyOnly = true
+		}
+	}
+}
+
+// WithLegacyProtocolOnly keeps the client on the initialize handshake,
+// skipping the server/discover probe.
+//
+// Deprecated: the initialize handshake was removed in protocol version
+// 2026-07-28. This option exists for deployments that depend on protocol-level
+// session state and will be removed once the deprecation window closes.
+func WithLegacyProtocolOnly() ClientOption {
+	return func(c *Client) {
+		c.legacyOnly = true
+	}
+}
+
+// WithMaxInputRoundTrips bounds how many times the client will fulfil a
+// server's input requests and retry the original call before giving up.
+//
+// The default is 10. See the multi round-trip request pattern (SEP-2322).
+func WithMaxInputRoundTrips(limit int) ClientOption {
+	return func(c *Client) {
+		c.maxInputRoundTrips = limit
+	}
+}
+
+// WithDiscoverTimeout bounds how long Initialize waits for a server/discover
+// reply before concluding that the server predates protocol version 2026-07-28
+// and falling back to the initialize handshake.
+//
+// The default is five seconds. A negative value disables the bound.
+func WithDiscoverTimeout(timeout time.Duration) ClientOption {
+	return func(c *Client) {
+		c.discoverTimeout = timeout
 	}
 }
 
@@ -160,9 +237,16 @@ func (c *Client) sendRequest(
 	params any,
 	header http.Header,
 ) (*json.RawMessage, error) {
-	if !c.initialized.Load() && method != "initialize" {
+	if !c.initialized.Load() && method != "initialize" && method != string(mcp.MethodServerDiscover) {
 		return nil, fmt.Errorf("client not initialized")
 	}
+
+	// Protocol version 2026-07-28 carries the protocol version, client
+	// identity, and client capabilities in the _meta of every request, and
+	// mirrors the method and name into HTTP headers (SEP-2575, SEP-2243).
+	// Both are no-ops on legacy connections.
+	params = c.applyRequestMeta(params)
+	header = c.applyStandardHeaders(header, method, params)
 
 	id := c.requestID.Add(1)
 
@@ -203,28 +287,55 @@ func outboundHeader(header http.Header, requestMethod string) http.Header {
 	return header
 }
 
-// Initialize negotiates with the server.
-// Must be called after Start, and before any request methods.
+// Initialize establishes the connection with the server.
+//
+// It must be called after Start, and before any request methods.
+//
+// Protocol version 2026-07-28 removed the initialize handshake (SEP-2575), so
+// this method first probes the server with server/discover. When the probe
+// succeeds the connection is stateless and every subsequent request carries
+// its own protocol metadata; the returned InitializeResult is rendered from
+// the discovery response so that callers observe the same value in both eras.
+//
+// When the probe fails with anything other than a recognized modern error the
+// server is taken to be legacy, and the classic initialize handshake is
+// performed instead.
 func (c *Client) Initialize(
 	ctx context.Context,
 	request mcp.InitializeRequest,
 ) (*mcp.InitializeResult, error) {
-	// Merge client capabilities with sampling capability if handler is configured
-	capabilities := request.Params.Capabilities
-	if c.samplingHandler != nil {
-		capabilities.Sampling = &mcp.SamplingCapability{}
+	c.clientInfo = request.Params.ClientInfo
+	c.clientCapabilities = mergeClientCapabilities(c.clientCapabilities, request.Params.Capabilities)
+
+	preferred := request.Params.ProtocolVersion
+	if preferred == "" {
+		preferred = c.preferredVersion
 	}
-	if c.rootsHandler != nil {
-		capabilities.Roots = &struct {
-			ListChanged bool `json:"listChanged,omitempty"`
-		}{
-			ListChanged: true,
+
+	// Try the stateless protocol core first, unless the caller pinned an
+	// earlier revision.
+	if !c.legacyOnly && (preferred == "" || mcp.IsModernProtocol(preferred)) {
+		discovered, err := c.negotiateModern(ctx, preferred)
+		if err == nil {
+			c.serverCapabilities = discovered.Capabilities
+			c.applyNegotiatedVersion(c.protocolVersion)
+			c.initialized.Store(true)
+			return initializeResultFromDiscover(c.protocolVersion, discovered), nil
 		}
+		// Fall through to the handshake: the server is not modern.
 	}
-	// Add elicitation capability if handler is configured
-	if c.elicitationHandler != nil {
-		capabilities.Elicitation = &mcp.ElicitationCapability{}
-	}
+
+	return c.initializeLegacy(ctx, request, preferred)
+}
+
+// initializeLegacy performs the initialize/initialized handshake used by
+// protocol versions up to and including 2025-11-25.
+func (c *Client) initializeLegacy(
+	ctx context.Context,
+	request mcp.InitializeRequest,
+	preferred string,
+) (*mcp.InitializeResult, error) {
+	capabilities := c.effectiveCapabilities()
 
 	// Ensure we send a params object with all required fields
 	params := struct {
@@ -232,14 +343,15 @@ func (c *Client) Initialize(
 		ClientInfo      mcp.Implementation     `json:"clientInfo"`
 		Capabilities    mcp.ClientCapabilities `json:"capabilities"`
 	}{
-		ProtocolVersion: request.Params.ProtocolVersion,
+		ProtocolVersion: preferred,
 		ClientInfo:      request.Params.ClientInfo,
 		Capabilities:    capabilities,
 	}
 
-	// By default, use client supported latest protocol version if version not specified
-	if params.ProtocolVersion == "" {
-		params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	// The handshake cannot negotiate 2026-07-28 or later, so ask for the
+	// newest revision that still uses it.
+	if params.ProtocolVersion == "" || mcp.IsModernProtocol(params.ProtocolVersion) {
+		params.ProtocolVersion = mcp.LATEST_LEGACY_PROTOCOL_VERSION
 	}
 
 	response, err := c.sendRequest(ctx, "initialize", params, outboundHeader(request.Header, request.Method))
@@ -253,18 +365,13 @@ func (c *Client) Initialize(
 	}
 
 	// Validate protocol version
-	if !slices.Contains(mcp.ValidProtocolVersions, result.ProtocolVersion) {
+	if !mcp.IsValidProtocolVersion(result.ProtocolVersion) {
 		return nil, mcp.UnsupportedProtocolVersionError{Version: result.ProtocolVersion}
 	}
 
 	// Store serverCapabilities and protocol version
 	c.serverCapabilities = result.Capabilities
-	c.protocolVersion = result.ProtocolVersion
-
-	// Set protocol version on HTTP transports
-	if httpConn, ok := c.transport.(transport.HTTPConnection); ok {
-		httpConn.SetProtocolVersion(result.ProtocolVersion)
-	}
+	c.applyNegotiatedVersion(result.ProtocolVersion)
 
 	// Send initialized notification
 	notification := mcp.JSONRPCNotification{
@@ -286,8 +393,48 @@ func (c *Client) Initialize(
 	return &result, nil
 }
 
+// applyNegotiatedVersion records the protocol version in effect and propagates
+// it to HTTP transports, which mirror it in the Mcp-Protocol-Version header.
+func (c *Client) applyNegotiatedVersion(version string) {
+	c.protocolVersion = version
+	if httpConn, ok := c.transport.(transport.HTTPConnection); ok {
+		httpConn.SetProtocolVersion(version)
+	}
+}
+
+// mergeClientCapabilities overlays the capabilities declared on a request onto
+// those configured at construction.
+func mergeClientCapabilities(base, overlay mcp.ClientCapabilities) mcp.ClientCapabilities {
+	if overlay.Extensions != nil {
+		base.Extensions = overlay.Extensions
+	}
+	if overlay.Experimental != nil {
+		base.Experimental = overlay.Experimental
+	}
+	if overlay.Roots != nil {
+		base.Roots = overlay.Roots
+	}
+	if overlay.Sampling != nil {
+		base.Sampling = overlay.Sampling
+	}
+	if overlay.Elicitation != nil {
+		base.Elicitation = overlay.Elicitation
+	}
+	if overlay.Tasks != nil {
+		base.Tasks = overlay.Tasks
+	}
+	return base
+}
+
 // Ping sends a ping request to verify the server is responsive.
+//
+// Deprecated: the ping RPC was removed in protocol version 2026-07-28
+// (SEP-2575); liveness is a transport concern there. On a modern connection
+// this method succeeds without sending anything.
 func (c *Client) Ping(ctx context.Context) error {
+	if c.isModern() {
+		return nil
+	}
 	_, err := c.sendRequest(ctx, string(mcp.MethodPing), nil, nil)
 	return err
 }
@@ -374,30 +521,13 @@ func (c *Client) ReadResource(
 	request mcp.ReadResourceRequest,
 ) (*mcp.ReadResourceResult, error) {
 	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
-	response, err := c.sendRequest(ctx, string(mcp.MethodResourcesRead), request.Params, outboundHeader(request.Header, request.Method))
-	if err != nil {
-		return nil, err
-	}
-
-	return mcp.ParseReadResourceResult(response)
-}
-
-// Subscribe subscribes to updates for a resource.
-func (c *Client) Subscribe(
-	ctx context.Context,
-	request mcp.SubscribeRequest,
-) error {
-	_, err := c.sendRequest(ctx, string(mcp.MethodResourcesSubscribe), request.Params, outboundHeader(request.Header, request.Method))
-	return err
-}
-
-// Unsubscribe removes a resource update subscription.
-func (c *Client) Unsubscribe(
-	ctx context.Context,
-	request mcp.UnsubscribeRequest,
-) error {
-	_, err := c.sendRequest(ctx, string(mcp.MethodResourcesUnsubscribe), request.Params, outboundHeader(request.Header, request.Method))
-	return err
+	header := outboundHeader(request.Header, request.Method)
+	return multiRoundTrip(ctx, c,
+		func(ctx context.Context, roundTrip mcp.MultiRoundTripParams) (*mcp.ReadResourceResult, error) {
+			return c.readResourceOnce(ctx, request, roundTrip, header)
+		},
+		readResourceNeedsInput,
+	)
 }
 
 // ListPromptsByPage manually lists prompts by page.
@@ -444,12 +574,13 @@ func (c *Client) GetPrompt(
 	request mcp.GetPromptRequest,
 ) (*mcp.GetPromptResult, error) {
 	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
-	response, err := c.sendRequest(ctx, string(mcp.MethodPromptsGet), request.Params, outboundHeader(request.Header, request.Method))
-	if err != nil {
-		return nil, err
-	}
-
-	return mcp.ParseGetPromptResult(response)
+	header := outboundHeader(request.Header, request.Method)
+	return multiRoundTrip(ctx, c,
+		func(ctx context.Context, roundTrip mcp.MultiRoundTripParams) (*mcp.GetPromptResult, error) {
+			return c.getPromptOnce(ctx, request, roundTrip, header)
+		},
+		getPromptNeedsInput,
+	)
 }
 
 // ListToolsByPage manually lists tools by page.
@@ -461,6 +592,9 @@ func (c *Client) ListToolsByPage(
 	if err != nil {
 		return nil, err
 	}
+	// Cache the definitions so that tools/call requests can mirror
+	// x-mcp-header annotated parameters into HTTP headers (SEP-2243).
+	c.rememberTools(result.Tools)
 	return result, nil
 }
 
@@ -496,19 +630,31 @@ func (c *Client) CallTool(
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
 	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
-	response, err := c.sendRequest(ctx, string(mcp.MethodToolsCall), request.Params, outboundHeader(request.Header, request.Method))
-	if err != nil {
-		return nil, err
-	}
-
-	return mcp.ParseCallToolResult(response)
+	header := outboundHeader(request.Header, request.Method)
+	return multiRoundTrip(ctx, c,
+		func(ctx context.Context, roundTrip mcp.MultiRoundTripParams) (*mcp.CallToolResult, error) {
+			return c.callToolOnce(ctx, request, roundTrip, header)
+		},
+		callToolNeedsInput,
+	)
 }
 
-// SetLevel sets the server logging level.
+// SetLevel sets the minimum severity of log messages the server should send.
+//
+// Protocol version 2026-07-28 removed the logging/setLevel RPC: the level is
+// declared per request, in _meta (SEP-2575). On a modern connection this
+// method records the level locally, and every subsequent request carries it.
+//
+// Deprecated: the Logging feature is deprecated as of protocol version
+// 2026-07-28 (SEP-2577). Log to stderr or use OpenTelemetry instead.
 func (c *Client) SetLevel(
 	ctx context.Context,
 	request mcp.SetLevelRequest,
 ) error {
+	if c.isModern() {
+		c.logLevel = request.Params.Level
+		return nil
+	}
 	_, err := c.sendRequest(ctx, "logging/setLevel", request.Params, outboundHeader(request.Header, request.Method))
 	return err
 }

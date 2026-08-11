@@ -201,6 +201,12 @@ func (c *StreamableHTTP) Start(ctx context.Context) error {
 			}()
 			select {
 			case <-c.initialized:
+				// Protocol version 2026-07-28 removed the standalone GET
+				// stream; server-to-client notifications arrive on a
+				// subscriptions/listen response stream instead.
+				if c.isModern() {
+					return
+				}
 				ctx, cancel := c.contextAwareOfClientClose(ctx)
 				defer cancel()
 				c.listenForever(ctx)
@@ -221,8 +227,11 @@ func (c *StreamableHTTP) Close() error {
 		// Cancel all in-flight requests
 		close(c.closed)
 
+		// Protocol version 2026-07-28 removed protocol-level sessions, so
+		// there is nothing to terminate and DELETE is not part of the
+		// transport any more.
 		sessionId := c.sessionID.Load().(string)
-		if sessionId != "" {
+		if sessionId != "" && !c.isModern() {
 			c.sessionID.Store("")
 			// notify server session closed
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -258,6 +267,23 @@ func (c *StreamableHTTP) Close() error {
 // SetProtocolVersion sets the negotiated protocol version for this connection.
 func (c *StreamableHTTP) SetProtocolVersion(version string) {
 	c.protocolVersion.Store(version)
+}
+
+// negotiatedProtocolVersion returns the protocol version in effect, or "" when
+// none has been negotiated yet.
+func (c *StreamableHTTP) negotiatedProtocolVersion() string {
+	if v := c.protocolVersion.Load(); v != nil {
+		if version, ok := v.(string); ok {
+			return version
+		}
+	}
+	return ""
+}
+
+// isModern reports whether this connection uses the stateless protocol core
+// introduced in 2026-07-28, where the transport carries no session state.
+func (c *StreamableHTTP) isModern() bool {
+	return mcp.IsModernProtocol(c.negotiatedProtocolVersion())
 }
 
 // ErrOAuthAuthorizationRequired is a sentinel error for OAuth authorization required
@@ -595,6 +621,15 @@ func (c *StreamableHTTP) SendRequest(
 		})
 	}
 
+	// A successful server/discover marks the connection ready in the same way
+	// initialize does for legacy servers: it is the first request of a modern
+	// connection (SEP-2575).
+	if request.Method == string(mcp.MethodServerDiscover) {
+		c.initializedOnce.Do(func() {
+			close(c.initialized)
+		})
+	}
+
 	// Handle different response types
 	mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	switch mediaType {
@@ -642,8 +677,10 @@ func (c *StreamableHTTP) sendHTTP(
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", acceptType)
+	// Protocol version 2026-07-28 retired the session header: a modern client
+	// neither sends nor stores one (SEP-2567).
 	sessionID := c.sessionID.Load().(string)
-	if sessionID != "" {
+	if sessionID != "" && !c.isModern() {
 		req.Header.Set(HeaderKeySessionID, sessionID)
 	}
 	// Set protocol version header if negotiated
