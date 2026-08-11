@@ -8,6 +8,7 @@ import (
 	"os"
 	"reflect"
 	"strconv"
+	"strings"
 )
 
 var errToolSchemaConflict = errors.New("provide either InputSchema or RawInputSchema, not both")
@@ -807,12 +808,38 @@ func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) err
 		return err
 	}
 
-	// If $defs wasn't provided but definitions was, use definitions
+	// If $defs wasn't provided but definitions was, use definitions.
+	// Marshaling re-emits Defs as "$defs", so local "#/definitions/..." $ref
+	// pointers must be rewritten to "#/$defs/..." or the round-tripped schema
+	// carries dangling references that strict validators reject.
 	if tis.Defs == nil && aux.Definitions != nil {
 		tis.Defs = aux.Definitions
+		rewriteDraft07LocalRefs(tis.Defs)
+		rewriteDraft07LocalRefs(tis.Properties)
+		rewriteDraft07LocalRefs(tis.AdditionalProperties)
 	}
 
 	return nil
+}
+
+// rewriteDraft07LocalRefs rewrites local draft-07 "#/definitions/..." $ref
+// pointers to their 2019-09+ "#/$defs/..." equivalent in place. It walks
+// nested maps and slices; non-local refs are left untouched.
+func rewriteDraft07LocalRefs(node any) {
+	const draft07Prefix = "#/definitions/"
+	switch v := node.(type) {
+	case map[string]any:
+		if ref, ok := v["$ref"].(string); ok && strings.HasPrefix(ref, draft07Prefix) {
+			v["$ref"] = "#/$defs/" + ref[len(draft07Prefix):]
+		}
+		for _, child := range v {
+			rewriteDraft07LocalRefs(child)
+		}
+	case []any:
+		for _, child := range v {
+			rewriteDraft07LocalRefs(child)
+		}
+	}
 }
 
 type ToolAnnotation struct {
