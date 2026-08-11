@@ -18,17 +18,18 @@ const (
 	// MethodInitialize initiates connection and negotiates protocol capabilities.
 	// https://modelcontextprotocol.io/specification/2024-11-05/basic/lifecycle/#initialization
 	//
-	// Deprecated: removed in protocol version 2026-07-28 (SEP-2575), which
-	// carries the protocol version, client identity, and client capabilities in
-	// each request's _meta instead. Use [MethodServerDiscover] to learn a
-	// server's capabilities up front.
+	// Removed in protocol version 2026-07-28 (SEP-2575), which carries the
+	// protocol version, client identity, and client capabilities in each
+	// request's _meta instead. Servers reject it on requests declaring that
+	// version or later; use [MethodServerDiscover] there.
 	MethodInitialize MCPMethod = "initialize"
 
 	// MethodPing verifies connection liveness between client and server.
 	// https://modelcontextprotocol.io/specification/2024-11-05/basic/utilities/ping/
 	//
-	// Deprecated: removed in protocol version 2026-07-28 (SEP-2575). Servers
-	// reject it on requests using that version or later.
+	// Removed in protocol version 2026-07-28 (SEP-2575), where liveness is a
+	// transport concern. Servers reject it on requests declaring that version
+	// or later.
 	MethodPing MCPMethod = "ping"
 
 	// MethodResourcesList lists all available server resources.
@@ -46,14 +47,15 @@ const (
 	// MethodResourcesSubscribe subscribes the client to updates for a resource.
 	// https://modelcontextprotocol.io/specification/2025-11-25/server/resources
 	//
-	// Deprecated: removed in protocol version 2026-07-28 (SEP-2575). Use the
-	// ResourceSubscriptions field of a [MethodSubscriptionsListen] request.
+	// Removed in protocol version 2026-07-28 (SEP-2575). Use the
+	// ResourceSubscriptions field of a [MethodSubscriptionsListen] request
+	// there.
 	MethodResourcesSubscribe MCPMethod = "resources/subscribe"
 
 	// MethodResourcesUnsubscribe cancels a previous resources/subscribe request.
 	// https://modelcontextprotocol.io/specification/2025-11-25/server/resources
 	//
-	// Deprecated: removed in protocol version 2026-07-28 (SEP-2575). Close the
+	// Removed in protocol version 2026-07-28 (SEP-2575). Close the
 	// [MethodSubscriptionsListen] stream instead.
 	MethodResourcesUnsubscribe MCPMethod = "resources/unsubscribe"
 
@@ -76,8 +78,8 @@ const (
 	// MethodSetLogLevel configures the minimum log level for client
 	// https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging
 	//
-	// Deprecated: removed in protocol version 2026-07-28 (SEP-2575). Set
-	// [MetaKeyLogLevel] in each request's _meta instead.
+	// Removed in protocol version 2026-07-28 (SEP-2575). Set [MetaKeyLogLevel]
+	// in each request's _meta instead.
 	MethodSetLogLevel MCPMethod = "logging/setLevel"
 
 	// MethodElicitationCreate requests additional information from the user during interactions.
@@ -502,9 +504,9 @@ const (
 const (
 	// RESOURCE_NOT_FOUND indicates that the requested resource was not found.
 	//
-	// Deprecated: protocol version 2026-07-28 aligns this condition with
-	// JSON-RPC by using [INVALID_PARAMS] instead. This code is still accepted
-	// from older servers.
+	// Protocol version 2026-07-28 aligns this condition with JSON-RPC by using
+	// [INVALID_PARAMS] instead. This code is still emitted to, and accepted
+	// from, peers using an earlier version.
 	RESOURCE_NOT_FOUND = -32002
 
 	// URL_ELICITATION_REQUIRED is the error code for when URL elicitation is required.

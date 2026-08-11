@@ -20,15 +20,15 @@ const (
 
 	// HeaderSessionID carries a protocol-level session identifier.
 	//
-	// Deprecated: removed in protocol version 2026-07-28 (SEP-2567). Servers
-	// serving that version ignore it and never mint or echo session IDs.
+	// Removed in protocol version 2026-07-28 (SEP-2567): servers serving that
+	// version ignore it and never mint or echo session IDs.
 	HeaderSessionID = "Mcp-Session-Id"
 
 	// HeaderLastEventID requests replay of a broken SSE stream.
 	//
-	// Deprecated: stream resumability was removed in protocol version
-	// 2026-07-28 (SEP-2575). A broken stream loses the in-flight request and
-	// the client must re-issue it with a new request ID.
+	// Stream resumability was removed in protocol version 2026-07-28
+	// (SEP-2575): a broken stream loses the in-flight request, and the client
+	// must re-issue it with a new request ID.
 	HeaderLastEventID = "Last-Event-ID"
 
 	// HeaderMethod mirrors the JSON-RPC method of the request body.

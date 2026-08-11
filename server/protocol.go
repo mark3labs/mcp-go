@@ -137,31 +137,3 @@ func extractRequestProtocolInfo(message json.RawMessage) (*RequestProtocolInfo, 
 
 	return info, nil
 }
-
-// methodRemovedInModernProtocol reports whether method was removed by protocol
-// version 2026-07-28 and must therefore be rejected on modern requests.
-func methodRemovedInModernProtocol(method mcp.MCPMethod) bool {
-	switch method {
-	case mcp.MethodInitialize,
-		mcp.MethodPing,
-		mcp.MethodSetLogLevel,
-		mcp.MethodResourcesSubscribe,
-		mcp.MethodResourcesUnsubscribe,
-		mcp.MethodTasksList,
-		mcp.MethodTasksResult:
-		return true
-	default:
-		return false
-	}
-}
-
-// methodRequiresModernProtocol reports whether method was introduced by
-// protocol version 2026-07-28 and is therefore unavailable to legacy requests.
-func methodRequiresModernProtocol(method mcp.MCPMethod) bool {
-	switch method {
-	case mcp.MethodServerDiscover, mcp.MethodSubscriptionsListen:
-		return true
-	default:
-		return false
-	}
-}

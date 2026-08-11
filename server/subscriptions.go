@@ -105,19 +105,20 @@ func (s *MCPServer) handleSubscriptionsListen(
 	}
 
 	// Acknowledge the subscription so the client learns which of its requested
-	// notification types were actually established.
-	ack := mcp.SubscriptionsAcknowledgedParams{
-		Notifications: allowed,
-		Meta:          map[string]any{mcp.MetaKeySubscriptionID: id},
-	}
-	if err := s.SendNotificationToSpecificClient(
-		session.SessionID(),
-		mcp.MethodNotificationSubscriptionsAcknowledged,
-		map[string]any{
-			"notifications": ack.Notifications,
-			"_meta":         ack.Meta,
+	// notification types were actually established. Every message on the
+	// stream, including this one, is tagged with the subscription ID so the
+	// client can correlate it.
+	ack := mcp.JSONRPCNotification{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		Notification: mcp.Notification{
+			Method: mcp.MethodNotificationSubscriptionsAcknowledged,
+			Params: mcp.NotificationParams{
+				Meta:             map[string]any{mcp.MetaKeySubscriptionID: id},
+				AdditionalFields: map[string]any{"notifications": allowed},
+			},
 		},
-	); err != nil {
+	}
+	if err := s.sendNotificationToSpecificClient(session, ack); err != nil {
 		return nil, &requestError{
 			id:   id,
 			code: mcp.INTERNAL_ERROR,

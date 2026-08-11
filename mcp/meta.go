@@ -34,8 +34,9 @@ const (
 	// level for a single request. When absent, servers MUST NOT emit log
 	// notifications for that request. Replaces the logging/setLevel RPC.
 	//
-	// Deprecated: the Logging feature is deprecated as of protocol version
-	// 2026-07-28 (SEP-2577). It remains functional for at least twelve months.
+	// The Logging feature it belongs to is deprecated as of protocol version
+	// 2026-07-28 (SEP-2577), and remains functional for at least twelve
+	// months. Log to stderr or use OpenTelemetry instead.
 	MetaKeyLogLevel = "io.modelcontextprotocol/logLevel"
 
 	// MetaKeySubscriptionID identifies the subscriptions/listen stream a

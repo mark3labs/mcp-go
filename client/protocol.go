@@ -242,7 +242,7 @@ func (c *Client) negotiateModern(ctx context.Context, preferred string) (*mcp.Di
 	previous := c.protocolVersion
 	c.applyNegotiatedVersion(preferred)
 
-	for attempt := 0; attempt < 2; attempt++ {
+	for range 2 {
 		result, err := c.Discover(probeCtx, mcp.DiscoverRequest{})
 		if err == nil {
 			return result, nil

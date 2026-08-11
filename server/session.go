@@ -216,6 +216,13 @@ func (s *MCPServer) SendLogMessageToClient(ctx context.Context, notification mcp
 func (s *MCPServer) sendNotificationToAllClients(notification mcp.JSONRPCNotification) {
 	s.sessions.Range(func(k, v any) bool {
 		if session, ok := v.(ClientSession); ok && session.Initialized() {
+			// From protocol version 2026-07-28 every server-to-client
+			// notification is opt-in: a session that opened a
+			// subscriptions/listen stream receives only the types it asked
+			// for (SEP-2575). Sessions that never opened one are unaffected.
+			if !subscriptionAllowsNotification(session, notification.Method) {
+				return true
+			}
 			if sessionWithStreamableHTTPConfig, ok := session.(SessionWithStreamableHTTPConfig); ok {
 				sessionWithStreamableHTTPConfig.UpgradeToSSEWhenReceiveNotification()
 			}

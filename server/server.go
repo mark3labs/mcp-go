@@ -286,9 +286,10 @@ func WithMethodCacheHints(method mcp.MCPMethod, ttlMs int64, scope mcp.CacheScop
 // behaviour, which still works over genuinely bidirectional transports such as
 // stdio and in-process, but not over stateless Streamable HTTP.
 //
-// Deprecated: prefer [InputRequestBuilder], which produces handlers that work
-// against clients of either protocol era. This option exists to ease migration
-// and will be removed once the deprecation window closes.
+// Deprecated: server-initiated requests were removed in protocol version
+// 2026-07-28 (SEP-2322). Prefer [InputRequestBuilder], which produces handlers
+// that work against clients of either protocol era. This option exists to ease
+// migration and will be removed once the deprecation window closes.
 func WithLegacyServerInitiatedRequests() ServerOption {
 	return func(s *MCPServer) {
 		s.allowServerInitiatedRequests = true
