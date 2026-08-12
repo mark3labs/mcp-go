@@ -259,19 +259,39 @@ func (s *nilResultSession) RequestElicitation(
 	return nil, nil
 }
 
+func (s *nilResultSession) RequestSampling(
+	_ context.Context,
+	_ mcp.CreateMessageRequest,
+) (*mcp.CreateMessageResult, error) {
+	s.calls++
+	return nil, nil
+}
+
+func (s *nilResultSession) ListRoots(
+	_ context.Context,
+	_ mcp.ListRootsRequest,
+) (*mcp.ListRootsResult, error) {
+	s.calls++
+	return nil, nil
+}
+
+var (
+	_ SessionWithSampling = (*nilResultSession)(nil)
+	_ SessionWithRoots    = (*nilResultSession)(nil)
+)
+
 func TestMultiRoundTrip_NilSessionResultIsReportedNotPanicked(t *testing.T) {
 	// A session that answers with neither a result nor an error must produce
 	// an error. These run on their own goroutines, so a panic would take the
 	// process down rather than failing the request.
-	srv := NewMCPServer("mrtr-test", "1.0.0", WithElicitation())
-	session := &nilResultSession{mrtrSession: *newMRTRSession("legacy")}
-
-	ctx := srv.WithContext(t.Context(), session)
-	ctx = WithRequestProtocolInfo(ctx, &RequestProtocolInfo{})
-
-	require.NotPanics(t, func() {
-		_, err := srv.fulfillInputRequests(ctx, mcp.InputRequests{
-			"who": mcp.NewElicitationInputRequest(mcp.ElicitationParams{
+	tests := []struct {
+		name    string
+		request mcp.InputRequest
+		wantErr string
+	}{
+		{
+			name: "elicitation",
+			request: mcp.NewElicitationInputRequest(mcp.ElicitationParams{
 				Mode:    mcp.ElicitationModeForm,
 				Message: "name?",
 				RequestedSchema: map[string]any{
@@ -279,10 +299,38 @@ func TestMultiRoundTrip_NilSessionResultIsReportedNotPanicked(t *testing.T) {
 					"properties": map[string]any{"name": map[string]any{"type": "string"}},
 				},
 			}),
+			wantErr: "session returned no elicitation result",
+		},
+		{
+			name: "sampling",
+			request: mcp.NewSamplingInputRequest(mcp.CreateMessageParams{
+				Messages:  []mcp.SamplingMessage{{Role: mcp.RoleUser, Content: mcp.NewTextContent("hi")}},
+				MaxTokens: 16,
+			}),
+			wantErr: "session returned no sampling result",
+		},
+		{
+			name:    "roots",
+			request: mcp.NewRootsInputRequest(),
+			wantErr: "session returned no roots result",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := NewMCPServer("mrtr-test", "1.0.0", WithElicitation())
+			session := &nilResultSession{mrtrSession: *newMRTRSession("legacy")}
+
+			ctx := srv.WithContext(t.Context(), session)
+			ctx = WithRequestProtocolInfo(ctx, &RequestProtocolInfo{})
+
+			require.NotPanics(t, func() {
+				_, err := srv.fulfillInputRequests(ctx, mcp.InputRequests{"who": tt.request})
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			})
 		})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "session returned no elicitation result")
-	})
+	}
 }
 
 func TestMultiRoundTrip_URLElicitationIsGatedOnModernClients(t *testing.T) {

@@ -916,8 +916,13 @@ drainLoop:
 		}
 	}
 
-	// close the done chan before unlocking to signal the goroutine to stop
-	if s.eventStore == nil {
+	// close the done chan before unlocking to signal the goroutine to stop.
+	// This is the exact complement of the resumable branch above, which
+	// already closed it: a request that is not resumable - including a modern
+	// request on a server that has an event store configured - must still stop
+	// its forwarder here, or the forwarder outlives the request and races the
+	// final response write.
+	if !resumable {
 		close(done)
 	}
 	mu.Unlock()

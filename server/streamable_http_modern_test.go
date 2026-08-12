@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
@@ -364,4 +367,59 @@ func TestModernProtocol_LegacyClientsUnaffected(t *testing.T) {
 	// Legacy responses are untouched: no resultType, no server identity.
 	assert.NotContains(t, result, "resultType")
 	assert.NotContains(t, result, "ttlMs")
+}
+
+func TestModernProtocol_EventStoreDoesNotStrandTheForwarder(t *testing.T) {
+	// Stream resumability was removed in 2026-07-28, so a modern request is
+	// never resumable even when the server has an event store configured for
+	// its legacy clients. The notification forwarder must still be stopped
+	// when the request ends: a forwarder that outlives its request leaks a
+	// goroutine and races the final response write.
+	mcpServer := NewMCPServer("modern-test", "1.0.0",
+		WithToolCapabilities(true),
+		WithLogging(),
+	)
+	mcpServer.AddTool(
+		mcp.NewTool("notify"),
+		func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			server := ServerFromContext(ctx)
+			_ = server.SendNotificationToClient(ctx, "notifications/progress", map[string]any{
+				"progress": 1,
+			})
+			return mcp.NewToolResultText("notified"), nil
+		},
+	)
+
+	httpServer := httptest.NewServer(NewStreamableHTTPServer(mcpServer,
+		WithEventStore(NewInMemoryEventStore()),
+	))
+	defer httpServer.Close()
+
+	before := runtime.NumGoroutine()
+
+	const requests = 25
+	for range requests {
+		resp := postModern(t, httpServer.URL, mcp.MethodToolsCall, map[string]any{
+			"name":      "notify",
+			"arguments": map[string]any{},
+		})
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}
+
+	// Each stranded forwarder blocks forever on its own request's channels, so
+	// a leak shows up as a goroutine count that scales with the request count.
+	var after int
+	for range 20 {
+		time.Sleep(100 * time.Millisecond)
+		after = runtime.NumGoroutine()
+		if after-before < requests/2 {
+			break
+		}
+	}
+
+	assert.Less(t, after-before, requests/2,
+		"notification forwarders outlived their requests: %d goroutines before, %d after %d requests",
+		before, after, requests)
 }
