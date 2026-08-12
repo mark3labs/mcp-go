@@ -6,6 +6,10 @@
 
 - [Core Concepts](/core-concepts): Understanding the fundamental concepts of MCP and how MCP-Go implements them is essential for building effective MCP servers and clients.
 - [Getting Started](/getting-started): The Model Context Protocol (MCP) is an open standard that enables secure, controlled connections between AI applications and external data sources and tools. It provides a standardized way for Large Language Models (LLMs) to access and interact with external systems while maintaining security and user control.
+- [Protocol Version 2026-07-28](/protocol-2026-07-28): The `2026-07-28` revision turns MCP from a stateful, bidirectional protocol into
+a stateless request/response one. Every request is self-describing, so any
+request can land on any server instance behind a plain round-robin load
+balancer.
 - [Quick Start](/quick-start): Get up and running with MCP-Go in minutes. This guide walks you through creating your first MCP server and client.
 - [Sampling](/clients/advanced-sampling): Learn how to implement MCP clients that can handle sampling requests from servers, enabling bidirectional communication where clients provide LLM capabilities to servers.
 - [Client Basics](/clients/basics): Learn the fundamentals of creating and managing MCP clients, including lifecycle management, initialization, and error handling.

@@ -444,6 +444,239 @@ MCP-Go supports multiple transport methods:
 * Read the full documentation in the [README](https://github.com/mark3labs/mcp-go/blob/main/README.md)
 
 
+## Protocol Version 2026-07-28
+
+The `2026-07-28` revision turns MCP from a stateful, bidirectional protocol into
+a stateless request/response one. Every request is self-describing, so any
+request can land on any server instance behind a plain round-robin load
+balancer.
+
+mcp-go speaks this revision and every earlier one, deciding which to use per
+connection. **Existing code keeps working unchanged**: if you do nothing, your
+server continues to serve older clients exactly as before, and gains support
+for newer ones.
+
+### What changed
+
+|                           | Before `2026-07-28`                                  | From `2026-07-28`                                                                          |
+| ------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Connecting                | `initialize` / `notifications/initialized` handshake | No handshake. Each request carries its version, identity, and capabilities in `_meta`.     |
+| Discovery                 | The `initialize` response                            | The [`server/discover`](#discovery) RPC, which servers must implement and clients may skip |
+| Sessions                  | `Mcp-Session-Id` header, terminated with `DELETE`    | Removed. Servers ignore the header and answer `GET` and `DELETE` with `405`.               |
+| Asking the user something | Server-initiated requests over a held-open stream    | [Multi round-trip requests](#multi-round-trip-requests)                                    |
+| Change notifications      | A standalone `GET` SSE stream                        | [`subscriptions/listen`](#subscriptions), with opt-in filters                              |
+| Resumability              | `Last-Event-ID` replay                               | Removed. Re-issue the request with a new ID.                                               |
+| Routing                   | Parse the JSON body                                  | The `Mcp-Method` and `Mcp-Name` headers                                                    |
+| Caching                   | —                                                    | `ttlMs` and `cacheScope` on list and read results                                          |
+| Removed RPCs              | —                                                    | `ping`, `logging/setLevel`, `resources/subscribe`, `resources/unsubscribe`                 |
+
+### Servers
+
+A server built the usual way serves both eras on one endpoint:
+
+```go
+srv := server.NewMCPServer("my-server", "1.0.0",
+    server.WithToolCapabilities(true),
+)
+
+http.ListenAndServe(":8080", server.NewStreamableHTTPServer(srv))
+```
+
+The era is decided per request, from the protocol version the request declares.
+Nothing about how you register tools, prompts, or resources changes.
+
+#### Pinning to earlier revisions
+
+Deployments that depend on protocol-level session state — per-session tools, for
+example — can advertise only the revisions that provide it:
+
+```go
+server.NewStreamableHTTPServer(srv,
+    server.WithStreamableHTTPProtocolVersions(mcp.LegacyProtocolVersions()...),
+)
+```
+
+Modern clients then receive an `UnsupportedProtocolVersionError` naming the
+versions you do support, and negotiate down automatically.
+
+#### Cache hints
+
+List and read results carry a freshness hint from this revision on. The default
+asks clients to revalidate every time, which preserves earlier behaviour:
+
+```go
+server.NewMCPServer("my-server", "1.0.0",
+    // Clients may reuse tool and prompt catalogs for a minute.
+    server.WithCacheHints(60_000, mcp.CacheScopePublic),
+    // Resource contents are user-specific, so no shared cache may hold them.
+    server.WithMethodCacheHints(mcp.MethodResourcesRead, 5_000, mcp.CacheScopePrivate),
+)
+```
+
+Hints are only emitted to clients using `2026-07-28` or later.
+
+#### Multi round-trip requests
+
+A tool that needs something from the user mid-call used to send the client a
+request over a held-open stream. That cannot work on a stateless protocol, so
+the server now says what it needs and the client retries the call with the
+answers attached.
+
+Write the handler once, and it works for clients of either era:
+
+```go
+srv.AddTool(mcp.NewTool("deploy"), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // On the retry, the client's answer is waiting for us.
+    if answer := server.ElicitationResponse(req.Params.InputResponses, "confirm"); answer != nil {
+        if answer.Action != mcp.ElicitationResponseActionAccept {
+            return mcp.NewToolResultText("deployment cancelled"), nil
+        }
+        return mcp.NewToolResultText("deployed"), nil
+    }
+
+    // First call: ask, and hand back whatever state we need to resume.
+    return server.NewInputRequestBuilder("awaiting-confirmation").
+        Elicit("confirm", mcp.ElicitationParams{
+            Mode:    mcp.ElicitationModeForm,
+            Message: "Deploy to production?",
+            RequestedSchema: map[string]any{
+                "type":       "object",
+                "properties": map[string]any{"ok": map[string]any{"type": "boolean"}},
+            },
+        }).
+        ToolResult(), nil
+})
+```
+
+`requestState` is opaque to the client and echoed back verbatim, so use it to
+carry whatever your handler needs to pick up where it left off. It is the right
+place for a continuation token; it is not a place for secrets, since the client
+can read it.
+
+Against a client using an earlier revision, mcp-go issues the
+`elicitation/create` that client understands and re-invokes your handler with
+the answer. You do not write that path.
+
+`RequestSampling`, `RequestElicitation`, and `RequestRoots` still exist, but
+return an error when the client speaks `2026-07-28` or later, where the pattern
+was removed. In-process servers are unaffected, since they call the handler
+directly rather than sending a message.
+
+#### Subscriptions
+
+`resources/subscribe` and the standalone `GET` stream are replaced by a single
+long-lived request. Clients opt in to specific notification types, and the
+server intersects that with what it can actually serve:
+
+```go
+srv := server.NewMCPServer("my-server", "1.0.0",
+    server.WithToolCapabilities(true),          // enables toolsListChanged
+    server.WithResourceCapabilities(true, true), // enables subscriptions and resourcesListChanged
+)
+```
+
+Your notification-sending code is unchanged; delivery is filtered for sessions
+that opened a subscription stream.
+
+#### Logging
+
+`logging/setLevel` is gone. Clients name a level per request, and a server must
+not emit log notifications for a request that did not ask for one.
+`SendLogMessageToClient` applies that rule automatically.
+
+### Clients
+
+`Initialize` probes with `server/discover` and falls back to the handshake, so
+the same code connects to servers of either era:
+
+```go
+c := client.NewClient(httpTransport)
+if err := c.Start(ctx); err != nil {
+    return err
+}
+
+var req mcp.InitializeRequest
+req.Params.ClientInfo = mcp.Implementation{Name: "my-client", Version: "1.0.0"}
+
+result, err := c.Initialize(ctx, req)  // result.ProtocolVersion tells you which era won
+```
+
+On a modern connection the client adds the required `_meta` and headers to every
+request, and neither sends nor stores a session ID.
+
+#### Multi round-trip requests
+
+Register the handlers you already would, and `CallTool`, `GetPrompt`, and
+`ReadResource` fulfil the server's requests and retry for you:
+
+```go
+c := client.NewClient(httpTransport,
+    client.WithElicitationHandler(myHandler),
+    client.WithMaxInputRoundTrips(5),  // optional; the default is 10
+)
+
+// Returns the final result. Any input the server needed was gathered
+// and resubmitted along the way.
+result, err := c.CallTool(ctx, req)
+```
+
+To drive the exchange yourself, disable nothing — just check
+`result.NeedsInput()` and pass `InputResponses` and `RequestState` on the next
+call.
+
+#### Subscriptions
+
+```go
+stop, err := c.ListenAsync(ctx, mcp.SubscriptionFilter{
+    ToolsListChanged:      true,
+    ResourceSubscriptions: []string{"file:///config.json"},
+}, func(err error) {
+    log.Printf("subscription stream ended: %v", err)
+})
+defer stop()
+```
+
+Notifications reach the handlers registered with `OnNotification` as before.
+
+#### Pinning to an earlier revision
+
+```go
+c := client.NewClient(httpTransport,
+    client.WithProtocolVersion(mcp.ProtocolVersion20251125),
+)
+```
+
+A transport configured with `WithContinuousListening` pins itself
+automatically, since that option depends on the `GET` stream this revision
+removed.
+
+### Migrating
+
+Nothing is required. When you are ready to adopt the new capabilities:
+
+1. **Rewrite server-initiated requests as multi round-trip handlers.** Replace
+   `RequestSampling`, `RequestElicitation`, and `RequestRoots` calls with
+   `NewInputRequestBuilder`. The result works for old and new clients alike.
+2. **Stop relying on protocol-level session state.** Mint an explicit handle
+   from a tool and have the model pass it back as an argument. This works
+   better than state hidden in the transport, because the model can see the
+   handle and thread it between tools.
+3. **Replace `Subscribe` with `Listen`** on clients that consume notifications.
+4. **Set cache hints** for catalogs that do not change often.
+5. **Move off `WithContinuousListening`,** `Ping`, and `SetLevel`, all of which
+   degrade to no-ops or local state on a modern connection.
+
+Deprecated features remain functional for at least twelve months under the MCP
+[feature lifecycle policy](https://modelcontextprotocol.io/community/feature-lifecycle).
+
+### Reference
+
+Spec: [2026-07-28 changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog).
+Key proposals: SEP-2575 (stateless core), SEP-2322 (multi round-trip),
+SEP-2243 (header routing), SEP-2549 (cacheable results), SEP-2567 (session
+removal), SEP-2577 (roots, sampling, and logging deprecation).
+
+
 ## Quick Start
 
 Get up and running with MCP-Go in minutes. This guide walks you through creating your first MCP server and client.
