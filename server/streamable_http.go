@@ -602,22 +602,37 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 
 	isInitializeRequest := jsonMessage.Method == mcp.MethodInitialize
 
-	// Handle sampling responses separately
+	// Decide which protocol era this message belongs to before branching on
+	// its shape. Protocol version 2026-07-28 removed protocol-level sessions,
+	// so a modern message never carries, mints, or echoes a session ID
+	// (SEP-2567), and must not reach a session-dependent path.
+	era := detectRequestEra(r.header(), rawData)
+	var requestID any
+	if len(jsonMessage.ID) > 0 {
+		_ = json.Unmarshal(jsonMessage.ID, &requestID)
+	}
+
+	// Handle sampling responses separately.
+	//
+	// A client-to-server response answers a server-initiated request, which
+	// protocol version 2026-07-28 replaced with multi round-trip requests
+	// (SEP-2322). Accepting one from a modern client would let a valid
+	// Mcp-Session-Id steer a modern message onto the legacy, session-scoped
+	// delivery path, so it is refused.
 	if isSamplingResponse {
+		if era.modern {
+			s.writeJSONRPCErrorStatus(w, requestID, mcp.INVALID_REQUEST,
+				"client-to-server responses are not supported in protocol version "+
+					mcp.ProtocolVersion20260728+
+					": server-initiated requests were replaced by multi round-trip requests",
+				http.StatusBadRequest)
+			return
+		}
 		if err := s.handleSamplingResponse(w, r, jsonMessage); err != nil {
 			s.logger.Error("Failed to handle sampling response", "err", err)
 			// HTTP Status code is already set in handleSamplingResponse, just return here
 		}
 		return
-	}
-
-	// Decide which protocol era this request belongs to. Protocol version
-	// 2026-07-28 removed protocol-level sessions, so a modern request never
-	// carries, mints, or echoes a session ID (SEP-2567).
-	era := detectRequestEra(r.header(), rawData)
-	var requestID any
-	if len(jsonMessage.ID) > 0 {
-		_ = json.Unmarshal(jsonMessage.ID, &requestID)
 	}
 
 	// Prepare the session for the mcp server

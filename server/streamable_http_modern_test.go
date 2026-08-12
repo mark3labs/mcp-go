@@ -423,3 +423,94 @@ func TestModernProtocol_EventStoreDoesNotStrandTheForwarder(t *testing.T) {
 		"notification forwarders outlived their requests: %d goroutines before, %d after %d requests",
 		before, after, requests)
 }
+
+func TestModernProtocol_ClientResponsesAreRejected(t *testing.T) {
+	// A client-to-server response answers a server-initiated request, which
+	// 2026-07-28 replaced with multi round-trip requests. Accepting one from a
+	// modern client would let a valid Mcp-Session-Id steer the message onto
+	// the legacy, session-scoped delivery path.
+	mcpServer := NewMCPServer("modern-test", "1.0.0", WithToolCapabilities(true))
+	streamable := NewStreamableHTTPServer(mcpServer, WithStateful(true))
+	httpServer := httptest.NewServer(streamable)
+	defer httpServer.Close()
+
+	// Establish a real session, so the header below is genuinely valid.
+	initBody, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  mcp.MethodInitialize,
+		"params": map[string]any{
+			"protocolVersion": mcp.LATEST_LEGACY_PROTOCOL_VERSION,
+			"clientInfo":      map[string]any{"name": "legacy", "version": "1.0.0"},
+			"capabilities":    map[string]any{},
+		},
+	})
+	require.NoError(t, err)
+
+	initReq, err := http.NewRequestWithContext(t.Context(), http.MethodPost, httpServer.URL, bytes.NewReader(initBody))
+	require.NoError(t, err)
+	initReq.Header.Set("Content-Type", "application/json")
+
+	initResp, err := http.DefaultClient.Do(initReq)
+	require.NoError(t, err)
+	defer initResp.Body.Close()
+
+	sessionID := initResp.Header.Get(mcp.HeaderSessionID)
+	require.NotEmpty(t, sessionID, "the legacy handshake must mint a session")
+
+	// Now replay that session ID on a modern response message.
+	responseBody, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      42,
+		"result":  map[string]any{"action": "accept"},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, httpServer.URL, bytes.NewReader(responseBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(mcp.HeaderProtocolVersion, mcp.ProtocolVersion20260728)
+	req.Header.Set(mcp.HeaderSessionID, sessionID)
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode,
+		"a modern client-to-server response must not reach the session-scoped path")
+
+	errDetails := decodeJSONRPC(t, resp)["error"].(map[string]any)
+	assert.Equal(t, float64(mcp.INVALID_REQUEST), errDetails["code"])
+	assert.Contains(t, errDetails["message"], "not supported in protocol version")
+}
+
+func TestLegacyProtocol_ClientResponsesStillWork(t *testing.T) {
+	// The rejection must be scoped to modern messages: a legacy client still
+	// answers server-initiated requests this way.
+	mcpServer := NewMCPServer("modern-test", "1.0.0", WithToolCapabilities(true))
+	httpServer := httptest.NewServer(NewStreamableHTTPServer(mcpServer))
+	defer httpServer.Close()
+
+	responseBody, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      42,
+		"result":  map[string]any{"action": "accept"},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, httpServer.URL, bytes.NewReader(responseBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	// The message reaches the legacy delivery path, which reports its own
+	// outcome. What matters is that it is not turned away by the modern-era
+	// rejection, whose message is distinctive.
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.NotContains(t, string(body), "not supported in protocol version",
+		"legacy responses must still reach the session-scoped delivery path")
+}
