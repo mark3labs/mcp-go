@@ -3,6 +3,8 @@ package server
 import (
 	"errors"
 	"fmt"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 var (
@@ -24,6 +26,25 @@ var (
 	// Notification-related errors
 	ErrNotificationNotInitialized = errors.New("notification channel not initialized")
 	ErrNotificationChannelBlocked = errors.New("notification channel queue is full - client may not be processing notifications fast enough")
+
+	// Protocol-era errors
+
+	// ErrRemovedInProtocolVersion indicates the request used a method that was
+	// removed in protocol version 2026-07-28. The method remains available to
+	// clients using an earlier protocol version.
+	ErrRemovedInProtocolVersion = errors.New("was removed in protocol version " + mcp.ProtocolVersion20260728)
+
+	// ErrRequiresModernProtocol indicates the request used a method that was
+	// introduced in protocol version 2026-07-28 without declaring that version
+	// in its _meta.
+	ErrRequiresModernProtocol = errors.New("requires protocol version " + mcp.ProtocolVersion20260728 + " or later")
+
+	// ErrServerInitiatedRequestUnsupported indicates the server tried to send a
+	// request to a client using protocol version 2026-07-28 or later, where
+	// server-initiated requests were replaced by multi round-trip requests.
+	ErrServerInitiatedRequestUnsupported = errors.New(
+		"server-initiated requests are not supported in protocol version " + mcp.ProtocolVersion20260728 +
+			" or later: return an InputRequests map from the handler instead (multi round-trip requests, SEP-2322)")
 )
 
 // ErrDynamicPathConfig is returned when attempting to use static path methods with dynamic path configuration

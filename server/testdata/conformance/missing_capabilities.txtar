@@ -1,0 +1,25 @@
+Client capabilities are required on every request from protocol version
+2026-07-28 onward: servers must not infer them from earlier requests. A request
+declaring a modern protocol version without them is rejected with
+MissingRequiredClientCapabilityError (-32021).
+
+-- client --
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/list",
+  "params": {
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+    }
+  }
+}
+-- server --
+{
+	"error": {
+		"code": -32021,
+		"message": "missing required client capability: \"io.modelcontextprotocol/clientCapabilities\""
+	},
+	"id": 1,
+	"jsonrpc": "2.0"
+}

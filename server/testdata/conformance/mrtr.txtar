@@ -1,0 +1,92 @@
+Multi round-trip requests (SEP-2322). The tool needs a name before it can
+answer, so the first call returns resultType "input_required" carrying an
+elicitation/create request and an opaque requestState. The client fulfils the
+request and retries the original call, echoing the state back and attaching the
+answer under the same key; the second call then completes.
+
+-- client --
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientInfo": { "name": "ExampleClient", "version": "1.0.0" },
+      "io.modelcontextprotocol/clientCapabilities": { "elicitation": {} }
+    },
+    "name": "confirmThenGreet",
+    "arguments": {}
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientInfo": { "name": "ExampleClient", "version": "1.0.0" },
+      "io.modelcontextprotocol/clientCapabilities": { "elicitation": {} }
+    },
+    "name": "confirmThenGreet",
+    "arguments": {},
+    "requestState": "step=1",
+    "inputResponses": {
+      "who": { "action": "accept", "content": { "name": "MCP Go" } }
+    }
+  }
+}
+-- server --
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"_meta": {
+			"io.modelcontextprotocol/serverInfo": {
+				"name": "testServer",
+				"version": "v1.0.0"
+			}
+		},
+		"content": [],
+		"inputRequests": {
+			"who": {
+				"method": "elicitation/create",
+				"params": {
+					"message": "What is your name?",
+					"mode": "form",
+					"requestedSchema": {
+						"properties": {
+							"name": {
+								"type": "string"
+							}
+						},
+						"type": "object"
+					}
+				}
+			}
+		},
+		"requestState": "step=1",
+		"resultType": "input_required"
+	}
+}
+
+{
+	"id": 2,
+	"jsonrpc": "2.0",
+	"result": {
+		"_meta": {
+			"io.modelcontextprotocol/serverInfo": {
+				"name": "testServer",
+				"version": "v1.0.0"
+			}
+		},
+		"content": [
+			{
+				"text": "hello MCP Go",
+				"type": "text"
+			}
+		],
+		"resultType": "complete"
+	}
+}

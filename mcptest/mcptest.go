@@ -169,7 +169,16 @@ func (s *Server) Start(ctx context.Context) error {
 	go func() {
 		defer s.wg.Done()
 
-		mcpServer := server.NewMCPServer(s.name, "1.0.0", s.serverOpts...)
+		// Tools under test may still call server.RequestSampling and
+		// server.RequestElicitation directly. Protocol version 2026-07-28
+		// replaced that pattern with multi round-trip requests, but the
+		// harness runs over stdio, which is genuinely bidirectional, so the
+		// old pattern is kept working here.
+		serverOpts := append([]server.ServerOption{
+			server.WithLegacyServerInitiatedRequests(),
+		}, s.serverOpts...)
+
+		mcpServer := server.NewMCPServer(s.name, "1.0.0", serverOpts...)
 
 		mcpServer.AddTools(s.tools...)
 		mcpServer.AddPrompts(s.prompts...)

@@ -18,6 +18,10 @@ var (
 // The client must have declared roots capability during initialization.
 // The session must implement SessionWithRoots to support this operation.
 func (s *MCPServer) RequestRoots(ctx context.Context, request mcp.ListRootsRequest) (*mcp.ListRootsResult, error) {
+	if err := s.assertServerInitiatedRequestAllowed(ctx, mcp.MethodListRoots); err != nil {
+		return nil, err
+	}
+
 	session := ClientSessionFromContext(ctx)
 	if session == nil {
 		return nil, ErrNoClientSession

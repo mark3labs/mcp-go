@@ -30,6 +30,11 @@ type StreamableHTTPCOption func(*StreamableHTTP)
 // It will establish a standalone long-live GET HTTP connection to the server.
 // https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
 // NOTICE: Even enabled, the server may not support this feature.
+//
+// Deprecated: protocol version 2026-07-28 removed the standalone GET stream
+// (SEP-2575). A transport with this option enabled keeps the connection on a
+// legacy protocol version; use Client.Listen to open a subscriptions/listen
+// stream instead.
 func WithContinuousListening() StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
 		sc.getListeningEnabled = true
@@ -201,6 +206,12 @@ func (c *StreamableHTTP) Start(ctx context.Context) error {
 			}()
 			select {
 			case <-c.initialized:
+				// Protocol version 2026-07-28 removed the standalone GET
+				// stream; server-to-client notifications arrive on a
+				// subscriptions/listen response stream instead.
+				if c.isModern() {
+					return
+				}
 				ctx, cancel := c.contextAwareOfClientClose(ctx)
 				defer cancel()
 				c.listenForever(ctx)
@@ -221,8 +232,11 @@ func (c *StreamableHTTP) Close() error {
 		// Cancel all in-flight requests
 		close(c.closed)
 
+		// Protocol version 2026-07-28 removed protocol-level sessions, so
+		// there is nothing to terminate and DELETE is not part of the
+		// transport any more.
 		sessionId := c.sessionID.Load().(string)
-		if sessionId != "" {
+		if sessionId != "" && !c.isModern() {
 			c.sessionID.Store("")
 			// notify server session closed
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -258,6 +272,50 @@ func (c *StreamableHTTP) Close() error {
 // SetProtocolVersion sets the negotiated protocol version for this connection.
 func (c *StreamableHTTP) SetProtocolVersion(version string) {
 	c.protocolVersion.Store(version)
+}
+
+// markInitializedOnDiscover opens the initialization gate once a
+// server/discover request has actually succeeded.
+//
+// A successful discover marks the connection ready in the same way initialize
+// does for legacy servers: it is the first request of a modern connection
+// (SEP-2575). A server predating the method answers HTTP 200 with a JSON-RPC
+// error, which is a failed probe: the gate must stay shut so the caller can
+// fall back to the initialize handshake before anything treats the transport
+// as ready.
+func (c *StreamableHTTP) markInitializedOnDiscover(request JSONRPCRequest, response *JSONRPCResponse) {
+	if request.Method != string(mcp.MethodServerDiscover) || response.Error != nil {
+		return
+	}
+	c.initializedOnce.Do(func() {
+		close(c.initialized)
+	})
+}
+
+// negotiatedProtocolVersion returns the protocol version in effect, or "" when
+// none has been negotiated yet.
+func (c *StreamableHTTP) negotiatedProtocolVersion() string {
+	if v := c.protocolVersion.Load(); v != nil {
+		if version, ok := v.(string); ok {
+			return version
+		}
+	}
+	return ""
+}
+
+// isModern reports whether this connection uses the stateless protocol core
+// introduced in 2026-07-28, where the transport carries no session state.
+func (c *StreamableHTTP) isModern() bool {
+	return mcp.IsModernProtocol(c.negotiatedProtocolVersion())
+}
+
+// RequiresLegacyProtocol reports whether this transport has been configured in
+// a way that only protocol versions before 2026-07-28 can satisfy.
+//
+// Continuous listening depends on the standalone GET stream, which that
+// revision removed, so a transport using it must stay on a legacy version.
+func (c *StreamableHTTP) RequiresLegacyProtocol() bool {
+	return c.getListeningEnabled
 }
 
 // ErrOAuthAuthorizationRequired is a sentinel error for OAuth authorization required
@@ -610,11 +668,20 @@ func (c *StreamableHTTP) SendRequest(
 			return nil, fmt.Errorf("response should contain RPC id: %v", response)
 		}
 
+		c.markInitializedOnDiscover(request, &response)
+
 		return &response, nil
 
 	case "text/event-stream":
 		// Server is using SSE for streaming responses
-		return c.handleSSEResponse(ctx, resp.Body, false)
+		sseResponse, err := c.handleSSEResponse(ctx, resp.Body, false)
+		if err != nil {
+			return nil, err
+		}
+		if sseResponse != nil {
+			c.markInitializedOnDiscover(request, sseResponse)
+		}
+		return sseResponse, nil
 
 	default:
 		return nil, fmt.Errorf("unexpected content type: %s", resp.Header.Get("Content-Type"))
@@ -642,8 +709,10 @@ func (c *StreamableHTTP) sendHTTP(
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", acceptType)
+	// Protocol version 2026-07-28 retired the session header: a modern client
+	// neither sends nor stores one (SEP-2567).
 	sessionID := c.sessionID.Load().(string)
-	if sessionID != "" {
+	if sessionID != "" && !c.isModern() {
 		req.Header.Set(HeaderKeySessionID, sessionID)
 	}
 	// Set protocol version header if negotiated

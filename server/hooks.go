@@ -77,6 +77,12 @@ type OnAfterInitializeFunc func(ctx context.Context, id any, message *mcp.Initia
 type OnBeforePingFunc func(ctx context.Context, id any, message *mcp.PingRequest)
 type OnAfterPingFunc func(ctx context.Context, id any, message *mcp.PingRequest, result *mcp.EmptyResult)
 
+type OnBeforeDiscoverFunc func(ctx context.Context, id any, message *mcp.DiscoverRequest)
+type OnAfterDiscoverFunc func(ctx context.Context, id any, message *mcp.DiscoverRequest, result *mcp.DiscoverResult)
+
+type OnBeforeSubscriptionsListenFunc func(ctx context.Context, id any, message *mcp.SubscriptionsListenRequest)
+type OnAfterSubscriptionsListenFunc func(ctx context.Context, id any, message *mcp.SubscriptionsListenRequest, result *mcp.SubscriptionsListenResult)
+
 type OnBeforeSetLevelFunc func(ctx context.Context, id any, message *mcp.SetLevelRequest)
 type OnAfterSetLevelFunc func(ctx context.Context, id any, message *mcp.SetLevelRequest, result *mcp.EmptyResult)
 
@@ -167,6 +173,10 @@ type Hooks struct {
 	OnAfterInitialize             []OnAfterInitializeFunc
 	OnBeforePing                  []OnBeforePingFunc
 	OnAfterPing                   []OnAfterPingFunc
+	OnBeforeDiscover              []OnBeforeDiscoverFunc
+	OnAfterDiscover               []OnAfterDiscoverFunc
+	OnBeforeSubscriptionsListen   []OnBeforeSubscriptionsListenFunc
+	OnAfterSubscriptionsListen    []OnAfterSubscriptionsListenFunc
 	OnBeforeSetLevel              []OnBeforeSetLevelFunc
 	OnAfterSetLevel               []OnAfterSetLevelFunc
 	OnBeforeListResources         []OnBeforeListResourcesFunc
@@ -390,6 +400,60 @@ func (c *Hooks) afterPing(ctx context.Context, id any, message *mcp.PingRequest,
 		return
 	}
 	for _, hook := range c.OnAfterPing {
+		hook(ctx, id, message, result)
+	}
+}
+func (c *Hooks) AddBeforeDiscover(hook OnBeforeDiscoverFunc) {
+	c.OnBeforeDiscover = append(c.OnBeforeDiscover, hook)
+}
+
+func (c *Hooks) AddAfterDiscover(hook OnAfterDiscoverFunc) {
+	c.OnAfterDiscover = append(c.OnAfterDiscover, hook)
+}
+
+func (c *Hooks) beforeDiscover(ctx context.Context, id any, message *mcp.DiscoverRequest) {
+	c.beforeAny(ctx, id, mcp.MethodServerDiscover, message)
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnBeforeDiscover {
+		hook(ctx, id, message)
+	}
+}
+
+func (c *Hooks) afterDiscover(ctx context.Context, id any, message *mcp.DiscoverRequest, result *mcp.DiscoverResult) {
+	c.onSuccess(ctx, id, mcp.MethodServerDiscover, message, result)
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnAfterDiscover {
+		hook(ctx, id, message, result)
+	}
+}
+func (c *Hooks) AddBeforeSubscriptionsListen(hook OnBeforeSubscriptionsListenFunc) {
+	c.OnBeforeSubscriptionsListen = append(c.OnBeforeSubscriptionsListen, hook)
+}
+
+func (c *Hooks) AddAfterSubscriptionsListen(hook OnAfterSubscriptionsListenFunc) {
+	c.OnAfterSubscriptionsListen = append(c.OnAfterSubscriptionsListen, hook)
+}
+
+func (c *Hooks) beforeSubscriptionsListen(ctx context.Context, id any, message *mcp.SubscriptionsListenRequest) {
+	c.beforeAny(ctx, id, mcp.MethodSubscriptionsListen, message)
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnBeforeSubscriptionsListen {
+		hook(ctx, id, message)
+	}
+}
+
+func (c *Hooks) afterSubscriptionsListen(ctx context.Context, id any, message *mcp.SubscriptionsListenRequest, result *mcp.SubscriptionsListenResult) {
+	c.onSuccess(ctx, id, mcp.MethodSubscriptionsListen, message, result)
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnAfterSubscriptionsListen {
 		hook(ctx, id, message, result)
 	}
 }

@@ -18,6 +18,9 @@ func TestClient_UnsupportedProtocolVersionResponse(t *testing.T) {
 	// Create client
 	client := &Client{
 		transport: mockTrans,
+		// These tests exercise the legacy initialize handshake directly, so
+		// skip the server/discover probe.
+		legacyOnly: true,
 	}
 
 	ctx := t.Context()
@@ -58,6 +61,9 @@ func TestClient_OperationsBeforeInitialize(t *testing.T) {
 	mockTrans := newMockTransport()
 	client := &Client{
 		transport: mockTrans,
+		// These tests exercise the legacy initialize handshake directly, so
+		// skip the server/discover probe.
+		legacyOnly: true,
 	}
 
 	ctx := t.Context()
@@ -85,7 +91,8 @@ func TestClient_NotificationHandlers(t *testing.T) {
 	t.Run("multiple handlers called in order", func(t *testing.T) {
 		mockTrans := newMockTransport()
 		client := &Client{
-			transport: mockTrans,
+			transport:  mockTrans,
+			legacyOnly: true,
 		}
 
 		ctx := t.Context()
@@ -137,6 +144,9 @@ func TestClient_GetSessionId(t *testing.T) {
 	mockTrans := newMockTransport()
 	client := &Client{
 		transport: mockTrans,
+		// These tests exercise the legacy initialize handshake directly, so
+		// skip the server/discover probe.
+		legacyOnly: true,
 	}
 
 	// Should return the transport's session ID
@@ -149,6 +159,9 @@ func TestClient_IsInitialized(t *testing.T) {
 	mockTrans := newMockTransport()
 	client := &Client{
 		transport: mockTrans,
+		// These tests exercise the legacy initialize handshake directly, so
+		// skip the server/discover probe.
+		legacyOnly: true,
 	}
 
 	// Should not be initialized initially

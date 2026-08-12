@@ -217,22 +217,83 @@ type MCPServer struct {
 	promptCompletionProvider   PromptCompletionProvider
 	resourceCompletionProvider ResourceCompletionProvider
 	capabilities               serverCapabilities
-	paginationLimit            *int
-	sessions                   sync.Map
-	hooks                      *Hooks
-	taskHooks                  *TaskHooks
-	tasks                      map[string]*taskEntry
-	expiredTasks               map[string]time.Time // Tracks recently expired task IDs with expiration timestamp
-	maxConcurrentTasks         *int                 // Optional limit on concurrent running tasks
-	activeTasks                int                  // Current count of running (non-terminal) tasks
-	inflightCancels            sync.Map             // Maps request ID -> context.CancelFunc for in-flight requests
-	inputValidator             *inputSchemaValidator
-	outputValidator            *outputSchemaValidator
-	strictInputSchemaDefault   bool
-	tracer                     tracing.Tracer
-	propagator                 tracing.Propagator
-	metaPropagator             tracing.MetaPropagator
-	requestLogger              *slog.Logger
+	cacheHints                 map[mcp.MCPMethod]cacheHints
+	// allowServerInitiatedRequests keeps RequestSampling, RequestElicitation,
+	// and RequestRoots usable against clients speaking protocol version
+	// 2026-07-28 or later. See WithLegacyServerInitiatedRequests.
+	allowServerInitiatedRequests bool
+	paginationLimit              *int
+	sessions                     sync.Map
+	hooks                        *Hooks
+	taskHooks                    *TaskHooks
+	tasks                        map[string]*taskEntry
+	expiredTasks                 map[string]time.Time // Tracks recently expired task IDs with expiration timestamp
+	maxConcurrentTasks           *int                 // Optional limit on concurrent running tasks
+	activeTasks                  int                  // Current count of running (non-terminal) tasks
+	inflightCancels              sync.Map             // Maps request ID -> context.CancelFunc for in-flight requests
+	inputValidator               *inputSchemaValidator
+	outputValidator              *outputSchemaValidator
+	strictInputSchemaDefault     bool
+	tracer                       tracing.Tracer
+	propagator                   tracing.Propagator
+	metaPropagator               tracing.MetaPropagator
+	requestLogger                *slog.Logger
+}
+
+// WithCacheHints sets the default SEP-2549 caching hints advertised on
+// tools/list, prompts/list, resources/list, resources/templates/list,
+// resources/read, and server/discover results.
+//
+// ttlMs is a freshness hint in milliseconds: clients may reuse a cached
+// response for that long before re-fetching. Zero, the default, asks clients
+// to revalidate every time. scope controls whether shared intermediaries may
+// cache the response across authorization contexts.
+//
+// The hints are only emitted to clients using protocol version 2026-07-28 or
+// later, which is where the fields were introduced.
+func WithCacheHints(ttlMs int64, scope mcp.CacheScope) ServerOption {
+	return func(s *MCPServer) {
+		s.capabilitiesMu.Lock()
+		defer s.capabilitiesMu.Unlock()
+		if s.cacheHints == nil {
+			s.cacheHints = make(map[mcp.MCPMethod]cacheHints)
+		}
+		s.cacheHints[""] = cacheHints{ttlMs: ttlMs, scope: scope}
+	}
+}
+
+// WithMethodCacheHints sets the SEP-2549 caching hints advertised on the
+// result of a single method, overriding any default set by [WithCacheHints].
+func WithMethodCacheHints(method mcp.MCPMethod, ttlMs int64, scope mcp.CacheScope) ServerOption {
+	return func(s *MCPServer) {
+		s.capabilitiesMu.Lock()
+		defer s.capabilitiesMu.Unlock()
+		if s.cacheHints == nil {
+			s.cacheHints = make(map[mcp.MCPMethod]cacheHints)
+		}
+		s.cacheHints[method] = cacheHints{ttlMs: ttlMs, scope: scope}
+	}
+}
+
+// WithLegacyServerInitiatedRequests keeps [MCPServer.RequestSampling],
+// [MCPServer.RequestElicitation], and [MCPServer.RequestRoots] usable against
+// clients speaking protocol version 2026-07-28 or later.
+//
+// That revision replaced server-initiated requests with multi round-trip
+// requests (SEP-2322), so by default those methods return
+// [ErrServerInitiatedRequestUnsupported] rather than sending a request the
+// client is not obliged to answer. Enabling this option restores the old
+// behaviour, which still works over genuinely bidirectional transports such as
+// stdio and in-process, but not over stateless Streamable HTTP.
+//
+// Deprecated: server-initiated requests were removed in protocol version
+// 2026-07-28 (SEP-2322). Prefer [InputRequestBuilder], which produces handlers
+// that work against clients of either protocol era. This option exists to ease
+// migration and will be removed once the deprecation window closes.
+func WithLegacyServerInitiatedRequests() ServerOption {
+	return func(s *MCPServer) {
+		s.allowServerInitiatedRequests = true
+	}
 }
 
 // WithPaginationLimit sets the pagination limit for the server.
@@ -254,6 +315,7 @@ type serverCapabilities struct {
 	tasks        *taskCapabilities
 	completions  *bool
 	experimental map[string]any
+	extensions   map[string]any
 }
 
 // resourceCapabilities defines the supported resource-related features
@@ -595,6 +657,24 @@ func WithCompletions() ServerOption {
 func WithExperimental(experimental map[string]any) ServerOption {
 	return func(s *MCPServer) {
 		s.capabilities.experimental = experimental
+	}
+}
+
+// WithExtensions advertises support for optional MCP extensions beyond the
+// core protocol, as a map of extension identifier to that extension's settings
+// object. An empty object means the extension is supported with no additional
+// settings.
+//
+// Extension identifiers follow the _meta key naming rules, so they carry a
+// mandatory prefix - for example "io.modelcontextprotocol/tasks" for the Tasks
+// extension, or "io.modelcontextprotocol/ui" for MCP Apps.
+//
+// Extensions were formalized in protocol version 2026-07-28. When one party
+// supports an extension and the other does not, the supporting party must
+// either fall back to core protocol behaviour or reject the request.
+func WithExtensions(extensions map[string]any) ServerOption {
+	return func(s *MCPServer) {
+		s.capabilities.extensions = extensions
 	}
 }
 
@@ -956,6 +1036,13 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 			panic(fmt.Sprintf("tool name '%s' already registered as task tool", name))
 		}
 		s.applyStrictInputSchemaDefault(&entry.Tool)
+		// Servers MUST reject tool definitions whose x-mcp-header annotations
+		// violate the SEP-2243 constraints, rather than emitting headers that
+		// gateways cannot route on.
+		if err := mcp.ValidateParamHeaderAnnotations(&entry.Tool); err != nil {
+			s.toolsMu.Unlock()
+			panic(fmt.Sprintf("tool %q has invalid x-mcp-header annotations: %v", name, err))
+		}
 		s.tools[name] = entry
 	}
 	s.toolsMu.Unlock()
@@ -1081,11 +1168,16 @@ func (s *MCPServer) AddNotificationHandler(
 	s.notificationHandlers[method] = handler
 }
 
-func (s *MCPServer) handleInitialize(
-	ctx context.Context,
-	_ any,
-	request mcp.InitializeRequest,
-) (*mcp.InitializeResult, *requestError) {
+// serverCapabilities builds the capability set advertised by this server.
+// It is shared by the legacy initialize handshake and the modern
+// server/discover RPC.
+func (s *MCPServer) serverCapabilitiesSnapshot() mcp.ServerCapabilities {
+	// Capabilities are registered at runtime - AddTool implicitly enables the
+	// tools capability, for example - so reads must be synchronized against
+	// those writers.
+	s.capabilitiesMu.RLock()
+	defer s.capabilitiesMu.RUnlock()
+
 	capabilities := mcp.ServerCapabilities{}
 
 	// Only add resource capabilities if they're configured
@@ -1166,18 +1258,37 @@ func (s *MCPServer) handleInitialize(
 		capabilities.Experimental = s.capabilities.experimental
 	}
 
+	if s.capabilities.extensions != nil {
+		capabilities.Extensions = s.capabilities.extensions
+	}
+
+	return capabilities
+}
+
+// serverImplementation returns the identity this server reports to clients.
+func (s *MCPServer) serverImplementation() mcp.Implementation {
+	return mcp.Implementation{
+		Name:        s.name,
+		Version:     s.version,
+		Title:       s.implementation.Title,
+		Description: s.implementation.Description,
+		WebsiteURL:  s.implementation.WebsiteURL,
+		Icons:       s.implementation.Icons,
+	}
+}
+
+func (s *MCPServer) handleInitialize(
+	ctx context.Context,
+	_ any,
+	request mcp.InitializeRequest,
+) (*mcp.InitializeResult, *requestError) {
+	capabilities := s.serverCapabilitiesSnapshot()
+
 	result := mcp.InitializeResult{
 		ProtocolVersion: s.protocolVersion(request.Params.ProtocolVersion),
-		ServerInfo: mcp.Implementation{
-			Name:        s.name,
-			Version:     s.version,
-			Title:       s.implementation.Title,
-			Description: s.implementation.Description,
-			WebsiteURL:  s.implementation.WebsiteURL,
-			Icons:       s.implementation.Icons,
-		},
-		Capabilities: capabilities,
-		Instructions: s.instructions,
+		ServerInfo:      s.serverImplementation(),
+		Capabilities:    capabilities,
+		Instructions:    s.instructions,
 	}
 
 	if session := ClientSessionFromContext(ctx); session != nil {
@@ -1188,25 +1299,22 @@ func (s *MCPServer) handleInitialize(
 			sessionWithClientInfo.SetClientInfo(request.Params.ClientInfo)
 			sessionWithClientInfo.SetClientCapabilities(request.Params.Capabilities)
 		}
+		if versioned, ok := session.(sessionProtocolVersionSetter); ok {
+			versioned.SetProtocolVersion(result.ProtocolVersion)
+		}
 	}
 
 	return &result, nil
 }
 
+// protocolVersion returns the protocol version to report in an
+// InitializeResult, given the version the client requested.
+//
+// The initialize handshake was removed in protocol version 2026-07-28, so the
+// negotiated version is always capped at [mcp.LATEST_LEGACY_PROTOCOL_VERSION].
+// Clients reach the modern, stateless protocol via server/discover instead.
 func (s *MCPServer) protocolVersion(clientVersion string) string {
-	// For backwards compatibility, if the server does not receive an MCP-Protocol-Version header,
-	// and has no other way to identify the version - for example, by relying on the protocol version negotiated
-	// during initialization - the server SHOULD assume protocol version 2025-03-26
-	// https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#protocol-version-header
-	if len(clientVersion) == 0 {
-		clientVersion = "2025-03-26"
-	}
-
-	if slices.Contains(mcp.ValidProtocolVersions, clientVersion) {
-		return clientVersion
-	}
-
-	return mcp.LATEST_PROTOCOL_VERSION
+	return mcp.NegotiateLegacyVersion(clientVersion)
 }
 
 func (s *MCPServer) handlePing(
@@ -1251,7 +1359,7 @@ func (s *MCPServer) handleSubscribe(
 			if err := subs.SubscribeToResourceErr(request.Params.URI); err != nil {
 				return nil, &requestError{
 					id:   id,
-					code: mcp.RESOURCE_NOT_FOUND,
+					code: resourceNotFoundCode(ctx),
 					err:  err,
 				}
 			}
@@ -1622,7 +1730,7 @@ func (s *MCPServer) handleReadResource(
 
 	return nil, &requestError{
 		id:   id,
-		code: mcp.RESOURCE_NOT_FOUND,
+		code: resourceNotFoundCode(ctx),
 		err: fmt.Errorf(
 			"handler not found for resource URI '%s': %w",
 			request.Params.URI,
@@ -1758,6 +1866,22 @@ func (s *MCPServer) handleGetPrompt(
 	s.promptMiddlewareMu.RUnlock()
 
 	result, err := finalHandler(ctx, request)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INTERNAL_ERROR,
+			err:  err,
+		}
+	}
+
+	// Bridge a handler asking for more input to clients that predate the
+	// multi round-trip pattern (SEP-2322).
+	result, err = resolveMultiRoundTrip(ctx, s, result, getPromptResultNeedsInput,
+		func(ctx context.Context, roundTrip mcp.MultiRoundTripParams) (*mcp.GetPromptResult, error) {
+			retried := request
+			retried.Params.MultiRoundTripParams = roundTrip
+			return finalHandler(ctx, retried)
+		})
 	if err != nil {
 		return nil, &requestError{
 			id:   id,
@@ -2014,6 +2138,25 @@ func (s *MCPServer) handleToolCall(
 	s.toolMiddlewareMu.RUnlock()
 
 	result, err := finalHandler(ctx, request)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INTERNAL_ERROR,
+			err:  err,
+		}
+	}
+
+	// A handler may ask the client for more input before it can finish
+	// (SEP-2322). Clients using protocol version 2026-07-28 or later receive
+	// the request and retry; for older clients the requests are fulfilled here
+	// with the server-initiated calls they understand, and the handler is
+	// re-invoked with the answers.
+	result, err = resolveMultiRoundTrip(ctx, s, result, callToolResultNeedsInput,
+		func(ctx context.Context, roundTrip mcp.MultiRoundTripParams) (*mcp.CallToolResult, error) {
+			retried := request
+			retried.Params.MultiRoundTripParams = roundTrip
+			return finalHandler(ctx, retried)
+		})
 	if err != nil {
 		return nil, &requestError{
 			id:   id,

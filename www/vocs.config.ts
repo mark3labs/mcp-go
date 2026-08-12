@@ -23,6 +23,10 @@ export default defineConfig({
       link: '/core-concepts',
     },
     {
+      text: 'Protocol 2026-07-28',
+      link: '/protocol-2026-07-28',
+    },
+    {
       text: 'Building MCP Servers',
       collapsed: false,
       items: [

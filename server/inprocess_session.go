@@ -56,6 +56,12 @@ func NewInProcessSessionWithHandlers(sessionID string, samplingHandler SamplingH
 	}
 }
 
+// isInProcess marks this session as dispatching server-initiated requests as
+// direct in-process function calls rather than protocol messages, which is why
+// they remain available on connections using protocol version 2026-07-28 or
+// later.
+func (s *InProcessSession) isInProcess() {}
+
 func (s *InProcessSession) SessionID() string {
 	return s.sessionID
 }
