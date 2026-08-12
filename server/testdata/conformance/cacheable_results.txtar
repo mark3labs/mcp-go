@@ -47,7 +47,7 @@ identity in _meta.
 				"version": "v1.0.0"
 			}
 		},
-		"cacheScope": "public",
+		"cacheScope": "private",
 		"resultType": "complete",
 		"tools": [
 			{
@@ -102,7 +102,7 @@ identity in _meta.
 				"version": "v1.0.0"
 			}
 		},
-		"cacheScope": "public",
+		"cacheScope": "private",
 		"prompts": [],
 		"resultType": "complete",
 		"ttlMs": 0
@@ -119,7 +119,7 @@ identity in _meta.
 				"version": "v1.0.0"
 			}
 		},
-		"cacheScope": "public",
+		"cacheScope": "private",
 		"resources": [],
 		"resultType": "complete",
 		"ttlMs": 0

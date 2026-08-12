@@ -64,14 +64,19 @@ type CacheableResult struct {
 	CacheScope CacheScope `json:"cacheScope,omitempty"`
 }
 
-// SetCacheHints populates the caching hints on the result. A nil receiver is a
-// no-op.
+// SetCacheHints populates the caching hints on the result.
+//
+// An empty scope defaults to [CacheScopePrivate], so a result is never shared
+// across authorization contexts unless the caller asks for it: list and read
+// results are frequently scoped to the caller's identity, and a shared
+// intermediary honouring a public scope would serve one principal's data to
+// another. A nil receiver is a no-op.
 func (r *CacheableResult) SetCacheHints(ttlMs int64, scope CacheScope) {
 	if r == nil {
 		return
 	}
 	if scope == "" {
-		scope = CacheScopePublic
+		scope = CacheScopePrivate
 	}
 	r.TTLMs = &ttlMs
 	r.CacheScope = scope

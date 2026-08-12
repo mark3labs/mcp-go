@@ -167,12 +167,14 @@ func TestMultiRoundTrip_LoadSheddingIsRejectedForLegacyClients(t *testing.T) {
 	ctx = WithRequestProtocolInfo(ctx, &RequestProtocolInfo{})
 
 	// A legacy client has no way to act on a load-shedding signal, so it is
-	// surfaced as an error rather than an empty result.
+	// surfaced as an error rather than an empty result. The sentinel lets a
+	// caller map it onto transport-level backpressure.
 	_, reqErr := srv.handleToolCall(ctx, 1, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{Name: "busy"},
 	})
 	require.NotNil(t, reqErr)
-	assert.Contains(t, reqErr.Error(), "busy")
+	assert.ErrorIs(t, reqErr, ErrLoadShedding)
+	assert.Contains(t, reqErr.Error(), "multi round-trip")
 }
 
 func TestMultiRoundTrip_InputResponseAccessors(t *testing.T) {
@@ -242,3 +244,61 @@ var (
 	_ SessionWithElicitation = (*mrtrSession)(nil)
 	_ SessionWithClientInfo  = (*mrtrSession)(nil)
 )
+
+// nilResultSession answers every server-initiated request with neither a
+// result nor an error.
+type nilResultSession struct {
+	mrtrSession
+}
+
+func (s *nilResultSession) RequestElicitation(
+	_ context.Context,
+	_ mcp.ElicitationRequest,
+) (*mcp.ElicitationResult, error) {
+	s.calls++
+	return nil, nil
+}
+
+func TestMultiRoundTrip_NilSessionResultIsReportedNotPanicked(t *testing.T) {
+	// A session that answers with neither a result nor an error must produce
+	// an error. These run on their own goroutines, so a panic would take the
+	// process down rather than failing the request.
+	srv := NewMCPServer("mrtr-test", "1.0.0", WithElicitation())
+	session := &nilResultSession{mrtrSession: *newMRTRSession("legacy")}
+
+	ctx := srv.WithContext(t.Context(), session)
+	ctx = WithRequestProtocolInfo(ctx, &RequestProtocolInfo{})
+
+	require.NotPanics(t, func() {
+		_, err := srv.fulfillInputRequests(ctx, mcp.InputRequests{
+			"who": mcp.NewElicitationInputRequest(mcp.ElicitationParams{
+				Mode:    mcp.ElicitationModeForm,
+				Message: "name?",
+				RequestedSchema: map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"name": map[string]any{"type": "string"}},
+				},
+			}),
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "session returned no elicitation result")
+	})
+}
+
+func TestMultiRoundTrip_URLElicitationIsGatedOnModernClients(t *testing.T) {
+	// RequestURLElicitation sends the same elicitation/create request, so it
+	// must not be a way around the SEP-2322 restriction.
+	srv := NewMCPServer("mrtr-test", "1.0.0", WithElicitation())
+	session := newMRTRSession("modern")
+
+	ctx := srv.WithContext(t.Context(), session)
+	ctx = WithRequestProtocolInfo(ctx, &RequestProtocolInfo{
+		Modern:          true,
+		ProtocolVersion: mcp.ProtocolVersion20260728,
+	})
+
+	_, err := srv.RequestURLElicitation(ctx, session, "id-1", "https://example.com/auth", "authorize")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrServerInitiatedRequestUnsupported)
+	assert.Equal(t, 0, session.calls, "nothing should have been sent to the client")
+}

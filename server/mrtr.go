@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -26,6 +27,14 @@ import (
 // fulfil a handler's input requests and re-invoke it. It matches the client
 // side bound.
 const maxLegacyInputRoundTrips = 10
+
+// ErrLoadShedding is returned when a handler sheds load by asking the client
+// to retry later, but the client predates the multi round-trip pattern and has
+// no way to act on that signal.
+//
+// Callers may detect it with errors.Is to map the condition onto a transport
+// level backpressure response, such as HTTP 503 with Retry-After.
+var ErrLoadShedding = errors.New("the server is busy, retry later")
 
 // InputRequestBuilder accumulates the requests a handler needs answered before
 // it can complete, and renders them as an [mcp.InputRequiredResult].
@@ -202,7 +211,7 @@ func resolveMultiRoundTrip[T any](
 			return result, nil
 		}
 		if len(requests) == 0 {
-			return nil, fmt.Errorf("the server is busy, retry later")
+			return nil, fmt.Errorf("multi round-trip: %w", ErrLoadShedding)
 		}
 		if attempt >= maxLegacyInputRoundTrips {
 			return nil, fmt.Errorf(
@@ -283,6 +292,9 @@ func (s *MCPServer) fulfillInputRequest(
 		if err != nil {
 			return mcp.InputResponse{}, err
 		}
+		if result == nil {
+			return mcp.InputResponse{}, fmt.Errorf("session returned no elicitation result")
+		}
 		return mcp.NewElicitationInputResponse(*result), nil
 
 	case mcp.MethodSamplingCreateMessage:
@@ -296,6 +308,9 @@ func (s *MCPServer) fulfillInputRequest(
 		if err != nil {
 			return mcp.InputResponse{}, err
 		}
+		if result == nil {
+			return mcp.InputResponse{}, fmt.Errorf("session returned no sampling result")
+		}
 		return mcp.NewSamplingInputResponse(*result), nil
 
 	case mcp.MethodListRoots:
@@ -304,6 +319,9 @@ func (s *MCPServer) fulfillInputRequest(
 		})
 		if err != nil {
 			return mcp.InputResponse{}, err
+		}
+		if result == nil {
+			return mcp.InputResponse{}, fmt.Errorf("session returned no roots result")
 		}
 		return mcp.NewRootsInputResponse(*result), nil
 

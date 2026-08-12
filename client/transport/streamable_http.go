@@ -274,6 +274,24 @@ func (c *StreamableHTTP) SetProtocolVersion(version string) {
 	c.protocolVersion.Store(version)
 }
 
+// markInitializedOnDiscover opens the initialization gate once a
+// server/discover request has actually succeeded.
+//
+// A successful discover marks the connection ready in the same way initialize
+// does for legacy servers: it is the first request of a modern connection
+// (SEP-2575). A server predating the method answers HTTP 200 with a JSON-RPC
+// error, which is a failed probe: the gate must stay shut so the caller can
+// fall back to the initialize handshake before anything treats the transport
+// as ready.
+func (c *StreamableHTTP) markInitializedOnDiscover(request JSONRPCRequest, response *JSONRPCResponse) {
+	if request.Method != string(mcp.MethodServerDiscover) || response.Error != nil {
+		return
+	}
+	c.initializedOnce.Do(func() {
+		close(c.initialized)
+	})
+}
+
 // negotiatedProtocolVersion returns the protocol version in effect, or "" when
 // none has been negotiated yet.
 func (c *StreamableHTTP) negotiatedProtocolVersion() string {
@@ -635,15 +653,6 @@ func (c *StreamableHTTP) SendRequest(
 		})
 	}
 
-	// A successful server/discover marks the connection ready in the same way
-	// initialize does for legacy servers: it is the first request of a modern
-	// connection (SEP-2575).
-	if request.Method == string(mcp.MethodServerDiscover) {
-		c.initializedOnce.Do(func() {
-			close(c.initialized)
-		})
-	}
-
 	// Handle different response types
 	mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	switch mediaType {
@@ -659,11 +668,20 @@ func (c *StreamableHTTP) SendRequest(
 			return nil, fmt.Errorf("response should contain RPC id: %v", response)
 		}
 
+		c.markInitializedOnDiscover(request, &response)
+
 		return &response, nil
 
 	case "text/event-stream":
 		// Server is using SSE for streaming responses
-		return c.handleSSEResponse(ctx, resp.Body, false)
+		sseResponse, err := c.handleSSEResponse(ctx, resp.Body, false)
+		if err != nil {
+			return nil, err
+		}
+		if sseResponse != nil {
+			c.markInitializedOnDiscover(request, sseResponse)
+		}
+		return sseResponse, nil
 
 	default:
 		return nil, fmt.Errorf("unexpected content type: %s", resp.Header.Get("Content-Type"))

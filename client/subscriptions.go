@@ -20,10 +20,15 @@ import (
 // cancels the request.
 
 // subscriptionState tracks the client's pending and active subscription.
+//
+// generation identifies the Listen call that currently owns the stream. A
+// later call supersedes an earlier one, and only the owner may clear the
+// state, so a returning call cannot tear down a stream that replaced it.
 type subscriptionState struct {
-	mu     sync.Mutex
-	filter mcp.SubscriptionFilter
-	cancel context.CancelFunc
+	mu         sync.Mutex
+	filter     mcp.SubscriptionFilter
+	cancel     context.CancelFunc
+	generation uint64
 }
 
 // Listen opens a subscriptions/listen stream for the given notification
@@ -53,13 +58,18 @@ func (c *Client) Listen(ctx context.Context, filter mcp.SubscriptionFilter) erro
 		previous()
 	}
 	c.subscriptions.cancel = cancel
+	c.subscriptions.generation++
+	generation := c.subscriptions.generation
 	c.subscriptions.mu.Unlock()
 
 	defer func() {
 		c.subscriptions.mu.Lock()
-		if c.subscriptions.cancel != nil {
+		// Clear the stream only if this call still owns it. A concurrent
+		// Listen may have superseded us, and its stream must survive our
+		// return. The filter is left in place so that URIs accumulated
+		// through Subscribe remain available to a subsequent Listen.
+		if c.subscriptions.generation == generation {
 			c.subscriptions.cancel = nil
-			c.subscriptions.filter = mcp.SubscriptionFilter{}
 		}
 		c.subscriptions.mu.Unlock()
 	}()

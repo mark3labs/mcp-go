@@ -17,6 +17,13 @@ import (
 // present.
 const defaultCacheTTLMs int64 = 0
 
+// defaultCacheScope is the scope advertised when a server configures no
+// caching hints. It is fail-closed: results may be reused only within the
+// authorization context that fetched them, so a shared intermediary cannot
+// serve one principal's data to another. Servers that want sharing declare it
+// with [WithCacheHints].
+const defaultCacheScope = mcp.CacheScopePrivate
+
 // cacheHints describes the SEP-2549 caching hints a server advertises on a
 // list or read result.
 type cacheHints struct {
@@ -118,7 +125,7 @@ func (s *MCPServer) cacheHintsFor(method mcp.MCPMethod) cacheHints {
 			return configured
 		}
 	}
-	return cacheHints{ttlMs: defaultCacheTTLMs, scope: mcp.CacheScopePublic}
+	return cacheHints{ttlMs: defaultCacheTTLMs, scope: defaultCacheScope}
 }
 
 // applyDefaultCacheHints populates caching hints on a result that has not

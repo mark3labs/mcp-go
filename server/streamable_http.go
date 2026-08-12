@@ -699,6 +699,11 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	// application/json response (the upgrade simply won't fire).
 	canStream := w.CanStream()
 
+	// Stream resumability was removed in protocol version 2026-07-28
+	// (SEP-2575), and a modern request carries no session ID to key a stored
+	// stream on, so replay is confined to legacy requests.
+	resumable := s.eventStore != nil && !era.modern
+
 	// Request stream for resumability, created lazily when the first SSE
 	// message for this request is delivered. Guarded by mu. Stored events
 	// must outlive the request context, which ends with the connection.
@@ -733,8 +738,14 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	// are written to this POST's SSE stream, per the Streamable HTTP guidance
 	// that server requests on a POST stream should relate to the originating
 	// request. The standalone GET stream remains the path for everything else.
+	//
+	// Protocol version 2026-07-28 removed both mechanisms this block depends
+	// on: server-initiated requests (SEP-2322) and stream resumability
+	// (SEP-2575). A modern request also has no session ID, so registering it
+	// would key every concurrent request on "" and let a response reach the
+	// wrong one.
 	var scopedRequests chan mcp.JSONRPCRequest
-	if canStream {
+	if canStream && !era.modern {
 		scopedRequests = make(chan mcp.JSONRPCRequest, 8)
 		// Registration makes responses to request-scoped server requests
 		// routable when nothing else has registered the session (stateless
@@ -778,7 +789,7 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 					case <-done:
 						// The notification is already off the channel; with an
 						// event store it must still be recorded.
-						if s.eventStore != nil && canStream {
+						if resumable && canStream {
 							deliverResumable(nt, false)
 						}
 						return
@@ -792,7 +803,7 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 					}
 					defer w.Flush()
 
-					if s.eventStore != nil {
+					if resumable {
 						deliverResumable(nt, false)
 						return
 					}
@@ -820,7 +831,7 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 						// The request is already off the channel; with an
 						// event store it must still be recorded so a resuming
 						// client sees it.
-						if s.eventStore != nil {
+						if resumable {
 							deliverResumable(req, false)
 						}
 						return
@@ -828,7 +839,7 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 					}
 					defer w.Flush()
 
-					if s.eventStore != nil {
+					if resumable {
 						deliverResumable(req, false)
 						return
 					}
@@ -871,7 +882,7 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	// With an event store, stop the forwarder before draining so that exactly
 	// one consumer records whatever notifications remain, preserving their
 	// order ahead of the response.
-	if s.eventStore != nil {
+	if resumable {
 		close(done)
 		<-forwarderExited
 	}
@@ -884,7 +895,7 @@ drainLoop:
 			if !canStream {
 				continue
 			}
-			if s.eventStore != nil {
+			if resumable {
 				deliverResumable(nt, false)
 				w.Flush()
 				continue
@@ -914,7 +925,7 @@ drainLoop:
 		// The connection is gone, but with an event store the response of an
 		// interrupted SSE request is still recorded so that a resuming client
 		// can be redelivered it.
-		if s.eventStore != nil && (rst != nil || (session.upgradeToSSE.Load() && canStream)) {
+		if resumable && (rst != nil || (session.upgradeToSSE.Load() && canStream)) {
 			mu.Lock()
 			deliverResumable(response, true)
 			mu.Unlock()
@@ -925,7 +936,7 @@ drainLoop:
 	// Also check upgradedHeader: a notification during HandleMessage processing
 	// may have already written SSE headers on this response, so we must continue
 	// in SSE mode to avoid writing JSON on top of SSE data.
-	if s.eventStore != nil && (rst != nil || (session.upgradeToSSE.Load() && canStream)) {
+	if resumable && (rst != nil || (session.upgradeToSSE.Load() && canStream)) {
 		mu.Lock()
 		deliverResumable(response, true)
 		mu.Unlock()

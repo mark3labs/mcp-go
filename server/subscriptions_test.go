@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,14 +15,21 @@ import (
 
 // listenSession records the notifications it is sent and tracks the
 // subscription filter the server established.
+//
+// The filter is written by the goroutine serving subscriptions/listen and read
+// by notification fan-out, so the state is mutex-guarded as
+// SessionWithSubscriptionFilter requires.
 type listenSession struct {
 	clientInfoStore
 	notify chan mcp.JSONRPCNotification
 
-	filter mcp.SubscriptionFilter
-	active bool
-
+	mu         sync.RWMutex
+	filter     mcp.SubscriptionFilter
+	active     bool
 	subscribed []string
+
+	// failOn makes SubscribeToResourceErr reject a specific URI.
+	failOn string
 }
 
 func newListenSession() *listenSession {
@@ -35,18 +44,35 @@ func (s *listenSession) Initialize()       {}
 func (s *listenSession) Initialized() bool { return true }
 
 func (s *listenSession) SetSubscriptionFilter(filter mcp.SubscriptionFilter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.filter = filter
 	s.active = !filter.IsEmpty()
 }
 
 func (s *listenSession) SubscriptionFilter() (mcp.SubscriptionFilter, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.filter, s.active
 }
 
 func (s *listenSession) SubscribeToResource(uri string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.subscribed = append(s.subscribed, uri)
 }
+
+func (s *listenSession) SubscribeToResourceErr(uri string) error {
+	if uri == s.failOn {
+		return fmt.Errorf("cannot subscribe to %q", uri)
+	}
+	s.SubscribeToResource(uri)
+	return nil
+}
+
 func (s *listenSession) UnsubscribeFromResource(uri string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for i, existing := range s.subscribed {
 		if existing == uri {
 			s.subscribed = append(s.subscribed[:i], s.subscribed[i+1:]...)
@@ -54,15 +80,24 @@ func (s *listenSession) UnsubscribeFromResource(uri string) {
 		}
 	}
 }
-func (s *listenSession) SubscribedResources() []string { return s.subscribed }
+
+func (s *listenSession) SubscribedResources() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return slices.Clone(s.subscribed)
+}
+
 func (s *listenSession) IsSubscribedToResource(uri string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return slices.Contains(s.subscribed, uri)
 }
 
 var (
-	_ ClientSession                    = (*listenSession)(nil)
-	_ SessionWithSubscriptionFilter    = (*listenSession)(nil)
-	_ SessionWithResourceSubscriptions = (*listenSession)(nil)
+	_ ClientSession                       = (*listenSession)(nil)
+	_ SessionWithSubscriptionFilter       = (*listenSession)(nil)
+	_ SessionWithResourceSubscriptions    = (*listenSession)(nil)
+	_ SessionWithResourceSubscriptionsErr = (*listenSession)(nil)
 )
 
 // listen runs subscriptions/listen in the background and returns a function
@@ -311,5 +346,81 @@ func TestPerRequestLogLevel(t *testing.T) {
 				assert.False(t, tt.wantSent, "expected a log notification")
 			}
 		})
+	}
+}
+
+func TestSubscriptionsListen_PartialResourceSubscriptionIsUnwound(t *testing.T) {
+	srv := NewMCPServer("listen-test", "1.0.0", WithResourceCapabilities(true, true))
+
+	// The second URI is refused. The first must not stay subscribed for the
+	// life of the session.
+	session := newListenSession()
+	session.failOn = "file:///b"
+	require.NoError(t, srv.RegisterSession(t.Context(), session))
+
+	ctx := srv.WithContext(t.Context(), session)
+	ctx = WithRequestProtocolInfo(ctx, &RequestProtocolInfo{
+		Modern:          true,
+		ProtocolVersion: mcp.ProtocolVersion20260728,
+	})
+
+	_, reqErr := srv.handleSubscriptionsListen(ctx, 1, mcp.SubscriptionsListenRequest{
+		Params: mcp.SubscriptionsListenParams{
+			Notifications: mcp.SubscriptionFilter{
+				ResourceSubscriptions: []string{"file:///a", "file:///b"},
+			},
+		},
+	})
+
+	require.NotNil(t, reqErr)
+	assert.Contains(t, reqErr.Error(), "file:///b")
+	assert.Empty(t, session.SubscribedResources(),
+		"a failed subscription must not leave earlier URIs subscribed")
+}
+
+func TestSubscriptionsListen_UnrequestedNotificationsAreRejected(t *testing.T) {
+	srv := NewMCPServer("listen-test", "1.0.0", WithToolCapabilities(true))
+	session := newListenSession()
+
+	stop := listen(t, srv, session, mcp.SubscriptionFilter{ToolsListChanged: true})
+	defer stop()
+
+	// Opt-in is absolute: a method outside the filter's vocabulary must not be
+	// delivered on a subscription stream, even though it is broadcast to
+	// every other session.
+	srv.sendNotificationToAllClients(mcp.JSONRPCNotification{
+		JSONRPC:      mcp.JSONRPC_VERSION,
+		Notification: mcp.Notification{Method: mcp.MethodNotificationTasksStatus},
+	})
+	srv.sendNotificationToAllClients(mcp.JSONRPCNotification{
+		JSONRPC:      mcp.JSONRPC_VERSION,
+		Notification: mcp.Notification{Method: "custom/broadcast"},
+	})
+	srv.sendNotificationToAllClients(mcp.JSONRPCNotification{
+		JSONRPC:      mcp.JSONRPC_VERSION,
+		Notification: mcp.Notification{Method: mcp.MethodNotificationToolsListChanged},
+	})
+
+	select {
+	case notification := <-session.notify:
+		assert.Equal(t, mcp.MethodNotificationToolsListChanged, notification.Method,
+			"only the opted-in notification may be delivered")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the opted-in notification")
+	}
+}
+
+func TestSubscriptionsListen_SessionsWithoutAFilterStillReceiveEverything(t *testing.T) {
+	// A session that never opened a subscription stream is a legacy session,
+	// where notifications are not opt-in. Denying by default must not leak
+	// into that path.
+	session := newListenSession()
+
+	for _, method := range []string{
+		mcp.MethodNotificationToolsListChanged,
+		mcp.MethodNotificationTasksStatus,
+		"custom/broadcast",
+	} {
+		assert.True(t, subscriptionAllowsNotification(session, method), "method %q", method)
 	}
 }

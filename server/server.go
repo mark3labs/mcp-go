@@ -1172,6 +1172,12 @@ func (s *MCPServer) AddNotificationHandler(
 // It is shared by the legacy initialize handshake and the modern
 // server/discover RPC.
 func (s *MCPServer) serverCapabilitiesSnapshot() mcp.ServerCapabilities {
+	// Capabilities are registered at runtime - AddTool implicitly enables the
+	// tools capability, for example - so reads must be synchronized against
+	// those writers.
+	s.capabilitiesMu.RLock()
+	defer s.capabilitiesMu.RUnlock()
+
 	capabilities := mcp.ServerCapabilities{}
 
 	// Only add resource capabilities if they're configured

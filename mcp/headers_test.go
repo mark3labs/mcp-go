@@ -349,3 +349,59 @@ func TestParamHeaderRejectsUnsafeIntegers(t *testing.T) {
 		assert.Empty(t, GenerateParamHeaders(tool, params), "arguments %s", arguments)
 	}
 }
+
+func TestParamHeaderAnnotationsSurviveTypeArrays(t *testing.T) {
+	// JSON Schema allows a type union, and protocol version 2026-07-28 widened
+	// input schemas to the full 2020-12 vocabulary. A property using the array
+	// form must not disable header handling for the whole tool.
+	tool := &Tool{
+		Name: "query",
+		RawInputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"note":   { "type": ["string", "null"] },
+				"region": { "type": "string", "x-mcp-header": "Region" }
+			}
+		}`),
+	}
+
+	bindings := ExtractParamHeaderBindings(tool)
+	require.Len(t, bindings, 1, "the annotated property must still be found")
+	assert.Equal(t, "Region", bindings[0].Header)
+
+	params := json.RawMessage(`{"name":"query","arguments":{"region":"us-east-1"}}`)
+	assert.Equal(t, "us-east-1", GenerateParamHeaders(tool, params)[HeaderParamPrefix+"Region"])
+
+	assert.NoError(t, ValidateParamHeaderAnnotations(tool))
+}
+
+func TestParamHeaderAnnotationsRejectedOnNullableTypeUnion(t *testing.T) {
+	// A union is only acceptable if every member is a permitted primitive.
+	tool := &Tool{
+		Name: "query",
+		RawInputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"region": { "type": ["string", "null"], "x-mcp-header": "Region" }
+			}
+		}`),
+	}
+
+	err := ValidateParamHeaderAnnotations(tool)
+	require.Error(t, err, "null is not a header-representable type")
+	assert.Contains(t, err.Error(), "primitive types")
+}
+
+func TestParamHeaderAnnotationsToleratesUnreadableSchema(t *testing.T) {
+	// A schema that cannot be parsed degrades rather than failing
+	// registration, matching this package's policy for schemas that fail to
+	// compile. No headers can be derived from it either, so nothing is
+	// smuggled past validation.
+	tool := &Tool{
+		Name:           "broken",
+		RawInputSchema: json.RawMessage(`{"type": "object", "properties": {`),
+	}
+
+	assert.NoError(t, ValidateParamHeaderAnnotations(tool))
+	assert.Empty(t, ExtractParamHeaderBindings(tool))
+}

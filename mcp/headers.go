@@ -249,24 +249,69 @@ func (b ParamHeaderBinding) HeaderName() string {
 
 // headerSchemaProperty captures the subset of a JSON Schema needed for
 // x-mcp-header processing.
+//
+// Type is kept raw because JSON Schema permits either a single type name or an
+// array of them, and protocol version 2026-07-28 widened input schemas to the
+// full JSON Schema 2020-12 vocabulary. Decoding it into a string would fail the
+// whole schema, silently disabling both header generation and annotation
+// validation for the tool.
 type headerSchemaProperty struct {
-	Type       string                          `json:"type"`
+	Type       json.RawMessage                 `json:"type"`
 	XMCPHeader json.RawMessage                 `json:"x-mcp-header,omitempty"`
 	Properties map[string]headerSchemaProperty `json:"properties,omitempty"`
+}
+
+// typeNames returns the type names declared by the property, accepting both
+// the scalar and array forms.
+func (p headerSchemaProperty) typeNames() []string {
+	if len(p.Type) == 0 {
+		return nil
+	}
+	var single string
+	if err := json.Unmarshal(p.Type, &single); err == nil {
+		return []string{single}
+	}
+	var multiple []string
+	if err := json.Unmarshal(p.Type, &multiple); err == nil {
+		return multiple
+	}
+	return nil
+}
+
+// isHeaderPrimitive reports whether every declared type is one x-mcp-header
+// permits. A property with no declared type is not accepted, because the value
+// could then be of any shape.
+func (p headerSchemaProperty) isHeaderPrimitive() bool {
+	names := p.typeNames()
+	if len(names) == 0 {
+		return false
+	}
+	for _, name := range names {
+		switch name {
+		case "string", "integer", "boolean":
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // schemaHeaderProperties normalizes any input-schema representation (a typed
 // schema struct, map[string]any, or json.RawMessage) into the subset of fields
 // needed for x-mcp-header processing.
-func schemaHeaderProperties(schema any) map[string]headerSchemaProperty {
+//
+// The error is reported separately from an absent schema so that callers which
+// must fail closed, such as annotation validation, can tell a schema with no
+// annotations apart from one that could not be read.
+func schemaHeaderProperties(schema any) (map[string]headerSchemaProperty, error) {
 	if schema == nil {
-		return nil
+		return nil, nil
 	}
 	var s headerSchemaProperty
 	if err := remarshal(schema, &s); err != nil {
-		return nil
+		return nil, fmt.Errorf("reading input schema: %w", err)
 	}
-	return s.Properties
+	return s.Properties, nil
 }
 
 // ExtractParamHeaderBindings returns a binding for every property in the
@@ -276,8 +321,8 @@ func ExtractParamHeaderBindings(tool *Tool) []ParamHeaderBinding {
 	if tool == nil {
 		return nil
 	}
-	props := schemaHeaderProperties(toolInputSchema(tool))
-	if len(props) == 0 {
+	props, err := schemaHeaderProperties(toolInputSchema(tool))
+	if err != nil || len(props) == 0 {
 		return nil
 	}
 	bindings := collectParamHeaderBindings(props, nil, nil)
@@ -314,7 +359,15 @@ func ValidateParamHeaderAnnotations(tool *Tool) error {
 	if tool == nil {
 		return nil
 	}
-	props := schemaHeaderProperties(toolInputSchema(tool))
+	props, err := schemaHeaderProperties(toolInputSchema(tool))
+	if err != nil {
+		// A structurally unreadable schema is tolerated rather than rejected,
+		// matching this package's existing policy for schemas that fail to
+		// compile. It is not a way to smuggle bad annotations past this check:
+		// the same decode failure leaves ExtractParamHeaderBindings empty, so
+		// no Mcp-Param-* header is ever generated from it.
+		return nil
+	}
 	if len(props) == 0 {
 		return nil
 	}
@@ -328,10 +381,10 @@ func validateParamHeadersIn(props map[string]headerSchemaProperty, prefix string
 			path = prefix + "." + name
 		}
 		if prop.XMCPHeader != nil {
-			if prop.Type != "string" && prop.Type != "integer" && prop.Type != "boolean" {
+			if !prop.isHeaderPrimitive() {
 				return fmt.Errorf(
-					"property %q: x-mcp-header can only be applied to primitive types (integer, string, boolean), got %q",
-					path, prop.Type)
+					"property %q: x-mcp-header can only be applied to primitive types (integer, string, boolean), got %s",
+					path, describeSchemaType(prop))
 			}
 			var header string
 			if err := json.Unmarshal(prop.XMCPHeader, &header); err != nil || header == "" {
@@ -353,6 +406,21 @@ func validateParamHeadersIn(props map[string]headerSchemaProperty, prefix string
 		}
 	}
 	return nil
+}
+
+// describeSchemaType renders a property's declared type for an error message.
+func describeSchemaType(prop headerSchemaProperty) string {
+	names := prop.typeNames()
+	if len(names) == 0 {
+		if len(prop.Type) == 0 {
+			return "no declared type"
+		}
+		return string(prop.Type)
+	}
+	if len(names) == 1 {
+		return strconv.Quote(names[0])
+	}
+	return "[" + strings.Join(names, ", ") + "]"
 }
 
 // validateHeaderToken checks that name matches the HTTP field-name token

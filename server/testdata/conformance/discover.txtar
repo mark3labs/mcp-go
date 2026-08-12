@@ -29,7 +29,7 @@ every discover result.
 				"version": "v1.0.0"
 			}
 		},
-		"cacheScope": "public",
+		"cacheScope": "private",
 		"capabilities": {
 			"elicitation": {},
 			"prompts": {

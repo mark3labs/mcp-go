@@ -31,6 +31,10 @@ func SubscriptionIDFromContext(ctx context.Context) any {
 // Protocol version 2026-07-28 makes every server-to-client notification
 // opt-in: a server MUST NOT deliver a notification type the client did not
 // explicitly request (SEP-2575).
+//
+// Implementations must be safe for concurrent use: the filter is written by
+// the goroutine serving the subscriptions/listen request and read by the
+// notification fan-out running on independent goroutines.
 type SessionWithSubscriptionFilter interface {
 	ClientSession
 	// SetSubscriptionFilter records the notification types the client opted
@@ -84,6 +88,16 @@ func (s *MCPServer) handleSubscriptionsListen(
 	// subscription store, so notifications/resources/updated fan-out is
 	// unchanged.
 	if subs, ok := session.(SessionWithResourceSubscriptions); ok {
+		// Track what actually took effect, and arm the cleanup before
+		// subscribing: a failure partway through the list must not leave the
+		// earlier URIs subscribed for the life of the session.
+		var established []string
+		defer func() {
+			for _, uri := range established {
+				subs.UnsubscribeFromResource(uri)
+			}
+		}()
+
 		for _, uri := range allowed.ResourceSubscriptions {
 			if errSubs, ok := session.(SessionWithResourceSubscriptionsErr); ok {
 				if err := errSubs.SubscribeToResourceErr(uri); err != nil {
@@ -93,15 +107,12 @@ func (s *MCPServer) handleSubscriptionsListen(
 						err:  fmt.Errorf("subscribing to %q: %w", uri, err),
 					}
 				}
+				established = append(established, uri)
 				continue
 			}
 			subs.SubscribeToResource(uri)
+			established = append(established, uri)
 		}
-		defer func() {
-			for _, uri := range allowed.ResourceSubscriptions {
-				subs.UnsubscribeFromResource(uri)
-			}
-		}()
 	}
 
 	// Acknowledge the subscription so the client learns which of its requested
@@ -183,6 +194,16 @@ func subscriptionAllowsNotification(session ClientSession, method string) bool {
 	case mcp.MethodNotificationResourcesListChanged:
 		return filter.ResourcesListChanged
 	default:
-		return true
+		// Opt-in is absolute: a server MUST NOT deliver a notification type
+		// the client did not request. Anything outside the filter's
+		// vocabulary - a custom broadcast, or an extension's notifications -
+		// therefore stays off the subscription stream. An extension that
+		// defines its own notifications negotiates them through its own
+		// capability and needs its own delivery path.
+		//
+		// notifications/resources/updated is unaffected: it is fanned out per
+		// subscribed URI through SessionWithResourceSubscriptions rather than
+		// broadcast.
+		return false
 	}
 }

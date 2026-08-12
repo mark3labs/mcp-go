@@ -169,6 +169,9 @@ func (c *Client) fulfillInputRequest(
 		if err != nil {
 			return mcp.InputResponse{}, err
 		}
+		if result == nil {
+			return mcp.InputResponse{}, fmt.Errorf("elicitation handler returned no result")
+		}
 		return mcp.NewElicitationInputResponse(*result), nil
 
 	case mcp.MethodSamplingCreateMessage:
@@ -185,6 +188,9 @@ func (c *Client) fulfillInputRequest(
 		if err != nil {
 			return mcp.InputResponse{}, err
 		}
+		if result == nil {
+			return mcp.InputResponse{}, fmt.Errorf("sampling handler returned no result")
+		}
 		return mcp.NewSamplingInputResponse(*result), nil
 
 	case mcp.MethodListRoots:
@@ -196,6 +202,9 @@ func (c *Client) fulfillInputRequest(
 		})
 		if err != nil {
 			return mcp.InputResponse{}, err
+		}
+		if result == nil {
+			return mcp.InputResponse{}, fmt.Errorf("roots handler returned no result")
 		}
 		return mcp.NewRootsInputResponse(*result), nil
 

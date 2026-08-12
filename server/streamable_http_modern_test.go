@@ -117,9 +117,10 @@ func TestModernProtocol_Discover(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "modern-test", serverInfo["name"])
 
-	// server/discover is a cacheable result (SEP-2549).
+	// server/discover is a cacheable result (SEP-2549). With no hints
+	// configured the scope is the fail-closed default.
 	assert.Contains(t, result, "ttlMs")
-	assert.Equal(t, string(mcp.CacheScopePublic), result["cacheScope"])
+	assert.Equal(t, string(mcp.CacheScopePrivate), result["cacheScope"])
 
 	assert.Equal(t, "be helpful", result["instructions"])
 }

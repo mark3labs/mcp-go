@@ -100,8 +100,8 @@ func (c *Client) applyRequestMeta(params any) any {
 	if c.clientInfo.Name != "" {
 		meta[mcp.MetaKeyClientInfo] = c.clientInfo
 	}
-	if c.logLevel != "" {
-		meta[mcp.MetaKeyLogLevel] = c.logLevel
+	if level := c.currentLogLevel(); level != "" {
+		meta[mcp.MetaKeyLogLevel] = level
 	}
 
 	encodedMeta, err := json.Marshal(meta)
@@ -110,6 +110,13 @@ func (c *Client) applyRequestMeta(params any) any {
 	}
 	fields["_meta"] = encodedMeta
 	return fields
+}
+
+// currentLogLevel returns the per-request log level to declare, if any.
+func (c *Client) currentLogLevel() mcp.LoggingLevel {
+	c.logLevelMu.RLock()
+	defer c.logLevelMu.RUnlock()
+	return c.logLevel
 }
 
 // applyStandardHeaders adds the Mcp-Method and Mcp-Name headers that protocol

@@ -141,10 +141,17 @@ func TestCacheableResultHints(t *testing.T) {
 	assert.JSONEq(t, `{"ttlMs":0,"cacheScope":"public"}`, string(encoded))
 }
 
-func TestCacheableResultDefaultsToPublicScope(t *testing.T) {
+func TestCacheableResultDefaultsToPrivateScope(t *testing.T) {
+	// Fail closed: an unset scope must not publish an authorization-scoped
+	// result to shared intermediaries.
 	var result CacheableResult
 	result.SetCacheHints(1000, "")
-	assert.Equal(t, CacheScopePublic, result.CacheScope)
+	assert.Equal(t, CacheScopePrivate, result.CacheScope)
+
+	// An explicit public scope is honoured.
+	var shared CacheableResult
+	shared.SetCacheHints(1000, CacheScopePublic)
+	assert.Equal(t, CacheScopePublic, shared.CacheScope)
 }
 
 func TestMetaTypedAccessors(t *testing.T) {

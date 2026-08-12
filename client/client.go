@@ -45,8 +45,10 @@ type Client struct {
 	legacyOnly bool
 
 	// logLevel is the per-request log level sent in _meta, replacing the
-	// logging/setLevel RPC removed in 2026-07-28.
-	logLevel mcp.LoggingLevel
+	// logging/setLevel RPC removed in 2026-07-28. It is guarded by logLevelMu
+	// because SetLevel may be called while other goroutines send requests.
+	logLevel   mcp.LoggingLevel
+	logLevelMu sync.RWMutex
 
 	// knownTools caches tool definitions so that tools/call requests can
 	// mirror x-mcp-header annotated parameters into HTTP headers (SEP-2243).
@@ -653,7 +655,9 @@ func (c *Client) SetLevel(
 	request mcp.SetLevelRequest,
 ) error {
 	if c.isModern() {
+		c.logLevelMu.Lock()
 		c.logLevel = request.Params.Level
+		c.logLevelMu.Unlock()
 		return nil
 	}
 	_, err := c.sendRequest(ctx, "logging/setLevel", request.Params, outboundHeader(request.Header, request.Method))
