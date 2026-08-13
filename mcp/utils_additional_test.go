@@ -223,6 +223,40 @@ func TestParseResourceContents(t *testing.T) {
 		assert.Contains(t, err.Error(), "uri is missing")
 	})
 
+	t.Run("empty text resource", func(t *testing.T) {
+		contentMap := map[string]any{
+			"uri":      "file:///empty.txt",
+			"mimeType": "text/plain",
+			"text":     "",
+		}
+
+		result, err := ParseResourceContents(contentMap)
+		require.NoError(t, err)
+
+		textRes, ok := result.(TextResourceContents)
+		require.True(t, ok)
+		assert.Equal(t, "file:///empty.txt", textRes.URI)
+		assert.Equal(t, "text/plain", textRes.MIMEType)
+		assert.Empty(t, textRes.Text)
+	})
+
+	t.Run("empty blob resource", func(t *testing.T) {
+		contentMap := map[string]any{
+			"uri":      "file:///empty.bin",
+			"mimeType": "application/octet-stream",
+			"blob":     "",
+		}
+
+		result, err := ParseResourceContents(contentMap)
+		require.NoError(t, err)
+
+		blobRes, ok := result.(BlobResourceContents)
+		require.True(t, ok)
+		assert.Equal(t, "file:///empty.bin", blobRes.URI)
+		assert.Equal(t, "application/octet-stream", blobRes.MIMEType)
+		assert.Empty(t, blobRes.Blob)
+	})
+
 	t.Run("no text or blob", func(t *testing.T) {
 		contentMap := map[string]any{
 			"uri": "file:///test",
@@ -232,6 +266,40 @@ func TestParseResourceContents(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported resource type")
 	})
+
+	t.Run("non-string text falls through", func(t *testing.T) {
+		contentMap := map[string]any{
+			"uri":  "file:///test",
+			"text": 42,
+		}
+
+		_, err := ParseResourceContents(contentMap)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported resource type")
+	})
+}
+
+// Test that a resources/read response carrying an empty text resource round
+// trips through ParseReadResourceResult, which is the path Client.ReadResource
+// takes.
+
+func TestParseReadResourceResultEmptyText(t *testing.T) {
+	payload, err := json.Marshal(ReadResourceResult{
+		Contents: []ResourceContents{
+			TextResourceContents{URI: "file:///empty.txt", MIMEType: "text/plain"},
+		},
+	})
+	require.NoError(t, err)
+
+	raw := json.RawMessage(payload)
+	result, err := ParseReadResourceResult(&raw)
+	require.NoError(t, err)
+	require.Len(t, result.Contents, 1)
+
+	textRes, ok := result.Contents[0].(TextResourceContents)
+	require.True(t, ok)
+	assert.Equal(t, "file:///empty.txt", textRes.URI)
+	assert.Empty(t, textRes.Text)
 }
 
 // Test ParseGetPromptResult with malformed JSON

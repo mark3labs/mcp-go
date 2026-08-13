@@ -832,7 +832,11 @@ func ParseResourceContents(contentMap map[string]any) (ResourceContents, error) 
 		return nil, fmt.Errorf("_meta must be an object")
 	}
 
-	if text := ExtractString(contentMap, "text"); text != "" {
+	// Select the variant on the presence of a string "text" or "blob" field,
+	// not on its emptiness. An empty resource is still a resource, and both
+	// fields marshal unconditionally, so treating "" as absent rejected
+	// payloads this library itself produces.
+	if text, ok := contentMap["text"].(string); ok {
 		return TextResourceContents{
 			Meta:     meta,
 			URI:      uri,
@@ -841,7 +845,7 @@ func ParseResourceContents(contentMap map[string]any) (ResourceContents, error) 
 		}, nil
 	}
 
-	if blob := ExtractString(contentMap, "blob"); blob != "" {
+	if blob, ok := contentMap["blob"].(string); ok {
 		return BlobResourceContents{
 			Meta:     meta,
 			URI:      uri,
