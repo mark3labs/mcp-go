@@ -29,6 +29,7 @@ type Server struct {
 
 	samplingHandler    client.SamplingHandler
 	elicitationHandler client.ElicitationHandler
+	rootsHandler       client.RootsHandler
 
 	cancel func()
 
@@ -154,6 +155,13 @@ func (s *Server) SetElicitationHandler(h client.ElicitationHandler) {
 	s.elicitationHandler = h
 }
 
+// SetRootsHandler registers a handler that responds to roots/list requests
+// (server.RequestRoots) made by tools under test. Must be called before Start().
+// The test client will advertise the roots capability during initialization.
+func (s *Server) SetRootsHandler(h client.RootsHandler) {
+	s.rootsHandler = h
+}
+
 // Start starts the server in a goroutine. Make sure to defer Close() after Start().
 // When using NewServer(), the returned server is already started.
 func (s *Server) Start(ctx context.Context) error {
@@ -161,16 +169,16 @@ func (s *Server) Start(ctx context.Context) error {
 
 	ctx, s.cancel = context.WithCancel(ctx)
 
-	// Capture handler state for the goroutine. Start must be called after any
-	// SetSamplingHandler / SetElicitationHandler calls, so there is no data race.
+	// Handler setters must be called before Start, so there is no data race.
 	samplingHandler := s.samplingHandler
 
 	// Start the MCP server in a goroutine
 	go func() {
 		defer s.wg.Done()
 
-		// Tools under test may still call server.RequestSampling and
-		// server.RequestElicitation directly. Protocol version 2026-07-28
+		// Tools under test may still call server.RequestSampling,
+		// server.RequestElicitation, and server.RequestRoots directly.
+		// Protocol version 2026-07-28
 		// replaced that pattern with multi round-trip requests, but the
 		// harness runs over stdio, which is genuinely bidirectional, so the
 		// old pattern is kept working here.
@@ -212,11 +220,14 @@ func (s *Server) Start(ctx context.Context) error {
 	if s.elicitationHandler != nil {
 		clientOpts = append(clientOpts, client.WithElicitationHandler(s.elicitationHandler))
 	}
+	if s.rootsHandler != nil {
+		clientOpts = append(clientOpts, client.WithRootsHandler(s.rootsHandler))
+	}
 
 	s.client = client.NewClient(s.transport, clientOpts...)
 
 	// Use client.Start instead of transport.Start so that bidirectional request
-	// handlers (sampling, elicitation) are registered before the Initialize handshake.
+	// handlers (sampling, elicitation, roots) are registered before the Initialize handshake.
 	if err := s.client.Start(ctx); err != nil {
 		return fmt.Errorf("client.Start(): %w", err)
 	}
