@@ -160,6 +160,19 @@ func handleRequest(request JSONRPCRequest) JSONRPCResponse {
 		})
 		fmt.Fprintf(os.Stdout, "%s\n", responseBytes)
 
+	case "debug/log_stderr":
+		// Write N kilobytes to stderr, then reply. Used to reproduce the
+		// stdio stderr-pipe deadlock (issue #956): without a draining reader
+		// the subprocess blocks once the OS pipe buffer (~64KB) fills.
+		var params struct {
+			Kilobytes int `json:"kilobytes"`
+		}
+		_ = json.Unmarshal(request.Params, &params)
+		line := strings.Repeat("x", 1023) + "\n"
+		for i := 0; i < params.Kilobytes; i++ {
+			_, _ = os.Stderr.WriteString(line)
+		}
+		response.Result = map[string]any{"logged": fmt.Sprintf("%dKB", params.Kilobytes)}
 	case "debug/echo_error_string":
 		all, _ := json.Marshal(request)
 		details := mcp.NewJSONRPCErrorDetails(mcp.METHOD_NOT_FOUND, string(all), nil)

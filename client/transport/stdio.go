@@ -43,6 +43,7 @@ type Stdio struct {
 	stdinMu          sync.Mutex
 	stdout           *bufio.Reader
 	stderr           io.ReadCloser
+	stderrCh         chan []byte
 	responses        map[string]chan *JSONRPCResponse
 	mu               sync.RWMutex
 	done             chan struct{}
@@ -62,6 +63,13 @@ type Stdio struct {
 const (
 	gracefulShutdownTimeout = 2 * time.Second
 	forceKillTimeout        = 3 * time.Second
+
+	// stderrChunkSize is the read buffer size used by the stderr drain goroutine.
+	stderrChunkSize = 32 * 1024
+	// stderrBufferChunks bounds how much undelivered stderr output is retained
+	// for Stderr() consumers. When full, the newest chunk is dropped so the
+	// subprocess can never block writing to a full, unread pipe.
+	stderrBufferChunks = 16
 )
 
 func waitForProcessExit(waitErrCh <-chan error, timeout time.Duration) (error, bool) {
@@ -113,6 +121,7 @@ func NewIO(input io.Reader, output io.WriteCloser, logging io.ReadCloser) *Stdio
 		stderr: logging,
 
 		responses: make(map[string]chan *JSONRPCResponse),
+		stderrCh:  make(chan []byte, stderrBufferChunks),
 		done:      make(chan struct{}),
 		ctx:       context.Background(),
 		logger:    slog.Default(),
@@ -147,6 +156,7 @@ func NewStdioWithOptions(
 		env:     env,
 
 		responses: make(map[string]chan *JSONRPCResponse),
+		stderrCh:  make(chan []byte, stderrBufferChunks),
 		done:      make(chan struct{}),
 		ctx:       context.Background(),
 		logger:    slog.Default(),
@@ -185,6 +195,13 @@ func (c *Stdio) Start(ctx context.Context) error {
 		c.readResponses(ready)
 	}()
 	<-ready
+
+	// Drain the subprocess's stderr so a server that logs more than the OS pipe
+	// buffer can never block in write(2) and stop answering on stdout. Stderr()
+	// consumers read the same stream through the internal buffer (see readStderr).
+	if c.stderr != nil {
+		go c.readStderr()
+	}
 
 	return nil
 }
@@ -585,8 +602,67 @@ func (c *Stdio) sendResponse(response JSONRPCResponse) {
 	}
 }
 
+// readStderr continuously drains the subprocess's stderr into an internal
+// buffer so that the OS pipe never fills up. A server that writes more than the
+// pipe buffer to stderr would otherwise block in write(2) and stop answering on
+// stdout, taking the whole stdio channel down. The buffered stream is exposed
+// to callers via Stderr(). When the buffer is full the newest chunk is dropped
+// rather than letting the subprocess block.
+func (c *Stdio) readStderr() {
+	defer close(c.stderrCh)
+	buf := make([]byte, stderrChunkSize)
+	for {
+		n, err := c.stderr.Read(buf)
+		if n > 0 {
+			chunk := make([]byte, n)
+			copy(chunk, buf[:n])
+			select {
+			case c.stderrCh <- chunk:
+			default:
+				// Buffer full: drop the newest chunk so the subprocess keeps
+				// making progress instead of blocking on the unread pipe.
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// stderrReader reads buffered stderr output produced by the readStderr drain
+// goroutine. It returns io.EOF once the subprocess's stderr stream is closed.
+type stderrReader struct {
+	ch  chan []byte
+	buf []byte
+}
+
+func (r *stderrReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if len(r.buf) == 0 {
+		chunk, ok := <-r.ch
+		if !ok {
+			return 0, io.EOF
+		}
+		r.buf = chunk
+	}
+	n := copy(p, r.buf)
+	r.buf = r.buf[n:]
+	return n, nil
+}
+
 // Stderr returns a reader for the stderr output of the subprocess.
 // This can be used to capture error messages or logs from the subprocess.
+//
+// The underlying stderr pipe is drained continuously by the transport, so a
+// caller that never reads it cannot deadlock the subprocess. The returned
+// reader replays that stream through a bounded buffer (up to ~512KB of the most
+// recent output); if a consumer reads slower than the subprocess writes, the
+// newest output is dropped rather than blocking the subprocess.
 func (c *Stdio) Stderr() io.Reader {
-	return c.stderr
+	if c.stderr == nil {
+		return nil
+	}
+	return &stderrReader{ch: c.stderrCh}
 }
