@@ -123,6 +123,8 @@ func TestCallToolRequest_SliceWithMixedTypes(t *testing.T) {
 		_, err := req.RequireIntSlice("mixed_int_slice")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "cannot be converted to int")
+		// the offending element is at index 1, not 0
+		assert.Contains(t, err.Error(), "item 1")
 	})
 
 	t.Run("GetFloatSlice with mixed types", func(t *testing.T) {
