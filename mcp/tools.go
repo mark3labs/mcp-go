@@ -396,8 +396,8 @@ func (r CallToolRequest) RequireIntSlice(key string) ([]int, error) {
 				case float64:
 					result = append(result, int(num))
 				case string:
-					if i, err := strconv.Atoi(num); err == nil {
-						result = append(result, i)
+					if n, err := strconv.Atoi(num); err == nil {
+						result = append(result, n)
 					} else {
 						return nil, fmt.Errorf("item %d in argument %q cannot be converted to int", i, key)
 					}
