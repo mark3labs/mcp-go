@@ -20,3 +20,29 @@ func NewStreamableHttpClient(baseURL string, options ...transport.StreamableHTTP
 	}
 	return NewClient(trans, clientOptions...), nil
 }
+
+// NewStreamableHTTPClient creates a new streamable-http-based MCP client
+// with the given base URL, applying the provided transport-level options
+// when constructing the transport and the provided client-level options
+// to the returned client.
+//
+// Pass transport options (e.g. transport.WithContinuousListening) as a
+// slice in transportOpts, and client options (e.g. WithTracer,
+// WithPropagator) as the variadic opts. When the transport reports an
+// active session ID at construction time, WithSession is appended
+// automatically so the returned client skips re-initialisation.
+func NewStreamableHTTPClient(
+	baseURL string,
+	transportOpts []transport.StreamableHTTPCOption,
+	opts ...ClientOption,
+) (*Client, error) {
+	trans, err := transport.NewStreamableHTTP(baseURL, transportOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create streamable-http transport: %w", err)
+	}
+	clientOpts := opts
+	if trans.GetSessionId() != "" {
+		clientOpts = append(clientOpts, WithSession())
+	}
+	return NewClient(trans, clientOpts...), nil
+}
