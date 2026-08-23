@@ -211,6 +211,21 @@ func TestAppendSSEData(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(data), &msg))
 }
 
+// TestSSEHandleDuplicateEndpoint verifies that repeated endpoint handshake
+// events cannot panic or replace the first accepted message endpoint.
+func TestSSEHandleDuplicateEndpoint(t *testing.T) {
+	t.Parallel()
+
+	transport, err := NewSSE("https://example.com/sse")
+	require.NoError(t, err)
+
+	require.NotPanics(t, func() {
+		transport.handleSSEEvent("endpoint", "/messages/first")
+		transport.handleSSEEvent("endpoint", "/messages/second")
+	})
+	require.Equal(t, "https://example.com/messages/first", transport.endpoint.String())
+}
+
 func TestSSE(t *testing.T) {
 	// Compile mock server
 	url, closeF := startMockSSEEchoServer()

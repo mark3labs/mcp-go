@@ -32,6 +32,7 @@ type SSE struct {
 	onNotification func(mcp.JSONRPCNotification)
 	notifyMu       sync.RWMutex
 	endpointChan   chan struct{}
+	endpointOnce   sync.Once
 	headers        map[string]string
 	headerFunc     HTTPHeaderFunc
 	host           string
@@ -374,8 +375,12 @@ func (c *SSE) handleSSEEvent(event, data string) {
 			c.logger.Error("Endpoint origin does not match connection origin")
 			return
 		}
-		c.endpoint = endpoint
-		close(c.endpointChan)
+		// The endpoint event is a one-time handshake. Keep the first valid
+		// endpoint and prevent duplicate server events from closing the channel twice.
+		c.endpointOnce.Do(func() {
+			c.endpoint = endpoint
+			close(c.endpointChan)
+		})
 
 	case "message":
 		var baseMessage JSONRPCResponse
