@@ -32,7 +32,8 @@ type SSE struct {
 	onNotification func(mcp.JSONRPCNotification)
 	notifyMu       sync.RWMutex
 	endpointChan   chan struct{}
-	endpointOnce   sync.Once
+	endpointMu     sync.RWMutex
+	endpointSet    bool
 	headers        map[string]string
 	headerFunc     HTTPHeaderFunc
 	host           string
@@ -167,6 +168,7 @@ func (c *SSE) Start(ctx context.Context) error {
 	if c.started.Load() {
 		return nil
 	}
+	endpointChan := c.resetEndpointHandshake()
 
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancelSSEStream = cancel
@@ -271,7 +273,7 @@ func (c *SSE) Start(ctx context.Context) error {
 	defer timer.Stop()
 
 	select {
-	case <-c.endpointChan:
+	case <-endpointChan:
 		// Endpoint received, proceed
 	case <-ctx.Done():
 		return fmt.Errorf("context cancelled while waiting for endpoint: %w", ctx.Err())
@@ -282,6 +284,20 @@ func (c *SSE) Start(ctx context.Context) error {
 
 	c.started.Store(true)
 	return nil
+}
+
+// resetEndpointHandshake starts a fresh endpoint handshake for one Start attempt.
+//
+// A delayed endpoint event can arrive after a previous attempt times out. Replacing
+// the channel and endpoint prevents that stale event from satisfying a later retry.
+func (c *SSE) resetEndpointHandshake() chan struct{} {
+	c.endpointMu.Lock()
+	defer c.endpointMu.Unlock()
+
+	c.endpoint = nil
+	c.endpointSet = false
+	c.endpointChan = make(chan struct{})
+	return c.endpointChan
 }
 
 // readSSE continuously reads the SSE stream and processes events.
@@ -375,12 +391,16 @@ func (c *SSE) handleSSEEvent(event, data string) {
 			c.logger.Error("Endpoint origin does not match connection origin")
 			return
 		}
+		c.endpointMu.Lock()
+		defer c.endpointMu.Unlock()
 		// The endpoint event is a one-time handshake. Keep the first valid
 		// endpoint and prevent duplicate server events from closing the channel twice.
-		c.endpointOnce.Do(func() {
-			c.endpoint = endpoint
-			close(c.endpointChan)
-		})
+		if c.endpointSet {
+			return
+		}
+		c.endpoint = endpoint
+		c.endpointSet = true
+		close(c.endpointChan)
 
 	case "message":
 		var baseMessage JSONRPCResponse
@@ -753,6 +773,8 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 
 // GetEndpoint returns the current endpoint URL for the SSE connection.
 func (c *SSE) GetEndpoint() *url.URL {
+	c.endpointMu.RLock()
+	defer c.endpointMu.RUnlock()
 	return c.endpoint
 }
 

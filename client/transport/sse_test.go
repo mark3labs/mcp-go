@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -224,6 +225,44 @@ func TestSSEHandleDuplicateEndpoint(t *testing.T) {
 		transport.handleSSEEvent("endpoint", "/messages/second")
 	})
 	require.Equal(t, "https://example.com/messages/first", transport.endpoint.String())
+}
+
+func TestSSEStartRetriesWithFreshEndpointHandshake(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher := w.(http.Flusher)
+		flusher.Flush()
+
+		if attempts.Add(1) == 1 {
+			// Keep the first handshake incomplete until its Start context expires.
+			<-r.Context().Done()
+			return
+		}
+
+		_, _ = fmt.Fprint(w, "event: endpoint\ndata: /messages/retry\n\n")
+		flusher.Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	transport, err := NewSSE(server.URL, WithEndpointTimeout(50*time.Millisecond))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = transport.Close() })
+
+	firstCtx, firstCancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer firstCancel()
+	require.Error(t, transport.Start(firstCtx))
+
+	// Simulate an endpoint event delivered late by the cancelled first stream.
+	// The next Start must not treat this stale endpoint as a successful retry.
+	transport.handleSSEEvent("endpoint", "/messages/stale")
+
+	secondCtx, secondCancel := context.WithTimeout(t.Context(), time.Second)
+	defer secondCancel()
+	require.NoError(t, transport.Start(secondCtx))
+	require.Equal(t, server.URL+"/messages/retry", transport.GetEndpoint().String())
 }
 
 func TestSSE(t *testing.T) {
