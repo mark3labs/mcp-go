@@ -2,6 +2,7 @@ package transport
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -43,6 +44,8 @@ type Stdio struct {
 	stdinMu          sync.Mutex
 	stdout           *bufio.Reader
 	stderr           io.ReadCloser
+	stderrWriter     io.Writer
+	stderrRing       *stderrBuffer
 	responses        map[string]chan *JSONRPCResponse
 	mu               sync.RWMutex
 	done             chan struct{}
@@ -62,7 +65,72 @@ type Stdio struct {
 const (
 	gracefulShutdownTimeout = 2 * time.Second
 	forceKillTimeout        = 3 * time.Second
+
+	// stderrBufferSize bounds how much recent stderr output the transport
+	// keeps available through Stderr(). The OS pipe itself is only ~64KB, so
+	// a larger buffer would not add fidelity once the child outruns readers.
+	stderrBufferSize = 64 * 1024
 )
+
+// stderrBuffer is a bounded, drop-oldest buffer of the subprocess's stderr
+// output. The transport writes into it continuously so the OS pipe never
+// fills up and blocks the child, while callers can still read recent stderr
+// through Stderr(). Reads block until data is available or the stream ends.
+type stderrBuffer struct {
+	mu   sync.Mutex
+	cond *sync.Cond
+	buf  bytes.Buffer
+	done bool
+}
+
+func newStderrBuffer() *stderrBuffer {
+	b := &stderrBuffer{}
+	b.cond = sync.NewCond(&b.mu)
+	return b
+}
+
+// Write appends p to the buffer, dropping the oldest data when the buffer is
+// full. It never blocks, so a child writing to stderr can never deadlock the
+// transport.
+func (b *stderrBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.done {
+		return 0, io.ErrClosedPipe
+	}
+	if len(p) > stderrBufferSize {
+		p = p[len(p)-stderrBufferSize:]
+	}
+	if overflow := b.buf.Len() + len(p) - stderrBufferSize; overflow > 0 {
+		b.buf.Next(overflow)
+	}
+	b.buf.Write(p)
+	b.cond.Broadcast()
+	return len(p), nil
+}
+
+// Read returns buffered data, blocking until data is available or the stream
+// is marked done.
+func (b *stderrBuffer) Read(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for b.buf.Len() == 0 && !b.done {
+		b.cond.Wait()
+	}
+	if b.buf.Len() == 0 {
+		return 0, io.EOF
+	}
+	return b.buf.Read(p)
+}
+
+// Close marks the stream as ended and wakes up blocked readers.
+func (b *stderrBuffer) Close() error {
+	b.mu.Lock()
+	b.done = true
+	b.cond.Broadcast()
+	b.mu.Unlock()
+	return nil
+}
 
 func waitForProcessExit(waitErrCh <-chan error, timeout time.Duration) (error, bool) {
 	select {
@@ -103,19 +171,15 @@ func WithCommandLogger(logger *slog.Logger) StdioOption {
 	}
 }
 
-// NewIO returns a new stdio-based transport using existing input, output, and
-// logging streams instead of spawning a subprocess.
-// This is useful for testing and simulating client behavior.
-func NewIO(input io.Reader, output io.WriteCloser, logging io.ReadCloser) *Stdio {
-	return &Stdio{
-		stdin:  output,
-		stdout: bufio.NewReader(input),
-		stderr: logging,
-
-		responses: make(map[string]chan *JSONRPCResponse),
-		done:      make(chan struct{}),
-		ctx:       context.Background(),
-		logger:    slog.Default(),
+// WithCommandStderrWriter sets the destination for the subprocess's stderr
+// output. The default destination is io.Discard: the transport drains stderr
+// continuously so that the OS pipe (about 64KB) can never fill up and block
+// the child process, which would deadlock the whole stdio channel.
+// Pass os.Stderr, a log file, or an in-memory buffer to capture the child's
+// stderr instead.
+func WithCommandStderrWriter(w io.Writer) StdioOption {
+	return func(s *Stdio) {
+		s.stderrWriter = w
 	}
 }
 
@@ -157,6 +221,22 @@ func NewStdioWithOptions(
 	}
 
 	return s
+}
+
+// NewIO returns a new stdio-based transport using existing input, output, and
+// logging streams instead of spawning a subprocess.
+// This is useful for testing and simulating client behavior.
+func NewIO(input io.Reader, output io.WriteCloser, logging io.ReadCloser) *Stdio {
+	return &Stdio{
+		stdin:  output,
+		stdout: bufio.NewReader(input),
+		stderr: logging,
+
+		responses: make(map[string]chan *JSONRPCResponse),
+		done:      make(chan struct{}),
+		ctx:       context.Background(),
+		logger:    slog.Default(),
+	}
 }
 
 func (c *Stdio) Start(ctx context.Context) error {
@@ -219,9 +299,14 @@ func (c *Stdio) spawnCommand(ctx context.Context) error {
 		return fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("failed to create stderr pipe: %w", err)
+	// Respect a stderr destination configured by a custom command factory;
+	// otherwise capture stderr so it can be drained below.
+	var stderr io.ReadCloser
+	if cmd.Stderr == nil {
+		stderr, err = cmd.StderrPipe()
+		if err != nil {
+			return fmt.Errorf("failed to create stderr pipe: %w", err)
+		}
 	}
 
 	c.cmd = cmd
@@ -231,6 +316,25 @@ func (c *Stdio) spawnCommand(ctx context.Context) error {
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start command: %w", err)
+	}
+
+	// Drain stderr continuously. An unread pipe holds only about 64KB;
+	// once it fills, the child blocks inside write(2) and stops answering
+	// on stdout, deadlocking every request (including Ping) with no error.
+	// The output is written to the bounded ring buffer (readable through
+	// Stderr()) and to stderrWriter, which defaults to io.Discard.
+	if stderr != nil {
+		c.stderrRing = newStderrBuffer()
+		stderrDest := c.stderrWriter
+		if stderrDest == nil {
+			stderrDest = io.Discard
+		}
+		go func() {
+			_, _ = io.Copy(io.MultiWriter(c.stderrRing, stderrDest), stderr)
+			// The pipe is exhausted (child exited or Close() closed it);
+			// wake up any readers blocked in Stderr().Read.
+			_ = c.stderrRing.Close()
+		}()
 	}
 
 	return nil
@@ -587,6 +691,14 @@ func (c *Stdio) sendResponse(response JSONRPCResponse) {
 
 // Stderr returns a reader for the stderr output of the subprocess.
 // This can be used to capture error messages or logs from the subprocess.
+//
+// The transport drains the subprocess's stderr into a bounded buffer so the
+// OS pipe never fills up and deadlocks the child. The reader returns the most
+// recent output; older output is dropped once the buffer is full. To capture
+// the full, real-time stream, use WithCommandStderrWriter instead.
 func (c *Stdio) Stderr() io.Reader {
+	if c.stderrRing != nil {
+		return c.stderrRing
+	}
 	return c.stderr
 }
