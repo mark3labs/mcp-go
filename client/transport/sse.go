@@ -32,6 +32,7 @@ type SSE struct {
 	onNotification func(mcp.JSONRPCNotification)
 	notifyMu       sync.RWMutex
 	endpointChan   chan struct{}
+	endpointOnce   sync.Once
 	headers        map[string]string
 	headerFunc     HTTPHeaderFunc
 	host           string
@@ -374,9 +375,15 @@ func (c *SSE) handleSSEEvent(event, data string) {
 			c.logger.Error("Endpoint origin does not match connection origin")
 			return
 		}
+		c.mu.Lock()
 		c.endpoint = endpoint
-		close(c.endpointChan)
-
+		c.mu.Unlock()
+		// The SSE spec sends a single endpoint event, but a proxy or a
+		// re-broadcasting server can emit it more than once. Closing the
+		// channel twice panics, so guard the close with sync.Once.
+		c.endpointOnce.Do(func() {
+			close(c.endpointChan)
+		})
 	case "message":
 		var baseMessage JSONRPCResponse
 		if err := json.Unmarshal([]byte(data), &baseMessage); err != nil {
@@ -401,16 +408,16 @@ func (c *SSE) handleSSEEvent(event, data string) {
 		// Create string key for map lookup
 		idKey := baseMessage.ID.String()
 
-		c.mu.RLock()
+		// Hold the write lock while sending: Close() also takes the write
+		// lock to close pending response channels, so the send can never
+		// race a close and panic with "send on closed channel".
+		c.mu.Lock()
 		ch, exists := c.responses[idKey]
-		c.mu.RUnlock()
-
 		if exists {
 			ch <- &baseMessage
-			c.mu.Lock()
 			delete(c.responses, idKey)
-			c.mu.Unlock()
 		}
+		c.mu.Unlock()
 	}
 }
 
@@ -440,7 +447,12 @@ func (c *SSE) SendRequest(
 	if c.closed.Load() {
 		return nil, fmt.Errorf("transport has been closed")
 	}
-	if c.endpoint == nil {
+
+	c.mu.RLock()
+	endpoint := c.endpoint
+	c.mu.RUnlock()
+
+	if endpoint == nil {
 		return nil, fmt.Errorf("endpoint not received")
 	}
 
@@ -451,7 +463,7 @@ func (c *SSE) SendRequest(
 	}
 
 	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint.String(), bytes.NewReader(requestBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(requestBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -639,7 +651,11 @@ func (c *SSE) SetProtocolVersion(version string) {
 
 // SendNotification sends a JSON-RPC notification to the server without expecting a response.
 func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNotification) error {
-	if c.endpoint == nil {
+	c.mu.RLock()
+	endpoint := c.endpoint
+	c.mu.RUnlock()
+
+	if endpoint == nil {
 		return fmt.Errorf("endpoint not received")
 	}
 
@@ -651,7 +667,7 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 	req, err := http.NewRequestWithContext(
 		ctx,
 		"POST",
-		c.endpoint.String(),
+		endpoint.String(),
 		bytes.NewReader(notificationBytes),
 	)
 	if err != nil {
@@ -748,6 +764,8 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 
 // GetEndpoint returns the current endpoint URL for the SSE connection.
 func (c *SSE) GetEndpoint() *url.URL {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.endpoint
 }
 
