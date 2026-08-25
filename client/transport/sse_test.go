@@ -678,6 +678,58 @@ func TestSSE(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("IntentionalCloseDoesNotNotify", func(t *testing.T) {
+		// Close() cancels the stream context, so the read errors out just like a
+		// dropped connection would. The handler must not fire in that case,
+		// otherwise the caller reconnects a transport it deliberately shut down.
+		var connectionLostCalled bool
+		var mu sync.Mutex
+
+		mockReader := &mockReaderWithError{
+			data: []byte("event: endpoint\ndata: /message\n\n"),
+			err:  context.Canceled,
+		}
+
+		url, closeF := startMockSSEEchoServer()
+		defer closeF()
+
+		trans, err := NewSSE(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		trans.SetConnectionLostHandler(func(err error) {
+			mu.Lock()
+			defer mu.Unlock()
+			connectionLostCalled = true
+		})
+
+		// Mimic Close() having already flipped the flag before the read failed.
+		trans.closed.Store(true)
+
+		done := make(chan struct{})
+		go func() {
+			trans.readSSE(mockReader)
+			close(done)
+		}()
+
+		select {
+		case <-done:
+		case <-time.After(1 * time.Second):
+			t.Fatal("readSSE did not return after intentional close")
+		}
+
+		// Let any erroneously-scheduled handler run before asserting it didn't.
+		time.Sleep(50 * time.Millisecond)
+
+		mu.Lock()
+		called := connectionLostCalled
+		mu.Unlock()
+		if called {
+			t.Fatal("connection lost handler fired on intentional close")
+		}
+	})
 }
 
 func TestSSEErrors(t *testing.T) {
