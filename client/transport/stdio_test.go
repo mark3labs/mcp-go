@@ -27,6 +27,8 @@ func compileTestServer(outputPath string) error {
 	return compileTestServerFromSource(outputPath, "../../testdata/mockstdio_server.go")
 }
 
+// compileTestServerFromSource builds a mock JSON-RPC server binary from the
+// given source file into outputPath, using a temporary build cache.
 func compileTestServerFromSource(outputPath, sourcePath string) error {
 	cmd := exec.Command(
 		"go",
@@ -1046,6 +1048,8 @@ func TestStdio_ConcurrentWritesDoNotInterleave(t *testing.T) {
 	}
 }
 
+// generateRandomString returns a deterministic pseudo-random string of the
+// given size by cycling through a fixed charset.
 func generateRandomString(size int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 "
 
@@ -1063,12 +1067,14 @@ type syncBuffer struct {
 	buf bytes.Buffer
 }
 
+// Write appends p to the guarded buffer.
 func (b *syncBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.Write(p)
 }
 
+// Len returns the guarded buffer's length.
 func (b *syncBuffer) Len() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -1166,6 +1172,7 @@ type failingWriter struct {
 	writes int
 }
 
+// Write accepts the first write and fails every subsequent one.
 func (w *failingWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()

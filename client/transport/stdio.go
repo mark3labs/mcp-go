@@ -83,6 +83,7 @@ type stderrBuffer struct {
 	done bool
 }
 
+// newStderrBuffer returns an empty, open stderr buffer ready for writing.
 func newStderrBuffer() *stderrBuffer {
 	b := &stderrBuffer{}
 	b.cond = sync.NewCond(&b.mu)

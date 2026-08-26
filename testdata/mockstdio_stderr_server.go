@@ -22,6 +22,8 @@ type JSONRPCResponse struct {
 	Result  any            `json:"result,omitempty"`
 }
 
+// main writes ~256KB to stderr before serving newline-delimited JSON-RPC
+// requests from stdin.
 func main() {
 	// Write far more than an OS pipe buffer (~64KB) to stderr before answering
 	// anything. A client that never drains stderr deadlocks right here: the

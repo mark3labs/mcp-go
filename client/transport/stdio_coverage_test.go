@@ -36,8 +36,10 @@ type errWriteCloser struct {
 	err    error
 }
 
+// Write reports the full write length and returns the configured error.
 func (w *errWriteCloser) Write(p []byte) (int, error) { return len(p), w.err }
 
+// Close marks the writer closed and returns the configured error.
 func (w *errWriteCloser) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -45,6 +47,7 @@ func (w *errWriteCloser) Close() error {
 	return w.err
 }
 
+// IsClosed reports whether Close has been called.
 func (w *errWriteCloser) IsClosed() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -54,13 +57,20 @@ func (w *errWriteCloser) IsClosed() bool {
 // failingReadCloser returns err on every Read and closeErr on Close.
 type failingReadCloser struct{ err, closeErr error }
 
+// Read always returns the configured error.
 func (r failingReadCloser) Read([]byte) (int, error) { return 0, r.err }
-func (r failingReadCloser) Close() error             { return r.closeErr }
 
+// Close returns the configured close error.
+func (r failingReadCloser) Close() error { return r.closeErr }
+
+// TestStdio_GetSessionId verifies the session ID accessor returns an empty
+// string for the stdio transport.
 func TestStdio_GetSessionId(t *testing.T) {
 	require.Equal(t, "", newBareStdio().GetSessionId())
 }
 
+// TestStdio_WithCommandLogger verifies WithCommandLogger keeps a non-nil
+// logger and falls back to slog.Default for nil.
 func TestStdio_WithCommandLogger(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -73,6 +83,8 @@ func TestStdio_WithCommandLogger(t *testing.T) {
 	require.Same(t, slog.Default(), stdio.logger)
 }
 
+// TestStdio_SendRequest_ClosedTransport verifies SendRequest fails with
+// ErrTransportClosed after the transport is closed.
 func TestStdio_SendRequest_ClosedTransport(t *testing.T) {
 	stdio := newBareStdio()
 	close(stdio.done)
@@ -83,6 +95,8 @@ func TestStdio_SendRequest_ClosedTransport(t *testing.T) {
 	require.ErrorIs(t, err, ErrTransportClosed)
 }
 
+// TestStdio_SendRequest_ContextCanceled verifies SendRequest fails with
+// context.Canceled when the context is already canceled.
 func TestStdio_SendRequest_ContextCanceled(t *testing.T) {
 	stdio := newBareStdio()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -94,6 +108,8 @@ func TestStdio_SendRequest_ContextCanceled(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+// TestStdio_SendRequest_NotStarted verifies SendRequest fails with
+// "stdio client not started" before Start has run.
 func TestStdio_SendRequest_NotStarted(t *testing.T) {
 	_, err := newBareStdio().SendRequest(t.Context(), JSONRPCRequest{
 		JSONRPC: "2.0", ID: mcp.NewRequestId(int64(1)),
@@ -101,6 +117,8 @@ func TestStdio_SendRequest_NotStarted(t *testing.T) {
 	require.EqualError(t, err, "stdio client not started")
 }
 
+// TestStdio_SendRequest_WriteError verifies SendRequest wraps a stdin write
+// failure.
 func TestStdio_SendRequest_WriteError(t *testing.T) {
 	stdio := newBareStdio()
 	writeErr := errors.New("stdin broken")
@@ -116,13 +134,18 @@ func TestStdio_SendRequest_WriteError(t *testing.T) {
 // race transport shutdown with an in-flight request write.
 type doneClosingWriter struct{ done chan struct{} }
 
+// Write closes the done channel once and reports the full write length.
 func (w *doneClosingWriter) Write(p []byte) (int, error) {
 	close(w.done)
 	return len(p), nil
 }
 
+// Close is a no-op.
 func (w *doneClosingWriter) Close() error { return nil }
 
+// TestStdio_SendRequest_DoneWithoutResponse verifies a request whose transport
+// closes before delivery fails with ErrTransportClosed and cleans up its
+// pending response channel.
 func TestStdio_SendRequest_DoneWithoutResponse(t *testing.T) {
 	stdio := newBareStdio()
 	stdio.stdin = &doneClosingWriter{done: stdio.done}
@@ -150,6 +173,8 @@ type injectingWriter struct {
 	idKey string
 }
 
+// Write closes the done channel once and delivers a canned response into the
+// request's freshly registered response channel.
 func (w *injectingWriter) Write(p []byte) (int, error) {
 	w.once.Do(func() {
 		close(w.done)
@@ -167,8 +192,11 @@ func (w *injectingWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// Close is a no-op.
 func (w *injectingWriter) Close() error { return nil }
 
+// TestStdio_SendRequest_DoneWithBufferedResponse verifies a response delivered
+// just before close wins over ErrTransportClosed.
 func TestStdio_SendRequest_DoneWithBufferedResponse(t *testing.T) {
 	stdio := newBareStdio()
 	idKey := mcp.NewRequestId(int64(1)).String()
@@ -183,6 +211,8 @@ func TestStdio_SendRequest_DoneWithBufferedResponse(t *testing.T) {
 	require.Equal(t, json.RawMessage(`"ok"`), resp.Result)
 }
 
+// TestStdio_SendRequest_ContextCanceledAfterWrite verifies a canceled context
+// wins once the request has been written.
 func TestStdio_SendRequest_ContextCanceledAfterWrite(t *testing.T) {
 	stdio := newBareStdio()
 	stdio.stdin = &errWriteCloser{}
@@ -195,6 +225,8 @@ func TestStdio_SendRequest_ContextCanceledAfterWrite(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+// TestStdio_SendNotification_NotStarted verifies SendNotification fails with
+// "stdio client not started" before Start has run.
 func TestStdio_SendNotification_NotStarted(t *testing.T) {
 	err := newBareStdio().SendNotification(t.Context(), mcp.JSONRPCNotification{
 		JSONRPC: "2.0",
@@ -205,6 +237,8 @@ func TestStdio_SendNotification_NotStarted(t *testing.T) {
 	require.EqualError(t, err, "stdio client not started")
 }
 
+// TestStdio_SendNotification_ClosedTransport verifies SendNotification fails
+// with ErrTransportClosed after the transport is closed.
 func TestStdio_SendNotification_ClosedTransport(t *testing.T) {
 	stdio := newBareStdio()
 	close(stdio.done)
@@ -218,6 +252,8 @@ func TestStdio_SendNotification_ClosedTransport(t *testing.T) {
 	require.ErrorIs(t, err, ErrTransportClosed)
 }
 
+// TestStdio_SendNotification_WriteError verifies SendNotification wraps a
+// stdin write failure.
 func TestStdio_SendNotification_WriteError(t *testing.T) {
 	stdio := newBareStdio()
 	stdio.stdin = &errWriteCloser{err: errors.New("stdin broken")}
@@ -231,6 +267,8 @@ func TestStdio_SendNotification_WriteError(t *testing.T) {
 	require.EqualError(t, err, "failed to write notification: stdin broken")
 }
 
+// TestStdio_SendNotification_Success verifies a notification is written to
+// stdin without error.
 func TestStdio_SendNotification_Success(t *testing.T) {
 	stdio := newBareStdio()
 	sink := &concurrentBuffer{}
@@ -253,20 +291,25 @@ type concurrentBuffer struct {
 	buf strings.Builder
 }
 
+// Write appends p to the guarded builder.
 func (b *concurrentBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.Write(p)
 }
 
+// Close is a no-op.
 func (b *concurrentBuffer) Close() error { return nil }
 
+// String returns the buffered output.
 func (b *concurrentBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
 
+// TestStdio_HandleIncomingRequest_NoHandler verifies an incoming request
+// without a handler is answered with a -32601 method-not-found error.
 func TestStdio_HandleIncomingRequest_NoHandler(t *testing.T) {
 	stdio := newBareStdio()
 	stdio.ctx = t.Context()
@@ -280,6 +323,8 @@ func TestStdio_HandleIncomingRequest_NoHandler(t *testing.T) {
 	require.Contains(t, sink.String(), "No request handler configured")
 }
 
+// TestStdio_HandleIncomingRequest_HandlerResponds verifies a handler's
+// response is written back to the client.
 func TestStdio_HandleIncomingRequest_HandlerResponds(t *testing.T) {
 	stdio := newBareStdio()
 	stdio.ctx = t.Context()
@@ -299,6 +344,8 @@ func TestStdio_HandleIncomingRequest_HandlerResponds(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond)
 }
 
+// TestStdio_HandleIncomingRequest_HandlerError verifies a handler error is
+// answered with a -32603 internal error.
 func TestStdio_HandleIncomingRequest_HandlerError(t *testing.T) {
 	stdio := newBareStdio()
 	stdio.ctx = t.Context()
@@ -319,6 +366,8 @@ func TestStdio_HandleIncomingRequest_HandlerError(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond)
 }
 
+// TestStdio_HandleIncomingRequest_HandlerNilResponse verifies a nil handler
+// response is not written back.
 func TestStdio_HandleIncomingRequest_HandlerNilResponse(t *testing.T) {
 	stdio := newBareStdio()
 	stdio.ctx = t.Context()
@@ -343,6 +392,8 @@ func TestStdio_HandleIncomingRequest_HandlerNilResponse(t *testing.T) {
 	require.NotContains(t, sink.String(), "result")
 }
 
+// TestStdio_HandleIncomingRequest_CtxCanceled verifies the handler is not
+// invoked with a canceled context and an internal error is answered instead.
 func TestStdio_HandleIncomingRequest_CtxCanceled(t *testing.T) {
 	stdio := newBareStdio()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -366,6 +417,8 @@ func TestStdio_HandleIncomingRequest_CtxCanceled(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond)
 }
 
+// TestStdio_SendResponse_MarshalError verifies sendResponse skips writing a
+// response that cannot be marshaled.
 func TestStdio_SendResponse_MarshalError(t *testing.T) {
 	stdio := newBareStdio()
 	sink := &concurrentBuffer{}
@@ -378,6 +431,8 @@ func TestStdio_SendResponse_MarshalError(t *testing.T) {
 	require.Empty(t, sink.String())
 }
 
+// TestStdio_SendResponse_WriteError verifies sendResponse logs rather than
+// propagates a stdin write failure.
 func TestStdio_SendResponse_WriteError(t *testing.T) {
 	stdio := newBareStdio()
 	stdio.stdin = &errWriteCloser{err: errors.New("stdin broken")}
@@ -388,6 +443,8 @@ func TestStdio_SendResponse_WriteError(t *testing.T) {
 	})
 }
 
+// TestStdio_Close_CleanupErrors verifies Close captures stdin close errors and
+// is a no-op on the second call.
 func TestStdio_Close_CleanupErrors(t *testing.T) {
 	// Both stdin and stderr close errors must be captured by Close.
 	stdio := newBareStdio()
@@ -401,6 +458,8 @@ func TestStdio_Close_CleanupErrors(t *testing.T) {
 	require.NoError(t, stdio.Close())
 }
 
+// TestStdio_ReadResponses_DoneBeforeRead verifies readResponses returns
+// immediately when done is already closed.
 func TestStdio_ReadResponses_DoneBeforeRead(t *testing.T) {
 	stdio := newBareStdio()
 	close(stdio.done)
@@ -411,6 +470,8 @@ func TestStdio_ReadResponses_DoneBeforeRead(t *testing.T) {
 	})
 }
 
+// TestStdio_ReadResponses_EOFClosesDone verifies readResponses closes done on
+// stdout EOF so in-flight requests unblock.
 func TestStdio_ReadResponses_EOFClosesDone(t *testing.T) {
 	stdio := newBareStdio()
 	stdio.stdout = bufio.NewReader(strings.NewReader(""))
@@ -426,6 +487,8 @@ func TestStdio_ReadResponses_EOFClosesDone(t *testing.T) {
 	}
 }
 
+// TestStdio_ReadResponses_ReadErrorLogsAndClosesDone verifies a stdout read
+// error closes done without panicking.
 func TestStdio_ReadResponses_ReadErrorLogsAndClosesDone(t *testing.T) {
 	stdio := newBareStdio()
 	stdio.stdout = bufio.NewReader(failingReadCloser{err: errors.New("stdout exploded")})
@@ -441,6 +504,8 @@ func TestStdio_ReadResponses_ReadErrorLogsAndClosesDone(t *testing.T) {
 	}
 }
 
+// TestStdio_ReadResponses_NotifiesHandler verifies notifications read from
+// stdout are delivered to the registered handler.
 func TestStdio_ReadResponses_NotifiesHandler(t *testing.T) {
 	stdio := newBareStdio()
 	stdio.stdout = bufio.NewReader(strings.NewReader(
@@ -469,6 +534,8 @@ type blockingWriter struct {
 	release chan struct{}
 }
 
+// Write signals entered on the first call and then blocks until release is
+// closed.
 func (w *blockingWriter) Write(p []byte) (int, error) {
 	w.once.Do(func() { close(w.entered) })
 	<-w.release

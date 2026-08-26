@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestStderrBuffer_ReadBlocksUntilData verifies Read blocks until Write
+// delivers data.
 func TestStderrBuffer_ReadBlocksUntilData(t *testing.T) {
 	buf := newStderrBuffer()
 
@@ -36,6 +38,8 @@ func TestStderrBuffer_ReadBlocksUntilData(t *testing.T) {
 	}
 }
 
+// TestStderrBuffer_ReadAfterCloseReturnsEOF verifies buffered data stays
+// readable after Close and drained reads then return io.EOF.
 func TestStderrBuffer_ReadAfterCloseReturnsEOF(t *testing.T) {
 	buf := newStderrBuffer()
 
@@ -53,6 +57,8 @@ func TestStderrBuffer_ReadAfterCloseReturnsEOF(t *testing.T) {
 	require.ErrorIs(t, err, io.EOF)
 }
 
+// TestStderrBuffer_WriteAfterCloseFails verifies Write reports
+// io.ErrClosedPipe after the stream is closed.
 func TestStderrBuffer_WriteAfterCloseFails(t *testing.T) {
 	buf := newStderrBuffer()
 	require.NoError(t, buf.Close())
@@ -61,6 +67,8 @@ func TestStderrBuffer_WriteAfterCloseFails(t *testing.T) {
 	require.ErrorIs(t, err, io.ErrClosedPipe)
 }
 
+// TestStderrBuffer_WriteDropsOldest verifies a full buffer evicts the oldest
+// bytes to make room for new output.
 func TestStderrBuffer_WriteDropsOldest(t *testing.T) {
 	buf := newStderrBuffer()
 
@@ -88,6 +96,8 @@ func TestStderrBuffer_WriteDropsOldest(t *testing.T) {
 	require.Equal(t, string(want), string(got))
 }
 
+// TestStderrBuffer_WriteOversizeChunkKeepsTail verifies a single write larger
+// than the buffer retains only its tail.
 func TestStderrBuffer_WriteOversizeChunkKeepsTail(t *testing.T) {
 	buf := newStderrBuffer()
 

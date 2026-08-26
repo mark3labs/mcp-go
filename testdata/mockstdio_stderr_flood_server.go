@@ -22,6 +22,8 @@ type JSONRPCResponse struct {
 	Result  any            `json:"result,omitempty"`
 }
 
+// main writes 320KB to stderr before serving newline-delimited JSON-RPC
+// requests from stdin.
 func main() {
 	// Write 320KB of stderr (ten 32KB drain chunks) before answering, so a
 	// test can fill the drain goroutine's bounded mirror queue and exercise
