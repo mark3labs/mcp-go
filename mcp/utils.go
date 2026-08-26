@@ -667,6 +667,7 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 			}
 		}
 		c.Annotations = annotations
+		c.Meta = meta
 		return c, nil
 
 	case ContentTypeResource:
