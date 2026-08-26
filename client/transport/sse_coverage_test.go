@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync"
 	"testing"
 	"time"
 
@@ -161,10 +162,20 @@ func TestSSE_SendRequest_MarshalError(t *testing.T) {
 	require.ErrorContains(t, err, "failed to marshal request")
 }
 
+// errorTransport is an http.RoundTripper that always fails with a fixed error,
+// making connection-error tests deterministic without relying on a particular
+// port being unbound.
+type errorTransport struct{ err error }
+
+func (t errorTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, t.err
+}
+
 func TestSSE_SendRequest_ConnectionError(t *testing.T) {
 	sse := newBareSSE()
 	sse.started.Store(true)
-	sse.endpoint = sse.baseURL // 127.0.0.1:1 refuses connections
+	sse.endpoint = sse.baseURL
+	sse.httpClient = &http.Client{Transport: errorTransport{err: errors.New("connection refused")}}
 
 	_, err := sse.SendRequest(t.Context(), JSONRPCRequest{
 		JSONRPC: "2.0", ID: mcp.NewRequestId(int64(1)),
@@ -224,11 +235,16 @@ func TestSSE_SendRequest_DeadlineAlreadyPassed(t *testing.T) {
 func TestSSE_SendRequest_HeaderOptions(t *testing.T) {
 	sse := newBareSSE()
 	sse.started.Store(true)
+	// The server handler runs on a different goroutine than the assertions
+	// below; guard the captured request data with a mutex.
+	var gotMu sync.Mutex
 	var gotHeader http.Header
 	var gotHost string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMu.Lock()
 		gotHeader = r.Header.Clone()
 		gotHost = r.Host
+		gotMu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -250,6 +266,8 @@ func TestSSE_SendRequest_HeaderOptions(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "timeout waiting for SSE response")
 
+	gotMu.Lock()
+	defer gotMu.Unlock()
 	require.Equal(t, "1", gotHeader.Get("X-Static"))
 	require.Equal(t, "2", gotHeader.Get("X-Func"))
 	require.Equal(t, "2025-03-26", gotHeader.Get(HeaderKeyProtocolVersion))
@@ -317,6 +335,7 @@ func TestSSE_SendNotification_MarshalError(t *testing.T) {
 func TestSSE_SendNotification_ConnectionError(t *testing.T) {
 	sse := newBareSSE()
 	sse.endpoint = sse.baseURL
+	sse.httpClient = &http.Client{Transport: errorTransport{err: errors.New("connection refused")}}
 
 	err := sse.SendNotification(t.Context(), mcp.JSONRPCNotification{
 		JSONRPC: "2.0",
