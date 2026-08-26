@@ -529,5 +529,3 @@ func TestStdio_BlockingStderrWriterDoesNotStopDrain(t *testing.T) {
 
 	close(writer.release)
 }
-
-

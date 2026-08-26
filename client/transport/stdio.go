@@ -98,6 +98,9 @@ func (b *stderrBuffer) Write(p []byte) (int, error) {
 	if b.done {
 		return 0, io.ErrClosedPipe
 	}
+	// Report the original length per the io.Writer contract even when the
+	// tail truncation below drops the leading bytes.
+	written := len(p)
 	if len(p) > stderrBufferSize {
 		p = p[len(p)-stderrBufferSize:]
 	}
@@ -106,7 +109,7 @@ func (b *stderrBuffer) Write(p []byte) (int, error) {
 	}
 	b.buf.Write(p)
 	b.cond.Broadcast()
-	return len(p), nil
+	return written, nil
 }
 
 // Read returns buffered data, blocking until data is available or the stream
@@ -335,27 +338,32 @@ func (c *Stdio) spawnCommand(ctx context.Context) error {
 // stderrWriter, which defaults to io.Discard.
 func (c *Stdio) startStderrDrain(stderr io.ReadCloser) {
 	c.stderrRing = newStderrBuffer()
-	stderrDest := c.stderrWriter
-	if stderrDest == nil {
-		stderrDest = io.Discard
-	}
-	go drainStderrIntoRing(c.stderrRing, stderr, stderrDest)
+	go drainStderrIntoRing(c.stderrRing, stderr, c.stderrWriter, c.logger)
 }
 
 // drainStderrIntoRing copies src into the ring buffer until the stream ends,
 // closing the ring afterwards to wake readers blocked in Stderr().Read.
 //
 // The drain must never stop while the child runs: a full OS pipe blocks the
-// child inside write(2) and deadlocks every request. Mirroring into dest is
-// therefore decoupled through a bounded queue: a failing or blocked writer
-// must not stop the pipe drain, so once the queue fills up (or the mirror
-// goroutine exits) further chunks are dropped. The mirror goroutine is
-// intentionally not waited for: a writer stuck inside Write would otherwise
-// delay ring Close and leave Stderr() readers blocked.
-func drainStderrIntoRing(ring *stderrBuffer, src io.ReadCloser, dest io.Writer) {
+// child inside write(2) and deadlocks every request. When dest is nil the
+// stream is drained directly into the ring without any mirroring overhead;
+// otherwise mirroring is decoupled through a bounded queue so a failing or
+// blocked writer cannot stop the pipe drain: once the queue fills up (or the
+// mirror goroutine exits) further chunks are dropped and the loss is logged
+// at debug level. The mirror goroutine is intentionally not waited for: a
+// writer stuck inside Write would otherwise delay ring Close and leave
+// Stderr() readers blocked.
+func drainStderrIntoRing(ring *stderrBuffer, src io.ReadCloser, dest io.Writer, logger *slog.Logger) {
 	defer func() {
 		_ = ring.Close()
 	}()
+
+	// No custom destination configured: drain directly without spawning a
+	// mirror goroutine or allocating mirror chunks.
+	if dest == nil {
+		_, _ = io.Copy(ring, src)
+		return
+	}
 
 	mirror := make(chan []byte, 8)
 	go func() {
@@ -380,6 +388,9 @@ func drainStderrIntoRing(ring *stderrBuffer, src io.ReadCloser, dest io.Writer) 
 			default:
 				// Mirror is full or gone; dropping the
 				// chunk keeps the pipe draining.
+				if logger != nil {
+					logger.Debug("stderr mirror queue full; dropping chunk", "bytes", n)
+				}
 			}
 		}
 		if rerr != nil {
