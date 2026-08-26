@@ -318,69 +318,75 @@ func (c *Stdio) spawnCommand(ctx context.Context) error {
 		return fmt.Errorf("failed to start command: %w", err)
 	}
 
-	// Drain stderr continuously. An unread pipe holds only about 64KB;
-	// once it fills, the child blocks inside write(2) and stops answering
-	// on stdout, deadlocking every request (including Ping) with no error.
-	// The output is written to the bounded ring buffer (readable through
-	// Stderr()) and to stderrWriter, which defaults to io.Discard.
+	// Drain stderr continuously so the subprocess can never deadlock on a
+	// full pipe (see startStderrDrain).
 	if stderr != nil {
-		c.stderrRing = newStderrBuffer()
-		stderrDest := c.stderrWriter
-		if stderrDest == nil {
-			stderrDest = io.Discard
-		}
-		go func() {
-			// Drain stderr into the ring buffer no matter what the
-			// mirror writer does: a full OS pipe blocks the child
-			// inside write(2) and deadlocks every request.
-			defer func() {
-				// The pipe is exhausted (child exited or Close()
-				// closed it); wake up readers blocked in
-				// Stderr().Read.
-				_ = c.stderrRing.Close()
-			}()
-
-			// Mirror drained chunks to stderrDest through a bounded
-			// queue. A failing or blocked writer must not stop the
-			// pipe drain: once the queue fills up (or the mirror
-			// goroutine exits) further chunks are dropped. The
-			// mirror goroutine is intentionally not waited for: a
-			// writer stuck inside Write would otherwise delay ring
-			// Close and leave Stderr() readers blocked.
-			mirror := make(chan []byte, 8)
-			go func() {
-				for chunk := range mirror {
-					if _, err := stderrDest.Write(chunk); err != nil {
-						return
-					}
-				}
-			}()
-
-			buf := make([]byte, 32*1024)
-			for {
-				n, rerr := stderr.Read(buf)
-				if n > 0 {
-					if _, werr := c.stderrRing.Write(buf[:n]); werr != nil {
-						break
-					}
-					chunk := make([]byte, n)
-					copy(chunk, buf[:n])
-					select {
-					case mirror <- chunk:
-					default:
-						// Mirror is full or gone; dropping the
-						// chunk keeps the pipe draining.
-					}
-				}
-				if rerr != nil {
-					break
-				}
-			}
-			close(mirror)
-		}()
+		c.startStderrDrain(stderr)
 	}
 
 	return nil
+}
+
+// startStderrDrain starts the background goroutine that keeps the subprocess
+// stderr pipe empty. An unread pipe holds only about 64KB; once it fills, the
+// child blocks inside write(2) and stops answering on stdout, deadlocking
+// every request (including Ping) with no error. The output is written to the
+// bounded ring buffer (readable through Stderr()) and mirrored to
+// stderrWriter, which defaults to io.Discard.
+func (c *Stdio) startStderrDrain(stderr io.ReadCloser) {
+	c.stderrRing = newStderrBuffer()
+	stderrDest := c.stderrWriter
+	if stderrDest == nil {
+		stderrDest = io.Discard
+	}
+	go drainStderrIntoRing(c.stderrRing, stderr, stderrDest)
+}
+
+// drainStderrIntoRing copies src into the ring buffer until the stream ends,
+// closing the ring afterwards to wake readers blocked in Stderr().Read.
+//
+// The drain must never stop while the child runs: a full OS pipe blocks the
+// child inside write(2) and deadlocks every request. Mirroring into dest is
+// therefore decoupled through a bounded queue: a failing or blocked writer
+// must not stop the pipe drain, so once the queue fills up (or the mirror
+// goroutine exits) further chunks are dropped. The mirror goroutine is
+// intentionally not waited for: a writer stuck inside Write would otherwise
+// delay ring Close and leave Stderr() readers blocked.
+func drainStderrIntoRing(ring *stderrBuffer, src io.ReadCloser, dest io.Writer) {
+	defer func() {
+		_ = ring.Close()
+	}()
+
+	mirror := make(chan []byte, 8)
+	go func() {
+		for chunk := range mirror {
+			if _, err := dest.Write(chunk); err != nil {
+				return
+			}
+		}
+	}()
+
+	buf := make([]byte, 32*1024)
+	for {
+		n, rerr := src.Read(buf)
+		if n > 0 {
+			if _, werr := ring.Write(buf[:n]); werr != nil {
+				break
+			}
+			chunk := make([]byte, n)
+			copy(chunk, buf[:n])
+			select {
+			case mirror <- chunk:
+			default:
+				// Mirror is full or gone; dropping the
+				// chunk keeps the pipe draining.
+			}
+		}
+		if rerr != nil {
+			break
+		}
+	}
+	close(mirror)
 }
 
 // closeDone safely closes the done channel exactly once, unblocking all
