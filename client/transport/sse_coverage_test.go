@@ -1,0 +1,416 @@
+package transport
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"testing"
+	"time"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/stretchr/testify/require"
+)
+
+// newBareSSE builds an SSE transport with no live connection so individual
+// branches (accessors, event handling, request error paths) can be exercised
+// deterministically.
+func newBareSSE() *SSE {
+	baseURL, _ := url.Parse("http://127.0.0.1:1/")
+	return &SSE{
+		baseURL:    baseURL,
+		httpClient: http.DefaultClient,
+		responses:  make(map[string]chan *JSONRPCResponse),
+		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+}
+
+func TestSSE_Accessors(t *testing.T) {
+	sse := newBareSSE()
+	require.Equal(t, "", sse.GetSessionId())
+	require.Nil(t, sse.GetOAuthHandler())
+	require.False(t, sse.IsOAuthEnabled())
+
+	// Protocol version is stored for later header attachment.
+	sse.SetProtocolVersion("2025-03-26")
+	require.Equal(t, "2025-03-26", sse.protocolVersion.Load())
+
+	// Endpoint and base URL accessors.
+	endpoint, _ := url.Parse("http://127.0.0.1:1/message")
+	sse.endpoint = endpoint
+	require.Equal(t, endpoint, sse.GetEndpoint())
+	require.Equal(t, sse.baseURL, sse.GetBaseURL())
+}
+
+func TestSSE_ClientOptions(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	client := &http.Client{}
+	headers := map[string]string{"X-Test": "1"}
+	headerFunc := func(ctx context.Context) map[string]string {
+		return map[string]string{"X-Func": "2"}
+	}
+
+	sse, err := NewSSE(
+		"http://127.0.0.1:1/",
+		WithSSELogger(logger),
+		WithHeaders(headers),
+		WithHeaderFunc(headerFunc),
+		WithHTTPClient(client),
+		WithEndpointTimeout(10*time.Second),
+	)
+	require.NoError(t, err)
+	require.Same(t, logger, sse.logger)
+	require.Equal(t, headers, sse.headers)
+	require.NotNil(t, sse.headerFunc)
+	require.Same(t, client, sse.httpClient)
+	require.Equal(t, 10*time.Second, sse.endpointTimeout)
+
+	// Non-positive timeout keeps the default.
+	sse, err = NewSSE("http://127.0.0.1:1/", WithEndpointTimeout(0))
+	require.NoError(t, err)
+	require.NotZero(t, sse.endpointTimeout)
+
+	// Nil logger falls back to slog.Default.
+	sse, err = NewSSE("http://127.0.0.1:1/", WithSSELogger(nil))
+	require.NoError(t, err)
+	require.Same(t, slog.Default(), sse.logger)
+}
+
+func TestSSE_SetConnectionLostHandler(t *testing.T) {
+	sse := newBareSSE()
+	var got error
+	sse.SetConnectionLostHandler(func(err error) { got = err })
+	require.NotNil(t, sse.onConnectionLost)
+
+	sse.onConnectionLost(errors.New("connection lost"))
+	require.EqualError(t, got, "connection lost")
+}
+
+func TestSSE_HandleSSEEvent_MessageInvalidJSON(t *testing.T) {
+	sse := newBareSSE()
+	require.NotPanics(t, func() {
+		sse.handleSSEEvent("message", "not-json")
+	})
+}
+
+func TestSSE_HandleSSEEvent_NotificationWithoutHandler(t *testing.T) {
+	sse := newBareSSE()
+	require.NotPanics(t, func() {
+		sse.handleSSEEvent("message", `{"jsonrpc":"2.0","method":"notify"}`)
+	})
+}
+
+func TestSSE_HandleSSEEvent_EndpointParseError(t *testing.T) {
+	sse := newBareSSE()
+
+	// An unparsable endpoint event must be ignored and leave endpoint unset.
+	require.NotPanics(t, func() {
+		sse.handleSSEEvent("endpoint", "http://[::1")
+	})
+	require.Nil(t, sse.endpoint)
+}
+
+func TestSSE_HandleSSEEvent_UnknownResponseID(t *testing.T) {
+	sse := newBareSSE()
+
+	// No pending request with this ID; delivery must be a no-op.
+	require.NotPanics(t, func() {
+		sse.handleSSEEvent("message", `{"jsonrpc":"2.0","id":42,"result":{}}`)
+	})
+}
+
+func TestSSE_SendRequest_NotStarted(t *testing.T) {
+	_, err := newBareSSE().SendRequest(t.Context(), JSONRPCRequest{
+		JSONRPC: "2.0", ID: mcp.NewRequestId(int64(1)),
+	})
+	require.EqualError(t, err, "transport not started yet")
+}
+
+func TestSSE_SendRequest_Closed(t *testing.T) {
+	sse := newBareSSE()
+	sse.started.Store(true)
+	sse.closed.Store(true)
+
+	_, err := sse.SendRequest(t.Context(), JSONRPCRequest{
+		JSONRPC: "2.0", ID: mcp.NewRequestId(int64(1)),
+	})
+	require.EqualError(t, err, "transport has been closed")
+}
+
+func TestSSE_SendRequest_EndpointNotReceived(t *testing.T) {
+	sse := newBareSSE()
+	sse.started.Store(true)
+
+	_, err := sse.SendRequest(t.Context(), JSONRPCRequest{
+		JSONRPC: "2.0", ID: mcp.NewRequestId(int64(1)),
+	})
+	require.EqualError(t, err, "endpoint not received")
+}
+
+func TestSSE_SendRequest_MarshalError(t *testing.T) {
+	sse := newBareSSE()
+	sse.started.Store(true)
+	sse.endpoint = sse.baseURL
+
+	_, err := sse.SendRequest(t.Context(), JSONRPCRequest{
+		JSONRPC: "2.0", ID: mcp.NewRequestId(int64(1)), Params: make(chan int),
+	})
+	require.ErrorContains(t, err, "failed to marshal request")
+}
+
+func TestSSE_SendRequest_ConnectionError(t *testing.T) {
+	sse := newBareSSE()
+	sse.started.Store(true)
+	sse.endpoint = sse.baseURL // 127.0.0.1:1 refuses connections
+
+	_, err := sse.SendRequest(t.Context(), JSONRPCRequest{
+		JSONRPC: "2.0", ID: mcp.NewRequestId(int64(1)),
+	})
+	require.ErrorContains(t, err, "failed to send request")
+}
+
+func TestSSE_SendRequest_UnauthorizedWithoutOAuth(t *testing.T) {
+	sse := newBareSSE()
+	sse.started.Store(true)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	sse.endpoint = mustURL(t, server.URL)
+
+	_, err := sse.SendRequest(t.Context(), JSONRPCRequest{
+		JSONRPC: "2.0", ID: mcp.NewRequestId(int64(1)),
+	})
+	var authErr *AuthorizationRequiredError
+	require.ErrorAs(t, err, &authErr)
+}
+
+func TestSSE_SendRequest_ServerError(t *testing.T) {
+	sse := newBareSSE()
+	sse.started.Store(true)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	sse.endpoint = mustURL(t, server.URL)
+
+	_, err := sse.SendRequest(t.Context(), JSONRPCRequest{
+		JSONRPC: "2.0", ID: mcp.NewRequestId(int64(1)),
+	})
+	require.ErrorContains(t, err, "request failed with status 500")
+}
+
+func TestSSE_SendRequest_DeadlineAlreadyPassed(t *testing.T) {
+	sse := newBareSSE()
+	sse.started.Store(true)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	sse.endpoint = mustURL(t, server.URL)
+
+	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	_, err := sse.SendRequest(ctx, JSONRPCRequest{
+		JSONRPC: "2.0", ID: mcp.NewRequestId(int64(1)),
+	})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestSSE_SendRequest_HeaderOptions(t *testing.T) {
+	sse := newBareSSE()
+	sse.started.Store(true)
+	var gotHeader http.Header
+	var gotHost string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Clone()
+		gotHost = r.Host
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	sse.endpoint = mustURL(t, server.URL)
+	sse.headers = map[string]string{"X-Static": "1"}
+	sse.headerFunc = func(ctx context.Context) map[string]string {
+		return map[string]string{"X-Func": "2"}
+	}
+	sse.protocolVersion.Store("2025-03-26")
+	sse.host = "example.com"
+
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+
+	// The server returns 200 without delivering an SSE response, so the
+	// request times out waiting; the headers are what this test verifies.
+	_, err := sse.SendRequest(ctx, JSONRPCRequest{
+		JSONRPC: "2.0", ID: mcp.NewRequestId(int64(1)),
+	})
+	require.ErrorContains(t, err, "timeout waiting for SSE response")
+
+	require.Equal(t, "1", gotHeader.Get("X-Static"))
+	require.Equal(t, "2", gotHeader.Get("X-Func"))
+	require.Equal(t, "2025-03-26", gotHeader.Get(HeaderKeyProtocolVersion))
+	require.Equal(t, "example.com", gotHost)
+}
+
+// chanClosingTransport closes the request's registered response channel after
+// the server responds, modeling Close() racing with an in-flight delivery.
+type chanClosingTransport struct {
+	base  http.RoundTripper
+	sse   *SSE
+	idKey string
+}
+
+func (t *chanClosingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	t.sse.mu.RLock()
+	ch := t.sse.responses[t.idKey]
+	t.sse.mu.RUnlock()
+	if ch != nil {
+		close(ch)
+	}
+	return resp, err
+}
+
+func TestSSE_SendRequest_ResponseChanClosed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	sse := newBareSSE()
+	sse.started.Store(true)
+	sse.endpoint = mustURL(t, server.URL)
+	sse.responseTimeout = time.Minute
+	idKey := mcp.NewRequestId(int64(1)).String()
+	sse.httpClient = &http.Client{Transport: &chanClosingTransport{
+		base:  http.DefaultTransport,
+		sse:   sse,
+		idKey: idKey,
+	}}
+
+	_, err := sse.SendRequest(t.Context(), JSONRPCRequest{
+		JSONRPC: "2.0", ID: mcp.NewRequestId(int64(1)),
+	})
+	require.EqualError(t, err, "connection has been closed")
+}
+
+func TestSSE_SendNotification_MarshalError(t *testing.T) {
+	sse := newBareSSE()
+	sse.endpoint = sse.baseURL
+
+	err := sse.SendNotification(t.Context(), mcp.JSONRPCNotification{
+		JSONRPC: "2.0",
+		Notification: mcp.Notification{
+			Method: "test",
+			Params: mcp.NotificationParams{AdditionalFields: map[string]any{
+				"bad": make(chan int),
+			}},
+		},
+	})
+	require.ErrorContains(t, err, "failed to marshal notification")
+}
+
+func TestSSE_SendNotification_ConnectionError(t *testing.T) {
+	sse := newBareSSE()
+	sse.endpoint = sse.baseURL
+
+	err := sse.SendNotification(t.Context(), mcp.JSONRPCNotification{
+		JSONRPC: "2.0",
+		Notification: mcp.Notification{
+			Method: "test",
+		},
+	})
+	require.ErrorContains(t, err, "failed to send notification")
+}
+
+func TestSSE_SendNotification_UnauthorizedWithoutOAuth(t *testing.T) {
+	sse := newBareSSE()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	sse.endpoint = mustURL(t, server.URL)
+
+	err := sse.SendNotification(t.Context(), mcp.JSONRPCNotification{
+		JSONRPC: "2.0",
+		Notification: mcp.Notification{
+			Method: "test",
+		},
+	})
+	var authErr *AuthorizationRequiredError
+	require.ErrorAs(t, err, &authErr)
+}
+
+func TestSSE_SendNotification_ServerError(t *testing.T) {
+	sse := newBareSSE()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	sse.endpoint = mustURL(t, server.URL)
+
+	err := sse.SendNotification(t.Context(), mcp.JSONRPCNotification{
+		JSONRPC: "2.0",
+		Notification: mcp.Notification{
+			Method: "test",
+		},
+	})
+	require.ErrorContains(t, err, "notification failed with status 500")
+}
+
+func TestSSE_SendNotification_Success(t *testing.T) {
+	sse := newBareSSE()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+	sse.endpoint = mustURL(t, server.URL)
+
+	err := sse.SendNotification(t.Context(), mcp.JSONRPCNotification{
+		JSONRPC: "2.0",
+		Notification: mcp.Notification{
+			Method: "test",
+		},
+	})
+	require.NoError(t, err)
+}
+
+func TestSSE_Close_WithoutStream(t *testing.T) {
+	sse := newBareSSE()
+	pending := make(chan *JSONRPCResponse)
+	sse.responses["pending"] = pending
+
+	require.NoError(t, sse.Close())
+	require.True(t, sse.closed.Load())
+
+	// The pending channel must be closed and dropped from the map.
+	select {
+	case _, ok := <-pending:
+		require.False(t, ok)
+	default:
+		t.Fatal("pending response channel was not closed")
+	}
+	require.Empty(t, sse.responses)
+
+	// Second close is a no-op.
+	require.NoError(t, sse.Close())
+}
+
+func TestSSE_Start_AlreadyStarted(t *testing.T) {
+	sse := newBareSSE()
+	sse.started.Store(true)
+
+	require.NoError(t, sse.Start(t.Context()))
+}
+
+// mustURL parses s or fails the test.
+func mustURL(t *testing.T, s string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(s)
+	require.NoError(t, err)
+	return u
+}
