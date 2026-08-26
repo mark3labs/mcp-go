@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -1675,22 +1676,27 @@ func TestSSE_CloseConcurrentWithMessageDoesNotPanic(t *testing.T) {
 		trans.handleSSEEvent("message", msg)
 	}()
 
-	// Wait until the sender is about to deliver, then give it time to reach
-	// the blocking send before running the closer.
+	// Wait until the sender owns trans.mu: TryLock fails exactly while the
+	// write lock is held, i.e. while the sender is blocked sending into the
+	// unbuffered responseChan. Polling the lock state is deterministic and
+	// does not depend on scheduling delays like timing sleeps do.
 	<-entering
-	time.Sleep(20 * time.Millisecond)
+	deadline := time.Now().Add(5 * time.Second)
+	for trans.mu.TryLock() {
+		trans.mu.Unlock()
+		if time.Now().After(deadline) {
+			t.Fatal("sender never acquired the write lock")
+		}
+		runtime.Gosched()
+	}
 
 	// Closer: runs while the send is in flight. Before the fix this closed
-	// responseChan under the sender and the blocked send panicked.
+	// responseChan under the sender and the blocked send panicked; with the
+	// fix it blocks on the write lock until the send completes.
 	go func() {
 		defer wg.Done()
 		_ = trans.Close()
 	}()
-
-	// Give the closer time to reach Close() before draining the channel:
-	// before the fix it closes the channel here and panics the blocked send;
-	// with the fix it blocks on the write lock until the send completes.
-	time.Sleep(50 * time.Millisecond)
 
 	// Drain the channel so the in-flight send completes; with the fix the
 	// closer's Close() waits for this before closing (now empty) channels.
