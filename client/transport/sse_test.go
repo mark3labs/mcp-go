@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -679,57 +680,64 @@ func TestSSE(t *testing.T) {
 		}
 	})
 
-	t.Run("IntentionalCloseDoesNotNotify", func(t *testing.T) {
-		// Close() cancels the stream context, so the read errors out just like a
-		// dropped connection would. The handler must not fire in that case,
-		// otherwise the caller reconnects a transport it deliberately shut down.
-		var connectionLostCalled bool
-		var mu sync.Mutex
+	// Close() cancels the stream context, so the read errors out just like a
+	// dropped connection would. The handler must fire for a genuine drop but
+	// stay silent when the closure was intentional, otherwise the caller
+	// reconnects a transport it deliberately shut down.
+	closeCases := []struct {
+		name         string
+		closedBefore bool
+		wantNotify   bool
+	}{
+		{name: "GenuineDropNotifies", closedBefore: false, wantNotify: true},
+		{name: "IntentionalCloseDoesNotNotify", closedBefore: true, wantNotify: false},
+	}
 
-		mockReader := &mockReaderWithError{
-			data: []byte("event: endpoint\ndata: /message\n\n"),
-			err:  context.Canceled,
-		}
+	for _, tc := range closeCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var connectionLostCalled bool
+			var mu sync.Mutex
 
-		url, closeF := startMockSSEEchoServer()
-		defer closeF()
+			mockReader := &mockReaderWithError{
+				data: []byte("event: endpoint\ndata: /message\n\n"),
+				err:  context.Canceled,
+			}
 
-		trans, err := NewSSE(url)
-		if err != nil {
-			t.Fatal(err)
-		}
+			url, closeF := startMockSSEEchoServer()
+			defer closeF()
 
-		trans.SetConnectionLostHandler(func(err error) {
+			trans, err := NewSSE(url)
+			require.NoError(t, err)
+
+			trans.SetConnectionLostHandler(func(err error) {
+				mu.Lock()
+				defer mu.Unlock()
+				connectionLostCalled = true
+			})
+
+			trans.closed.Store(tc.closedBefore)
+
+			done := make(chan struct{})
+			go func() {
+				trans.readSSE(mockReader)
+				close(done)
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(1 * time.Second):
+				t.Fatal("readSSE did not return in time")
+			}
+
+			// Let any erroneously-scheduled handler run before asserting.
+			time.Sleep(50 * time.Millisecond)
+
 			mu.Lock()
-			defer mu.Unlock()
-			connectionLostCalled = true
+			called := connectionLostCalled
+			mu.Unlock()
+			assert.Equal(t, tc.wantNotify, called)
 		})
-
-		// Mimic Close() having already flipped the flag before the read failed.
-		trans.closed.Store(true)
-
-		done := make(chan struct{})
-		go func() {
-			trans.readSSE(mockReader)
-			close(done)
-		}()
-
-		select {
-		case <-done:
-		case <-time.After(1 * time.Second):
-			t.Fatal("readSSE did not return after intentional close")
-		}
-
-		// Let any erroneously-scheduled handler run before asserting it didn't.
-		time.Sleep(50 * time.Millisecond)
-
-		mu.Lock()
-		called := connectionLostCalled
-		mu.Unlock()
-		if called {
-			t.Fatal("connection lost handler fired on intentional close")
-		}
-	})
+	}
 }
 
 func TestSSEErrors(t *testing.T) {
