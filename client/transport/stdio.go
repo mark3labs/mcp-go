@@ -330,10 +330,53 @@ func (c *Stdio) spawnCommand(ctx context.Context) error {
 			stderrDest = io.Discard
 		}
 		go func() {
-			_, _ = io.Copy(io.MultiWriter(c.stderrRing, stderrDest), stderr)
-			// The pipe is exhausted (child exited or Close() closed it);
-			// wake up any readers blocked in Stderr().Read.
-			_ = c.stderrRing.Close()
+			// Drain stderr into the ring buffer no matter what the
+			// mirror writer does: a full OS pipe blocks the child
+			// inside write(2) and deadlocks every request.
+			defer func() {
+				// The pipe is exhausted (child exited or Close()
+				// closed it); wake up readers blocked in
+				// Stderr().Read.
+				_ = c.stderrRing.Close()
+			}()
+
+			// Mirror drained chunks to stderrDest through a bounded
+			// queue. A failing or blocked writer must not stop the
+			// pipe drain: once the queue fills up (or the mirror
+			// goroutine exits) further chunks are dropped. The
+			// mirror goroutine is intentionally not waited for: a
+			// writer stuck inside Write would otherwise delay ring
+			// Close and leave Stderr() readers blocked.
+			mirror := make(chan []byte, 8)
+			go func() {
+				for chunk := range mirror {
+					if _, err := stderrDest.Write(chunk); err != nil {
+						return
+					}
+				}
+			}()
+
+			buf := make([]byte, 32*1024)
+			for {
+				n, rerr := stderr.Read(buf)
+				if n > 0 {
+					if _, werr := c.stderrRing.Write(buf[:n]); werr != nil {
+						break
+					}
+					chunk := make([]byte, n)
+					copy(chunk, buf[:n])
+					select {
+					case mirror <- chunk:
+					default:
+						// Mirror is full or gone; dropping the
+						// chunk keeps the pipe draining.
+					}
+				}
+				if rerr != nil {
+					break
+				}
+			}
+			close(mirror)
 		}()
 	}
 

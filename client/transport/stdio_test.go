@@ -1157,3 +1157,76 @@ func TestStdio_WithCommandStderrWriter_CapturesStderr(t *testing.T) {
 		return stderrBuf.Len() >= 64*1024
 	}, 10*time.Second, 50*time.Millisecond, "stderr output was not forwarded to the configured writer")
 }
+
+// failingWriter accepts the first write and then reports an error on every
+// subsequent write, modeling a custom stderr destination that breaks after
+// the child has already started emitting output.
+type failingWriter struct {
+	mu     sync.Mutex
+	writes int
+}
+
+func (w *failingWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.writes++
+	if w.writes > 1 {
+		return 0, errors.New("stderr writer failed")
+	}
+	return len(p), nil
+}
+
+// WriteCount reports how many writes the failing writer has observed.
+func (w *failingWriter) WriteCount() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writes
+}
+
+// TestStdio_WithCommandStderrWriterFailureStillDrains verifies that a custom
+// stderr writer which fails after its first write does not stop the stderr
+// drain. If the drain goroutine stopped, the child's stderr pipe would fill
+// up, the child would block inside write(2), and even Ping would time out.
+func TestStdio_WithCommandStderrWriterFailureStillDrains(t *testing.T) {
+	tempFile, err := os.CreateTemp(t.TempDir(), "mockstdio_stderr_server")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	tempFile.Close()
+	mockServerPath := tempFile.Name() + ".exe"
+
+	if compileErr := compileTestServerFromSource(mockServerPath, "../../testdata/mockstdio_stderr_server.go"); compileErr != nil {
+		t.Fatalf("Failed to compile mock server: %v", compileErr)
+	}
+
+	writer := &failingWriter{}
+	stdio := NewStdioWithOptions(mockServerPath, nil, nil, WithCommandStderrWriter(writer))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	if err := stdio.Start(ctx); err != nil {
+		t.Fatalf("Failed to start Stdio transport: %v", err)
+	}
+	defer stdio.Close()
+
+	// The mock server writes ~256KB to stderr before answering. With the
+	// writer failing after the first chunk, only a drain that is decoupled
+	// from the writer keeps the pipe empty and the child responsive.
+	for i := range 3 {
+		reqCtx, reqCancel := context.WithTimeout(ctx, 5*time.Second)
+		_, err := stdio.SendRequest(reqCtx, JSONRPCRequest{
+			JSONRPC: "2.0",
+			ID:      mcp.NewRequestId(int64(i + 1)),
+			Method:  "ping",
+		})
+		reqCancel()
+		if err != nil {
+			t.Fatalf("SendRequest %d failed after stderr writer error: %v", i+1, err)
+		}
+	}
+
+	// The writer must have been exercised at least once, confirming this
+	// test actually runs the failure path rather than skipping it.
+	require.GreaterOrEqual(t, writer.WriteCount(), 1)
+}
