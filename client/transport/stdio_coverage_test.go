@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -458,6 +459,75 @@ func TestStdio_ReadResponses_NotifiesHandler(t *testing.T) {
 	case <-t.Context().Done():
 		t.Fatal("notification handler was not invoked")
 	}
+}
+
+// blockingWriter blocks inside its first Write until release is closed,
+// modeling a custom stderr destination that stalls without returning an error.
+type blockingWriter struct {
+	once    sync.Once
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (w *blockingWriter) Write(p []byte) (int, error) {
+	w.once.Do(func() { close(w.entered) })
+	<-w.release
+	return len(p), nil
+}
+
+// TestStdio_BlockingStderrWriterDoesNotStopDrain verifies that a stderr writer
+// stuck inside Write cannot stop the pipe drain: once the mirror queue fills,
+// further chunks are dropped and the drain keeps consuming the pipe, so a
+// stderr-heavy server still answers Ping.
+func TestStdio_BlockingStderrWriterDoesNotStopDrain(t *testing.T) {
+	tempFile, err := os.CreateTemp(t.TempDir(), "mockstdio_stderr_flood_server")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	tempFile.Close()
+	mockServerPath := tempFile.Name() + ".exe"
+
+	if compileErr := compileTestServerFromSource(mockServerPath, "../../testdata/mockstdio_stderr_flood_server.go"); compileErr != nil {
+		t.Fatalf("Failed to compile mock server: %v", compileErr)
+	}
+
+	writer := &blockingWriter{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	stdio := NewStdioWithOptions(mockServerPath, nil, nil, WithCommandStderrWriter(writer))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	if err := stdio.Start(ctx); err != nil {
+		t.Fatalf("Failed to start Stdio transport: %v", err)
+	}
+	defer stdio.Close()
+
+	// The server writes 320KB of stderr before answering; wait until the
+	// mirror goroutine is stuck in the writer, then let the server finish
+	// and verify the transport still answers requests.
+	select {
+	case <-writer.entered:
+	case <-ctx.Done():
+		t.Fatal("stderr writer was never called")
+	}
+
+	for i := range 3 {
+		reqCtx, reqCancel := context.WithTimeout(ctx, 5*time.Second)
+		_, err := stdio.SendRequest(reqCtx, JSONRPCRequest{
+			JSONRPC: "2.0",
+			ID:      mcp.NewRequestId(int64(i + 1)),
+			Method:  "ping",
+		})
+		reqCancel()
+		if err != nil {
+			t.Fatalf("SendRequest %d failed with blocked stderr writer: %v", i+1, err)
+		}
+	}
+
+	close(writer.release)
 }
 
 
