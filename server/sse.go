@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"path"
 	"strings"
@@ -423,15 +422,6 @@ func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
 	}
 
 	return s
-}
-
-// NewTestServer creates a test server for testing purposes
-func NewTestServer(server *MCPServer, opts ...SSEOption) *httptest.Server {
-	sseServer := NewSSEServer(server, opts...)
-
-	testServer := httptest.NewServer(sseServer)
-	sseServer.baseURL = testServer.URL
-	return testServer
 }
 
 // Start begins serving SSE connections on the specified address.

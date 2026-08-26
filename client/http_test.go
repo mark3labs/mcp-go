@@ -12,6 +12,7 @@ import (
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	servertest "github.com/mark3labs/mcp-go/server/servertest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -70,7 +71,7 @@ func TestHTTPClient(t *testing.T) {
 		)
 	}
 
-	testServer := server.NewTestStreamableHTTPServer(mcpServer)
+	testServer := servertest.NewTestStreamableHTTPServer(mcpServer)
 	defer testServer.Close()
 
 	initRequest := mcp.InitializeRequest{
@@ -221,7 +222,7 @@ func TestHTTPClientDoesNotForwardServerReceivedHeaders(t *testing.T) {
 		},
 	)
 
-	backendHTTP := server.NewTestStreamableHTTPServer(backendServer)
+	backendHTTP := servertest.NewTestStreamableHTTPServer(backendServer)
 	defer backendHTTP.Close()
 
 	backendClient, err := NewStreamableHttpClient(backendHTTP.URL)
@@ -250,7 +251,7 @@ func TestHTTPClientDoesNotForwardServerReceivedHeaders(t *testing.T) {
 			return backendClient.CallTool(ctx, request)
 		},
 	)
-	proxyHTTP := server.NewTestStreamableHTTPServer(proxyServer)
+	proxyHTTP := servertest.NewTestStreamableHTTPServer(proxyServer)
 	defer proxyHTTP.Close()
 
 	endClient, err := NewStreamableHttpClient(proxyHTTP.URL)

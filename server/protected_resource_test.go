@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/mark3labs/mcp-go/server/servertest"
 )
 
 func TestProtectedResourceMetadataPath(t *testing.T) {
@@ -303,7 +304,7 @@ func TestSSEServer_WithSSEProtectedResourceMetadata(t *testing.T) {
 		AuthorizationServers: []string{"https://auth.example.com"},
 	}
 
-	ts := server.NewTestServer(mcpSrv,
+	ts := servertest.NewTestServer(mcpSrv,
 		server.WithSSEProtectedResourceMetadata(cfg),
 	)
 	defer ts.Close()
@@ -326,7 +327,7 @@ func TestSSEServer_WithSSEProtectedResourceMetadata_PathQualifiedResource(t *tes
 		Resource: "https://sse.example.com/mcp",
 	}
 
-	ts := server.NewTestServer(mcpSrv,
+	ts := servertest.NewTestServer(mcpSrv,
 		server.WithSSEProtectedResourceMetadata(cfg),
 	)
 	defer ts.Close()
@@ -340,7 +341,7 @@ func TestSSEServer_WithSSEProtectedResourceMetadata_PathQualifiedResource(t *tes
 
 func TestSSEServer_WithoutProtectedResourceMetadata_WellKnown404(t *testing.T) {
 	mcpSrv := server.NewMCPServer("test", "1.0.0")
-	ts := server.NewTestServer(mcpSrv)
+	ts := servertest.NewTestServer(mcpSrv)
 	defer ts.Close()
 
 	resp, err := http.Get(ts.URL + "/.well-known/oauth-protected-resource")

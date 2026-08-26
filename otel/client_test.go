@@ -15,6 +15,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	otelmcp "github.com/mark3labs/mcp-go/otel"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/mark3labs/mcp-go/server/servertest"
 )
 
 const attrProtocolVersion = "mcp.protocol.version"
@@ -130,7 +131,7 @@ func TestRoundTrip_TraceparentSpansClientAndServer(t *testing.T) {
 		return mcp.NewToolResultText("ok"), nil
 	})
 
-	httpSrv := server.NewTestStreamableHTTPServer(srv)
+	httpSrv := servertest.NewTestStreamableHTTPServer(srv)
 	t.Cleanup(httpSrv.Close)
 
 	streamable, err := transport.NewStreamableHTTP(httpSrv.URL)

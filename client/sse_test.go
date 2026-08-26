@@ -10,6 +10,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	servertest "github.com/mark3labs/mcp-go/server/servertest"
 )
 
 type contextKey string
@@ -65,7 +66,7 @@ func TestSSEMCPClient(t *testing.T) {
 	})
 
 	// Initialize
-	testServer := server.NewTestServer(mcpServer,
+	testServer := servertest.NewTestServer(mcpServer,
 		server.WithSSEContextFunc(func(ctx context.Context, r *http.Request) context.Context {
 			ctx = context.WithValue(ctx, testHeaderKey, r.Header.Get("X-Test-Header"))
 			ctx = context.WithValue(ctx, testHeaderFuncKey, r.Header.Get("X-Test-Header-Func"))

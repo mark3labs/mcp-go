@@ -18,6 +18,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/mark3labs/mcp-go/server/servertest"
 )
 
 const sessionHeader = "Mcp-Session-Id"
@@ -245,7 +246,7 @@ func startServer(t *testing.T, store server.EventStore) (*server.MCPServer, *htt
 	if store != nil {
 		opts = append(opts, server.WithEventStore(store))
 	}
-	ts := server.NewTestStreamableHTTPServer(mcpServer, opts...)
+	ts := servertest.NewTestStreamableHTTPServer(mcpServer, opts...)
 	t.Cleanup(ts.Close)
 	// Unblock any emitter call still waiting for commands, so shutting the
 	// test server down cannot hang on an in-flight request.
