@@ -167,6 +167,8 @@ func TestSSE_SendRequest_MarshalError(t *testing.T) {
 // port being unbound.
 type errorTransport struct{ err error }
 
+// RoundTrip always fails with the transport's configured error, regardless of
+// the request.
 func (t errorTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	return nil, t.err
 }
