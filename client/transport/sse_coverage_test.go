@@ -29,6 +29,8 @@ func newBareSSE() *SSE {
 	}
 }
 
+// TestSSE_Accessors verifies the no-connection accessors: session ID, OAuth
+// state, protocol version, endpoint, and base URL.
 func TestSSE_Accessors(t *testing.T) {
 	sse := newBareSSE()
 	require.Equal(t, "", sse.GetSessionId())
@@ -46,6 +48,9 @@ func TestSSE_Accessors(t *testing.T) {
 	require.Equal(t, sse.baseURL, sse.GetBaseURL())
 }
 
+// TestSSE_ClientOptions verifies that every WithSSE* option is applied when
+// constructing the transport, including the fallbacks for a zero endpoint
+// timeout and a nil logger.
 func TestSSE_ClientOptions(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	client := &http.Client{}
@@ -80,6 +85,8 @@ func TestSSE_ClientOptions(t *testing.T) {
 	require.Same(t, slog.Default(), sse.logger)
 }
 
+// TestSSE_SetConnectionLostHandler verifies the connection-lost callback is
+// stored and invoked with the connection error.
 func TestSSE_SetConnectionLostHandler(t *testing.T) {
 	sse := newBareSSE()
 	var got error
@@ -90,6 +97,8 @@ func TestSSE_SetConnectionLostHandler(t *testing.T) {
 	require.EqualError(t, got, "connection lost")
 }
 
+// TestSSE_HandleSSEEvent_MessageInvalidJSON verifies a message event with
+// invalid JSON is ignored without panicking.
 func TestSSE_HandleSSEEvent_MessageInvalidJSON(t *testing.T) {
 	sse := newBareSSE()
 	require.NotPanics(t, func() {
@@ -97,6 +106,8 @@ func TestSSE_HandleSSEEvent_MessageInvalidJSON(t *testing.T) {
 	})
 }
 
+// TestSSE_HandleSSEEvent_NotificationWithoutHandler verifies a notification
+// message with no registered handler is dropped without panicking.
 func TestSSE_HandleSSEEvent_NotificationWithoutHandler(t *testing.T) {
 	sse := newBareSSE()
 	require.NotPanics(t, func() {
@@ -104,6 +115,8 @@ func TestSSE_HandleSSEEvent_NotificationWithoutHandler(t *testing.T) {
 	})
 }
 
+// TestSSE_HandleSSEEvent_EndpointParseError verifies an unparsable endpoint
+// event is ignored and leaves the endpoint unset.
 func TestSSE_HandleSSEEvent_EndpointParseError(t *testing.T) {
 	sse := newBareSSE()
 
@@ -114,6 +127,8 @@ func TestSSE_HandleSSEEvent_EndpointParseError(t *testing.T) {
 	require.Nil(t, sse.endpoint)
 }
 
+// TestSSE_HandleSSEEvent_UnknownResponseID verifies a message whose ID has no
+// pending response is a no-op.
 func TestSSE_HandleSSEEvent_UnknownResponseID(t *testing.T) {
 	sse := newBareSSE()
 
@@ -123,6 +138,8 @@ func TestSSE_HandleSSEEvent_UnknownResponseID(t *testing.T) {
 	})
 }
 
+// TestSSE_SendRequest_NotStarted verifies SendRequest fails with
+// "transport not started yet" before Start has run.
 func TestSSE_SendRequest_NotStarted(t *testing.T) {
 	_, err := newBareSSE().SendRequest(t.Context(), JSONRPCRequest{
 		JSONRPC: "2.0", ID: mcp.NewRequestId(int64(1)),
@@ -130,6 +147,8 @@ func TestSSE_SendRequest_NotStarted(t *testing.T) {
 	require.EqualError(t, err, "transport not started yet")
 }
 
+// TestSSE_SendRequest_Closed verifies SendRequest fails with
+// "transport has been closed" after Close has run.
 func TestSSE_SendRequest_Closed(t *testing.T) {
 	sse := newBareSSE()
 	sse.started.Store(true)
@@ -141,6 +160,8 @@ func TestSSE_SendRequest_Closed(t *testing.T) {
 	require.EqualError(t, err, "transport has been closed")
 }
 
+// TestSSE_SendRequest_EndpointNotReceived verifies SendRequest fails with
+// "endpoint not received" when no endpoint event has arrived.
 func TestSSE_SendRequest_EndpointNotReceived(t *testing.T) {
 	sse := newBareSSE()
 	sse.started.Store(true)
@@ -151,6 +172,8 @@ func TestSSE_SendRequest_EndpointNotReceived(t *testing.T) {
 	require.EqualError(t, err, "endpoint not received")
 }
 
+// TestSSE_SendRequest_MarshalError verifies SendRequest wraps JSON marshaling
+// failures of the request.
 func TestSSE_SendRequest_MarshalError(t *testing.T) {
 	sse := newBareSSE()
 	sse.started.Store(true)
@@ -173,6 +196,8 @@ func (t errorTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	return nil, t.err
 }
 
+// TestSSE_SendRequest_ConnectionError verifies SendRequest wraps HTTP
+// connection failures using the injected errorTransport.
 func TestSSE_SendRequest_ConnectionError(t *testing.T) {
 	sse := newBareSSE()
 	sse.started.Store(true)
@@ -185,6 +210,8 @@ func TestSSE_SendRequest_ConnectionError(t *testing.T) {
 	require.ErrorContains(t, err, "failed to send request")
 }
 
+// TestSSE_SendRequest_UnauthorizedWithoutOAuth verifies a 401 response is
+// surfaced as AuthorizationRequiredError when OAuth is not configured.
 func TestSSE_SendRequest_UnauthorizedWithoutOAuth(t *testing.T) {
 	sse := newBareSSE()
 	sse.started.Store(true)
@@ -201,6 +228,8 @@ func TestSSE_SendRequest_UnauthorizedWithoutOAuth(t *testing.T) {
 	require.ErrorAs(t, err, &authErr)
 }
 
+// TestSSE_SendRequest_ServerError verifies a 500 response is surfaced with the
+// status code in the error.
 func TestSSE_SendRequest_ServerError(t *testing.T) {
 	sse := newBareSSE()
 	sse.started.Store(true)
@@ -216,6 +245,8 @@ func TestSSE_SendRequest_ServerError(t *testing.T) {
 	require.ErrorContains(t, err, "request failed with status 500")
 }
 
+// TestSSE_SendRequest_DeadlineAlreadyPassed verifies a request whose context
+// deadline already passed fails with context.DeadlineExceeded.
 func TestSSE_SendRequest_DeadlineAlreadyPassed(t *testing.T) {
 	sse := newBareSSE()
 	sse.started.Store(true)
@@ -234,6 +265,9 @@ func TestSSE_SendRequest_DeadlineAlreadyPassed(t *testing.T) {
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
+// TestSSE_SendRequest_HeaderOptions verifies static headers, the dynamic
+// header function, the protocol version, and the host override are all
+// attached to the outbound HTTP request.
 func TestSSE_SendRequest_HeaderOptions(t *testing.T) {
 	sse := newBareSSE()
 	sse.started.Store(true)
@@ -284,6 +318,8 @@ type chanClosingTransport struct {
 	idKey string
 }
 
+// RoundTrip delegates to the base transport and then closes the registered
+// response channel, modeling Close racing an in-flight delivery.
 func (t *chanClosingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.base.RoundTrip(req)
 	t.sse.mu.RLock()
@@ -295,6 +331,9 @@ func (t *chanClosingTransport) RoundTrip(req *http.Request) (*http.Response, err
 	return resp, err
 }
 
+// TestSSE_SendRequest_ResponseChanClosed verifies SendRequest reports
+// "connection has been closed" when the response channel is closed before
+// delivery.
 func TestSSE_SendRequest_ResponseChanClosed(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -318,6 +357,8 @@ func TestSSE_SendRequest_ResponseChanClosed(t *testing.T) {
 	require.EqualError(t, err, "connection has been closed")
 }
 
+// TestSSE_SendNotification_MarshalError verifies SendNotification wraps JSON
+// marshaling failures of the notification.
 func TestSSE_SendNotification_MarshalError(t *testing.T) {
 	sse := newBareSSE()
 	sse.endpoint = sse.baseURL
@@ -334,6 +375,8 @@ func TestSSE_SendNotification_MarshalError(t *testing.T) {
 	require.ErrorContains(t, err, "failed to marshal notification")
 }
 
+// TestSSE_SendNotification_ConnectionError verifies SendNotification wraps
+// HTTP connection failures using the injected errorTransport.
 func TestSSE_SendNotification_ConnectionError(t *testing.T) {
 	sse := newBareSSE()
 	sse.endpoint = sse.baseURL
@@ -348,6 +391,9 @@ func TestSSE_SendNotification_ConnectionError(t *testing.T) {
 	require.ErrorContains(t, err, "failed to send notification")
 }
 
+// TestSSE_SendNotification_UnauthorizedWithoutOAuth verifies a 401 response to
+// a notification is surfaced as AuthorizationRequiredError when OAuth is not
+// configured.
 func TestSSE_SendNotification_UnauthorizedWithoutOAuth(t *testing.T) {
 	sse := newBareSSE()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -366,6 +412,8 @@ func TestSSE_SendNotification_UnauthorizedWithoutOAuth(t *testing.T) {
 	require.ErrorAs(t, err, &authErr)
 }
 
+// TestSSE_SendNotification_ServerError verifies a 500 response to a
+// notification is surfaced with the status code in the error.
 func TestSSE_SendNotification_ServerError(t *testing.T) {
 	sse := newBareSSE()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -383,6 +431,8 @@ func TestSSE_SendNotification_ServerError(t *testing.T) {
 	require.ErrorContains(t, err, "notification failed with status 500")
 }
 
+// TestSSE_SendNotification_Success verifies a notification accepted by the
+// server returns no error.
 func TestSSE_SendNotification_Success(t *testing.T) {
 	sse := newBareSSE()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -400,6 +450,8 @@ func TestSSE_SendNotification_Success(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestSSE_Close_WithoutStream verifies Close without a live stream closes and
+// drops pending response channels and is idempotent.
 func TestSSE_Close_WithoutStream(t *testing.T) {
 	sse := newBareSSE()
 	pending := make(chan *JSONRPCResponse)
@@ -421,6 +473,8 @@ func TestSSE_Close_WithoutStream(t *testing.T) {
 	require.NoError(t, sse.Close())
 }
 
+// TestSSE_Start_AlreadyStarted verifies Start is a no-op returning no error
+// when the transport is already started.
 func TestSSE_Start_AlreadyStarted(t *testing.T) {
 	sse := newBareSSE()
 	sse.started.Store(true)

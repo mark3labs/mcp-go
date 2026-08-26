@@ -1194,6 +1194,8 @@ func TestSSEHostOverride(t *testing.T) {
 	})
 }
 
+// TestSSE_SendRequest_Timeout verifies SendRequest fails with a timeout error
+// when the server accepts the request but never delivers an SSE response.
 func TestSSE_SendRequest_Timeout(t *testing.T) {
 	t.Run("TimeoutWhenServerNeverResponds", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
