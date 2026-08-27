@@ -586,7 +586,7 @@ func TestStdio_NewIODoesNotConsumeLoggingReader(t *testing.T) {
 
 	select {
 	case <-stderr.read:
-		t.Fatal("NewIO logging reader was consumed by the subprocess stderr drainer")
+		require.FailNow(t, "NewIO logging reader was consumed by the subprocess stderr drainer")
 	case <-time.After(100 * time.Millisecond):
 	}
 }
