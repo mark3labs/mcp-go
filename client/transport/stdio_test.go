@@ -574,6 +574,34 @@ func TestStdio_ReadResponses_SuppressesClosedPipeShutdownNoise(t *testing.T) {
 	}
 }
 
+func TestStdio_NewIODoesNotConsumeLoggingReader(t *testing.T) {
+	stdout := errReader{err: &fs.PathError{Op: "read", Path: "|0", Err: fs.ErrClosed}}
+	stderr := &trackingReadCloser{read: make(chan struct{}, 1)}
+	stdio := NewIO(stdout, nopWriteCloser{Writer: io.Discard}, stderr)
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	t.Cleanup(cancel)
+	require.NoError(t, stdio.Start(ctx))
+	t.Cleanup(func() { _ = stdio.Close() })
+
+	select {
+	case <-stderr.read:
+		t.Fatal("NewIO logging reader was consumed by the subprocess stderr drainer")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+type trackingReadCloser struct {
+	read chan struct{}
+}
+
+func (r *trackingReadCloser) Read([]byte) (int, error) {
+	r.read <- struct{}{}
+	return 0, io.EOF
+}
+
+func (*trackingReadCloser) Close() error { return nil }
+
 type nopWriteCloser struct {
 	io.Writer
 }
