@@ -102,7 +102,7 @@ func TestSSE_SetConnectionLostHandler(t *testing.T) {
 func TestSSE_HandleSSEEvent_MessageInvalidJSON(t *testing.T) {
 	sse := newBareSSE()
 	require.NotPanics(t, func() {
-		sse.handleSSEEvent("message", "not-json")
+		sse.handleSSEEvent("message", "not-json", make(chan struct{}), &sync.Once{})
 	})
 }
 
@@ -111,7 +111,7 @@ func TestSSE_HandleSSEEvent_MessageInvalidJSON(t *testing.T) {
 func TestSSE_HandleSSEEvent_NotificationWithoutHandler(t *testing.T) {
 	sse := newBareSSE()
 	require.NotPanics(t, func() {
-		sse.handleSSEEvent("message", `{"jsonrpc":"2.0","method":"notify"}`)
+		sse.handleSSEEvent("message", `{"jsonrpc":"2.0","method":"notify"}`, make(chan struct{}), &sync.Once{})
 	})
 }
 
@@ -122,7 +122,7 @@ func TestSSE_HandleSSEEvent_EndpointParseError(t *testing.T) {
 
 	// An unparsable endpoint event must be ignored and leave endpoint unset.
 	require.NotPanics(t, func() {
-		sse.handleSSEEvent("endpoint", "http://[::1")
+		sse.handleSSEEvent("endpoint", "http://[::1", make(chan struct{}), &sync.Once{})
 	})
 	require.Nil(t, sse.endpoint)
 }
@@ -134,7 +134,7 @@ func TestSSE_HandleSSEEvent_UnknownResponseID(t *testing.T) {
 
 	// No pending request with this ID; delivery must be a no-op.
 	require.NotPanics(t, func() {
-		sse.handleSSEEvent("message", `{"jsonrpc":"2.0","id":42,"result":{}}`)
+		sse.handleSSEEvent("message", `{"jsonrpc":"2.0","id":42,"result":{}}`, make(chan struct{}), &sync.Once{})
 	})
 }
 

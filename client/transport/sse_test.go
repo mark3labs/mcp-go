@@ -611,8 +611,7 @@ func TestSSE(t *testing.T) {
 		// that the readSSE method returns without calling any handler
 
 		// Directly test the readSSE method with our mock reader
-		go trans.readSSE(mockReader)
-
+		go trans.readSSE(mockReader, make(chan struct{}), &sync.Once{})
 		// Wait for readSSE to complete
 		time.Sleep(100 * time.Millisecond)
 
@@ -653,8 +652,7 @@ func TestSSE(t *testing.T) {
 		})
 
 		// Directly test the readSSE method with our mock reader that simulates ERROR
-		go trans.readSSE(mockReader)
-
+		go trans.readSSE(mockReader, make(chan struct{}), &sync.Once{})
 		// Wait for connection lost handler to be called
 		timeout := time.After(1 * time.Second)
 		ticker := time.NewTicker(10 * time.Millisecond)
@@ -1675,7 +1673,7 @@ func TestSSE_CloseConcurrentWithMessageDoesNotPanic(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		close(entering)
-		trans.handleSSEEvent("message", msg)
+		trans.handleSSEEvent("message", msg, make(chan struct{}), &sync.Once{})
 	}()
 
 	// Wait until the sender owns trans.mu: TryLock fails exactly while the

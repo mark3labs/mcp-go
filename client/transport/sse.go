@@ -31,13 +31,12 @@ type SSE struct {
 	mu             sync.RWMutex
 	onNotification func(mcp.JSONRPCNotification)
 	notifyMu       sync.RWMutex
-	endpointChan   chan struct{}
-	endpointOnce   sync.Once
 	headers        map[string]string
 	headerFunc     HTTPHeaderFunc
 	host           string
 	logger         *slog.Logger
 
+	startMu          sync.Mutex
 	started          atomic.Bool
 	closed           atomic.Bool
 	cancelSSEStream  context.CancelFunc
@@ -138,7 +137,6 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 		baseURL:         parsedURL,
 		httpClient:      &http.Client{},
 		responses:       make(map[string]chan *JSONRPCResponse),
-		endpointChan:    make(chan struct{}),
 		headers:         make(map[string]string),
 		logger:          slog.Default(),
 		endpointTimeout: 30 * time.Second,
@@ -164,9 +162,21 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 // Start initiates the SSE connection to the server and waits for the endpoint information.
 // Returns an error if the connection fails or times out waiting for the endpoint.
 func (c *SSE) Start(ctx context.Context) error {
+	// Serialize Start attempts so overlapping calls cannot open multiple
+	// streams that race for the same handshake. A failed attempt releases
+	// the lock so the caller can retry.
+	c.startMu.Lock()
+	defer c.startMu.Unlock()
+
 	if c.started.Load() {
 		return nil
 	}
+
+	// The handshake state belongs to this Start attempt only. Delayed
+	// endpoint events from a superseded reader (e.g. after a failed Start)
+	// close only this attempt's channel and cannot corrupt a later retry.
+	endpointChan := make(chan struct{})
+	endpointOnce := &sync.Once{}
 
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancelSSEStream = cancel
@@ -250,7 +260,7 @@ func (c *SSE) Start(ctx context.Context) error {
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	go c.readSSE(resp.Body)
+	go c.readSSE(resp.Body, endpointChan, endpointOnce)
 
 	// Wait for the endpoint to be received
 	endpointTimeout := c.endpointTimeout
@@ -271,7 +281,7 @@ func (c *SSE) Start(ctx context.Context) error {
 	defer timer.Stop()
 
 	select {
-	case <-c.endpointChan:
+	case <-endpointChan:
 		// Endpoint received, proceed
 	case <-ctx.Done():
 		return fmt.Errorf("context cancelled while waiting for endpoint: %w", ctx.Err())
@@ -286,7 +296,7 @@ func (c *SSE) Start(ctx context.Context) error {
 
 // readSSE continuously reads the SSE stream and processes events.
 // It runs until the connection is closed or an error occurs.
-func (c *SSE) readSSE(reader io.ReadCloser) {
+func (c *SSE) readSSE(reader io.ReadCloser, endpointChan chan struct{}, endpointOnce *sync.Once) {
 	defer reader.Close()
 
 	br := bufio.NewReader(reader)
@@ -304,7 +314,7 @@ func (c *SSE) readSSE(reader io.ReadCloser) {
 					if event == "" {
 						event = "message"
 					}
-					c.handleSSEEvent(event, data)
+					c.handleSSEEvent(event, data, endpointChan, endpointOnce)
 				}
 			}
 			c.connectionLostMu.RLock()
@@ -328,7 +338,7 @@ func (c *SSE) readSSE(reader io.ReadCloser) {
 				if event == "" {
 					event = "message"
 				}
-				c.handleSSEEvent(event, data)
+				c.handleSSEEvent(event, data, endpointChan, endpointOnce)
 				event = ""
 				data = ""
 			}
@@ -363,7 +373,7 @@ func appendSSEData(existing, line string) string {
 
 // handleSSEEvent processes SSE events based on their type.
 // Handles 'endpoint' events for connection setup and 'message' events for JSON-RPC communication.
-func (c *SSE) handleSSEEvent(event, data string) {
+func (c *SSE) handleSSEEvent(event, data string, endpointChan chan struct{}, endpointOnce *sync.Once) {
 	switch event {
 	case "endpoint":
 		endpoint, err := c.baseURL.Parse(data)
@@ -380,9 +390,10 @@ func (c *SSE) handleSSEEvent(event, data string) {
 		c.mu.Unlock()
 		// The SSE spec sends a single endpoint event, but a proxy or a
 		// re-broadcasting server can emit it more than once. Closing the
-		// channel twice panics, so guard the close with sync.Once.
-		c.endpointOnce.Do(func() {
-			close(c.endpointChan)
+		// channel twice panics, so guard the close with the attempt's
+		// sync.Once.
+		endpointOnce.Do(func() {
+			close(endpointChan)
 		})
 	case "message":
 		var baseMessage JSONRPCResponse
