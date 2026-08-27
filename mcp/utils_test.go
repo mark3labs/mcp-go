@@ -676,6 +676,7 @@ func TestParseContent(t *testing.T) {
 					assert.Equal(t, exp.MIMEType, act.MIMEType)
 					assert.Equal(t, exp.Size, act.Size)
 					assert.Equal(t, exp.Annotations, act.Annotations)
+					assert.Equal(t, exp.Meta, act.Meta)
 				case EmbeddedResource:
 					act, ok := result.(EmbeddedResource)
 					assert.True(t, ok)
