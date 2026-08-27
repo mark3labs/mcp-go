@@ -36,7 +36,12 @@ type SSE struct {
 	host           string
 	logger         *slog.Logger
 
-	startMu          sync.Mutex
+	// startMu protects startDone. Concurrent Start calls share one active
+	// handshake and may cancel independently; Start and Close must not
+	// overlap.
+	startMu   sync.Mutex
+	startDone chan struct{}
+
 	started          atomic.Bool
 	closed           atomic.Bool
 	cancelSSEStream  context.CancelFunc
@@ -162,16 +167,44 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 // Start initiates the SSE connection to the server and waits for the endpoint information.
 // Returns an error if the connection fails or times out waiting for the endpoint.
 func (c *SSE) Start(ctx context.Context) error {
-	// Serialize Start attempts so overlapping calls cannot open multiple
-	// streams that race for the same handshake. A failed attempt releases
-	// the lock so the caller can retry.
-	c.startMu.Lock()
-	defer c.startMu.Unlock()
+	for {
+		c.startMu.Lock()
+		if c.started.Load() {
+			c.startMu.Unlock()
+			return nil
+		}
+		// A concurrent Start is already in flight: wait for it and honor
+		// our own context instead of blocking on the mutex.
+		if startDone := c.startDone; startDone != nil {
+			c.startMu.Unlock()
+			select {
+			case <-startDone:
+				if err := ctx.Err(); err != nil {
+					return fmt.Errorf("context cancelled while waiting for concurrent start: %w", err)
+				}
+				continue
+			case <-ctx.Done():
+				return fmt.Errorf("context cancelled while waiting for concurrent start: %w", ctx.Err())
+			}
+		}
 
-	if c.started.Load() {
-		return nil
+		// Become the owner of this handshake attempt.
+		startDone := make(chan struct{})
+		c.startDone = startDone
+		c.startMu.Unlock()
+
+		err := c.start(ctx)
+
+		c.startMu.Lock()
+		c.startDone = nil
+		close(startDone)
+		c.startMu.Unlock()
+		return err
 	}
+}
 
+// start performs one SSE connection and endpoint handshake attempt.
+func (c *SSE) start(ctx context.Context) error {
 	// The handshake state belongs to this Start attempt only. Delayed
 	// endpoint events from a superseded reader (e.g. after a failed Start)
 	// close only this attempt's channel and cannot corrupt a later retry.

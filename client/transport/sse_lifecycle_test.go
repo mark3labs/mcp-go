@@ -136,6 +136,67 @@ func TestSSE_ReadSSE_PendingEndpointAtEOF(t *testing.T) {
 	}
 }
 
+// TestSSE_Start_FollowerCancelsIndependently verifies a concurrent Start
+// waiting for the owner's in-flight handshake honors its own context and
+// cancels without disturbing the owner.
+func TestSSE_Start_FollowerCancelsIndependently(t *testing.T) {
+	releaseEndpoint := make(chan struct{})
+	var requests atomic.Int32
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-releaseEndpoint
+		fmt.Fprintf(w, "event: endpoint\ndata: %s/messages\n\n", server.URL)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	transport, err := NewSSE(server.URL, WithEndpointTimeout(5*time.Second))
+	require.NoError(t, err)
+	defer transport.Close()
+
+	// Owner: blocks waiting for the endpoint.
+	ownerDone := make(chan error, 1)
+	go func() { ownerDone <- transport.Start(t.Context()) }()
+
+	// Wait until the owner registered its in-flight handshake.
+	require.Eventually(t, func() bool {
+		transport.startMu.Lock()
+		defer transport.startMu.Unlock()
+		return transport.startDone != nil
+	}, time.Second, 5*time.Millisecond)
+
+	// Follower: waits on the shared handshake but cancels its own context.
+	followerCtx, cancel := context.WithCancel(t.Context())
+	followerDone := make(chan error, 1)
+	go func() { followerDone <- transport.Start(followerCtx) }()
+	time.Sleep(20 * time.Millisecond) // let the follower reach the wait
+	cancel()
+
+	select {
+	case err := <-followerDone:
+		require.Error(t, err)
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("follower did not honor its own context cancellation")
+	}
+
+	// Release the endpoint: the owner still completes successfully.
+	close(releaseEndpoint)
+	select {
+	case err := <-ownerDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("owner did not complete after the endpoint was sent")
+	}
+
+	require.Equal(t, int32(1), requests.Load(), "concurrent Start opened extra streams")
+}
+
 // TestSSE_Start_FollowerContextCancellation verifies cancelling the caller's
 // context while waiting for the endpoint aborts Start with the context error.
 func TestSSE_Start_FollowerContextCancellation(t *testing.T) {
