@@ -399,6 +399,84 @@ func TestSSEConcurrentStartUsesSingleHandshake(t *testing.T) {
 	}
 }
 
+// TestSSEConcurrentStartHonorsFollowerContext verifies that a caller waiting
+// for an active handshake can cancel without interrupting the shared attempt.
+func TestSSEConcurrentStartHonorsFollowerContext(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		followerTimeout time.Duration
+	}{
+		{name: "short follower deadline", followerTimeout: 25 * time.Millisecond},
+		{name: "longer follower deadline", followerTimeout: 75 * time.Millisecond},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var connections atomic.Int32
+			firstConnected := make(chan struct{})
+			releaseEndpoint := make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				connections.Add(1)
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.WriteHeader(http.StatusOK)
+				flusher := w.(http.Flusher)
+				flusher.Flush()
+				close(firstConnected)
+
+				select {
+				case <-releaseEndpoint:
+				case <-r.Context().Done():
+					return
+				}
+				_, _ = fmt.Fprint(w, "event: endpoint\ndata: /messages\n\n")
+				flusher.Flush()
+				<-r.Context().Done()
+			}))
+			defer server.Close()
+
+			transport, err := NewSSE(server.URL, WithEndpointTimeout(time.Second))
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = transport.Close() })
+
+			leaderCtx, leaderCancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer leaderCancel()
+			leaderResult := make(chan error, 1)
+			go func() {
+				leaderResult <- transport.Start(leaderCtx)
+			}()
+
+			select {
+			case <-firstConnected:
+			case <-leaderCtx.Done():
+				t.Fatalf("leader SSE connection was not established: %v", leaderCtx.Err())
+			}
+
+			followerCtx, followerCancel := context.WithTimeout(t.Context(), tt.followerTimeout)
+			defer followerCancel()
+			followerResult := make(chan error, 1)
+			go func() {
+				followerResult <- transport.Start(followerCtx)
+			}()
+
+			select {
+			case err := <-followerResult:
+				require.ErrorIs(t, err, context.DeadlineExceeded)
+			case <-time.After(500 * time.Millisecond):
+				close(releaseEndpoint)
+				t.Fatal("follower Start did not honor its context deadline")
+			}
+
+			close(releaseEndpoint)
+			require.NoError(t, <-leaderResult)
+			require.Equal(t, int32(1), connections.Load())
+		})
+	}
+}
+
 func TestSSE(t *testing.T) {
 	// Compile mock server
 	url, closeF := startMockSSEEchoServer()

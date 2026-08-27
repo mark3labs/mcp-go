@@ -39,8 +39,11 @@ type SSE struct {
 	host           string
 	logger         *slog.Logger
 
-	started          atomic.Bool
+	started atomic.Bool
+	// startMu protects startDone. Concurrent Start calls share one active
+	// handshake and may cancel independently; Start and Close must not overlap.
 	startMu          sync.Mutex
+	startDone        chan struct{}
 	closed           atomic.Bool
 	cancelSSEStream  context.CancelFunc
 	protocolVersion  atomic.Value // string
@@ -166,12 +169,40 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 // Start initiates the SSE connection to the server and waits for the endpoint information.
 // Returns an error if the connection fails or times out waiting for the endpoint.
 func (c *SSE) Start(ctx context.Context) error {
-	c.startMu.Lock()
-	defer c.startMu.Unlock()
+	for {
+		c.startMu.Lock()
+		if c.started.Load() {
+			c.startMu.Unlock()
+			return nil
+		}
+		if startDone := c.startDone; startDone != nil {
+			c.startMu.Unlock()
+			select {
+			case <-startDone:
+				if err := ctx.Err(); err != nil {
+					return fmt.Errorf("context cancelled while waiting for concurrent start: %w", err)
+				}
+				continue
+			case <-ctx.Done():
+				return fmt.Errorf("context cancelled while waiting for concurrent start: %w", ctx.Err())
+			}
+		}
 
-	if c.started.Load() {
-		return nil
+		startDone := make(chan struct{})
+		c.startDone = startDone
+		c.startMu.Unlock()
+
+		err := c.start(ctx)
+		c.startMu.Lock()
+		c.startDone = nil
+		close(startDone)
+		c.startMu.Unlock()
+		return err
 	}
+}
+
+// start performs one SSE connection and endpoint handshake attempt.
+func (c *SSE) start(ctx context.Context) error {
 	endpointChan := c.resetEndpointHandshake()
 
 	ctx, cancel := context.WithCancel(ctx)
