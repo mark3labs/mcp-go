@@ -252,7 +252,7 @@ func (c *SSE) Start(ctx context.Context) error {
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	go c.readSSE(resp.Body)
+	go c.readSSE(resp.Body, endpointChan)
 
 	// Wait for the endpoint to be received
 	endpointTimeout := c.endpointTimeout
@@ -300,9 +300,10 @@ func (c *SSE) resetEndpointHandshake() chan struct{} {
 	return c.endpointChan
 }
 
-// readSSE continuously reads the SSE stream and processes events.
+// readSSE continuously reads one connection's SSE stream and processes events.
+// endpointChan identifies the Start attempt that owns endpoint handshake events.
 // It runs until the connection is closed or an error occurs.
-func (c *SSE) readSSE(reader io.ReadCloser) {
+func (c *SSE) readSSE(reader io.ReadCloser, endpointChan chan struct{}) {
 	defer reader.Close()
 
 	br := bufio.NewReader(reader)
@@ -320,7 +321,7 @@ func (c *SSE) readSSE(reader io.ReadCloser) {
 					if event == "" {
 						event = "message"
 					}
-					c.handleSSEEvent(event, data)
+					c.handleSSEEvent(event, data, endpointChan)
 				}
 			}
 			c.connectionLostMu.RLock()
@@ -344,7 +345,7 @@ func (c *SSE) readSSE(reader io.ReadCloser) {
 				if event == "" {
 					event = "message"
 				}
-				c.handleSSEEvent(event, data)
+				c.handleSSEEvent(event, data, endpointChan)
 				event = ""
 				data = ""
 			}
@@ -379,7 +380,7 @@ func appendSSEData(existing, line string) string {
 
 // handleSSEEvent processes SSE events based on their type.
 // Handles 'endpoint' events for connection setup and 'message' events for JSON-RPC communication.
-func (c *SSE) handleSSEEvent(event, data string) {
+func (c *SSE) handleSSEEvent(event, data string, endpointChan chan struct{}) {
 	switch event {
 	case "endpoint":
 		endpoint, err := c.baseURL.Parse(data)
@@ -395,7 +396,8 @@ func (c *SSE) handleSSEEvent(event, data string) {
 		defer c.endpointMu.Unlock()
 		// The endpoint event is a one-time handshake. Keep the first valid
 		// endpoint and prevent duplicate server events from closing the channel twice.
-		if c.endpointSet {
+		// Ignore endpoint events from a reader owned by an earlier Start attempt.
+		if endpointChan != c.endpointChan || c.endpointSet {
 			return
 		}
 		c.endpoint = endpoint

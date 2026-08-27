@@ -217,18 +217,47 @@ func TestAppendSSEData(t *testing.T) {
 func TestSSEHandleDuplicateEndpoint(t *testing.T) {
 	t.Parallel()
 
-	transport, err := NewSSE("https://example.com/sse")
-	require.NoError(t, err)
+	tests := []struct {
+		name   string
+		first  string
+		second string
+		want   string
+	}{
+		{
+			name:   "relative endpoints",
+			first:  "/messages/first",
+			second: "/messages/second",
+			want:   "https://example.com/messages/first",
+		},
+		{
+			name:   "absolute endpoints",
+			first:  "https://example.com/messages/first",
+			second: "https://example.com/messages/second",
+			want:   "https://example.com/messages/first",
+		},
+	}
 
-	require.NotPanics(t, func() {
-		transport.handleSSEEvent("endpoint", "/messages/first")
-		transport.handleSSEEvent("endpoint", "/messages/second")
-	})
-	require.Equal(t, "https://example.com/messages/first", transport.endpoint.String())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			transport, err := NewSSE("https://example.com/sse")
+			require.NoError(t, err)
+			endpointChan := transport.resetEndpointHandshake()
+
+			require.NotPanics(t, func() {
+				transport.handleSSEEvent("endpoint", tt.first, endpointChan)
+				transport.handleSSEEvent("endpoint", tt.second, endpointChan)
+			})
+			require.Equal(t, tt.want, transport.GetEndpoint().String())
+		})
+	}
 }
 
 func TestSSEStartRetriesWithFreshEndpointHandshake(t *testing.T) {
 	var attempts atomic.Int32
+	secondConnected := make(chan struct{})
+	releaseSecondEndpoint := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
@@ -241,27 +270,54 @@ func TestSSEStartRetriesWithFreshEndpointHandshake(t *testing.T) {
 			return
 		}
 
+		close(secondConnected)
+		select {
+		case <-releaseSecondEndpoint:
+		case <-r.Context().Done():
+			return
+		}
 		_, _ = fmt.Fprint(w, "event: endpoint\ndata: /messages/retry\n\n")
 		flusher.Flush()
 		<-r.Context().Done()
 	}))
 	defer server.Close()
 
-	transport, err := NewSSE(server.URL, WithEndpointTimeout(50*time.Millisecond))
+	transport, err := NewSSE(server.URL, WithEndpointTimeout(500*time.Millisecond))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = transport.Close() })
 
-	firstCtx, firstCancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	firstCtx, firstCancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer firstCancel()
 	require.Error(t, transport.Start(firstCtx))
 
-	// Simulate an endpoint event delivered late by the cancelled first stream.
-	// The next Start must not treat this stale endpoint as a successful retry.
-	transport.handleSSEEvent("endpoint", "/messages/stale")
+	transport.endpointMu.RLock()
+	staleEndpointChan := transport.endpointChan
+	transport.endpointMu.RUnlock()
 
-	secondCtx, secondCancel := context.WithTimeout(t.Context(), time.Second)
+	secondCtx, secondCancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer secondCancel()
-	require.NoError(t, transport.Start(secondCtx))
+	secondResult := make(chan error, 1)
+	go func() {
+		secondResult <- transport.Start(secondCtx)
+	}()
+
+	select {
+	case <-secondConnected:
+	case <-secondCtx.Done():
+		t.Fatalf("second SSE connection was not established: %v", secondCtx.Err())
+	}
+
+	// Deliver an endpoint event from the cancelled reader after Start has reset
+	// its handshake. The stale event must not complete or overwrite the retry.
+	transport.handleSSEEvent("endpoint", "/messages/stale", staleEndpointChan)
+	select {
+	case err := <-secondResult:
+		t.Fatalf("stale endpoint completed the retry: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(releaseSecondEndpoint)
+	require.NoError(t, <-secondResult)
 	require.Equal(t, server.URL+"/messages/retry", transport.GetEndpoint().String())
 }
 
@@ -664,7 +720,7 @@ func TestSSE(t *testing.T) {
 		// that the readSSE method returns without calling any handler
 
 		// Directly test the readSSE method with our mock reader
-		go trans.readSSE(mockReader)
+		go trans.readSSE(mockReader, trans.endpointChan)
 
 		// Wait for readSSE to complete
 		time.Sleep(100 * time.Millisecond)
@@ -706,7 +762,7 @@ func TestSSE(t *testing.T) {
 		})
 
 		// Directly test the readSSE method with our mock reader that simulates ERROR
-		go trans.readSSE(mockReader)
+		go trans.readSSE(mockReader, trans.endpointChan)
 
 		// Wait for connection lost handler to be called
 		timeout := time.After(1 * time.Second)
