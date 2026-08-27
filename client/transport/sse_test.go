@@ -680,6 +680,19 @@ func TestSSE(t *testing.T) {
 	})
 }
 
+func TestSSEStartAfterClose(t *testing.T) {
+	url, closeServer := startMockSSEEchoServer()
+	defer closeServer()
+
+	transport, err := NewSSE(url)
+	require.NoError(t, err)
+	require.NoError(t, transport.Start(t.Context()))
+	require.NoError(t, transport.Close())
+
+	err = transport.Start(t.Context())
+	require.EqualError(t, err, "transport has been closed")
+}
+
 func TestSSEErrors(t *testing.T) {
 	t.Run("InvalidURL", func(t *testing.T) {
 		// Create a new SSE transport with an invalid URL
