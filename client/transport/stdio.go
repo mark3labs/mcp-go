@@ -199,7 +199,7 @@ func (c *Stdio) Start(ctx context.Context) error {
 	// Drain the subprocess's stderr so a server that logs more than the OS pipe
 	// buffer can never block in write(2) and stop answering on stdout. Stderr()
 	// consumers read the same stream through the internal buffer (see readStderr).
-	if c.stderr != nil {
+	if c.stderr != nil && c.cmd != nil {
 		go c.readStderr()
 	}
 
@@ -663,6 +663,9 @@ func (r *stderrReader) Read(p []byte) (int, error) {
 func (c *Stdio) Stderr() io.Reader {
 	if c.stderr == nil {
 		return nil
+	}
+	if c.cmd == nil {
+		return c.stderr
 	}
 	return &stderrReader{ch: c.stderrCh}
 }
