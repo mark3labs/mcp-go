@@ -40,6 +40,7 @@ type SSE struct {
 	logger         *slog.Logger
 
 	started          atomic.Bool
+	startMu          sync.Mutex
 	closed           atomic.Bool
 	cancelSSEStream  context.CancelFunc
 	protocolVersion  atomic.Value // string
@@ -165,6 +166,9 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 // Start initiates the SSE connection to the server and waits for the endpoint information.
 // Returns an error if the connection fails or times out waiting for the endpoint.
 func (c *SSE) Start(ctx context.Context) error {
+	c.startMu.Lock()
+	defer c.startMu.Unlock()
+
 	if c.started.Load() {
 		return nil
 	}

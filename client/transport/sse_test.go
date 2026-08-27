@@ -321,6 +321,84 @@ func TestSSEStartRetriesWithFreshEndpointHandshake(t *testing.T) {
 	require.Equal(t, server.URL+"/messages/retry", transport.GetEndpoint().String())
 }
 
+// TestSSEConcurrentStartUsesSingleHandshake verifies that overlapping Start
+// calls share the first successful connection instead of replacing its state.
+func TestSSEConcurrentStartUsesSingleHandshake(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		callers int
+	}{
+		{name: "two callers", callers: 2},
+		{name: "many callers", callers: 8},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var connections atomic.Int32
+			firstConnected := make(chan struct{})
+			releaseEndpoint := make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.WriteHeader(http.StatusOK)
+				flusher := w.(http.Flusher)
+				flusher.Flush()
+
+				if connections.Add(1) == 1 {
+					close(firstConnected)
+				}
+				select {
+				case <-releaseEndpoint:
+				case <-r.Context().Done():
+					return
+				}
+				_, _ = fmt.Fprint(w, "event: endpoint\ndata: /messages\n\n")
+				flusher.Flush()
+				<-r.Context().Done()
+			}))
+			defer server.Close()
+
+			transport, err := NewSSE(server.URL, WithEndpointTimeout(time.Second))
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = transport.Close() })
+
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			results := make(chan error, tt.callers)
+			go func() {
+				results <- transport.Start(ctx)
+			}()
+
+			select {
+			case <-firstConnected:
+			case <-ctx.Done():
+				t.Fatalf("first SSE connection was not established: %v", ctx.Err())
+			}
+
+			var launched sync.WaitGroup
+			launched.Add(tt.callers - 1)
+			for range tt.callers - 1 {
+				go func() {
+					launched.Done()
+					results <- transport.Start(ctx)
+				}()
+			}
+			launched.Wait()
+			time.Sleep(50 * time.Millisecond)
+			require.Equal(t, int32(1), connections.Load(), "concurrent Start calls must not create new handshakes")
+
+			close(releaseEndpoint)
+			for range tt.callers {
+				require.NoError(t, <-results)
+			}
+			require.Equal(t, int32(1), connections.Load())
+		})
+	}
+}
+
 func TestSSE(t *testing.T) {
 	// Compile mock server
 	url, closeF := startMockSSEEchoServer()
