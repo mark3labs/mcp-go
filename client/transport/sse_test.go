@@ -420,12 +420,14 @@ func TestSSEConcurrentStartHonorsFollowerContext(t *testing.T) {
 			firstConnected := make(chan struct{})
 			releaseEndpoint := make(chan struct{})
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				connections.Add(1)
+				first := connections.Add(1) == 1
 				w.Header().Set("Content-Type", "text/event-stream")
 				w.WriteHeader(http.StatusOK)
 				flusher := w.(http.Flusher)
 				flusher.Flush()
-				close(firstConnected)
+				if first {
+					close(firstConnected)
+				}
 
 				select {
 				case <-releaseEndpoint:
