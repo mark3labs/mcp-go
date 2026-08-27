@@ -1052,44 +1052,55 @@ func generateRandomString(size int) string {
 }
 
 func TestStdio_StderrDrainPreventsDeadlock(t *testing.T) {
-	// Regression test for issue #956: the stdio transport must keep reading the
-	// subprocess's stderr pipe. A server that writes more than the OS pipe buffer
-	// (~64KB) to stderr would otherwise block in write(2), stop answering on
-	// stdout, and take the whole stdio channel down with an unexplained hang.
-	tempFile, err := os.CreateTemp(t.TempDir(), "mockstdio_server")
-	require.NoError(t, err)
-	tempFile.Close()
-	mockServerPath := tempFile.Name() + ".exe"
-
-	require.NoError(t, compileTestServer(mockServerPath))
-
-	stdio := NewStdio(mockServerPath, nil)
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	defer cancel()
-	require.NoError(t, stdio.Start(ctx))
-	defer stdio.Close()
-
-	// Make the server write 256KB to stderr (well past the ~64KB pipe buffer)
-	// before replying.
-	logReq := JSONRPCRequest{
-		JSONRPC: "2.0",
-		ID:      mcp.NewRequestId(int64(1)),
-		Method:  "debug/log_stderr",
-		Params:  map[string]any{"kilobytes": 256},
+	tests := []struct {
+		name string
+	}{
+		{name: "large stderr output does not block requests"},
 	}
-	logResp, err := stdio.SendRequest(ctx, logReq)
-	require.NoError(t, err)
-	require.NotNil(t, logResp)
 
-	// The channel must still be alive after the heavy stderr write: a follow-up
-	// echo has to complete within the remaining timeout.
-	echoReq := JSONRPCRequest{
-		JSONRPC: "2.0",
-		ID:      mcp.NewRequestId(int64(2)),
-		Method:  "debug/echo",
-		Params:  map[string]any{"alive": true},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Regression test for issue #956: the stdio transport must keep reading
+			// the subprocess's stderr pipe. A server that writes more than the OS
+			// pipe buffer (~64KB) to stderr would otherwise block in write(2), stop
+			// answering on stdout, and take the whole stdio channel down with an
+			// unexplained hang.
+			tempFile, err := os.CreateTemp(t.TempDir(), "mockstdio_server")
+			require.NoError(t, err)
+			tempFile.Close()
+			mockServerPath := tempFile.Name() + ".exe"
+
+			require.NoError(t, compileTestServer(mockServerPath))
+
+			stdio := NewStdio(mockServerPath, nil)
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			require.NoError(t, stdio.Start(ctx))
+			defer stdio.Close()
+
+			// Make the server write 256KB to stderr (well past the ~64KB pipe
+			// buffer) before replying.
+			logReq := JSONRPCRequest{
+				JSONRPC: "2.0",
+				ID:      mcp.NewRequestId(int64(1)),
+				Method:  "debug/log_stderr",
+				Params:  map[string]any{"kilobytes": 256},
+			}
+			logResp, err := stdio.SendRequest(ctx, logReq)
+			require.NoError(t, err)
+			require.NotNil(t, logResp)
+
+			// The channel must still be alive after the heavy stderr write: a
+			// follow-up echo has to complete within the remaining timeout.
+			echoReq := JSONRPCRequest{
+				JSONRPC: "2.0",
+				ID:      mcp.NewRequestId(int64(2)),
+				Method:  "debug/echo",
+				Params:  map[string]any{"alive": true},
+			}
+			echoResp, err := stdio.SendRequest(ctx, echoReq)
+			require.NoError(t, err)
+			require.NotNil(t, echoResp)
+		})
 	}
-	echoResp, err := stdio.SendRequest(ctx, echoReq)
-	require.NoError(t, err)
-	require.NotNil(t, echoResp)
 }

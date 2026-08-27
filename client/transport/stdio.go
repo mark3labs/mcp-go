@@ -657,9 +657,9 @@ func (r *stderrReader) Read(p []byte) (int, error) {
 //
 // The underlying stderr pipe is drained continuously by the transport, so a
 // caller that never reads it cannot deadlock the subprocess. The returned
-// reader replays that stream through a bounded buffer (up to ~512KB of the most
-// recent output); if a consumer reads slower than the subprocess writes, the
-// newest output is dropped rather than blocking the subprocess.
+// reader replays that stream through a bounded buffer (up to ~512KB of retained
+// output); if a consumer reads slower than the subprocess writes, the newest
+// output is dropped rather than blocking the subprocess.
 func (c *Stdio) Stderr() io.Reader {
 	if c.stderr == nil {
 		return nil
