@@ -799,17 +799,13 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 				func() {
 					mu.Lock()
 					defer mu.Unlock()
-					// if the done chan is closed, as the request is terminated, just return
-					select {
-					case <-done:
-						// The notification is already off the channel; with an
-						// event store it must still be recorded.
-						if resumable && canStream {
-							deliverResumable(nt, false)
-						}
-						return
-					default:
-					}
+					// The notification is already off the channel, so the
+					// response path's drain loop can no longer see it:
+					// returning here because done is closed would lose it
+					// outright. Fall through and deliver it exactly as if done
+					// were still open. Both paths that close done now wait on
+					// forwarderExited before writing, so this cannot interleave
+					// with the final response.
 					if !canStream {
 						// Without streaming we can't deliver notifications mid-flight;
 						// they will be dropped on the floor here. The final response
@@ -881,8 +877,15 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	// Process message through MCPServer
 	response := s.server.HandleMessage(ctx, rawData)
 	if response == nil {
-		mu.Lock()
+		// Await the forwarder here too. It may be holding a notification it
+		// took off the channel but has not yet written; letting this path
+		// return first would either lose that notification or let the
+		// forwarder write to a ResponseWriter whose handler has already
+		// returned. Waiting settles both. If the forwarder does deliver, it
+		// sets upgradedHeader and this path correctly skips the 202.
 		close(done)
+		<-forwarderExited
+		mu.Lock()
 		if !upgradedHeader {
 			mu.Unlock()
 			w.WriteHeader(http.StatusAccepted)
@@ -894,13 +897,17 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 
 	// Write response
 	//
-	// With an event store, stop the forwarder before draining so that exactly
-	// one consumer records whatever notifications remain, preserving their
-	// order ahead of the response.
-	if resumable {
-		close(done)
-		<-forwarderExited
-	}
+	// Stop the forwarder and wait for it to exit before draining, so that
+	// exactly one consumer handles whatever notifications remain and their
+	// order ahead of the response is preserved.
+	//
+	// The wait is not an event-store concern. The forwarder takes a
+	// notification off the channel and THEN acquires mu; if the response path
+	// were to drain and close done in between, that notification would be
+	// stranded in the forwarder's local variable, where the drain loop cannot
+	// see it. Awaiting the forwarder is what makes delivery deterministic.
+	close(done)
+	<-forwarderExited
 	mu.Lock()
 
 drainLoop:
@@ -931,15 +938,6 @@ drainLoop:
 		}
 	}
 
-	// close the done chan before unlocking to signal the goroutine to stop.
-	// This is the exact complement of the resumable branch above, which
-	// already closed it: a request that is not resumable - including a modern
-	// request on a server that has an event store configured - must still stop
-	// its forwarder here, or the forwarder outlives the request and races the
-	// final response write.
-	if !resumable {
-		close(done)
-	}
 	mu.Unlock()
 	if ctx.Err() != nil {
 		// The connection is gone, but with an event store the response of an
