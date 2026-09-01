@@ -1287,6 +1287,8 @@ func (AudioContent) isContent() {}
 // ResourceLink represents a link to a resource that the client can access.
 type ResourceLink struct {
 	Annotated
+	// Meta is a metadata object that is reserved by MCP for storing additional information.
+	Meta *Meta  `json:"_meta,omitempty"`
 	Type string `json:"type"` // Must be "resource_link"
 	// The URI of the resource.
 	URI string `json:"uri"`
