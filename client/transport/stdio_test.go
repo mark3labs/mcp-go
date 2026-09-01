@@ -2,6 +2,7 @@ package transport
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,13 +24,19 @@ import (
 )
 
 func compileTestServer(outputPath string) error {
+	return compileTestServerFromSource(outputPath, "../../testdata/mockstdio_server.go")
+}
+
+// compileTestServerFromSource builds a mock JSON-RPC server binary from the
+// given source file into outputPath, using a temporary build cache.
+func compileTestServerFromSource(outputPath, sourcePath string) error {
 	cmd := exec.Command(
 		"go",
 		"build",
 		"-buildmode=pie",
 		"-o",
 		outputPath,
-		"../../testdata/mockstdio_server.go",
+		sourcePath,
 	)
 	tmpCache, _ := os.MkdirTemp("", "gocache")
 	cmd.Env = append(os.Environ(), "GOCACHE="+tmpCache)
@@ -1041,6 +1048,8 @@ func TestStdio_ConcurrentWritesDoNotInterleave(t *testing.T) {
 	}
 }
 
+// generateRandomString returns a deterministic pseudo-random string of the
+// given size by cycling through a fixed charset.
 func generateRandomString(size int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 "
 
@@ -1049,4 +1058,182 @@ func generateRandomString(size int) string {
 		b[i] = charset[i%len(charset)]
 	}
 	return string(b)
+}
+
+// syncBuffer is a mutex-guarded bytes.Buffer used by tests that read Len()
+// while the stderr drain goroutine writes.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+// Write appends p to the guarded buffer.
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+// Len returns the guarded buffer's length.
+func (b *syncBuffer) Len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Len()
+}
+
+// TestStdio_ServerStderrDoesNotDeadlock verifies that a subprocess which fills
+// its stderr pipe keeps answering on stdout. Regression test for the deadlock
+// where StderrPipe was never read: once the ~64KB OS pipe buffer fills, the
+// child blocks inside write(2) and every request times out.
+func TestStdio_ServerStderrDoesNotDeadlock(t *testing.T) {
+	tempFile, err := os.CreateTemp(t.TempDir(), "mockstdio_stderr_server")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	tempFile.Close()
+	mockServerPath := tempFile.Name() + ".exe"
+
+	if compileErr := compileTestServerFromSource(mockServerPath, "../../testdata/mockstdio_stderr_server.go"); compileErr != nil {
+		t.Fatalf("Failed to compile mock server: %v", compileErr)
+	}
+
+	stdio := NewStdio(mockServerPath, nil)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	if err := stdio.Start(ctx); err != nil {
+		t.Fatalf("Failed to start Stdio transport: %v", err)
+	}
+	defer stdio.Close()
+
+	// The mock server writes ~256KB to stderr before answering anything. If the
+	// transport does not drain stderr, the first Ping already times out.
+	for i := range 3 {
+		reqCtx, reqCancel := context.WithTimeout(ctx, 5*time.Second)
+		_, err := stdio.SendRequest(reqCtx, JSONRPCRequest{
+			JSONRPC: "2.0",
+			ID:      mcp.NewRequestId(int64(i + 1)),
+			Method:  "ping",
+		})
+		reqCancel()
+		if err != nil {
+			t.Fatalf("SendRequest %d failed: %v", i+1, err)
+		}
+	}
+}
+
+// TestStdio_WithCommandStderrWriter_CapturesStderr verifies that the drain
+// goroutine forwards the child's stderr to the configured writer.
+func TestStdio_WithCommandStderrWriter_CapturesStderr(t *testing.T) {
+	tempFile, err := os.CreateTemp(t.TempDir(), "mockstdio_stderr_server")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	tempFile.Close()
+	mockServerPath := tempFile.Name() + ".exe"
+
+	if compileErr := compileTestServerFromSource(mockServerPath, "../../testdata/mockstdio_stderr_server.go"); compileErr != nil {
+		t.Fatalf("Failed to compile mock server: %v", compileErr)
+	}
+
+	var stderrBuf syncBuffer
+	stdio := NewStdioWithOptions(mockServerPath, nil, nil, WithCommandStderrWriter(&stderrBuf))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	if err := stdio.Start(ctx); err != nil {
+		t.Fatalf("Failed to start Stdio transport: %v", err)
+	}
+	defer stdio.Close()
+
+	// A single Ping proves the child is past its stderr burst.
+	reqCtx, reqCancel := context.WithTimeout(ctx, 5*time.Second)
+	if _, err := stdio.SendRequest(reqCtx, JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(int64(1)),
+		Method:  "ping",
+	}); err != nil {
+		t.Fatalf("SendRequest failed: %v", err)
+	}
+	reqCancel()
+
+	require.Eventually(t, func() bool {
+		return stderrBuf.Len() >= 64*1024
+	}, 10*time.Second, 50*time.Millisecond, "stderr output was not forwarded to the configured writer")
+}
+
+// failingWriter accepts the first write and then reports an error on every
+// subsequent write, modeling a custom stderr destination that breaks after
+// the child has already started emitting output.
+type failingWriter struct {
+	mu     sync.Mutex
+	writes int
+}
+
+// Write accepts the first write and fails every subsequent one.
+func (w *failingWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.writes++
+	if w.writes > 1 {
+		return 0, errors.New("stderr writer failed")
+	}
+	return len(p), nil
+}
+
+// WriteCount reports how many writes the failing writer has observed.
+func (w *failingWriter) WriteCount() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writes
+}
+
+// TestStdio_WithCommandStderrWriterFailureStillDrains verifies that a custom
+// stderr writer which fails after its first write does not stop the stderr
+// drain. If the drain goroutine stopped, the child's stderr pipe would fill
+// up, the child would block inside write(2), and even Ping would time out.
+func TestStdio_WithCommandStderrWriterFailureStillDrains(t *testing.T) {
+	tempFile, err := os.CreateTemp(t.TempDir(), "mockstdio_stderr_server")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	tempFile.Close()
+	mockServerPath := tempFile.Name() + ".exe"
+
+	if compileErr := compileTestServerFromSource(mockServerPath, "../../testdata/mockstdio_stderr_server.go"); compileErr != nil {
+		t.Fatalf("Failed to compile mock server: %v", compileErr)
+	}
+
+	writer := &failingWriter{}
+	stdio := NewStdioWithOptions(mockServerPath, nil, nil, WithCommandStderrWriter(writer))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	if err := stdio.Start(ctx); err != nil {
+		t.Fatalf("Failed to start Stdio transport: %v", err)
+	}
+	defer stdio.Close()
+
+	// The mock server writes ~256KB to stderr before answering. With the
+	// writer failing after the first chunk, only a drain that is decoupled
+	// from the writer keeps the pipe empty and the child responsive.
+	for i := range 3 {
+		reqCtx, reqCancel := context.WithTimeout(ctx, 5*time.Second)
+		_, err := stdio.SendRequest(reqCtx, JSONRPCRequest{
+			JSONRPC: "2.0",
+			ID:      mcp.NewRequestId(int64(i + 1)),
+			Method:  "ping",
+		})
+		reqCancel()
+		if err != nil {
+			t.Fatalf("SendRequest %d failed after stderr writer error: %v", i+1, err)
+		}
+	}
+
+	// The writer must have been exercised at least once, confirming this
+	// test actually runs the failure path rather than skipping it.
+	require.GreaterOrEqual(t, writer.WriteCount(), 1)
 }
