@@ -718,7 +718,7 @@ func TestSSE(t *testing.T) {
 
 			done := make(chan struct{})
 			go func() {
-				trans.readSSE(mockReader)
+				trans.readSSE(mockReader, make(chan struct{}), &sync.Once{})
 				close(done)
 			}()
 
