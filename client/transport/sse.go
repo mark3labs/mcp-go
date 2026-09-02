@@ -340,6 +340,12 @@ func (c *SSE) readSSE(reader io.ReadCloser, endpointChan chan struct{}, endpoint
 		// and the for loop will break.
 		line, err := br.ReadString('\n')
 		if err != nil {
+			// Close() cancels the stream context, which surfaces here as a read
+			// error; firing the handler would reconnect a transport the caller
+			// just shut down.
+			if c.closed.Load() {
+				return
+			}
 			if err == io.EOF {
 				// Process any pending event before exit
 				if data != "" {
@@ -356,7 +362,7 @@ func (c *SSE) readSSE(reader io.ReadCloser, endpointChan chan struct{}, endpoint
 			if handler != nil {
 				// Notify that the connection will be closed due to an error
 				handler(err)
-			} else if err == io.EOF && !c.closed.Load() {
+			} else if err == io.EOF {
 				c.logger.Error("SSE stream error", "err", err)
 			}
 			return
