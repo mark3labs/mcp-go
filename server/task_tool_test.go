@@ -532,9 +532,15 @@ func TestTaskToolTracerBullet(t *testing.T) {
 
 	t.Run("task tool handler returns context.Canceled before tasks/cancel called", func(t *testing.T) {
 		// This test verifies that if a handler detects context cancellation
-		// (e.g., from parent context timeout) and returns ctx.Err() before
+		// (e.g., from its own internal timeout) and returns ctx.Err() before
 		// tasks/cancel is explicitly called, the task is still marked as cancelled
 		// rather than failed.
+		//
+		// Note: With the fix for #897 (context.WithoutCancel), the task context
+		// is now detached from the parent/HTTP request context. This means the
+		// handler must manage its own cancellation via the task's context, not
+		// rely on parent context cancellation. We test internal handler cancellation
+		// by having the handler cancel its own context via a timeout.
 
 		// Step 1: Create server
 		server := NewMCPServer(
@@ -543,11 +549,7 @@ func TestTaskToolTracerBullet(t *testing.T) {
 			WithTaskCapabilities(true, true, true),
 		)
 
-		// Step 2: Create a parent context that we'll cancel
-		parentCtx, cancelParent := context.WithCancel(t.Context())
-		defer cancelParent()
-
-		// Step 3: Register a task tool that respects context cancellation
+		// Step 2: Register a task tool that simulates internal cancellation
 		handlerStarted := make(chan struct{})
 
 		selfCancelTool := mcp.NewTool("self_cancel_operation",
@@ -556,49 +558,48 @@ func TestTaskToolTracerBullet(t *testing.T) {
 
 		server.AddTaskTool(selfCancelTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
 			close(handlerStarted)
-			// Wait for context cancellation
-			<-ctx.Done()
+			// Simulate internal cancellation by creating a context that cancels quickly
+			innerCtx, innerCancel := context.WithTimeout(ctx, 10*time.Millisecond)
+			defer innerCancel()
+			<-innerCtx.Done()
 			// Return the context error
-			return nil, ctx.Err()
+			return nil, innerCtx.Err()
 		})
 
-		// Step 4: Call tool with task augmentation
-		callRequest := mcp.CallToolRequest{
-			Params: mcp.CallToolParams{
-				Name: "self_cancel_operation",
-				Task: &mcp.TaskParams{},
-			},
+	// Step 4: Call tool with task augmentation
+	callRequest := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "self_cancel_operation",
+			Task: &mcp.TaskParams{},
+		},
+	}
+
+	callResult, callErr := server.handleToolCall(t.Context(), 1, callRequest)
+	require.Nil(t, callErr)
+	require.NotNil(t, callResult)
+
+	createTaskResult := callResult.(*mcp.CreateTaskResult)
+	taskID := createTaskResult.Task.TaskId
+
+	// Wait for handler to start
+	<-handlerStarted
+
+	// Step 5: Wait for task to complete (handler self-cancels via timeout)
+	var finalTask mcp.Task
+	for range 20 {
+		task, _, err := server.getTask(t.Context(), taskID)
+		require.NoError(t, err)
+		finalTask = task
+		if task.Status.IsTerminal() {
+			break
 		}
+		time.Sleep(20 * time.Millisecond)
+	}
 
-		callResult, callErr := server.handleToolCall(parentCtx, 1, callRequest)
-		require.Nil(t, callErr)
-		require.NotNil(t, callResult)
-
-		createTaskResult := callResult.(*mcp.CreateTaskResult)
-		taskID := createTaskResult.Task.TaskId
-
-		// Wait for handler to start
-		<-handlerStarted
-
-		// Step 5: Cancel the parent context (simulating external cancellation)
-		cancelParent()
-
-		// Step 6: Wait for task to complete
-		var finalTask mcp.Task
-		for range 20 {
-			task, _, err := server.getTask(t.Context(), taskID)
-			require.NoError(t, err)
-			finalTask = task
-			if task.Status.IsTerminal() {
-				break
-			}
-			time.Sleep(20 * time.Millisecond)
-		}
-
-		// Step 7: Verify task status is cancelled (not failed)
-		assert.Equal(t, mcp.TaskStatusCancelled, finalTask.Status)
-		assert.Contains(t, finalTask.StatusMessage, "context canceled")
-	})
+	// Step 6: Verify task status is cancelled (not failed)
+	assert.Equal(t, mcp.TaskStatusCancelled, finalTask.Status)
+	assert.Contains(t, finalTask.StatusMessage, "context deadline exceeded")
+})
 
 	t.Run("multiple concurrent task tools", func(t *testing.T) {
 		// Step 1: Create server
