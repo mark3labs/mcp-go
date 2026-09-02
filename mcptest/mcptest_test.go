@@ -12,6 +12,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/mcptest"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/mark3labs/mcp-go/server/servertest"
 )
 
 func TestServerWithTool(t *testing.T) {
@@ -373,7 +374,7 @@ func TestListToolsWithHeader(t *testing.T) {
 		server.WithHooks(hooks),
 	)
 
-	testServer := server.NewTestStreamableHTTPServer(mcpServer)
+	testServer := servertest.NewTestStreamableHTTPServer(mcpServer)
 	defer testServer.Close()
 
 	initRequest := mcp.InitializeRequest{

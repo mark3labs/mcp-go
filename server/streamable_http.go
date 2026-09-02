@@ -10,7 +10,6 @@ import (
 	"maps"
 	"mime"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -2120,13 +2119,6 @@ func (s *InsecureStatefulSessionIdManager) Terminate(sessionID string) (isNotAll
 	s.terminated.Store(sessionID, true)
 	s.sessions.Delete(sessionID)
 	return false, nil
-}
-
-// NewTestStreamableHTTPServer creates a test server for testing purposes
-func NewTestStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *httptest.Server {
-	sseServer := NewStreamableHTTPServer(server, opts...)
-	testServer := httptest.NewServer(sseServer)
-	return testServer
 }
 
 // isJSONEmpty reports whether the provided JSON value is "empty":
