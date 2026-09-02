@@ -1009,7 +1009,7 @@ func TestContinuousListeningSessionTerminated(t *testing.T) {
 	// Start a server that returns 200 on POST (initialize) but 404 on GET
 	// (simulating a server restart where the session no longer exists).
 	sessionID := "test-session-123"
-	var getCalls int64
+	var getCalls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			// Handle initialize
@@ -1024,7 +1024,7 @@ func TestContinuousListeningSessionTerminated(t *testing.T) {
 			return
 		}
 		if r.Method == http.MethodGet {
-			atomic.AddInt64(&getCalls, 1)
+			getCalls.Add(1)
 			// Simulate session terminated: server restarted, session gone
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -1074,7 +1074,7 @@ func TestContinuousListeningSessionTerminated(t *testing.T) {
 
 	// Verify no further retries: wait several retry intervals and check GET count.
 	time.Sleep(5 * retryInterval)
-	calls := atomic.LoadInt64(&getCalls)
+	calls := getCalls.Load()
 	if calls != 1 {
 		t.Errorf("Expected exactly 1 GET attempt, got %d (listener retried after session termination)", calls)
 	}
