@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -178,4 +179,220 @@ func TestStreamableHTTPInvalidListeningSessionReturnsNotFound(t *testing.T) {
 	_, err = io.Copy(io.Discard, resp.Body)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+type blockingValidateSessionManager struct {
+	manager          *InsecureStatefulSessionIdManager
+	blockNext        atomic.Bool
+	validateEntered  chan struct{}
+	continueValidate chan struct{}
+}
+
+func (m *blockingValidateSessionManager) Generate() string {
+	return m.manager.Generate()
+}
+
+func (m *blockingValidateSessionManager) Validate(sessionID string) (bool, error) {
+	if m.blockNext.CompareAndSwap(true, false) {
+		close(m.validateEntered)
+		<-m.continueValidate
+	}
+	return m.manager.Validate(sessionID)
+}
+
+func (m *blockingValidateSessionManager) Terminate(sessionID string) (bool, error) {
+	return m.manager.Terminate(sessionID)
+}
+
+type deleteSignalResolver struct {
+	manager        SessionIdManager
+	deleteResolved chan struct{}
+	deleteOnce     sync.Once
+}
+
+func (r *deleteSignalResolver) ResolveSessionIdManager(req *http.Request) SessionIdManager {
+	if req != nil && req.Method == http.MethodDelete {
+		r.deleteOnce.Do(func() {
+			close(r.deleteResolved)
+		})
+	}
+	return r.manager
+}
+
+func TestStreamableHTTPDeleteSerializesWithListeningRegistration(t *testing.T) {
+	manager := &blockingValidateSessionManager{
+		manager:          &InsecureStatefulSessionIdManager{},
+		validateEntered:  make(chan struct{}),
+		continueValidate: make(chan struct{}),
+	}
+	resolver := &deleteSignalResolver{
+		manager:        manager,
+		deleteResolved: make(chan struct{}),
+	}
+	transport := NewStreamableHTTPServer(
+		NewMCPServer("lifecycle-race-test", "1.0.0"),
+		WithSessionIdManagerResolver(resolver),
+	)
+	ts := httptest.NewServer(transport)
+	defer ts.Close()
+
+	sessionID := initializeLegacySession(t, ts.URL)
+	manager.blockNext.Store(true)
+
+	type responseResult struct {
+		response *http.Response
+		err      error
+	}
+	getResult := make(chan responseResult, 1)
+	go func() {
+		req, err := http.NewRequest(http.MethodGet, ts.URL, nil)
+		if err != nil {
+			getResult <- responseResult{err: err}
+			return
+		}
+		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set(HeaderKeySessionID, sessionID)
+		resp, err := http.DefaultClient.Do(req)
+		getResult <- responseResult{response: resp, err: err}
+	}()
+
+	select {
+	case <-manager.validateEntered:
+	case <-time.After(time.Second):
+		t.Fatal("listening GET did not reach session validation")
+	}
+
+	deleteResult := make(chan responseResult, 1)
+	go func() {
+		req, err := http.NewRequest(http.MethodDelete, ts.URL, nil)
+		if err != nil {
+			deleteResult <- responseResult{err: err}
+			return
+		}
+		req.Header.Set(HeaderKeySessionID, sessionID)
+		resp, err := http.DefaultClient.Do(req)
+		deleteResult <- responseResult{response: resp, err: err}
+	}()
+
+	select {
+	case <-resolver.deleteResolved:
+	case <-time.After(time.Second):
+		t.Fatal("DELETE did not reach the lifecycle barrier")
+	}
+	close(manager.continueValidate)
+
+	get := <-getResult
+	require.NoError(t, get.err)
+	require.Equal(t, http.StatusOK, get.response.StatusCode)
+	require.NoError(t, get.response.Body.Close())
+
+	deleted := <-deleteResult
+	require.NoError(t, deleted.err)
+	require.Equal(t, http.StatusOK, deleted.response.StatusCode)
+	require.NoError(t, deleted.response.Body.Close())
+
+	_, getStillActive := transport.activeGetConnections.Load(sessionID)
+	assert.False(t, getStillActive)
+	_, sessionStillActive := transport.activeSessions.Load(sessionID)
+	assert.False(t, sessionStillActive)
+
+	staleReq, err := http.NewRequest(http.MethodGet, ts.URL, nil)
+	require.NoError(t, err)
+	staleReq.Header.Set("Accept", "text/event-stream")
+	staleReq.Header.Set(HeaderKeySessionID, sessionID)
+	stale, err := http.DefaultClient.Do(staleReq)
+	require.NoError(t, err)
+	defer stale.Body.Close()
+	assert.Equal(t, http.StatusNotFound, stale.StatusCode)
+}
+
+type blockingStreamResponseWriter struct {
+	header        http.Header
+	writeStarted  chan struct{}
+	writeReleased chan struct{}
+	writeOnce     sync.Once
+	releaseOnce   sync.Once
+}
+
+func newBlockingStreamResponseWriter() *blockingStreamResponseWriter {
+	return &blockingStreamResponseWriter{
+		header:        make(http.Header),
+		writeStarted:  make(chan struct{}),
+		writeReleased: make(chan struct{}),
+	}
+}
+
+func (w *blockingStreamResponseWriter) Header() http.Header {
+	return w.header
+}
+
+func (w *blockingStreamResponseWriter) WriteHeader(int) {}
+
+func (w *blockingStreamResponseWriter) Write([]byte) (int, error) {
+	w.writeOnce.Do(func() {
+		close(w.writeStarted)
+	})
+	<-w.writeReleased
+	return 0, context.DeadlineExceeded
+}
+
+func (w *blockingStreamResponseWriter) Flush() {}
+
+func (w *blockingStreamResponseWriter) CanStream() bool {
+	return true
+}
+
+func (w *blockingStreamResponseWriter) SetWriteDeadline(deadline time.Time) error {
+	if !deadline.IsZero() {
+		w.releaseOnce.Do(func() {
+			close(w.writeReleased)
+		})
+	}
+	return nil
+}
+
+func TestStreamableHTTPCleanupInterruptsBlockedWrite(t *testing.T) {
+	manager := &InsecureStatefulSessionIdManager{}
+	transport := NewStreamableHTTPServer(
+		NewMCPServer("blocked-write-test", "1.0.0"),
+		WithSessionIdManager(manager),
+		WithHeartbeatInterval(time.Millisecond),
+	)
+	sessionID := manager.Generate()
+	w := newBlockingStreamResponseWriter()
+	handlerDone := make(chan struct{})
+	go func() {
+		defer close(handlerDone)
+		transport.Handle(w, &HTTPRequest{
+			Method: http.MethodGet,
+			Header: http.Header{
+				"Accept":           []string{"text/event-stream"},
+				HeaderKeySessionID: []string{sessionID},
+			},
+			Context: t.Context(),
+		})
+	}()
+
+	select {
+	case <-w.writeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat did not reach the blocked SSE write")
+	}
+
+	cleanupDone := make(chan struct{})
+	go func() {
+		defer close(cleanupDone)
+		transport.cleanupSessionState(context.WithoutCancel(t.Context()), sessionID)
+	}()
+
+	select {
+	case <-cleanupDone:
+	case <-time.After(time.Second):
+		t.Fatal("session cleanup did not interrupt the blocked SSE write")
+	}
+	select {
+	case <-handlerDone:
+	case <-time.After(time.Second):
+		t.Fatal("listening handler did not exit after its write was interrupted")
+	}
 }

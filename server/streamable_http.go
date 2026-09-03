@@ -287,6 +287,7 @@ type StreamableHTTPServer struct {
 	sessionResourceTemplates *sessionResourceTemplatesStore
 	activeSessions           sync.Map     // sessionId --> *streamableHttpSession (for sampling responses)
 	activeGetConnections     sync.Map     // sessionId --> *activeGetConnection (non-resumable listening GET)
+	sessionLifecycleMu       sync.Mutex   // serializes listening GET registration with DELETE termination
 	requestIDCounter         atomic.Int64 // server -> client request IDs, shared across sessions
 
 	eventStore         EventStore
@@ -1050,49 +1051,84 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 	if sessionID == "" {
 		sessionID = sessionIDManager.Generate()
 	}
-	if sessionID != "" {
-		terminated, err := sessionIDManager.Validate(sessionID)
-		if err != nil {
-			writeHTTPError(w, "Invalid session ID", http.StatusNotFound)
-			return
-		}
-		if terminated {
-			writeHTTPError(w, "Session terminated", http.StatusNotFound)
-			return
-		}
-	}
 
 	streamCtx := r.ctx()
-	if s.eventStore == nil && sessionID != "" {
-		var cancel context.CancelFunc
-		streamCtx, cancel = context.WithCancel(streamCtx)
-		connection := &activeGetConnection{cancel: cancel, done: make(chan struct{})}
-		if _, loaded := s.activeGetConnections.LoadOrStore(sessionID, connection); loaded {
-			cancel()
-			writeHTTPError(w, "A listening stream is already active for this session", http.StatusConflict)
-			return
+	var session *streamableHttpSession
+	var loaded bool
+	var connection *activeGetConnection
+	if registered := func() bool {
+		// Validation, listening-connection registration, and logical-session
+		// registration must be atomic with DELETE termination. Otherwise a GET
+		// can validate, pause while DELETE cleans up, then recreate the session.
+		s.sessionLifecycleMu.Lock()
+		defer s.sessionLifecycleMu.Unlock()
+
+		if sessionID != "" {
+			terminated, err := sessionIDManager.Validate(sessionID)
+			if err != nil {
+				writeHTTPError(w, "Invalid session ID", http.StatusNotFound)
+				return false
+			}
+			if terminated {
+				writeHTTPError(w, "Session terminated", http.StatusNotFound)
+				return false
+			}
 		}
+
+		if s.eventStore == nil && sessionID != "" {
+			var cancel context.CancelFunc
+			streamCtx, cancel = context.WithCancel(streamCtx)
+			connection = &activeGetConnection{
+				cancel: cancel,
+				done:   make(chan struct{}),
+			}
+			if deadlineWriter, ok := w.(interface{ SetWriteDeadline(time.Time) error }); ok {
+				connection.interruptWrite = func() {
+					_ = deadlineWriter.SetWriteDeadline(time.Now())
+				}
+			}
+			if _, alreadyListening := s.activeGetConnections.LoadOrStore(sessionID, connection); alreadyListening {
+				cancel()
+				connection = nil
+				writeHTTPError(w, "A listening stream is already active for this session", http.StatusConflict)
+				return false
+			}
+		}
+
+		// Get or create the logical session while DELETE is excluded.
+		newSession := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionResources, s.sessionResourceTemplates, s.sessionLogLevels, &s.requestIDCounter)
+		actual, sessionLoaded := s.activeSessions.LoadOrStore(sessionID, newSession)
+		loaded = sessionLoaded
+		session = actual.(*streamableHttpSession)
+		if loaded {
+			return true
+		}
+
+		if err := s.server.RegisterSession(r.ctx(), session); err != nil {
+			s.activeSessions.Delete(sessionID)
+			if connection != nil {
+				connection.cancel()
+				s.activeGetConnections.CompareAndDelete(sessionID, connection)
+				close(connection.done)
+				connection = nil
+			}
+			writeHTTPErrorf(w, http.StatusBadRequest, "Session registration failed: %v", err)
+			return false
+		}
+		return true
+	}(); !registered {
+		return
+	}
+
+	if connection != nil {
 		defer func() {
-			cancel()
+			connection.cancel()
 			s.activeGetConnections.CompareAndDelete(sessionID, connection)
 			close(connection.done)
 		}()
 	}
 
-	// Get or create session atomically to prevent TOCTOU races
-	// where concurrent GETs could both create and register duplicate sessions
-	var session *streamableHttpSession
-	newSession := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionResources, s.sessionResourceTemplates, s.sessionLogLevels, &s.requestIDCounter)
-	actual, loaded := s.activeSessions.LoadOrStore(sessionID, newSession)
-	session = actual.(*streamableHttpSession)
-
 	if !loaded {
-		// We created a new session, need to register it
-		if err := s.server.RegisterSession(r.ctx(), session); err != nil {
-			s.activeSessions.Delete(sessionID)
-			writeHTTPErrorf(w, http.StatusBadRequest, "Session registration failed: %v", err)
-			return
-		}
 		if s.eventStore == nil {
 			defer s.server.UnregisterSession(r.ctx(), sessionID)
 			defer s.activeSessions.Delete(sessionID)
@@ -1261,7 +1297,9 @@ func (s *StreamableHTTPServer) handleDelete(w HTTPResponseWriter, r *HTTPRequest
 	// delete request terminate the session
 	sessionID := r.header().Get(HeaderKeySessionID)
 	sessionIdManager := s.resolveSessionIdManager(r)
+	s.sessionLifecycleMu.Lock()
 	notAllowed, err := sessionIdManager.Terminate(sessionID)
+	s.sessionLifecycleMu.Unlock()
 	if err != nil {
 		writeHTTPErrorf(w, http.StatusInternalServerError, "Session termination failed: %v", err)
 		return
@@ -1447,12 +1485,15 @@ func (s *StreamableHTTPServer) touchSession(sessionID string) {
 
 // cleanupSessionState removes all per-session transport state for the given session ID.
 func (s *StreamableHTTPServer) cleanupSessionState(ctx context.Context, sessionID string) {
-	s.closeActiveGetConnection(ctx, sessionID)
+	cleanupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	s.closeActiveGetConnection(cleanupCtx, sessionID)
 	if s.eventStore != nil {
-		s.cleanupResumableState(ctx, sessionID)
+		s.cleanupResumableState(cleanupCtx, sessionID)
 	}
 	// Unregister first to stop notification routing before deleting data.
-	s.server.UnregisterSession(ctx, sessionID)
+	s.server.UnregisterSession(cleanupCtx, sessionID)
 	s.activeSessions.Delete(sessionID)
 	s.sessionTools.delete(sessionID)
 	s.sessionResources.delete(sessionID)
@@ -1468,6 +1509,9 @@ func (s *StreamableHTTPServer) closeActiveGetConnection(ctx context.Context, ses
 	}
 	connection := value.(*activeGetConnection)
 	connection.cancel()
+	if connection.interruptWrite != nil {
+		connection.interruptWrite()
+	}
 	select {
 	case <-connection.done:
 	case <-ctx.Done():
@@ -1784,8 +1828,9 @@ type streamableHttpSession struct {
 }
 
 type activeGetConnection struct {
-	cancel context.CancelFunc
-	done   chan struct{}
+	cancel         context.CancelFunc
+	interruptWrite func()
+	done           chan struct{}
 }
 
 func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, resourcesStore *sessionResourcesStore, templatesStore *sessionResourceTemplatesStore, levels *sessionLogLevelsStore, requestIDCounter *atomic.Int64) *streamableHttpSession {
