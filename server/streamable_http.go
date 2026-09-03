@@ -285,9 +285,9 @@ type StreamableHTTPServer struct {
 	sessionTools             *sessionToolsStore
 	sessionResources         *sessionResourcesStore
 	sessionResourceTemplates *sessionResourceTemplatesStore
-	activeSessions           sync.Map     // sessionId --> *streamableHttpSession (for sampling responses)
-	activeGetConnections     sync.Map     // sessionId --> *activeGetConnection (non-resumable listening GET)
-	sessionLifecycleMu       sync.Locker  // serializes listening GET registration with DELETE termination
+	activeSessions           sync.Map // sessionId --> *streamableHttpSession (for sampling responses)
+	activeGetConnections     sync.Map // sessionId --> *activeGetConnection (non-resumable listening GET)
+	sessionLifecycle         sessionLifecycleLocker
 	requestIDCounter         atomic.Int64 // server -> client request IDs, shared across sessions
 
 	eventStore         EventStore
@@ -347,7 +347,7 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 		logger:                   slog.Default(),
 		sessionResources:         newSessionResourcesStore(),
 		sessionResourceTemplates: newSessionResourceTemplatesStore(),
-		sessionLifecycleMu:       &sync.Mutex{},
+		sessionLifecycle:         newSessionLifecycleLocks(),
 	}
 
 	// Apply all options
@@ -545,9 +545,11 @@ func (s *StreamableHTTPServer) CloseSessions(ctx context.Context) {
 	}
 
 	for _, sessionID := range sessionIDs {
+		unlockLifecycle := s.sessionLifecycle.lock(sessionID)
 		if _, err := mgr.Terminate(sessionID); err != nil {
 			s.logger.Warn("failed to terminate session during CloseSessions", "sessionID", sessionID, "err", err)
 		}
+		unlockLifecycle()
 		s.cleanupSessionState(ctx, sessionID)
 	}
 }
@@ -1061,8 +1063,8 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 		// Validation, listening-connection registration, and logical-session
 		// registration must be atomic with DELETE termination. Otherwise a GET
 		// can validate, pause while DELETE cleans up, then recreate the session.
-		s.sessionLifecycleMu.Lock()
-		defer s.sessionLifecycleMu.Unlock()
+		unlockLifecycle := s.sessionLifecycle.lock(sessionID)
+		defer unlockLifecycle()
 
 		if sessionID != "" {
 			terminated, err := sessionIDManager.Validate(sessionID)
@@ -1102,6 +1104,7 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 		loaded = sessionLoaded
 		session = actual.(*streamableHttpSession)
 		if loaded {
+			s.touchSession(sessionID)
 			return true
 		}
 
@@ -1116,6 +1119,7 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 			writeHTTPErrorf(w, http.StatusBadRequest, "Session registration failed: %v", err)
 			return false
 		}
+		s.touchSession(sessionID)
 		return true
 	}(); !registered {
 		return
@@ -1138,8 +1142,6 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 		// messages produced while the client is away are recorded for
 		// replay; it is cleaned up on DELETE or by the idle sweeper.
 	}
-
-	s.touchSession(sessionID)
 
 	if s.eventStore != nil {
 		s.serveListeningStream(w, r, sessionID, session)
@@ -1298,9 +1300,9 @@ func (s *StreamableHTTPServer) handleDelete(w HTTPResponseWriter, r *HTTPRequest
 	// delete request terminate the session
 	sessionID := r.header().Get(HeaderKeySessionID)
 	sessionIdManager := s.resolveSessionIdManager(r)
-	s.sessionLifecycleMu.Lock()
+	unlockLifecycle := s.sessionLifecycle.lock(sessionID)
 	notAllowed, err := sessionIdManager.Terminate(sessionID)
-	s.sessionLifecycleMu.Unlock()
+	unlockLifecycle()
 	if err != nil {
 		writeHTTPErrorf(w, http.StatusInternalServerError, "Session termination failed: %v", err)
 		return
@@ -1581,7 +1583,9 @@ func (s *StreamableHTTPServer) sweepExpiredSessions() {
 		if mgr == nil {
 			mgr = s.sessionIdManagerResolver.ResolveSessionIdManager(nil)
 		}
+		unlockLifecycle := s.sessionLifecycle.lock(sessionID)
 		_, _ = mgr.Terminate(sessionID)
+		unlockLifecycle()
 		s.cleanupSessionState(context.Background(), sessionID)
 		return true
 	})
@@ -1832,6 +1836,46 @@ type activeGetConnection struct {
 	cancel         context.CancelFunc
 	interruptWrite func()
 	done           chan struct{}
+}
+
+type sessionLifecycleLocker interface {
+	lock(sessionID string) (unlock func())
+}
+
+type sessionLifecycleLocks struct {
+	mu      sync.Mutex
+	entries map[string]*sessionLifecycleLock
+}
+
+type sessionLifecycleLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func newSessionLifecycleLocks() *sessionLifecycleLocks {
+	return &sessionLifecycleLocks{entries: make(map[string]*sessionLifecycleLock)}
+}
+
+func (l *sessionLifecycleLocks) lock(sessionID string) func() {
+	l.mu.Lock()
+	entry := l.entries[sessionID]
+	if entry == nil {
+		entry = &sessionLifecycleLock{}
+		l.entries[sessionID] = entry
+	}
+	entry.refs++
+	l.mu.Unlock()
+
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		l.mu.Lock()
+		entry.refs--
+		if entry.refs == 0 {
+			delete(l.entries, sessionID)
+		}
+		l.mu.Unlock()
+	}
 }
 
 func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, resourcesStore *sessionResourcesStore, templatesStore *sessionResourceTemplatesStore, levels *sessionLogLevelsStore, requestIDCounter *atomic.Int64) *streamableHttpSession {

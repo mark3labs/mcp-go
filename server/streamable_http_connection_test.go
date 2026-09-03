@@ -215,19 +215,19 @@ func (m *blockingValidateSessionManager) Terminate(sessionID string) (bool, erro
 }
 
 type secondLockSignaler struct {
-	sync.Mutex
+	delegate      sessionLifecycleLocker
 	attempts      atomic.Int32
 	secondAttempt chan struct{}
 	signalOnce    sync.Once
 }
 
-func (l *secondLockSignaler) Lock() {
+func (l *secondLockSignaler) lock(sessionID string) func() {
 	if l.attempts.Add(1) == 2 {
 		l.signalOnce.Do(func() {
 			close(l.secondAttempt)
 		})
 	}
-	l.Mutex.Lock()
+	return l.delegate.lock(sessionID)
 }
 
 func TestStreamableHTTPDeleteSerializesWithListeningRegistration(t *testing.T) {
@@ -241,8 +241,11 @@ func TestStreamableHTTPDeleteSerializesWithListeningRegistration(t *testing.T) {
 		NewMCPServer("lifecycle-race-test", "1.0.0"),
 		WithSessionIdManager(manager),
 	)
-	lifecycleLock := &secondLockSignaler{secondAttempt: make(chan struct{})}
-	transport.sessionLifecycleMu = lifecycleLock
+	lifecycleLock := &secondLockSignaler{
+		delegate:      newSessionLifecycleLocks(),
+		secondAttempt: make(chan struct{}),
+	}
+	transport.sessionLifecycle = lifecycleLock
 
 	sessionID := manager.Generate()
 	manager.blockNext.Store(true)
@@ -335,6 +338,25 @@ func TestStreamableHTTPDeleteSerializesWithListeningRegistration(t *testing.T) {
 	staleStatus := staleWriter.status
 	staleWriter.mu.Unlock()
 	assert.Equal(t, http.StatusNotFound, staleStatus)
+}
+
+func TestSessionLifecycleLocksDoNotBlockOtherSessions(t *testing.T) {
+	locks := newSessionLifecycleLocks()
+	unlockFirst := locks.lock("first")
+	defer unlockFirst()
+
+	secondCompleted := make(chan struct{})
+	go func() {
+		unlockSecond := locks.lock("second")
+		unlockSecond()
+		close(secondCompleted)
+	}()
+
+	select {
+	case <-secondCompleted:
+	case <-time.After(time.Second):
+		t.Fatal("one session's lifecycle lock blocked a different session")
+	}
 }
 
 type blockingStreamResponseWriter struct {
