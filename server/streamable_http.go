@@ -22,6 +22,8 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+const sessionCleanupTimeout = 5 * time.Second
+
 // StreamableHTTPOption defines a function type for configuring StreamableHTTPServer
 type StreamableHTTPOption func(*StreamableHTTPServer)
 
@@ -285,7 +287,9 @@ type StreamableHTTPServer struct {
 	sessionTools             *sessionToolsStore
 	sessionResources         *sessionResourcesStore
 	sessionResourceTemplates *sessionResourceTemplatesStore
-	activeSessions           sync.Map     // sessionId --> *streamableHttpSession (for sampling responses)
+	activeSessions           sync.Map // sessionId --> *streamableHttpSession (for sampling responses)
+	activeGETConnections     sync.Map // sessionId --> *activeGETConnection (non-resumable listening GET)
+	sessionLifecycle         sessionLifecycleLocker
 	requestIDCounter         atomic.Int64 // server -> client request IDs, shared across sessions
 
 	eventStore         EventStore
@@ -345,6 +349,7 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 		logger:                   slog.Default(),
 		sessionResources:         newSessionResourcesStore(),
 		sessionResourceTemplates: newSessionResourceTemplatesStore(),
+		sessionLifecycle:         newSessionLifecycleLocks(),
 	}
 
 	// Apply all options
@@ -542,9 +547,11 @@ func (s *StreamableHTTPServer) CloseSessions(ctx context.Context) {
 	}
 
 	for _, sessionID := range sessionIDs {
+		unlockLifecycle := s.sessionLifecycle.lock(sessionID)
 		if _, err := mgr.Terminate(sessionID); err != nil {
 			s.logger.Warn("failed to terminate session during CloseSessions", "sessionID", sessionID, "err", err)
 		}
+		unlockLifecycle()
 		s.cleanupSessionState(ctx, sessionID)
 	}
 }
@@ -1033,6 +1040,16 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 		return
 	}
 
+	var deadlineWriter writeDeadlineSetter
+	if s.eventStore == nil {
+		var ok bool
+		deadlineWriter, ok = w.(writeDeadlineSetter)
+		if !ok {
+			writeHTTPError(w, "Streaming requires write-deadline support", http.StatusMethodNotAllowed)
+			return
+		}
+	}
+
 	// A GET carrying Last-Event-ID resumes a previously broken SSE stream
 	// rather than opening a fresh listening stream.
 	if s.eventStore != nil {
@@ -1043,38 +1060,102 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 	}
 
 	sessionID := r.header().Get(HeaderKeySessionID)
-	// The MCP specification doesn't require validating session ID for GET requests.
 	// If no session ID is provided by the client, generate one using the configured SessionIdManager
 	// so that custom session id generators are honored consistently across POST/GET flows.
+	sessionIDManager := s.resolveSessionIdManager(r)
 	if sessionID == "" {
-		sessionIdManager := s.resolveSessionIdManager(r)
-		sessionID = sessionIdManager.Generate()
+		sessionID = sessionIDManager.Generate()
 	}
 
-	// Get or create session atomically to prevent TOCTOU races
-	// where concurrent GETs could both create and register duplicate sessions
+	streamCtx := r.ctx()
 	var session *streamableHttpSession
-	newSession := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionResources, s.sessionResourceTemplates, s.sessionLogLevels, &s.requestIDCounter)
-	actual, loaded := s.activeSessions.LoadOrStore(sessionID, newSession)
-	session = actual.(*streamableHttpSession)
+	var loaded bool
+	var connection *activeGETConnection
+	if registered := func() bool {
+		// Validation, listening-connection registration, and logical-session
+		// registration must be atomic with DELETE termination. Otherwise a GET
+		// can validate, pause while DELETE cleans up, then recreate the session.
+		unlockLifecycle := s.sessionLifecycle.lock(sessionID)
+		defer unlockLifecycle()
 
-	if !loaded {
-		// We created a new session, need to register it
+		if sessionID != "" {
+			terminated, err := sessionIDManager.Validate(sessionID)
+			if err != nil {
+				writeHTTPError(w, "Invalid session ID", http.StatusNotFound)
+				return false
+			}
+			if terminated {
+				writeHTTPError(w, "Session terminated", http.StatusNotFound)
+				return false
+			}
+		}
+
+		if s.eventStore == nil && sessionID != "" {
+			var cancel context.CancelFunc
+			streamCtx, cancel = context.WithCancel(streamCtx)
+			connection = &activeGETConnection{
+				cancel: cancel,
+				done:   make(chan struct{}),
+			}
+			connection.interruptWrite = func() {
+				_ = deadlineWriter.SetWriteDeadline(time.Now())
+			}
+			if _, alreadyListening := s.activeGETConnections.LoadOrStore(sessionID, connection); alreadyListening {
+				cancel()
+				connection = nil
+				writeHTTPError(w, "A listening stream is already active for this session", http.StatusConflict)
+				return false
+			}
+		}
+
+		// Get or create the logical session while DELETE is excluded.
+		newSession := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionResources, s.sessionResourceTemplates, s.sessionLogLevels, &s.requestIDCounter)
+		actual, sessionLoaded := s.activeSessions.LoadOrStore(sessionID, newSession)
+		loaded = sessionLoaded
+		session = actual.(*streamableHttpSession)
+		if loaded {
+			s.touchSession(sessionID)
+			return true
+		}
+
 		if err := s.server.RegisterSession(r.ctx(), session); err != nil {
 			s.activeSessions.Delete(sessionID)
+			if connection != nil {
+				connection.cancel()
+				s.activeGETConnections.CompareAndDelete(sessionID, connection)
+				close(connection.done)
+				connection = nil
+			}
 			writeHTTPErrorf(w, http.StatusBadRequest, "Session registration failed: %v", err)
-			return
+			return false
 		}
+		s.touchSession(sessionID)
+		return true
+	}(); !registered {
+		return
+	}
+
+	if connection != nil {
+		defer func() {
+			connection.cancel()
+			s.activeGETConnections.CompareAndDelete(sessionID, connection)
+			close(connection.done)
+		}()
+	}
+
+	if !loaded {
 		if s.eventStore == nil {
-			defer s.server.UnregisterSession(r.ctx(), sessionID)
+			defer func() {
+				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(r.ctx()), sessionCleanupTimeout)
+				defer cancel()
+				s.server.UnregisterSession(cleanupCtx, sessionID)
+			}()
 			defer s.activeSessions.Delete(sessionID)
 		}
 		// With an event store, the session outlives the connection so that
 		// messages produced while the client is away are recorded for
 		// replay; it is cleaned up on DELETE or by the idle sweeper.
 	}
-
-	s.touchSession(sessionID)
 
 	if s.eventStore != nil {
 		s.serveListeningStream(w, r, sessionID, session)
@@ -1091,10 +1172,16 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 
 	// Start notification handler for this session
 	done := make(chan struct{})
-	defer close(done)
+	var workers sync.WaitGroup
+	defer func() {
+		close(done)
+		workers.Wait()
+	}()
 	writeChan := make(chan any, 16)
 
+	workers.Add(1)
 	go func() {
+		defer workers.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				s.logger.Error("panic in SSE notification writer", "panic", r)
@@ -1160,7 +1247,9 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 
 	if s.listenHeartbeatInterval > 0 {
 		// heartbeat to keep the connection alive
+		workers.Add(1)
 		go func() {
+			defer workers.Done()
 			defer func() {
 				if r := recover(); r != nil {
 					s.logger.Error("panic in heartbeat goroutine", "panic", r)
@@ -1190,8 +1279,6 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 		}()
 	}
 
-	ctx := r.ctx()
-
 	// Keep the connection open until the client disconnects
 	//
 	// There's will a Available() check when handler ends, and it maybe race with Flush(),
@@ -1208,7 +1295,7 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 			}
 			w.Flush()
 			s.touchSession(sessionID)
-		case <-ctx.Done():
+		case <-streamCtx.Done():
 			return
 		case <-session.done:
 			return
@@ -1227,7 +1314,9 @@ func (s *StreamableHTTPServer) handleDelete(w HTTPResponseWriter, r *HTTPRequest
 	// delete request terminate the session
 	sessionID := r.header().Get(HeaderKeySessionID)
 	sessionIdManager := s.resolveSessionIdManager(r)
+	unlockLifecycle := s.sessionLifecycle.lock(sessionID)
 	notAllowed, err := sessionIdManager.Terminate(sessionID)
+	unlockLifecycle()
 	if err != nil {
 		writeHTTPErrorf(w, http.StatusInternalServerError, "Session termination failed: %v", err)
 		return
@@ -1237,7 +1326,9 @@ func (s *StreamableHTTPServer) handleDelete(w HTTPResponseWriter, r *HTTPRequest
 		return
 	}
 
-	s.cleanupSessionState(r.ctx(), sessionID)
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(r.ctx()), sessionCleanupTimeout)
+	defer cancel()
+	s.cleanupSessionState(cleanupCtx, sessionID)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -1411,17 +1502,38 @@ func (s *StreamableHTTPServer) touchSession(sessionID string) {
 
 // cleanupSessionState removes all per-session transport state for the given session ID.
 func (s *StreamableHTTPServer) cleanupSessionState(ctx context.Context, sessionID string) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionCleanupTimeout)
+	defer cancel()
+
+	s.closeActiveGetConnection(cleanupCtx, sessionID)
 	if s.eventStore != nil {
-		s.cleanupResumableState(ctx, sessionID)
+		s.cleanupResumableState(cleanupCtx, sessionID)
 	}
 	// Unregister first to stop notification routing before deleting data.
-	s.server.UnregisterSession(ctx, sessionID)
+	s.server.UnregisterSession(cleanupCtx, sessionID)
 	s.activeSessions.Delete(sessionID)
 	s.sessionTools.delete(sessionID)
 	s.sessionResources.delete(sessionID)
 	s.sessionResourceTemplates.delete(sessionID)
 	s.sessionLogLevels.delete(sessionID)
 	s.sessionLastActive.Delete(sessionID)
+}
+
+func (s *StreamableHTTPServer) closeActiveGetConnection(ctx context.Context, sessionID string) {
+	value, ok := s.activeGETConnections.Load(sessionID)
+	if !ok {
+		return
+	}
+	connection := value.(*activeGETConnection)
+	connection.cancel()
+	if connection.interruptWrite != nil {
+		connection.interruptWrite()
+	}
+	select {
+	case <-connection.done:
+	case <-ctx.Done():
+		s.logger.Warn("timed out closing active GET connection", "sessionID", sessionID, "err", ctx.Err())
+	}
 }
 
 // startSessionSweeper launches a background goroutine that periodically removes
@@ -1485,7 +1597,14 @@ func (s *StreamableHTTPServer) sweepExpiredSessions() {
 		if mgr == nil {
 			mgr = s.sessionIdManagerResolver.ResolveSessionIdManager(nil)
 		}
+		unlockLifecycle := s.sessionLifecycle.lock(sessionID)
+		currentLastActive := lastActive.Load()
+		if currentLastActive != capturedLastActive || time.Now().UnixNano()-currentLastActive < ttlNanos {
+			unlockLifecycle()
+			return true
+		}
 		_, _ = mgr.Terminate(sessionID)
+		unlockLifecycle()
 		s.cleanupSessionState(context.Background(), sessionID)
 		return true
 	})
@@ -1730,6 +1849,54 @@ type streamableHttpSession struct {
 
 	samplingRequests sync.Map      // requestID -> pending sampling request context
 	requestIDCounter *atomic.Int64 // shared per server so IDs stay unique across sessions with the same session ID
+}
+
+type activeGETConnection struct {
+	cancel         context.CancelFunc
+	interruptWrite func()
+	done           chan struct{}
+}
+
+type sessionLifecycleLocker interface {
+	lock(sessionID string) (unlock func())
+}
+
+// sessionLifecycleLocks is safe for concurrent use. Callers must invoke the
+// unlock function returned by lock so unused per-session entries are reclaimed.
+type sessionLifecycleLocks struct {
+	mu      sync.Mutex
+	entries map[string]*sessionLifecycleLock
+}
+
+type sessionLifecycleLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func newSessionLifecycleLocks() *sessionLifecycleLocks {
+	return &sessionLifecycleLocks{entries: make(map[string]*sessionLifecycleLock)}
+}
+
+func (l *sessionLifecycleLocks) lock(sessionID string) func() {
+	l.mu.Lock()
+	entry := l.entries[sessionID]
+	if entry == nil {
+		entry = &sessionLifecycleLock{}
+		l.entries[sessionID] = entry
+	}
+	entry.refs++
+	l.mu.Unlock()
+
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		l.mu.Lock()
+		entry.refs--
+		if entry.refs == 0 {
+			delete(l.entries, sessionID)
+		}
+		l.mu.Unlock()
+	}
 }
 
 func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, resourcesStore *sessionResourcesStore, templatesStore *sessionResourceTemplatesStore, levels *sessionLogLevelsStore, requestIDCounter *atomic.Int64) *streamableHttpSession {
