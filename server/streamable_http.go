@@ -1502,7 +1502,7 @@ func (s *StreamableHTTPServer) touchSession(sessionID string) {
 
 // cleanupSessionState removes all per-session transport state for the given session ID.
 func (s *StreamableHTTPServer) cleanupSessionState(ctx context.Context, sessionID string) {
-	cleanupCtx, cancel := context.WithTimeout(ctx, sessionCleanupTimeout)
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionCleanupTimeout)
 	defer cancel()
 
 	s.closeActiveGetConnection(cleanupCtx, sessionID)

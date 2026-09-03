@@ -192,6 +192,30 @@ func TestStreamableHTTPDisconnectUnregistersWithLiveContext(t *testing.T) {
 	assert.False(t, unregisterContextCanceled.Load())
 }
 
+func TestStreamableHTTPCloseSessionsDetachesCanceledContext(t *testing.T) {
+	var unregisterCalls atomic.Int32
+	var unregisterContextCanceled atomic.Bool
+	hooks := &Hooks{}
+	hooks.AddOnUnregisterSession(func(ctx context.Context, _ ClientSession) {
+		unregisterCalls.Add(1)
+		unregisterContextCanceled.Store(ctx.Err() != nil)
+	})
+	transport := NewStreamableHTTPServer(
+		NewMCPServer("close-sessions-context-test", "1.0.0", WithHooks(hooks)),
+		WithStateful(true),
+	)
+	ts := httptest.NewServer(transport)
+	defer ts.Close()
+
+	initializeLegacySession(t, ts.URL)
+	cleanupCtx, cancel := context.WithCancel(t.Context())
+	cancel()
+	transport.CloseSessions(cleanupCtx)
+
+	assert.Equal(t, int32(1), unregisterCalls.Load())
+	assert.False(t, unregisterContextCanceled.Load())
+}
+
 func TestStreamableHTTPInvalidListeningSessionReturnsNotFound(t *testing.T) {
 	transport := NewStreamableHTTPServer(NewMCPServer("invalid-test", "1.0.0"), WithStateful(true))
 	ts := httptest.NewServer(transport)
