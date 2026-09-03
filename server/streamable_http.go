@@ -287,7 +287,7 @@ type StreamableHTTPServer struct {
 	sessionResourceTemplates *sessionResourceTemplatesStore
 	activeSessions           sync.Map     // sessionId --> *streamableHttpSession (for sampling responses)
 	activeGetConnections     sync.Map     // sessionId --> *activeGetConnection (non-resumable listening GET)
-	sessionLifecycleMu       sync.Mutex   // serializes listening GET registration with DELETE termination
+	sessionLifecycleMu       sync.Locker  // serializes listening GET registration with DELETE termination
 	requestIDCounter         atomic.Int64 // server -> client request IDs, shared across sessions
 
 	eventStore         EventStore
@@ -347,6 +347,7 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 		logger:                   slog.Default(),
 		sessionResources:         newSessionResourcesStore(),
 		sessionResourceTemplates: newSessionResourceTemplatesStore(),
+		sessionLifecycleMu:       &sync.Mutex{},
 	}
 
 	// Apply all options
