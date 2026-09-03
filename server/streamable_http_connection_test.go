@@ -158,10 +158,38 @@ func TestStreamableHTTPHeartbeatStopsWithListeningConnection(t *testing.T) {
 	assert.Equal(t, string(mcp.MethodPing), heartbeat.Method)
 
 	cancel()
-	stream.Body.Close()
+	require.NoError(t, stream.Body.Close())
 	requireConnectionClosed(t, done)
 	_, stillRegistered := transport.activeGetConnections.Load(sessionID)
 	assert.False(t, stillRegistered)
+}
+
+func TestStreamableHTTPDisconnectUnregistersWithLiveContext(t *testing.T) {
+	var unregisterCalls atomic.Int32
+	var unregisterContextCanceled atomic.Bool
+	hooks := &Hooks{}
+	hooks.AddOnUnregisterSession(func(ctx context.Context, _ ClientSession) {
+		unregisterCalls.Add(1)
+		unregisterContextCanceled.Store(ctx.Err() != nil)
+	})
+	manager := &InsecureStatefulSessionIdManager{}
+	transport := NewStreamableHTTPServer(
+		NewMCPServer("disconnect-cleanup-test", "1.0.0", WithHooks(hooks)),
+		WithSessionIdManager(manager),
+	)
+	ts := httptest.NewServer(transport)
+	defer ts.Close()
+
+	sessionID := manager.Generate()
+	stream, cancel := openListeningGet(t, ts.URL, sessionID)
+	require.Equal(t, http.StatusOK, stream.StatusCode)
+	done := activeGetDone(t, transport, sessionID)
+
+	cancel()
+	stream.Body.Close()
+	requireConnectionClosed(t, done)
+	assert.Equal(t, int32(1), unregisterCalls.Load())
+	assert.False(t, unregisterContextCanceled.Load())
 }
 
 func TestStreamableHTTPInvalidListeningSessionReturnsNotFound(t *testing.T) {

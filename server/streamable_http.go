@@ -22,6 +22,8 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+const sessionCleanupTimeout = 5 * time.Second
+
 // StreamableHTTPOption defines a function type for configuring StreamableHTTPServer
 type StreamableHTTPOption func(*StreamableHTTPServer)
 
@@ -1135,7 +1137,11 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 
 	if !loaded {
 		if s.eventStore == nil {
-			defer s.server.UnregisterSession(r.ctx(), sessionID)
+			defer func() {
+				cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(r.ctx()), sessionCleanupTimeout)
+				defer cancel()
+				s.server.UnregisterSession(cleanupCtx, sessionID)
+			}()
 			defer s.activeSessions.Delete(sessionID)
 		}
 		// With an event store, the session outlives the connection so that
@@ -1312,7 +1318,7 @@ func (s *StreamableHTTPServer) handleDelete(w HTTPResponseWriter, r *HTTPRequest
 		return
 	}
 
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(r.ctx()), 5*time.Second)
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(r.ctx()), sessionCleanupTimeout)
 	defer cancel()
 	s.cleanupSessionState(cleanupCtx, sessionID)
 
@@ -1488,7 +1494,7 @@ func (s *StreamableHTTPServer) touchSession(sessionID string) {
 
 // cleanupSessionState removes all per-session transport state for the given session ID.
 func (s *StreamableHTTPServer) cleanupSessionState(ctx context.Context, sessionID string) {
-	cleanupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	cleanupCtx, cancel := context.WithTimeout(ctx, sessionCleanupTimeout)
 	defer cancel()
 
 	s.closeActiveGetConnection(cleanupCtx, sessionID)
