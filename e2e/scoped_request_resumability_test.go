@@ -14,6 +14,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/mark3labs/mcp-go/server/servertest"
 )
 
 // With an event store configured, a server request issued while a POST is
@@ -38,7 +39,7 @@ func TestResumability_RequestScopedElicitationCaptured(t *testing.T) {
 		return mcp.NewToolResultText("action=" + string(result.Action)), nil
 	})
 
-	ts := server.NewTestStreamableHTTPServer(mcpServer, server.WithEventStore(store))
+	ts := servertest.NewTestStreamableHTTPServer(mcpServer, server.WithEventStore(store))
 	t.Cleanup(ts.Close)
 
 	// The client answers elicitations, so it advertises the capability.

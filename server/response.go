@@ -82,7 +82,7 @@ func (s *MCPServer) decorateResult(result any, method mcp.MCPMethod) (any, bool)
 		return nil, false
 	}
 
-	metadata, ok := pointer.Interface().(mcp.ResultMetadata)
+	metadata, ok := reflect.TypeAssert[mcp.ResultMetadata](pointer)
 	if !ok {
 		return nil, false
 	}
@@ -100,7 +100,7 @@ func (s *MCPServer) decorateResult(result any, method mcp.MCPMethod) (any, bool)
 
 	// ttlMs and cacheScope are required on list and read results.
 	if methodReturnsCacheableResult(method) {
-		if cacheable, ok := pointer.Interface().(mcp.CacheHintSetter); ok {
+		if cacheable, ok := reflect.TypeAssert[mcp.CacheHintSetter](pointer); ok {
 			applyDefaultCacheHints(cacheable, s.cacheHintsFor(method))
 		}
 	}

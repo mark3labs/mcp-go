@@ -1641,8 +1641,8 @@ func (s *MCPServer) handleReadResource(
 		s.resourceMiddlewareMu.RLock()
 		mw := s.resourceHandlerMiddlewares
 		// Apply middlewares in reverse order
-		for i := len(mw) - 1; i >= 0; i-- {
-			finalHandler = mw[i](finalHandler)
+		for _, m := range slices.Backward(mw) {
+			finalHandler = m(finalHandler)
 		}
 		s.resourceMiddlewareMu.RUnlock()
 
@@ -1713,8 +1713,8 @@ func (s *MCPServer) handleReadResource(
 		finalHandler := ResourceHandlerFunc(matchedHandler)
 		mw := s.resourceHandlerMiddlewares
 		// Apply middlewares in reverse order
-		for i := len(mw) - 1; i >= 0; i-- {
-			finalHandler = mw[i](finalHandler)
+		for _, m := range slices.Backward(mw) {
+			finalHandler = m(finalHandler)
 		}
 		s.resourceMiddlewareMu.RUnlock()
 		contents, err := finalHandler(ctx, request)
@@ -1860,8 +1860,8 @@ func (s *MCPServer) handleGetPrompt(
 	mw := s.promptHandlerMiddlewares
 
 	// Apply middlewares in reverse order
-	for i := len(mw) - 1; i >= 0; i-- {
-		finalHandler = mw[i](finalHandler)
+	for _, m := range slices.Backward(mw) {
+		finalHandler = m(finalHandler)
 	}
 	s.promptMiddlewareMu.RUnlock()
 
@@ -2132,8 +2132,8 @@ func (s *MCPServer) handleToolCall(
 	mw := s.toolHandlerMiddlewares
 
 	// Apply middlewares in reverse order
-	for i := len(mw) - 1; i >= 0; i-- {
-		finalHandler = mw[i](finalHandler)
+	for _, m := range slices.Backward(mw) {
+		finalHandler = m(finalHandler)
 	}
 	s.toolMiddlewareMu.RUnlock()
 
@@ -2247,6 +2247,14 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 		}
 	}
 
+	// Snapshot the task as "working" before launching execution, so the
+	// CreateTaskResult reflects the just-created state even if the async
+	// handler completes before we read it back (a fast/synchronous handler
+	// can finish before this goroutine is scheduled).
+	s.tasksMu.RLock()
+	taskCopy := entry.task
+	s.tasksMu.RUnlock()
+
 	// Execute tool asynchronously
 	// For regular tools being used as tasks, we need different execution logic
 	if hasTaskHandler {
@@ -2257,11 +2265,6 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 	}
 
 	// Return CreateTaskResult immediately with task as top-level field
-	// Make a copy of the task to avoid data races with background goroutine
-	s.tasksMu.RLock()
-	taskCopy := entry.task
-	s.tasksMu.RUnlock()
-
 	return &mcp.CreateTaskResult{
 		Task: taskCopy,
 	}, nil
@@ -2388,8 +2391,8 @@ func (s *MCPServer) executeRegularToolAsTask(
 
 	s.toolMiddlewareMu.RLock()
 	mw := s.toolHandlerMiddlewares
-	for i := len(mw) - 1; i >= 0; i-- {
-		finalHandler = mw[i](finalHandler)
+	for _, m := range slices.Backward(mw) {
+		finalHandler = m(finalHandler)
 	}
 	s.toolMiddlewareMu.RUnlock()
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -79,7 +80,7 @@ func (s *MCPServer) startMessageLog(
 	}
 
 	return func(resp mcp.JSONRPCMessage) {
-		final := append(attrs[:len(attrs):len(attrs)],
+		final := append(slices.Clip(attrs),
 			slog.Float64(logKeyDurationSeconds, time.Since(start).Seconds()),
 		)
 		if e, ok := resp.(mcp.JSONRPCError); ok {

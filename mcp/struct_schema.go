@@ -90,7 +90,7 @@ func (s *schemaFallbackState) schemaForStructFields(
 	t reflect.Type,
 	opts *jsonschema.ForOptions,
 ) (*jsonschema.Schema, error) {
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if t.Kind() != reflect.Struct {
@@ -119,7 +119,7 @@ func (s *schemaFallbackState) schemaForStructFields(
 			}
 			if field.Anonymous && !info.explicitName {
 				anonType := fieldType
-				if anonType.Kind() == reflect.Ptr {
+				if anonType.Kind() == reflect.Pointer {
 					anonType = anonType.Elem()
 				}
 				if anonType.Kind() == reflect.Struct {
@@ -203,7 +203,7 @@ func applyStructFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 	if schema == nil || schema.Properties == nil {
 		return
 	}
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if t.Kind() != reflect.Struct {
@@ -221,7 +221,7 @@ func applyStructFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 			}
 			if field.Anonymous && !info.explicitName {
 				anonType := fieldType
-				if anonType.Kind() == reflect.Ptr {
+				if anonType.Kind() == reflect.Pointer {
 					anonType = anonType.Elem()
 				}
 				if anonType.Kind() == reflect.Struct {

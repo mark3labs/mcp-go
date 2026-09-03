@@ -449,6 +449,28 @@ func TestParseContent(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name: "resource link with _meta",
+			contentMap: map[string]any{
+				"type": "resource_link",
+				"uri":  "file:///test.txt",
+				"name": "test.txt",
+				"_meta": map[string]any{
+					"source_url": "https://example.com",
+				},
+			},
+			expected: ResourceLink{
+				Type: ContentTypeLink,
+				URI:  "file:///test.txt",
+				Name: "test.txt",
+				Meta: &Meta{
+					AdditionalFields: map[string]any{
+						"source_url": "https://example.com",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
 			name: "text content with _meta containing progressToken",
 			contentMap: map[string]any{
 				"type": "text",
@@ -654,6 +676,7 @@ func TestParseContent(t *testing.T) {
 					assert.Equal(t, exp.MIMEType, act.MIMEType)
 					assert.Equal(t, exp.Size, act.Size)
 					assert.Equal(t, exp.Annotations, act.Annotations)
+					assert.Equal(t, exp.Meta, act.Meta)
 				case EmbeddedResource:
 					act, ok := result.(EmbeddedResource)
 					assert.True(t, ok)

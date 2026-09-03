@@ -93,7 +93,7 @@ func (r CallToolRequest) GetRawArguments() any {
 // BindArguments unmarshals the Arguments into the provided struct
 // This is useful for working with strongly-typed arguments
 func (r CallToolRequest) BindArguments(target any) error {
-	if target == nil || reflect.ValueOf(target).Kind() != reflect.Ptr {
+	if target == nil || reflect.ValueOf(target).Kind() != reflect.Pointer {
 		return fmt.Errorf("target must be a non-nil pointer")
 	}
 
@@ -396,8 +396,8 @@ func (r CallToolRequest) RequireIntSlice(key string) ([]int, error) {
 				case float64:
 					result = append(result, int(num))
 				case string:
-					if i, err := strconv.Atoi(num); err == nil {
-						result = append(result, i)
+					if n, err := strconv.Atoi(num); err == nil {
+						result = append(result, n)
 					} else {
 						return nil, fmt.Errorf("item %d in argument %q cannot be converted to int", i, key)
 					}

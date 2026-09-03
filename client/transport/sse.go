@@ -31,14 +31,23 @@ type SSE struct {
 	mu             sync.RWMutex
 	onNotification func(mcp.JSONRPCNotification)
 	notifyMu       sync.RWMutex
-	endpointChan   chan struct{}
 	headers        map[string]string
 	headerFunc     HTTPHeaderFunc
 	host           string
 	logger         *slog.Logger
 
-	startMu          sync.Mutex
-	lifecycleMu      sync.Mutex
+	// startMu protects startDone. Concurrent Start calls share one active
+	// handshake and may cancel independently; Start and Close must not
+	// overlap.
+	startMu   sync.Mutex
+	startDone chan struct{}
+
+	// lifecycleMu serializes the closed transition with canceler publication.
+	// Start publishes the stream canceler under it and Close flips closed and
+	// reads the canceler under it, so an in-flight start cannot escape
+	// shutdown with a live request context.
+	lifecycleMu sync.Mutex
+
 	started          atomic.Bool
 	closed           atomic.Bool
 	cancelSSEStream  context.CancelFunc
@@ -139,7 +148,6 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 		baseURL:         parsedURL,
 		httpClient:      &http.Client{},
 		responses:       make(map[string]chan *JSONRPCResponse),
-		endpointChan:    make(chan struct{}),
 		headers:         make(map[string]string),
 		logger:          slog.Default(),
 		endpointTimeout: 30 * time.Second,
@@ -165,22 +173,64 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 // Start initiates the SSE connection to the server and waits for the endpoint information.
 // Returns an error if the connection fails or times out waiting for the endpoint.
 func (c *SSE) Start(ctx context.Context) error {
-	// Serialize starts so only one request can publish the active stream canceler.
-	c.startMu.Lock()
-	defer c.startMu.Unlock()
+	for {
+		c.startMu.Lock()
+		// Reject any start after Close before the started fast-path so a closed
+		// transport reports ErrTransportClosed instead of nil.
+		if c.closed.Load() {
+			c.startMu.Unlock()
+			return ErrTransportClosed
+		}
+		if c.started.Load() {
+			c.startMu.Unlock()
+			return nil
+		}
+		// A concurrent Start is already in flight: wait for it and honor
+		// our own context instead of blocking on the mutex.
+		if startDone := c.startDone; startDone != nil {
+			c.startMu.Unlock()
+			select {
+			case <-startDone:
+				if err := ctx.Err(); err != nil {
+					return fmt.Errorf("context cancelled while waiting for concurrent start: %w", err)
+				}
+				continue
+			case <-ctx.Done():
+				return fmt.Errorf("context cancelled while waiting for concurrent start: %w", ctx.Err())
+			}
+		}
 
-	// Publish the canceler under the same lock that Close uses for the closed
-	// transition. Close therefore either rejects this start or observes its canceler.
+		// Become the owner of this handshake attempt.
+		startDone := make(chan struct{})
+		c.startDone = startDone
+		c.startMu.Unlock()
+
+		err := c.start(ctx)
+
+		c.startMu.Lock()
+		c.startDone = nil
+		close(startDone)
+		c.startMu.Unlock()
+		return err
+	}
+}
+
+// start performs one SSE connection and endpoint handshake attempt.
+func (c *SSE) start(ctx context.Context) error {
+	// The handshake state belongs to this Start attempt only. Delayed
+	// endpoint events from a superseded reader (e.g. after a failed Start)
+	// close only this attempt's channel and cannot corrupt a later retry.
+	endpointChan := make(chan struct{})
+	endpointOnce := &sync.Once{}
+
+	// Publish the canceler under the same lock Close uses for the closed
+	// transition. Close therefore either rejects this attempt or observes its
+	// canceler.
 	c.lifecycleMu.Lock()
 	if c.closed.Load() {
 		c.lifecycleMu.Unlock()
 		return ErrTransportClosed
 	}
-	if c.started.Load() {
-		c.lifecycleMu.Unlock()
-		return nil
-	}
-
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancelSSEStream = cancel
 	c.lifecycleMu.Unlock()
@@ -271,7 +321,7 @@ func (c *SSE) Start(ctx context.Context) error {
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	go c.readSSE(resp.Body)
+	go c.readSSE(resp.Body, endpointChan, endpointOnce)
 
 	// Wait for the endpoint to be received
 	endpointTimeout := c.endpointTimeout
@@ -292,7 +342,7 @@ func (c *SSE) Start(ctx context.Context) error {
 	defer timer.Stop()
 
 	select {
-	case <-c.endpointChan:
+	case <-endpointChan:
 		// Endpoint received, proceed
 	case <-ctx.Done():
 		return fmt.Errorf("context cancelled while waiting for endpoint: %w", ctx.Err())
@@ -315,7 +365,7 @@ func (c *SSE) Start(ctx context.Context) error {
 
 // readSSE continuously reads the SSE stream and processes events.
 // It runs until the connection is closed or an error occurs.
-func (c *SSE) readSSE(reader io.ReadCloser) {
+func (c *SSE) readSSE(reader io.ReadCloser, endpointChan chan struct{}, endpointOnce *sync.Once) {
 	defer reader.Close()
 
 	br := bufio.NewReader(reader)
@@ -326,6 +376,12 @@ func (c *SSE) readSSE(reader io.ReadCloser) {
 		// and the for loop will break.
 		line, err := br.ReadString('\n')
 		if err != nil {
+			// Close() cancels the stream context, which surfaces here as a read
+			// error; firing the handler would reconnect a transport the caller
+			// just shut down.
+			if c.closed.Load() {
+				return
+			}
 			if err == io.EOF {
 				// Process any pending event before exit
 				if data != "" {
@@ -333,7 +389,7 @@ func (c *SSE) readSSE(reader io.ReadCloser) {
 					if event == "" {
 						event = "message"
 					}
-					c.handleSSEEvent(event, data)
+					c.handleSSEEvent(event, data, endpointChan, endpointOnce)
 				}
 			}
 			c.connectionLostMu.RLock()
@@ -342,7 +398,7 @@ func (c *SSE) readSSE(reader io.ReadCloser) {
 			if handler != nil {
 				// Notify that the connection will be closed due to an error
 				handler(err)
-			} else if err == io.EOF && !c.closed.Load() {
+			} else if err == io.EOF {
 				c.logger.Error("SSE stream error", "err", err)
 			}
 			return
@@ -357,7 +413,7 @@ func (c *SSE) readSSE(reader io.ReadCloser) {
 				if event == "" {
 					event = "message"
 				}
-				c.handleSSEEvent(event, data)
+				c.handleSSEEvent(event, data, endpointChan, endpointOnce)
 				event = ""
 				data = ""
 			}
@@ -392,7 +448,7 @@ func appendSSEData(existing, line string) string {
 
 // handleSSEEvent processes SSE events based on their type.
 // Handles 'endpoint' events for connection setup and 'message' events for JSON-RPC communication.
-func (c *SSE) handleSSEEvent(event, data string) {
+func (c *SSE) handleSSEEvent(event, data string, endpointChan chan struct{}, endpointOnce *sync.Once) {
 	switch event {
 	case "endpoint":
 		endpoint, err := c.baseURL.Parse(data)
@@ -404,9 +460,16 @@ func (c *SSE) handleSSEEvent(event, data string) {
 			c.logger.Error("Endpoint origin does not match connection origin")
 			return
 		}
+		c.mu.Lock()
 		c.endpoint = endpoint
-		close(c.endpointChan)
-
+		c.mu.Unlock()
+		// The SSE spec sends a single endpoint event, but a proxy or a
+		// re-broadcasting server can emit it more than once. Closing the
+		// channel twice panics, so guard the close with the attempt's
+		// sync.Once.
+		endpointOnce.Do(func() {
+			close(endpointChan)
+		})
 	case "message":
 		var baseMessage JSONRPCResponse
 		if err := json.Unmarshal([]byte(data), &baseMessage); err != nil {
@@ -431,16 +494,16 @@ func (c *SSE) handleSSEEvent(event, data string) {
 		// Create string key for map lookup
 		idKey := baseMessage.ID.String()
 
-		c.mu.RLock()
+		// Hold the write lock while sending: Close() also takes the write
+		// lock to close pending response channels, so the send can never
+		// race a close and panic with "send on closed channel".
+		c.mu.Lock()
 		ch, exists := c.responses[idKey]
-		c.mu.RUnlock()
-
 		if exists {
 			ch <- &baseMessage
-			c.mu.Lock()
 			delete(c.responses, idKey)
-			c.mu.Unlock()
 		}
+		c.mu.Unlock()
 	}
 }
 
@@ -470,7 +533,12 @@ func (c *SSE) SendRequest(
 	if c.closed.Load() {
 		return nil, fmt.Errorf("transport has been closed")
 	}
-	if c.endpoint == nil {
+
+	c.mu.RLock()
+	endpoint := c.endpoint
+	c.mu.RUnlock()
+
+	if endpoint == nil {
 		return nil, fmt.Errorf("endpoint not received")
 	}
 
@@ -481,7 +549,7 @@ func (c *SSE) SendRequest(
 	}
 
 	// Create HTTP request
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint.String(), bytes.NewReader(requestBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(requestBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -635,8 +703,8 @@ func (c *SSE) SendRequest(
 // Close shuts down the SSE client connection and cleans up any pending responses.
 // Returns an error if the shutdown process fails.
 func (c *SSE) Close() error {
-	// Synchronize the closed transition with Start's canceler publication so an
-	// in-flight start cannot escape shutdown with a live request context.
+	// Synchronize the closed transition with Start's canceler publication so
+	// an in-flight start cannot escape shutdown with a live request context.
 	c.lifecycleMu.Lock()
 	if c.closed.Load() {
 		c.lifecycleMu.Unlock()
@@ -676,7 +744,11 @@ func (c *SSE) SetProtocolVersion(version string) {
 
 // SendNotification sends a JSON-RPC notification to the server without expecting a response.
 func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNotification) error {
-	if c.endpoint == nil {
+	c.mu.RLock()
+	endpoint := c.endpoint
+	c.mu.RUnlock()
+
+	if endpoint == nil {
 		return fmt.Errorf("endpoint not received")
 	}
 
@@ -688,7 +760,7 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 	req, err := http.NewRequestWithContext(
 		ctx,
 		"POST",
-		c.endpoint.String(),
+		endpoint.String(),
 		bytes.NewReader(notificationBytes),
 	)
 	if err != nil {
@@ -785,6 +857,8 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 
 // GetEndpoint returns the current endpoint URL for the SSE connection.
 func (c *SSE) GetEndpoint() *url.URL {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.endpoint
 }
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 
@@ -163,8 +164,8 @@ func TestWithLogger_RegistersToolMiddleware(t *testing.T) {
 	require.NotEmpty(t, mws, "WithLogger must register at least one tool middleware")
 
 	wrapped := ToolHandlerFunc(handler)
-	for i := len(mws) - 1; i >= 0; i-- {
-		wrapped = mws[i](wrapped)
+	for _, m := range slices.Backward(mws) {
+		wrapped = m(wrapped)
 	}
 	_, _ = wrapped(t.Context(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "list_pods"}})
 
