@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +28,29 @@ type mockReaderWithError struct {
 	err      error
 	position int
 	closed   bool
+}
+
+type blockingDoneContext struct {
+	context.Context
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+// RoundTrip delegates to the test function while satisfying http.RoundTripper.
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+// Done pauses context cancellation setup so tests can exercise the lifecycle boundary.
+func (c *blockingDoneContext) Done() <-chan struct{} {
+	c.once.Do(func() {
+		close(c.entered)
+		<-c.release
+	})
+	return c.Context.Done()
 }
 
 func (m *mockReaderWithError) Read(p []byte) (n int, err error) {
@@ -737,6 +761,88 @@ func TestSSE(t *testing.T) {
 			assert.Equal(t, tc.wantNotify, called)
 		})
 	}
+}
+
+func TestSSEStartAfterClose(t *testing.T) {
+	tests := []struct {
+		name             string
+		startBeforeClose bool
+		wantRequests     int32
+	}{
+		{name: "close before first start", wantRequests: 0},
+		{name: "close after successful start", startBeforeClose: true, wantRequests: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var requestCount atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requestCount.Add(1)
+				w.Header().Set("Content-Type", "text/event-stream")
+				flusher, ok := w.(http.Flusher)
+				if !ok {
+					http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+					return
+				}
+				_, _ = fmt.Fprint(w, "event: endpoint\ndata: /message\n\n")
+				flusher.Flush()
+				<-r.Context().Done()
+			}))
+			defer server.Close()
+
+			transport, err := NewSSE(server.URL)
+			require.NoError(t, err)
+			if tt.startBeforeClose {
+				require.NoError(t, transport.Start(t.Context()))
+			}
+			require.NoError(t, transport.Close())
+
+			err = transport.Start(t.Context())
+			require.ErrorIs(t, err, ErrTransportClosed)
+			require.Equal(t, tt.wantRequests, requestCount.Load())
+		})
+	}
+}
+
+func TestSSEConcurrentStartClosePublishesCancellation(t *testing.T) {
+	ctx := &blockingDoneContext{
+		Context: t.Context(),
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	httpClient := &http.Client{
+		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			<-request.Context().Done()
+			return nil, request.Context().Err()
+		}),
+	}
+	transport, err := NewSSE("http://example.com/sse", WithHTTPClient(httpClient))
+	require.NoError(t, err)
+
+	startErr := make(chan error, 1)
+	go func() {
+		startErr <- transport.Start(ctx)
+	}()
+	<-ctx.entered
+
+	closeStarted := make(chan struct{})
+	closeErr := make(chan error, 1)
+	go func() {
+		close(closeStarted)
+		closeErr <- transport.Close()
+	}()
+	<-closeStarted
+
+	// Close must wait until Start publishes the stream canceler under lifecycleMu.
+	select {
+	case err := <-closeErr:
+		t.Fatalf("Close returned before Start published cancellation: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(ctx.release)
+	require.NoError(t, <-closeErr)
+	require.ErrorIs(t, <-startErr, context.Canceled)
 }
 
 func TestSSEErrors(t *testing.T) {
