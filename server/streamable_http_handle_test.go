@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -82,6 +83,8 @@ func (f *flushableHTTPResponseWriter) Flush() {
 }
 
 func (f *flushableHTTPResponseWriter) CanStream() bool { return true }
+
+func (f *flushableHTTPResponseWriter) SetWriteDeadline(time.Time) error { return nil }
 
 func TestStreamableHTTPServer_Handle_InitializeWithoutNetHTTP(t *testing.T) {
 	mcpServer := NewMCPServer("test-mcp-server", "1.0")

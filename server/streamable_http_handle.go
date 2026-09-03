@@ -109,8 +109,17 @@ type HTTPResponseWriter interface {
 	Flush()
 	// CanStream reports whether Flush actually delivers bytes to the client
 	// immediately. When false, the server will not upgrade POST responses to
-	// SSE and will reject GET requests with 405 Method Not Allowed.
+	// SSE and will reject GET requests with 405 Method Not Allowed. Writers
+	// passed to Handle for non-resumable GET streams must also implement
+	// SetWriteDeadline(time.Time) so cleanup can interrupt a blocked write.
 	CanStream() bool
+}
+
+// writeDeadlineSetter is required for long-lived GET streams so session
+// cleanup can interrupt a blocked write. Implementations used only for
+// non-streaming responses do not need to provide it.
+type writeDeadlineSetter interface {
+	SetWriteDeadline(time.Time) error
 }
 
 // httpResponseWriterAdapter adapts an http.ResponseWriter to

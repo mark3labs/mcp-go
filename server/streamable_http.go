@@ -288,7 +288,7 @@ type StreamableHTTPServer struct {
 	sessionResources         *sessionResourcesStore
 	sessionResourceTemplates *sessionResourceTemplatesStore
 	activeSessions           sync.Map // sessionId --> *streamableHttpSession (for sampling responses)
-	activeGetConnections     sync.Map // sessionId --> *activeGetConnection (non-resumable listening GET)
+	activeGETConnections     sync.Map // sessionId --> *activeGETConnection (non-resumable listening GET)
 	sessionLifecycle         sessionLifecycleLocker
 	requestIDCounter         atomic.Int64 // server -> client request IDs, shared across sessions
 
@@ -1040,6 +1040,16 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 		return
 	}
 
+	var deadlineWriter writeDeadlineSetter
+	if s.eventStore == nil {
+		var ok bool
+		deadlineWriter, ok = w.(writeDeadlineSetter)
+		if !ok {
+			writeHTTPError(w, "Streaming requires write-deadline support", http.StatusMethodNotAllowed)
+			return
+		}
+	}
+
 	// A GET carrying Last-Event-ID resumes a previously broken SSE stream
 	// rather than opening a fresh listening stream.
 	if s.eventStore != nil {
@@ -1060,7 +1070,7 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 	streamCtx := r.ctx()
 	var session *streamableHttpSession
 	var loaded bool
-	var connection *activeGetConnection
+	var connection *activeGETConnection
 	if registered := func() bool {
 		// Validation, listening-connection registration, and logical-session
 		// registration must be atomic with DELETE termination. Otherwise a GET
@@ -1083,16 +1093,14 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 		if s.eventStore == nil && sessionID != "" {
 			var cancel context.CancelFunc
 			streamCtx, cancel = context.WithCancel(streamCtx)
-			connection = &activeGetConnection{
+			connection = &activeGETConnection{
 				cancel: cancel,
 				done:   make(chan struct{}),
 			}
-			if deadlineWriter, ok := w.(interface{ SetWriteDeadline(time.Time) error }); ok {
-				connection.interruptWrite = func() {
-					_ = deadlineWriter.SetWriteDeadline(time.Now())
-				}
+			connection.interruptWrite = func() {
+				_ = deadlineWriter.SetWriteDeadline(time.Now())
 			}
-			if _, alreadyListening := s.activeGetConnections.LoadOrStore(sessionID, connection); alreadyListening {
+			if _, alreadyListening := s.activeGETConnections.LoadOrStore(sessionID, connection); alreadyListening {
 				cancel()
 				connection = nil
 				writeHTTPError(w, "A listening stream is already active for this session", http.StatusConflict)
@@ -1114,7 +1122,7 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 			s.activeSessions.Delete(sessionID)
 			if connection != nil {
 				connection.cancel()
-				s.activeGetConnections.CompareAndDelete(sessionID, connection)
+				s.activeGETConnections.CompareAndDelete(sessionID, connection)
 				close(connection.done)
 				connection = nil
 			}
@@ -1130,7 +1138,7 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 	if connection != nil {
 		defer func() {
 			connection.cancel()
-			s.activeGetConnections.CompareAndDelete(sessionID, connection)
+			s.activeGETConnections.CompareAndDelete(sessionID, connection)
 			close(connection.done)
 		}()
 	}
@@ -1512,11 +1520,11 @@ func (s *StreamableHTTPServer) cleanupSessionState(ctx context.Context, sessionI
 }
 
 func (s *StreamableHTTPServer) closeActiveGetConnection(ctx context.Context, sessionID string) {
-	value, ok := s.activeGetConnections.Load(sessionID)
+	value, ok := s.activeGETConnections.Load(sessionID)
 	if !ok {
 		return
 	}
-	connection := value.(*activeGetConnection)
+	connection := value.(*activeGETConnection)
 	connection.cancel()
 	if connection.interruptWrite != nil {
 		connection.interruptWrite()
@@ -1590,6 +1598,11 @@ func (s *StreamableHTTPServer) sweepExpiredSessions() {
 			mgr = s.sessionIdManagerResolver.ResolveSessionIdManager(nil)
 		}
 		unlockLifecycle := s.sessionLifecycle.lock(sessionID)
+		currentLastActive := lastActive.Load()
+		if currentLastActive != capturedLastActive || time.Now().UnixNano()-currentLastActive < ttlNanos {
+			unlockLifecycle()
+			return true
+		}
 		_, _ = mgr.Terminate(sessionID)
 		unlockLifecycle()
 		s.cleanupSessionState(context.Background(), sessionID)
@@ -1838,7 +1851,7 @@ type streamableHttpSession struct {
 	requestIDCounter *atomic.Int64 // shared per server so IDs stay unique across sessions with the same session ID
 }
 
-type activeGetConnection struct {
+type activeGETConnection struct {
 	cancel         context.CancelFunc
 	interruptWrite func()
 	done           chan struct{}
@@ -1848,6 +1861,8 @@ type sessionLifecycleLocker interface {
 	lock(sessionID string) (unlock func())
 }
 
+// sessionLifecycleLocks is safe for concurrent use. Callers must invoke the
+// unlock function returned by lock so unused per-session entries are reclaimed.
 type sessionLifecycleLocks struct {
 	mu      sync.Mutex
 	entries map[string]*sessionLifecycleLock

@@ -56,9 +56,9 @@ func openListeningGet(t *testing.T, endpoint, sessionID string) (*http.Response,
 
 func activeGetDone(t *testing.T, transport *StreamableHTTPServer, sessionID string) <-chan struct{} {
 	t.Helper()
-	value, ok := transport.activeGetConnections.Load(sessionID)
+	value, ok := transport.activeGETConnections.Load(sessionID)
 	require.True(t, ok)
-	return value.(*activeGetConnection).done
+	return value.(*activeGETConnection).done
 }
 
 func requireConnectionClosed(t *testing.T, done <-chan struct{}) {
@@ -100,7 +100,7 @@ func TestStreamableHTTPListeningConnectionLifecycle(t *testing.T) {
 	cancelFirst()
 	first.Body.Close()
 	requireConnectionClosed(t, firstDone)
-	_, stillRegistered := transport.activeGetConnections.Load(sessionID)
+	_, stillRegistered := transport.activeGETConnections.Load(sessionID)
 	assert.False(t, stillRegistered)
 
 	reconnected, cancelReconnect := openListeningGet(t, ts.URL, sessionID)
@@ -160,7 +160,7 @@ func TestStreamableHTTPHeartbeatStopsWithListeningConnection(t *testing.T) {
 	cancel()
 	require.NoError(t, stream.Body.Close())
 	requireConnectionClosed(t, done)
-	_, stillRegistered := transport.activeGetConnections.Load(sessionID)
+	_, stillRegistered := transport.activeGETConnections.Load(sessionID)
 	assert.False(t, stillRegistered)
 }
 
@@ -207,6 +207,50 @@ func TestStreamableHTTPInvalidListeningSessionReturnsNotFound(t *testing.T) {
 	_, err = io.Copy(io.Discard, resp.Body)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+type nonInterruptibleStreamResponseWriter struct {
+	*bufferingHTTPResponseWriter
+}
+
+func (w *nonInterruptibleStreamResponseWriter) Flush() {}
+
+func (w *nonInterruptibleStreamResponseWriter) CanStream() bool {
+	return true
+}
+
+func TestStreamableHTTPRejectsNonInterruptibleCustomWriter(t *testing.T) {
+	manager := &InsecureStatefulSessionIdManager{}
+	transport := NewStreamableHTTPServer(
+		NewMCPServer("non-interruptible-writer-test", "1.0.0"),
+		WithSessionIdManager(manager),
+	)
+	sessionID := manager.Generate()
+	w := &nonInterruptibleStreamResponseWriter{newBufferingHTTPResponseWriter()}
+	transport.Handle(w, &HTTPRequest{
+		Method: http.MethodGet,
+		Header: http.Header{
+			"Accept":           []string{"text/event-stream"},
+			HeaderKeySessionID: []string{sessionID},
+		},
+		Context: t.Context(),
+	})
+
+	w.mu.Lock()
+	status := w.status
+	w.mu.Unlock()
+	require.Equal(t, http.StatusMethodNotAllowed, status)
+	_, stillRegistered := transport.activeGETConnections.Load(sessionID)
+	assert.False(t, stillRegistered)
+
+	ts := httptest.NewServer(transport)
+	defer ts.Close()
+	stream, cancel := openListeningGet(t, ts.URL, sessionID)
+	require.Equal(t, http.StatusOK, stream.StatusCode)
+	done := activeGetDone(t, transport, sessionID)
+	cancel()
+	require.NoError(t, stream.Body.Close())
+	requireConnectionClosed(t, done)
 }
 
 type blockingValidateSessionManager struct {
@@ -348,7 +392,7 @@ func TestStreamableHTTPDeleteSerializesWithListeningRegistration(t *testing.T) {
 	}
 	assert.True(t, manager.terminateAfterValidate.Load())
 
-	_, getStillActive := transport.activeGetConnections.Load(sessionID)
+	_, getStillActive := transport.activeGETConnections.Load(sessionID)
 	assert.False(t, getStillActive)
 	_, sessionStillActive := transport.activeSessions.Load(sessionID)
 	assert.False(t, sessionStillActive)
@@ -385,6 +429,82 @@ func TestSessionLifecycleLocksDoNotBlockOtherSessions(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("one session's lifecycle lock blocked a different session")
 	}
+}
+
+type firstLifecycleLockBarrier struct {
+	delegate sessionLifecycleLocker
+	target   string
+	once     sync.Once
+	entered  chan struct{}
+	release  chan struct{}
+}
+
+func (b *firstLifecycleLockBarrier) lock(sessionID string) func() {
+	shouldBlock := false
+	if sessionID == b.target {
+		b.once.Do(func() {
+			shouldBlock = true
+		})
+	}
+	if shouldBlock {
+		close(b.entered)
+		<-b.release
+	}
+	return b.delegate.lock(sessionID)
+}
+
+func TestStreamableHTTPSweeperRechecksActivityInsideLifecycleLock(t *testing.T) {
+	manager := &InsecureStatefulSessionIdManager{}
+	transport := NewStreamableHTTPServer(
+		NewMCPServer("sweeper-race-test", "1.0.0"),
+		WithSessionIdManager(manager),
+	)
+	transport.sessionIdleTTL = time.Minute
+	ts := httptest.NewServer(transport)
+	defer ts.Close()
+
+	sessionID := initializeLegacySession(t, ts.URL)
+	lastActive := new(atomic.Int64)
+	staleTimestamp := time.Now().Add(-2 * transport.sessionIdleTTL).UnixNano()
+	lastActive.Store(staleTimestamp)
+	transport.sessionLastActive.Store(sessionID, lastActive)
+	barrier := &firstLifecycleLockBarrier{
+		delegate: newSessionLifecycleLocks(),
+		target:   sessionID,
+		entered:  make(chan struct{}),
+		release:  make(chan struct{}),
+	}
+	transport.sessionLifecycle = barrier
+
+	sweepDone := make(chan struct{})
+	go func() {
+		defer close(sweepDone)
+		transport.sweepExpiredSessions()
+	}()
+	select {
+	case <-barrier.entered:
+	case <-time.After(time.Second):
+		t.Fatal("sweeper did not reach the lifecycle barrier")
+	}
+
+	stream, cancel := openListeningGet(t, ts.URL, sessionID)
+	require.Equal(t, http.StatusOK, stream.StatusCode)
+	done := activeGetDone(t, transport, sessionID)
+	require.NotEqual(t, staleTimestamp, lastActive.Load())
+	close(barrier.release)
+
+	select {
+	case <-sweepDone:
+	case <-time.After(time.Second):
+		t.Fatal("sweeper did not finish")
+	}
+	terminated, err := manager.Validate(sessionID)
+	require.NoError(t, err)
+	assert.False(t, terminated)
+
+	cancel()
+	require.NoError(t, stream.Body.Close())
+	requireConnectionClosed(t, done)
 }
 
 type blockingStreamResponseWriter struct {
