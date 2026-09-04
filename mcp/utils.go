@@ -730,6 +730,26 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 	return nil, fmt.Errorf("unsupported content type: %s", contentType)
 }
 
+// resultEnvelope holds the fields a result carries outside its payload: the
+// SEP-2322 round-trip fields and the SEP-2549 cache hints.
+type resultEnvelope struct {
+	ResultType    ResultType    `json:"resultType"`
+	InputRequests InputRequests `json:"inputRequests"`
+	RequestState  string        `json:"requestState"`
+	TTLMs         *int64        `json:"ttlMs"`
+	CacheScope    CacheScope    `json:"cacheScope"`
+}
+
+// parseResultEnvelope decodes the envelope of a result whose payload holds
+// interface values and therefore has to be walked by hand.
+func parseResultEnvelope(rawMessage json.RawMessage) (resultEnvelope, error) {
+	var envelope resultEnvelope
+	if err := json.Unmarshal(rawMessage, &envelope); err != nil {
+		return resultEnvelope{}, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	return envelope, nil
+}
+
 func ParseGetPromptResult(rawMessage *json.RawMessage) (*GetPromptResult, error) {
 	if rawMessage == nil {
 		return nil, fmt.Errorf("response is nil")
@@ -740,7 +760,15 @@ func ParseGetPromptResult(rawMessage *json.RawMessage) (*GetPromptResult, error)
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
+	envelope, err := parseResultEnvelope(*rawMessage)
+	if err != nil {
+		return nil, err
+	}
+
 	result := GetPromptResult{}
+	result.ResultType = envelope.ResultType
+	result.InputRequests = envelope.InputRequests
+	result.RequestState = envelope.RequestState
 
 	meta, ok := jsonContent["_meta"]
 	if ok {
@@ -756,8 +784,10 @@ func ParseGetPromptResult(rawMessage *json.RawMessage) (*GetPromptResult, error)
 		}
 	}
 
+	// A null payload is treated like an absent one: an input_required result
+	// carries no messages, and so does a zero-valued GetPromptResult.
 	messages, ok := jsonContent["messages"]
-	if ok {
+	if ok && messages != nil {
 		messagesArr, ok := messages.([]any)
 		if !ok {
 			return nil, fmt.Errorf("messages is not an array")
@@ -864,7 +894,17 @@ func ParseReadResourceResult(rawMessage *json.RawMessage) (*ReadResourceResult, 
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
+	envelope, err := parseResultEnvelope(*rawMessage)
+	if err != nil {
+		return nil, err
+	}
+
 	var result ReadResourceResult
+	result.ResultType = envelope.ResultType
+	result.InputRequests = envelope.InputRequests
+	result.RequestState = envelope.RequestState
+	result.TTLMs = envelope.TTLMs
+	result.CacheScope = envelope.CacheScope
 
 	meta, ok := jsonContent["_meta"]
 	if ok {
@@ -874,7 +914,12 @@ func ParseReadResourceResult(rawMessage *json.RawMessage) (*ReadResourceResult, 
 	}
 
 	contents, ok := jsonContent["contents"]
-	if !ok {
+	if !ok || contents == nil {
+		// An input_required result asks for more input instead of returning
+		// contents, so the payload is legitimately absent.
+		if result.NeedsInput() {
+			return &result, nil
+		}
 		return nil, fmt.Errorf("contents is missing")
 	}
 
