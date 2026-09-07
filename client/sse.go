@@ -51,6 +51,31 @@ func NewSSEMCPClient(baseURL string, options ...transport.ClientOption) (*Client
 	return NewClient(sseTransport), nil
 }
 
+// NewSSEClient creates a new SSE-based MCP client with the given base URL,
+// applying the provided transport-level options when constructing the
+// transport and the provided client-level options to the returned client.
+//
+// Pass transport options (e.g. WithHeaders, WithHTTPClient) as a slice in
+// transportOpts, and client options (e.g. WithTracer, WithPropagator) as
+// the variadic opts:
+//
+//	c, err := client.NewSSEClient(
+//	    url,
+//	    []transport.ClientOption{client.WithHeaders(h)},
+//	    client.WithTracer(t),
+//	)
+func NewSSEClient(
+	baseURL string,
+	transportOpts []transport.ClientOption,
+	opts ...ClientOption,
+) (*Client, error) {
+	sseTransport, err := transport.NewSSE(baseURL, transportOpts...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create SSE transport: %w", err)
+	}
+	return NewClient(sseTransport, opts...), nil
+}
+
 // GetEndpoint returns the current endpoint URL for the SSE connection.
 //
 // Note: This method only works with SSE transport, or it will panic.
