@@ -33,6 +33,7 @@ type StdioServer struct {
 	// Thread-safe tool call processing
 	toolCallQueue  chan *toolCallWork
 	workerWg       sync.WaitGroup
+	requestWg      sync.WaitGroup // Tracks in-flight request handlers
 	workerPoolSize int
 	queueSize      int
 	writeMu        sync.Mutex // Protects concurrent writes
@@ -524,6 +525,12 @@ func (s *StdioServer) Listen(
 		ctx = s.contextFunc(ctx)
 	}
 
+	// Requests are served on their own goroutines. Cancelling this context when
+	// input processing ends releases any handler still blocked on it, so none
+	// outlives the session it was registered against.
+	ctx, cancelRequests := context.WithCancel(ctx)
+	defer cancelRequests()
+
 	reader := bufio.NewReader(stdin)
 
 	// Start worker pool for tool calls
@@ -539,8 +546,10 @@ func (s *StdioServer) Listen(
 	err := s.processInputStream(ctx, reader, stdout)
 
 	// Shutdown workers gracefully
+	cancelRequests()
 	close(s.toolCallQueue)
 	s.workerWg.Wait()
+	s.requestWg.Wait()
 
 	return err
 }
@@ -611,7 +620,11 @@ func (s *StdioServer) processMessage(
 	// Serve requests off the read loop: a handler that blocks, such as
 	// subscriptions/listen, must not stall it. writeMu serialises the writes.
 	if parsed && baseMessage.ID != nil {
-		go s.handleRequest(ctx, rawMessage, writer)
+		s.requestWg.Add(1)
+		go func() {
+			defer s.requestWg.Done()
+			s.handleRequest(ctx, baseMessage.ID, rawMessage, writer)
+		}()
 		return nil
 	}
 
@@ -628,13 +641,14 @@ func (s *StdioServer) processMessage(
 	return nil
 }
 
-// handleRequest serves one JSON-RPC request and writes its response.
-func (s *StdioServer) handleRequest(ctx context.Context, rawMessage json.RawMessage, writer io.Writer) {
+// handleRequest serves one JSON-RPC request and writes its response. id is the
+// request's JSON-RPC id, so a recovered panic stays correlatable by the client.
+func (s *StdioServer) handleRequest(ctx context.Context, id any, rawMessage json.RawMessage, writer io.Writer) {
 	response := func() (resp mcp.JSONRPCMessage) {
 		defer func() {
 			if r := recover(); r != nil {
 				s.errLogger.Printf("panic recovered in stdio request handler: %v", r)
-				resp = createErrorResponse(nil, mcp.INTERNAL_ERROR, fmt.Sprintf("internal panic: %v", r))
+				resp = createErrorResponse(id, mcp.INTERNAL_ERROR, fmt.Sprintf("internal panic: %v", r))
 			}
 		}()
 		return s.server.HandleMessage(ctx, rawMessage)

@@ -9,8 +9,11 @@ import (
 	"log"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -561,10 +564,67 @@ func TestStdioServeRequestsDuringSubscriptionsListen(t *testing.T) {
 		return ok && id == 2
 	}, "tools/list response while the subscription stream is open")
 
-	if listed["error"] != nil {
-		t.Fatalf("unexpected error in tools/list response: %v", listed["error"])
+	require.Nil(t, listed["error"], "unexpected error in tools/list response")
+	require.NotNil(t, listed["result"], "expected a result in the tools/list response")
+}
+
+func TestStdioJoinsRequestHandlersOnEOF(t *testing.T) {
+	// EOF does not cancel the caller's context, so Listen must release its own
+	// request handlers and wait for them. Otherwise a handler that blocks - as
+	// subscriptions/listen does for the life of its stream - outlives the
+	// session it was registered against.
+	started := make(chan struct{})
+	var finished atomic.Bool
+
+	mcpServer := NewMCPServer("test", "1.0.0", WithResourceCapabilities(false, false))
+	mcpServer.AddResource(
+		mcp.NewResource("test://blocking", "blocking"),
+		func(ctx context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+			close(started)
+			<-ctx.Done()
+			finished.Store(true)
+			return nil, ctx.Err()
+		},
+	)
+
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+	go func() { _, _ = io.Copy(io.Discard, stdoutReader) }()
+
+	stdioServer := NewStdioServer(mcpServer)
+	stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+
+	// The caller's context stays live, as it would in a long-running host.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	listenDone := make(chan error, 1)
+	go func() { listenDone <- stdioServer.Listen(ctx, stdinReader, stdoutWriter) }()
+
+	request, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  string(mcp.MethodResourcesRead),
+		"params":  map[string]any{"uri": "test://blocking"},
+	})
+	require.NoError(t, err)
+	go func() { _, _ = stdinWriter.Write(append(request, '\n')) }()
+
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("resource handler never started")
 	}
-	if listed["result"] == nil {
-		t.Fatal("expected a result in the tools/list response")
+
+	// The client goes away.
+	require.NoError(t, stdinWriter.Close())
+
+	select {
+	case err := <-listenDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Listen did not return after EOF")
 	}
+
+	require.True(t, finished.Load(), "Listen returned while a request handler was still running")
 }
