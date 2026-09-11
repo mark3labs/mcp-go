@@ -583,8 +583,10 @@ func (s *StdioServer) processMessage(
 	// Check if this is a tool call that might need sampling (and thus should be processed concurrently)
 	var baseMessage struct {
 		Method string `json:"method"`
+		ID     any    `json:"id,omitempty"`
 	}
-	if json.Unmarshal(rawMessage, &baseMessage) == nil && baseMessage.Method == string(mcp.MethodToolsCall) {
+	parsed := json.Unmarshal(rawMessage, &baseMessage) == nil
+	if parsed && baseMessage.Method == string(mcp.MethodToolsCall) {
 		// Queue tool calls for processing by workers
 		select {
 		case s.toolCallQueue <- &toolCallWork{
@@ -606,7 +608,14 @@ func (s *StdioServer) processMessage(
 		}
 	}
 
-	// Handle other messages synchronously
+	// Serve requests off the read loop: a handler that blocks, such as
+	// subscriptions/listen, must not stall it. writeMu serialises the writes.
+	if parsed && baseMessage.ID != nil {
+		go s.handleRequest(ctx, rawMessage, writer)
+		return nil
+	}
+
+	// Notifications carry no response and must not queue behind a request.
 	response := s.server.HandleMessage(ctx, rawMessage)
 
 	// Only write response if there is one (not for notifications)
@@ -617,6 +626,24 @@ func (s *StdioServer) processMessage(
 	}
 
 	return nil
+}
+
+// handleRequest serves one JSON-RPC request and writes its response.
+func (s *StdioServer) handleRequest(ctx context.Context, rawMessage json.RawMessage, writer io.Writer) {
+	response := func() (resp mcp.JSONRPCMessage) {
+		defer func() {
+			if r := recover(); r != nil {
+				s.errLogger.Printf("panic recovered in stdio request handler: %v", r)
+				resp = createErrorResponse(nil, mcp.INTERNAL_ERROR, fmt.Sprintf("internal panic: %v", r))
+			}
+		}()
+		return s.server.HandleMessage(ctx, rawMessage)
+	}()
+	if response != nil {
+		if err := s.writeResponse(response, writer); err != nil {
+			s.errLogger.Printf("Error writing response: %v", err)
+		}
+	}
 }
 
 // handleSamplingResponse checks if the message is a response to a sampling request

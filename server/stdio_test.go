@@ -484,3 +484,87 @@ func TestStdioServer(t *testing.T) {
 		}
 	})
 }
+
+func TestStdioServeRequestsDuringSubscriptionsListen(t *testing.T) {
+	// subscriptions/listen holds its stream open for the life of the
+	// subscription. Dispatching it on the read loop would stall every later
+	// request, so the server must keep serving while it is open.
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+
+	mcpServer := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
+	mcpServer.AddTool(mcp.NewTool("ping"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("pong"), nil
+	})
+
+	stdioServer := NewStdioServer(mcpServer)
+	stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = stdioServer.Listen(ctx, stdinReader, stdoutWriter) }()
+
+	responses := make(chan map[string]any, 4)
+	go func() {
+		scanner := bufio.NewScanner(stdoutReader)
+		for scanner.Scan() {
+			var msg map[string]any
+			if json.Unmarshal(scanner.Bytes(), &msg) == nil {
+				responses <- msg
+			}
+		}
+	}()
+
+	meta := map[string]any{
+		"io.modelcontextprotocol/protocolVersion":    mcp.ProtocolVersion20260728,
+		"io.modelcontextprotocol/clientInfo":         map[string]any{"name": "test-client", "version": "1.0.0"},
+		"io.modelcontextprotocol/clientCapabilities": map[string]any{},
+	}
+	send := func(id any, method string, params map[string]any) {
+		params["_meta"] = meta
+		b, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+		if err != nil {
+			t.Errorf("marshalling %s: %v", method, err)
+			return
+		}
+		// Written from a goroutine so a stalled read loop fails the test by
+		// timeout rather than blocking it forever on the unbuffered pipe.
+		go func() { _, _ = stdinWriter.Write(append(b, '\n')) }()
+	}
+
+	// Wait for a message matching want, ignoring anything else on the stream.
+	await := func(want func(map[string]any) bool, describe string) map[string]any {
+		t.Helper()
+		deadline := time.After(5 * time.Second)
+		for {
+			select {
+			case msg := <-responses:
+				if want(msg) {
+					return msg
+				}
+			case <-deadline:
+				t.Fatalf("timed out waiting for %s", describe)
+			}
+		}
+	}
+
+	send("listen-1", string(mcp.MethodSubscriptionsListen), map[string]any{
+		"notifications": map[string]any{"toolsListChanged": true},
+	})
+	await(func(m map[string]any) bool {
+		return m["method"] == string(mcp.MethodNotificationSubscriptionsAcknowledged)
+	}, "subscriptions/listen acknowledgement")
+
+	send(2, string(mcp.MethodToolsList), map[string]any{})
+	listed := await(func(m map[string]any) bool {
+		id, ok := m["id"].(float64)
+		return ok && id == 2
+	}, "tools/list response while the subscription stream is open")
+
+	if listed["error"] != nil {
+		t.Fatalf("unexpected error in tools/list response: %v", listed["error"])
+	}
+	if listed["result"] == nil {
+		t.Fatal("expected a result in the tools/list response")
+	}
+}
