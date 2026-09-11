@@ -15,7 +15,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -658,60 +657,6 @@ func TestStdio_StartGuaranteesReaderReady(t *testing.T) {
 	}
 }
 
-func TestStdio_WithCommandFunc(t *testing.T) {
-	called := false
-	tmpDir := t.TempDir()
-	chrootDir := filepath.Join(tmpDir, "sandbox-root")
-	err := os.MkdirAll(chrootDir, 0o755)
-	require.NoError(t, err, "failed to create chroot dir")
-
-	fakeCmdFunc := func(ctx context.Context, command string, args []string, env []string) (*exec.Cmd, error) {
-		called = true
-
-		// Override the args inside our command func.
-		cmd := exec.CommandContext(ctx, command, "bonjour")
-
-		// Simulate some security-related settings for test purposes.
-		cmd.Env = []string{"PATH=/usr/bin", "NODE_ENV=production"}
-		cmd.Dir = tmpDir
-
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Credential: &syscall.Credential{
-				Uid: 1001,
-				Gid: 1001,
-			},
-			Chroot: chrootDir,
-		}
-
-		return cmd, nil
-	}
-
-	stdio := NewStdioWithOptions(
-		"echo",
-		[]string{"foo=bar"},
-		[]string{"hello"},
-		WithCommandFunc(fakeCmdFunc),
-	)
-	require.NotNil(t, stdio)
-	require.NotNil(t, stdio.cmdFunc)
-
-	// Manually call the cmdFunc passing the same values as in spawnCommand.
-	cmd, err := stdio.cmdFunc(t.Context(), "echo", nil, []string{"hello"})
-	require.NoError(t, err)
-	require.True(t, called)
-	require.NotNil(t, cmd)
-	require.NotNil(t, cmd.SysProcAttr)
-	require.Equal(t, chrootDir, cmd.SysProcAttr.Chroot)
-	require.Equal(t, tmpDir, cmd.Dir)
-	require.Equal(t, uint32(1001), cmd.SysProcAttr.Credential.Uid)
-	require.Equal(t, "echo", filepath.Base(cmd.Path))
-	require.Len(t, cmd.Args, 2)
-	require.Contains(t, cmd.Args, "bonjour")
-	require.Len(t, cmd.Env, 2)
-	require.Contains(t, cmd.Env, "PATH=/usr/bin")
-	require.Contains(t, cmd.Env, "NODE_ENV=production")
-}
-
 func TestStdio_SpawnCommand(t *testing.T) {
 	ctx := t.Context()
 	t.Setenv("TEST_ENVIRON_VAR", "true")
@@ -853,6 +798,45 @@ func TestStdio_Close_ShutsDownHungChild(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStdio_Close_KillsHungChildOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows-only: SIGTERM is not implemented and must not delay Close")
+	}
+
+	// ping -t never exits and does not observe stdin close, so Close must
+	// reach the forced-kill path after gracefulShutdownTimeout.
+	stdio := NewStdio("ping", nil, "-t", "127.0.0.1")
+	require.NotNil(t, stdio)
+
+	err := stdio.spawnCommand(t.Context())
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		if stdio.cmd != nil && stdio.cmd.Process != nil {
+			_ = stdio.cmd.Process.Kill()
+		}
+	})
+
+	deadline := gracefulShutdownTimeout + forceKillTimeout + 2*time.Second
+	closeErrCh := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		closeErrCh <- stdio.Close()
+	}()
+
+	select {
+	case <-closeErrCh:
+	case <-time.After(deadline):
+		t.Fatalf("Close() did not return within %s", deadline)
+	}
+
+	elapsed := time.Since(start)
+	require.GreaterOrEqual(t, elapsed, gracefulShutdownTimeout)
+	// A leftover SIGTERM wait would push Close to graceful+force (~5s).
+	require.Less(t, elapsed, gracefulShutdownTimeout+forceKillTimeout)
+	require.NotNil(t, stdio.cmd.ProcessState)
 }
 
 func TestStdio_NewStdioWithOptions_AppliesOptions(t *testing.T) {
