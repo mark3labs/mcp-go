@@ -484,3 +484,173 @@ func TestStdioServer(t *testing.T) {
 		}
 	})
 }
+
+// TestStdioServer_SubscriptionsListenDoesNotBlockSubsequentRequests is the
+// regression for #976: subscriptions/listen is a long-lived stream, and
+// serving it on the stdio read loop left every later request unanswered.
+func TestStdioServer_SubscriptionsListenDoesNotBlockSubsequentRequests(t *testing.T) {
+	// os.Pipe is buffered, matching the issue repro and letting the test write
+	// tools/list after subscriptions/listen without blocking on the reader.
+	stdinReader, stdinWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdoutReader, stdoutWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mcpServer := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
+	mcpServer.AddTool(mcp.NewTool("ping"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("pong"), nil
+	})
+	stdioServer := NewStdioServer(mcpServer)
+	stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	serverErrCh := make(chan error, 1)
+	go func() {
+		err := stdioServer.Listen(ctx, stdinReader, stdoutWriter)
+		if err != nil && err != io.EOF && err != context.Canceled {
+			serverErrCh <- err
+		}
+		stdoutWriter.Close()
+		close(serverErrCh)
+	}()
+	defer stdinReader.Close()
+	defer stdinWriter.Close()
+	defer stdoutReader.Close()
+
+	lines := make(chan string, 16)
+	go func() {
+		scanner := bufio.NewScanner(stdoutReader)
+		for scanner.Scan() {
+			lines <- scanner.Text()
+		}
+		close(lines)
+	}()
+
+	send := func(id any, method string, params map[string]any) {
+		t.Helper()
+		if params == nil {
+			params = map[string]any{}
+		}
+		params["_meta"] = modernMeta()
+		body, err := json.Marshal(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      id,
+			"method":  method,
+			"params":  params,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := stdinWriter.Write(append(body, '\n')); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	send("discover", string(mcp.MethodServerDiscover), map[string]any{})
+	send("listen:0", string(mcp.MethodSubscriptionsListen), map[string]any{
+		"notifications": map[string]any{"toolsListChanged": true},
+	})
+	send("list", string(mcp.MethodToolsList), map[string]any{})
+
+	deadline := time.After(2 * time.Second)
+	var gotToolsList bool
+	for !gotToolsList {
+		select {
+		case line, ok := <-lines:
+			if !ok {
+				t.Fatal("stdout closed before tools/list responded")
+			}
+			var msg map[string]any
+			if err := json.Unmarshal([]byte(line), &msg); err != nil {
+				t.Fatalf("unmarshal %q: %v", line, err)
+			}
+			switch msg["id"] {
+			case "listen:0":
+				if msg["error"] != nil {
+					t.Fatalf("subscriptions/listen error: %v", msg["error"])
+				}
+			case "list":
+				if msg["error"] != nil {
+					t.Fatalf("tools/list error: %v", msg["error"])
+				}
+				if msg["result"] == nil {
+					t.Fatal("tools/list missing result")
+				}
+				gotToolsList = true
+			}
+		case <-deadline:
+			t.Fatal("tools/list still unanswered after subscriptions/listen; stdio read loop is blocked")
+		}
+	}
+
+	cancel()
+	if err := <-serverErrCh; err != nil {
+		t.Errorf("unexpected server error: %v", err)
+	}
+}
+
+// TestStdioServer_SubscriptionsListenEndsWhenStdinCloses checks that Listen
+// returns on stdin EOF even while subscriptions/listen is waiting. The
+// Listen context is not cancelled on EOF, so the stream must be stopped
+// explicitly or workerWg.Wait would hang.
+func TestStdioServer_SubscriptionsListenEndsWhenStdinCloses(t *testing.T) {
+	stdinReader, stdinWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdoutReader, stdoutWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdinReader.Close()
+	defer stdoutReader.Close()
+
+	mcpServer := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
+	stdioServer := NewStdioServer(mcpServer)
+	stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+
+	done := make(chan error, 1)
+	go func() {
+		done <- stdioServer.Listen(t.Context(), stdinReader, stdoutWriter)
+		stdoutWriter.Close()
+	}()
+
+	go func() {
+		_, _ = io.Copy(io.Discard, stdoutReader)
+	}()
+
+	params := map[string]any{
+		"notifications": map[string]any{"toolsListChanged": true},
+		"_meta":         modernMeta(),
+	}
+	body, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "listen:0",
+		"method":  string(mcp.MethodSubscriptionsListen),
+		"params":  params,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stdinWriter.Write(append(body, '\n')); err != nil {
+		t.Fatal(err)
+	}
+	if err := stdinWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil && err != io.EOF && err != context.Canceled {
+			t.Errorf("unexpected Listen error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Listen did not return after stdin closed during subscriptions/listen")
+	}
+}

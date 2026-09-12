@@ -414,7 +414,7 @@ func (s *StdioServer) handleNotifications(ctx context.Context, stdout io.Writer)
 // - The context is cancelled (returns context.Err())
 // - EOF is encountered (returns nil)
 // - An error occurs while reading or processing messages (returns the error)
-func (s *StdioServer) processInputStream(ctx context.Context, reader *bufio.Reader, stdout io.Writer) error {
+func (s *StdioServer) processInputStream(ctx, streamCtx context.Context, reader *bufio.Reader, stdout io.Writer) error {
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -429,7 +429,7 @@ func (s *StdioServer) processInputStream(ctx context.Context, reader *bufio.Read
 			return err
 		}
 
-		if err := s.processMessage(ctx, line, stdout); err != nil {
+		if err := s.processMessage(ctx, streamCtx, line, stdout); err != nil {
 			if err == io.EOF {
 				return nil
 			}
@@ -468,6 +468,27 @@ func (s *StdioServer) toolCallWorker(ctx context.Context) {
 			}
 		case <-ctx.Done():
 			return
+		}
+	}
+}
+
+// handleAsyncMessage runs HandleMessage off the stdio read loop. It is used
+// for long-lived requests such as subscriptions/listen.
+func (s *StdioServer) handleAsyncMessage(ctx context.Context, rawMessage json.RawMessage, writer io.Writer) {
+	defer s.workerWg.Done()
+
+	response := func() (resp mcp.JSONRPCMessage) {
+		defer func() {
+			if r := recover(); r != nil {
+				s.errLogger.Printf("panic recovered in stdio request handler: %v", r)
+				resp = createErrorResponse(nil, mcp.INTERNAL_ERROR, fmt.Sprintf("internal panic: %v", r))
+			}
+		}()
+		return s.server.HandleMessage(ctx, rawMessage)
+	}()
+	if response != nil {
+		if err := s.writeResponse(response, writer); err != nil {
+			s.errLogger.Printf("Error writing response: %v", err)
 		}
 	}
 }
@@ -526,6 +547,11 @@ func (s *StdioServer) Listen(
 
 	reader := bufio.NewReader(stdin)
 
+	// streamCtx is cancelled when the input stream ends so a blocking
+	// subscriptions/listen does not pin Listen after the client hangs up.
+	streamCtx, stopStream := context.WithCancel(ctx)
+	defer stopStream()
+
 	// Start worker pool for tool calls
 	for i := 0; i < s.workerPoolSize; i++ {
 		s.workerWg.Add(1)
@@ -536,7 +562,12 @@ func (s *StdioServer) Listen(
 	go s.handleNotifications(ctx, stdout)
 
 	// Process input stream
-	err := s.processInputStream(ctx, reader, stdout)
+	err := s.processInputStream(ctx, streamCtx, reader, stdout)
+
+	// Unblock subscriptions/listen before waiting for workers: that handler
+	// holds ctx.Done() for the life of the stream, and stdin EOF does not
+	// cancel the Listen context.
+	stopStream()
 
 	// Shutdown workers gracefully
 	close(s.toolCallQueue)
@@ -549,7 +580,7 @@ func (s *StdioServer) Listen(
 // It parses the message, processes it through the wrapped MCPServer, and writes any response.
 // Returns an error if there are issues with message processing or response writing.
 func (s *StdioServer) processMessage(
-	ctx context.Context,
+	ctx, streamCtx context.Context,
 	line string,
 	writer io.Writer,
 ) error {
@@ -584,7 +615,8 @@ func (s *StdioServer) processMessage(
 	var baseMessage struct {
 		Method string `json:"method"`
 	}
-	if json.Unmarshal(rawMessage, &baseMessage) == nil && baseMessage.Method == string(mcp.MethodToolsCall) {
+	parsed := json.Unmarshal(rawMessage, &baseMessage) == nil
+	if parsed && baseMessage.Method == string(mcp.MethodToolsCall) {
 		// Queue tool calls for processing by workers
 		select {
 		case s.toolCallQueue <- &toolCallWork{
@@ -604,6 +636,15 @@ func (s *StdioServer) processMessage(
 			}
 			return nil
 		}
+	}
+
+	// subscriptions/listen holds the request open until the client cancels
+	// (SEP-2575). Serving it inline would stall the stdio read loop, so every
+	// later request - tools/list included - would never be answered (#976).
+	if parsed && baseMessage.Method == string(mcp.MethodSubscriptionsListen) {
+		s.workerWg.Add(1)
+		go s.handleAsyncMessage(streamCtx, rawMessage, writer)
+		return nil
 	}
 
 	// Handle other messages synchronously
