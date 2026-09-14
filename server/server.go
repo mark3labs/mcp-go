@@ -2289,10 +2289,14 @@ func (s *MCPServer) executeTaskTool(
 	taskCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Store cancel func in entry so it can be cancelled via tasks/cancel
+	// Register cancellation atomically with TTL cleanup, which may have already removed the task.
 	s.tasksMu.Lock()
 	entry.cancelFunc = cancel
+	expired := s.tasks[entry.task.TaskId] != entry
 	s.tasksMu.Unlock()
+	if expired {
+		cancel()
+	}
 
 	// Execute the task tool handler
 	result, err := taskTool.Handler(taskCtx, request)
@@ -2381,10 +2385,14 @@ func (s *MCPServer) executeRegularToolAsTask(
 	taskCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Store cancel func in entry so it can be cancelled via tasks/cancel
+	// Register cancellation atomically with TTL cleanup, which may have already removed the task.
 	s.tasksMu.Lock()
 	entry.cancelFunc = cancel
+	expired := s.tasks[entry.task.TaskId] != entry
 	s.tasksMu.Unlock()
+	if expired {
+		cancel()
+	}
 
 	// Execute the regular tool handler with middleware applied
 	finalHandler := regularTool.Handler
@@ -2998,15 +3006,23 @@ func (s *MCPServer) cancelTask(ctx context.Context, taskID string) error {
 	return nil
 }
 
-// scheduleTaskCleanup removes the task from storage after its TTL expires so
-// clients have the full TTL window to retrieve results.
+// scheduleTaskCleanup cancels unfinished task execution and removes the task from
+// storage after its TTL expires so clients have the full TTL window to retrieve results.
 func (s *MCPServer) scheduleTaskCleanup(taskID string, ttlMs int64) {
 	time.Sleep(time.Duration(ttlMs) * time.Millisecond)
 
+	var cancel context.CancelFunc
 	s.tasksMu.Lock()
+	if entry, ok := s.tasks[taskID]; ok && !entry.completed {
+		cancel = entry.cancelFunc
+	}
 	delete(s.tasks, taskID)
 	s.expiredTasks[taskID] = time.Now()
 	s.tasksMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
 
 	// Remove tombstone after 5 minutes.
 	time.AfterFunc(5*time.Minute, func() {

@@ -7,9 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func TestExecuteTaskTool_PanicRecovery(t *testing.T) {
@@ -116,4 +117,151 @@ func TestScheduleTaskCleanup_CleansUpAfterTTL(t *testing.T) {
 
 	assert.False(t, exists, "task should be removed after TTL")
 	assert.True(t, expired, "task should appear in expiredTasks tombstone")
+}
+
+// TestScheduleTaskCleanup_CancelsRunningTaskOnTTL verifies execution stops and frees its concurrency slot.
+func TestScheduleTaskCleanup_CancelsRunningTaskOnTTL(t *testing.T) {
+	tests := []struct {
+		name              string
+		regularTool       bool
+		expireBeforeStart bool
+	}{
+		{name: "running task tool"},
+		{name: "running regular tool", regularTool: true},
+		{name: "task tool expired before execution", expireBeforeStart: true},
+		{name: "regular tool expired before execution", regularTool: true, expireBeforeStart: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewMCPServer("test", "1.0.0", WithMaxConcurrentTasks(1))
+			const taskID = "ttl-task"
+			entry, err := s.createTask(t.Context(), taskID, "ttl-tool", nil, nil)
+			require.NoError(t, err)
+
+			ctx, cancel := context.WithCancel(t.Context())
+			started := make(chan struct{})
+			exited := make(chan struct{})
+			t.Cleanup(func() {
+				cancel()
+				select {
+				case <-exited:
+				case <-time.After(time.Second):
+					t.Error("task execution did not exit after test cleanup")
+				}
+			})
+
+			handler := func(taskCtx context.Context) error {
+				close(started)
+				<-taskCtx.Done()
+				return taskCtx.Err()
+			}
+			request := mcp.CallToolRequest{
+				Params: mcp.CallToolParams{Name: "ttl-tool"},
+			}
+
+			if tt.expireBeforeStart {
+				s.scheduleTaskCleanup(taskID, 50)
+			}
+
+			go func() {
+				defer close(exited)
+				if tt.regularTool {
+					s.executeRegularToolAsTask(ctx, entry, ServerTool{
+						Handler: func(taskCtx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+							return nil, handler(taskCtx)
+						},
+					}, request)
+				} else {
+					s.executeTaskTool(ctx, entry, ServerTaskTool{
+						Handler: func(taskCtx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+							return nil, handler(taskCtx)
+						},
+					}, request)
+				}
+			}()
+
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("task handler did not start")
+			}
+
+			if !tt.expireBeforeStart {
+				s.scheduleTaskCleanup(taskID, 50)
+			}
+
+			select {
+			case <-exited:
+			case <-time.After(time.Second):
+				t.Fatal("task execution did not exit after TTL expiration")
+			}
+
+			assert.NoError(t, ctx.Err(), "TTL expiration must not cancel the parent context")
+			select {
+			case <-entry.done:
+			default:
+				t.Error("task completion was not signalled")
+			}
+
+			s.tasksMu.RLock()
+			assert.True(t, entry.completed)
+			assert.Equal(t, mcp.TaskStatusCancelled, entry.task.Status)
+			assert.Zero(t, s.activeTasks)
+			assert.NotContains(t, s.tasks, taskID)
+			assert.Contains(t, s.expiredTasks, taskID)
+			s.tasksMu.RUnlock()
+
+			nextEntry, err := s.createTask(ctx, "next-task", "ttl-tool", nil, nil)
+			require.NoError(t, err, "expired task must release its concurrency slot")
+			s.completeTask(nextEntry, nil, nil)
+		})
+	}
+}
+
+// TestScheduleTaskCleanup_CancellationConditions verifies cancellation guards and lock ownership.
+func TestScheduleTaskCleanup_CancellationConditions(t *testing.T) {
+	tests := []struct {
+		name          string
+		exists        bool
+		completed     bool
+		withCancel    bool
+		wantCancelled bool
+	}{
+		{name: "running", exists: true, withCancel: true, wantCancelled: true},
+		{name: "completed", exists: true, completed: true, withCancel: true},
+		{name: "without cancel function", exists: true},
+		{name: "missing", withCancel: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewMCPServer("test", "1.0.0")
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			const taskID = "ttl-task"
+			entry := &taskEntry{task: mcp.NewTask(taskID), completed: tt.completed}
+			if tt.withCancel {
+				entry.cancelFunc = func() {
+					if assert.True(t, s.tasksMu.TryLock(), "cancel must run outside tasksMu") {
+						s.tasksMu.Unlock()
+					}
+					cancel()
+				}
+			}
+			if tt.exists {
+				s.tasks[taskID] = entry
+			}
+
+			s.scheduleTaskCleanup(taskID, 1)
+
+			if tt.wantCancelled {
+				assert.ErrorIs(t, ctx.Err(), context.Canceled)
+			} else {
+				assert.NoError(t, ctx.Err())
+			}
+			assert.NotContains(t, s.tasks, taskID)
+			assert.Contains(t, s.expiredTasks, taskID)
+		})
+	}
 }
