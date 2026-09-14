@@ -1,12 +1,14 @@
 package mcp
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -751,6 +753,11 @@ type ToolArgumentsSchema struct {
 	Properties           map[string]any `json:"properties"`
 	Required             []string       `json:"required,omitempty"`
 	AdditionalProperties any            `json:"additionalProperties,omitempty"`
+	// PropertyOrder is the marshal order of the top-level Properties keys.
+	// UnmarshalJSON sets it from the "properties" object. Names that are not
+	// in Properties are skipped, and keys that are not listed follow in
+	// sorted order. A nil PropertyOrder marshals all keys in sorted order.
+	PropertyOrder []string `json:"-"`
 }
 
 // ToolInputSchema remains a named type for retro-compatibility, so its JSON
@@ -799,9 +806,16 @@ func toolArgumentsSchemaMarshalJSON(tis ToolArgumentsSchema) ([]byte, error) {
 	}
 
 	// Marshal Properties to '{}' rather than `nil` when its length equals zero
-	if tis.Properties != nil {
+	switch {
+	case tis.PropertyOrder != nil:
+		properties, err := marshalOrderedProperties(tis.Properties, tis.PropertyOrder)
+		if err != nil {
+			return nil, err
+		}
+		m["properties"] = properties
+	case tis.Properties != nil:
 		m["properties"] = tis.Properties
-	} else {
+	default:
 		m["properties"] = map[string]any{}
 	}
 
@@ -819,6 +833,94 @@ func toolArgumentsSchemaMarshalJSON(tis ToolArgumentsSchema) ([]byte, error) {
 	return json.Marshal(m)
 }
 
+// marshalOrderedProperties encodes properties as a JSON object. Keys listed in
+// order come first, names not in properties are skipped, and the remaining
+// keys follow in sorted order. Keys and values go through json.Marshal, so
+// escaping matches the encoding of a map.
+func marshalOrderedProperties(properties map[string]any, order []string) (json.RawMessage, error) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	written := make(map[string]bool, len(properties))
+	writeProperty := func(name string) error {
+		key, err := json.Marshal(name)
+		if err != nil {
+			return err
+		}
+		value, err := json.Marshal(properties[name])
+		if err != nil {
+			return err
+		}
+		if len(written) > 0 {
+			buf.WriteByte(',')
+		}
+		written[name] = true
+		buf.Write(key)
+		buf.WriteByte(':')
+		buf.Write(value)
+		return nil
+	}
+
+	for _, name := range order {
+		if _, ok := properties[name]; !ok || written[name] {
+			continue
+		}
+		if err := writeProperty(name); err != nil {
+			return nil, err
+		}
+	}
+
+	if len(written) < len(properties) {
+		rest := make([]string, 0, len(properties)-len(written))
+		for name := range properties {
+			if !written[name] {
+				rest = append(rest, name)
+			}
+		}
+		slices.Sort(rest)
+		for _, name := range rest {
+			if err := writeProperty(name); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
+// propertyOrder returns the keys of the JSON object raw in the order they
+// appear, keeping the first position of a duplicate key. It returns nil when
+// raw is not an object or has no keys.
+func propertyOrder(raw json.RawMessage) []string {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil
+	}
+
+	var order []string
+	seen := make(map[string]bool)
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil
+		}
+		name, ok := tok.(string)
+		if !ok {
+			return nil
+		}
+		if !seen[name] {
+			seen[name] = true
+			order = append(order, name)
+		}
+
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil
+		}
+	}
+	return order
+}
+
 // It handles both "$defs" (JSON Schema 2019-09+) and "definitions" (JSON Schema draft-07)
 // by reading either field and storing it in the Defs field.
 func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) error {
@@ -826,6 +928,8 @@ func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) err
 	type Alias ToolArgumentsSchema
 	aux := &struct {
 		Definitions map[string]any `json:"definitions,omitempty"`
+		// Properties shadows Alias.Properties so the raw bytes keep the key order.
+		Properties json.RawMessage `json:"properties"`
 		*Alias
 	}{
 		Alias: (*Alias)(tis),
@@ -833,6 +937,13 @@ func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) err
 
 	if err := json.Unmarshal(data, aux); err != nil {
 		return err
+	}
+
+	if aux.Properties != nil {
+		if err := json.Unmarshal(aux.Properties, &tis.Properties); err != nil {
+			return err
+		}
+		tis.PropertyOrder = propertyOrder(aux.Properties)
 	}
 
 	// If $defs wasn't provided but definitions was, use definitions.
@@ -1035,6 +1146,9 @@ func WithOutputSchema[T any]() ToolOption {
 		// Always set the type to "object" as of the current MCP spec
 		// https://modelcontextprotocol.io/specification/2025-06-18/server/tools#output-schema
 		t.OutputSchema.Type = "object"
+		// Decoding the generated schema recorded struct field order. Clear it
+		// so these tools keep emitting properties sorted by name.
+		t.OutputSchema.PropertyOrder = nil
 	}
 }
 
