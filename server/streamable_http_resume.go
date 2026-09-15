@@ -484,7 +484,7 @@ func (s *StreamableHTTPServer) cleanupResumableState(ctx context.Context, sessio
 // returns a func that clears it again. Writers without deadline support,
 // e.g. adapters for other frameworks, are left untouched.
 func setWriteDeadline(w HTTPResponseWriter, d time.Duration) (restore func()) {
-	dw, ok := w.(interface{ SetWriteDeadline(time.Time) error })
+	dw, ok := w.(writeDeadlineSetter)
 	if !ok {
 		return func() {}
 	}
