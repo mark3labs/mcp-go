@@ -11,6 +11,8 @@ import (
 // server. Pages are fetched on demand as the iterator is consumed; breaking
 // out of the loop stops further requests.
 //
+// Each iteration starts from the cursor in the original request.
+//
 // If an error occurs while fetching a page, the iterator yields a single
 // (zero-value, error) pair and then stops.
 //
@@ -27,6 +29,7 @@ func (c *Client) IterTools(
 	request mcp.ListToolsRequest,
 ) iter.Seq2[mcp.Tool, error] {
 	return func(yield func(mcp.Tool, error) bool) {
+		request := request
 		for {
 			if err := ctx.Err(); err != nil {
 				yield(mcp.Tool{}, err)
@@ -54,6 +57,8 @@ func (c *Client) IterTools(
 // from the server. Pages are fetched on demand as the iterator is consumed;
 // breaking out of the loop stops further requests.
 //
+// Each iteration starts from the cursor in the original request.
+//
 // If an error occurs while fetching a page, the iterator yields a single
 // (zero-value, error) pair and then stops.
 func (c *Client) IterResources(
@@ -61,6 +66,7 @@ func (c *Client) IterResources(
 	request mcp.ListResourcesRequest,
 ) iter.Seq2[mcp.Resource, error] {
 	return func(yield func(mcp.Resource, error) bool) {
+		request := request
 		for {
 			if err := ctx.Err(); err != nil {
 				yield(mcp.Resource{}, err)
@@ -88,6 +94,8 @@ func (c *Client) IterResources(
 // resource templates from the server. Pages are fetched on demand as the
 // iterator is consumed; breaking out of the loop stops further requests.
 //
+// Each iteration starts from the cursor in the original request.
+//
 // If an error occurs while fetching a page, the iterator yields a single
 // (zero-value, error) pair and then stops.
 func (c *Client) IterResourceTemplates(
@@ -95,6 +103,7 @@ func (c *Client) IterResourceTemplates(
 	request mcp.ListResourceTemplatesRequest,
 ) iter.Seq2[mcp.ResourceTemplate, error] {
 	return func(yield func(mcp.ResourceTemplate, error) bool) {
+		request := request
 		for {
 			if err := ctx.Err(); err != nil {
 				yield(mcp.ResourceTemplate{}, err)
@@ -122,6 +131,8 @@ func (c *Client) IterResourceTemplates(
 // the server. Pages are fetched on demand as the iterator is consumed;
 // breaking out of the loop stops further requests.
 //
+// Each iteration starts from the cursor in the original request.
+//
 // If an error occurs while fetching a page, the iterator yields a single
 // (zero-value, error) pair and then stops.
 func (c *Client) IterPrompts(
@@ -129,6 +140,7 @@ func (c *Client) IterPrompts(
 	request mcp.ListPromptsRequest,
 ) iter.Seq2[mcp.Prompt, error] {
 	return func(yield func(mcp.Prompt, error) bool) {
+		request := request
 		for {
 			if err := ctx.Err(); err != nil {
 				yield(mcp.Prompt{}, err)
