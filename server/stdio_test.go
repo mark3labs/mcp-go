@@ -9,7 +9,6 @@ import (
 	"log"
 	"os"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -574,7 +573,8 @@ func TestStdioJoinsRequestHandlersOnEOF(t *testing.T) {
 	// subscriptions/listen does for the life of its stream - outlives the
 	// session it was registered against.
 	started := make(chan struct{})
-	var finished atomic.Bool
+	cancelled := make(chan struct{})
+	release := make(chan struct{})
 
 	mcpServer := NewMCPServer("test", "1.0.0", WithResourceCapabilities(false, false))
 	mcpServer.AddResource(
@@ -582,24 +582,23 @@ func TestStdioJoinsRequestHandlersOnEOF(t *testing.T) {
 		func(ctx context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 			close(started)
 			<-ctx.Done()
-			finished.Store(true)
+			close(cancelled)
+			// Stay in the handler so the test can tell a Listen that waits from
+			// one that merely cancels.
+			<-release
 			return nil, ctx.Err()
 		},
 	)
 
 	stdinReader, stdinWriter := io.Pipe()
-	stdoutReader, stdoutWriter := io.Pipe()
-	go func() { _, _ = io.Copy(io.Discard, stdoutReader) }()
 
 	stdioServer := NewStdioServer(mcpServer)
 	stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
 
-	// The caller's context stays live, as it would in a long-running host.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+	// The caller's context stays live for the whole test, as it would in a
+	// long-running host: only EOF should release the handler.
 	listenDone := make(chan error, 1)
-	go func() { listenDone <- stdioServer.Listen(ctx, stdinReader, stdoutWriter) }()
+	go func() { listenDone <- stdioServer.Listen(t.Context(), stdinReader, io.Discard) }()
 
 	request, err := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
@@ -620,11 +619,23 @@ func TestStdioJoinsRequestHandlersOnEOF(t *testing.T) {
 	require.NoError(t, stdinWriter.Close())
 
 	select {
+	case <-cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Listen did not cancel the request handler on EOF")
+	}
+
+	select {
+	case err := <-listenDone:
+		t.Fatalf("Listen returned while the request handler was still running: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+
+	select {
 	case err := <-listenDone:
 		require.NoError(t, err)
 	case <-time.After(5 * time.Second):
-		t.Fatal("Listen did not return after EOF")
+		t.Fatal("Listen did not return once the request handler finished")
 	}
-
-	require.True(t, finished.Load(), "Listen returned while a request handler was still running")
 }

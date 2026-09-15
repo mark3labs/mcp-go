@@ -42,6 +42,7 @@ type StdioServer struct {
 // toolCallWork represents a queued tool call request
 type toolCallWork struct {
 	ctx     context.Context
+	id      any // JSON-RPC id, so a recovered panic stays correlatable
 	message json.RawMessage
 	writer  io.Writer
 }
@@ -457,7 +458,7 @@ func (s *StdioServer) toolCallWorker(ctx context.Context) {
 				defer func() {
 					if r := recover(); r != nil {
 						s.errLogger.Printf("panic recovered in stdio tool call worker: %v", r)
-						resp = createErrorResponse(nil, mcp.INTERNAL_ERROR, fmt.Sprintf("internal panic: %v", r))
+						resp = createErrorResponse(work.id, mcp.INTERNAL_ERROR, fmt.Sprintf("internal panic: %v", r))
 					}
 				}()
 				return s.server.HandleMessage(work.ctx, work.message)
@@ -600,6 +601,7 @@ func (s *StdioServer) processMessage(
 		select {
 		case s.toolCallQueue <- &toolCallWork{
 			ctx:     ctx,
+			id:      baseMessage.ID,
 			message: rawMessage,
 			writer:  writer,
 		}:
@@ -620,11 +622,9 @@ func (s *StdioServer) processMessage(
 	// Serve requests off the read loop: a handler that blocks, such as
 	// subscriptions/listen, must not stall it. writeMu serialises the writes.
 	if parsed && baseMessage.ID != nil {
-		s.requestWg.Add(1)
-		go func() {
-			defer s.requestWg.Done()
+		s.requestWg.Go(func() {
 			s.handleRequest(ctx, baseMessage.ID, rawMessage, writer)
-		}()
+		})
 		return nil
 	}
 
