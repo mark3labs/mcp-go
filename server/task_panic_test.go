@@ -13,6 +13,8 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// TestExecuteTaskTool_PanicRecovery verifies that a panicking task tool handler is recovered
+// and updates the task status to failed.
 func TestExecuteTaskTool_PanicRecovery(t *testing.T) {
 	s := NewMCPServer("test", "1.0.0")
 
@@ -57,6 +59,8 @@ func TestExecuteTaskTool_PanicRecovery(t *testing.T) {
 	s.tasksMu.RUnlock()
 }
 
+// TestScheduleTaskCleanup_GoroutinesExitAfterTTL verifies that cleanup goroutines exit
+// after their TTL expires and do not leak.
 func TestScheduleTaskCleanup_GoroutinesExitAfterTTL(t *testing.T) {
 	s := NewMCPServer("test", "1.0.0")
 
@@ -66,15 +70,16 @@ func TestScheduleTaskCleanup_GoroutinesExitAfterTTL(t *testing.T) {
 	for i := range numTasks {
 		taskID := fmt.Sprintf("leak-test-%d", i)
 
-		s.tasksMu.Lock()
-		s.tasks[taskID] = &taskEntry{
+		entry := &taskEntry{
 			task: mcp.NewTask(taskID),
 			done: make(chan struct{}),
 		}
+		s.tasksMu.Lock()
+		s.tasks[taskID] = entry
 		s.tasksMu.Unlock()
 
 		wg.Go(func() {
-			s.scheduleTaskCleanup(taskID, 50)
+			s.scheduleTaskCleanup(taskID, entry, 50)
 		})
 	}
 
@@ -90,21 +95,24 @@ func TestScheduleTaskCleanup_GoroutinesExitAfterTTL(t *testing.T) {
 	}
 }
 
+// TestScheduleTaskCleanup_CleansUpAfterTTL verifies that a task is removed from storage
+// and added to expiredTasks after its TTL expires.
 func TestScheduleTaskCleanup_CleansUpAfterTTL(t *testing.T) {
 	s := NewMCPServer("test", "1.0.0")
 
 	taskID := "test-ttl-task"
 
 	// Add a task entry
-	s.tasksMu.Lock()
-	s.tasks[taskID] = &taskEntry{
+	entry := &taskEntry{
 		task: mcp.NewTask(taskID),
 		done: make(chan struct{}),
 	}
+	s.tasksMu.Lock()
+	s.tasks[taskID] = entry
 	s.tasksMu.Unlock()
 
 	// Schedule cleanup with a very short TTL (50ms)
-	go s.scheduleTaskCleanup(taskID, 50)
+	go s.scheduleTaskCleanup(taskID, entry, 50)
 
 	// Wait for cleanup to happen
 	time.Sleep(200 * time.Millisecond)
@@ -161,7 +169,7 @@ func TestScheduleTaskCleanup_CancelsRunningTaskOnTTL(t *testing.T) {
 			}
 
 			if tt.expireBeforeStart {
-				s.scheduleTaskCleanup(taskID, 50)
+				s.scheduleTaskCleanup(taskID, entry, 50)
 			}
 
 			go func() {
@@ -188,7 +196,7 @@ func TestScheduleTaskCleanup_CancelsRunningTaskOnTTL(t *testing.T) {
 			}
 
 			if !tt.expireBeforeStart {
-				s.scheduleTaskCleanup(taskID, 50)
+				s.scheduleTaskCleanup(taskID, entry, 50)
 			}
 
 			select {
@@ -253,7 +261,7 @@ func TestScheduleTaskCleanup_CancellationConditions(t *testing.T) {
 				s.tasks[taskID] = entry
 			}
 
-			s.scheduleTaskCleanup(taskID, 1)
+			s.scheduleTaskCleanup(taskID, entry, 1)
 
 			if tt.wantCancelled {
 				assert.ErrorIs(t, ctx.Err(), context.Canceled)
@@ -261,7 +269,52 @@ func TestScheduleTaskCleanup_CancellationConditions(t *testing.T) {
 				assert.NoError(t, ctx.Err())
 			}
 			assert.NotContains(t, s.tasks, taskID)
-			assert.Contains(t, s.expiredTasks, taskID)
+			if tt.exists {
+				assert.Contains(t, s.expiredTasks, taskID)
+			} else {
+				assert.NotContains(t, s.expiredTasks, taskID)
+			}
 		})
 	}
 }
+
+// TestScheduleTaskCleanup_StaleTimerDoesNotCancelReplacementTask verifies that an expired TTL
+// timer from a previous task does not cancel or remove a newly replaced task with the same ID.
+func TestScheduleTaskCleanup_StaleTimerDoesNotCancelReplacementTask(t *testing.T) {
+	s := NewMCPServer("test", "1.0.0")
+	const taskID = "replaced-task"
+
+	ctxOld, cancelOld := context.WithCancel(t.Context())
+	defer cancelOld()
+	oldEntry := &taskEntry{
+		task:       mcp.NewTask(taskID),
+		cancelFunc: cancelOld,
+		done:       make(chan struct{}),
+	}
+
+	ctxNew, cancelNew := context.WithCancel(t.Context())
+	defer cancelNew()
+	newEntry := &taskEntry{
+		task:       mcp.NewTask(taskID),
+		cancelFunc: cancelNew,
+		done:       make(chan struct{}),
+	}
+
+	// Store newEntry under the same taskID
+	s.tasksMu.Lock()
+	s.tasks[taskID] = newEntry
+	s.tasksMu.Unlock()
+
+	// Trigger cleanup timer bound to oldEntry
+	s.scheduleTaskCleanup(taskID, oldEntry, 1)
+
+	// The replacement task must not be cancelled or removed
+	assert.NoError(t, ctxNew.Err(), "stale cleanup timer must not cancel replacement task")
+	assert.NoError(t, ctxOld.Err())
+
+	s.tasksMu.RLock()
+	assert.Equal(t, newEntry, s.tasks[taskID], "replacement task must remain in tasks map")
+	assert.NotContains(t, s.expiredTasks, taskID, "replacement task ID must not be marked as expired")
+	s.tasksMu.RUnlock()
+}
+

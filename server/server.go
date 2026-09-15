@@ -2815,7 +2815,7 @@ func (s *MCPServer) createTask(ctx context.Context, taskID string, toolName stri
 
 	// Start TTL cleanup if specified
 	if ttl != nil && *ttl > 0 {
-		go s.scheduleTaskCleanup(taskID, *ttl)
+		go s.scheduleTaskCleanup(taskID, entry, *ttl)
 	}
 
 	return entry, nil
@@ -3008,12 +3008,18 @@ func (s *MCPServer) cancelTask(ctx context.Context, taskID string) error {
 
 // scheduleTaskCleanup cancels unfinished task execution and removes the task from
 // storage after its TTL expires so clients have the full TTL window to retrieve results.
-func (s *MCPServer) scheduleTaskCleanup(taskID string, ttlMs int64) {
+// It only performs cleanup if the stored task entry matches expected.
+func (s *MCPServer) scheduleTaskCleanup(taskID string, expected *taskEntry, ttlMs int64) {
 	time.Sleep(time.Duration(ttlMs) * time.Millisecond)
 
 	var cancel context.CancelFunc
 	s.tasksMu.Lock()
-	if entry, ok := s.tasks[taskID]; ok && !entry.completed {
+	entry, ok := s.tasks[taskID]
+	if !ok || entry != expected {
+		s.tasksMu.Unlock()
+		return
+	}
+	if !entry.completed {
 		cancel = entry.cancelFunc
 	}
 	delete(s.tasks, taskID)
