@@ -2,11 +2,14 @@ package mcptest_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/mcptest"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestServerWithSamplingHandler verifies that a tool which calls server.RequestSampling
@@ -86,8 +89,8 @@ func TestServerWithSamplingHandler(t *testing.T) {
 	if got != wantReply {
 		t.Errorf("got %q, want %q", got, wantReply)
 	}
-	if samplingHandler.callCount != 1 {
-		t.Errorf("expected sampling handler called once, got %d", samplingHandler.callCount)
+	if got := samplingHandler.calls(); got != 1 {
+		t.Errorf("expected sampling handler called once, got %d", got)
 	}
 }
 
@@ -180,19 +183,55 @@ func TestServerWithElicitationHandler(t *testing.T) {
 	if got != "confirmed" {
 		t.Errorf("got %q, want %q", got, "confirmed")
 	}
-	if elicitationHandler.callCount != 1 {
-		t.Errorf("expected elicitation handler called once, got %d", elicitationHandler.callCount)
+	if got := elicitationHandler.calls(); got != 1 {
+		t.Errorf("expected elicitation handler called once, got %d", got)
 	}
 }
 
-// fixedSamplingHandler is a test double that always returns a preset text reply.
+// TestServerWithRootsHandler verifies that a tool which calls server.RequestRoots
+// can be tested end-to-end using mcptest.
+func TestServerWithRootsHandler(t *testing.T) {
+	ctx := t.Context()
+	rootsHandler := &fixedRootsHandler{
+		roots: []mcp.Root{{URI: "file:///workspace", Name: "workspace"}},
+	}
+
+	srv := mcptest.NewUnstartedServer(t)
+	defer srv.Close()
+	srv.AddServerOptions(server.WithRoots())
+	srv.AddTool(
+		mcp.NewTool("list_workspace_roots"),
+		func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			mcpServer := server.ServerFromContext(ctx)
+			result, err := mcpServer.RequestRoots(ctx, mcp.ListRootsRequest{})
+			if err != nil {
+				return mcp.NewToolResultError("roots failed: " + err.Error()), nil
+			}
+			return mcp.NewToolResultText(result.Roots[0].URI), nil
+		},
+	)
+	srv.SetRootsHandler(rootsHandler)
+
+	require.NoError(t, srv.Start(ctx))
+	result, err := srv.Client().CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{Name: "list_workspace_roots"},
+	})
+	require.NoError(t, err)
+
+	got, err := resultToString(result)
+	require.NoError(t, err)
+	assert.Equal(t, "file:///workspace", got)
+	assert.Equal(t, 1, rootsHandler.calls())
+}
+
+// fixedSamplingHandler is safe for concurrent use by the stdio worker pool.
 type fixedSamplingHandler struct {
-	reply     string
-	callCount int
+	callCounter
+	reply string
 }
 
 func (h *fixedSamplingHandler) CreateMessage(_ context.Context, _ mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
-	h.callCount++
+	h.recordCall()
 	return &mcp.CreateMessageResult{
 		SamplingMessage: mcp.SamplingMessage{
 			Role:    mcp.RoleAssistant,
@@ -203,18 +242,46 @@ func (h *fixedSamplingHandler) CreateMessage(_ context.Context, _ mcp.CreateMess
 	}, nil
 }
 
-// fixedElicitationHandler is a test double that always accepts with a preset content map.
+// fixedElicitationHandler is safe for concurrent use by the stdio worker pool.
 type fixedElicitationHandler struct {
-	response  map[string]any
-	callCount int
+	callCounter
+	response map[string]any
+}
+
+// fixedRootsHandler is safe for concurrent use by the stdio worker pool.
+type fixedRootsHandler struct {
+	callCounter
+	roots []mcp.Root
+}
+
+func (h *fixedRootsHandler) ListRoots(_ context.Context, _ mcp.ListRootsRequest) (*mcp.ListRootsResult, error) {
+	h.recordCall()
+	return &mcp.ListRootsResult{Roots: h.roots}, nil
 }
 
 func (h *fixedElicitationHandler) Elicit(_ context.Context, _ mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
-	h.callCount++
+	h.recordCall()
 	return &mcp.ElicitationResult{
 		ElicitationResponse: mcp.ElicitationResponse{
 			Action:  mcp.ElicitationResponseActionAccept,
 			Content: h.response,
 		},
 	}, nil
+}
+
+type callCounter struct {
+	mu    sync.Mutex
+	count int
+}
+
+func (c *callCounter) recordCall() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.count++
+}
+
+func (c *callCounter) calls() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.count
 }
