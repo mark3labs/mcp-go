@@ -223,40 +223,6 @@ func TestParseResourceContents(t *testing.T) {
 		assert.Contains(t, err.Error(), "uri is missing")
 	})
 
-	t.Run("empty text resource", func(t *testing.T) {
-		contentMap := map[string]any{
-			"uri":      "file:///empty.txt",
-			"mimeType": "text/plain",
-			"text":     "",
-		}
-
-		result, err := ParseResourceContents(contentMap)
-		require.NoError(t, err)
-
-		textRes, ok := result.(TextResourceContents)
-		require.True(t, ok)
-		assert.Equal(t, "file:///empty.txt", textRes.URI)
-		assert.Equal(t, "text/plain", textRes.MIMEType)
-		assert.Empty(t, textRes.Text)
-	})
-
-	t.Run("empty blob resource", func(t *testing.T) {
-		contentMap := map[string]any{
-			"uri":      "file:///empty.bin",
-			"mimeType": "application/octet-stream",
-			"blob":     "",
-		}
-
-		result, err := ParseResourceContents(contentMap)
-		require.NoError(t, err)
-
-		blobRes, ok := result.(BlobResourceContents)
-		require.True(t, ok)
-		assert.Equal(t, "file:///empty.bin", blobRes.URI)
-		assert.Equal(t, "application/octet-stream", blobRes.MIMEType)
-		assert.Empty(t, blobRes.Blob)
-	})
-
 	t.Run("no text or blob", func(t *testing.T) {
 		contentMap := map[string]any{
 			"uri": "file:///test",
@@ -267,16 +233,58 @@ func TestParseResourceContents(t *testing.T) {
 		assert.Contains(t, err.Error(), "unsupported resource type")
 	})
 
-	t.Run("non-string text falls through", func(t *testing.T) {
-		contentMap := map[string]any{
-			"uri":  "file:///test",
-			"text": 42,
-		}
+	tests := []struct {
+		name     string
+		content  map[string]any
+		expected ResourceContents
+		wantErr  string
+	}{
+		{
+			name: "empty text resource",
+			content: map[string]any{
+				"uri":      "file:///empty.txt",
+				"mimeType": "text/plain",
+				"text":     "",
+			},
+			expected: TextResourceContents{
+				URI:      "file:///empty.txt",
+				MIMEType: "text/plain",
+			},
+		},
+		{
+			name: "empty blob resource",
+			content: map[string]any{
+				"uri":      "file:///empty.bin",
+				"mimeType": "application/octet-stream",
+				"blob":     "",
+			},
+			expected: BlobResourceContents{
+				URI:      "file:///empty.bin",
+				MIMEType: "application/octet-stream",
+			},
+		},
+		{
+			name: "non-string text falls through",
+			content: map[string]any{
+				"uri":  "file:///test",
+				"text": 42,
+			},
+			wantErr: "unsupported resource type",
+		},
+	}
 
-		_, err := ParseResourceContents(contentMap)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "unsupported resource type")
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ParseResourceContents(tt.content)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }
 
 // Test that a resources/read response carrying an empty text resource round
