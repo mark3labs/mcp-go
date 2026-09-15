@@ -170,6 +170,15 @@ func TestScheduleTaskCleanup_CancelsRunningTaskOnTTL(t *testing.T) {
 
 			if tt.expireBeforeStart {
 				s.scheduleTaskCleanup(taskID, entry, 50)
+
+				s.tasksMu.RLock()
+				_, exists := s.tasks[taskID]
+				_, expired := s.expiredTasks[taskID]
+				cancelFunc := entry.cancelFunc
+				s.tasksMu.RUnlock()
+				require.False(t, exists, "cleanup must remove the task before execution starts")
+				require.True(t, expired, "cleanup must record expiration before execution starts")
+				require.Nil(t, cancelFunc, "cleanup must precede cancellation registration")
 			}
 
 			go func() {
@@ -317,4 +326,3 @@ func TestScheduleTaskCleanup_StaleTimerDoesNotCancelReplacementTask(t *testing.T
 	assert.NotContains(t, s.expiredTasks, taskID, "replacement task ID must not be marked as expired")
 	s.tasksMu.RUnlock()
 }
-
