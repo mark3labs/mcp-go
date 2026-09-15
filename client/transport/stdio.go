@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -443,13 +444,31 @@ func (c *Stdio) Close() error {
 				return
 			}
 
+			forceKilled := false
 			if c.cmd.Process != nil {
-				_ = c.cmd.Process.Signal(syscall.SIGTERM)
+				// SIGTERM is not implemented on Windows. Kill immediately after
+				// the graceful stdin-close wait so Close does not spend an
+				// extra forceKillTimeout waiting for a signal that never lands.
+				if runtime.GOOS == "windows" {
+					if err := c.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) && closeErr == nil {
+						closeErr = fmt.Errorf("failed to kill process: %w", err)
+					}
+					forceKilled = true
+				} else {
+					_ = c.cmd.Process.Signal(syscall.SIGTERM)
+				}
 			}
 
 			if err, done := waitForProcessExit(waitErrCh, forceKillTimeout); done {
 				if err != nil && closeErr == nil {
 					closeErr = err
+				}
+				return
+			}
+
+			if forceKilled {
+				if closeErr == nil {
+					closeErr = ErrChildShutdownTimeout
 				}
 				return
 			}
