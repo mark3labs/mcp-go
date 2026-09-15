@@ -169,6 +169,10 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 func (c *SSE) Start(ctx context.Context) error {
 	for {
 		c.startMu.Lock()
+		if c.closed.Load() {
+			c.startMu.Unlock()
+			return fmt.Errorf("transport has been closed")
+		}
 		if c.started.Load() {
 			c.startMu.Unlock()
 			return nil
