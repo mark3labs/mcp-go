@@ -193,49 +193,53 @@ func assertIteratorRestart[T any](t *testing.T, seq iter.Seq2[T, error], want in
 }
 
 func TestClient_IteratorsRestart(t *testing.T) {
-	for _, startAfterFirstPage := range []bool{false, true} {
-		t.Run(fmt.Sprintf("initial_cursor=%t", startAfterFirstPage), func(t *testing.T) {
+	tests := []struct {
+		name                string
+		startAfterFirstPage bool
+		want                int
+	}{
+		{name: "empty_initial_cursor", startAfterFirstPage: false, want: 7},
+		{name: "non_empty_initial_cursor", startAfterFirstPage: true, want: 5},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
 			client := newIterTestClient(t, 2, 7)
-			want := 7
-			if startAfterFirstPage {
-				want = 5
-			}
 
 			t.Run("tools", func(t *testing.T) {
 				request := mcp.ListToolsRequest{}
-				if startAfterFirstPage {
+				if test.startAfterFirstPage {
 					page, err := client.ListToolsByPage(t.Context(), request)
 					require.NoError(t, err)
 					request.Params.Cursor = page.NextCursor
 				}
-				assertIteratorRestart(t, client.IterTools(t.Context(), request), want, func(value mcp.Tool) string { return value.Name })
+				assertIteratorRestart(t, client.IterTools(t.Context(), request), test.want, func(value mcp.Tool) string { return value.Name })
 			})
 			t.Run("resources", func(t *testing.T) {
 				request := mcp.ListResourcesRequest{}
-				if startAfterFirstPage {
+				if test.startAfterFirstPage {
 					page, err := client.ListResourcesByPage(t.Context(), request)
 					require.NoError(t, err)
 					request.Params.Cursor = page.NextCursor
 				}
-				assertIteratorRestart(t, client.IterResources(t.Context(), request), want, func(value mcp.Resource) string { return value.URI })
+				assertIteratorRestart(t, client.IterResources(t.Context(), request), test.want, func(value mcp.Resource) string { return value.URI })
 			})
 			t.Run("resource_templates", func(t *testing.T) {
 				request := mcp.ListResourceTemplatesRequest{}
-				if startAfterFirstPage {
+				if test.startAfterFirstPage {
 					page, err := client.ListResourceTemplatesByPage(t.Context(), request)
 					require.NoError(t, err)
 					request.Params.Cursor = page.NextCursor
 				}
-				assertIteratorRestart(t, client.IterResourceTemplates(t.Context(), request), want, func(value mcp.ResourceTemplate) string { return value.Name })
+				assertIteratorRestart(t, client.IterResourceTemplates(t.Context(), request), test.want, func(value mcp.ResourceTemplate) string { return value.Name })
 			})
 			t.Run("prompts", func(t *testing.T) {
 				request := mcp.ListPromptsRequest{}
-				if startAfterFirstPage {
+				if test.startAfterFirstPage {
 					page, err := client.ListPromptsByPage(t.Context(), request)
 					require.NoError(t, err)
 					request.Params.Cursor = page.NextCursor
 				}
-				assertIteratorRestart(t, client.IterPrompts(t.Context(), request), want, func(value mcp.Prompt) string { return value.Name })
+				assertIteratorRestart(t, client.IterPrompts(t.Context(), request), test.want, func(value mcp.Prompt) string { return value.Name })
 			})
 		})
 	}
