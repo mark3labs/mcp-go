@@ -178,3 +178,78 @@ func TestParamHeaders_InvalidAnnotationsAreRejectedAtRegistration(t *testing.T) 
 		},
 	)
 }
+
+// badHeaderTool declares an x-mcp-header on a non-primitive property, which
+// every registration path must refuse.
+func badHeaderTool() mcp.Tool {
+	return mcp.NewToolWithRawSchema("bad", "invalid", json.RawMessage(`{
+		"type": "object",
+		"properties": { "items": { "type": "array", "x-mcp-header": "Items" } }
+	}`))
+}
+
+const badHeaderToolPanic = `tool "bad" has invalid x-mcp-header annotations: property "items": ` +
+	`x-mcp-header can only be applied to primitive types (integer, string, boolean), got "array"`
+
+func TestParamHeaders_InvalidAnnotationsAreRejectedOnEveryRegistrationPath(t *testing.T) {
+	noop := func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return nil, nil
+	}
+	noopTask := func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+		return nil, nil
+	}
+
+	tests := []struct {
+		name     string
+		register func(srv *MCPServer)
+	}{
+		{
+			name: "SetTools",
+			register: func(srv *MCPServer) {
+				srv.SetTools(ServerTool{Tool: badHeaderTool(), Handler: noop})
+			},
+		},
+		{
+			name: "AddTaskTools",
+			register: func(srv *MCPServer) {
+				srv.AddTaskTools(ServerTaskTool{Tool: badHeaderTool(), Handler: noopTask})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := NewMCPServer("header-test", "1.0.0", WithToolCapabilities(true))
+
+			assert.PanicsWithValue(t, badHeaderToolPanic, func() { tt.register(srv) })
+
+			// Nothing from the rejected batch may have been registered.
+			assert.Empty(t, srv.ListTools())
+			srv.toolsMu.RLock()
+			assert.Empty(t, srv.taskTools)
+			srv.toolsMu.RUnlock()
+		})
+	}
+}
+
+func TestParamHeaders_InvalidAnnotationsAreRejectedForSessionTools(t *testing.T) {
+	srv := NewMCPServer("header-test", "1.0.0", WithToolCapabilities(true))
+	session := &sessionTestClientWithTools{
+		sessionID:           "header-session",
+		notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+		initialized:         true,
+	}
+	require.NoError(t, srv.RegisterSession(t.Context(), session))
+	require.NoError(t, srv.AddSessionTool(session.SessionID(), mcp.NewTool("existing"), nil))
+
+	err := srv.AddSessionTools(session.SessionID(),
+		ServerTool{Tool: mcp.NewTool("good")},
+		ServerTool{Tool: badHeaderTool()},
+	)
+	require.EqualError(t, err, badHeaderToolPanic)
+
+	// The session keeps its previous tool set: the batch is rejected as a whole.
+	tools := session.GetSessionTools()
+	assert.Len(t, tools, 1)
+	assert.Contains(t, tools, "existing")
+}
