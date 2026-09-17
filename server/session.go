@@ -466,6 +466,9 @@ func (s *MCPServer) AddSessionTools(sessionID string, tools ...ServerTool) error
 	// Add new tools
 	for _, tool := range tools {
 		s.applyStrictInputSchemaDefault(&tool.Tool)
+		if err := validateToolHeaderAnnotations(&tool.Tool); err != nil {
+			return err
+		}
 		newSessionTools[tool.Tool.Name] = tool
 	}
 
