@@ -1193,7 +1193,7 @@ func ParseTaskResultResult(rawMessage *json.RawMessage) (*TaskResultResult, erro
 	for _, item := range raw.Content {
 		content, err := UnmarshalContent(item)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("unmarshal task result content: %w", err)
 		}
 		resultResult.Content = append(resultResult.Content, content)
 	}

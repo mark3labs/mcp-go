@@ -8,6 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestParseTaskResultResult checks that the tasks/result payload is read from
+// the top level of the response, not from a nested "result" key.
 func TestParseTaskResultResult(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -59,8 +61,8 @@ func TestParseTaskResultResult(t *testing.T) {
 	}
 }
 
-// The server marshals TaskResultResult directly, so whatever it produces has to
-// survive the parser.
+// TestParseTaskResultResultRoundTrip feeds the parser what the server actually
+// marshals: TaskResultResult goes out as-is, so it has to come back intact.
 func TestParseTaskResultResultRoundTrip(t *testing.T) {
 	sent := TaskResultResult{
 		Result:            Result{Meta: NewMetaFromMap(map[string]any{"trace": "abc"}), ResultType: ResultTypeComplete},
