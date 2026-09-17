@@ -1038,6 +1038,9 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 	s.implicitlyRegisterToolCapabilities()
 
 	s.toolsMu.Lock()
+	// Stage the whole batch before touching the registry so a rejected entry
+	// leaves earlier ones unregistered as well.
+	staged := make(map[string]ServerTool, len(tools))
 	for _, entry := range tools {
 		name := entry.Tool.Name
 		// Check for collision with task tools
@@ -1050,8 +1053,9 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 			s.toolsMu.Unlock()
 			panic(err.Error())
 		}
-		s.tools[name] = entry
+		staged[name] = entry
 	}
+	maps.Copy(s.tools, staged)
 	s.toolsMu.Unlock()
 
 	// When the list of available tools changes, servers that declared the listChanged capability SHOULD send a notification.
@@ -1066,6 +1070,7 @@ func (s *MCPServer) AddTaskTools(taskTools ...ServerTaskTool) {
 	s.implicitlyRegisterToolCapabilities()
 
 	s.toolsMu.Lock()
+	staged := make(map[string]ServerTaskTool, len(taskTools))
 	for _, entry := range taskTools {
 		name := entry.Tool.Name
 		// Check for collision with regular tools
@@ -1078,8 +1083,9 @@ func (s *MCPServer) AddTaskTools(taskTools ...ServerTaskTool) {
 			s.toolsMu.Unlock()
 			panic(err.Error())
 		}
-		s.taskTools[name] = entry
+		staged[name] = entry
 	}
+	maps.Copy(s.taskTools, staged)
 	s.toolsMu.Unlock()
 
 	// When the list of available tools changes, servers that declared the listChanged capability SHOULD send a notification.

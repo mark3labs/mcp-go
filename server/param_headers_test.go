@@ -199,20 +199,37 @@ func TestParamHeaders_InvalidAnnotationsAreRejectedOnEveryRegistrationPath(t *te
 		return nil, nil
 	}
 
+	// A valid tool precedes the bad one in every batch: rejecting the batch
+	// must not leave the entries validated before the failure behind.
 	tests := []struct {
 		name     string
 		register func(srv *MCPServer)
 	}{
 		{
+			name: "AddTools",
+			register: func(srv *MCPServer) {
+				srv.AddTools(
+					ServerTool{Tool: mcp.NewTool("good"), Handler: noop},
+					ServerTool{Tool: badHeaderTool(), Handler: noop},
+				)
+			},
+		},
+		{
 			name: "SetTools",
 			register: func(srv *MCPServer) {
-				srv.SetTools(ServerTool{Tool: badHeaderTool(), Handler: noop})
+				srv.SetTools(
+					ServerTool{Tool: mcp.NewTool("good"), Handler: noop},
+					ServerTool{Tool: badHeaderTool(), Handler: noop},
+				)
 			},
 		},
 		{
 			name: "AddTaskTools",
 			register: func(srv *MCPServer) {
-				srv.AddTaskTools(ServerTaskTool{Tool: badHeaderTool(), Handler: noopTask})
+				srv.AddTaskTools(
+					ServerTaskTool{Tool: mcp.NewTool("good"), Handler: noopTask},
+					ServerTaskTool{Tool: badHeaderTool(), Handler: noopTask},
+				)
 			},
 		},
 	}
@@ -223,7 +240,6 @@ func TestParamHeaders_InvalidAnnotationsAreRejectedOnEveryRegistrationPath(t *te
 
 			assert.PanicsWithValue(t, badHeaderToolPanic, func() { tt.register(srv) })
 
-			// Nothing from the rejected batch may have been registered.
 			assert.Empty(t, srv.ListTools())
 			srv.toolsMu.RLock()
 			assert.Empty(t, srv.taskTools)
