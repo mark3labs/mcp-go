@@ -8,10 +8,9 @@ import (
 )
 
 // IterTools returns an iterator that lazily fetches pages of tools from the
-// server. Pages are fetched on demand as the iterator is consumed; breaking
-// out of the loop stops further requests.
-//
-// Each iteration starts from the cursor in the original request.
+// server. Each iteration starts from the cursor in the original request.
+// Pages are fetched on demand as the iterator is consumed; breaking out of the
+// loop stops further requests.
 //
 // If an error occurs while fetching a page, the iterator yields a single
 // (zero-value, error) pair and then stops.
@@ -54,10 +53,9 @@ func (c *Client) IterTools(
 }
 
 // IterResources returns an iterator that lazily fetches pages of resources
-// from the server. Pages are fetched on demand as the iterator is consumed;
-// breaking out of the loop stops further requests.
-//
-// Each iteration starts from the cursor in the original request.
+// from the server. Each iteration starts from the cursor in the original
+// request. Pages are fetched on demand as the iterator is consumed; breaking
+// out of the loop stops further requests.
 //
 // If an error occurs while fetching a page, the iterator yields a single
 // (zero-value, error) pair and then stops.
@@ -91,10 +89,9 @@ func (c *Client) IterResources(
 }
 
 // IterResourceTemplates returns an iterator that lazily fetches pages of
-// resource templates from the server. Pages are fetched on demand as the
-// iterator is consumed; breaking out of the loop stops further requests.
-//
-// Each iteration starts from the cursor in the original request.
+// resource templates from the server. Each iteration starts from the cursor in
+// the original request. Pages are fetched on demand as the iterator is
+// consumed; breaking out of the loop stops further requests.
 //
 // If an error occurs while fetching a page, the iterator yields a single
 // (zero-value, error) pair and then stops.
@@ -128,10 +125,9 @@ func (c *Client) IterResourceTemplates(
 }
 
 // IterPrompts returns an iterator that lazily fetches pages of prompts from
-// the server. Pages are fetched on demand as the iterator is consumed;
-// breaking out of the loop stops further requests.
-//
-// Each iteration starts from the cursor in the original request.
+// the server. Each iteration starts from the cursor in the original request.
+// Pages are fetched on demand as the iterator is consumed; breaking out of the
+// loop stops further requests.
 //
 // If an error occurs while fetching a page, the iterator yields a single
 // (zero-value, error) pair and then stops.
