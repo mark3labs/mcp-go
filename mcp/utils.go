@@ -802,10 +802,15 @@ func ParseCallToolResult(rawMessage *json.RawMessage) (*CallToolResult, error) {
 	}
 
 	var probe struct {
-		Content json.RawMessage `json:"content"`
+		ResultType ResultType      `json:"resultType"`
+		TaskID     string          `json:"taskId"`
+		Content    json.RawMessage `json:"content"`
 	}
 	if err := json.Unmarshal(*rawMessage, &probe); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	if probe.ResultType == ResultTypeTask {
+		return nil, &UnsupportedTaskResultError{TaskID: probe.TaskID}
 	}
 	if probe.Content == nil {
 		return nil, fmt.Errorf("content is missing")
@@ -1080,16 +1085,28 @@ func jsonToTask(jsonContent map[string]any, result *GetTaskResult) {
 		}
 	}
 
-	ttl, ok := jsonContent["ttl"]
-	if ok {
+	// SEP-2663 field name: ttlMs
+	if ttl, ok := jsonContent["ttlMs"]; ok {
+		if ttlFloat, ok := ttl.(float64); ok {
+			ttlInt64 := int64(ttlFloat)
+			result.TTL = &ttlInt64
+		}
+	} else if ttl, ok := jsonContent["ttl"]; ok {
+		// Legacy 2025-11-25 field name fallback
 		if ttlFloat, ok := ttl.(float64); ok {
 			ttlInt64 := int64(ttlFloat)
 			result.TTL = &ttlInt64
 		}
 	}
 
-	pollInterval, ok := jsonContent["pollInterval"]
-	if ok {
+	// SEP-2663 field name: pollIntervalMs
+	if pollInterval, ok := jsonContent["pollIntervalMs"]; ok {
+		if pollIntervalFloat64, ok := pollInterval.(float64); ok {
+			pollIntervalInt := int64(pollIntervalFloat64)
+			result.PollInterval = &pollIntervalInt
+		}
+	} else if pollInterval, ok := jsonContent["pollInterval"]; ok {
+		// Legacy 2025-11-25 field name fallback
 		if pollIntervalFloat64, ok := pollInterval.(float64); ok {
 			pollIntervalInt := int64(pollIntervalFloat64)
 			result.PollInterval = &pollIntervalInt
@@ -1108,18 +1125,19 @@ func ParseCancelTaskResult(rawMessage *json.RawMessage) (*CancelTaskResult, erro
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
-	convertResult := GetTaskResult{}
-	jsonToTask(jsonContent, &convertResult)
-	cancelResult := CancelTaskResult(convertResult)
+	// Re-use jsonToTask so legacy task fields (taskId, status, ttl, etc.) are
+	// populated when the server sent them. they stay zero on ack-only responses.
+	getResult := GetTaskResult{}
+	jsonToTask(jsonContent, &getResult)
 
-	meta, ok := jsonContent["_meta"]
-	if ok {
+	cancelResult := &CancelTaskResult{Task: getResult.Task}
+	if meta, ok := jsonContent["_meta"]; ok {
 		if metaMap, ok := meta.(map[string]any); ok {
 			cancelResult.Meta = NewMetaFromMap(metaMap)
 		}
 	}
 
-	return &cancelResult, nil
+	return cancelResult, nil
 }
 
 // ParseListTasksResult parses a JSON message and converts it to a ListTasksResult.
@@ -1228,5 +1246,39 @@ func ParseGetTaskResult(rawMessage *json.RawMessage) (*GetTaskResult, error) {
 
 	jsonToTask(jsonContent, &result)
 
+	// SEP-2663 inline fields: populate TaskResult, TaskError, InputRequests
+	// directly via json.Unmarshal since jsonToTask doesn't cover them.
+	var sep struct {
+		TaskResult    json.RawMessage      `json:"result"`
+		TaskError     *JSONRPCErrorDetails `json:"error"`
+		InputRequests InputRequests        `json:"inputRequests"`
+	}
+	if err := json.Unmarshal(*rawMessage, &sep); err == nil {
+		result.TaskResult = sep.TaskResult
+		result.TaskError = sep.TaskError
+		result.InputRequests = sep.InputRequests
+	}
+
 	return &result, nil
+}
+
+// ParseUpdateTaskResult parses a JSON message and converts it to an UpdateTaskResult.
+func ParseUpdateTaskResult(rawMessage *json.RawMessage) (*UpdateTaskResult, error) {
+	if rawMessage == nil {
+		return nil, fmt.Errorf("response is nil")
+	}
+
+	var jsonContent map[string]any
+	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	updateResult := &UpdateTaskResult{}
+	if meta, ok := jsonContent["_meta"]; ok {
+		if metaMap, ok := meta.(map[string]any); ok {
+			updateResult.Meta = NewMetaFromMap(metaMap)
+		}
+	}
+
+	return updateResult, nil
 }
