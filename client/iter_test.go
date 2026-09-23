@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -168,4 +169,78 @@ func TestClient_IterPrompts(t *testing.T) {
 		names = append(names, p.Name)
 	}
 	assert.Len(t, names, 5)
+}
+
+func assertIteratorRestart[T any](t *testing.T, seq iter.Seq2[T, error], want int, key func(T) string) {
+	t.Helper()
+	collect := func(limit int) []string {
+		var values []string
+		for value, err := range seq {
+			require.NoError(t, err)
+			values = append(values, key(value))
+			if len(values) == limit {
+				break
+			}
+		}
+		return values
+	}
+
+	first := collect(0)
+	require.Len(t, first, want)
+	assert.Equal(t, first, collect(0), "reusing an exhausted iterator must restart")
+	assert.Equal(t, first[:3], collect(3), "early exit should start from the original cursor")
+	assert.Equal(t, first, collect(0), "reusing an interrupted iterator must restart")
+}
+
+func TestClient_IteratorsRestart(t *testing.T) {
+	tests := []struct {
+		name                string
+		startAfterFirstPage bool
+		want                int
+	}{
+		{name: "empty_initial_cursor", startAfterFirstPage: false, want: 7},
+		{name: "non_empty_initial_cursor", startAfterFirstPage: true, want: 5},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := newIterTestClient(t, 2, 7)
+
+			t.Run("tools", func(t *testing.T) {
+				request := mcp.ListToolsRequest{}
+				if test.startAfterFirstPage {
+					page, err := client.ListToolsByPage(t.Context(), request)
+					require.NoError(t, err)
+					request.Params.Cursor = page.NextCursor
+				}
+				assertIteratorRestart(t, client.IterTools(t.Context(), request), test.want, func(value mcp.Tool) string { return value.Name })
+			})
+			t.Run("resources", func(t *testing.T) {
+				request := mcp.ListResourcesRequest{}
+				if test.startAfterFirstPage {
+					page, err := client.ListResourcesByPage(t.Context(), request)
+					require.NoError(t, err)
+					request.Params.Cursor = page.NextCursor
+				}
+				assertIteratorRestart(t, client.IterResources(t.Context(), request), test.want, func(value mcp.Resource) string { return value.URI })
+			})
+			t.Run("resource_templates", func(t *testing.T) {
+				request := mcp.ListResourceTemplatesRequest{}
+				if test.startAfterFirstPage {
+					page, err := client.ListResourceTemplatesByPage(t.Context(), request)
+					require.NoError(t, err)
+					request.Params.Cursor = page.NextCursor
+				}
+				assertIteratorRestart(t, client.IterResourceTemplates(t.Context(), request), test.want, func(value mcp.ResourceTemplate) string { return value.Name })
+			})
+			t.Run("prompts", func(t *testing.T) {
+				request := mcp.ListPromptsRequest{}
+				if test.startAfterFirstPage {
+					page, err := client.ListPromptsByPage(t.Context(), request)
+					require.NoError(t, err)
+					request.Params.Cursor = page.NextCursor
+				}
+				assertIteratorRestart(t, client.IterPrompts(t.Context(), request), test.want, func(value mcp.Prompt) string { return value.Name })
+			})
+		})
+	}
 }
