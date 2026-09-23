@@ -974,6 +974,16 @@ func (s *MCPServer) applyStrictInputSchemaDefault(tool *mcp.Tool) {
 	tool.InputSchema.AdditionalProperties = false
 }
 
+// validateToolHeaderAnnotations rejects a tool definition whose x-mcp-header
+// annotations violate the SEP-2243 constraints, rather than emitting headers
+// that gateways cannot route on. Servers MUST refuse such definitions.
+func validateToolHeaderAnnotations(tool *mcp.Tool) error {
+	if err := mcp.ValidateParamHeaderAnnotations(tool); err != nil {
+		return fmt.Errorf("tool %q has invalid x-mcp-header annotations: %w", tool.Name, err)
+	}
+	return nil
+}
+
 // AddTool registers a new tool and its handler
 func (s *MCPServer) AddTool(tool mcp.Tool, handler ToolHandlerFunc) {
 	s.AddTools(ServerTool{Tool: tool, Handler: handler})
@@ -1028,6 +1038,9 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 	s.implicitlyRegisterToolCapabilities()
 
 	s.toolsMu.Lock()
+	// Stage the whole batch before touching the registry so a rejected entry
+	// leaves earlier ones unregistered as well.
+	staged := make(map[string]ServerTool, len(tools))
 	for _, entry := range tools {
 		name := entry.Tool.Name
 		// Check for collision with task tools
@@ -1036,15 +1049,13 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 			panic(fmt.Sprintf("tool name '%s' already registered as task tool", name))
 		}
 		s.applyStrictInputSchemaDefault(&entry.Tool)
-		// Servers MUST reject tool definitions whose x-mcp-header annotations
-		// violate the SEP-2243 constraints, rather than emitting headers that
-		// gateways cannot route on.
-		if err := mcp.ValidateParamHeaderAnnotations(&entry.Tool); err != nil {
+		if err := validateToolHeaderAnnotations(&entry.Tool); err != nil {
 			s.toolsMu.Unlock()
-			panic(fmt.Sprintf("tool %q has invalid x-mcp-header annotations: %v", name, err))
+			panic(err.Error())
 		}
-		s.tools[name] = entry
+		staged[name] = entry
 	}
+	maps.Copy(s.tools, staged)
 	s.toolsMu.Unlock()
 
 	// When the list of available tools changes, servers that declared the listChanged capability SHOULD send a notification.
@@ -1059,6 +1070,7 @@ func (s *MCPServer) AddTaskTools(taskTools ...ServerTaskTool) {
 	s.implicitlyRegisterToolCapabilities()
 
 	s.toolsMu.Lock()
+	staged := make(map[string]ServerTaskTool, len(taskTools))
 	for _, entry := range taskTools {
 		name := entry.Tool.Name
 		// Check for collision with regular tools
@@ -1067,8 +1079,13 @@ func (s *MCPServer) AddTaskTools(taskTools ...ServerTaskTool) {
 			panic(fmt.Sprintf("task tool name '%s' already registered as regular tool", name))
 		}
 		s.applyStrictInputSchemaDefault(&entry.Tool)
-		s.taskTools[name] = entry
+		if err := validateToolHeaderAnnotations(&entry.Tool); err != nil {
+			s.toolsMu.Unlock()
+			panic(err.Error())
+		}
+		staged[name] = entry
 	}
+	maps.Copy(s.taskTools, staged)
 	s.toolsMu.Unlock()
 
 	// When the list of available tools changes, servers that declared the listChanged capability SHOULD send a notification.
@@ -1092,6 +1109,10 @@ func (s *MCPServer) SetTools(tools ...ServerTool) {
 			panic(fmt.Sprintf("tool name '%s' already registered as task tool", name))
 		}
 		s.applyStrictInputSchemaDefault(&entry.Tool)
+		if err := validateToolHeaderAnnotations(&entry.Tool); err != nil {
+			s.toolsMu.Unlock()
+			panic(err.Error())
+		}
 		newTools[name] = entry
 	}
 	s.tools = newTools
