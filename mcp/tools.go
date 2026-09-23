@@ -724,7 +724,9 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 		m["outputSchema"] = t.OutputSchema
 	}
 
-	m["annotations"] = t.Annotations
+	if t.Annotations.HasAny() {
+		m["annotations"] = t.Annotations
+	}
 
 	if t.DeferLoading {
 		m["defer_loading"] = t.DeferLoading
@@ -993,6 +995,15 @@ type ToolAnnotation struct {
 	OpenWorldHint *bool `json:"openWorldHint,omitempty"`
 }
 
+// HasAny reports whether any annotation field was explicitly set.
+func (a ToolAnnotation) HasAny() bool {
+	return a.Title != "" ||
+		a.ReadOnlyHint != nil ||
+		a.DestructiveHint != nil ||
+		a.IdempotentHint != nil ||
+		a.OpenWorldHint != nil
+}
+
 // ToolOption is a function that configures a Tool.
 // It provides a flexible way to set various properties of a Tool using the functional options pattern.
 type ToolOption func(*Tool)
@@ -1160,6 +1171,15 @@ func WithOutputSchema[T any]() ToolOption {
 func WithRawOutputSchema(schema json.RawMessage) ToolOption {
 	return func(t *Tool) {
 		t.RawOutputSchema = schema
+	}
+}
+
+// WithoutDefaultAnnotations clears the default annotation hints initialized by
+// NewTool so the annotations field is omitted from JSON unless later options
+// set annotation values explicitly.
+func WithoutDefaultAnnotations() ToolOption {
+	return func(t *Tool) {
+		t.Annotations = ToolAnnotation{}
 	}
 }
 
