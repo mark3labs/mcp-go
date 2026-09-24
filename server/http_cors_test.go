@@ -146,6 +146,55 @@ func TestStreamableHTTP_CORS_Preflight(t *testing.T) {
 	assert.Equal(t, "Origin", resp.Header.Get("Vary"))
 }
 
+func TestStreamableHTTP_CORS_DefaultAllowedHeadersCoverMCPHeaders(t *testing.T) {
+	t.Parallel()
+
+	mcp := NewMCPServer("test", "1.0.0")
+	srv := NewStreamableHTTPServer(mcp,
+		WithStreamableHTTPCORS(WithCORSAllowedOrigins("https://example.com")),
+	)
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	tests := []struct {
+		name           string
+		requestHeaders []string
+	}{
+		{
+			name:           "legacy request after initialize",
+			requestHeaders: []string{"content-type", "mcp-protocol-version", "mcp-session-id"},
+		},
+		{
+			name:           "2026-07-28 request",
+			requestHeaders: []string{"content-type", "mcp-method", "mcp-name", "mcp-protocol-version"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodOptions, ts.URL, nil)
+			require.NoError(t, err)
+			req.Header.Set("Origin", "https://example.com")
+			req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+			req.Header.Set("Access-Control-Request-Headers", strings.Join(tt.requestHeaders, ","))
+
+			resp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = resp.Body.Close() })
+
+			allowed := map[string]bool{}
+			for _, h := range strings.Split(resp.Header.Get("Access-Control-Allow-Headers"), ",") {
+				allowed[strings.ToLower(strings.TrimSpace(h))] = true
+			}
+			for _, h := range tt.requestHeaders {
+				assert.True(t, allowed[h], "preflight does not allow %q", h)
+			}
+		})
+	}
+}
+
 func TestStreamableHTTP_CORS_PreflightDisallowedOrigin(t *testing.T) {
 	t.Parallel()
 
