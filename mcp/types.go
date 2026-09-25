@@ -97,8 +97,11 @@ const (
 	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
 	MethodTasksGet MCPMethod = "tasks/get"
 
+	// MethodTasksUpdate submits responses to outstanding inputRequests for a
+	// task in the input_required state.
+	MethodTasksUpdate MCPMethod = "tasks/update"
+
 	// MethodTasksList lists all tasks for the current session.
-	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
 	MethodTasksList MCPMethod = "tasks/list"
 
 	// MethodTasksResult retrieves the result of a completed task.
@@ -146,6 +149,10 @@ const (
 	// MethodNotificationTasksStatus notifies when a task's status changes.
 	// https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks
 	MethodNotificationTasksStatus = "notifications/tasks/status"
+
+	// MethodNotificationTasks is the SEP-2663 tasks extension notification
+	// method for task status changes.
+	MethodNotificationTasks = "notifications/tasks"
 
 	// MethodCompletionComplete returns completion suggestions for a given argument
 	// https://modelcontextprotocol.io/specification/2025-11-25/server/utilities/completion
@@ -623,6 +630,17 @@ type ClientCapabilities struct {
 	Elicitation *ElicitationCapability `json:"elicitation,omitempty"`
 	// Present if the client supports task-based execution.
 	Tasks *TasksCapability `json:"tasks,omitempty"`
+}
+
+// HasExtension reports whether the client declared support for the named
+// extension. The name should be a fully-qualified extension identifier such as
+// "io.modelcontextprotocol/tasks".
+func (c *ClientCapabilities) HasExtension(name string) bool {
+	if c == nil {
+		return false
+	}
+	_, ok := c.Extensions[name]
+	return ok
 }
 
 // ServerCapabilities represents capabilities that a server may support. Known
@@ -1724,6 +1742,36 @@ func (t Task) GetName() string {
 	return t.TaskId
 }
 
+// MarshalJSONLegacyTask serializes the Task of legacy 2025-11-25 wire format.
+func (r CreateTaskResult) MarshalJSONLegacyTask() ([]byte, error) {
+	taskFields := map[string]any{
+		"taskId":        r.Task.TaskId,
+		"status":        r.Task.Status,
+		"createdAt":     r.Task.CreatedAt,
+		"lastUpdatedAt": r.Task.LastUpdatedAt,
+		"ttl":           r.Task.TTL,
+	}
+	if r.Task.StatusMessage != "" {
+		taskFields["statusMessage"] = r.Task.StatusMessage
+	}
+	if r.Task.PollInterval != nil {
+		taskFields["pollInterval"] = *r.Task.PollInterval
+	}
+	raw, err := json.Marshal(taskFields)
+	if err != nil {
+		return nil, err
+	}
+	m := map[string]json.RawMessage{"task": raw}
+	if r.Meta != nil {
+		metaBytes, err := json.Marshal(r.Meta)
+		if err != nil {
+			return nil, err
+		}
+		m["_meta"] = metaBytes
+	}
+	return json.Marshal(m)
+}
+
 // TaskParams represents the task metadata included when augmenting a request.
 type TaskParams struct {
 	// Requested duration in milliseconds to retain task from creation.
@@ -1734,10 +1782,76 @@ type TaskParams struct {
 // It contains task metadata rather than the actual operation result.
 type CreateTaskResult struct {
 	Result
-	Task              Task      `json:"task"`
+	Task              Task      `json:"-"`
 	Content           []Content `json:"-"`
 	StructuredContent any       `json:"-"`
 	IsError           bool      `json:"-"`
+	// Legacy instructs MarshalJSON to use the 2025-11-25 wire format.
+	Legacy bool `json:"-"`
+}
+
+// MarshalJSON implements custom JSON marshaling for CreateTaskResult.
+func (r CreateTaskResult) MarshalJSON() ([]byte, error) {
+	if r.Legacy {
+		return r.MarshalJSONLegacyTask()
+	}
+	m := map[string]any{
+		"resultType":    ResultTypeTask,
+		"taskId":        r.Task.TaskId,
+		"status":        r.Task.Status,
+		"createdAt":     r.Task.CreatedAt,
+		"lastUpdatedAt": r.Task.LastUpdatedAt,
+		"ttlMs":         r.Task.TTL,
+	}
+	if r.Task.StatusMessage != "" {
+		m["statusMessage"] = r.Task.StatusMessage
+	}
+	if r.Task.PollInterval != nil {
+		m["pollIntervalMs"] = *r.Task.PollInterval
+	}
+	if r.Meta != nil {
+		m["_meta"] = r.Meta
+	}
+	return json.Marshal(m)
+}
+
+// UnmarshalJSON handles both wire formats SEP-2663 and Legacy(2025-11-25).
+func (r *CreateTaskResult) UnmarshalJSON(data []byte) error {
+	// Always decode the common Result fields (_meta, resultType) first.
+	var base struct {
+		Meta       *Meta      `json:"_meta"`
+		ResultType ResultType `json:"resultType"`
+		Task       *Task      `json:"task"`
+		TaskId     string     `json:"taskId"`
+	}
+	if err := json.Unmarshal(data, &base); err != nil {
+		return err
+	}
+	r.Meta = base.Meta
+	r.ResultType = base.ResultType
+
+	if base.Task != nil {
+		// Legacy format: task nested under "task" key.
+		r.Task = *base.Task
+		r.Legacy = true
+		return nil
+	}
+	// SEP-2663 inline format: task fields at the top level.
+	type inlineTask struct {
+		TaskId        string     `json:"taskId"`
+		Status        TaskStatus `json:"status"`
+		StatusMessage string     `json:"statusMessage,omitempty"`
+		CreatedAt     string     `json:"createdAt"`
+		LastUpdatedAt string     `json:"lastUpdatedAt"`
+		TTL           *int64     `json:"ttlMs"`
+		PollInterval  *int64     `json:"pollIntervalMs,omitempty"`
+	}
+	var inline inlineTask
+	if err := json.Unmarshal(data, &inline); err != nil {
+		return err
+	}
+	r.Task = Task(inline)
+	return nil
 }
 
 // GetTaskRequest retrieves the current status of a task.
@@ -1755,6 +1869,11 @@ type GetTaskParams struct {
 type GetTaskResult struct {
 	Result
 	Task
+	TaskResult json.RawMessage      `json:"result,omitempty"`
+	TaskError  *JSONRPCErrorDetails `json:"error,omitempty"`
+	// InputRequests holds outstanding server-to-client requests when Status
+	// is input_required.
+	InputRequests InputRequests `json:"inputRequests,omitempty"`
 }
 
 // ListTasksRequest retrieves a paginated list of tasks.
@@ -1807,6 +1926,23 @@ type CancelTaskResult struct {
 	Task
 }
 
+// MarshalJSON serialises CancelTaskResult.
+func (r CancelTaskResult) MarshalJSON() ([]byte, error) {
+	if r.TaskId == "" {
+		// Ack-only.
+		type resultOnly struct {
+			Result
+		}
+		return json.Marshal(resultOnly{r.Result})
+	}
+	// Legacy: include all task fields inline.
+	type flat struct {
+		Result
+		Task
+	}
+	return json.Marshal(flat(r))
+}
+
 // TaskStatusNotification is sent when a task's status changes.
 type TaskStatusNotification struct {
 	Notification
@@ -1815,6 +1951,25 @@ type TaskStatusNotification struct {
 
 type TaskStatusNotificationParams struct {
 	Task
+}
+
+// UpdateTaskRequest submits responses to outstanding inputRequests for a task
+// in the input_required state.
+type UpdateTaskRequest struct {
+	Request
+	Header http.Header      `json:"-"`
+	Params UpdateTaskParams `json:"params"`
+}
+
+// UpdateTaskParams are the parameters for tasks/update.
+type UpdateTaskParams struct {
+	TaskId         string         `json:"taskId"`
+	InputResponses InputResponses `json:"inputResponses"`
+}
+
+// UpdateTaskResult is the ack-only result returned by tasks/update.
+type UpdateTaskResult struct {
+	Result
 }
 
 // ClientRequest represents any request that can be sent from client to server.
