@@ -1253,11 +1253,12 @@ func ParseGetTaskResult(rawMessage *json.RawMessage) (*GetTaskResult, error) {
 		TaskError     *JSONRPCErrorDetails `json:"error"`
 		InputRequests InputRequests        `json:"inputRequests"`
 	}
-	if err := json.Unmarshal(*rawMessage, &sep); err == nil {
-		result.TaskResult = sep.TaskResult
-		result.TaskError = sep.TaskError
-		result.InputRequests = sep.InputRequests
+	if err := json.Unmarshal(*rawMessage, &sep); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal SEP-2663 task fields: %w", err)
 	}
+	result.TaskResult = sep.TaskResult
+	result.TaskError = sep.TaskError
+	result.InputRequests = sep.InputRequests
 
 	return &result, nil
 }

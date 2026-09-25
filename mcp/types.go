@@ -1817,17 +1817,22 @@ func (r CreateTaskResult) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON handles both wire formats SEP-2663 and Legacy(2025-11-25).
 func (r *CreateTaskResult) UnmarshalJSON(data []byte) error {
-	var probe struct {
-		Task       *Task  `json:"task"`
-		ResultType string `json:"resultType"`
-		TaskId     string `json:"taskId"`
+	// Always decode the common Result fields (_meta, resultType) first.
+	var base struct {
+		Meta       *Meta      `json:"_meta"`
+		ResultType ResultType `json:"resultType"`
+		Task       *Task      `json:"task"`
+		TaskId     string     `json:"taskId"`
 	}
-	if err := json.Unmarshal(data, &probe); err != nil {
+	if err := json.Unmarshal(data, &base); err != nil {
 		return err
 	}
-	if probe.Task != nil {
+	r.Meta = base.Meta
+	r.ResultType = base.ResultType
+
+	if base.Task != nil {
 		// Legacy format: task nested under "task" key.
-		r.Task = *probe.Task
+		r.Task = *base.Task
 		r.Legacy = true
 		return nil
 	}
@@ -1845,15 +1850,7 @@ func (r *CreateTaskResult) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &inline); err != nil {
 		return err
 	}
-	r.Task = Task{
-		TaskId:        inline.TaskId,
-		Status:        inline.Status,
-		StatusMessage: inline.StatusMessage,
-		CreatedAt:     inline.CreatedAt,
-		LastUpdatedAt: inline.LastUpdatedAt,
-		TTL:           inline.TTL,
-		PollInterval:  inline.PollInterval,
-	}
+	r.Task = Task(inline)
 	return nil
 }
 
@@ -1931,7 +1928,7 @@ type CancelTaskResult struct {
 
 // MarshalJSON serialises CancelTaskResult.
 func (r CancelTaskResult) MarshalJSON() ([]byte, error) {
-	if r.Task.TaskId == "" {
+	if r.TaskId == "" {
 		// Ack-only.
 		type resultOnly struct {
 			Result
@@ -1943,7 +1940,7 @@ func (r CancelTaskResult) MarshalJSON() ([]byte, error) {
 		Result
 		Task
 	}
-	return json.Marshal(flat{r.Result, r.Task})
+	return json.Marshal(flat(r))
 }
 
 // TaskStatusNotification is sent when a task's status changes.
