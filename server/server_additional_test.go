@@ -901,3 +901,78 @@ func TestMCPServer_PaginationCursorStability(t *testing.T) {
 	// The key is that it shouldn't crash or return errors
 	assert.NotNil(t, result.Tools)
 }
+
+// Resource and resource template names need not be unique. Paging one item at
+// a time puts a page boundary between every pair of equally named entries, and
+// none of them may be skipped.
+func TestMCPServer_PaginationWithDuplicateNames(t *testing.T) {
+	pageThrough := func(t *testing.T, server *MCPServer, method string, collect func(result any) ([]string, mcp.Cursor)) []string {
+		t.Helper()
+		var got []string
+		cursor := mcp.Cursor("")
+		for range 10 {
+			params := "{}"
+			if cursor != "" {
+				params = fmt.Sprintf(`{"cursor": %q}`, cursor)
+			}
+			response := server.HandleMessage(t.Context(), fmt.Appendf(nil,
+				`{"jsonrpc": "2.0", "id": 1, "method": %q, "params": %s}`, method, params))
+			resp, ok := response.(mcp.JSONRPCResponse)
+			require.True(t, ok, "unexpected response: %+v", response)
+			var page []string
+			page, cursor = collect(resp.Result)
+			got = append(got, page...)
+			if cursor == "" {
+				return got
+			}
+		}
+		t.Fatalf("%s did not finish paging", method)
+		return nil
+	}
+
+	t.Run("resources", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithResourceCapabilities(false, false),
+			WithPaginationLimit(1),
+		)
+		for _, uri := range []string{"file:///b/README.md", "file:///a/README.md", "file:///c/README.md"} {
+			server.AddResource(mcp.NewResource(uri, "README.md"), nil)
+		}
+		server.AddResource(mcp.NewResource("file:///main.go", "main.go"), nil)
+
+		got := pageThrough(t, server, "resources/list", func(result any) ([]string, mcp.Cursor) {
+			page := result.(mcp.ListResourcesResult)
+			var uris []string
+			for _, resource := range page.Resources {
+				uris = append(uris, resource.URI)
+			}
+			return uris, page.NextCursor
+		})
+		assert.Equal(t, []string{
+			"file:///a/README.md",
+			"file:///b/README.md",
+			"file:///c/README.md",
+			"file:///main.go",
+		}, got)
+	})
+
+	t.Run("resource templates", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithResourceCapabilities(false, false),
+			WithPaginationLimit(1),
+		)
+		for _, uriTemplate := range []string{"repo://b/{path}", "repo://a/{path}"} {
+			server.AddResourceTemplate(mcp.NewResourceTemplate(uriTemplate, "file"), nil)
+		}
+
+		got := pageThrough(t, server, "resources/templates/list", func(result any) ([]string, mcp.Cursor) {
+			page := result.(mcp.ListResourceTemplatesResult)
+			var templates []string
+			for _, template := range page.ResourceTemplates {
+				templates = append(templates, template.URITemplate.Raw())
+			}
+			return templates, page.NextCursor
+		})
+		assert.Equal(t, []string{"repo://a/{path}", "repo://b/{path}"}, got)
+	})
+}
