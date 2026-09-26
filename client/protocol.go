@@ -224,9 +224,9 @@ func (c *Client) Discover(ctx context.Context, request mcp.DiscoverRequest) (*mc
 //
 // It sends server/discover at the client's preferred version. If the server
 // rejects that version but names the ones it does support, the request is
-// retried once at the highest mutually supported modern version. Any other
-// failure means the server is not modern, and the caller falls back to the
-// initialize handshake.
+// retried once at the highest mutually supported modern version, even the
+// one just tried. It returns the last error otherwise, and the caller decides
+// whether to fall back to the initialize handshake.
 //
 // The probe is bounded by a timeout: a well-behaved JSON-RPC server answers an
 // unknown method with MethodNotFound, but a server predating this method may
@@ -249,29 +249,42 @@ func (c *Client) negotiateModern(ctx context.Context, preferred string) (*mcp.Di
 	previous := c.protocolVersion
 	c.applyNegotiatedVersion(preferred)
 
-	for range 2 {
-		result, err := c.Discover(probeCtx, mcp.DiscoverRequest{})
+	var err error
+	for attempt := range 2 {
+		var result *mcp.DiscoverResult
+		result, err = c.Discover(probeCtx, mcp.DiscoverRequest{})
 		if err == nil {
 			return result, nil
 		}
 
 		// A recognized modern error identifies a modern server: renegotiate
-		// rather than falling back.
+		// rather than falling back. Retry once with the newest version both
+		// sides support, even if it is the one just tried: the server has
+		// said it accepts it.
 		var unsupported mcp.UnsupportedProtocolVersionError
-		if errors.As(err, &unsupported) && len(unsupported.Supported) > 0 {
-			negotiated := mcp.NegotiateMutuallySupportedVersion(unsupported.Supported)
-			if negotiated != "" && mcp.IsModernProtocol(negotiated) && negotiated != c.protocolVersion {
-				c.applyNegotiatedVersion(negotiated)
-				continue
-			}
+		if attempt > 0 || !errors.As(err, &unsupported) {
+			break
 		}
-
-		c.applyNegotiatedVersion(previous)
-		return nil, err
+		negotiated := mcp.NegotiateMutuallySupportedVersion(unsupported.Supported)
+		if !mcp.IsModernProtocol(negotiated) {
+			break
+		}
+		c.applyNegotiatedVersion(negotiated)
 	}
 
 	c.applyNegotiatedVersion(previous)
-	return nil, fmt.Errorf("server/discover: exhausted version negotiation attempts")
+	return nil, err
+}
+
+// listsLegacyVersion reports whether versions include one this client can
+// speak through the initialize handshake.
+func listsLegacyVersion(versions []string) bool {
+	for _, version := range versions {
+		if mcp.IsValidProtocolVersion(version) && !mcp.IsModernProtocol(version) {
+			return true
+		}
+	}
+	return false
 }
 
 // discoverProbeTimeout returns how long to wait for a server/discover reply
