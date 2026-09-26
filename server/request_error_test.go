@@ -31,6 +31,9 @@ func newHandlerErrorServer() *MCPServer {
 		// Wrapped, as a handler that adds context to the error would.
 		return nil, fmt.Errorf("checking access: %w", urlElicitationRequired)
 	})
+	srv.AddTool(mcp.NewTool("protected_pointer_action"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return nil, fmt.Errorf("checking access: %w", &urlElicitationRequired)
+	})
 	srv.AddTool(mcp.NewTool("failing_action"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return nil, errors.New("backend unavailable")
 	})
@@ -74,6 +77,11 @@ func TestHandlerURLElicitationRequiredError(t *testing.T) {
 		{
 			name:    "tools/call",
 			request: `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"protected_action"}}`,
+			message: "checking access: URL elicitation required: 1 elicitation(s) needed",
+		},
+		{
+			name:    "tools/call returning a pointer",
+			request: `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"protected_pointer_action"}}`,
 			message: "checking access: URL elicitation required: 1 elicitation(s) needed",
 		},
 		{
