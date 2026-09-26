@@ -193,6 +193,20 @@ type OAuthHandler struct {
 
 	mu            sync.RWMutex // Protects expectedState
 	expectedState string       // Expected state value for CSRF protection
+
+	// refreshMu protects refreshing, the token refresh in flight, if any.
+	// Callers of this handler that find the token expired share it: a
+	// refresh token may be good for a single use, so they must not each
+	// send it.
+	refreshMu  sync.Mutex
+	refreshing *tokenRefresh
+}
+
+// tokenRefresh is a token refresh shared by the callers that wait for it.
+type tokenRefresh struct {
+	done  chan struct{}
+	token *Token
+	err   error
 }
 
 // NewOAuthHandler creates a new OAuth handler
@@ -210,7 +224,10 @@ func NewOAuthHandler(config OAuthConfig) *OAuthHandler {
 	}
 }
 
-// GetAuthorizationHeader returns the Authorization header value for a request
+// GetAuthorizationHeader returns the Authorization header value for a request.
+//
+// If the stored token has expired, it refreshes it, or waits for a refresh
+// another caller already started, and returns ctx's error if ctx ends first.
 func (h *OAuthHandler) GetAuthorizationHeader(ctx context.Context) (string, error) {
 	token, err := h.getValidToken(ctx)
 	if err != nil {
@@ -236,18 +253,72 @@ func (h *OAuthHandler) getValidToken(ctx context.Context) (*Token, error) {
 	if err == nil && !token.IsExpired() && token.AccessToken != "" {
 		return token, nil
 	}
-
-	// If we have a refresh token, try to use it
-	if err == nil && token.RefreshToken != "" {
-		newToken, err := h.refreshToken(ctx, token.RefreshToken)
-		if err == nil {
-			return newToken, nil
-		}
-		// If refresh fails, continue to authorization flow
+	if err != nil || token.RefreshToken == "" {
+		// We need to get a new token through the authorization flow
+		return nil, ErrOAuthAuthorizationRequired
 	}
 
-	// We need to get a new token through the authorization flow
-	return nil, ErrOAuthAuthorizationRequired
+	// Share one refresh among the callers that need it. With refresh token
+	// rotation, which the MCP spec requires for public clients, a second
+	// request with the same refresh token is rejected, and a server that
+	// detects the reuse may revoke the tokens the first request got.
+	refresh := h.startRefresh(ctx)
+	select {
+	case <-refresh.done:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if refresh.err != nil {
+		// If refresh fails, continue to authorization flow
+		return nil, ErrOAuthAuthorizationRequired
+	}
+	return refresh.token, nil
+}
+
+// refreshTimeout bounds a token refresh, which doesn't end with the context
+// of the caller that started it.
+const refreshTimeout = 30 * time.Second
+
+// startRefresh returns the token refresh in flight, starting one if there is
+// none.
+//
+// The refresh runs on its own context rather than the caller's. If it ended
+// with the caller, a caller that gives up after the server has used up the
+// refresh token would leave the others to send the spent token again.
+func (h *OAuthHandler) startRefresh(ctx context.Context) *tokenRefresh {
+	h.refreshMu.Lock()
+	defer h.refreshMu.Unlock()
+	if h.refreshing != nil {
+		return h.refreshing
+	}
+	refresh := &tokenRefresh{done: make(chan struct{})}
+	h.refreshing = refresh
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshTimeout)
+	go func() {
+		defer cancel()
+		refresh.token, refresh.err = h.refreshStoredToken(ctx)
+		h.refreshMu.Lock()
+		h.refreshing = nil
+		h.refreshMu.Unlock()
+		close(refresh.done)
+	}()
+	return refresh
+}
+
+// refreshStoredToken refreshes the stored token, unless a refresh that
+// finished since the caller read the store has already replaced it.
+func (h *OAuthHandler) refreshStoredToken(ctx context.Context) (*Token, error) {
+	token, err := h.config.TokenStore.GetToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !token.IsExpired() && token.AccessToken != "" {
+		return token, nil
+	}
+	if token.RefreshToken == "" {
+		return nil, ErrOAuthAuthorizationRequired
+	}
+	return h.refreshToken(ctx, token.RefreshToken)
 }
 
 // refreshToken refreshes an OAuth token
