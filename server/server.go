@@ -161,6 +161,8 @@ type requestError struct {
 	id   any
 	code int
 	err  error
+	// data, when set, is sent as the data member of the JSON-RPC error.
+	data any
 }
 
 func (e *requestError) Error() string {
@@ -171,7 +173,7 @@ func (e *requestError) ToJSONRPCError() mcp.JSONRPCError {
 	return mcp.JSONRPCError{
 		JSONRPC: mcp.JSONRPC_VERSION,
 		ID:      mcp.NewRequestId(e.id),
-		Error:   mcp.NewJSONRPCErrorDetails(e.code, e.err.Error(), nil),
+		Error:   mcp.NewJSONRPCErrorDetails(e.code, e.err.Error(), e.data),
 	}
 }
 
@@ -1669,11 +1671,7 @@ func (s *MCPServer) handleReadResource(
 
 		contents, err := finalHandler(ctx, request)
 		if err != nil {
-			return nil, &requestError{
-				id:   id,
-				code: mcp.INTERNAL_ERROR,
-				err:  err,
-			}
+			return nil, handlerError(ctx, id, err)
 		}
 		return &mcp.ReadResourceResult{Contents: contents}, nil
 	}
@@ -1740,11 +1738,7 @@ func (s *MCPServer) handleReadResource(
 		s.resourceMiddlewareMu.RUnlock()
 		contents, err := finalHandler(ctx, request)
 		if err != nil {
-			return nil, &requestError{
-				id:   id,
-				code: mcp.INTERNAL_ERROR,
-				err:  err,
-			}
+			return nil, handlerError(ctx, id, err)
 		}
 		return &mcp.ReadResourceResult{Contents: contents}, nil
 	}
@@ -1888,11 +1882,7 @@ func (s *MCPServer) handleGetPrompt(
 
 	result, err := finalHandler(ctx, request)
 	if err != nil {
-		return nil, &requestError{
-			id:   id,
-			code: mcp.INTERNAL_ERROR,
-			err:  err,
-		}
+		return nil, handlerError(ctx, id, err)
 	}
 
 	// Bridge a handler asking for more input to clients that predate the
@@ -1904,11 +1894,7 @@ func (s *MCPServer) handleGetPrompt(
 			return finalHandler(ctx, retried)
 		})
 	if err != nil {
-		return nil, &requestError{
-			id:   id,
-			code: mcp.INTERNAL_ERROR,
-			err:  err,
-		}
+		return nil, handlerError(ctx, id, err)
 	}
 
 	return result, nil
@@ -2160,11 +2146,7 @@ func (s *MCPServer) handleToolCall(
 
 	result, err := finalHandler(ctx, request)
 	if err != nil {
-		return nil, &requestError{
-			id:   id,
-			code: mcp.INTERNAL_ERROR,
-			err:  err,
-		}
+		return nil, handlerError(ctx, id, err)
 	}
 
 	// A handler may ask the client for more input before it can finish
@@ -2179,11 +2161,7 @@ func (s *MCPServer) handleToolCall(
 			return finalHandler(ctx, retried)
 		})
 	if err != nil {
-		return nil, &requestError{
-			id:   id,
-			code: mcp.INTERNAL_ERROR,
-			err:  err,
-		}
+		return nil, handlerError(ctx, id, err)
 	}
 
 	// Validate the tool's StructuredContent against its declared output
