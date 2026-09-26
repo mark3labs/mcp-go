@@ -675,8 +675,18 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("panic recovered in SSE message handler for session %s: %v", sessionID, r)
-				// Send error response so the client doesn't hang waiting.
-				errResp := createErrorResponse(nil, mcp.INTERNAL_ERROR, fmt.Sprintf("internal panic: %v", r))
+				// Send error response so the client doesn't hang waiting. It
+				// carries the request's id, as that is how the client matches
+				// a response to the call waiting for it. A message without an
+				// id is a notification, as in HandleMessage, and gets no reply.
+				var request struct {
+					ID any `json:"id"`
+				}
+				_ = json.Unmarshal(rawMessage, &request)
+				if request.ID == nil {
+					return
+				}
+				errResp := createErrorResponse(request.ID, mcp.INTERNAL_ERROR, fmt.Sprintf("internal panic: %v", r))
 				if eventData, err := json.Marshal(errResp); err == nil {
 					message := fmt.Sprintf("event: message\ndata: %s\n\n", eventData)
 					select {
