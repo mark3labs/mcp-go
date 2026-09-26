@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,15 @@ type OAuthConfig struct {
 	ClientURI string
 	// ClientSecret is the OAuth client secret (for confidential clients)
 	ClientSecret string
+	// TokenEndpointAuthMethod is how the client authenticates at the token
+	// endpoint: "client_secret_basic", "client_secret_post" or "none". Set it
+	// for pre-registered credentials, or for credentials saved from an
+	// earlier dynamic registration (see GetTokenEndpointAuthMethod), when the
+	// authorization server supports more than one method. When empty, the
+	// method returned by dynamic client registration is used, or else
+	// client_secret_basic if the server's metadata lists it but not
+	// client_secret_post, and client_secret_post otherwise.
+	TokenEndpointAuthMethod string
 	// RedirectURI is the redirect URI for the OAuth flow
 	RedirectURI string
 	// Scopes is the list of OAuth scopes to request
@@ -191,6 +201,11 @@ type OAuthHandler struct {
 	metadataMu  sync.Mutex
 	resourceURL string // RFC 8707 resource indicator; set from protected resource metadata
 
+	// registeredAuthMethod is the token_endpoint_auth_method the
+	// authorization server registered for the client during dynamic client
+	// registration, if any.
+	registeredAuthMethod string
+
 	mu            sync.RWMutex // Protects expectedState
 	expectedState string       // Expected state value for CSRF protection
 }
@@ -260,27 +275,15 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken string) (*
 	data := url.Values{}
 	data.Set("grant_type", "refresh_token")
 	data.Set("refresh_token", refreshToken)
-	data.Set("client_id", h.config.ClientID)
-	if h.config.ClientSecret != "" {
-		data.Set("client_secret", h.config.ClientSecret)
-	}
 	// RFC 8707: Include resource parameter on refresh requests
 	if resourceURL := h.getResourceURL(); resourceURL != "" {
 		data.Set("resource", resourceURL)
 	}
 
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		metadata.TokenEndpoint,
-		strings.NewReader(data.Encode()),
-	)
+	req, err := h.newTokenRequest(ctx, metadata, data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create refresh token request: %w", err)
 	}
-
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
 
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
@@ -1048,8 +1051,9 @@ func (h *OAuthHandler) RegisterClient(ctx context.Context, clientName string) er
 	}
 
 	var regResponse struct {
-		ClientID     string `json:"client_id"`
-		ClientSecret string `json:"client_secret,omitempty"`
+		ClientID                string `json:"client_id"`
+		ClientSecret            string `json:"client_secret,omitempty"`
+		TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&regResponse); err != nil {
@@ -1061,6 +1065,9 @@ func (h *OAuthHandler) RegisterClient(ctx context.Context, clientName string) er
 	if regResponse.ClientSecret != "" {
 		h.config.ClientSecret = regResponse.ClientSecret
 	}
+	// RFC 7591 §3.2.1: the response carries the method the server actually
+	// registered, which may differ from the one requested.
+	h.registeredAuthMethod = regResponse.TokenEndpointAuthMethod
 
 	return nil
 }
@@ -1095,12 +1102,7 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
 	data.Set("code", code)
-	data.Set("client_id", h.config.ClientID)
 	data.Set("redirect_uri", h.config.RedirectURI)
-
-	if h.config.ClientSecret != "" {
-		data.Set("client_secret", h.config.ClientSecret)
-	}
 
 	if h.config.PKCEEnabled && codeVerifier != "" {
 		data.Set("code_verifier", codeVerifier)
@@ -1111,18 +1113,10 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 		data.Set("resource", resourceURL)
 	}
 
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		metadata.TokenEndpoint,
-		strings.NewReader(data.Encode()),
-	)
+	req, err := h.newTokenRequest(ctx, metadata, data)
 	if err != nil {
 		return fmt.Errorf("failed to create token request: %w", err)
 	}
-
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
 
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
@@ -1166,6 +1160,82 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 	}
 
 	return nil
+}
+
+// Client authentication methods at the token endpoint (RFC 6749 §2.3.1,
+// RFC 7591 §2).
+const (
+	clientSecretBasic = "client_secret_basic"
+	clientSecretPost  = "client_secret_post"
+	clientAuthNone    = "none"
+)
+
+func isClientAuthMethod(method string) bool {
+	return method == clientSecretBasic || method == clientSecretPost || method == clientAuthNone
+}
+
+// GetTokenEndpointAuthMethod returns the client authentication method set in
+// OAuthConfig.TokenEndpointAuthMethod or, failing that, the one the
+// authorization server returned from dynamic client registration. Save it
+// along with the client ID and secret to reuse registered credentials.
+func (h *OAuthHandler) GetTokenEndpointAuthMethod() string {
+	if isClientAuthMethod(h.config.TokenEndpointAuthMethod) {
+		return h.config.TokenEndpointAuthMethod
+	}
+	if isClientAuthMethod(h.registeredAuthMethod) {
+		return h.registeredAuthMethod
+	}
+	return ""
+}
+
+// tokenEndpointAuthMethod picks how the client authenticates at the token
+// endpoint: the method configured or registered for it, or else HTTP Basic
+// when that is the only one of the two secret-based methods the server's
+// metadata lists. A server that says nothing keeps getting the secret in the
+// request body, as before.
+func (h *OAuthHandler) tokenEndpointAuthMethod(metadata *AuthServerMetadata) string {
+	if h.config.ClientSecret == "" {
+		return clientAuthNone
+	}
+	if method := h.GetTokenEndpointAuthMethod(); method != "" {
+		return method
+	}
+	supported := metadata.TokenEndpointAuthMethodsSupported
+	if slices.Contains(supported, clientSecretBasic) && !slices.Contains(supported, clientSecretPost) {
+		return clientSecretBasic
+	}
+	return clientSecretPost
+}
+
+// newTokenRequest builds a token endpoint request carrying data and the
+// client's credentials.
+func (h *OAuthHandler) newTokenRequest(ctx context.Context, metadata *AuthServerMetadata, data url.Values) (*http.Request, error) {
+	method := h.tokenEndpointAuthMethod(metadata)
+	basic := method == clientSecretBasic
+	if !basic {
+		data.Set("client_id", h.config.ClientID)
+		if method == clientSecretPost {
+			data.Set("client_secret", h.config.ClientSecret)
+		}
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		metadata.TokenEndpoint,
+		strings.NewReader(data.Encode()),
+	)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	if basic {
+		// RFC 6749 §2.3.1: the client ID and secret are form-encoded before
+		// they are used as the Basic user name and password.
+		req.SetBasicAuth(url.QueryEscape(h.config.ClientID), url.QueryEscape(h.config.ClientSecret))
+	}
+	return req, nil
 }
 
 // GetAuthorizationURL returns the URL for the authorization endpoint
