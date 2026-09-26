@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"reflect"
@@ -758,6 +759,12 @@ type ToolArgumentsSchema struct {
 	// in Properties are skipped, and keys that are not listed follow in
 	// sorted order. A nil PropertyOrder marshals all keys in sorted order.
 	PropertyOrder []string `json:"-"`
+	// AdditionalFields holds the schema's other top-level keywords by name,
+	// such as "$schema", "$id", "title" or "oneOf". UnmarshalJSON fills it
+	// and MarshalJSON writes it back, so decoding and encoding a schema
+	// keeps them. The fields above, when set, take precedence over entries
+	// with the same name.
+	AdditionalFields map[string]any `json:"-"`
 }
 
 // ToolInputSchema remains a named type for retro-compatibility, so its JSON
@@ -798,7 +805,11 @@ func (tis *ToolArgumentsSchema) UnmarshalJSON(data []byte) error {
 
 // toolArgumentsSchemaMarshalJSON handles the fields stored in ToolArgumentsSchema when json.Marshaler is called
 func toolArgumentsSchemaMarshalJSON(tis ToolArgumentsSchema) ([]byte, error) {
-	m := make(map[string]any)
+	m := make(map[string]any, len(tis.AdditionalFields)+5)
+	maps.Copy(m, tis.AdditionalFields)
+	if tis.Defs != nil {
+		delete(m, "definitions") // Defs is written as "$defs"; don't write both.
+	}
 	m["type"] = tis.Type
 
 	if tis.Defs != nil {
@@ -819,10 +830,13 @@ func toolArgumentsSchemaMarshalJSON(tis ToolArgumentsSchema) ([]byte, error) {
 		m["properties"] = map[string]any{}
 	}
 
-	// Marshal Required to '[]' rather than `nil` when its length equals zero
-	if len(tis.Required) > 0 {
+	// Marshal Required to '[]' rather than `nil` when its length equals zero,
+	// unless the schema declares draft-04 or earlier, where an empty
+	// "required" is invalid.
+	switch {
+	case len(tis.Required) > 0:
 		m["required"] = tis.Required
-	} else {
+	case !declaresDraft04OrEarlier(m["$schema"]):
 		m["required"] = []string{}
 	}
 
@@ -938,6 +952,9 @@ func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) err
 	if err := json.Unmarshal(data, aux); err != nil {
 		return err
 	}
+	if err := unmarshalAdditionalSchemaKeywords(data, tis); err != nil {
+		return err
+	}
 
 	if aux.Properties != nil {
 		if err := json.Unmarshal(aux.Properties, &tis.Properties); err != nil {
@@ -955,8 +972,44 @@ func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) err
 		rewriteDraft07LocalRefs(tis.Defs)
 		rewriteDraft07LocalRefs(tis.Properties)
 		rewriteDraft07LocalRefs(tis.AdditionalProperties)
+		rewriteDraft07LocalRefs(tis.AdditionalFields)
 	}
 
+	return nil
+}
+
+// declaresDraft04OrEarlier reports whether a $schema value names JSON Schema
+// draft-04 or earlier, where "required" needs at least one element.
+func declaresDraft04OrEarlier(schema any) bool {
+	uri, _ := schema.(string)
+	return strings.Contains(uri, "json-schema.org/draft-04/") || strings.Contains(uri, "json-schema.org/draft-03/")
+}
+
+// unmarshalAdditionalSchemaKeywords stores the top-level keywords of a schema
+// that ToolArgumentsSchema has no field for in AdditionalFields.
+func unmarshalAdditionalSchemaKeywords(data []byte, tis *ToolArgumentsSchema) error {
+	var keywords map[string]json.RawMessage
+	if err := json.Unmarshal(data, &keywords); err != nil {
+		return err
+	}
+	if keywords == nil { // JSON null, which leaves the schema as it is
+		return nil
+	}
+	for _, known := range []string{"$defs", "definitions", "type", "properties", "required", "additionalProperties"} {
+		delete(keywords, known)
+	}
+	if len(keywords) == 0 {
+		tis.AdditionalFields = nil
+		return nil
+	}
+	tis.AdditionalFields = make(map[string]any, len(keywords))
+	for name, raw := range keywords {
+		var value any
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return err
+		}
+		tis.AdditionalFields[name] = value
+	}
 	return nil
 }
 
