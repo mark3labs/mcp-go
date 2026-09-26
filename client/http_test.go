@@ -330,3 +330,43 @@ func (sm *SafeMap) Len() int {
 	defer sm.mu.RUnlock()
 	return len(sm.data)
 }
+
+// After the server ends a session, the caller re-initializes, and the
+// server/discover probe finds a server on protocol version 2026-07-28, which
+// has no sessions. Requests go out again.
+func TestStreamableHTTP_ReinitializeOnTheModernProtocol(t *testing.T) {
+	mcpServer := server.NewMCPServer("test-server", "1.0.0", server.WithToolCapabilities(true))
+	httpServer := servertest.NewTestStreamableHTTPServer(mcpServer, server.WithStateful(true))
+	defer httpServer.Close()
+	c, err := NewStreamableHttpClient(httpServer.URL)
+	require.NoError(t, err)
+	defer c.Close()
+	ctx := t.Context()
+	require.NoError(t, c.Start(ctx))
+
+	legacy := mcp.InitializeRequest{}
+	legacy.Params.ProtocolVersion = mcp.LATEST_LEGACY_PROTOCOL_VERSION
+	legacy.Params.ClientInfo = mcp.Implementation{Name: "test-client", Version: "1.0.0"}
+	_, err = c.Initialize(ctx, legacy)
+	require.NoError(t, err)
+	sessionID := c.GetSessionId()
+	require.NotEmpty(t, sessionID)
+
+	// End the session, as the server does when it expires one.
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, httpServer.URL, nil)
+	require.NoError(t, err)
+	req.Header.Set(transport.HeaderKeySessionID, sessionID)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	_, err = c.ListTools(ctx, mcp.ListToolsRequest{})
+	require.ErrorIs(t, err, transport.ErrSessionTerminated)
+
+	modern := mcp.InitializeRequest{}
+	modern.Params.ClientInfo = mcp.Implementation{Name: "test-client", Version: "1.0.0"}
+	result, err := c.Initialize(ctx, modern)
+	require.NoError(t, err)
+	require.Equal(t, mcp.ProtocolVersion20260728, result.ProtocolVersion)
+	_, err = c.ListTools(ctx, mcp.ListToolsRequest{})
+	require.NoError(t, err)
+}
