@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -301,7 +302,8 @@ func outboundHeader(header http.Header, requestMethod string) http.Header {
 //
 // When the probe fails with anything other than a recognized modern error the
 // server is taken to be legacy, and the classic initialize handshake is
-// performed instead.
+// performed instead. After an UnsupportedProtocolVersionError the handshake is
+// only tried if the server lists a legacy version this client supports.
 func (c *Client) Initialize(
 	ctx context.Context,
 	request mcp.InitializeRequest,
@@ -325,7 +327,18 @@ func (c *Client) Initialize(
 			c.initialized.Store(true)
 			return initializeResultFromDiscover(c.protocolVersion, discovered), nil
 		}
-		// Fall through to the handshake: the server is not modern.
+		// A server that answers with UnsupportedProtocolVersionError and
+		// lists the versions it supports is modern. The handshake only helps
+		// if one of them is a legacy version this client speaks; otherwise
+		// report that no version fits rather than fall back. An error without
+		// the list is not a recognizable modern one.
+		var unsupported mcp.UnsupportedProtocolVersionError
+		if errors.As(err, &unsupported) && len(unsupported.Supported) > 0 &&
+			!listsLegacyVersion(unsupported.Supported) {
+			return nil, err
+		}
+		// Fall through to the handshake: the server is not modern, or also
+		// speaks a legacy version.
 	}
 
 	return c.initializeLegacy(ctx, request, preferred)
