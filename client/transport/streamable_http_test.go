@@ -1614,3 +1614,132 @@ func TestSendRequestSSEStreamStaysOpenWithContinuousListening(t *testing.T) {
 	require.NoError(t, err, "tools/list should not hang even with continuous listening against stateless server")
 	require.NotNil(t, resp2)
 }
+
+func TestNextReconnectDelay(t *testing.T) {
+	tests := []struct {
+		name      string
+		current   time.Duration
+		baseDelay time.Duration
+		maxDelay  time.Duration
+		expected  time.Duration
+	}{
+		{
+			name:      "backoff disabled keeps base delay",
+			current:   retryInterval,
+			baseDelay: retryInterval,
+			maxDelay:  0,
+			expected:  retryInterval,
+		},
+		{
+			name:      "delay doubles",
+			current:   time.Second,
+			baseDelay: time.Second,
+			maxDelay:  30 * time.Second,
+			expected:  2 * time.Second,
+		},
+		{
+			name:      "delay capped at max",
+			current:   20 * time.Second,
+			baseDelay: time.Second,
+			maxDelay:  30 * time.Second,
+			expected:  30 * time.Second,
+		},
+		{
+			name:      "delay stays at max",
+			current:   30 * time.Second,
+			baseDelay: time.Second,
+			maxDelay:  30 * time.Second,
+			expected:  30 * time.Second,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expected, nextReconnectDelay(tt.current, tt.baseDelay, tt.maxDelay))
+		})
+	}
+}
+
+func TestWithContinuousListeningBackoffOption(t *testing.T) {
+	trans, err := NewStreamableHTTP("http://example.com/mcp",
+		WithContinuousListening(),
+		WithContinuousListeningBackoff(2*time.Second, time.Minute),
+	)
+	require.NoError(t, err)
+	require.Equal(t, 2*time.Second, trans.reconnectInitialDelay)
+	require.Equal(t, time.Minute, trans.reconnectMaxDelay)
+}
+
+func TestContinuousListeningBackoffIncreasesRetryDelay(t *testing.T) {
+	var mu sync.Mutex
+	var getTimes []time.Time
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set(HeaderKeySessionID, "test-session-backoff")
+			resp := JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      mcp.NewRequestId(int64(0)),
+				Result:  json.RawMessage(`{"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"test"}}`),
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+		mu.Lock()
+		getTimes = append(getTimes, time.Now())
+		count := len(getTimes)
+		mu.Unlock()
+		if count <= 4 {
+			// Fail the first four GET attempts so the listener backs off.
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}))
+	defer server.Close()
+
+	trans, err := NewStreamableHTTP(server.URL,
+		WithContinuousListening(),
+		WithContinuousListeningBackoff(40*time.Millisecond, 320*time.Millisecond),
+		WithHTTPLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+	)
+	require.NoError(t, err)
+	defer trans.Close()
+
+	require.NoError(t, trans.Start(t.Context()))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	_, err = trans.SendRequest(ctx, JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(int64(0)),
+		Method:  "initialize",
+	})
+	require.NoError(t, err)
+
+	// Wait for five GET attempts (four failures with growing delays).
+	var times []time.Time
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		mu.Lock()
+		n := len(getTimes)
+		times = append([]time.Time(nil), getTimes...)
+		mu.Unlock()
+		if n >= 5 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for GET attempts, got %d", n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	interval := func(i, j int) time.Duration { return times[j].Sub(times[i]) }
+	// Expected delays between attempts: 40ms, 80ms, 160ms, 320ms.
+	// Assert lower bounds slightly below the expected values to tolerate
+	// timer granularity, and require the delay to actually grow.
+	require.GreaterOrEqual(t, interval(0, 1), 30*time.Millisecond)
+	require.GreaterOrEqual(t, interval(1, 2), 60*time.Millisecond)
+	require.GreaterOrEqual(t, interval(2, 3), 120*time.Millisecond)
+	require.GreaterOrEqual(t, interval(3, 4), 240*time.Millisecond)
+	require.Greater(t, interval(2, 3), interval(0, 1))
+}

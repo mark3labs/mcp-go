@@ -41,6 +41,26 @@ func WithContinuousListening() StreamableHTTPCOption {
 	}
 }
 
+// WithContinuousListeningBackoff configures exponential backoff for the
+// reconnect attempts performed by the continuous listener enabled with
+// [WithContinuousListening]. After a connection attempt fails, the delay
+// before the next attempt doubles, starting at initialDelay and capped at
+// maxDelay. The delay resets to initialDelay once a connection ends cleanly.
+//
+// Without this option the listener retries at a fixed interval, preserving
+// the historical behavior. Values are sanitized: a non-positive initialDelay
+// disables backoff, and a maxDelay smaller than initialDelay is treated as
+// initialDelay.
+//
+// Deprecated: like [WithContinuousListening], this only applies to the legacy
+// standalone GET stream removed by protocol version 2026-07-28 (SEP-2575).
+func WithContinuousListeningBackoff(initialDelay, maxDelay time.Duration) StreamableHTTPCOption {
+	return func(sc *StreamableHTTP) {
+		sc.reconnectInitialDelay = initialDelay
+		sc.reconnectMaxDelay = maxDelay
+	}
+}
+
 // WithHTTPBasicClient sets a custom HTTP client on the StreamableHTTP transport.
 func WithHTTPBasicClient(client *http.Client) StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
@@ -130,6 +150,9 @@ type StreamableHTTP struct {
 	host                string
 	logger              *slog.Logger
 	getListeningEnabled bool
+
+	reconnectInitialDelay time.Duration
+	reconnectMaxDelay     time.Duration
 
 	sessionID       atomic.Value // string
 	protocolVersion atomic.Value // string
@@ -998,6 +1021,13 @@ func (c *StreamableHTTP) IsOAuthEnabled() bool {
 
 func (c *StreamableHTTP) listenForever(ctx context.Context) {
 	c.logger.Info("listening to server forever")
+	baseDelay := retryInterval
+	maxDelay := time.Duration(0)
+	if c.reconnectInitialDelay > 0 {
+		baseDelay = c.reconnectInitialDelay
+		maxDelay = max(c.reconnectMaxDelay, baseDelay)
+	}
+	delay := baseDelay
 	for {
 		// Use the original context for continuous listening - no per-iteration timeout
 		// The SSE connection itself will detect disconnections via the underlying HTTP transport,
@@ -1027,16 +1057,32 @@ func (c *StreamableHTTP) listenForever(ctx context.Context) {
 		}
 
 		if err != nil {
-			c.logger.Error("failed to listen to server. retry in 1 second", "err", err)
+			c.logger.Error("failed to listen to server", "err", err, "retryIn", delay)
 		}
 
 		// Use context-aware sleep
 		select {
-		case <-time.After(retryInterval):
+		case <-time.After(delay):
 		case <-ctx.Done():
 			return
 		}
+
+		if err == nil {
+			delay = baseDelay
+		} else {
+			delay = nextReconnectDelay(delay, baseDelay, maxDelay)
+		}
 	}
+}
+
+// nextReconnectDelay returns the reconnect delay to use after a failed
+// attempt. A maxDelay <= 0 means backoff is disabled and the delay stays at
+// baseDelay; otherwise the delay doubles, capped at maxDelay.
+func nextReconnectDelay(current, baseDelay, maxDelay time.Duration) time.Duration {
+	if maxDelay <= 0 {
+		return baseDelay
+	}
+	return min(current*2, maxDelay)
 }
 
 var (
