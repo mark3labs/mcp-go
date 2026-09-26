@@ -595,6 +595,7 @@ func (c *Client) ListToolsByPage(
 	if err != nil {
 		return nil, err
 	}
+	result.Tools = c.withoutInvalidHeaderTools(ctx, result.Tools)
 	// Cache the definitions so that tools/call requests can mirror
 	// x-mcp-header annotated parameters into HTTP headers (SEP-2243).
 	c.rememberTools(result.Tools)
