@@ -166,6 +166,13 @@ type AuthServerMetadata struct {
 	IntrospectionEndpointAuthMethodsSupported          []string `json:"introspection_endpoint_auth_methods_supported,omitempty"`
 	IntrospectionEndpointAuthSigningAlgValuesSupported []string `json:"introspection_endpoint_auth_signing_alg_values_supported,omitempty"`
 	CodeChallengeMethodsSupported                      []string `json:"code_challenge_methods_supported,omitempty"`
+	// AuthorizationResponseIssParameterSupported reports whether the server
+	// includes the iss parameter in authorization responses (RFC 9207).
+	AuthorizationResponseIssParameterSupported bool `json:"authorization_response_iss_parameter_supported,omitempty"`
+
+	// guessed marks metadata made up from default endpoints because the
+	// server published none, so its Issuer was never confirmed.
+	guessed bool
 }
 
 // OAuthHandler handles OAuth authentication for HTTP requests
@@ -980,6 +987,7 @@ func (h *OAuthHandler) getDefaultEndpoints(baseURL string) (*AuthServerMetadata,
 		AuthorizationEndpoint: authBaseURL + "/authorize",
 		TokenEndpoint:         authBaseURL + "/token",
 		RegistrationEndpoint:  authBaseURL + "/register",
+		guessed:               true,
 	}, nil
 }
 
@@ -1068,8 +1076,81 @@ func (h *OAuthHandler) RegisterClient(ctx context.Context, clientName string) er
 // ErrInvalidState is returned when the state parameter doesn't match the expected value
 var ErrInvalidState = errors.New("invalid state parameter, possible CSRF attack")
 
-// ProcessAuthorizationResponse processes the authorization response and exchanges the code for a token
+// ErrIssuerMismatch is returned when the iss parameter of an authorization
+// response doesn't identify the authorization server the client is using
+// (RFC 9207).
+var ErrIssuerMismatch = errors.New("authorization response issuer mismatch, possible mix-up attack")
+
+// ProcessAuthorizationResponse processes the authorization response and exchanges the code for a token.
+// It doesn't check the response's iss parameter; ProcessAuthorizationCallback does.
 func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, state, codeVerifier string) error {
+	return h.processAuthorizationResponse(ctx, code, state, codeVerifier, nil)
+}
+
+// ProcessAuthorizationCallback processes the authorization response the
+// authorization server redirected to the client's redirect URI with, given
+// the redirect's query parameters, and exchanges the code for a token.
+//
+// Besides the state, it checks the iss parameter against the issuer in the
+// authorization server's metadata, as RFC 9207 and the MCP authorization
+// spec require, and it returns an error the authorization server sent in
+// place of a code as an [OAuthError], but only once the response has passed
+// those checks.
+func (h *OAuthHandler) ProcessAuthorizationCallback(ctx context.Context, query url.Values, codeVerifier string) error {
+	// RFC 6749 §3.1: response parameters must not be repeated. A second iss
+	// or code could otherwise pass the checks while another one is used.
+	for _, name := range []string{"code", "state", "iss", "error"} {
+		if len(query[name]) > 1 {
+			return fmt.Errorf("authorization response repeats the %s parameter", name)
+		}
+	}
+	return h.processAuthorizationResponse(ctx, query.Get("code"), query.Get("state"), codeVerifier,
+		func(metadata *AuthServerMetadata) error {
+			if err := checkAuthorizationResponseIssuer(query, metadata); err != nil {
+				return err
+			}
+			if code := query.Get("error"); code != "" {
+				return fmt.Errorf("authorization request failed: %w", OAuthError{
+					ErrorCode:        code,
+					ErrorDescription: query.Get("error_description"),
+					ErrorURI:         query.Get("error_uri"),
+				})
+			}
+			if query.Get("code") == "" {
+				return errors.New("authorization response has no code")
+			}
+			return nil
+		})
+}
+
+// checkAuthorizationResponseIssuer applies RFC 9207 §2.4 to the query
+// parameters of an authorization response: an iss parameter must be
+// identical to the issuer in the authorization server's metadata, and a
+// server that advertises the parameter must send it. The comparison is
+// exact; normalizing either value could let a look-alike issuer through.
+// An empty iss counts as absent (RFC 6749 §3.1). Without metadata from the
+// server there is no issuer to compare against, so nothing is checked.
+func checkAuthorizationResponseIssuer(query url.Values, metadata *AuthServerMetadata) error {
+	if metadata.guessed {
+		return nil
+	}
+	iss := query.Get("iss")
+	if iss == "" {
+		if metadata.AuthorizationResponseIssParameterSupported {
+			return fmt.Errorf("%w: the authorization server sends iss, but the response has none", ErrIssuerMismatch)
+		}
+		return nil
+	}
+	if iss != metadata.Issuer {
+		return fmt.Errorf("%w: got %q, expected %q", ErrIssuerMismatch, iss, metadata.Issuer)
+	}
+	return nil
+}
+
+// processAuthorizationResponse implements ProcessAuthorizationResponse. When
+// checkResponse isn't nil, it vets the response against the authorization
+// server's metadata after the state check and before the code is exchanged.
+func (h *OAuthHandler) processAuthorizationResponse(ctx context.Context, code, state, codeVerifier string, checkResponse func(*AuthServerMetadata) error) error {
 	// Validate the state parameter to prevent CSRF attacks
 	h.mu.Lock()
 	expectedState := h.expectedState
@@ -1090,6 +1171,12 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 	metadata, err := h.getServerMetadata(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get server metadata: %w", err)
+	}
+
+	if checkResponse != nil {
+		if err := checkResponse(metadata); err != nil {
+			return err
+		}
 	}
 
 	data := url.Values{}
