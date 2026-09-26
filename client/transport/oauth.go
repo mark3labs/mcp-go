@@ -218,9 +218,11 @@ func (h *OAuthHandler) GetAuthorizationHeader(ctx context.Context) (string, erro
 	}
 
 	// Per RFC 6749 §5.1, token_type is case-insensitive.
-	// Normalize to "Bearer" for strict implementations.
+	// Normalize to "Bearer" for strict implementations. A token without a
+	// type, for example one an application put in the store itself, is
+	// sent as a bearer token too, as MCP authorization prescribes.
 	tokenType := token.TokenType
-	if strings.EqualFold(tokenType, "bearer") {
+	if tokenType == "" || strings.EqualFold(tokenType, "bearer") {
 		tokenType = "Bearer"
 	}
 
