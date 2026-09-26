@@ -1911,6 +1911,17 @@ func (s *MCPServer) handleGetPrompt(
 		}
 	}
 
+	// A handler that returns neither a result nor an error, on the first call
+	// or on a retry, must still produce a response. The dispatcher would
+	// otherwise dereference the nil result and panic.
+	if result == nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INTERNAL_ERROR,
+			err:  noResultError("prompt", request.Params.Name),
+		}
+	}
+
 	return result, nil
 }
 
@@ -2186,6 +2197,17 @@ func (s *MCPServer) handleToolCall(
 		}
 	}
 
+	// Without this check a handler that returns neither a result nor an
+	// error, on the first call or on a retry, would be answered with a null
+	// result, which no client accepts.
+	if result == nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INTERNAL_ERROR,
+			err:  noResultError("tool", request.Params.Name),
+		}
+	}
+
 	// Validate the tool's StructuredContent against its declared output
 	// schema when output schema validation has been enabled via
 	// WithOutputSchemaValidation. A validation failure is surfaced as a
@@ -2376,6 +2398,13 @@ func (s *MCPServer) executeTaskTool(
 		return
 	}
 
+	// tasks/result has nothing to report for a handler that returned neither
+	// a result nor an error, so the task fails.
+	if result == nil {
+		s.completeTask(entry, nil, noResultError("tool", request.Params.Name))
+		return
+	}
+
 	// Task succeeded - store the CreateTaskResult
 	// Note: The actual result will be retrieved later via tasks/result
 	//
@@ -2478,6 +2507,13 @@ func (s *MCPServer) executeRegularToolAsTask(
 
 		// Task failed - complete with error
 		s.completeTask(entry, nil, err)
+		return
+	}
+
+	// tasks/result has nothing to report for a handler that returned neither
+	// a result nor an error, so the task fails.
+	if result == nil {
+		s.completeTask(entry, nil, noResultError("tool", request.Params.Name))
 		return
 	}
 
