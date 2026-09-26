@@ -300,8 +300,9 @@ func outboundHeader(header http.Header, requestMethod string) http.Header {
 // its own protocol metadata; the returned InitializeResult is rendered from
 // the discovery response so that callers observe the same value in both eras.
 //
-// When the probe fails with anything other than a recognized modern error the
-// server is taken to be legacy, and the classic initialize handshake is
+// When the probe fails with anything other than a recognized modern error, or
+// succeeds with a result that lists no modern version this client supports,
+// the server is taken to be legacy, and the classic initialize handshake is
 // performed instead. After an UnsupportedProtocolVersionError the handshake is
 // only tried if the server lists a legacy version this client supports.
 func (c *Client) Initialize(
