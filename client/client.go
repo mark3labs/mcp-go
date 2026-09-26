@@ -765,6 +765,9 @@ func (c *Client) handleSamplingRequestTransport(ctx context.Context, request tra
 	if err != nil {
 		return nil, err
 	}
+	if result == nil {
+		return nil, fmt.Errorf("sampling handler returned no result")
+	}
 
 	// Marshal the result
 	resultBytes, err := json.Marshal(result)
@@ -776,6 +779,18 @@ func (c *Client) handleSamplingRequestTransport(ctx context.Context, request tra
 	response := transport.NewJSONRPCResultResponse(request.ID, json.RawMessage(resultBytes))
 
 	return response, nil
+}
+
+// withRootsArray returns result with a non-nil Roots, so that a client with
+// no roots answers with "roots": [] rather than null, which the schema
+// doesn't allow.
+func withRootsArray(result *mcp.ListRootsResult) *mcp.ListRootsResult {
+	if result.Roots != nil {
+		return result
+	}
+	withRoots := *result
+	withRoots.Roots = []mcp.Root{}
+	return &withRoots
 }
 
 // handleListRootsRequestTransport handles list roots requests at the transport level.
@@ -796,6 +811,10 @@ func (c *Client) handleListRootsRequestTransport(ctx context.Context, request tr
 	if err != nil {
 		return nil, err
 	}
+	if result == nil {
+		return nil, fmt.Errorf("roots handler returned no result")
+	}
+	result = withRootsArray(result)
 
 	// Marshal the result
 	resultBytes, err := json.Marshal(result)
@@ -843,6 +862,9 @@ func (c *Client) handleElicitationRequestTransport(ctx context.Context, request 
 	result, err := c.elicitationHandler.Elicit(ctx, mcpRequest)
 	if err != nil {
 		return nil, err
+	}
+	if result == nil {
+		return nil, fmt.Errorf("elicitation handler returned no result")
 	}
 
 	// Marshal the result
