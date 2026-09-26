@@ -224,6 +224,7 @@ type MCPServer struct {
 	allowServerInitiatedRequests bool
 	paginationLimit              *int
 	sessions                     sync.Map
+	listenSessions               sync.Map // see registerListenSession
 	hooks                        *Hooks
 	taskHooks                    *TaskHooks
 	tasks                        map[string]*taskEntry

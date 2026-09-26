@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -8,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -422,6 +425,188 @@ func TestModernProtocol_EventStoreDoesNotStrandTheForwarder(t *testing.T) {
 	assert.Less(t, after-before, requests/2,
 		"notification forwarders outlived their requests: %d goroutines before, %d after %d requests",
 		before, after, requests)
+}
+
+// listenMessage is a notification read off a subscriptions/listen stream.
+type listenMessage struct {
+	Method string `json:"method"`
+	Params struct {
+		Meta map[string]any `json:"_meta"`
+	} `json:"params"`
+}
+
+// openListenStream opens a modern subscriptions/listen stream with the given
+// request ID and notification filter, and returns the notifications it
+// delivers. The stream closes when ctx is cancelled.
+func openListenStream(ctx context.Context, t *testing.T, url string, id int, notifications map[string]any) <-chan listenMessage {
+	t.Helper()
+
+	body, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  mcp.MethodSubscriptionsListen,
+		"params": map[string]any{
+			"notifications": notifications,
+			"_meta":         modernMeta(),
+		},
+	})
+	require.NoError(t, err)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set(mcp.HeaderProtocolVersion, mcp.ProtocolVersion20260728)
+	req.Header.Set(mcp.HeaderMethod, string(mcp.MethodSubscriptionsListen))
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	messages := make(chan listenMessage, 8)
+	go func() {
+		defer close(messages)
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			data, ok := strings.CutPrefix(scanner.Text(), "data: ")
+			if !ok {
+				continue
+			}
+			var message listenMessage
+			if json.Unmarshal([]byte(data), &message) == nil {
+				messages <- message
+			}
+		}
+	}()
+	return messages
+}
+
+func nextListenMessage(t *testing.T, messages <-chan listenMessage) listenMessage {
+	t.Helper()
+	select {
+	case message := <-messages:
+		return message
+	case <-time.After(5 * time.Second):
+		t.Fatal("nothing arrived on the subscription stream")
+		return listenMessage{}
+	}
+}
+
+// A modern client receives the notifications the server broadcasts, such as
+// notifications/tools/list_changed, on a subscriptions/listen stream: only the
+// types it opted in to, each tagged with the stream's subscription ID. The
+// stream's session is reachable by broadcasts while the stream is open, and it
+// is not registered as a client session.
+func TestModernProtocol_ListenStreamReceivesListChanged(t *testing.T) {
+	var registered atomic.Int32
+	hooks := &Hooks{}
+	hooks.AddOnRegisterSession(func(context.Context, ClientSession) { registered.Add(1) })
+	mcpServer := NewMCPServer("modern-test", "1.0.0",
+		WithToolCapabilities(true),
+		WithPromptCapabilities(true),
+		WithHooks(hooks),
+	)
+	httpServer := httptest.NewServer(NewStreamableHTTPServer(mcpServer))
+	defer httpServer.Close()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	everything := openListenStream(ctx, t, httpServer.URL, 7,
+		map[string]any{"toolsListChanged": true, "promptsListChanged": true})
+	promptsOnly := openListenStream(ctx, t, httpServer.URL, 8,
+		map[string]any{"promptsListChanged": true})
+
+	for stream, id := range map[<-chan listenMessage]float64{everything: 7, promptsOnly: 8} {
+		ack := nextListenMessage(t, stream)
+		require.Equal(t, mcp.MethodNotificationSubscriptionsAcknowledged, ack.Method)
+		require.Equal(t, id, ack.Params.Meta[mcp.MetaKeySubscriptionID])
+	}
+
+	mcpServer.SendNotificationToAllClients("notifications/custom", nil)
+	mcpServer.AddTool(mcp.NewTool("added"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("added"), nil
+	})
+	mcpServer.AddPrompt(mcp.NewPrompt("added"), func(context.Context, mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		return mcp.NewGetPromptResult("added", nil), nil
+	})
+
+	// Broadcasts arrive in order, so a type the stream did not ask for would
+	// show up before the ones it did.
+	toolsChanged := nextListenMessage(t, everything)
+	assert.Equal(t, mcp.MethodNotificationToolsListChanged, toolsChanged.Method)
+	assert.Equal(t, float64(7), toolsChanged.Params.Meta[mcp.MetaKeySubscriptionID])
+	promptsChanged := nextListenMessage(t, everything)
+	assert.Equal(t, mcp.MethodNotificationPromptsListChanged, promptsChanged.Method)
+	assert.Equal(t, float64(7), promptsChanged.Params.Meta[mcp.MetaKeySubscriptionID])
+
+	onlyPrompts := nextListenMessage(t, promptsOnly)
+	assert.Equal(t, mcp.MethodNotificationPromptsListChanged, onlyPrompts.Method)
+	assert.Equal(t, float64(8), onlyPrompts.Params.Meta[mcp.MetaKeySubscriptionID])
+
+	cancel()
+	assert.Eventually(t, func() bool {
+		listening := 0
+		mcpServer.listenSessions.Range(func(any, any) bool {
+			listening++
+			return true
+		})
+		return listening == 0
+	}, 5*time.Second, 10*time.Millisecond, "a subscription stream stayed reachable after it closed")
+
+	assert.Zero(t, registered.Load(), "a subscription stream registered a client session")
+	mcpServer.sessions.Range(func(key, _ any) bool {
+		t.Errorf("unexpected registered session %v", key)
+		return true
+	})
+}
+
+// A listen stream's session receives no broadcast before subscriptions/listen
+// has recorded what the client asked for, nor after it is cleared.
+func TestStreamableHTTPSessionListenStreamIsFilteredThroughout(t *testing.T) {
+	session := newStreamableHttpSession("", nil, nil, nil, nil, new(atomic.Int64))
+	assert.True(t, subscriptionAllowsNotification(session, mcp.MethodNotificationToolsListChanged),
+		"a session that serves no subscription stream is unfiltered")
+
+	session.serveSubscriptionStream()
+	assert.False(t, subscriptionAllowsNotification(session, mcp.MethodNotificationToolsListChanged))
+
+	session.SetSubscriptionFilter(mcp.SubscriptionFilter{ToolsListChanged: true})
+	assert.True(t, subscriptionAllowsNotification(session, mcp.MethodNotificationToolsListChanged))
+	assert.False(t, subscriptionAllowsNotification(session, mcp.MethodNotificationPromptsListChanged))
+
+	session.SetSubscriptionFilter(mcp.SubscriptionFilter{})
+	assert.False(t, subscriptionAllowsNotification(session, mcp.MethodNotificationToolsListChanged))
+}
+
+// A subscriptions/listen sent as a notification has no ID to tag the stream
+// with, so it is not served as one.
+func TestModernProtocol_ListenWithoutIDIsNotAStream(t *testing.T) {
+	mcpServer := NewMCPServer("modern-test", "1.0.0", WithToolCapabilities(true))
+	httpServer := httptest.NewServer(NewStreamableHTTPServer(mcpServer))
+	defer httpServer.Close()
+
+	body, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"method":  mcp.MethodSubscriptionsListen,
+		"params": map[string]any{
+			"notifications": map[string]any{"toolsListChanged": true},
+			"_meta":         modernMeta(),
+		},
+	})
+	require.NoError(t, err)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, httpServer.URL, bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set(mcp.HeaderProtocolVersion, mcp.ProtocolVersion20260728)
+	req.Header.Set(mcp.HeaderMethod, string(mcp.MethodSubscriptionsListen))
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusAccepted, resp.StatusCode)
+	mcpServer.listenSessions.Range(func(key, _ any) bool {
+		t.Errorf("unexpected subscription stream %v", key)
+		return true
+	})
 }
 
 // establishLegacySession performs the legacy handshake and returns the minted
