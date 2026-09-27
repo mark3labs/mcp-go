@@ -1743,3 +1743,91 @@ func TestContinuousListeningBackoffIncreasesRetryDelay(t *testing.T) {
 	require.GreaterOrEqual(t, interval(3, 4), 240*time.Millisecond)
 	require.Greater(t, interval(2, 3), interval(0, 1))
 }
+
+func TestContinuousListeningCleanStreamEndDoesNotAdvanceBackoff(t *testing.T) {
+	var mu sync.Mutex
+	var getTimes []time.Time
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set(HeaderKeySessionID, "test-session-clean-eof")
+			resp := JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      mcp.NewRequestId(int64(0)),
+				Result:  json.RawMessage(`{"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"test"}}`),
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+		mu.Lock()
+		getTimes = append(getTimes, time.Now())
+		count := len(getTimes)
+		mu.Unlock()
+		// Disable keep-alive so the Go transport never silently retries a GET
+		// on a race-closed pooled connection, which would skew timing below.
+		w.Header().Set("Connection", "close")
+		switch count {
+		case 1:
+			// End the SSE stream cleanly right away (server closes the connection).
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		case 2, 3:
+			// Fail the next attempts so the listener backs off from baseDelay again.
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+
+	trans, err := NewStreamableHTTP(server.URL,
+		WithContinuousListening(),
+		WithContinuousListeningBackoff(40*time.Millisecond, 320*time.Millisecond),
+		WithHTTPLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+	)
+	require.NoError(t, err)
+	defer trans.Close()
+
+	require.NoError(t, trans.Start(t.Context()))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	_, err = trans.SendRequest(ctx, JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(int64(0)),
+		Method:  "initialize",
+	})
+	require.NoError(t, err)
+
+	// Wait for four GET attempts: clean EOF, two failures, then stop.
+	var times []time.Time
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		mu.Lock()
+		n := len(getTimes)
+		times = append([]time.Time(nil), getTimes...)
+		mu.Unlock()
+		if n >= 4 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for GET attempts, got %d", n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	interval := func(i, j int) time.Duration { return times[j].Sub(times[i]) }
+	// A clean EOF is a success: the listener reconnects after baseDelay (40ms).
+	require.GreaterOrEqual(t, interval(0, 1), 30*time.Millisecond)
+	require.Less(t, interval(0, 1), 60*time.Millisecond)
+	// The first failure after a success also waits baseDelay (the delay is
+	// advanced only after the wait), then the backoff grows from baseDelay:
+	// the second failure waits 80ms.
+	require.GreaterOrEqual(t, interval(1, 2), 30*time.Millisecond)
+	require.Less(t, interval(1, 2), 60*time.Millisecond)
+	require.GreaterOrEqual(t, interval(2, 3), 60*time.Millisecond)
+	require.Greater(t, interval(2, 3), interval(1, 2))
+}
