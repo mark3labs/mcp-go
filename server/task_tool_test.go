@@ -193,7 +193,7 @@ func TestTaskToolTracerBullet(t *testing.T) {
 					continue
 				}
 				if params["taskId"] == taskID && params["status"] == mcp.TaskStatusCompleted {
-					assert.Equal(t, mcp.MethodNotificationTasksStatus, statusNotification.Method)
+					assert.Equal(t, mcp.MethodNotificationTasks, statusNotification.Method)
 					goto notificationReceived
 				}
 				// Ignore non-matching or working notifications

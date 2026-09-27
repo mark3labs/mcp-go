@@ -58,6 +58,7 @@ func TestTaskAugmentedToolCall_ResponseFormat(t *testing.T) {
 func TestTaskAugmentedToolCall_SpecCompliance(t *testing.T) {
 	server := NewMCPServer("test", "1.0.0",
 		WithTaskCapabilities(true, true, true),
+		WithExtensions(map[string]any{mcp.ExtensionTasks: map[string]any{}}),
 	)
 
 	tool := mcp.NewTool("async_op",
@@ -74,9 +75,13 @@ func TestTaskAugmentedToolCall_SpecCompliance(t *testing.T) {
 		"method": "tools/call",
 		"params": {
 			"name": "async_op",
-			"task": {
-				"ttl": 60000,
-				"pollInterval": 5000
+			"_meta": {
+				"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+				"io.modelcontextprotocol/clientCapabilities": {
+					"extensions": {
+						"io.modelcontextprotocol/tasks": {}
+					}
+				}
 			}
 		}
 	}`))
@@ -99,22 +104,17 @@ func TestTaskAugmentedToolCall_SpecCompliance(t *testing.T) {
 	result, ok := parsed["result"].(map[string]any)
 	require.True(t, ok, "result should be an object")
 
-	// Verify task is a direct field of result (not in _meta)
-	assert.Contains(t, result, "task", "task should be direct field of result")
-	assert.NotContains(t, result, "_meta", "task should NOT be in _meta")
+	// Verify SEP-2663 inline structure
+	assert.Equal(t, "task", result["resultType"], "resultType should be 'task'")
+	assert.Contains(t, result, "taskId", "taskId should be a direct field of result")
 
-	// Verify task structure
-	task, ok := result["task"].(map[string]any)
-	require.True(t, ok, "task should be an object")
-
-	assert.Contains(t, task, "taskId")
-	assert.Contains(t, task, "status")
-	assert.Equal(t, "working", task["status"])
-	assert.Contains(t, task, "createdAt")
-	assert.Contains(t, task, "lastUpdatedAt")
-	assert.Contains(t, task, "ttl")
-	assert.Equal(t, float64(60000), task["ttl"])
-	// pollInterval is optional per spec, only check if provided
+	assert.Contains(t, result, "taskId")
+	assert.Contains(t, result, "status")
+	assert.Equal(t, "working", result["status"])
+	assert.Contains(t, result, "createdAt")
+	assert.Contains(t, result, "lastUpdatedAt")
+	// ttlMs is null when not specified (JSON: "ttlMs": null)
+	assert.Contains(t, result, "ttlMs")
+	// pollIntervalMs is optional per spec, only check if provided
 	// The server sets it to nil when not specified, so it won't appear in JSON
-	// This is correct behavior per JSON omitempty
 }
