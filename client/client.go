@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -925,6 +926,10 @@ func (c *Client) CancelTask(
 	return mcp.ParseCancelTaskResult(response)
 }
 
+// ErrRepeatedTaskListCursor is returned when tasks/list repeats a cursor that
+// was already requested. Following it would request the same page again.
+var ErrRepeatedTaskListCursor = errors.New("tasks/list cursor did not advance")
+
 // ListTasksByPage lists one page of tasks.
 func (c *Client) ListTasksByPage(
 	ctx context.Context,
@@ -943,15 +948,20 @@ func (c *Client) ListTasks(
 	ctx context.Context,
 	request mcp.ListTasksRequest,
 ) (*mcp.ListTasksResult, error) {
+	seen := map[mcp.Cursor]struct{}{request.Params.Cursor: {}}
 	result, err := c.ListTasksByPage(ctx, request)
 	if err != nil {
 		return nil, err
 	}
 	for result.NextCursor != "" {
+		if _, dup := seen[result.NextCursor]; dup {
+			return nil, fmt.Errorf("%w: %q", ErrRepeatedTaskListCursor, result.NextCursor)
+		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
+			seen[result.NextCursor] = struct{}{}
 			request.Params.Cursor = result.NextCursor
 			page, err := c.ListTasksByPage(ctx, request)
 			if err != nil {

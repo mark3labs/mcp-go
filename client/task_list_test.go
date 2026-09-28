@@ -2,8 +2,12 @@ package client
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"sync"
 	"testing"
 
+	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/stretchr/testify/assert"
@@ -72,4 +76,90 @@ func TestClient_ListTasksFollowsPagination(t *testing.T) {
 	again, err := c.ListTasks(t.Context(), mcp.ListTasksRequest{})
 	require.NoError(t, err)
 	assert.Len(t, again.Tasks, len(wantIDs))
+}
+
+func TestClient_ListTasksRejectsRepeatedCursor(t *testing.T) {
+	tests := []struct {
+		name      string
+		pages     []mcp.ListTasksResult
+		wantCalls int
+	}{
+		{
+			name: "same cursor returned again",
+			pages: []mcp.ListTasksResult{
+				{Tasks: []mcp.Task{{TaskId: "t1"}}, PaginatedResult: mcp.PaginatedResult{NextCursor: "page-2"}},
+				{Tasks: []mcp.Task{{TaskId: "t2"}}, PaginatedResult: mcp.PaginatedResult{NextCursor: "page-2"}},
+			},
+			wantCalls: 2,
+		},
+		{
+			name: "cursor cycles back to an earlier page",
+			pages: []mcp.ListTasksResult{
+				{Tasks: []mcp.Task{{TaskId: "t1"}}, PaginatedResult: mcp.PaginatedResult{NextCursor: "page-2"}},
+				{Tasks: []mcp.Task{{TaskId: "t2"}}, PaginatedResult: mcp.PaginatedResult{NextCursor: "page-3"}},
+				{Tasks: []mcp.Task{{TaskId: "t3"}}, PaginatedResult: mcp.PaginatedResult{NextCursor: "page-2"}},
+			},
+			wantCalls: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := newListTasksPageTransport(tt.pages)
+			c := NewClient(tr, WithSession())
+
+			_, err := c.ListTasks(t.Context(), mcp.ListTasksRequest{})
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrRepeatedTaskListCursor)
+			assert.Equal(t, tt.wantCalls, tr.callCount())
+		})
+	}
+}
+
+type listTasksPageTransport struct {
+	mu    sync.Mutex
+	pages []mcp.ListTasksResult
+	calls int
+}
+
+func newListTasksPageTransport(pages []mcp.ListTasksResult) *listTasksPageTransport {
+	return &listTasksPageTransport{pages: pages}
+}
+
+func (t *listTasksPageTransport) Start(context.Context) error { return nil }
+
+func (t *listTasksPageTransport) SendRequest(
+	_ context.Context,
+	request transport.JSONRPCRequest,
+) (*transport.JSONRPCResponse, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if request.Method != string(mcp.MethodTasksList) {
+		return nil, errors.New("unexpected request method")
+	}
+	if t.calls >= len(t.pages) {
+		return nil, errors.New("no scripted tasks/list page")
+	}
+	page := t.pages[t.calls]
+	t.calls++
+	raw, err := json.Marshal(page)
+	if err != nil {
+		return nil, err
+	}
+	return &transport.JSONRPCResponse{Result: raw}, nil
+}
+
+func (t *listTasksPageTransport) SendNotification(context.Context, mcp.JSONRPCNotification) error {
+	return nil
+}
+
+func (t *listTasksPageTransport) SetNotificationHandler(func(mcp.JSONRPCNotification)) {}
+func (t *listTasksPageTransport) Close() error                                         { return nil }
+func (t *listTasksPageTransport) GetSessionId() string                                 { return "" }
+
+func (t *listTasksPageTransport) callCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.calls
 }
