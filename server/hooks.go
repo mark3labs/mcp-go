@@ -116,14 +116,14 @@ type OnAfterCallToolFunc func(ctx context.Context, id any, message *mcp.CallTool
 type OnBeforeGetTaskFunc func(ctx context.Context, id any, message *mcp.GetTaskRequest)
 type OnAfterGetTaskFunc func(ctx context.Context, id any, message *mcp.GetTaskRequest, result *mcp.GetTaskResult)
 
+type OnBeforeUpdateTaskFunc func(ctx context.Context, id any, message *mcp.UpdateTaskRequest)
+type OnAfterUpdateTaskFunc func(ctx context.Context, id any, message *mcp.UpdateTaskRequest, result *mcp.UpdateTaskResult)
+
 type OnBeforeListTasksFunc func(ctx context.Context, id any, message *mcp.ListTasksRequest)
 type OnAfterListTasksFunc func(ctx context.Context, id any, message *mcp.ListTasksRequest, result *mcp.ListTasksResult)
 
 type OnBeforeTaskResultFunc func(ctx context.Context, id any, message *mcp.TaskResultRequest)
 type OnAfterTaskResultFunc func(ctx context.Context, id any, message *mcp.TaskResultRequest, result *mcp.TaskResultResult)
-
-type OnBeforeUpdateTaskFunc func(ctx context.Context, id any, message *mcp.UpdateTaskRequest)
-type OnAfterUpdateTaskFunc func(ctx context.Context, id any, message *mcp.UpdateTaskRequest, result *mcp.UpdateTaskResult)
 
 type OnBeforeCancelTaskFunc func(ctx context.Context, id any, message *mcp.CancelTaskRequest)
 type OnAfterCancelTaskFunc func(ctx context.Context, id any, message *mcp.CancelTaskRequest, result *mcp.CancelTaskResult)
@@ -202,12 +202,12 @@ type Hooks struct {
 	OnAfterCallTool               []OnAfterCallToolFunc
 	OnBeforeGetTask               []OnBeforeGetTaskFunc
 	OnAfterGetTask                []OnAfterGetTaskFunc
+	OnBeforeUpdateTask            []OnBeforeUpdateTaskFunc
+	OnAfterUpdateTask             []OnAfterUpdateTaskFunc
 	OnBeforeListTasks             []OnBeforeListTasksFunc
 	OnAfterListTasks              []OnAfterListTasksFunc
 	OnBeforeTaskResult            []OnBeforeTaskResultFunc
 	OnAfterTaskResult             []OnAfterTaskResultFunc
-	OnBeforeUpdateTask            []OnBeforeUpdateTaskFunc
-	OnAfterUpdateTask             []OnAfterUpdateTaskFunc
 	OnBeforeCancelTask            []OnBeforeCancelTaskFunc
 	OnAfterCancelTask             []OnAfterCancelTaskFunc
 	OnBeforeComplete              []OnBeforeCompleteFunc
@@ -759,6 +759,33 @@ func (c *Hooks) afterGetTask(ctx context.Context, id any, message *mcp.GetTaskRe
 		hook(ctx, id, message, result)
 	}
 }
+func (c *Hooks) AddBeforeUpdateTask(hook OnBeforeUpdateTaskFunc) {
+	c.OnBeforeUpdateTask = append(c.OnBeforeUpdateTask, hook)
+}
+
+func (c *Hooks) AddAfterUpdateTask(hook OnAfterUpdateTaskFunc) {
+	c.OnAfterUpdateTask = append(c.OnAfterUpdateTask, hook)
+}
+
+func (c *Hooks) beforeUpdateTask(ctx context.Context, id any, message *mcp.UpdateTaskRequest) {
+	c.beforeAny(ctx, id, mcp.MethodTasksUpdate, message)
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnBeforeUpdateTask {
+		hook(ctx, id, message)
+	}
+}
+
+func (c *Hooks) afterUpdateTask(ctx context.Context, id any, message *mcp.UpdateTaskRequest, result *mcp.UpdateTaskResult) {
+	c.onSuccess(ctx, id, mcp.MethodTasksUpdate, message, result)
+	if c == nil {
+		return
+	}
+	for _, hook := range c.OnAfterUpdateTask {
+		hook(ctx, id, message, result)
+	}
+}
 func (c *Hooks) AddBeforeListTasks(hook OnBeforeListTasksFunc) {
 	c.OnBeforeListTasks = append(c.OnBeforeListTasks, hook)
 }
@@ -821,14 +848,6 @@ func (c *Hooks) AddAfterCancelTask(hook OnAfterCancelTaskFunc) {
 	c.OnAfterCancelTask = append(c.OnAfterCancelTask, hook)
 }
 
-func (c *Hooks) AddBeforeUpdateTask(hook OnBeforeUpdateTaskFunc) {
-	c.OnBeforeUpdateTask = append(c.OnBeforeUpdateTask, hook)
-}
-
-func (c *Hooks) AddAfterUpdateTask(hook OnAfterUpdateTaskFunc) {
-	c.OnAfterUpdateTask = append(c.OnAfterUpdateTask, hook)
-}
-
 func (c *Hooks) beforeCancelTask(ctx context.Context, id any, message *mcp.CancelTaskRequest) {
 	c.beforeAny(ctx, id, mcp.MethodTasksCancel, message)
 	if c == nil {
@@ -848,27 +867,6 @@ func (c *Hooks) afterCancelTask(ctx context.Context, id any, message *mcp.Cancel
 		hook(ctx, id, message, result)
 	}
 }
-
-func (c *Hooks) beforeUpdateTask(ctx context.Context, id any, message *mcp.UpdateTaskRequest) {
-	c.beforeAny(ctx, id, mcp.MethodTasksUpdate, message)
-	if c == nil {
-		return
-	}
-	for _, hook := range c.OnBeforeUpdateTask {
-		hook(ctx, id, message)
-	}
-}
-
-func (c *Hooks) afterUpdateTask(ctx context.Context, id any, message *mcp.UpdateTaskRequest, result *mcp.UpdateTaskResult) {
-	c.onSuccess(ctx, id, mcp.MethodTasksUpdate, message, result)
-	if c == nil {
-		return
-	}
-	for _, hook := range c.OnAfterUpdateTask {
-		hook(ctx, id, message, result)
-	}
-}
-
 func (c *Hooks) AddBeforeComplete(hook OnBeforeCompleteFunc) {
 	c.OnBeforeComplete = append(c.OnBeforeComplete, hook)
 }

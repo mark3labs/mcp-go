@@ -266,8 +266,8 @@ func TestMCPServer_HandleCancelTask(t *testing.T) {
 	require.True(t, ok, "Expected JSONRPCResponse, got %T", response)
 
 	// Legacy (non-modern) request returns CancelTaskResult with the task state.
-	result, ok := resp.Result.(*mcp.CancelTaskResult)
-	require.True(t, ok, "Expected *CancelTaskResult, got %T", resp.Result)
+	result, ok := resp.Result.(mcp.CancelTaskResult)
+	require.True(t, ok, "Expected CancelTaskResult, got %T", resp.Result)
 
 	assert.Equal(t, "task-789", result.TaskId)
 	assert.Equal(t, mcp.TaskStatusCancelled, result.Status)

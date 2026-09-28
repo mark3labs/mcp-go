@@ -529,10 +529,8 @@ func (s *MCPServer) HandleMessage(
 	case mcp.MethodTasksGet:
 		var request mcp.GetTaskRequest
 		var result *mcp.GetTaskResult
-		// For protocol SEP-2663, check the per-request extension capability.
 		if protocolInfo.Modern {
-			clientCaps := protocolInfo.ClientCapabilities
-			if clientCaps == nil || !clientCaps.HasExtension(mcp.ExtensionTasks) {
+			if clientCaps := protocolInfo.ClientCapabilities; clientCaps == nil || !clientCaps.HasExtension(mcp.ExtensionTasks) {
 				err = &requestError{
 					id:   baseMessage.ID,
 					code: mcp.MISSING_REQUIRED_CLIENT_CAPABILITY,
@@ -545,19 +543,16 @@ func (s *MCPServer) HandleMessage(
 				code: mcp.METHOD_NOT_FOUND,
 				err:  fmt.Errorf("tasks %w", ErrUnsupported),
 			}
-		}
-		if err == nil {
-			if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
-				err = &requestError{
-					id:   baseMessage.ID,
-					code: mcp.INVALID_REQUEST,
-					err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
-				}
-			} else {
-				request.Header = headers
-				s.hooks.beforeGetTask(ctx, baseMessage.ID, &request)
-				result, err = s.handleGetTask(ctx, baseMessage.ID, request)
+		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.INVALID_REQUEST,
+				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
+		} else {
+			request.Header = headers
+			s.hooks.beforeGetTask(ctx, baseMessage.ID, &request)
+			result, err = s.handleGetTask(ctx, baseMessage.ID, request)
 		}
 		if err != nil {
 			s.hooks.onError(ctx, baseMessage.ID, baseMessage.Method, &request, err)
@@ -568,12 +563,11 @@ func (s *MCPServer) HandleMessage(
 	case mcp.MethodTasksUpdate:
 		var request mcp.UpdateTaskRequest
 		var result *mcp.UpdateTaskResult
-		// tasks/update is a SEP-2663 method; only modern clients can use it.
 		if !protocolInfo.Modern {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
-				err:  fmt.Errorf("%q requires modern protocol (2026-07-28+)", baseMessage.Method),
+				err:  fmt.Errorf("%q %w", baseMessage.Method, ErrRequiresModernProtocol),
 			}
 		} else if clientCaps := protocolInfo.ClientCapabilities; clientCaps == nil || !clientCaps.HasExtension(mcp.ExtensionTasks) {
 			err = &requestError{
@@ -665,10 +659,8 @@ func (s *MCPServer) HandleMessage(
 	case mcp.MethodTasksCancel:
 		var request mcp.CancelTaskRequest
 		var result *mcp.CancelTaskResult
-		// For protocol SEP-2663, check the per-request extension capability.
 		if protocolInfo.Modern {
-			clientCaps := protocolInfo.ClientCapabilities
-			if clientCaps == nil || !clientCaps.HasExtension(mcp.ExtensionTasks) {
+			if clientCaps := protocolInfo.ClientCapabilities; clientCaps == nil || !clientCaps.HasExtension(mcp.ExtensionTasks) {
 				err = &requestError{
 					id:   baseMessage.ID,
 					code: mcp.MISSING_REQUIRED_CLIENT_CAPABILITY,
@@ -681,26 +673,23 @@ func (s *MCPServer) HandleMessage(
 				code: mcp.METHOD_NOT_FOUND,
 				err:  fmt.Errorf("tasks %w", ErrUnsupported),
 			}
-		}
-		if err == nil {
-			if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
-				err = &requestError{
-					id:   baseMessage.ID,
-					code: mcp.INVALID_REQUEST,
-					err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
-				}
-			} else {
-				request.Header = headers
-				s.hooks.beforeCancelTask(ctx, baseMessage.ID, &request)
-				result, err = s.handleCancelTask(ctx, baseMessage.ID, request)
+		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.INVALID_REQUEST,
+				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
+		} else {
+			request.Header = headers
+			s.hooks.beforeCancelTask(ctx, baseMessage.ID, &request)
+			result, err = s.handleCancelTask(ctx, baseMessage.ID, request)
 		}
 		if err != nil {
 			s.hooks.onError(ctx, baseMessage.ID, baseMessage.Method, &request, err)
 			return err.ToJSONRPCError()
 		}
 		s.hooks.afterCancelTask(ctx, baseMessage.ID, &request, result)
-		return createResponse(baseMessage.ID, result)
+		return createResponse(baseMessage.ID, *result)
 	case mcp.MethodCompletionComplete:
 		var request mcp.CompleteRequest
 		var result *mcp.CompleteResult
