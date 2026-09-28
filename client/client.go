@@ -925,8 +925,8 @@ func (c *Client) CancelTask(
 	return mcp.ParseCancelTaskResult(response)
 }
 
-// ListTasks returns the list of tasks
-func (c *Client) ListTasks(
+// ListTasksByPage lists one page of tasks.
+func (c *Client) ListTasksByPage(
 	ctx context.Context,
 	request mcp.ListTasksRequest,
 ) (*mcp.ListTasksResult, error) {
@@ -936,6 +936,32 @@ func (c *Client) ListTasks(
 	}
 
 	return mcp.ParseListTasksResult(response)
+}
+
+// ListTasks lists all tasks by following paginated responses.
+func (c *Client) ListTasks(
+	ctx context.Context,
+	request mcp.ListTasksRequest,
+) (*mcp.ListTasksResult, error) {
+	result, err := c.ListTasksByPage(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	for result.NextCursor != "" {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			request.Params.Cursor = result.NextCursor
+			page, err := c.ListTasksByPage(ctx, request)
+			if err != nil {
+				return nil, err
+			}
+			result.Tasks = append(result.Tasks, page.Tasks...)
+			result.NextCursor = page.NextCursor
+		}
+	}
+	return result, nil
 }
 
 // TaskResult returns finished task result
