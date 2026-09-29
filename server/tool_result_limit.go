@@ -19,9 +19,15 @@ import (
 // When a result exceeds the limit it is replaced by a small tool execution
 // error (CallToolResult with IsError: true) that explains the overflow rather
 // than being silently truncated. Silent truncation is avoided because a partial
-// result can still look valid to the model. The size is measured as the number
-// of bytes in the JSON encoding of the CallToolResult, which is a faithful
-// proxy for the payload sent back to the client.
+// result can still look valid to the model.
+//
+// The size is measured as the number of bytes in the JSON encoding of the
+// CallToolResult returned by the handler. Because the guard runs inside the
+// tool handler chain, it measures the result before the JSON-RPC envelope and
+// any protocol-version metadata (resultType, _meta.serverInfo on 2026-07-28 and
+// later) are attached, so the response delivered to the client can be slightly
+// larger than maxBytes. Treat the limit as a bound on the tool payload, not as
+// an exact cap on the wire response.
 func WithToolResultSizeLimit(maxBytes int) ServerOption {
 	if maxBytes <= 0 {
 		return func(*MCPServer) {}
