@@ -1572,7 +1572,7 @@ type CompleteArgument struct {
 
 // CompleteContext is the context about already-resolved arguments
 type CompleteContext struct {
-	Arguments map[string]string `json:"arguments"`
+	Arguments map[string]string `json:"arguments,omitempty"`
 }
 
 // Completion is the server's response to a completion/complete request
