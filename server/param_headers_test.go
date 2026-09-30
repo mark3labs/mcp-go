@@ -248,6 +248,9 @@ func TestParamHeaders_InvalidAnnotationsAreRejectedOnEveryRegistrationPath(t *te
 	}
 }
 
+// TestParamHeaders_InvalidAnnotationsAreRejectedForSessionTools checks that
+// AddSessionTools refuses a batch holding a tool with invalid x-mcp-header
+// annotations, leaving the session's previous tool set unchanged.
 func TestParamHeaders_InvalidAnnotationsAreRejectedForSessionTools(t *testing.T) {
 	srv := NewMCPServer("header-test", "1.0.0", WithToolCapabilities(true))
 	session := &sessionTestClientWithTools{
@@ -282,6 +285,9 @@ func headerQueryTool() mcp.Tool {
 	}`))
 }
 
+// TestParamHeaders_BindingsAreCachedOnEveryRegistrationPath checks that each
+// way of registering a tool caches its x-mcp-header bindings, and that
+// deleting or replacing tools drops their entries.
 func TestParamHeaders_BindingsAreCachedOnEveryRegistrationPath(t *testing.T) {
 	register := map[string]func(*MCPServer){
 		"AddTool":     func(s *MCPServer) { s.AddTool(headerQueryTool(), nil) },
@@ -314,6 +320,9 @@ func TestParamHeaders_BindingsAreCachedOnEveryRegistrationPath(t *testing.T) {
 	})
 }
 
+// TestParamHeaders_CallsValidateAgainstTheCachedBindings checks that a
+// tools/call is validated against the bindings cached at registration rather
+// than against the tool's schema.
 func TestParamHeaders_CallsValidateAgainstTheCachedBindings(t *testing.T) {
 	srv := NewMCPServer("header-test", "1.0.0", WithToolCapabilities(true))
 	srv.AddTool(headerQueryTool(), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -336,6 +345,9 @@ func TestParamHeaders_CallsValidateAgainstTheCachedBindings(t *testing.T) {
 	assert.True(t, isResult, "the mismatch was refused, so the call re-read the schema instead of the cache")
 }
 
+// TestParamHeaders_AMissingCacheEntryFallsBackToTheSchema checks that a
+// registered tool without a cache entry is still validated, against the
+// bindings in its schema.
 func TestParamHeaders_AMissingCacheEntryFallsBackToTheSchema(t *testing.T) {
 	srv := NewMCPServer("header-test", "1.0.0", WithToolCapabilities(true))
 	srv.AddTool(headerQueryTool(), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -356,6 +368,9 @@ func TestParamHeaders_AMissingCacheEntryFallsBackToTheSchema(t *testing.T) {
 	assert.Equal(t, float64(mcp.HEADER_MISMATCH), errDetails["code"])
 }
 
+// TestParamHeaders_ASessionToolReplacedThroughSetSessionToolsIsCheckedAgainstItsNewSchema
+// checks that a session tool swapped in through SetSessionTools is validated
+// against its new schema, not the one it was added with.
 func TestParamHeaders_ASessionToolReplacedThroughSetSessionToolsIsCheckedAgainstItsNewSchema(t *testing.T) {
 	srv := NewMCPServer("header-test", "1.0.0", WithToolCapabilities(true))
 	session := &sessionTestClientWithTools{

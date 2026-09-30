@@ -234,6 +234,9 @@ func TestGenerateParamHeadersSkipsAbsentArguments(t *testing.T) {
 	assert.Empty(t, GenerateParamHeaders(headerTool(), params))
 }
 
+// TestValidateParamHeaders checks that headers mirroring the body pass, and
+// that a missing header, a header disagreeing with the body, or a header for
+// an absent parameter is rejected as a header mismatch.
 func TestValidateParamHeaders(t *testing.T) {
 	tool := headerTool()
 	params := json.RawMessage(`{
@@ -276,6 +279,8 @@ func TestValidateParamHeaders(t *testing.T) {
 	})
 }
 
+// TestValidateParamHeadersWithBindings checks that the bindings passed in,
+// not the tool's schema, decide which headers are validated.
 func TestValidateParamHeadersWithBindings(t *testing.T) {
 	tool := headerTool()
 	params := json.RawMessage(`{"name":"query","arguments":{"region":"us-east-1"}}`)
