@@ -516,7 +516,14 @@ func GenerateParamHeaders(tool *Tool, params json.RawMessage) map[string]string 
 //
 // getHeader returns the value of a header, or "" when absent.
 func ValidateParamHeaders(getHeader func(string) string, tool *Tool, params json.RawMessage) error {
-	bindings := ExtractParamHeaderBindings(tool)
+	return ValidateParamHeadersWithBindings(getHeader, ExtractParamHeaderBindings(tool), params)
+}
+
+// ValidateParamHeadersWithBindings is ValidateParamHeaders for bindings
+// already extracted with ExtractParamHeaderBindings, so a server that
+// registers a tool once can validate every call against it without
+// re-reading the schema.
+func ValidateParamHeadersWithBindings(getHeader func(string) string, bindings []ParamHeaderBinding, params json.RawMessage) error {
 	if len(bindings) == 0 {
 		return nil
 	}

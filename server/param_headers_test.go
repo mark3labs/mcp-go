@@ -269,3 +269,128 @@ func TestParamHeaders_InvalidAnnotationsAreRejectedForSessionTools(t *testing.T)
 	assert.Len(t, tools, 1)
 	assert.Contains(t, tools, "existing")
 }
+
+// headerQueryTool is the annotated tool newHeaderToolServer serves, for tests
+// that need the registry rather than a running server.
+func headerQueryTool() mcp.Tool {
+	return mcp.NewToolWithRawSchema("query", "runs a query", json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"sql":    { "type": "string" },
+			"region": { "type": "string", "x-mcp-header": "Region" }
+		}
+	}`))
+}
+
+func TestParamHeaders_BindingsAreCachedOnEveryRegistrationPath(t *testing.T) {
+	register := map[string]func(*MCPServer){
+		"AddTool":     func(s *MCPServer) { s.AddTool(headerQueryTool(), nil) },
+		"AddTools":    func(s *MCPServer) { s.AddTools(ServerTool{Tool: headerQueryTool()}) },
+		"SetTools":    func(s *MCPServer) { s.SetTools(ServerTool{Tool: headerQueryTool()}) },
+		"AddTaskTool": func(s *MCPServer) { s.AddTaskTool(headerQueryTool(), nil) },
+	}
+	for name, add := range register {
+		t.Run(name, func(t *testing.T) {
+			srv := NewMCPServer("header-test", "1.0.0", WithToolCapabilities(true))
+			add(srv)
+
+			bindings := srv.toolHeaderBindings["query"]
+			require.Len(t, bindings, 1)
+			assert.Equal(t, "Region", bindings[0].Header)
+			assert.Equal(t, []string{"region"}, bindings[0].Path)
+		})
+	}
+
+	t.Run("DeleteTools and SetTools drop the entry", func(t *testing.T) {
+		srv := NewMCPServer("header-test", "1.0.0", WithToolCapabilities(true))
+		srv.AddTool(headerQueryTool(), nil)
+		srv.DeleteTools("query")
+		assert.NotContains(t, srv.toolHeaderBindings, "query")
+
+		srv.AddTool(headerQueryTool(), nil)
+		srv.SetTools(ServerTool{Tool: mcp.NewTool("other")})
+		assert.NotContains(t, srv.toolHeaderBindings, "query")
+		assert.Contains(t, srv.toolHeaderBindings, "other")
+	})
+}
+
+func TestParamHeaders_CallsValidateAgainstTheCachedBindings(t *testing.T) {
+	srv := NewMCPServer("header-test", "1.0.0", WithToolCapabilities(true))
+	srv.AddTool(headerQueryTool(), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("ok"), nil
+	})
+	// Blank the cached bindings: a call that re-read the schema would find the
+	// annotation and refuse the mismatch below.
+	srv.toolHeaderBindings["query"] = nil
+
+	httpServer := httptest.NewServer(NewStreamableHTTPServer(srv, WithStateLess(true)))
+	t.Cleanup(httpServer.Close)
+
+	response := postWithHeaders(t,
+		httpServer.URL,
+		map[string]any{"region": "us-east-1"},
+		map[string]string{mcp.HeaderParamPrefix + "Region": "eu-west-1"},
+	)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	_, isResult := decodeJSONRPC(t, response)["result"]
+	assert.True(t, isResult, "the mismatch was refused, so the call re-read the schema instead of the cache")
+}
+
+func TestParamHeaders_AMissingCacheEntryFallsBackToTheSchema(t *testing.T) {
+	srv := NewMCPServer("header-test", "1.0.0", WithToolCapabilities(true))
+	srv.AddTool(headerQueryTool(), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("ok"), nil
+	})
+	// A registration path that forgot the cache must not switch the check off.
+	delete(srv.toolHeaderBindings, "query")
+
+	httpServer := httptest.NewServer(NewStreamableHTTPServer(srv, WithStateLess(true)))
+	t.Cleanup(httpServer.Close)
+
+	response := postWithHeaders(t,
+		httpServer.URL,
+		map[string]any{"region": "us-east-1"},
+		map[string]string{mcp.HeaderParamPrefix + "Region": "eu-west-1"},
+	)
+	errDetails := decodeJSONRPC(t, response)["error"].(map[string]any)
+	assert.Equal(t, float64(mcp.HEADER_MISMATCH), errDetails["code"])
+}
+
+func TestParamHeaders_ASessionToolReplacedThroughSetSessionToolsIsCheckedAgainstItsNewSchema(t *testing.T) {
+	srv := NewMCPServer("header-test", "1.0.0", WithToolCapabilities(true))
+	session := &sessionTestClientWithTools{
+		sessionID:           "s",
+		notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+		initialized:         true,
+	}
+	require.NoError(t, srv.RegisterSession(t.Context(), session))
+	require.NoError(t, srv.AddSessionTool("s", headerQueryTool(), nil))
+
+	// User code may read the session's tools back, give one a new schema under
+	// the same name and store the map again; the call must see the new schema.
+	tools := session.GetSessionTools()
+	entry := tools["query"]
+	entry.Tool = mcp.NewToolWithRawSchema("query", "runs a query", json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"region": { "type": "string" },
+			"zone":   { "type": "string", "x-mcp-header": "Zone" }
+		}
+	}`))
+	tools["query"] = entry
+	session.SetSessionTools(tools)
+
+	ctx := srv.WithContext(t.Context(), session)
+	message := json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"query","arguments":{"region":"r1","zone":"z1"}}}`)
+	headers := http.Header{}
+	headers.Set(mcp.HeaderProtocolVersion, mcp.ProtocolVersion20260728)
+	headers.Set(mcp.HeaderMethod, string(mcp.MethodToolsCall))
+	headers.Set(mcp.HeaderName, "query")
+	headers.Set(mcp.HeaderParamPrefix+"Zone", "z1")
+	assert.NoError(t, srv.validateStandardHeadersForMessage(ctx, headers, mcp.ProtocolVersion20260728, mcp.MethodToolsCall, message))
+
+	headers.Del(mcp.HeaderParamPrefix + "Zone")
+	err := srv.validateStandardHeadersForMessage(ctx, headers, mcp.ProtocolVersion20260728, mcp.MethodToolsCall, message)
+	require.Error(t, err)
+	assert.True(t, mcp.IsHeaderMismatch(err))
+}

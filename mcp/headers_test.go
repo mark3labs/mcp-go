@@ -276,6 +276,19 @@ func TestValidateParamHeaders(t *testing.T) {
 	})
 }
 
+func TestValidateParamHeadersWithBindings(t *testing.T) {
+	tool := headerTool()
+	params := json.RawMessage(`{"name":"query","arguments":{"region":"us-east-1"}}`)
+	header := http.Header{}
+	header.Set(HeaderParamPrefix+"Region", "eu-west-1")
+
+	// The schema would refuse this mismatch; the given bindings decide instead.
+	assert.NoError(t, ValidateParamHeadersWithBindings(header.Get, nil, params))
+	err := ValidateParamHeadersWithBindings(header.Get, ExtractParamHeaderBindings(tool), params)
+	require.Error(t, err)
+	assert.True(t, IsHeaderMismatch(err))
+}
+
 func TestValidateParamHeaderAnnotations(t *testing.T) {
 	tests := []struct {
 		name    string
