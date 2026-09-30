@@ -178,7 +178,7 @@ func (s *MCPServer) HandleMessage(
 				code: mcp.MISSING_REQUIRED_CLIENT_CAPABILITY,
 				err:  fmt.Errorf("{{toLower .GroupName}} extension %w", ErrUnsupported),
 			}
-		} else {{ end }}{{ end }}{{ if .Group }}if !protocolInfo.Modern && s.capabilities.{{.Group}} == nil {
+		} else {{ end }}{{ end }}{{ if .Group }}if {{ if .RequiresExtension }}!protocolInfo.Modern && {{ end }}s.capabilities.{{.Group}} == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
