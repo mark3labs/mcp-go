@@ -1638,6 +1638,20 @@ func TestStreamableHTTP_ProtocolVersionHeader(t *testing.T) {
 		}
 	})
 
+	t.Run("unsupported version is rejected on responses", func(t *testing.T) {
+		responses := map[string]map[string]any{
+			"ping":  {"jsonrpc": "2.0", "id": 1, "result": map[string]any{}},
+			"empty": {"jsonrpc": "2.0", "id": 1},
+		}
+		for name, body := range responses {
+			t.Run(name, func(t *testing.T) {
+				status, payload := send(t, http.MethodPost, body, "2025-01-01")
+				assert.Equal(t, http.StatusBadRequest, status)
+				assert.Contains(t, payload, "Unsupported protocol version: 2025-01-01")
+			})
+		}
+	})
+
 	t.Run("supported version is accepted", func(t *testing.T) {
 		status, payload := send(t, http.MethodPost, listTools, mcp.LATEST_LEGACY_PROTOCOL_VERSION)
 		assert.Equal(t, http.StatusOK, status, payload)

@@ -576,6 +576,20 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 		return
 	}
 
+	isInitializeRequest := jsonMessage.Method == mcp.MethodInitialize
+
+	// Decide which protocol era this message belongs to before branching on
+	// its shape. Protocol version 2026-07-28 removed protocol-level sessions,
+	// so a modern message never carries, mints, or echoes a session ID
+	// (SEP-2567), and must not reach a session-dependent path.
+	era := detectRequestEra(r.header(), rawData)
+
+	// The header is only required after initialize, which negotiates the
+	// version itself. Responses posted by the client are checked as well.
+	if !era.modern && !isInitializeRequest && rejectUnsupportedProtocolVersion(w, era.headerVersion) {
+		return
+	}
+
 	// detect empty ping response, skip session ID validation
 	isEmptyResponse := jsonMessage.Method == "" && jsonMessage.ID != nil &&
 		(isJSONEmpty(jsonMessage.Result) && isJSONEmpty(jsonMessage.Error))
@@ -599,22 +613,9 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	isSamplingResponse := jsonMessage.Method == "" && jsonMessage.ID != nil &&
 		(jsonMessage.Result != nil || jsonMessage.Error != nil)
 
-	isInitializeRequest := jsonMessage.Method == mcp.MethodInitialize
-
-	// Decide which protocol era this message belongs to before branching on
-	// its shape. Protocol version 2026-07-28 removed protocol-level sessions,
-	// so a modern message never carries, mints, or echoes a session ID
-	// (SEP-2567), and must not reach a session-dependent path.
-	era := detectRequestEra(r.header(), rawData)
 	var requestID any
 	if len(jsonMessage.ID) > 0 {
 		_ = json.Unmarshal(jsonMessage.ID, &requestID)
-	}
-
-	// The header is only required after initialize, which negotiates the
-	// version itself.
-	if !era.modern && !isInitializeRequest && rejectUnsupportedProtocolVersion(w, era.headerVersion) {
-		return
 	}
 
 	// Handle sampling responses separately.
