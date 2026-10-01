@@ -701,9 +701,10 @@ func (c *StreamableHTTP) sendHTTP(
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// request headers
+	// request headers; cloned because the transport headers below must not
+	// leak into (or race on) the caller's map
 	if header != nil {
-		req.Header = header
+		req.Header = header.Clone()
 	}
 
 	// Set headers
