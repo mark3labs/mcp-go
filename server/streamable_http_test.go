@@ -1590,6 +1590,80 @@ func TestStreamableHTTP_SessionValidation(t *testing.T) {
 	})
 }
 
+func TestStreamableHTTP_ProtocolVersionHeader(t *testing.T) {
+	mcpServer := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(true))
+	server := NewTestStreamableHTTPServer(mcpServer, WithStateful(true))
+	defer server.Close()
+
+	sessionID := establishLegacySession(t, server.URL)
+
+	send := func(t *testing.T, method string, body any, protocolVersion string) (int, string) {
+		t.Helper()
+		var reader io.Reader
+		if body != nil {
+			jsonBody, err := json.Marshal(body)
+			require.NoError(t, err)
+			reader = bytes.NewReader(jsonBody)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, method, server.URL, reader)
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(HeaderKeySessionID, sessionID)
+		if protocolVersion != "" {
+			req.Header.Set(mcp.HeaderProtocolVersion, protocolVersion)
+		}
+		resp, err := server.Client().Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		payload, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		return resp.StatusCode, string(payload)
+	}
+
+	listTools := map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}
+
+	t.Run("unsupported version is rejected", func(t *testing.T) {
+		for _, method := range []string{http.MethodPost, http.MethodGet, http.MethodDelete} {
+			t.Run(method, func(t *testing.T) {
+				var body any
+				if method == http.MethodPost {
+					body = listTools
+				}
+				status, payload := send(t, method, body, "2025-01-01")
+				assert.Equal(t, http.StatusBadRequest, status)
+				assert.Contains(t, payload, "Unsupported protocol version: 2025-01-01")
+			})
+		}
+	})
+
+	t.Run("supported version is accepted", func(t *testing.T) {
+		status, payload := send(t, http.MethodPost, listTools, mcp.LATEST_LEGACY_PROTOCOL_VERSION)
+		assert.Equal(t, http.StatusOK, status, payload)
+	})
+
+	t.Run("missing header is accepted", func(t *testing.T) {
+		status, payload := send(t, http.MethodPost, listTools, "")
+		assert.Equal(t, http.StatusOK, status, payload)
+	})
+
+	t.Run("initialize is not checked", func(t *testing.T) {
+		initialize := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      3,
+			"method":  mcp.MethodInitialize,
+			"params": map[string]any{
+				"protocolVersion": mcp.LATEST_LEGACY_PROTOCOL_VERSION,
+				"clientInfo":      map[string]any{"name": "test-client", "version": "1.0.0"},
+				"capabilities":    map[string]any{},
+			},
+		}
+		status, payload := send(t, http.MethodPost, initialize, "2025-01-01")
+		assert.Equal(t, http.StatusOK, status, payload)
+	})
+}
+
 func TestInsecureStatefulSessionIdManager(t *testing.T) {
 	t.Run("Generate creates valid session ID", func(t *testing.T) {
 		manager := &InsecureStatefulSessionIdManager{}

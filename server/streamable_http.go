@@ -611,6 +611,12 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 		_ = json.Unmarshal(jsonMessage.ID, &requestID)
 	}
 
+	// The header is only required after initialize, which negotiates the
+	// version itself.
+	if !era.modern && !isInitializeRequest && rejectUnsupportedProtocolVersion(w, era.headerVersion) {
+		return
+	}
+
 	// Handle sampling responses separately.
 	//
 	// A client-to-server response answers a server-initiated request, which
@@ -1016,6 +1022,9 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 		s.rejectModernSessionMethod(w, http.MethodGet)
 		return
 	}
+	if rejectUnsupportedProtocolVersion(w, r.header().Get(mcp.HeaderProtocolVersion)) {
+		return
+	}
 
 	// get request is for listening to notifications
 	// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
@@ -1221,6 +1230,9 @@ func (s *StreamableHTTPServer) handleDelete(w HTTPResponseWriter, r *HTTPRequest
 	// nothing for a DELETE to terminate.
 	if isModernHTTPRequest(r) {
 		s.rejectModernSessionMethod(w, http.MethodDelete)
+		return
+	}
+	if rejectUnsupportedProtocolVersion(w, r.header().Get(mcp.HeaderProtocolVersion)) {
 		return
 	}
 
