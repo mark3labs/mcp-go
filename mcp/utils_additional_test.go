@@ -1067,6 +1067,16 @@ func TestToolResultContent_StructuredContent(t *testing.T) {
 		require.NoError(t, err)
 		assert.JSONEq(t, string(data), string(encoded))
 	})
+
+	t.Run("UnmarshalContent keeps large integers", func(t *testing.T) {
+		data := []byte(`{"type":"tool_result","toolUseId":"tu_1","content":[],"structuredContent":{"id":9007199254740993}}`)
+		result, err := UnmarshalContent(data)
+		require.NoError(t, err)
+
+		encoded, err := json.Marshal(result)
+		require.NoError(t, err)
+		assert.Contains(t, string(encoded), `"structuredContent":{"id":9007199254740993}`)
+	})
 }
 
 func TestToolUseContent_IsContent(t *testing.T) {
