@@ -730,6 +730,33 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 	return nil, fmt.Errorf("unsupported content type: %s", contentType)
 }
 
+// ParseSamplingContent parses the content of a SamplingMessage that was
+// decoded into generic JSON values. A single content block is returned as a
+// Content and an array of blocks as a []Content. Any other value, such as
+// content that is already typed, is returned unchanged.
+func ParseSamplingContent(content any) (any, error) {
+	switch c := content.(type) {
+	case map[string]any:
+		return ParseContent(c)
+	case []any:
+		blocks := make([]Content, 0, len(c))
+		for i, item := range c {
+			itemMap, ok := item.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("content[%d]: expected object, got %T", i, item)
+			}
+			block, err := ParseContent(itemMap)
+			if err != nil {
+				return nil, fmt.Errorf("content[%d]: %w", i, err)
+			}
+			blocks = append(blocks, block)
+		}
+		return blocks, nil
+	default:
+		return content, nil
+	}
+}
+
 // resultEnvelope holds the fields a result carries outside its payload: the
 // SEP-2322 round-trip fields and the SEP-2549 cache hints.
 type resultEnvelope struct {

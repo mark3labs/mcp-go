@@ -706,15 +706,11 @@ func (s *stdioSession) handleSamplingResponse(rawMessage json.RawMessage) bool {
 			samplingResp.err = fmt.Errorf("failed to unmarshal sampling response: %w", err)
 		} else {
 			// Parse content from map[string]any to proper Content type (TextContent, ImageContent, AudioContent)
-			if contentMap, ok := result.Content.(map[string]any); ok {
-				content, err := mcp.ParseContent(contentMap)
-				if err != nil {
-					samplingResp.err = fmt.Errorf("failed to parse sampling response content: %w", err)
-				} else {
-					result.Content = content
-					samplingResp.result = &result
-				}
+			content, err := mcp.ParseSamplingContent(result.Content)
+			if err != nil {
+				samplingResp.err = fmt.Errorf("failed to parse sampling response content: %w", err)
 			} else {
+				result.Content = content
 				samplingResp.result = &result
 			}
 		}
