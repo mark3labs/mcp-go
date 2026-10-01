@@ -1403,6 +1403,9 @@ type ToolResultContent struct {
 	ToolUseID string `json:"toolUseId"`
 	// Content is the unstructured result content of the tool use.
 	Content []Content `json:"content"`
+	// StructuredContent is an optional structured result of the tool use.
+	// If the tool defined an outputSchema, this SHOULD conform to that schema.
+	StructuredContent any `json:"structuredContent,omitempty"`
 	// Whether the tool use resulted in an error.
 	IsError bool `json:"isError,omitempty"`
 }
@@ -1412,11 +1415,12 @@ func (ToolResultContent) isContent() {}
 // toolResultContentJSON is a helper type for unmarshaling ToolResultContent.
 type toolResultContentJSON struct {
 	Annotated
-	Meta      *Meta             `json:"_meta,omitempty"`
-	Type      string            `json:"type"`
-	ToolUseID string            `json:"toolUseId"`
-	Content   []json.RawMessage `json:"content"`
-	IsError   bool              `json:"isError,omitempty"`
+	Meta              *Meta             `json:"_meta,omitempty"`
+	Type              string            `json:"type"`
+	ToolUseID         string            `json:"toolUseId"`
+	Content           []json.RawMessage `json:"content"`
+	StructuredContent any               `json:"structuredContent,omitempty"`
+	IsError           bool              `json:"isError,omitempty"`
 }
 
 // UnmarshalJSON implements custom JSON unmarshaling for ToolResultContent
@@ -1430,6 +1434,7 @@ func (t *ToolResultContent) UnmarshalJSON(data []byte) error {
 	t.Meta = raw.Meta
 	t.Type = raw.Type
 	t.ToolUseID = raw.ToolUseID
+	t.StructuredContent = raw.StructuredContent
 	t.IsError = raw.IsError
 
 	if len(raw.Content) > 0 {

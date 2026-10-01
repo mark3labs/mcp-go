@@ -1045,6 +1045,30 @@ func TestToolResultContent_JSONRoundTrip(t *testing.T) {
 	assert.Equal(t, "Sunny, 22°C", text.Text)
 }
 
+func TestToolResultContent_StructuredContent(t *testing.T) {
+	data := []byte(`{"type":"tool_result","toolUseId":"tu_1","content":[{"type":"text","text":"{\"temperature\":22,\"conditions\":\"Sunny\"}"}],"structuredContent":{"temperature":22,"conditions":"Sunny"}}`)
+
+	t.Run("UnmarshalContent", func(t *testing.T) {
+		result, err := UnmarshalContent(data)
+		require.NoError(t, err)
+
+		encoded, err := json.Marshal(result)
+		require.NoError(t, err)
+		assert.JSONEq(t, string(data), string(encoded))
+	})
+
+	t.Run("ParseContent", func(t *testing.T) {
+		var contentMap map[string]any
+		require.NoError(t, json.Unmarshal(data, &contentMap))
+		result, err := ParseContent(contentMap)
+		require.NoError(t, err)
+
+		encoded, err := json.Marshal(result)
+		require.NoError(t, err)
+		assert.JSONEq(t, string(data), string(encoded))
+	})
+}
+
 func TestToolUseContent_IsContent(t *testing.T) {
 	var c Content = ToolUseContent{Type: ContentTypeToolUse, ID: "tu_1", Name: "test"}
 	assert.NotNil(t, c)
