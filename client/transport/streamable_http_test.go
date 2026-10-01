@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1613,4 +1614,35 @@ func TestSendRequestSSEStreamStaysOpenWithContinuousListening(t *testing.T) {
 	resp2, err := trans.SendRequest(ctx, listReq)
 	require.NoError(t, err, "tools/list should not hang even with continuous listening against stateless server")
 	require.NotNil(t, resp2)
+}
+
+func TestStreamableHTTP_SendRequestDoesNotMutateCallerHeader(t *testing.T) {
+	url, closeF := startMockStreamableHTTPServer()
+	defer closeF()
+
+	trans, err := NewStreamableHTTP(url, WithHTTPHeaders(map[string]string{
+		"Authorization": "Bearer secret",
+	}))
+	require.NoError(t, err)
+	defer trans.Close()
+
+	shared := http.Header{"X-Tenant": []string{"acme"}}
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Go(func() {
+			resp, err := trans.SendRequest(t.Context(), JSONRPCRequest{
+				JSONRPC: "2.0",
+				ID:      mcp.NewRequestId(int64(i)),
+				Method:  "debug/echo_header",
+				Header:  shared,
+			})
+			if assert.NoError(t, err) {
+				assert.Contains(t, string(resp.Result), "acme")
+			}
+		})
+	}
+	wg.Wait()
+
+	require.Equal(t, http.Header{"X-Tenant": []string{"acme"}}, shared)
 }
