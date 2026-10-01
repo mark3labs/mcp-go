@@ -2432,6 +2432,74 @@ func TestMCPServer_WithRecover(t *testing.T) {
 	assert.Nil(t, errorResponse.Error.Data)
 }
 
+func TestMCPServer_ToolHandlerPreservesJSONRPCError(t *testing.T) {
+	elicitation := mcp.ElicitationParams{
+		Mode:          "url",
+		Message:       "Authorize access",
+		ElicitationID: "authorization",
+		URL:           "https://example.com/authorize",
+	}
+	handlerErr := mcp.URLElicitationRequiredError{
+		Elicitations: []mcp.ElicitationParams{elicitation},
+	}
+
+	server := NewMCPServer("test-server", "1.0.0")
+	server.AddTool(
+		mcp.NewTool("authorize"),
+		func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return nil, fmt.Errorf("tool call failed: %w", handlerErr)
+		},
+	)
+
+	response := server.HandleMessage(t.Context(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 4,
+		"method": "tools/call",
+		"params": {
+			"name": "authorize"
+		}
+	}`))
+
+	errorResponse, ok := response.(mcp.JSONRPCError)
+	require.True(t, ok)
+	assert.Equal(t, mcp.JSONRPC_VERSION, errorResponse.JSONRPC)
+	assert.Equal(t, float64(4), errorResponse.ID.Value())
+	assert.Equal(t, mcp.URL_ELICITATION_REQUIRED, errorResponse.Error.Code)
+	assert.Equal(t, handlerErr.Error(), errorResponse.Error.Message)
+	assert.Equal(t, map[string]any{
+		"elicitations": []mcp.ElicitationParams{elicitation},
+	}, errorResponse.Error.Data)
+}
+
+func TestMCPServer_ToolHandlerErrorDefaultsToInternalError(t *testing.T) {
+	handlerErr := errors.New("tool call failed")
+
+	server := NewMCPServer("test-server", "1.0.0")
+	server.AddTool(
+		mcp.NewTool("fail"),
+		func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return nil, handlerErr
+		},
+	)
+
+	response := server.HandleMessage(t.Context(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 5,
+		"method": "tools/call",
+		"params": {
+			"name": "fail"
+		}
+	}`))
+
+	errorResponse, ok := response.(mcp.JSONRPCError)
+	require.True(t, ok)
+	assert.Equal(t, mcp.JSONRPC_VERSION, errorResponse.JSONRPC)
+	assert.Equal(t, float64(5), errorResponse.ID.Value())
+	assert.Equal(t, mcp.INTERNAL_ERROR, errorResponse.Error.Code)
+	assert.Equal(t, handlerErr.Error(), errorResponse.Error.Message)
+	assert.Nil(t, errorResponse.Error.Data)
+}
+
 func getTools(length int) []mcp.Tool {
 	list := make([]mcp.Tool, 0, 10000)
 	for i := range length {
