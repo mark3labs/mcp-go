@@ -89,3 +89,78 @@ func TestToolResultSizeLimitMiddleware(t *testing.T) {
 		require.Contains(t, string(enc), "bigtool")
 	})
 }
+
+func TestToolResultSizeLimit_TaskTool(t *testing.T) {
+	largeText := mcp.NewTextContent(strings.Repeat("a", 4096))
+	small := &mcp.CreateTaskResult{
+		Content:           []mcp.Content{mcp.NewTextContent("hi")},
+		StructuredContent: map[string]any{"value": "hi"},
+		Result:            mcp.Result{Meta: mcp.NewMetaFromMap(map[string]any{"custom": "hi"})},
+		IsError:           true,
+	}
+	encoded, err := json.Marshal(&mcp.CallToolResult{
+		Result: small.Result, Content: small.Content,
+		StructuredContent: small.StructuredContent, IsError: small.IsError,
+	})
+	require.NoError(t, err)
+	sentinel := errors.New("handler failed")
+	tests := []struct {
+		name    string
+		limit   int
+		result  *mcp.CreateTaskResult
+		err     error
+		dropped bool
+	}{
+		{name: "oversized text", limit: 256, result: &mcp.CreateTaskResult{Content: []mcp.Content{largeText}}, dropped: true},
+		{name: "oversized structured content", limit: 256, result: &mcp.CreateTaskResult{StructuredContent: strings.Repeat("a", 4096)}, dropped: true},
+		{name: "oversized metadata", limit: 256, result: &mcp.CreateTaskResult{Result: mcp.Result{Meta: mcp.NewMetaFromMap(map[string]any{"custom": strings.Repeat("a", 4096)})}}, dropped: true},
+		{name: "exact limit preserves payload", limit: len(encoded), result: small},
+		{name: "one byte over limit", limit: len(encoded) - 1, result: small, dropped: true},
+		{name: "zero disables limit", result: &mcp.CreateTaskResult{Content: []mcp.Content{largeText}}},
+		{name: "negative disables limit", limit: -1, result: &mcp.CreateTaskResult{Content: []mcp.Content{largeText}}},
+		{name: "unencodable result", limit: 256, result: &mcp.CreateTaskResult{StructuredContent: make(chan int)}},
+		{name: "nil result", limit: 256},
+		{name: "handler error", limit: 256, result: &mcp.CreateTaskResult{Content: []mcp.Content{largeText}}, err: sentinel},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := NewMCPServer("test", "1.0.0", WithToolResultSizeLimit(tt.limit))
+			tool := mcp.NewTool("task_tool", mcp.WithTaskSupport(mcp.TaskSupportRequired))
+			srv.AddTaskTool(tool, func(context.Context, mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				return tt.result, tt.err
+			})
+			entry, err := srv.createTask(t.Context(), "test-task", tool.Name, nil, nil)
+			require.NoError(t, err)
+			srv.executeTaskTool(t.Context(), entry, srv.taskTools[tool.Name], mcp.CallToolRequest{
+				Params: mcp.CallToolParams{Name: tool.Name},
+			})
+			require.True(t, entry.completed)
+			if tt.err != nil {
+				require.ErrorIs(t, entry.resultErr, sentinel)
+				require.Equal(t, mcp.TaskStatusFailed, entry.task.Status)
+				return
+			}
+			require.NoError(t, entry.resultErr)
+			require.Equal(t, mcp.TaskStatusCompleted, entry.task.Status)
+			if !tt.dropped {
+				require.Same(t, tt.result, entry.result)
+				return
+			}
+			stored, ok := entry.result.(*mcp.CallToolResult)
+			require.True(t, ok, "task store must contain the replacement tool error, got %T", entry.result)
+			require.True(t, stored.IsError)
+			require.Nil(t, stored.StructuredContent)
+			require.Nil(t, stored.Meta)
+			result, reqErr := srv.handleTaskResult(t.Context(), 1, mcp.TaskResultRequest{
+				Params: mcp.TaskResultParams{TaskId: entry.task.TaskId},
+			})
+			require.Nil(t, reqErr)
+			require.True(t, result.IsError)
+			require.Equal(t, stored.Content, result.Content)
+			text, ok := result.Content[0].(mcp.TextContent)
+			require.True(t, ok)
+			require.Contains(t, text.Text, "too large")
+			require.Contains(t, text.Text, tool.Name)
+		})
+	}
+}

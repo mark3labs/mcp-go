@@ -27,12 +27,16 @@ import (
 // any protocol-version metadata (resultType, _meta.serverInfo on 2026-07-28 and
 // later) are attached, so the response delivered to the client can be slightly
 // larger than maxBytes. Treat the limit as a bound on the tool payload, not as
-// an exact cap on the wire response.
+// an exact cap on the wire response. Task-only tools are checked against the
+// equivalent CallToolResult payload before their result is stored.
 func WithToolResultSizeLimit(maxBytes int) ServerOption {
 	if maxBytes <= 0 {
 		return func(*MCPServer) {}
 	}
-	return WithToolHandlerMiddleware(toolResultSizeLimitMiddleware(maxBytes))
+	return func(s *MCPServer) {
+		s.taskToolResultSizeLimit = maxBytes
+		WithToolHandlerMiddleware(toolResultSizeLimitMiddleware(maxBytes))(s)
+	}
 }
 
 // toolResultSizeLimitMiddleware returns a ToolHandlerMiddleware that enforces
@@ -45,24 +49,26 @@ func toolResultSizeLimitMiddleware(maxBytes int) ToolHandlerMiddleware {
 				return result, err
 			}
 
-			encoded, mErr := json.Marshal(result)
-			if mErr != nil {
-				// The result cannot be measured; let it through unchanged
-				// rather than blocking the call. Encoding will be attempted
-				// again when the response is written to the client.
-				return result, nil
-			}
-
-			if len(encoded) <= maxBytes {
-				return result, nil
-			}
-
-			return mcp.NewToolResultErrorf(
-				"tool result for %q is too large: %d bytes exceeds the configured limit of %d bytes; the result was dropped instead of truncated to avoid overloading the client context window",
-				request.Params.Name,
-				len(encoded),
-				maxBytes,
-			), nil
+			return limitToolResultSize(request.Params.Name, result, maxBytes), nil
 		}
 	}
+}
+
+// limitToolResultSize replaces an oversized tool payload with a tool execution error.
+func limitToolResultSize(toolName string, result *mcp.CallToolResult, maxBytes int) *mcp.CallToolResult {
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		// The result cannot be measured; let it through unchanged.
+		// Encoding will be attempted again when the response is written.
+		return result
+	}
+	if len(encoded) <= maxBytes {
+		return result
+	}
+	return mcp.NewToolResultErrorf(
+		"tool result for %q is too large: %d bytes exceeds the configured limit of %d bytes; the result was dropped instead of truncated to avoid overloading the client context window",
+		toolName,
+		len(encoded),
+		maxBytes,
+	)
 }
