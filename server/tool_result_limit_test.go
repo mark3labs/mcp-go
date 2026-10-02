@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -163,4 +164,106 @@ func TestToolResultSizeLimit_TaskTool(t *testing.T) {
 			require.Contains(t, text.Text, tool.Name)
 		})
 	}
+}
+
+func TestToolResultSizeLimit_RepeatedOptions(t *testing.T) {
+	payload := mcp.NewToolResultText(strings.Repeat("a", 500))
+	encoded, err := json.Marshal(payload)
+	require.NoError(t, err)
+	tests := []struct {
+		name    string
+		limits  []int
+		dropped bool
+	}{
+		{name: "loosen", limits: []int{64, 4096}},
+		{name: "tighten", limits: []int{4096, 64}, dropped: true},
+		{name: "repeat positive", limits: []int{64, 64}, dropped: true},
+		{name: "disable with zero", limits: []int{64, 0}},
+		{name: "disable with negative", limits: []int{64, -1}},
+		{name: "re-enable loose after zero", limits: []int{64, 0, 4096}},
+		{name: "re-enable loose after negative", limits: []int{64, -1, 4096}},
+		{name: "re-enable strict after zero", limits: []int{4096, 0, 64}, dropped: true},
+		{name: "re-enable strict after negative", limits: []int{4096, -1, 64}, dropped: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, taskOnly := range []bool{false, true} {
+				name := "regular"
+				if taskOnly {
+					name = "task-only"
+				}
+				t.Run(name, func(t *testing.T) {
+					options := make([]ServerOption, 0, len(tt.limits))
+					for _, limit := range tt.limits {
+						options = append(options, WithToolResultSizeLimit(limit))
+					}
+					srv := NewMCPServer("test", "1.0.0", options...)
+					var result *mcp.CallToolResult
+					if taskOnly {
+						tool := mcp.NewTool("sized", mcp.WithTaskSupport(mcp.TaskSupportRequired))
+						taskResult := &mcp.CreateTaskResult{Content: payload.Content}
+						srv.AddTaskTool(tool, func(context.Context, mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+							return taskResult, nil
+						})
+						entry, err := srv.createTask(t.Context(), "test-task", tool.Name, nil, nil)
+						require.NoError(t, err)
+						srv.executeTaskTool(t.Context(), entry, srv.taskTools[tool.Name], mcp.CallToolRequest{
+							Params: mcp.CallToolParams{Name: tool.Name},
+						})
+						require.True(t, entry.completed)
+						require.NoError(t, entry.resultErr)
+						require.Equal(t, mcp.TaskStatusCompleted, entry.task.Status)
+						if !tt.dropped {
+							require.Same(t, taskResult, entry.result)
+						}
+						taskResponse, reqErr := srv.handleTaskResult(t.Context(), 1, mcp.TaskResultRequest{
+							Params: mcp.TaskResultParams{TaskId: entry.task.TaskId},
+						})
+						require.Nil(t, reqErr)
+						result = &mcp.CallToolResult{Content: taskResponse.Content, IsError: taskResponse.IsError}
+					} else {
+						addSizedTool(t, srv, "sized", 500)
+						response := callTool(t, srv, "sized", map[string]any{})
+						if tt.dropped {
+							requireToolErrorContaining(t, response, "too large")
+							result = response.(mcp.JSONRPCResponse).Result.(*mcp.CallToolResult)
+						} else {
+							result = requireToolSuccess(t, response)
+						}
+					}
+					require.Equal(t, tt.dropped, result.IsError)
+					if tt.dropped {
+						text, ok := result.Content[0].(mcp.TextContent)
+						require.True(t, ok)
+						require.Contains(t, text.Text, fmt.Sprintf("%d bytes exceeds the configured limit of %d bytes", len(encoded), tt.limits[len(tt.limits)-1]))
+					} else {
+						require.Equal(t, payload.Content, result.Content)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestToolResultSizeLimit_RepeatedOptionsPreserveMiddlewareOrder(t *testing.T) {
+	var events []string
+	observe := func(name string) ToolHandlerMiddleware {
+		return func(next ToolHandlerFunc) ToolHandlerFunc {
+			return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				events = append(events, name+" before")
+				result, err := next(ctx, request)
+				events = append(events, fmt.Sprintf("%s after: IsError=%t", name, result.IsError))
+				return result, err
+			}
+		}
+	}
+	srv := NewMCPServer("test", "1.0.0",
+		WithToolHandlerMiddleware(observe("outer")),
+		WithToolResultSizeLimit(64),
+		WithToolHandlerMiddleware(observe("inner")),
+		WithToolResultSizeLimit(4096),
+	)
+	addSizedTool(t, srv, "big", 5000)
+	requireToolErrorContaining(t, callTool(t, srv, "big", map[string]any{}), "configured limit of 4096 bytes")
+	require.Equal(t, []string{"outer before", "inner before", "inner after: IsError=false", "outer after: IsError=true"}, events)
 }

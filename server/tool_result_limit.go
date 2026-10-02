@@ -14,7 +14,8 @@ import (
 // expensive.
 //
 // The limit is opt-in: a maxBytes of zero or less disables the guard entirely
-// and leaves existing behavior unchanged, so no middleware is installed.
+// and leaves existing behavior unchanged. When this option is repeated, the
+// last value wins for both regular and task-only tools.
 //
 // When a result exceeds the limit it is replaced by a small tool execution
 // error (CallToolResult with IsError: true) that explains the overflow rather
@@ -30,12 +31,18 @@ import (
 // an exact cap on the wire response. Task-only tools are checked against the
 // equivalent CallToolResult payload before their result is stored.
 func WithToolResultSizeLimit(maxBytes int) ServerOption {
-	if maxBytes <= 0 {
-		return func(*MCPServer) {}
-	}
 	return func(s *MCPServer) {
-		s.taskToolResultSizeLimit = maxBytes
-		WithToolHandlerMiddleware(toolResultSizeLimitMiddleware(maxBytes))(s)
+		s.toolResultSizeLimit = maxBytes
+		if maxBytes <= 0 || s.toolResultLimitInstalled {
+			return
+		}
+		s.toolResultLimitInstalled = true
+		WithToolHandlerMiddleware(func(next ToolHandlerFunc) ToolHandlerFunc {
+			if s.toolResultSizeLimit <= 0 {
+				return next
+			}
+			return toolResultSizeLimitMiddleware(s.toolResultSizeLimit)(next)
+		})(s)
 	}
 }
 
