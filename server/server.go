@@ -2528,6 +2528,7 @@ func (s *MCPServer) handleNotification(
 // inflightKey returns a session-scoped key for the inflight cancellation map.
 // This prevents cross-session request ID collisions in multi-client scenarios.
 func inflightKey(ctx context.Context, requestID any) string {
+	requestID = mcp.NewRequestId(requestID).String()
 	if session := ClientSessionFromContext(ctx); session != nil {
 		return fmt.Sprintf("%s:%v", session.SessionID(), requestID)
 	}

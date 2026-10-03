@@ -300,10 +300,27 @@ func (p NotificationParams) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON implements custom JSON unmarshaling
 func (p *NotificationParams) UnmarshalJSON(data []byte) error {
-	// Create a map to hold all fields
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
+	}
+	m := make(map[string]any, len(fields))
+	for name, raw := range fields {
+		if name == "requestId" {
+			var id RequestId
+			if err := json.Unmarshal(raw, &id); err == nil {
+				m[name] = id.Value()
+				if value, ok := m[name].(int64); ok && value >= -9007199254740991 && value <= 9007199254740991 {
+					m[name] = float64(value)
+				}
+				continue
+			}
+		}
+		var value any
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return err
+		}
+		m[name] = value
 	}
 
 	// Initialize maps if they're nil
@@ -355,7 +372,9 @@ func NewRequestId(value any) RequestId {
 	return RequestId{value: value}
 }
 
-// Value returns the underlying value of the RequestId
+// Value returns the underlying value of the RequestId.
+// Decoded integers use int64 when representable, otherwise json.Number to
+// preserve the exact value. Strings and fractional numbers retain their types.
 func (r RequestId) Value() any {
 	return r.value
 }
@@ -368,10 +387,18 @@ func (r RequestId) String() string {
 	case int64:
 		return "int64:" + strconv.FormatInt(v, 10)
 	case float64:
-		if v == float64(int64(v)) {
-			return "int64:" + strconv.FormatInt(int64(v), 10)
+		if encoded, err := json.Marshal(v); err == nil {
+			number := json.Number(encoded)
+			if _, integer := integerRequestNumber(number); integer {
+				return requestNumberKey(number)
+			}
 		}
 		return "float64:" + strconv.FormatFloat(v, 'f', -1, 64)
+	case json.Number:
+		return requestNumberKey(v)
+	case int, int8, int16, int32, uint, uint8, uint16, uint32, uint64:
+		encoded, _ := json.Marshal(v)
+		return requestNumberKey(json.Number(encoded))
 	case nil:
 		return "<nil>"
 	default:
@@ -399,6 +426,14 @@ func (r *RequestId) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &s); err == nil {
 		r.value = s
 		return nil
+	}
+
+	var number json.Number
+	if err := json.Unmarshal(data, &number); err == nil {
+		if value, integer := integerRequestNumber(number); integer {
+			r.value = value
+			return nil
+		}
 	}
 
 	// JSON numbers are unmarshaled as float64 in Go
