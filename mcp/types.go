@@ -396,12 +396,15 @@ func (r RequestId) String() string {
 		return "float64:" + strconv.FormatFloat(v, 'f', -1, 64)
 	case json.Number:
 		return requestNumberKey(v)
-	case int, int8, int16, int32, uint, uint8, uint16, uint32, uint64:
-		encoded, _ := json.Marshal(v)
-		return requestNumberKey(json.Number(encoded))
 	case nil:
 		return "<nil>"
 	default:
+		if encoded, err := json.Marshal(v); err == nil {
+			var decoded RequestId
+			if err := json.Unmarshal(encoded, &decoded); err == nil {
+				return decoded.String()
+			}
+		}
 		return "unknown:" + fmt.Sprintf("%v", v)
 	}
 }

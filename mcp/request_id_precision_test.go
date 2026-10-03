@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"math/big"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -59,4 +60,17 @@ func TestNotificationParamsRetainsOtherFields(t *testing.T) {
 	require.Equal(t, float64(3), params.Meta["n"])
 	require.NoError(t, json.Unmarshal([]byte(`{"requestId":{"custom":true}}`), &params))
 	require.Equal(t, map[string]any{"custom": true}, params.AdditionalFields["requestId"])
+}
+
+func TestRequestIDNativeValuesMatchWireIdentity(t *testing.T) {
+	type integerAlias uint64
+	type stringAlias string
+	values := []any{int(1), uint64(18446744073709551615), integerAlias(18446744073709551615), stringAlias("123"), new(big.Int).Lsh(big.NewInt(1), 128)}
+	for _, value := range values {
+		encoded, err := json.Marshal(value)
+		require.NoError(t, err)
+		var decoded RequestId
+		require.NoError(t, json.Unmarshal(encoded, &decoded))
+		require.Equal(t, decoded.String(), NewRequestId(value).String(), string(encoded))
+	}
 }
