@@ -613,10 +613,11 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	isSamplingResponse := jsonMessage.Method == "" && jsonMessage.ID != nil &&
 		(jsonMessage.Result != nil || jsonMessage.Error != nil)
 
-	var requestID any
+	var id mcp.RequestId
 	if len(jsonMessage.ID) > 0 {
-		_ = json.Unmarshal(jsonMessage.ID, &requestID)
+		_ = json.Unmarshal(jsonMessage.ID, &id)
 	}
+	requestID := id.Value()
 
 	// Handle sampling responses separately.
 	//
