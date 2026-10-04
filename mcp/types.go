@@ -1432,7 +1432,8 @@ func (t *ToolResultContent) UnmarshalJSON(data []byte) error {
 	t.ToolUseID = raw.ToolUseID
 	t.IsError = raw.IsError
 
-	if len(raw.Content) > 0 {
+	t.Content = nil
+	if raw.Content != nil {
 		t.Content = make([]Content, 0, len(raw.Content))
 		for _, rawContent := range raw.Content {
 			c, err := UnmarshalContent(rawContent)
