@@ -29,6 +29,7 @@ func (c *Client) IterTools(
 ) iter.Seq2[mcp.Tool, error] {
 	return func(yield func(mcp.Tool, error) bool) {
 		request := request
+		seen := map[mcp.Cursor]struct{}{request.Params.Cursor: {}}
 		for {
 			if err := ctx.Err(); err != nil {
 				yield(mcp.Tool{}, err)
@@ -45,6 +46,10 @@ func (c *Client) IterTools(
 				}
 			}
 			if result.NextCursor == "" {
+				return
+			}
+			if err := noteListCursor(seen, result.NextCursor); err != nil {
+				yield(mcp.Tool{}, err)
 				return
 			}
 			request.Params.Cursor = result.NextCursor
@@ -65,6 +70,7 @@ func (c *Client) IterResources(
 ) iter.Seq2[mcp.Resource, error] {
 	return func(yield func(mcp.Resource, error) bool) {
 		request := request
+		seen := map[mcp.Cursor]struct{}{request.Params.Cursor: {}}
 		for {
 			if err := ctx.Err(); err != nil {
 				yield(mcp.Resource{}, err)
@@ -81,6 +87,10 @@ func (c *Client) IterResources(
 				}
 			}
 			if result.NextCursor == "" {
+				return
+			}
+			if err := noteListCursor(seen, result.NextCursor); err != nil {
+				yield(mcp.Resource{}, err)
 				return
 			}
 			request.Params.Cursor = result.NextCursor
@@ -101,6 +111,7 @@ func (c *Client) IterResourceTemplates(
 ) iter.Seq2[mcp.ResourceTemplate, error] {
 	return func(yield func(mcp.ResourceTemplate, error) bool) {
 		request := request
+		seen := map[mcp.Cursor]struct{}{request.Params.Cursor: {}}
 		for {
 			if err := ctx.Err(); err != nil {
 				yield(mcp.ResourceTemplate{}, err)
@@ -117,6 +128,10 @@ func (c *Client) IterResourceTemplates(
 				}
 			}
 			if result.NextCursor == "" {
+				return
+			}
+			if err := noteListCursor(seen, result.NextCursor); err != nil {
+				yield(mcp.ResourceTemplate{}, err)
 				return
 			}
 			request.Params.Cursor = result.NextCursor
@@ -137,6 +152,7 @@ func (c *Client) IterPrompts(
 ) iter.Seq2[mcp.Prompt, error] {
 	return func(yield func(mcp.Prompt, error) bool) {
 		request := request
+		seen := map[mcp.Cursor]struct{}{request.Params.Cursor: {}}
 		for {
 			if err := ctx.Err(); err != nil {
 				yield(mcp.Prompt{}, err)
@@ -153,6 +169,10 @@ func (c *Client) IterPrompts(
 				}
 			}
 			if result.NextCursor == "" {
+				return
+			}
+			if err := noteListCursor(seen, result.NextCursor); err != nil {
+				yield(mcp.Prompt{}, err)
 				return
 			}
 			request.Params.Cursor = result.NextCursor
