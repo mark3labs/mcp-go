@@ -596,6 +596,18 @@ func (s *StdioServer) processMessage(
 		ID     mcp.RequestId `json:"id"`
 	}
 	parsed := json.Unmarshal(rawMessage, &baseMessage) == nil
+	if !parsed {
+		var invalidIDMessage struct {
+			Method string          `json:"method"`
+			ID     json.RawMessage `json:"id"`
+		}
+		if err := json.Unmarshal(rawMessage, &invalidIDMessage); err == nil && invalidIDMessage.Method == string(mcp.MethodToolsCall) {
+			var id mcp.RequestId
+			if err := json.Unmarshal(invalidIDMessage.ID, &id); err != nil {
+				return s.writeResponse(createErrorResponse(nil, mcp.INVALID_REQUEST, "Invalid request id"), writer)
+			}
+		}
+	}
 	if parsed && baseMessage.Method == string(mcp.MethodToolsCall) {
 		// Queue tool calls for processing by workers
 		select {
