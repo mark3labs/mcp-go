@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -50,6 +51,16 @@ func TestRequestIDExtendedIntegerIdentity(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRequestIDVeryLongExponentIdentity(t *testing.T) {
+	// The exponent stays compact; normalization must not parse it as a machine integer.
+	exponent := "1" + strings.Repeat("0", 100_000)
+	previousExponent := strings.Repeat("9", 100_000)
+	var first, second RequestId
+	require.NoError(t, json.Unmarshal([]byte("1e"+exponent), &first))
+	require.NoError(t, json.Unmarshal([]byte("10e"+previousExponent), &second))
+	require.Equal(t, first.String(), second.String())
 }
 
 func TestNotificationParamsRetainsOtherFields(t *testing.T) {
