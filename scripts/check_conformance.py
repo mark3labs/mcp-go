@@ -65,11 +65,22 @@ def read_suite_results(output_dir: Path) -> dict[str, tuple[bool, bool]]:
     results = {}
     for checks_file in output_dir.glob("server-*/checks.json"):
         checks = json.loads(checks_file.read_text(encoding="utf-8"))
-        scenario = checks_file.parent.name.removeprefix("server-").rsplit("-202", maxsplit=1)[0]
+        scenario = scenario_from_result_dir(checks_file.parent)
         passed = bool(checks) and all(check.get("status") in {"SUCCESS", "INFO"} for check in checks)
         runner_error = any(check.get("description") == "Failed to run scenario" for check in checks)
         results[scenario] = (passed, runner_error)
     return results
+
+
+def scenario_from_result_dir(result_dir: Path) -> str:
+    name = result_dir.name.removeprefix("server-")
+    match = re.fullmatch(
+        r"(?P<scenario>.+)-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:-\d{3})?Z",
+        name,
+    )
+    if match is None:
+        raise ValueError(f"unrecognized conformance result directory: {result_dir.name}")
+    return match.group("scenario")
 
 
 def read_active_scenarios(output: str) -> tuple[int | None, list[str]]:
@@ -91,7 +102,7 @@ def main() -> int:
         try:
             suite_status, suite_output = run_cli(args.url, suite_dir)
             suite_results = read_suite_results(suite_dir)
-        except (ConformanceRunnerError, OSError, json.JSONDecodeError) as error:
+        except (ConformanceRunnerError, OSError, ValueError) as error:
             print(f"Conformance runner failure: {error}")
             return 1
         if not suite_results:
@@ -144,7 +155,7 @@ def main() -> int:
                 try:
                     status, output_text = run_cli(args.url, output_dir, scenario)
                     results = read_suite_results(output_dir)
-                except (ConformanceRunnerError, OSError, json.JSONDecodeError) as error:
+                except (ConformanceRunnerError, OSError, ValueError) as error:
                     print(f"Conformance runner failure for {scenario}: {error}")
                     return 1
                 result = results.get(scenario)

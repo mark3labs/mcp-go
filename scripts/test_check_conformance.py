@@ -8,6 +8,20 @@ import check_conformance
 
 
 class CheckConformanceTests(unittest.TestCase):
+    def test_scenario_result_timestamp_is_not_tied_to_a_specific_year(self):
+        self.assertEqual(
+            check_conformance.scenario_from_result_dir(
+                Path("server-tools-list-2026-10-05T14-00-00-123Z")
+            ),
+            "tools-list",
+        )
+        self.assertEqual(
+            check_conformance.scenario_from_result_dir(
+                Path("server-tools-list-2030-01-01T00-00-00-000Z")
+            ),
+            "tools-list",
+        )
+
     def test_active_scenarios_are_counted_from_cli_output(self):
         output = "Running active suite (2 scenarios) against http://localhost\n\n=== Running scenario: ping ===\n=== Running scenario: tools-list ==="
 
