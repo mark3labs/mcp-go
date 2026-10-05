@@ -1,0 +1,54 @@
+name: MCP conformance
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/conformance.yml'
+      - 'conformance/**'
+      - 'examples/conformance/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'scripts/check_conformance.py'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/conformance.yml'
+      - 'conformance/**'
+      - 'examples/conformance/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'scripts/check_conformance.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Start conformance fixture server
+        run: |
+          go run ./examples/conformance > /tmp/mcp-conformance-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:3000/health >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              cat /tmp/mcp-conformance-server.log
+              exit 1
+            fi
+            sleep 1
+          done
+          python3 scripts/check_conformance.py \
+            --url http://127.0.0.1:3000/mcp \
+            --baseline conformance/server/expected-failures.yml
