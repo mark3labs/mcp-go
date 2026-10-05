@@ -193,19 +193,18 @@ func registerTools(mcpServer *server.MCPServer) {
 			if request.Params.Meta != nil {
 				token = request.Params.Meta.ProgressToken
 			}
-			if token == nil {
-				token = 0
-			}
-			for i, progress := range []int{0, 50, 100} {
-				if i > 0 {
-					time.Sleep(50 * time.Millisecond)
-				}
-				if err := mcpServer.SendNotificationToClient(ctx, string(mcp.MethodNotificationProgress), map[string]any{
-					"progressToken": token,
-					"progress":      progress,
-					"total":         100,
-				}); err != nil {
-					return nil, err
+			if token != nil {
+				for i, progress := range []int{0, 50, 100} {
+					if i > 0 {
+						time.Sleep(50 * time.Millisecond)
+					}
+					if err := mcpServer.SendNotificationToClient(ctx, string(mcp.MethodNotificationProgress), map[string]any{
+						"progressToken": token,
+						"progress":      progress,
+						"total":         100,
+					}); err != nil {
+						return nil, err
+					}
 				}
 			}
 			return mcp.NewToolResultText("progress reported"), nil

@@ -3,6 +3,7 @@ name: MCP conformance
 on:
   pull_request:
     paths:
+      - '**/*.go'
       - '.github/workflows/conformance.yml'
       - 'conformance/**'
       - 'examples/conformance/**'
@@ -12,6 +13,7 @@ on:
   push:
     branches: [main]
     paths:
+      - '**/*.go'
       - '.github/workflows/conformance.yml'
       - 'conformance/**'
       - 'examples/conformance/**'
@@ -34,6 +36,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Test conformance checker
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - name: Start conformance fixture server
         run: |
           go run ./examples/conformance > /tmp/mcp-conformance-server.log 2>&1 &
