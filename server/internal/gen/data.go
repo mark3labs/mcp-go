@@ -19,6 +19,9 @@ type MCPRequestType struct {
 	// RequiresModern marks methods introduced by protocol version 2026-07-28.
 	// They are rejected with METHOD_NOT_FOUND on legacy requests.
 	RequiresModern bool
+	// RequiresExtension marks methods that require the client to have declared
+	// the named MCP extension SEP-2663.
+	RequiresExtension string
 }
 
 var MCPRequestTypes = []MCPRequestType{
@@ -166,15 +169,26 @@ var MCPRequestTypes = []MCPRequestType{
 		ResultIsAny:    true, // Returns 'any' to support both CallToolResult and CreateTaskResult
 		HasMeta:        true,
 	}, {
-		MethodName:     "MethodTasksGet",
-		ParamType:      "GetTaskRequest",
-		ResultType:     "GetTaskResult",
-		Group:          "tasks",
-		GroupName:      "Tasks",
-		GroupHookName:  "Task",
-		HookName:       "GetTask",
-		UnmarshalError: "invalid get task request",
-		HandlerFunc:    "handleGetTask",
+		MethodName:        "MethodTasksGet",
+		ParamType:         "GetTaskRequest",
+		ResultType:        "GetTaskResult",
+		Group:             "tasks",
+		GroupName:         "Tasks",
+		GroupHookName:     "Task",
+		HookName:          "GetTask",
+		UnmarshalError:    "invalid get task request",
+		HandlerFunc:       "handleGetTask",
+		RequiresExtension: "mcp.ExtensionTasks",
+	}, {
+		MethodName:        "MethodTasksUpdate",
+		ParamType:         "UpdateTaskRequest",
+		ResultType:        "UpdateTaskResult",
+		GroupName:         "Tasks",
+		HookName:          "UpdateTask",
+		UnmarshalError:    "invalid update task request",
+		HandlerFunc:       "handleUpdateTask",
+		RequiresModern:    true,
+		RequiresExtension: "mcp.ExtensionTasks",
 	}, {
 		MethodName:      "MethodTasksList",
 		ParamType:       "ListTasksRequest",
@@ -198,15 +212,16 @@ var MCPRequestTypes = []MCPRequestType{
 		HandlerFunc:     "handleTaskResult",
 		RemovedInModern: true,
 	}, {
-		MethodName:     "MethodTasksCancel",
-		ParamType:      "CancelTaskRequest",
-		ResultType:     "CancelTaskResult",
-		Group:          "tasks",
-		GroupName:      "Tasks",
-		GroupHookName:  "Task",
-		HookName:       "CancelTask",
-		UnmarshalError: "invalid cancel task request",
-		HandlerFunc:    "handleCancelTask",
+		MethodName:        "MethodTasksCancel",
+		ParamType:         "CancelTaskRequest",
+		ResultType:        "CancelTaskResult",
+		Group:             "tasks",
+		GroupName:         "Tasks",
+		GroupHookName:     "Task",
+		HookName:          "CancelTask",
+		UnmarshalError:    "invalid cancel task request",
+		HandlerFunc:       "handleCancelTask",
+		RequiresExtension: "mcp.ExtensionTasks",
 	}, {
 		MethodName:     "MethodCompletionComplete",
 		ParamType:      "CompleteRequest",

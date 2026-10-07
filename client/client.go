@@ -925,6 +925,19 @@ func (c *Client) CancelTask(
 	return mcp.ParseCancelTaskResult(response)
 }
 
+// UpdateTask delivers inputResponses to a task that is waiting for client input
+func (c *Client) UpdateTask(
+	ctx context.Context,
+	request mcp.UpdateTaskRequest,
+) (*mcp.UpdateTaskResult, error) {
+	response, err := c.sendRequest(ctx, string(mcp.MethodTasksUpdate), request.Params, outboundHeader(request.Header, request.Method))
+	if err != nil {
+		return nil, err
+	}
+
+	return mcp.ParseUpdateTaskResult(response)
+}
+
 // ListTasks returns the list of tasks
 func (c *Client) ListTasks(
 	ctx context.Context,
