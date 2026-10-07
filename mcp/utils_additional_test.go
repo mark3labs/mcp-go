@@ -583,6 +583,42 @@ func TestParseCallToolResult_Errors(t *testing.T) {
 		assert.Contains(t, err.Error(), "content is missing")
 	})
 
+	t.Run("null structuredContent without content", func(t *testing.T) {
+		raw := json.RawMessage(`{"structuredContent": null}`)
+		_, err := ParseCallToolResult(&raw)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "content is missing")
+	})
+
+	t.Run("structured content without content field", func(t *testing.T) {
+		raw := json.RawMessage(`{"structuredContent": {"data": "structured only"}}`)
+		result, err := ParseCallToolResult(&raw)
+		require.NoError(t, err)
+		assert.Empty(t, result.Content)
+		assert.Equal(t, map[string]any{"data": "structured only"}, result.StructuredContent)
+	})
+
+	t.Run("input required without content", func(t *testing.T) {
+		raw := json.RawMessage(`{
+			"resultType": "input_required",
+			"inputRequests": {"confirm": {"method": "elicitation/create", "params": {"message": "Continue?"}}},
+			"requestState": "{\"step\":1}"
+		}`)
+		result, err := ParseCallToolResult(&raw)
+		require.NoError(t, err)
+		assert.True(t, result.NeedsInput())
+		assert.Equal(t, `{"step":1}`, result.RequestState)
+		require.Contains(t, result.InputRequests, "confirm")
+		assert.Equal(t, MethodElicitationCreate, result.InputRequests["confirm"].Method)
+		assert.Empty(t, result.Content)
+	})
+
+	t.Run("complete result without content", func(t *testing.T) {
+		raw := json.RawMessage(`{"resultType": "complete"}`)
+		_, err := ParseCallToolResult(&raw)
+		assert.ErrorContains(t, err, "content is missing")
+	})
+
 	t.Run("content not array", func(t *testing.T) {
 		raw := json.RawMessage(`{"content": "not an array"}`)
 		_, err := ParseCallToolResult(&raw)
