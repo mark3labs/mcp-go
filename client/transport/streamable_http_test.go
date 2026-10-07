@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1451,11 +1452,10 @@ func TestReadSSEContextCancellation(t *testing.T) {
 	c := &StreamableHTTP{}
 
 	handlerCalled := make(chan struct{}, 1)
-	done := make(chan struct{})
+	done := make(chan error, 1)
 
 	go func() {
-		defer close(done)
-		c.readSSE(ctx, pr, func(event, data string) {
+		done <- c.readSSE(ctx, pr, func(event, data string) {
 			handlerCalled <- struct{}{}
 		})
 	}()
@@ -1466,8 +1466,8 @@ func TestReadSSEContextCancellation(t *testing.T) {
 
 	// readSSE must exit within 1 second after cancellation
 	select {
-	case <-done:
-		// Success — readSSE exited promptly
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
 	case <-time.After(2 * time.Second):
 		t.Fatal("readSSE did not exit within 2 seconds after context cancellation — blocking I/O is not interrupted")
 	}
@@ -1616,6 +1616,7 @@ func TestSendRequestSSEStreamStaysOpenWithContinuousListening(t *testing.T) {
 }
 
 func TestNextReconnectDelay(t *testing.T) {
+	const maxDuration = time.Duration(1<<63 - 1)
 	tests := []struct {
 		name      string
 		current   time.Duration
@@ -1650,6 +1651,69 @@ func TestNextReconnectDelay(t *testing.T) {
 			baseDelay: time.Second,
 			maxDelay:  30 * time.Second,
 			expected:  30 * time.Second,
+		},
+		{
+			name:      "negative maximum keeps base delay",
+			current:   maxDuration,
+			baseDelay: time.Second,
+			maxDelay:  -time.Second,
+			expected:  time.Second,
+		},
+		{
+			name:      "disabled backoff ignores overflowing current",
+			current:   maxDuration,
+			baseDelay: time.Second,
+			maxDelay:  0,
+			expected:  time.Second,
+		},
+		{
+			name:      "maximum duration saturates",
+			current:   maxDuration,
+			baseDelay: time.Second,
+			maxDelay:  maxDuration,
+			expected:  maxDuration,
+		},
+		{
+			name:      "just below half of maximum doubles",
+			current:   maxDuration/2 - 1,
+			baseDelay: time.Second,
+			maxDelay:  maxDuration,
+			expected:  maxDuration - 3,
+		},
+		{
+			name:      "half of odd maximum doubles",
+			current:   maxDuration / 2,
+			baseDelay: time.Second,
+			maxDelay:  maxDuration,
+			expected:  maxDuration - 1,
+		},
+		{
+			name:      "just above half of maximum saturates",
+			current:   maxDuration/2 + 1,
+			baseDelay: time.Second,
+			maxDelay:  maxDuration,
+			expected:  maxDuration,
+		},
+		{
+			name:      "overflowing current saturates at smaller maximum",
+			current:   maxDuration,
+			baseDelay: time.Second,
+			maxDelay:  30 * time.Second,
+			expected:  30 * time.Second,
+		},
+		{
+			name:      "half of even maximum reaches cap",
+			current:   5 * time.Nanosecond,
+			baseDelay: time.Second,
+			maxDelay:  10 * time.Nanosecond,
+			expected:  10 * time.Nanosecond,
+		},
+		{
+			name:      "above half of odd maximum saturates",
+			current:   5 * time.Nanosecond,
+			baseDelay: time.Second,
+			maxDelay:  9 * time.Nanosecond,
+			expected:  9 * time.Nanosecond,
 		},
 	}
 	for _, tt := range tests {
@@ -1830,4 +1894,35 @@ func TestContinuousListeningCleanStreamEndDoesNotAdvanceBackoff(t *testing.T) {
 	require.Less(t, interval(1, 2), 60*time.Millisecond)
 	require.GreaterOrEqual(t, interval(2, 3), 60*time.Millisecond)
 	require.Greater(t, interval(2, 3), interval(1, 2))
+}
+
+func TestStreamableHTTP_SendRequestDoesNotMutateCallerHeader(t *testing.T) {
+	url, closeF := startMockStreamableHTTPServer()
+	defer closeF()
+
+	trans, err := NewStreamableHTTP(url, WithHTTPHeaders(map[string]string{
+		"Authorization": "Bearer secret",
+	}))
+	require.NoError(t, err)
+	defer trans.Close()
+
+	shared := http.Header{"X-Tenant": []string{"acme"}}
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Go(func() {
+			resp, err := trans.SendRequest(t.Context(), JSONRPCRequest{
+				JSONRPC: "2.0",
+				ID:      mcp.NewRequestId(int64(i)),
+				Method:  "debug/echo_header",
+				Header:  shared,
+			})
+			if assert.NoError(t, err) {
+				assert.Contains(t, string(resp.Result), "acme")
+			}
+		})
+	}
+	wg.Wait()
+
+	require.Equal(t, http.Header{"X-Tenant": []string{"acme"}}, shared)
 }

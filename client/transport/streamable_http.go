@@ -724,9 +724,10 @@ func (c *StreamableHTTP) sendHTTP(
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// request headers
+	// request headers; cloned because the transport headers below must not
+	// leak into (or race on) the caller's map
 	if header != nil {
-		req.Header = header
+		req.Header = header.Clone()
 	}
 
 	// Set headers
@@ -1100,7 +1101,10 @@ func nextReconnectDelay(current, baseDelay, maxDelay time.Duration) time.Duratio
 	if maxDelay <= 0 {
 		return baseDelay
 	}
-	return min(current*2, maxDelay)
+	if current > maxDelay/2 {
+		return maxDelay
+	}
+	return current * 2
 }
 
 var (
