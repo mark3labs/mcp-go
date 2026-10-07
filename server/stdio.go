@@ -592,16 +592,28 @@ func (s *StdioServer) processMessage(
 
 	// Check if this is a tool call that might need sampling (and thus should be processed concurrently)
 	var baseMessage struct {
-		Method string `json:"method"`
-		ID     any    `json:"id,omitempty"`
+		Method string        `json:"method"`
+		ID     mcp.RequestId `json:"id"`
 	}
 	parsed := json.Unmarshal(rawMessage, &baseMessage) == nil
+	if !parsed {
+		var invalidIDMessage struct {
+			Method string          `json:"method"`
+			ID     json.RawMessage `json:"id"`
+		}
+		if err := json.Unmarshal(rawMessage, &invalidIDMessage); err == nil && invalidIDMessage.Method == string(mcp.MethodToolsCall) {
+			var id mcp.RequestId
+			if err := json.Unmarshal(invalidIDMessage.ID, &id); err != nil {
+				return s.writeResponse(createErrorResponse(nil, mcp.INVALID_REQUEST, "Invalid request id"), writer)
+			}
+		}
+	}
 	if parsed && baseMessage.Method == string(mcp.MethodToolsCall) {
 		// Queue tool calls for processing by workers
 		select {
 		case s.toolCallQueue <- &toolCallWork{
 			ctx:     ctx,
-			id:      baseMessage.ID,
+			id:      baseMessage.ID.Value(),
 			message: rawMessage,
 			writer:  writer,
 		}:
@@ -621,9 +633,9 @@ func (s *StdioServer) processMessage(
 
 	// Serve requests off the read loop: a handler that blocks, such as
 	// subscriptions/listen, must not stall it. writeMu serialises the writes.
-	if parsed && baseMessage.ID != nil {
+	if parsed && !baseMessage.ID.IsNil() {
 		s.requestWg.Go(func() {
-			s.handleRequest(ctx, baseMessage.ID, rawMessage, writer)
+			s.handleRequest(ctx, baseMessage.ID.Value(), rawMessage, writer)
 		})
 		return nil
 	}
