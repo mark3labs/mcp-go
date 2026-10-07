@@ -1452,11 +1452,10 @@ func TestReadSSEContextCancellation(t *testing.T) {
 	c := &StreamableHTTP{}
 
 	handlerCalled := make(chan struct{}, 1)
-	done := make(chan struct{})
+	done := make(chan error, 1)
 
 	go func() {
-		defer close(done)
-		c.readSSE(ctx, pr, func(event, data string) {
+		done <- c.readSSE(ctx, pr, func(event, data string) {
 			handlerCalled <- struct{}{}
 		})
 	}()
@@ -1467,8 +1466,8 @@ func TestReadSSEContextCancellation(t *testing.T) {
 
 	// readSSE must exit within 1 second after cancellation
 	select {
-	case <-done:
-		// Success — readSSE exited promptly
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
 	case <-time.After(2 * time.Second):
 		t.Fatal("readSSE did not exit within 2 seconds after context cancellation — blocking I/O is not interrupted")
 	}
@@ -1614,6 +1613,287 @@ func TestSendRequestSSEStreamStaysOpenWithContinuousListening(t *testing.T) {
 	resp2, err := trans.SendRequest(ctx, listReq)
 	require.NoError(t, err, "tools/list should not hang even with continuous listening against stateless server")
 	require.NotNil(t, resp2)
+}
+
+func TestNextReconnectDelay(t *testing.T) {
+	const maxDuration = time.Duration(1<<63 - 1)
+	tests := []struct {
+		name      string
+		current   time.Duration
+		baseDelay time.Duration
+		maxDelay  time.Duration
+		expected  time.Duration
+	}{
+		{
+			name:      "backoff disabled keeps base delay",
+			current:   retryInterval,
+			baseDelay: retryInterval,
+			maxDelay:  0,
+			expected:  retryInterval,
+		},
+		{
+			name:      "delay doubles",
+			current:   time.Second,
+			baseDelay: time.Second,
+			maxDelay:  30 * time.Second,
+			expected:  2 * time.Second,
+		},
+		{
+			name:      "delay capped at max",
+			current:   20 * time.Second,
+			baseDelay: time.Second,
+			maxDelay:  30 * time.Second,
+			expected:  30 * time.Second,
+		},
+		{
+			name:      "delay stays at max",
+			current:   30 * time.Second,
+			baseDelay: time.Second,
+			maxDelay:  30 * time.Second,
+			expected:  30 * time.Second,
+		},
+		{
+			name:      "negative maximum keeps base delay",
+			current:   maxDuration,
+			baseDelay: time.Second,
+			maxDelay:  -time.Second,
+			expected:  time.Second,
+		},
+		{
+			name:      "disabled backoff ignores overflowing current",
+			current:   maxDuration,
+			baseDelay: time.Second,
+			maxDelay:  0,
+			expected:  time.Second,
+		},
+		{
+			name:      "maximum duration saturates",
+			current:   maxDuration,
+			baseDelay: time.Second,
+			maxDelay:  maxDuration,
+			expected:  maxDuration,
+		},
+		{
+			name:      "just below half of maximum doubles",
+			current:   maxDuration/2 - 1,
+			baseDelay: time.Second,
+			maxDelay:  maxDuration,
+			expected:  maxDuration - 3,
+		},
+		{
+			name:      "half of odd maximum doubles",
+			current:   maxDuration / 2,
+			baseDelay: time.Second,
+			maxDelay:  maxDuration,
+			expected:  maxDuration - 1,
+		},
+		{
+			name:      "just above half of maximum saturates",
+			current:   maxDuration/2 + 1,
+			baseDelay: time.Second,
+			maxDelay:  maxDuration,
+			expected:  maxDuration,
+		},
+		{
+			name:      "overflowing current saturates at smaller maximum",
+			current:   maxDuration,
+			baseDelay: time.Second,
+			maxDelay:  30 * time.Second,
+			expected:  30 * time.Second,
+		},
+		{
+			name:      "half of even maximum reaches cap",
+			current:   5 * time.Nanosecond,
+			baseDelay: time.Second,
+			maxDelay:  10 * time.Nanosecond,
+			expected:  10 * time.Nanosecond,
+		},
+		{
+			name:      "above half of odd maximum saturates",
+			current:   5 * time.Nanosecond,
+			baseDelay: time.Second,
+			maxDelay:  9 * time.Nanosecond,
+			expected:  9 * time.Nanosecond,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expected, nextReconnectDelay(tt.current, tt.baseDelay, tt.maxDelay))
+		})
+	}
+}
+
+func TestWithContinuousListeningBackoffOption(t *testing.T) {
+	trans, err := NewStreamableHTTP("http://example.com/mcp",
+		WithContinuousListening(),
+		WithContinuousListeningBackoff(2*time.Second, time.Minute),
+	)
+	require.NoError(t, err)
+	require.Equal(t, 2*time.Second, trans.reconnectInitialDelay)
+	require.Equal(t, time.Minute, trans.reconnectMaxDelay)
+}
+
+func TestContinuousListeningBackoffIncreasesRetryDelay(t *testing.T) {
+	var mu sync.Mutex
+	var getTimes []time.Time
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set(HeaderKeySessionID, "test-session-backoff")
+			resp := JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      mcp.NewRequestId(int64(0)),
+				Result:  json.RawMessage(`{"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"test"}}`),
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+		mu.Lock()
+		getTimes = append(getTimes, time.Now())
+		count := len(getTimes)
+		mu.Unlock()
+		if count <= 4 {
+			// Fail the first four GET attempts so the listener backs off.
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}))
+	defer server.Close()
+
+	trans, err := NewStreamableHTTP(server.URL,
+		WithContinuousListening(),
+		WithContinuousListeningBackoff(40*time.Millisecond, 320*time.Millisecond),
+		WithHTTPLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+	)
+	require.NoError(t, err)
+	defer trans.Close()
+
+	require.NoError(t, trans.Start(t.Context()))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	_, err = trans.SendRequest(ctx, JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(int64(0)),
+		Method:  "initialize",
+	})
+	require.NoError(t, err)
+
+	// Wait for five GET attempts (four failures with growing delays).
+	var times []time.Time
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		mu.Lock()
+		n := len(getTimes)
+		times = append([]time.Time(nil), getTimes...)
+		mu.Unlock()
+		if n >= 5 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for GET attempts, got %d", n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	interval := func(i, j int) time.Duration { return times[j].Sub(times[i]) }
+	// Expected delays between attempts: 40ms, 80ms, 160ms, 320ms.
+	// Assert lower bounds slightly below the expected values to tolerate
+	// timer granularity, and require the delay to actually grow.
+	require.GreaterOrEqual(t, interval(0, 1), 30*time.Millisecond)
+	require.GreaterOrEqual(t, interval(1, 2), 60*time.Millisecond)
+	require.GreaterOrEqual(t, interval(2, 3), 120*time.Millisecond)
+	require.GreaterOrEqual(t, interval(3, 4), 240*time.Millisecond)
+	require.Greater(t, interval(2, 3), interval(0, 1))
+}
+
+func TestContinuousListeningCleanStreamEndDoesNotAdvanceBackoff(t *testing.T) {
+	var mu sync.Mutex
+	var getTimes []time.Time
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set(HeaderKeySessionID, "test-session-clean-eof")
+			resp := JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      mcp.NewRequestId(int64(0)),
+				Result:  json.RawMessage(`{"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"test"}}`),
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+		mu.Lock()
+		getTimes = append(getTimes, time.Now())
+		count := len(getTimes)
+		mu.Unlock()
+		// Disable keep-alive so the Go transport never silently retries a GET
+		// on a race-closed pooled connection, which would skew timing below.
+		w.Header().Set("Connection", "close")
+		switch count {
+		case 1:
+			// End the SSE stream cleanly right away (server closes the connection).
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		case 2, 3:
+			// Fail the next attempts so the listener backs off from baseDelay again.
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+
+	trans, err := NewStreamableHTTP(server.URL,
+		WithContinuousListening(),
+		WithContinuousListeningBackoff(40*time.Millisecond, 320*time.Millisecond),
+		WithHTTPLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+	)
+	require.NoError(t, err)
+	defer trans.Close()
+
+	require.NoError(t, trans.Start(t.Context()))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	_, err = trans.SendRequest(ctx, JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(int64(0)),
+		Method:  "initialize",
+	})
+	require.NoError(t, err)
+
+	// Wait for four GET attempts: clean EOF, two failures, then stop.
+	var times []time.Time
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		mu.Lock()
+		n := len(getTimes)
+		times = append([]time.Time(nil), getTimes...)
+		mu.Unlock()
+		if n >= 4 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for GET attempts, got %d", n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	interval := func(i, j int) time.Duration { return times[j].Sub(times[i]) }
+	// A clean EOF is a success: the listener reconnects after baseDelay (40ms).
+	require.GreaterOrEqual(t, interval(0, 1), 30*time.Millisecond)
+	require.Less(t, interval(0, 1), 60*time.Millisecond)
+	// The first failure after a success also waits baseDelay (the delay is
+	// advanced only after the wait), then the backoff grows from baseDelay:
+	// the second failure waits 80ms.
+	require.GreaterOrEqual(t, interval(1, 2), 30*time.Millisecond)
+	require.Less(t, interval(1, 2), 60*time.Millisecond)
+	require.GreaterOrEqual(t, interval(2, 3), 60*time.Millisecond)
+	require.Greater(t, interval(2, 3), interval(1, 2))
 }
 
 func TestStreamableHTTP_SendRequestDoesNotMutateCallerHeader(t *testing.T) {

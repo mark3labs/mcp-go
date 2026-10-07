@@ -41,6 +41,26 @@ func WithContinuousListening() StreamableHTTPCOption {
 	}
 }
 
+// WithContinuousListeningBackoff configures exponential backoff for the
+// reconnect attempts performed by the continuous listener enabled with
+// [WithContinuousListening]. After a connection attempt fails, the delay
+// before the next attempt doubles, starting at initialDelay and capped at
+// maxDelay. The delay resets to initialDelay once a connection ends cleanly.
+//
+// Without this option the listener retries at a fixed interval, preserving
+// the historical behavior. Values are sanitized: a non-positive initialDelay
+// disables backoff, and a maxDelay smaller than initialDelay is treated as
+// initialDelay.
+//
+// Deprecated: like [WithContinuousListening], this only applies to the legacy
+// standalone GET stream removed by protocol version 2026-07-28 (SEP-2575).
+func WithContinuousListeningBackoff(initialDelay, maxDelay time.Duration) StreamableHTTPCOption {
+	return func(sc *StreamableHTTP) {
+		sc.reconnectInitialDelay = initialDelay
+		sc.reconnectMaxDelay = maxDelay
+	}
+}
+
 // WithHTTPBasicClient sets a custom HTTP client on the StreamableHTTP transport.
 func WithHTTPBasicClient(client *http.Client) StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
@@ -130,6 +150,9 @@ type StreamableHTTP struct {
 	host                string
 	logger              *slog.Logger
 	getListeningEnabled bool
+
+	reconnectInitialDelay time.Duration
+	reconnectMaxDelay     time.Duration
 
 	sessionID       atomic.Value // string
 	protocolVersion atomic.Value // string
@@ -777,6 +800,8 @@ func (c *StreamableHTTP) sendHTTP(
 func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCloser, ignoreResponse bool) (*JSONRPCResponse, error) {
 	// Create a channel for this specific request
 	responseChan := make(chan *JSONRPCResponse, 1)
+	// readErrChan reports how the SSE stream ended: nil means a clean EOF.
+	readErrChan := make(chan error, 1)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -786,12 +811,11 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 		defer func() {
 			if r := recover(); r != nil {
 				c.logger.Error("panic in SSE stream reader", "panic", r)
+				readErrChan <- fmt.Errorf("panic in SSE stream reader: %v", r)
 			}
 		}()
-		// Ensure this goroutine respects the context
-		defer close(responseChan)
 
-		c.readSSE(ctx, reader, func(event, data string) {
+		readErrChan <- c.readSSE(ctx, reader, func(event, data string) {
 			// Try to unmarshal as a response first
 			var message JSONRPCResponse
 			if err := json.Unmarshal([]byte(data), &message); err != nil {
@@ -833,13 +857,24 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 		})
 	}()
 
-	// Wait for the response or context cancellation
+	// Wait for the response, the end of the stream, or context cancellation
 	select {
 	case response := <-responseChan:
 		if response == nil {
 			return nil, fmt.Errorf("unexpected nil response")
 		}
 		return response, nil
+	case readErr := <-readErrChan:
+		if readErr != nil {
+			return nil, readErr
+		}
+		// The stream ended cleanly without delivering a response.
+		if ignoreResponse {
+			// For continuous listening, a clean EOF means the server closed the
+			// stream normally — this is a successful (ended) session, not a failure.
+			return nil, nil
+		}
+		return nil, fmt.Errorf("SSE stream ended without a response")
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -848,10 +883,14 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 // readSSE reads the SSE stream(reader) and calls the handler for each event and data pair.
 // It will end when the reader is closed (or the context is done).
 //
+// It returns nil when the stream ends cleanly (io.EOF), the context error when
+// ctx is cancelled, or the underlying read error otherwise. Callers use this to
+// distinguish a clean disconnect from a failed one.
+//
 // A background goroutine closes the reader when ctx is cancelled, which unblocks
 // any in-progress ReadString call. This is necessary because ReadString is blocking
 // I/O that does not respect context cancellation on its own.
-func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, handler func(event, data string)) {
+func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, handler func(event, data string)) error {
 	// Close the reader when context is cancelled to interrupt blocking reads.
 	// This ensures ReadString returns immediately with an error instead of
 	// blocking indefinitely when the SSE stream is open but idle.
@@ -873,7 +912,7 @@ func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, hand
 		if err != nil {
 			// Context was cancelled — reader was closed by the goroutine above.
 			if ctx.Err() != nil {
-				return
+				return ctx.Err()
 			}
 			if err == io.EOF {
 				// Process any pending event before exit
@@ -883,10 +922,10 @@ func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, hand
 					}
 					handler(event, data)
 				}
-				return
+				return nil
 			}
 			c.logger.Error("SSE stream error", "err", err)
-			return
+			return fmt.Errorf("SSE stream error: %w", err)
 		}
 
 		// Remove only newline markers
@@ -999,6 +1038,13 @@ func (c *StreamableHTTP) IsOAuthEnabled() bool {
 
 func (c *StreamableHTTP) listenForever(ctx context.Context) {
 	c.logger.Info("listening to server forever")
+	baseDelay := retryInterval
+	maxDelay := time.Duration(0)
+	if c.reconnectInitialDelay > 0 {
+		baseDelay = c.reconnectInitialDelay
+		maxDelay = max(c.reconnectMaxDelay, baseDelay)
+	}
+	delay := baseDelay
 	for {
 		// Use the original context for continuous listening - no per-iteration timeout
 		// The SSE connection itself will detect disconnections via the underlying HTTP transport,
@@ -1028,16 +1074,37 @@ func (c *StreamableHTTP) listenForever(ctx context.Context) {
 		}
 
 		if err != nil {
-			c.logger.Error("failed to listen to server. retry in 1 second", "err", err)
+			c.logger.Error("failed to listen to server", "err", err, "retryIn", delay)
+		} else {
+			// The stream ended cleanly: reconnect after baseDelay and let later
+			// failures start backing off from baseDelay again.
+			delay = baseDelay
 		}
 
 		// Use context-aware sleep
 		select {
-		case <-time.After(retryInterval):
+		case <-time.After(delay):
 		case <-ctx.Done():
 			return
 		}
+
+		if err != nil {
+			delay = nextReconnectDelay(delay, baseDelay, maxDelay)
+		}
 	}
+}
+
+// nextReconnectDelay returns the reconnect delay to use after a failed
+// attempt. A maxDelay <= 0 means backoff is disabled and the delay stays at
+// baseDelay; otherwise the delay doubles, capped at maxDelay.
+func nextReconnectDelay(current, baseDelay, maxDelay time.Duration) time.Duration {
+	if maxDelay <= 0 {
+		return baseDelay
+	}
+	if current > maxDelay/2 {
+		return maxDelay
+	}
+	return current * 2
 }
 
 var (
@@ -1076,7 +1143,9 @@ func (c *StreamableHTTP) createGETConnectionToServer(ctx context.Context) error 
 		return fmt.Errorf("unexpected content type: %s", resp.Header.Get("Content-Type"))
 	}
 
-	// When ignoreResponse is true, the function will never return expect context is done.
+	// With ignoreResponse set, this returns nil error when the stream ends
+	// cleanly (server closed the connection) or when ctx is done, and a
+	// non-nil error only on an actual read/protocol failure.
 	// NOTICE: Due to the ambiguity of the specification, other SDKs may use the GET connection to transfer the response
 	// messages. To be more compatible, we should handle this response, however, as the transport layer is message-based,
 	// currently, there is no convenient way to handle this response.
