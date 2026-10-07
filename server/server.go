@@ -220,6 +220,8 @@ type MCPServer struct {
 	promptHandlers             map[string]PromptHandlerFunc
 	tools                      map[string]ServerTool
 	taskTools                  map[string]ServerTaskTool
+	toolResultSizeLimit        int
+	toolResultLimitInstalled   bool
 	toolHandlerMiddlewares     []ToolHandlerMiddleware
 	resourceHandlerMiddlewares []ResourceHandlerMiddleware
 	promptHandlerMiddlewares   []PromptHandlerMiddleware
@@ -2386,6 +2388,19 @@ func (s *MCPServer) executeTaskTool(
 		// Task failed - complete with error
 		s.completeTask(entry, nil, err)
 		return
+	}
+
+	if s.toolResultSizeLimit > 0 && result != nil {
+		payload := &mcp.CallToolResult{
+			Result:            result.Result,
+			Content:           result.Content,
+			StructuredContent: result.StructuredContent,
+			IsError:           result.IsError,
+		}
+		if limited := limitToolResultSize(request.Params.Name, payload, s.toolResultSizeLimit); limited != payload {
+			s.completeTask(entry, limited, nil)
+			return
+		}
 	}
 
 	// Task succeeded - store the CreateTaskResult
