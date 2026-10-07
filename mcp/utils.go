@@ -833,14 +833,14 @@ func ParseCallToolResult(rawMessage *json.RawMessage) (*CallToolResult, error) {
 
 	var probe struct {
 		Content           json.RawMessage `json:"content"`
-		StructuredContent json.RawMessage `json:"structuredContent"`
+		StructuredContent any             `json:"structuredContent"`
 		ResultType        ResultType      `json:"resultType"`
 	}
 	if err := json.Unmarshal(*rawMessage, &probe); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 	// Structured-only results and input_required (SEP-2322) legitimately omit content.
-	if probe.Content == nil && len(probe.StructuredContent) == 0 && probe.ResultType != ResultTypeInputRequired {
+	if probe.Content == nil && probe.StructuredContent == nil && probe.ResultType != ResultTypeInputRequired {
 		return nil, fmt.Errorf("content is missing")
 	}
 

@@ -583,6 +583,13 @@ func TestParseCallToolResult_Errors(t *testing.T) {
 		assert.Contains(t, err.Error(), "content is missing")
 	})
 
+	t.Run("null structuredContent without content", func(t *testing.T) {
+		raw := json.RawMessage(`{"structuredContent": null}`)
+		_, err := ParseCallToolResult(&raw)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "content is missing")
+	})
+
 	t.Run("structured content without content field", func(t *testing.T) {
 		raw := json.RawMessage(`{"structuredContent": {"data": "structured only"}}`)
 		result, err := ParseCallToolResult(&raw)
