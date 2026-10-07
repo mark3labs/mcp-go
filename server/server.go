@@ -163,11 +163,23 @@ type requestError struct {
 	err  error
 }
 
+type jsonRPCErrorProvider interface {
+	JSONRPCError() mcp.JSONRPCError
+}
+
 func (e *requestError) Error() string {
 	return fmt.Sprintf("request error: %s", e.err)
 }
 
 func (e *requestError) ToJSONRPCError() mcp.JSONRPCError {
+	var provider jsonRPCErrorProvider
+	if errors.As(e.err, &provider) {
+		response := provider.JSONRPCError()
+		response.JSONRPC = mcp.JSONRPC_VERSION
+		response.ID = mcp.NewRequestId(e.id)
+		return response
+	}
+
 	return mcp.JSONRPCError{
 		JSONRPC: mcp.JSONRPC_VERSION,
 		ID:      mcp.NewRequestId(e.id),
