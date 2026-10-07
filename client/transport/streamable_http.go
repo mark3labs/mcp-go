@@ -635,7 +635,7 @@ func (c *StreamableHTTP) SendRequest(
 		// handle error response
 		var errResponse JSONRPCResponse
 		body, _ := io.ReadAll(resp.Body)
-		if err := json.Unmarshal(body, &errResponse); err == nil {
+		if err := json.Unmarshal(body, &errResponse); err == nil && errResponse.JSONRPC == mcp.JSONRPC_VERSION && errResponse.Error != nil {
 			return &errResponse, nil
 		}
 		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, body)
