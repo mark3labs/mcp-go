@@ -595,6 +595,8 @@ func TestStreamableHTTPErrors(t *testing.T) {
 			{name: "framework detail", status: http.StatusServiceUnavailable, body: `{"detail":"Service Unavailable"}`},
 			{name: "rate limited", status: http.StatusTooManyRequests, body: `{"message":"API rate limit exceeded"}`},
 			{name: "error object without jsonrpc", status: http.StatusInternalServerError, body: `{"error":{"code":-32603,"message":"boom"}}`},
+			{name: "empty error object", status: http.StatusTooManyRequests, body: `{"jsonrpc":"2.0","error":{}}`},
+			{name: "error without message", status: http.StatusBadGateway, body: `{"jsonrpc":"2.0","error":{"code":-32603}}`},
 		}
 
 		for _, tt := range tests {

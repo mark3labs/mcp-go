@@ -635,8 +635,10 @@ func (c *StreamableHTTP) SendRequest(
 		// handle error response
 		var errResponse JSONRPCResponse
 		body, _ := io.ReadAll(resp.Body)
-		if err := json.Unmarshal(body, &errResponse); err == nil && errResponse.JSONRPC == mcp.JSONRPC_VERSION && errResponse.Error != nil {
-			return &errResponse, nil
+		if isJSONRPCErrorBody(body) {
+			if err := json.Unmarshal(body, &errResponse); err == nil {
+				return &errResponse, nil
+			}
 		}
 		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, body)
 	}
@@ -686,6 +688,22 @@ func (c *StreamableHTTP) SendRequest(
 	default:
 		return nil, fmt.Errorf("unexpected content type: %s", resp.Header.Get("Content-Type"))
 	}
+}
+
+// isJSONRPCErrorBody reports whether body is a JSON-RPC error message with
+// both the required code and message members.
+func isJSONRPCErrorBody(body []byte) bool {
+	var msg struct {
+		JSONRPC string `json:"jsonrpc"`
+		Error   *struct {
+			Code    *int    `json:"code"`
+			Message *string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &msg); err != nil {
+		return false
+	}
+	return msg.JSONRPC == mcp.JSONRPC_VERSION && msg.Error != nil && msg.Error.Code != nil && msg.Error.Message != nil
 }
 
 func (c *StreamableHTTP) sendHTTP(
