@@ -262,8 +262,19 @@ func (c *Client) sendRequest(
 		Header:  header,
 	}
 
+	// A request whose context has already ended isn't sent, so there is
+	// nothing to cancel.
+	if err := ctx.Err(); err != nil {
+		err = transport.NewError(err)
+		endSendSpan(span, err)
+		return nil, err
+	}
+
 	response, err := c.transport.SendRequest(ctx, request)
 	if err != nil {
+		if ctx.Err() != nil {
+			c.cancelRequest(ctx, request)
+		}
 		err = transport.NewError(err)
 		endSendSpan(span, err)
 		return nil, err
@@ -278,6 +289,66 @@ func (c *Client) sendRequest(
 	endSendSpan(span, nil)
 	return &response.Result, nil
 }
+
+// cancelRequest tells the server to stop working on a request whose context
+// ended before the response arrived, with a notifications/cancelled that
+// references it. Over stdio that is the only way to cancel a request, and
+// protocol version 2026-07-28 requires it there.
+//
+// Over HTTP nothing is sent: on protocol version 2026-07-28 the transport
+// ending the request's stream is the cancellation, and earlier versions keep
+// the behaviour they had. The handshake is left alone, since initialize must
+// not be cancelled and nothing else is sent before it completes, and so are
+// task-augmented requests, which are cancelled with tasks/cancel instead.
+func (c *Client) cancelRequest(ctx context.Context, request transport.JSONRPCRequest) {
+	if !c.initialized.Load() ||
+		request.Method == string(mcp.MethodInitialize) ||
+		request.Method == string(mcp.MethodServerDiscover) ||
+		isTaskAugmented(request.Params) {
+		return
+	}
+	if _, ok := c.transport.(transport.HTTPConnection); ok {
+		return
+	}
+	notification := mcp.JSONRPCNotification{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		Notification: mcp.Notification{
+			Method: string(mcp.MethodNotificationCancelled),
+			Params: mcp.NotificationParams{
+				AdditionalFields: map[string]any{"requestId": request.ID, "reason": ctx.Err().Error()},
+			},
+		},
+	}
+	// The request's context has ended, so send with one of our own, and off
+	// the caller's path: the caller already has its error, and a peer that
+	// doesn't read must not hold it up. The notification is best effort.
+	ctx = context.WithoutCancel(ctx)
+	go func() {
+		ctx, cancel := context.WithTimeout(ctx, cancelNotificationTimeout)
+		defer cancel()
+		_ = c.transport.SendNotification(ctx, notification)
+	}()
+}
+
+// isTaskAugmented reports whether params ask for the request to run as a
+// task.
+func isTaskAugmented(params any) bool {
+	encoded, err := json.Marshal(params)
+	if err != nil {
+		return false
+	}
+	var fields struct {
+		Task json.RawMessage `json:"task"`
+	}
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		return false
+	}
+	return len(fields.Task) > 0 && string(fields.Task) != "null"
+}
+
+// cancelNotificationTimeout bounds how long cancelRequest waits to send a
+// notifications/cancelled.
+const cancelNotificationTimeout = 5 * time.Second
 
 func outboundHeader(header http.Header, requestMethod string) http.Header {
 	// A typed request with Method set was decoded from an inbound JSON-RPC
