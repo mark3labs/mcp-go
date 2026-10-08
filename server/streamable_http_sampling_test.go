@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -214,4 +216,38 @@ func TestStreamableHTTPServer_SamplingQueueFull(t *testing.T) {
 	if !strings.Contains(err.Error(), "queue is full") {
 		t.Errorf("Expected queue full error, got: %v", err)
 	}
+}
+
+func TestStreamableHTTPServer_SamplingArrayContent(t *testing.T) {
+	session := newStreamableHttpSession("test-session", nil, nil, nil, nil, new(atomic.Int64))
+
+	go func() {
+		item := <-session.samplingRequestChan
+		item.response <- samplingResponseItem{
+			requestID: item.requestID,
+			result: json.RawMessage(`{
+				"role": "assistant",
+				"content": [
+					{"type": "tool_use", "id": "call_abc123", "name": "get_weather", "input": {"city": "Paris"}},
+					{"type": "tool_use", "id": "call_def456", "name": "get_weather", "input": {"city": "London"}}
+				],
+				"model": "test-model",
+				"stopReason": "toolUse"
+			}`),
+		}
+	}()
+
+	result, err := session.RequestSampling(t.Context(), mcp.CreateMessageRequest{
+		CreateMessageParams: mcp.CreateMessageParams{
+			Messages: []mcp.SamplingMessage{
+				{Role: mcp.RoleUser, Content: mcp.NewTextContent("What's the weather like in Paris and London?")},
+			},
+			MaxTokens: 1000,
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []mcp.Content{
+		mcp.NewToolUseContent("call_abc123", "get_weather", map[string]any{"city": "Paris"}),
+		mcp.NewToolUseContent("call_def456", "get_weather", map[string]any{"city": "London"}),
+	}, result.Content)
 }

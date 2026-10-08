@@ -38,11 +38,13 @@ func TestToolResultContentUnmarshalReusedReceiver(t *testing.T) {
 	}{
 		{"empty content", `{"type":"tool_result","toolUseId":"next","content":[]}`},
 		{"null content", `{"type":"tool_result","toolUseId":"next","content":null}`},
+		{"new structured content", `{"type":"tool_result","toolUseId":"next","content":[],"structuredContent":{"current":2}}`},
+		{"null structured content", `{"type":"tool_result","toolUseId":"next","content":[],"structuredContent":null}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var reused ToolResultContent
-			require.NoError(t, json.Unmarshal([]byte(`{"type":"tool_result","toolUseId":"previous","content":[{"type":"text","text":"previous result"}],"isError":true}`), &reused))
+			require.NoError(t, json.Unmarshal([]byte(`{"type":"tool_result","toolUseId":"previous","content":[{"type":"text","text":"previous result"}],"structuredContent":{"previous":1},"isError":true}`), &reused))
 			require.NoError(t, json.Unmarshal([]byte(tt.data), &reused))
 
 			var fresh ToolResultContent

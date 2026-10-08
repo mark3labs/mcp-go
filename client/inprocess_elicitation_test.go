@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/client/transport"
@@ -30,6 +31,52 @@ func (h *MockElicitationHandler) Elicit(ctx context.Context, request mcp.Elicita
 			},
 		},
 	}, nil
+}
+
+// A tool that needs authorization first returns mcp.URLElicitationRequiredError,
+// as the elicitation docs describe, and a client using protocol version
+// 2025-11-25, which defines that error, gets it back with the URL to send the
+// user to.
+func TestInProcessURLElicitationRequiredError(t *testing.T) {
+	mcpServer := server.NewMCPServer("test-server", "1.0.0", server.WithElicitation())
+	mcpServer.AddTool(mcp.NewTool("protected_action"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return nil, mcp.URLElicitationRequiredError{
+			Elicitations: []mcp.ElicitationParams{{
+				Mode:          mcp.ElicitationModeURL,
+				ElicitationID: "auth-1",
+				URL:           "https://example.com/authorize?id=auth-1",
+				Message:       "Authorization is required to access this resource.",
+			}},
+		}
+	})
+
+	client := NewInProcessClientWithElicitationHandler(mcpServer, &MockElicitationHandler{})
+	defer client.Close()
+	if err := client.Start(t.Context()); err != nil {
+		t.Fatalf("Failed to start client: %v", err)
+	}
+	if _, err := client.Initialize(t.Context(), mcp.InitializeRequest{
+		Params: mcp.InitializeParams{
+			ProtocolVersion: mcp.LATEST_LEGACY_PROTOCOL_VERSION,
+			ClientInfo:      mcp.Implementation{Name: "test-client", Version: "1.0.0"},
+			Capabilities: mcp.ClientCapabilities{
+				Elicitation: &mcp.ElicitationCapability{URL: &struct{}{}},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("Failed to initialize: %v", err)
+	}
+
+	_, err := client.CallTool(t.Context(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{Name: "protected_action"},
+	})
+	var required mcp.URLElicitationRequiredError
+	if !errors.As(err, &required) {
+		t.Fatalf("expected URLElicitationRequiredError, got %v", err)
+	}
+	if len(required.Elicitations) != 1 || required.Elicitations[0].URL != "https://example.com/authorize?id=auth-1" {
+		t.Errorf("unexpected elicitations: %+v", required.Elicitations)
+	}
 }
 
 func TestInProcessElicitation(t *testing.T) {

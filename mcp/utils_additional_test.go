@@ -583,6 +583,28 @@ func TestParseCallToolResult_Errors(t *testing.T) {
 		assert.Contains(t, err.Error(), "content is missing")
 	})
 
+	t.Run("input required without content", func(t *testing.T) {
+		// The shape other SDKs send: an InputRequiredResult has no content.
+		raw := json.RawMessage(`{
+			"resultType": "input_required",
+			"inputRequests": {"confirm": {"method": "elicitation/create", "params": {"message": "Continue?"}}},
+			"requestState": "{\"step\":1}"
+		}`)
+		result, err := ParseCallToolResult(&raw)
+		require.NoError(t, err)
+		assert.True(t, result.NeedsInput())
+		assert.Equal(t, `{"step":1}`, result.RequestState)
+		require.Contains(t, result.InputRequests, "confirm")
+		assert.Equal(t, MethodElicitationCreate, result.InputRequests["confirm"].Method)
+		assert.Empty(t, result.Content)
+	})
+
+	t.Run("complete result without content", func(t *testing.T) {
+		raw := json.RawMessage(`{"resultType": "complete"}`)
+		_, err := ParseCallToolResult(&raw)
+		assert.ErrorContains(t, err, "content is missing")
+	})
+
 	t.Run("content not array", func(t *testing.T) {
 		raw := json.RawMessage(`{"content": "not an array"}`)
 		_, err := ParseCallToolResult(&raw)
@@ -1043,6 +1065,40 @@ func TestToolResultContent_JSONRoundTrip(t *testing.T) {
 	text, ok := tc.Content[0].(TextContent)
 	require.True(t, ok)
 	assert.Equal(t, "Sunny, 22°C", text.Text)
+}
+
+func TestToolResultContent_StructuredContent(t *testing.T) {
+	data := []byte(`{"type":"tool_result","toolUseId":"tu_1","content":[{"type":"text","text":"{\"temperature\":22,\"conditions\":\"Sunny\"}"}],"structuredContent":{"temperature":22,"conditions":"Sunny"}}`)
+
+	t.Run("UnmarshalContent", func(t *testing.T) {
+		result, err := UnmarshalContent(data)
+		require.NoError(t, err)
+
+		encoded, err := json.Marshal(result)
+		require.NoError(t, err)
+		assert.JSONEq(t, string(data), string(encoded))
+	})
+
+	t.Run("ParseContent", func(t *testing.T) {
+		var contentMap map[string]any
+		require.NoError(t, json.Unmarshal(data, &contentMap))
+		result, err := ParseContent(contentMap)
+		require.NoError(t, err)
+
+		encoded, err := json.Marshal(result)
+		require.NoError(t, err)
+		assert.JSONEq(t, string(data), string(encoded))
+	})
+
+	t.Run("UnmarshalContent keeps large integers", func(t *testing.T) {
+		data := []byte(`{"type":"tool_result","toolUseId":"tu_1","content":[],"structuredContent":{"id":9007199254740993}}`)
+		result, err := UnmarshalContent(data)
+		require.NoError(t, err)
+
+		encoded, err := json.Marshal(result)
+		require.NoError(t, err)
+		assert.Contains(t, string(encoded), `"structuredContent":{"id":9007199254740993}`)
+	})
 }
 
 func TestToolUseContent_IsContent(t *testing.T) {

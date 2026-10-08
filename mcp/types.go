@@ -1209,7 +1209,7 @@ type CreateMessageResult struct {
 // SamplingMessage describes a message issued to or received from an LLM API.
 type SamplingMessage struct {
 	Role    Role `json:"role"`
-	Content any  `json:"content"` // Can be TextContent, ImageContent, AudioContent, ToolUseContent or ToolResultContent
+	Content any  `json:"content"` // Can be TextContent, ImageContent, AudioContent, ToolUseContent or ToolResultContent, or a []Content of them
 }
 
 type Annotations struct {
@@ -1403,20 +1403,41 @@ type ToolResultContent struct {
 	ToolUseID string `json:"toolUseId"`
 	// Content is the unstructured result content of the tool use.
 	Content []Content `json:"content"`
+	// StructuredContent is an optional structured result of the tool use.
+	// If the tool defined an outputSchema, this SHOULD conform to that schema.
+	StructuredContent any `json:"structuredContent,omitempty"`
+	// RawStructuredContent preserves the original JSON bytes for structuredContent when
+	// unmarshaled from a wire message.
+	RawStructuredContent json.RawMessage `json:"-"`
 	// Whether the tool use resulted in an error.
 	IsError bool `json:"isError,omitempty"`
 }
 
 func (ToolResultContent) isContent() {}
 
+// MarshalJSON implements custom JSON marshaling for ToolResultContent.
+// structuredContent is written from RawStructuredContent when it is set.
+func (t ToolResultContent) MarshalJSON() ([]byte, error) {
+	type alias ToolResultContent
+	out := struct {
+		alias
+		StructuredContent any `json:"structuredContent,omitempty"`
+	}{alias: alias(t), StructuredContent: t.StructuredContent}
+	if len(t.RawStructuredContent) > 0 {
+		out.StructuredContent = t.RawStructuredContent
+	}
+	return json.Marshal(out)
+}
+
 // toolResultContentJSON is a helper type for unmarshaling ToolResultContent.
 type toolResultContentJSON struct {
 	Annotated
-	Meta      *Meta             `json:"_meta,omitempty"`
-	Type      string            `json:"type"`
-	ToolUseID string            `json:"toolUseId"`
-	Content   []json.RawMessage `json:"content"`
-	IsError   bool              `json:"isError,omitempty"`
+	Meta              *Meta             `json:"_meta,omitempty"`
+	Type              string            `json:"type"`
+	ToolUseID         string            `json:"toolUseId"`
+	Content           []json.RawMessage `json:"content"`
+	StructuredContent json.RawMessage   `json:"structuredContent,omitempty"`
+	IsError           bool              `json:"isError,omitempty"`
 }
 
 // UnmarshalJSON implements custom JSON unmarshaling for ToolResultContent
@@ -1431,6 +1452,15 @@ func (t *ToolResultContent) UnmarshalJSON(data []byte) error {
 	t.Type = raw.Type
 	t.ToolUseID = raw.ToolUseID
 	t.IsError = raw.IsError
+
+	t.RawStructuredContent = nil
+	t.StructuredContent = nil
+	if len(raw.StructuredContent) > 0 {
+		t.RawStructuredContent = append(json.RawMessage(nil), raw.StructuredContent...)
+		if err := json.Unmarshal(raw.StructuredContent, &t.StructuredContent); err != nil {
+			return fmt.Errorf("unmarshaling tool result structured content: %w", err)
+		}
+	}
 
 	t.Content = nil
 	if raw.Content != nil {
@@ -1573,7 +1603,7 @@ type CompleteArgument struct {
 
 // CompleteContext is the context about already-resolved arguments
 type CompleteContext struct {
-	Arguments map[string]string `json:"arguments"`
+	Arguments map[string]string `json:"arguments,omitempty"`
 }
 
 // Completion is the server's response to a completion/complete request
