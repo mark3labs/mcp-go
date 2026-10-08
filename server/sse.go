@@ -517,6 +517,9 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		sessionID:           sessionID,
 		notificationChannel: make(chan mcp.JSONRPCNotification, 100),
 	}
+	// Whichever way the stream ends, release the goroutines waiting to
+	// queue a response for it.
+	defer session.closeDone()
 
 	s.sessions.Store(sessionID, session)
 	defer s.sessions.Delete(sessionID)
@@ -692,7 +695,6 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 					select {
 					case session.eventQueue <- message:
 					case <-session.done:
-					default:
 					}
 				}
 			}
@@ -711,15 +713,14 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 				message = fmt.Sprintf("event: message\ndata: %s\n\n", eventData)
 			}
 
-			// Queue the event for sending via SSE
+			// Queue the event for sending via SSE. The client is waiting
+			// for the response, so if the queue is full, wait for room
+			// rather than drop it.
 			select {
 			case session.eventQueue <- message:
 				// Event queued successfully
 			case <-session.done:
 				// Session is closed, don't try to queue
-			default:
-				// Queue is full, log this situation
-				log.Printf("Event queue full for session %s", sessionID)
 			}
 		}
 	}(messageCtx)
