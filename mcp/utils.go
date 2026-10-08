@@ -722,6 +722,7 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 			}
 		}
 		c := NewToolResultContent(toolUseID, contentItems, isError)
+		c.StructuredContent = contentMap["structuredContent"]
 		c.Annotations = annotations
 		c.Meta = meta
 		return c, nil
