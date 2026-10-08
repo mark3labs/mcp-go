@@ -37,7 +37,13 @@ func compileTestServerFromSource(outputPath, sourcePath string) error {
 		outputPath,
 		sourcePath,
 	)
-	tmpCache, _ := os.MkdirTemp("", "gocache")
+	// Each build gets a cache of its own, which #241 added for a flaky
+	// parallel build. Nothing reuses it, so it goes once the build is done.
+	tmpCache, err := os.MkdirTemp("", "gocache")
+	if err != nil {
+		return fmt.Errorf("creating build cache: %w", err)
+	}
+	defer os.RemoveAll(tmpCache)
 	cmd.Env = append(os.Environ(), "GOCACHE="+tmpCache)
 
 	if output, err := cmd.CombinedOutput(); err != nil {
