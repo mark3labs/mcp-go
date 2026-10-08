@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -123,15 +124,14 @@ func extractRequestProtocolInfo(message json.RawMessage) (*RequestProtocolInfo, 
 	}
 
 	// Client capabilities are required on every modern request. An empty
-	// object is valid and means "no optional capabilities".
-	if raw := meta.GetMetaField(mcp.MetaKeyClientCapabilities); raw == nil {
-		return nil, mcp.MissingRequiredClientCapabilityError{Capability: mcp.MetaKeyClientCapabilities}
-	}
+	// object is valid and means "no optional capabilities". A request without
+	// them, or with a value that does not decode as capabilities, is malformed
+	// and is rejected as invalid params (-32602).
+	// MissingRequiredClientCapabilityError is for a request that needs a
+	// capability the client did not declare.
 	caps := meta.ClientCapabilities()
 	if caps == nil {
-		return nil, mcp.HeaderMismatchError{
-			Reason: "invalid _meta field " + mcp.MetaKeyClientCapabilities,
-		}
+		return nil, errors.New("missing or invalid _meta field " + mcp.MetaKeyClientCapabilities)
 	}
 	info.ClientCapabilities = caps
 

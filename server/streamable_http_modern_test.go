@@ -33,11 +33,18 @@ func modernMeta() map[string]any {
 // requires, and returns the raw HTTP response.
 func postModern(t *testing.T, url string, method mcp.MCPMethod, params map[string]any) *http.Response {
 	t.Helper()
+	return postModernWithMeta(t, url, method, params, modernMeta())
+}
+
+// postModernWithMeta is postModern with the request's _meta supplied by the
+// caller.
+func postModernWithMeta(t *testing.T, url string, method mcp.MCPMethod, params, meta map[string]any) *http.Response {
+	t.Helper()
 
 	if params == nil {
 		params = map[string]any{}
 	}
-	params["_meta"] = modernMeta()
+	params["_meta"] = meta
 
 	body, err := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
@@ -308,6 +315,34 @@ func TestModernProtocol_HeaderValidation(t *testing.T) {
 		errDetails := decodeJSONRPC(t, resp)["error"].(map[string]any)
 		assert.Equal(t, float64(mcp.HEADER_MISMATCH), errDetails["code"])
 	})
+}
+
+// A request missing a required _meta field is malformed, and over HTTP it is
+// refused with 400 Bad Request and Invalid params.
+func TestModernProtocol_ClientCapabilitiesRequired(t *testing.T) {
+	srv := newModernTestServer(t)
+
+	tests := []struct {
+		name         string
+		capabilities any
+	}{
+		{name: "missing"},
+		{name: "not an object", capabilities: "all"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			meta := modernMeta()
+			delete(meta, mcp.MetaKeyClientCapabilities)
+			if tt.capabilities != nil {
+				meta[mcp.MetaKeyClientCapabilities] = tt.capabilities
+			}
+
+			resp := postModernWithMeta(t, srv.URL, mcp.MethodToolsList, nil, meta)
+			assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+			errDetails := decodeJSONRPC(t, resp)["error"].(map[string]any)
+			assert.Equal(t, float64(mcp.INVALID_PARAMS), errDetails["code"])
+		})
+	}
 }
 
 func TestModernProtocol_UnsupportedVersionNegotiation(t *testing.T) {
