@@ -215,7 +215,20 @@ func (s *MCPServer) validateStandardHeadersForMessage(
 	if tool == nil {
 		return nil
 	}
-	return mcp.ValidateParamHeaders(headers.Get, tool, wrapper.Params)
+	return mcp.ValidateParamHeadersLookup(lookupHeader(headers), tool, wrapper.Params)
+}
+
+// lookupHeader reports the first value of a header and whether it was sent at
+// all, so that a header sent with an empty value is not taken for a missing
+// one.
+func lookupHeader(headers http.Header) func(string) (string, bool) {
+	return func(name string) (string, bool) {
+		values := headers.Values(name)
+		if len(values) == 0 {
+			return "", false
+		}
+		return values[0], true
+	}
 }
 
 // toolForHeaderValidation resolves the tool named by a tools/call request, so
