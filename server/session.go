@@ -229,43 +229,51 @@ func (s *MCPServer) SendLogMessageToClient(ctx context.Context, notification mcp
 func (s *MCPServer) sendNotificationToAllClients(notification mcp.JSONRPCNotification) {
 	s.sessions.Range(func(k, v any) bool {
 		if session, ok := v.(ClientSession); ok && session.Initialized() {
-			// From protocol version 2026-07-28 every server-to-client
-			// notification is opt-in: a session that opened a
-			// subscriptions/listen stream receives only the types it asked
-			// for (SEP-2575). Sessions that never opened one are unaffected.
-			if !subscriptionAllowsNotification(session, notification.Method) {
-				return true
-			}
-			if sessionWithStreamableHTTPConfig, ok := session.(SessionWithStreamableHTTPConfig); ok {
-				sessionWithStreamableHTTPConfig.UpgradeToSSEWhenReceiveNotification()
-			}
-			select {
-			case session.NotificationChannel() <- notification:
-				// Successfully sent notification
-			default:
-				// Channel is blocked, if there's an error hook, use it
-				if s.hooks != nil && len(s.hooks.OnError) > 0 {
-					err := ErrNotificationChannelBlocked
-					// Copy hooks pointer to local variable to avoid race condition
-					hooks := s.hooks
-					go func(sessionID string, hooks *Hooks) {
-						defer func() {
-							if r := recover(); r != nil {
-								log.Printf("mcp-go: panic in OnError hook (notification blocked, session %s): %v", sessionID, r)
-							}
-						}()
-						ctx := context.Background()
-						// Use the error hook to report the blocked channel
-						hooks.onError(ctx, nil, "notification", map[string]any{
-							"method":    notification.Method,
-							"sessionID": sessionID,
-						}, fmt.Errorf("notification channel blocked for session %s: %w", sessionID, err))
-					}(session.SessionID(), hooks)
-				}
-			}
+			s.broadcastToSession(session, notification)
 		}
 		return true
 	})
+	s.listenSessions.Range(func(k, _ any) bool {
+		s.broadcastToSession(k.(ClientSession), notification)
+		return true
+	})
+}
+
+func (s *MCPServer) broadcastToSession(session ClientSession, notification mcp.JSONRPCNotification) {
+	// From protocol version 2026-07-28 every server-to-client notification is
+	// opt-in: a session that opened a subscriptions/listen stream receives
+	// only the types it asked for (SEP-2575). Sessions that never opened one
+	// are unaffected.
+	if !subscriptionAllowsNotification(session, notification.Method) {
+		return
+	}
+	if sessionWithStreamableHTTPConfig, ok := session.(SessionWithStreamableHTTPConfig); ok {
+		sessionWithStreamableHTTPConfig.UpgradeToSSEWhenReceiveNotification()
+	}
+	select {
+	case session.NotificationChannel() <- notification:
+		// Successfully sent notification
+	default:
+		// Channel is blocked, if there's an error hook, use it
+		if s.hooks != nil && len(s.hooks.OnError) > 0 {
+			err := ErrNotificationChannelBlocked
+			// Copy hooks pointer to local variable to avoid race condition
+			hooks := s.hooks
+			go func(sessionID string, hooks *Hooks) {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("mcp-go: panic in OnError hook (notification blocked, session %s): %v", sessionID, r)
+					}
+				}()
+				ctx := context.Background()
+				// Use the error hook to report the blocked channel
+				hooks.onError(ctx, nil, "notification", map[string]any{
+					"method":    notification.Method,
+					"sessionID": sessionID,
+				}, fmt.Errorf("notification channel blocked for session %s: %w", sessionID, err))
+			}(session.SessionID(), hooks)
+		}
+	}
 }
 
 func (s *MCPServer) sendNotificationToSpecificClient(session ClientSession, notification mcp.JSONRPCNotification) error {

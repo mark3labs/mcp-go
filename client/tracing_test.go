@@ -126,3 +126,44 @@ func TestNoOption_DoesNotInjectHeaders(t *testing.T) {
 
 	assert.Empty(t, wrapped.last.Get("X-Test-Propagated"))
 }
+
+func TestWithPropagator_DoesNotMutateCallerHeader(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []ClientOption
+	}{
+		{name: "legacy", opts: []ClientOption{WithLegacyProtocolOnly()}},
+		{name: "modern"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := server.NewMCPServer("trace-srv", "1.0")
+			srv.AddTool(mcp.Tool{Name: "echo"}, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				return mcp.NewToolResultText("ok"), nil
+			})
+			wrapped := &headerCapturingTransport{Interface: transport.NewInProcessTransport(srv)}
+
+			opts := append([]ClientOption{WithPropagator(headerInjectingPropagator{})}, tt.opts...)
+			c := NewClient(wrapped, opts...)
+			require.NoError(t, c.Start(t.Context()))
+			t.Cleanup(func() { _ = c.Close() })
+
+			initReq := mcp.InitializeRequest{}
+			initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+			initReq.Params.ClientInfo = mcp.Implementation{Name: "test", Version: "1"}
+			_, err := c.Initialize(t.Context(), initReq)
+			require.NoError(t, err)
+
+			shared := http.Header{"X-Tenant": []string{"acme"}}
+			callReq := mcp.CallToolRequest{Header: shared}
+			callReq.Params.Name = "echo"
+			_, err = c.CallTool(t.Context(), callReq)
+			require.NoError(t, err)
+
+			assert.Equal(t, "yes", wrapped.last.Get("X-Test-Propagated"))
+			assert.Equal(t, "acme", wrapped.last.Get("X-Tenant"))
+			assert.Equal(t, http.Header{"X-Tenant": []string{"acme"}}, shared)
+		})
+	}
+}
