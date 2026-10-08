@@ -2247,6 +2247,17 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 	regularTool, isRegularTool := s.tools[request.Params.Name]
 	s.toolsMu.RUnlock()
 
+	// A session's own tool takes precedence over the server's, as it does in
+	// handleToolCall, which routed this call here after finding it there.
+	if session := ClientSessionFromContext(ctx); session != nil {
+		if sessionWithTools, ok := session.(SessionWithTools); ok {
+			if sessionTool, ok := sessionWithTools.GetSessionTools()[request.Params.Name]; ok {
+				regularTool, isRegularTool = sessionTool, true
+				isTaskTool = false
+			}
+		}
+	}
+
 	// Determine which tool to use and validate task support
 	var toolToUse ServerTaskTool
 	var hasTaskHandler bool
