@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script src="/initializeTheme.iife.js"></script><link rel="preload" as="image" href="/logo.png"/><title>Client Transports – MCP-Go</title><meta property="og:type" content="website"/><meta property="og:title" content="Client Transports"/><meta property="og:url" content="https://mcp-go.dev"/><meta name="twitter:card" content="summary_large_image"/>
-    <script type="module" crossorigin src="/assets/index-Dz4VvcUu.js"></script>
+    <script type="module" crossorigin src="/assets/index-CZz7jXjv.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/style-3fK4AU4f.css">
   </head>
   <body>
@@ -439,6 +439,7 @@
 <span class="line vocs_Span"><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">        sessionID </span><span style="color:#D73A49;--shiki-dark:#F47067" class="vocs_Span">=</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span"> c.</span><span style="color:#6F42C1;--shiki-dark:#DCBDFB" class="vocs_Span">GetSessionId</span><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">() </span><span style="color:#6A737D;--shiki-dark:#768390" class="vocs_Span">// Update session ID</span></span>
 <span class="line vocs_Span"><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">    }</span></span>
 <span class="line vocs_Span"><span style="color:#24292E;--shiki-dark:#ADBAC7" class="vocs_Span">}</span></span></code></pre></div></div>
+<p class="vocs_Paragraph">Once the server has answered 404 for the session, every request fails with <code class="vocs_Code">transport.ErrSessionTerminated</code> until <code class="vocs_Code">Initialize</code> succeeds again. With continuous listening, the GET stream moves to the new session.</p>
 <h2 class="vocs_H2 vocs_Heading"><div id="sse-client" class="vocs_Heading_slugTarget"></div>SSE Client<a class="vocs_Anchor vocs_Autolink" aria-hidden="true" tabindex="-1" href="/clients/transports#sse-client" data-discover="true"><div data-autolink-icon="true" class="vocs_Div vocs_AutolinkIcon" style="--vocs_AutolinkIcon_iconUrl:url(/.vocs/icons/link.svg)"></div></a></h2>
 <p class="vocs_Paragraph">SSE (Server-Sent Events) clients provide real-time communication with servers.</p>
 <h3 class="vocs_H3 vocs_Heading"><div id="basic-sse-client" class="vocs_Heading_slugTarget"></div>Basic SSE Client<a class="vocs_Anchor vocs_Autolink" aria-hidden="true" tabindex="-1" href="/clients/transports#basic-sse-client" data-discover="true"><div data-autolink-icon="true" class="vocs_Div vocs_AutolinkIcon" style="--vocs_AutolinkIcon_iconUrl:url(/.vocs/icons/link.svg)"></div></a></h3>
