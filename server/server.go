@@ -225,6 +225,7 @@ type MCPServer struct {
 	// 2026-07-28 or later. See WithLegacyServerInitiatedRequests.
 	allowServerInitiatedRequests bool
 	paginationLimit              *int
+	toolResultSizeLimit          int
 	sessions                     sync.Map
 	listenSessions               sync.Map // see registerListenSession
 	hooks                        *Hooks
@@ -303,6 +304,15 @@ func WithLegacyServerInitiatedRequests() ServerOption {
 func WithPaginationLimit(limit int) ServerOption {
 	return func(s *MCPServer) {
 		s.paginationLimit = &limit
+	}
+}
+
+// WithToolResultSizeLimit replaces a tool result whose JSON encoding is
+// larger than maxBytes with an error result. The oversized payload is not
+// sent. Zero and negative limits disable the check.
+func WithToolResultSizeLimit(maxBytes int) ServerOption {
+	return func(s *MCPServer) {
+		s.toolResultSizeLimit = maxBytes
 	}
 }
 
@@ -2216,6 +2226,13 @@ func (s *MCPServer) handleToolCall(
 	if s.outputValidator != nil {
 		if _, vErr := s.outputValidator.validate(tool.Tool, result); vErr != nil {
 			return validationToolResult(vErr), nil
+		}
+	}
+
+	if s.toolResultSizeLimit > 0 {
+		encoded, mErr := json.Marshal(result)
+		if mErr == nil && len(encoded) > s.toolResultSizeLimit {
+			return mcp.NewToolResultError(fmt.Sprintf("tool result exceeds %d bytes", s.toolResultSizeLimit)), nil
 		}
 	}
 

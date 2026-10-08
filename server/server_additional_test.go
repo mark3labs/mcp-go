@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -900,4 +901,40 @@ func TestMCPServer_PaginationCursorStability(t *testing.T) {
 	// Should handle gracefully (may have different results due to modifications)
 	// The key is that it shouldn't crash or return errors
 	assert.NotNil(t, result.Tools)
+}
+
+func TestToolResultSizeLimit(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0",
+		WithToolCapabilities(true),
+		WithToolResultSizeLimit(64),
+	)
+	server.AddTool(mcp.NewTool("big"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText(strings.Repeat("x", 200)), nil
+	})
+	server.AddTool(mcp.NewTool("small"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("ok"), nil
+	})
+
+	call := func(name string) mcp.JSONRPCResponse {
+		t.Helper()
+		response := server.HandleMessage(t.Context(), fmt.Appendf(nil, `{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {"name": "%s"}
+		}`, name))
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok)
+		return resp
+	}
+
+	big, err := json.Marshal(call("big").Result)
+	require.NoError(t, err)
+	assert.Contains(t, string(big), "tool result exceeds 64 bytes")
+	assert.Contains(t, string(big), `"isError":true`)
+
+	small, err := json.Marshal(call("small").Result)
+	require.NoError(t, err)
+	assert.Contains(t, string(small), "ok")
+	assert.NotContains(t, string(small), "tool result exceeds")
 }
