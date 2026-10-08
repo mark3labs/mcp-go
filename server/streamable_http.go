@@ -1437,12 +1437,17 @@ func (s *StreamableHTTPServer) nextRequestID(sessionID string) int64 {
 
 // touchSession records the current time as the last activity for the given session.
 // It is a no-op when the sweeper is disabled (sessionIdleTTL <= 0) or sessionID is empty.
+// It runs on every request, so a known session is found with Load and touched
+// without allocating; only a session's first touch pays for LoadOrStore.
 func (s *StreamableHTTPServer) touchSession(sessionID string) {
 	if sessionID == "" || s.sessionIdleTTL <= 0 {
 		return
 	}
 	now := time.Now().UnixNano()
-	actual, _ := s.sessionLastActive.LoadOrStore(sessionID, new(atomic.Int64))
+	actual, ok := s.sessionLastActive.Load(sessionID)
+	if !ok {
+		actual, _ = s.sessionLastActive.LoadOrStore(sessionID, new(atomic.Int64))
+	}
 	actual.(*atomic.Int64).Store(now)
 }
 
