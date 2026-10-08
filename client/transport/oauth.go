@@ -46,6 +46,12 @@ type OAuthConfig struct {
 	ProtectedResourceMetadataURL string
 	// PKCEEnabled enables PKCE for the OAuth flow (recommended for public clients)
 	PKCEEnabled bool
+	// SkipIssuerMetadataValidation turns off the check that authorization
+	// server metadata found through protected resource metadata declares the
+	// issuer it was requested for (RFC 8414 §3.3). Turning it off weakens
+	// security; it is meant only for authorization servers known to publish
+	// a mismatched issuer.
+	SkipIssuerMetadataValidation bool
 	// HTTPClient is an optional HTTP client to use for requests.
 	// If nil, a default HTTP client with a 30 second timeout will be used.
 	HTTPClient *http.Client
@@ -610,6 +616,7 @@ func (h *OAuthHandler) fetchServerMetadata(ctx context.Context) (metadataDiscove
 	h.metadataMu.Lock()
 	authServerMetadataURL := h.config.AuthServerMetadataURL
 	protectedResourceMetadataURL := h.config.ProtectedResourceMetadataURL
+	validateIssuer := !h.config.SkipIssuerMetadataValidation
 	baseURL, baseURLErr := h.extractBaseURL()
 	h.metadataMu.Unlock()
 
@@ -743,9 +750,23 @@ func (h *OAuthHandler) fetchServerMetadata(ctx context.Context) (metadataDiscove
 	for _, u := range authorizationServerMetadataURLs(authServerURL) {
 		// Intermediate fetch errors are intentionally discarded so the caller
 		// can fall through to the next candidate URL.
-		if metadata, _ := h.fetchMetadataFromURL(ctx, u); metadata != nil {
-			return metadataDiscoveryResult{metadata: metadata, resourceURL: resourceURL}, nil
+		metadata, _ := h.fetchMetadataFromURL(ctx, u)
+		if metadata == nil {
+			continue
 		}
+		// RFC 8414 §3.3 / OpenID Connect Discovery §4.3: the issuer in the
+		// document must be identical to the issuer the well-known URL was
+		// built from, or the metadata must not be used. Otherwise a server
+		// could send the client to one authorization server's endpoints
+		// under another's name. Only a final trailing slash is ignored, as
+		// in the official Go SDK: both spellings name the same server.
+		if validateIssuer && strings.TrimSuffix(metadata.Issuer, "/") != strings.TrimSuffix(authServerURL, "/") {
+			return metadataDiscoveryResult{}, fmt.Errorf(
+				"authorization server metadata from %q declares issuer %q, not %q",
+				u, metadata.Issuer, authServerURL,
+			)
+		}
+		return metadataDiscoveryResult{metadata: metadata, resourceURL: resourceURL}, nil
 	}
 
 	// If both discovery methods fail, use default endpoints based on the authorization server URL
