@@ -1007,8 +1007,8 @@ func TestContinuousListeningSessionTerminated(t *testing.T) {
 	retryInterval = 20 * time.Millisecond
 	t.Cleanup(func() { retryInterval = origRetryInterval })
 
-	// Start a server that returns 200 on POST (initialize) but 404 on GET
-	// (simulating a server restart where the session no longer exists).
+	// Start a server that returns 200 on POST (initialize) but 404 on GET,
+	// which the listener takes as a server that doesn't offer the stream.
 	sessionID := "test-session-123"
 	var getCalls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
