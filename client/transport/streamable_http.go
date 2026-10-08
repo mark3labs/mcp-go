@@ -12,6 +12,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -119,9 +120,12 @@ func WithStreamableHTTPHost(host string) StreamableHTTPCOption {
 //
 // https://modelcontextprotocol.io/specification/2025-03-26/basic/transports
 //
-// The current implementation does not support the following features:
-//   - resuming stream
-//     (https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#resumability-and-redelivery)
+// Before protocol version 2026-07-28, a response stream the server ends
+// before the response, once it has sent an event ID, is resumed with a GET
+// carrying Last-Event-ID (SEP-1699). Streams that break off are not resumed
+// (https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#resumability-and-redelivery).
+// A server may keep a resumed request open indefinitely, so callers should
+// give requests a deadline.
 type StreamableHTTP struct {
 	serverURL           *url.URL
 	httpClient          *http.Client
@@ -781,6 +785,10 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// resumeErr is why the stream couldn't be resumed. It is written before
+	// responseChan is closed and read after, so the close orders the two.
+	var resumeErr error
+
 	// Start a goroutine to process the SSE stream
 	go func() {
 		defer func() {
@@ -791,7 +799,9 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 		// Ensure this goroutine respects the context
 		defer close(responseChan)
 
-		c.readSSE(ctx, reader, func(event, data string) {
+		var cursor sseCursor
+		delivered := false
+		handle := func(event, data string) {
 			// Try to unmarshal as a response first
 			var message JSONRPCResponse
 			if err := json.Unmarshal([]byte(data), &message); err != nil {
@@ -828,21 +838,85 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 			}
 
 			if !ignoreResponse {
+				delivered = true
 				responseChan <- &message
 			}
-		})
+		}
+		ended := c.readSSEWithCursor(ctx, reader, &cursor, handle)
+
+		// Before protocol version 2026-07-28, a server may end the stream
+		// before the response, once it has sent an event ID, and the client
+		// polls it by reconnecting (SEP-1699). A stream that breaks off
+		// fails the request, as before.
+		for ended && !ignoreResponse && !delivered && ctx.Err() == nil && cursor.lastEventID != "" && !c.isModern() {
+			ended, resumeErr = c.resumeSSE(ctx, &cursor, handle)
+			if resumeErr != nil {
+				return
+			}
+		}
 	}()
 
 	// Wait for the response or context cancellation
 	select {
 	case response := <-responseChan:
 		if response == nil {
+			if resumeErr != nil {
+				return nil, fmt.Errorf("failed to resume the SSE stream for the response: %w", resumeErr)
+			}
 			return nil, fmt.Errorf("unexpected nil response")
 		}
 		return response, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+// defaultSSEReconnectDelay is how long a client waits before resuming an SSE
+// stream when the server sent no retry field. minSSEReconnectDelay is the
+// shortest wait it takes from one, so that a server asking for no wait at
+// all isn't polled in a tight loop.
+var (
+	defaultSSEReconnectDelay = 1 * time.Second
+	minSSEReconnectDelay     = 10 * time.Millisecond
+)
+
+// resumeSSE waits the reconnection time the server asked for, reopens the
+// stream with a GET carrying Last-Event-ID, the 2025-11-25 way of resuming a
+// stream the server ended before the response, and reads it. It reports
+// whether the server ended this stream too.
+func (c *StreamableHTTP) resumeSSE(ctx context.Context, cursor *sseCursor, handler func(event, data string)) (bool, error) {
+	delay := defaultSSEReconnectDelay
+	if cursor.hasRetry {
+		delay = max(cursor.retry, minSSEReconnectDelay)
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+
+	// The connection gets a context of its own, so that it and the goroutine
+	// readSSEWithCursor starts for it are released as soon as it ends, not
+	// when the request does.
+	ctx, cancel := context.WithCancel(ctx)
+	header := make(http.Header)
+	header.Set("Last-Event-ID", cursor.lastEventID)
+	resp, err := c.sendHTTP(ctx, http.MethodGet, nil, "text/event-stream", header)
+	if err != nil {
+		cancel()
+		return false, err
+	}
+	// Cancel before closing the body, as SendRequest does.
+	defer func() { cancel(); resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+	if mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type")); mediaType != "text/event-stream" {
+		return false, fmt.Errorf("unexpected content type %q", resp.Header.Get("Content-Type"))
+	}
+	return c.readSSEWithCursor(ctx, resp.Body, cursor, handler), nil
 }
 
 // readSSE reads the SSE stream(reader) and calls the handler for each event and data pair.
@@ -852,6 +926,24 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 // any in-progress ReadString call. This is necessary because ReadString is blocking
 // I/O that does not respect context cancellation on its own.
 func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, handler func(event, data string)) {
+	c.readSSEWithCursor(ctx, reader, nil, handler)
+}
+
+// sseCursor holds what a client needs to resume an SSE stream (SEP-1699):
+// the ID of the last event dispatched and the reconnection time the server
+// asked for with the retry field, if any.
+type sseCursor struct {
+	lastEventID string
+	retry       time.Duration
+	hasRetry    bool
+}
+
+// readSSEWithCursor is readSSE that also records the id and retry fields
+// in cursor, when it isn't nil, and reports whether the server ended the
+// stream, as opposed to it breaking off or the context ending. As in the SSE
+// spec, an event's id counts once the event is dispatched, even an event
+// with no data, which is how a server primes the client to reconnect.
+func (c *StreamableHTTP) readSSEWithCursor(ctx context.Context, reader io.ReadCloser, cursor *sseCursor, handler func(event, data string)) bool {
 	// Close the reader when context is cancelled to interrupt blocking reads.
 	// This ensures ReadString returns immediately with an error instead of
 	// blocking indefinitely when the SSE stream is open but idle.
@@ -866,33 +958,43 @@ func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, hand
 	}()
 
 	br := bufio.NewReader(reader)
-	var event, data string
+	var event, data, id string
+	var hasID bool
+	commitID := func() {
+		if cursor != nil && hasID {
+			cursor.lastEventID = id
+		}
+		hasID = false
+	}
 
 	for {
 		line, err := br.ReadString('\n')
 		if err != nil {
 			// Context was cancelled — reader was closed by the goroutine above.
 			if ctx.Err() != nil {
-				return
+				return false
 			}
 			if err == io.EOF {
-				// Process any pending event before exit
+				// Process any pending event before exit. Its id isn't
+				// recorded, as the event was never finished: resuming from
+				// the one before at worst repeats it.
 				if data != "" {
 					if event == "" {
 						event = "message"
 					}
 					handler(event, data)
 				}
-				return
+				return true
 			}
 			c.logger.Error("SSE stream error", "err", err)
-			return
+			return false
 		}
 
 		// Remove only newline markers
 		line = strings.TrimRight(line, "\r\n")
 		if line == "" {
 			// Empty line means end of event
+			commitID()
 			if data != "" {
 				if event == "" {
 					event = "message"
@@ -908,6 +1010,18 @@ func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, hand
 			event = strings.TrimSpace(eventStr)
 		} else if dataStr, ok := strings.CutPrefix(line, "data:"); ok {
 			data = appendSSEData(data, dataStr)
+		} else if idStr, ok := strings.CutPrefix(line, "id:"); ok {
+			// The SSE spec ignores an id that contains a NUL character.
+			if value := strings.TrimPrefix(idStr, " "); !strings.ContainsRune(value, 0) {
+				id, hasID = value, true
+			}
+		} else if retryStr, ok := strings.CutPrefix(line, "retry:"); ok && cursor != nil {
+			// Only ASCII digits are a valid retry value.
+			value := strings.TrimPrefix(retryStr, " ")
+			if ms, err := strconv.ParseUint(value, 10, 31); err == nil && value != "" && strings.Trim(value, "0123456789") == "" {
+				cursor.retry = time.Duration(ms) * time.Millisecond
+				cursor.hasRetry = true
+			}
 		}
 	}
 }
