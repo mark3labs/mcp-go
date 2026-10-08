@@ -1020,7 +1020,7 @@ func (c *StreamableHTTP) resumeSSE(ctx context.Context, cursor *sseCursor, handl
 	ctx, cancel := context.WithCancel(ctx)
 	header := make(http.Header)
 	header.Set("Last-Event-ID", cursor.lastEventID)
-	resp, err := c.sendHTTP(ctx, http.MethodGet, nil, "text/event-stream", header)
+	resp, err := c.sendHTTP(ctx, http.MethodGet, nil, "text/event-stream", header, false)
 	if err != nil {
 		cancel()
 		return false, err
