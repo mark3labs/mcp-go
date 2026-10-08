@@ -299,7 +299,8 @@ func WithLegacyServerInitiatedRequests() ServerOption {
 	}
 }
 
-// WithPaginationLimit sets the pagination limit for the server.
+// WithPaginationLimit sets the maximum page size for list results.
+// Zero and negative limits leave the list unpaged.
 func WithPaginationLimit(limit int) ServerOption {
 	return func(s *MCPServer) {
 		s.paginationLimit = &limit
@@ -1490,7 +1491,7 @@ func listByPagination[T mcp.Named](
 		})
 	}
 	endPos := len(allElements)
-	if s.paginationLimit != nil {
+	if s.paginationLimit != nil && *s.paginationLimit > 0 {
 		if len(allElements) > startPos+*s.paginationLimit {
 			endPos = startPos + *s.paginationLimit
 		}
@@ -1504,7 +1505,7 @@ func listByPagination[T mcp.Named](
 	}
 	// set the next cursor
 	nextCursor := func() mcp.Cursor {
-		if s.paginationLimit != nil && len(elementsToReturn) >= *s.paginationLimit {
+		if s.paginationLimit != nil && *s.paginationLimit > 0 && len(elementsToReturn) >= *s.paginationLimit {
 			nc := elementsToReturn[len(elementsToReturn)-1].GetName()
 			toString := base64.StdEncoding.EncodeToString([]byte(nc))
 			return mcp.Cursor(toString)
