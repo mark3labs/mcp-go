@@ -740,7 +740,7 @@ func (c *StreamableHTTP) SendRequest(
 		var errResponse JSONRPCResponse
 		body, _ := io.ReadAll(resp.Body)
 		if isJSONRPCErrorBody(body) {
-			if err := json.Unmarshal(body, &errResponse); err == nil {
+			if err := json.Unmarshal(body, &errResponse); err == nil && errResponse.Error != nil {
 				return &errResponse, nil
 			}
 		}
