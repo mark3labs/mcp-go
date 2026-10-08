@@ -1472,11 +1472,19 @@ func (s *MCPServer) handleSetLevel(
 	return &mcp.EmptyResult{}, nil
 }
 
-func listByPagination[T mcp.Named](
+func resourceTemplateKey(template mcp.ResourceTemplate) string {
+	if template.URITemplate == nil || template.URITemplate.Template == nil {
+		return ""
+	}
+	return template.URITemplate.Raw()
+}
+
+func listByPagination[T any](
 	_ context.Context,
 	s *MCPServer,
 	cursor mcp.Cursor,
 	allElements []T,
+	key func(T) string,
 ) ([]T, mcp.Cursor, error) {
 	startPos := 0
 	if cursor != "" {
@@ -1486,7 +1494,7 @@ func listByPagination[T mcp.Named](
 		}
 		cString := string(c)
 		startPos = sort.Search(len(allElements), func(i int) bool {
-			return allElements[i].GetName() > cString
+			return key(allElements[i]) > cString
 		})
 	}
 	endPos := len(allElements)
@@ -1505,7 +1513,7 @@ func listByPagination[T mcp.Named](
 	// set the next cursor
 	nextCursor := func() mcp.Cursor {
 		if s.paginationLimit != nil && len(elementsToReturn) >= *s.paginationLimit {
-			nc := elementsToReturn[len(elementsToReturn)-1].GetName()
+			nc := key(elementsToReturn[len(elementsToReturn)-1])
 			toString := base64.StdEncoding.EncodeToString([]byte(nc))
 			return mcp.Cursor(toString)
 		}
@@ -1539,9 +1547,10 @@ func (s *MCPServer) handleListResources(
 		}
 	}
 
-	// Sort the resources by name
+	// Sort by URI. Name is a display label and is not unique, so paging on it
+	// skips every later resource that shares the cursor's name.
 	resourcesList := slices.SortedFunc(maps.Values(resourceMap), func(a, b mcp.Resource) int {
-		return cmp.Compare(a.Name, b.Name)
+		return cmp.Compare(a.URI, b.URI)
 	})
 
 	// Apply pagination
@@ -1550,6 +1559,7 @@ func (s *MCPServer) handleListResources(
 		s,
 		request.Params.Cursor,
 		resourcesList,
+		func(r mcp.Resource) string { return r.URI },
 	)
 	if err != nil {
 		return nil, &requestError{
@@ -1602,13 +1612,14 @@ func (s *MCPServer) handleListResourceTemplates(
 	}
 
 	sort.Slice(templates, func(i, j int) bool {
-		return templates[i].Name < templates[j].Name
+		return resourceTemplateKey(templates[i]) < resourceTemplateKey(templates[j])
 	})
 	templatesToReturn, nextCursor, err := listByPagination(
 		ctx,
 		s,
 		request.Params.Cursor,
 		templates,
+		resourceTemplateKey,
 	)
 	if err != nil {
 		return nil, &requestError{
@@ -1836,6 +1847,7 @@ func (s *MCPServer) handleListPrompts(
 		s,
 		request.Params.Cursor,
 		prompts,
+		func(p mcp.Prompt) string { return p.Name },
 	)
 	if err != nil {
 		return nil, &requestError{
@@ -2045,6 +2057,7 @@ func (s *MCPServer) handleListTools(
 		s,
 		request.Params.Cursor,
 		tools,
+		func(tool mcp.Tool) string { return tool.Name },
 	)
 	if err != nil {
 		return nil, &requestError{
@@ -2639,6 +2652,7 @@ func (s *MCPServer) handleListTasks(
 		s,
 		request.Params.Cursor,
 		tasks,
+		func(task mcp.Task) string { return task.TaskId },
 	)
 	if err != nil {
 		return nil, &requestError{
