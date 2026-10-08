@@ -638,6 +638,7 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	// The session is ephemeral. Its life is the same as the request. It's only created
 	// for interaction with the mcp server.
 	var sessionID string
+	listening := false
 	if era.modern {
 		if !s.validateModernRequest(w, r, era, requestID) {
 			return
@@ -645,6 +646,10 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 		// The Mcp-Session-Id header is ignored, and no session ID is minted.
 		// Each modern request is served by its own ephemeral session.
 		isInitializeRequest = false
+		// A subscriptions/listen stream is where a modern client receives
+		// the notifications the server broadcasts, such as
+		// notifications/tools/list_changed.
+		listening = jsonMessage.Method == mcp.MethodSubscriptionsListen && requestID != nil
 	} else {
 		sessionIdManager := s.resolveSessionIdManager(r)
 		if isInitializeRequest {
@@ -691,6 +696,16 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	// Create ephemeral session if no persistent session exists
 	if session == nil {
 		session = newStreamableHttpSession(sessionID, s.sessionTools, s.sessionResources, s.sessionResourceTemplates, s.sessionLogLevels, &s.requestIDCounter)
+	}
+
+	// Broadcasts only reach sessions the server knows of, and a modern
+	// request's session is known nowhere else. A listen stream's session is
+	// made reachable while the request runs; it receives nothing until
+	// subscriptions/listen records the types the client asked for.
+	if listening {
+		session.serveSubscriptionStream()
+		s.server.registerListenSession(session)
+		defer s.server.unregisterListenSession(session)
 	}
 
 	// Set the client context before handling the message
@@ -795,6 +810,9 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 		for {
 			select {
 			case nt := <-session.notificationChannel:
+				if listening {
+					nt = tagSubscription(nt, requestID)
+				}
 				func() {
 					mu.Lock()
 					defer mu.Unlock()
@@ -879,6 +897,10 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 
 	// Process message through MCPServer
 	response := s.server.HandleMessage(ctx, rawData)
+	if listening {
+		// Stop broadcasts before draining what is already queued.
+		s.server.unregisterListenSession(session)
+	}
 	if response == nil {
 		mu.Lock()
 		close(done)
@@ -908,6 +930,9 @@ drainLoop:
 		case nt := <-session.notificationChannel:
 			if !canStream {
 				continue
+			}
+			if listening {
+				nt = tagSubscription(nt, requestID)
 			}
 			if resumable {
 				deliverResumable(nt, false)
@@ -1240,6 +1265,18 @@ func (s *StreamableHTTPServer) handleDelete(w HTTPResponseWriter, r *HTTPRequest
 	s.cleanupSessionState(r.ctx(), sessionID)
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// tagSubscription tags a notification with the ID of the
+// subscriptions/listen request whose stream carries it, as every notification
+// on a subscription stream must be. The _meta map is copied, because a
+// broadcast shares it with the copies sent to every other session.
+func tagSubscription(notification mcp.JSONRPCNotification, id any) mcp.JSONRPCNotification {
+	meta := make(map[string]any, len(notification.Params.Meta)+1)
+	maps.Copy(meta, notification.Params.Meta)
+	meta[mcp.MetaKeySubscriptionID] = id
+	notification.Params.Meta = meta
+	return notification
 }
 
 func writeSSEEvent(w io.Writer, data any) error {
@@ -1730,6 +1767,12 @@ type streamableHttpSession struct {
 
 	samplingRequests sync.Map      // requestID -> pending sampling request context
 	requestIDCounter *atomic.Int64 // shared per server so IDs stay unique across sessions with the same session ID
+
+	// Whether the session serves a subscriptions/listen stream, and the
+	// notification types that stream opted in to.
+	subscriptionMu     sync.RWMutex
+	listening          bool
+	subscriptionFilter mcp.SubscriptionFilter
 }
 
 func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, resourcesStore *sessionResourcesStore, templatesStore *sessionResourceTemplatesStore, levels *sessionLogLevelsStore, requestIDCounter *atomic.Int64) *streamableHttpSession {
@@ -1822,6 +1865,31 @@ func (s *streamableHttpSession) UpgradeToSSEWhenReceiveNotification() {
 }
 
 var _ SessionWithStreamableHTTPConfig = (*streamableHttpSession)(nil)
+
+func (s *streamableHttpSession) SetSubscriptionFilter(filter mcp.SubscriptionFilter) {
+	s.subscriptionMu.Lock()
+	defer s.subscriptionMu.Unlock()
+	s.subscriptionFilter = filter
+}
+
+// SubscriptionFilter reports a session serving a subscriptions/listen stream as
+// filtered for as long as it serves it, so that it receives nothing before its
+// filter is recorded or after it is cleared. Other sessions are unfiltered.
+func (s *streamableHttpSession) SubscriptionFilter() (mcp.SubscriptionFilter, bool) {
+	s.subscriptionMu.RLock()
+	defer s.subscriptionMu.RUnlock()
+	return s.subscriptionFilter, s.listening
+}
+
+// serveSubscriptionStream marks the session as serving a subscriptions/listen
+// stream.
+func (s *streamableHttpSession) serveSubscriptionStream() {
+	s.subscriptionMu.Lock()
+	defer s.subscriptionMu.Unlock()
+	s.listening = true
+}
+
+var _ SessionWithSubscriptionFilter = (*streamableHttpSession)(nil)
 
 // RequestSampling implements SessionWithSampling interface for HTTP transport
 func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
