@@ -190,11 +190,11 @@ type OAuthHandler struct {
 	httpClient       *http.Client
 	serverMetadata   *AuthServerMetadata
 	metadataFetchErr error
-	// metadataOnce gates the discovery RPCs so they run exactly once per
-	// OAuthHandler. It is a pointer (rather than an embedded value) so
-	// SetProtectedResourceMetadataURL can swap in a fresh sync.Once
-	// without racing against a concurrently running Do on the previous
-	// instance. The pointer itself is protected by metadataMu; callers
+	// metadataOnce gates the discovery RPCs so they run once per
+	// OAuthHandler, or again after a discovery that failed. It is a pointer
+	// (rather than an embedded value) so SetProtectedResourceMetadataURL
+	// can swap in a fresh sync.Once without racing against a concurrently
+	// running Do on the previous instance. The pointer itself is protected by metadataMu; callers
 	// snapshot the pointer under the lock and then invoke Do without
 	// holding the lock.
 	metadataOnce *sync.Once
@@ -605,12 +605,13 @@ type metadataDiscoveryResult struct {
 // getServerMetadata fetches the OAuth server metadata.
 //
 // Discovery is gated by metadataOnce so the network round trips happen
-// exactly once per OAuthHandler. metadataMu is taken only to snapshot
-// configuration inputs before the fetch and to publish the result
-// afterwards; it is intentionally NOT held while HTTP requests are in
-// flight so that concurrent callers of other metadataMu-guarded methods
-// (e.g. SetProtectedResourceMetadataURL, getResourceURL,
-// validateAdvertisedPRMURL) are not blocked on network I/O. See #871.
+// once per OAuthHandler, or again after a discovery that failed. metadataMu
+// is taken only to snapshot configuration inputs before the fetch and to
+// publish the result afterwards; it is intentionally NOT held while HTTP
+// requests are in flight so that concurrent callers of other
+// metadataMu-guarded methods (e.g. SetProtectedResourceMetadataURL,
+// getResourceURL, validateAdvertisedPRMURL) are not blocked on network I/O.
+// See #871.
 func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetadata, error) {
 	// Snapshot (and lazily initialize) the current sync.Once under the
 	// lock. Using a pointer means SetProtectedResourceMetadataURL can
@@ -635,6 +636,16 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		if h.metadataOnce != once {
 			return
 		}
+		// A failed discovery is reported to the callers waiting on it, but
+		// not kept: it may come from the first caller's context ending or
+		// from a network error, so the next call discovers again. Each
+		// discovery reports its own failure, not one left by the last.
+		h.metadataFetchErr = nil
+		defer func() {
+			if h.metadataFetchErr != nil {
+				h.metadataOnce = &sync.Once{}
+			}
+		}()
 		if err != nil {
 			h.metadataFetchErr = err
 			return
@@ -652,10 +663,10 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		}
 		// Discovery completed without producing metadata or an error (e.g. a
 		// non-2xx response handled by fetchMetadataFromURL). Record an explicit
-		// error — including the discovery target — so callers receive a
-		// consistent cached failure instead of a nil *AuthServerMetadata, which
-		// they would dereference and panic on. Skip when serverMetadata is
-		// already populated: a no-op re-discovery preserves the prior value.
+		// error — including the discovery target — so callers receive an
+		// error instead of a nil *AuthServerMetadata, which they would
+		// dereference and panic on. Skip when serverMetadata is already
+		// populated: a no-op re-discovery preserves the prior value.
 		if h.serverMetadata == nil && h.metadataFetchErr == nil {
 			if h.config.AuthServerMetadataURL != "" {
 				h.metadataFetchErr = fmt.Errorf("authorization server metadata unavailable: discovery at %q returned no metadata", h.config.AuthServerMetadataURL)
