@@ -1941,13 +1941,11 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 
 		// Parse content from map[string]any to proper Content type (TextContent, ImageContent, AudioContent)
 		// HTTP transport unmarshals Content as map[string]any, we need to convert it to the proper type
-		if contentMap, ok := result.Content.(map[string]any); ok {
-			content, err := mcp.ParseContent(contentMap)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse sampling response content: %w", err)
-			}
-			result.Content = content
+		content, err := mcp.ParseSamplingContent(result.Content)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse sampling response content: %w", err)
 		}
+		result.Content = content
 
 		return &result, nil
 	case <-ctx.Done():
