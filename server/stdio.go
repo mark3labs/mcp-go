@@ -611,7 +611,7 @@ func (s *StdioServer) processMessage(
 		default:
 			// Queue is full, process synchronously as fallback
 			s.errLogger.Printf("Tool call queue full, processing synchronously")
-			response := s.server.HandleMessage(ctx, rawMessage)
+			response := s.handleMessage(ctx, baseMessage.ID, rawMessage)
 			if response != nil {
 				return s.writeResponse(response, writer)
 			}
@@ -629,7 +629,7 @@ func (s *StdioServer) processMessage(
 	}
 
 	// Notifications carry no response and must not queue behind a request.
-	response := s.server.HandleMessage(ctx, rawMessage)
+	response := s.handleMessage(ctx, baseMessage.ID, rawMessage)
 
 	// Only write response if there is one (not for notifications)
 	if response != nil {
@@ -641,18 +641,25 @@ func (s *StdioServer) processMessage(
 	return nil
 }
 
+// handleMessage runs HandleMessage, recovering a panicking handler so that
+// it can't end the process. A request gets an INTERNAL_ERROR response
+// carrying its id; a notification (nil id) gets no response at all.
+func (s *StdioServer) handleMessage(ctx context.Context, id any, rawMessage json.RawMessage) (response mcp.JSONRPCMessage) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.errLogger.Printf("panic recovered in stdio message handler: %v", r)
+			if id != nil {
+				response = createErrorResponse(id, mcp.INTERNAL_ERROR, fmt.Sprintf("internal panic: %v", r))
+			}
+		}
+	}()
+	return s.server.HandleMessage(ctx, rawMessage)
+}
+
 // handleRequest serves one JSON-RPC request and writes its response. id is the
 // request's JSON-RPC id, so a recovered panic stays correlatable by the client.
 func (s *StdioServer) handleRequest(ctx context.Context, id any, rawMessage json.RawMessage, writer io.Writer) {
-	response := func() (resp mcp.JSONRPCMessage) {
-		defer func() {
-			if r := recover(); r != nil {
-				s.errLogger.Printf("panic recovered in stdio request handler: %v", r)
-				resp = createErrorResponse(id, mcp.INTERNAL_ERROR, fmt.Sprintf("internal panic: %v", r))
-			}
-		}()
-		return s.server.HandleMessage(ctx, rawMessage)
-	}()
+	response := s.handleMessage(ctx, id, rawMessage)
 	if response != nil {
 		if err := s.writeResponse(response, writer); err != nil {
 			s.errLogger.Printf("Error writing response: %v", err)
