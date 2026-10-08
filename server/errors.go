@@ -55,3 +55,9 @@ type ErrDynamicPathConfig struct {
 func (e *ErrDynamicPathConfig) Error() string {
 	return fmt.Sprintf("%s cannot be used with WithDynamicBasePath. Use dynamic path logic in your router.", e.Method)
 }
+
+// noResultError reports a handler that returned neither a result nor an
+// error, which leaves the server nothing to send.
+func noResultError(kind, name string) error {
+	return fmt.Errorf("%s '%s' handler returned no result", kind, name)
+}
