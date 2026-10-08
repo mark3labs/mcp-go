@@ -536,6 +536,48 @@ func TestCompleteParamsUnmarshalJSON(t *testing.T) {
 	}
 }
 
+func TestCompleteParamsMarshalJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		params   CompleteParams
+		expected string
+	}{
+		{
+			name: "No context arguments",
+			params: CompleteParams{
+				Ref:      PromptReference{Type: "ref/prompt", Name: "test-prompt"},
+				Argument: CompleteArgument{Name: "test-arg", Value: "test-value"},
+			},
+			expected: `{
+				"ref": {"type": "ref/prompt", "name": "test-prompt"},
+				"argument": {"name": "test-arg", "value": "test-value"},
+				"context": {}
+			}`,
+		},
+		{
+			name: "With context arguments",
+			params: CompleteParams{
+				Ref:      PromptReference{Type: "ref/prompt", Name: "test-prompt"},
+				Argument: CompleteArgument{Name: "test-arg", Value: "test-value"},
+				Context:  CompleteContext{Arguments: map[string]string{"other-arg": "other-value"}},
+			},
+			expected: `{
+				"ref": {"type": "ref/prompt", "name": "test-prompt"},
+				"argument": {"name": "test-arg", "value": "test-value"},
+				"context": {"arguments": {"other-arg": "other-value"}}
+			}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := json.Marshal(tc.params)
+			require.NoError(t, err)
+			assert.JSONEq(t, tc.expected, string(data))
+		})
+	}
+}
+
 func TestPaginatedParamsMetaMarshalling(t *testing.T) {
 	// Marshalling the full request (rather than just req.Params) is what
 	// exercises the embedding/shadowing in PaginatedRequest -> Request.
