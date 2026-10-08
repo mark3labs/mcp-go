@@ -598,6 +598,9 @@ func TestStreamableHTTPErrors(t *testing.T) {
 			{name: "error object without jsonrpc", status: http.StatusInternalServerError, body: `{"error":{"code":-32603,"message":"boom"}}`},
 			{name: "empty error object", status: http.StatusTooManyRequests, body: `{"jsonrpc":"2.0","error":{}}`},
 			{name: "error without message", status: http.StatusBadGateway, body: `{"jsonrpc":"2.0","error":{"code":-32603}}`},
+			{name: "differently cased error member", status: http.StatusInternalServerError, body: `{"jsonrpc":"2.0","Error":{"code":-32603,"message":"failure"}}`},
+			{name: "differently cased jsonrpc member", status: http.StatusInternalServerError, body: `{"JSONRPC":"2.0","error":{"code":-32603,"message":"failure"}}`},
+			{name: "differently cased code member", status: http.StatusInternalServerError, body: `{"jsonrpc":"2.0","error":{"Code":-32603,"message":"failure"}}`},
 		}
 
 		for _, tt := range tests {

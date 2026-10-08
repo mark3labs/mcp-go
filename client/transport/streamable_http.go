@@ -799,19 +799,24 @@ func (c *StreamableHTTP) SendRequest(
 }
 
 // isJSONRPCErrorBody reports whether body is a JSON-RPC error message with
-// both the required code and message members.
+// both the required code and message members. Member names are matched
+// exactly, unlike json.Unmarshal into a struct.
 func isJSONRPCErrorBody(body []byte) bool {
-	var msg struct {
-		JSONRPC string `json:"jsonrpc"`
-		Error   *struct {
-			Code    *int    `json:"code"`
-			Message *string `json:"message"`
-		} `json:"error"`
-	}
+	var msg map[string]json.RawMessage
 	if err := json.Unmarshal(body, &msg); err != nil {
 		return false
 	}
-	return msg.JSONRPC == mcp.JSONRPC_VERSION && msg.Error != nil && msg.Error.Code != nil && msg.Error.Message != nil
+	var version string
+	if err := json.Unmarshal(msg["jsonrpc"], &version); err != nil || version != mcp.JSONRPC_VERSION {
+		return false
+	}
+	var errObj map[string]json.RawMessage
+	if err := json.Unmarshal(msg["error"], &errObj); err != nil {
+		return false
+	}
+	_, hasCode := errObj["code"]
+	_, hasMessage := errObj["message"]
+	return hasCode && hasMessage
 }
 
 // sendHTTP sends an HTTP request to the server. Once the session has ended,
