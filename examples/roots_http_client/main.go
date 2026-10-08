@@ -131,14 +131,14 @@ func main() {
 	} else if result.IsError {
 		log.Printf("tool reported error")
 	} else if len(result.Content) > 0 {
-		resultStr := ""
+		var resultStr strings.Builder
 		for _, content := range result.Content {
 			switch tc := content.(type) {
 			case mcp.TextContent:
-				resultStr += fmt.Sprintf("%s\n", tc.Text)
+				resultStr.WriteString(fmt.Sprintf("%s\n", tc.Text))
 			}
 		}
-		fmt.Printf("client call tool result: %s\n", resultStr)
+		fmt.Printf("client call tool result: %s\n", resultStr.String())
 	}
 
 	// Keep the client running (in a real app, you'd have your main application logic here)
