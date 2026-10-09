@@ -212,3 +212,16 @@ func (s *StreamableHTTPServer) rejectModernSessionMethod(w HTTPResponseWriter, v
 func isModernHTTPRequest(r *HTTPRequest) bool {
 	return mcp.IsModernProtocol(r.header().Get(mcp.HeaderProtocolVersion))
 }
+
+// rejectUnsupportedProtocolVersion answers a request from a client using a
+// protocol version before 2026-07-28 with 400 Bad Request when its
+// Mcp-Protocol-Version header names a version this SDK does not implement, and
+// reports whether it did. A missing header is accepted, as clients on
+// 2025-03-26 do not send it.
+func rejectUnsupportedProtocolVersion(w HTTPResponseWriter, version string) bool {
+	if version == "" || mcp.IsValidProtocolVersion(version) {
+		return false
+	}
+	writeHTTPErrorf(w, http.StatusBadRequest, "Unsupported protocol version: %s", version)
+	return true
+}

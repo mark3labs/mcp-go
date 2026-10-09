@@ -215,7 +215,20 @@ func (s *MCPServer) validateStandardHeadersForMessage(
 	if !ok {
 		return nil
 	}
-	return mcp.ValidateParamHeadersWithBindings(headers.Get, bindings, wrapper.Params)
+	return mcp.ValidateParamHeadersWithBindings(lookupHeader(headers), bindings, wrapper.Params)
+}
+
+// lookupHeader reports the first value of a header and whether it was sent at
+// all, so that a header sent with an empty value is not taken for a missing
+// one.
+func lookupHeader(headers http.Header) func(string) (string, bool) {
+	return func(name string) (string, bool) {
+		values := headers.Values(name)
+		if len(values) == 0 {
+			return "", false
+		}
+		return values[0], true
+	}
 }
 
 // headerBindingsForCall resolves the x-mcp-header bindings of the tool named

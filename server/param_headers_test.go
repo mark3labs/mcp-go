@@ -94,6 +94,34 @@ func TestParamHeaders_MirroredValueIsAccepted(t *testing.T) {
 	assert.Equal(t, "ran in us-east-1", content[0].(map[string]any)["text"])
 }
 
+// An empty string argument is mirrored as a header with an empty value, which
+// is what GenerateParamHeaders produces for it. The header is present, so the
+// call must go through rather than be refused as missing it.
+func TestParamHeaders_EmptyValueIsAccepted(t *testing.T) {
+	srv := newHeaderToolServer(t)
+
+	response := postWithHeaders(t,
+		srv.URL,
+		map[string]any{"sql": "select 1", "region": ""},
+		map[string]string{mcp.HeaderParamPrefix + "Region": ""},
+	)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+
+	result := decodeJSONRPC(t, response)["result"].(map[string]any)
+	content := result["content"].([]any)
+	assert.Equal(t, "ran in ", content[0].(map[string]any)["text"])
+}
+
+// Without the header, an empty string argument is still unmatched.
+func TestParamHeaders_EmptyValueWithoutHeaderIsRejected(t *testing.T) {
+	srv := newHeaderToolServer(t)
+
+	response := postWithHeaders(t, srv.URL, map[string]any{"region": ""}, nil)
+
+	errDetails := decodeJSONRPC(t, response)["error"].(map[string]any)
+	assert.Equal(t, float64(mcp.HEADER_MISMATCH), errDetails["code"])
+}
+
 func TestParamHeaders_MismatchIsRejected(t *testing.T) {
 	srv := newHeaderToolServer(t)
 

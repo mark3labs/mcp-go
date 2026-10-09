@@ -514,16 +514,31 @@ func GenerateParamHeaders(tool *Tool, params json.RawMessage) map[string]string 
 // ValidateParamHeaders checks that every Mcp-Param-* header on a tools/call
 // request agrees with the corresponding argument in the request body.
 //
-// getHeader returns the value of a header, or "" when absent.
+// getHeader returns the value of a header, or "" when absent. That cannot tell
+// a header sent with an empty value from a missing one, so an empty string
+// argument is always reported as a missing header. Use
+// [ValidateParamHeadersLookup] when header presence is known.
 func ValidateParamHeaders(getHeader func(string) string, tool *Tool, params json.RawMessage) error {
-	return ValidateParamHeadersWithBindings(getHeader, ExtractParamHeaderBindings(tool), params)
+	return ValidateParamHeadersLookup(func(name string) (string, bool) {
+		value := getHeader(name)
+		return value, value != ""
+	}, tool, params)
 }
 
-// ValidateParamHeadersWithBindings is ValidateParamHeaders for bindings
+// ValidateParamHeadersLookup is like [ValidateParamHeaders], but lookupHeader
+// also reports whether the header is present at all. An empty string argument
+// is sent as a header with an empty value, and it matches only when that
+// header is present. For an absent or null argument only a header with a
+// value is a mismatch, as in ValidateParamHeaders.
+func ValidateParamHeadersLookup(lookupHeader func(string) (string, bool), tool *Tool, params json.RawMessage) error {
+	return ValidateParamHeadersWithBindings(lookupHeader, ExtractParamHeaderBindings(tool), params)
+}
+
+// ValidateParamHeadersWithBindings is [ValidateParamHeadersLookup] for bindings
 // already extracted with ExtractParamHeaderBindings, so a server that
 // registers a tool once can validate every call against it without
 // re-reading the schema.
-func ValidateParamHeadersWithBindings(getHeader func(string) string, bindings []ParamHeaderBinding, params json.RawMessage) error {
+func ValidateParamHeadersWithBindings(lookupHeader func(string) (string, bool), bindings []ParamHeaderBinding, params json.RawMessage) error {
 	if len(bindings) == 0 {
 		return nil
 	}
@@ -534,7 +549,7 @@ func ValidateParamHeadersWithBindings(getHeader func(string) string, bindings []
 
 	for _, binding := range bindings {
 		name := binding.HeaderName()
-		headerValue := getHeader(name)
+		headerValue, headerPresent := lookupHeader(name)
 		raw, exists := lookupArgument(args, binding.Path)
 
 		if !exists || string(raw) == "null" {
@@ -547,7 +562,7 @@ func ValidateParamHeadersWithBindings(getHeader func(string) string, bindings []
 			continue
 		}
 
-		if headerValue == "" {
+		if !headerPresent {
 			return HeaderMismatchError{
 				Header: name,
 				Reason: fmt.Sprintf("missing header for parameter %q", strings.Join(binding.Path, ".")),

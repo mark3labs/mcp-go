@@ -279,17 +279,71 @@ func TestValidateParamHeaders(t *testing.T) {
 	})
 }
 
+// An empty string argument is mirrored as a header with an empty value. A
+// lookup that reports presence tells that header apart from a missing one.
+func TestValidateParamHeadersLookupEmptyString(t *testing.T) {
+	tool := headerTool()
+	emptyRegion := json.RawMessage(`{"name":"query","arguments":{"region":""}}`)
+
+	generated := GenerateParamHeaders(tool, emptyRegion)
+	require.Contains(t, generated, HeaderParamPrefix+"Region")
+	assert.Empty(t, generated[HeaderParamPrefix+"Region"])
+
+	lookup := func(header http.Header) func(string) (string, bool) {
+		return func(name string) (string, bool) {
+			values := header.Values(name)
+			if len(values) == 0 {
+				return "", false
+			}
+			return values[0], true
+		}
+	}
+	emptyHeader := http.Header{HeaderParamPrefix + "Region": {""}}
+
+	t.Run("an empty header matches an empty argument", func(t *testing.T) {
+		assert.NoError(t, ValidateParamHeadersLookup(lookup(emptyHeader), tool, emptyRegion))
+	})
+
+	t.Run("a missing header does not", func(t *testing.T) {
+		err := ValidateParamHeadersLookup(lookup(http.Header{}), tool, emptyRegion)
+		require.Error(t, err)
+		assert.True(t, IsHeaderMismatch(err))
+	})
+
+	t.Run("an empty header does not match a non-empty argument", func(t *testing.T) {
+		params := json.RawMessage(`{"name":"query","arguments":{"region":"us-east-1"}}`)
+		err := ValidateParamHeadersLookup(lookup(emptyHeader), tool, params)
+		require.Error(t, err)
+		assert.True(t, IsHeaderMismatch(err))
+	})
+
+	t.Run("an empty header for an absent argument is still ignored", func(t *testing.T) {
+		absent := json.RawMessage(`{"name":"query","arguments":{}}`)
+		assert.NoError(t, ValidateParamHeadersLookup(lookup(emptyHeader), tool, absent))
+	})
+
+	t.Run("ValidateParamHeaders cannot tell the empty header from a missing one", func(t *testing.T) {
+		err := ValidateParamHeaders(emptyHeader.Get, tool, emptyRegion)
+		require.Error(t, err)
+		assert.True(t, IsHeaderMismatch(err))
+	})
+}
+
 // TestValidateParamHeadersWithBindings checks that the bindings passed in,
 // not the tool's schema, decide which headers are validated.
 func TestValidateParamHeadersWithBindings(t *testing.T) {
 	tool := headerTool()
 	params := json.RawMessage(`{"name":"query","arguments":{"region":"us-east-1"}}`)
-	header := http.Header{}
-	header.Set(HeaderParamPrefix+"Region", "eu-west-1")
+	lookup := func(name string) (string, bool) {
+		if name == HeaderParamPrefix+"Region" {
+			return "eu-west-1", true
+		}
+		return "", false
+	}
 
 	// The schema would refuse this mismatch; the given bindings decide instead.
-	assert.NoError(t, ValidateParamHeadersWithBindings(header.Get, nil, params))
-	err := ValidateParamHeadersWithBindings(header.Get, ExtractParamHeaderBindings(tool), params)
+	assert.NoError(t, ValidateParamHeadersWithBindings(lookup, nil, params))
+	err := ValidateParamHeadersWithBindings(lookup, ExtractParamHeaderBindings(tool), params)
 	require.Error(t, err)
 	assert.True(t, IsHeaderMismatch(err))
 }
