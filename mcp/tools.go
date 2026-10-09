@@ -1142,9 +1142,11 @@ func WithOutputSchema[T any]() ToolOption {
 			return
 		}
 
-		if err := json.Unmarshal(mcpSchema, &t.OutputSchema); err != nil {
+		var outputSchema ToolOutputSchema
+		if err := json.Unmarshal(mcpSchema, &outputSchema); err != nil {
 			return
 		}
+		t.OutputSchema = outputSchema
 
 		// Always set the type to "object" as of the current MCP spec
 		// https://modelcontextprotocol.io/specification/2025-06-18/server/tools#output-schema
