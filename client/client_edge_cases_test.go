@@ -2,7 +2,6 @@ package client
 
 import (
 	"testing"
-	"time"
 
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -89,7 +88,7 @@ func TestClient_OperationsBeforeInitialize(t *testing.T) {
 // TestClient_NotificationHandlers tests notification handler behavior
 func TestClient_NotificationHandlers(t *testing.T) {
 	t.Run("multiple handlers called in order", func(t *testing.T) {
-		mockTrans := newMockTransport()
+		mockTrans := &mockProtocolTransport{}
 		client := &Client{
 			transport:  mockTrans,
 			legacyOnly: true,
@@ -119,19 +118,7 @@ func TestClient_NotificationHandlers(t *testing.T) {
 			},
 		}
 
-		// Manually trigger the handlers we registered on the client
-		// Access them through the read lock
-		client.notifyMu.RLock()
-		handlers := make([]func(mcp.JSONRPCNotification), len(client.notifications))
-		copy(handlers, client.notifications)
-		client.notifyMu.RUnlock()
-
-		for _, h := range handlers {
-			h(notif)
-		}
-
-		// Wait a bit for handlers to execute
-		time.Sleep(50 * time.Millisecond)
+		mockTrans.notificationHandler(notif)
 
 		// All handlers should have been called in order
 		assert.Equal(t, []int{0, 1, 2}, callOrder)
