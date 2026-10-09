@@ -1257,7 +1257,7 @@ func ParseTaskResultResult(rawMessage *json.RawMessage) (*TaskResultResult, erro
 		Meta              *Meta             `json:"_meta"`
 		ResultType        ResultType        `json:"resultType"`
 		Content           []json.RawMessage `json:"content"`
-		StructuredContent any               `json:"structuredContent"`
+		StructuredContent json.RawMessage   `json:"structuredContent"`
 		IsError           bool              `json:"isError"`
 	}
 	if err := json.Unmarshal(*rawMessage, &raw); err != nil {
@@ -1265,9 +1265,15 @@ func ParseTaskResultResult(rawMessage *json.RawMessage) (*TaskResultResult, erro
 	}
 
 	resultResult := TaskResultResult{
-		Result:            Result{Meta: raw.Meta, ResultType: raw.ResultType},
-		StructuredContent: raw.StructuredContent,
-		IsError:           raw.IsError,
+		Result:               Result{Meta: raw.Meta, ResultType: raw.ResultType},
+		RawStructuredContent: raw.StructuredContent,
+		IsError:              raw.IsError,
+	}
+
+	if len(raw.StructuredContent) > 0 {
+		if err := json.Unmarshal(raw.StructuredContent, &resultResult.StructuredContent); err != nil {
+			return nil, fmt.Errorf("unmarshal task structured content: %w", err)
+		}
 	}
 
 	for _, item := range raw.Content {
