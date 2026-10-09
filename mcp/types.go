@@ -240,15 +240,16 @@ func (m *Meta) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// NewMetaFromMap builds metadata without modifying or retaining the caller's map.
+// Nested values are shared; only the top-level map is copied.
 func NewMetaFromMap(m map[string]any) *Meta {
-	progressToken := m["progressToken"]
-	if progressToken != nil {
-		delete(m, "progressToken")
-	}
+	fields := maps.Clone(m)
+	progressToken := fields["progressToken"]
+	delete(fields, "progressToken")
 
 	return &Meta{
 		ProgressToken:    progressToken,
-		AdditionalFields: m,
+		AdditionalFields: fields,
 	}
 }
 
