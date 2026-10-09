@@ -783,19 +783,27 @@ func (h *OAuthHandler) fetchServerMetadata(ctx context.Context) (metadataDiscove
 		return metadataDiscoveryResult{}, fmt.Errorf("failed to decode protected resource response: %w", err)
 	}
 
-	// RFC 9728 §3.3/§7.3: when metadata is fetched from a PRM URL the
-	// server advertised via WWW-Authenticate (an untrusted network
-	// input), the declared resource identifier MUST match the
-	// protected resource the client addressed — otherwise the
-	// response MUST NOT be used. An advertised PRM response that
-	// omits the resource field is also rejected: since the PRM
-	// endpoint may not share an origin with the protected resource,
-	// the response cannot be implicitly trusted without an explicit
-	// binding.
+	// RFC 9728 §3.3/§7.3: the resource identifier a protected resource
+	// metadata document declares must match the protected resource the
+	// client addressed — otherwise the document MUST NOT be used. Without
+	// the check, a malicious MCP server could declare another server as its
+	// resource and have tokens minted for that victim: the RFC 8707
+	// resource parameter taken from the metadata names the victim, so the
+	// authorization server mints a token for the victim's API while the
+	// attacker's server receives it.
 	//
-	// The check is scoped to the advertised path because the
-	// well-known origin-constructed path is already bound to the
-	// protected resource by same-origin URL construction.
+	// Both discovery paths enforce the binding, at different strictness.
+	// A PRM URL advertised via WWW-Authenticate is untrusted input that may
+	// not share an origin with the protected resource, so its document must
+	// declare a resource identifier exactly equal to the base URL, and a
+	// document that omits the resource field is rejected outright: with no
+	// explicit identifier there is no binding at all. The well-known path is
+	// constructed from the base URL, but the document it serves is still
+	// server-controlled, so a declared resource must at least bind to the
+	// addressed resource — same scheme and host, and a path equal to or a
+	// segment-aware prefix of the addressed path (see resourceBindsToURL) —
+	// so servers mounted at /mcp that declare their origin as the resource
+	// keep working while a resource naming another server is rejected.
 	if explicitMetadataURL {
 		if protectedResource.Resource == "" {
 			return metadataDiscoveryResult{}, fmt.Errorf(
@@ -809,6 +817,11 @@ func (h *OAuthHandler) fetchServerMetadata(ctx context.Context) (metadataDiscove
 				protectedResource.Resource, baseURL,
 			)
 		}
+	} else if protectedResource.Resource != "" && !resourceBindsToURL(protectedResource.Resource, baseURL) {
+		return metadataDiscoveryResult{}, fmt.Errorf(
+			"protected resource metadata from %q declares resource %q which does not match base URL %q",
+			protectedResourceURL, protectedResource.Resource, baseURL,
+		)
 	}
 
 	// RFC 8707: Capture the resource identifier for use in authorization requests.
@@ -886,6 +899,26 @@ func buildWellKnownURL(baseURL string, suffix string) (string, error) {
 	return root + "/.well-known/" + suffix + path, nil
 }
 
+// resourceComponentsEqual reports whether two parsed resource identifiers
+// agree on every component an RFC 9728 §3.3 binding check compares outside
+// the path: scheme and host case-insensitively per RFC 3986 §3.1 / §3.2.2,
+// and query, fragment, and userinfo, which are significant.
+func resourceComponentsEqual(a, b *url.URL) bool {
+	if !strings.EqualFold(a.Scheme, b.Scheme) {
+		return false
+	}
+	if !strings.EqualFold(a.Host, b.Host) {
+		return false
+	}
+	if a.RawQuery != b.RawQuery {
+		return false
+	}
+	if a.Fragment != b.Fragment {
+		return false
+	}
+	return a.User.String() == b.User.String()
+}
+
 // resourceIdentifiersEqual reports whether two OAuth protected resource
 // identifiers refer to the same resource for the purposes of RFC 9728 §3.3
 // equality checks. Scheme and host are compared case-insensitively per
@@ -901,26 +934,54 @@ func resourceIdentifiersEqual(a, b string) bool {
 	if errA != nil || errB != nil {
 		return a == b
 	}
-	if !strings.EqualFold(ua.Scheme, ub.Scheme) {
-		return false
-	}
-	if !strings.EqualFold(ua.Host, ub.Host) {
+	if !resourceComponentsEqual(ua, ub) {
 		return false
 	}
 	// Use EscapedPath rather than Path so percent-encoded reserved
 	// characters stay distinct from their decoded forms (e.g. "a%2Fb"
 	// must not compare equal to "a/b"), preserving RFC 3986 segment
 	// semantics.
-	if strings.TrimSuffix(ua.EscapedPath(), "/") != strings.TrimSuffix(ub.EscapedPath(), "/") {
+	return strings.TrimSuffix(ua.EscapedPath(), "/") == strings.TrimSuffix(ub.EscapedPath(), "/")
+}
+
+// resourceBindsToURL reports whether the resource identifier declared in a
+// protected resource metadata document fetched from the RFC 9728 §3.3
+// well-known path binds to the addressed URL (the client's base URL): the
+// two must agree on scheme and host (case-insensitively) and on query,
+// fragment, and userinfo, and the declared resource's path must equal or
+// be a path-prefix of the addressed path at a segment boundary — "/a"
+// binds "/a" and "/a/b" but not "/ab" — with a single trailing slash on
+// either path ignored, as in resourceIdentifiersEqual.
+//
+// The prefix rule is deliberately looser than the exact equality required
+// of a PRM URL advertised via WWW-Authenticate: the well-known URL is
+// constructed from the base URL, so the document is bound to the
+// resource's origin by construction, but real deployments commonly mount
+// their MCP endpoint at a path (e.g. https://host/mcp) while declaring the
+// bare origin (https://host) as their resource.
+//
+// Unparseable inputs fall back to exact string equality, as in
+// resourceIdentifiersEqual.
+func resourceBindsToURL(resource, addressed string) bool {
+	ur, errR := url.Parse(resource)
+	ub, errB := url.Parse(addressed)
+	if errR != nil || errB != nil {
+		return resource == addressed
+	}
+	if !resourceComponentsEqual(ur, ub) {
 		return false
 	}
-	if ua.RawQuery != ub.RawQuery {
-		return false
+	// Use EscapedPath rather than Path for the same RFC 3986 segment
+	// semantics as resourceIdentifiersEqual.
+	resourcePath := strings.TrimSuffix(ur.EscapedPath(), "/")
+	addressedPath := strings.TrimSuffix(ub.EscapedPath(), "/")
+	if resourcePath == addressedPath {
+		return true
 	}
-	if ua.Fragment != ub.Fragment {
-		return false
-	}
-	return ua.User.String() == ub.User.String()
+	// Segment-aware prefix: the resource path must end on a segment
+	// boundary of the addressed path, so "/a" must not bind "/ab". An
+	// empty resource path (a bare origin) binds any path on that origin.
+	return strings.HasPrefix(addressedPath, resourcePath+"/")
 }
 
 // fetchMetadataFromURL fetches and parses OAuth server metadata from a URL.
