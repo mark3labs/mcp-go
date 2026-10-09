@@ -532,9 +532,9 @@ func TestTaskToolTracerBullet(t *testing.T) {
 
 	t.Run("task tool handler returns context.Canceled before tasks/cancel called", func(t *testing.T) {
 		// This test verifies that if a handler detects context cancellation
-		// (e.g., from parent context timeout) and returns ctx.Err() before
-		// tasks/cancel is explicitly called, the task is still marked as cancelled
-		// rather than failed.
+		// (e.g., from TTL expiry) and returns ctx.Err() before tasks/cancel is
+		// explicitly called, the task is still marked as cancelled rather than
+		// failed.
 
 		// Step 1: Create server
 		server := NewMCPServer(
@@ -543,11 +543,7 @@ func TestTaskToolTracerBullet(t *testing.T) {
 			WithTaskCapabilities(true, true, true),
 		)
 
-		// Step 2: Create a parent context that we'll cancel
-		parentCtx, cancelParent := context.WithCancel(t.Context())
-		defer cancelParent()
-
-		// Step 3: Register a task tool that respects context cancellation
+		// Step 2: Register a task tool that respects context cancellation
 		handlerStarted := make(chan struct{})
 
 		selfCancelTool := mcp.NewTool("self_cancel_operation",
@@ -562,7 +558,7 @@ func TestTaskToolTracerBullet(t *testing.T) {
 			return nil, ctx.Err()
 		})
 
-		// Step 4: Call tool with task augmentation
+		// Step 3: Call tool with task augmentation
 		callRequest := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
 				Name: "self_cancel_operation",
@@ -570,7 +566,7 @@ func TestTaskToolTracerBullet(t *testing.T) {
 			},
 		}
 
-		callResult, callErr := server.handleToolCall(parentCtx, 1, callRequest)
+		callResult, callErr := server.handleToolCall(t.Context(), 1, callRequest)
 		require.Nil(t, callErr)
 		require.NotNil(t, callResult)
 
@@ -580,10 +576,17 @@ func TestTaskToolTracerBullet(t *testing.T) {
 		// Wait for handler to start
 		<-handlerStarted
 
-		// Step 5: Cancel the parent context (simulating external cancellation)
-		cancelParent()
+		// Step 4: Cancel the task's context without going through tasks/cancel.
+		// The task no longer follows the context of the request that created it.
+		entry, err := server.getTaskEntry(t.Context(), taskID)
+		require.NoError(t, err)
+		server.tasksMu.RLock()
+		cancelTask := entry.cancelFunc
+		server.tasksMu.RUnlock()
+		require.NotNil(t, cancelTask)
+		cancelTask()
 
-		// Step 6: Wait for task to complete
+		// Step 5: Wait for task to complete
 		var finalTask mcp.Task
 		for range 20 {
 			task, _, err := server.getTask(t.Context(), taskID)
@@ -595,7 +598,7 @@ func TestTaskToolTracerBullet(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 		}
 
-		// Step 7: Verify task status is cancelled (not failed)
+		// Step 6: Verify task status is cancelled (not failed)
 		assert.Equal(t, mcp.TaskStatusCancelled, finalTask.Status)
 		assert.Contains(t, finalTask.StatusMessage, "context canceled")
 	})
@@ -716,4 +719,147 @@ func TestTaskTool_ModelImmediateResponse(t *testing.T) {
 		immediateResponse := result.Meta.AdditionalFields[mcp.ModelImmediateResponseMetaKey]
 		assert.Equal(t, message, immediateResponse)
 	})
+}
+
+// addTaskWorkTool registers a tool named "work" that runs as a task, either
+// through AddTaskTool or as a regular tool with optional task support.
+func addTaskWorkTool(s *MCPServer, taskTool bool, handle func(ctx context.Context) (string, error)) {
+	if taskTool {
+		s.AddTaskTool(mcp.NewTool("work", mcp.WithTaskSupport(mcp.TaskSupportRequired)),
+			func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+				text, err := handle(ctx)
+				if err != nil {
+					return nil, err
+				}
+				return &mcp.CreateTaskResult{Content: []mcp.Content{mcp.NewTextContent(text)}}, nil
+			})
+		return
+	}
+	s.AddTool(mcp.NewTool("work", mcp.WithTaskSupport(mcp.TaskSupportOptional)),
+		func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			text, err := handle(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return mcp.NewToolResultText(text), nil
+		})
+}
+
+// callWorkAsTask sends a task-augmented tools/call for "work" through
+// HandleMessage and returns the created task's ID.
+func callWorkAsTask(ctx context.Context, t *testing.T, s *MCPServer) string {
+	t.Helper()
+	response := s.HandleMessage(ctx, []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"work","task":{}}}`))
+	jsonResp, ok := response.(mcp.JSONRPCResponse)
+	require.True(t, ok, "expected JSONRPCResponse, got %T: %+v", response, response)
+	created, ok := jsonResp.Result.(*mcp.CreateTaskResult)
+	require.True(t, ok, "expected *mcp.CreateTaskResult, got %T", jsonResp.Result)
+	return created.Task.TaskId
+}
+
+// TestTaskAugmentedToolCall_OutlivesRequest verifies that a task keeps running
+// after HandleMessage has returned the CreateTaskResult and the caller has
+// cancelled the request context, and that the task still sees that context's
+// values.
+func TestTaskAugmentedToolCall_OutlivesRequest(t *testing.T) {
+	type ctxKey struct{}
+
+	tests := []struct {
+		name     string
+		taskTool bool
+	}{
+		{name: "task tool", taskTool: true},
+		{name: "regular tool with optional task support", taskTool: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+
+			release := make(chan struct{})
+			addTaskWorkTool(s, tt.taskTool, func(ctx context.Context) (string, error) {
+				<-release
+				if err := ctx.Err(); err != nil {
+					return "", err
+				}
+				value, _ := ctx.Value(ctxKey{}).(string)
+				return value, nil
+			})
+
+			requestCtx, endRequest := context.WithCancel(context.WithValue(t.Context(), ctxKey{}, "request value"))
+			taskID := callWorkAsTask(requestCtx, t, s)
+			// The request is over once the CreateTaskResult is written.
+			endRequest()
+			close(release)
+
+			resultCtx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			response := s.HandleMessage(resultCtx, fmt.Appendf(nil,
+				`{"jsonrpc":"2.0","id":2,"method":"tasks/result","params":{"taskId":%q}}`, taskID))
+			jsonResp, ok := response.(mcp.JSONRPCResponse)
+			require.True(t, ok, "expected JSONRPCResponse, got %T: %+v", response, response)
+			result, ok := jsonResp.Result.(mcp.TaskResultResult)
+			require.True(t, ok, "expected mcp.TaskResultResult, got %T", jsonResp.Result)
+
+			task, _, err := s.getTask(t.Context(), taskID)
+			require.NoError(t, err)
+			assert.Equal(t, mcp.TaskStatusCompleted, task.Status, task.StatusMessage)
+			require.Len(t, result.Content, 1)
+			text, ok := result.Content[0].(mcp.TextContent)
+			require.True(t, ok, "expected TextContent, got %T", result.Content[0])
+			assert.Equal(t, "request value", text.Text)
+		})
+	}
+}
+
+// TestTaskAugmentedToolCall_TasksCancelStopsHandler verifies that tasks/cancel
+// still cancels the context a task runs under.
+func TestTaskAugmentedToolCall_TasksCancelStopsHandler(t *testing.T) {
+	tests := []struct {
+		name     string
+		taskTool bool
+	}{
+		{name: "task tool", taskTool: true},
+		{name: "regular tool with optional task support", taskTool: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+
+			started := make(chan struct{})
+			stopped := make(chan error, 1)
+			addTaskWorkTool(s, tt.taskTool, func(ctx context.Context) (string, error) {
+				close(started)
+				<-ctx.Done()
+				stopped <- ctx.Err()
+				return "", ctx.Err()
+			})
+
+			taskID := callWorkAsTask(t.Context(), t, s)
+
+			select {
+			case <-started:
+			case <-time.After(2 * time.Second):
+				t.Fatal("task handler did not start")
+			}
+
+			response := s.HandleMessage(t.Context(), fmt.Appendf(nil,
+				`{"jsonrpc":"2.0","id":2,"method":"tasks/cancel","params":{"taskId":%q}}`, taskID))
+			_, ok := response.(mcp.JSONRPCResponse)
+			require.True(t, ok, "expected JSONRPCResponse, got %T: %+v", response, response)
+
+			select {
+			case err := <-stopped:
+				assert.ErrorIs(t, err, context.Canceled)
+			case <-time.After(2 * time.Second):
+				t.Fatal("tasks/cancel did not cancel the task's context")
+			}
+
+			task, _, err := s.getTask(t.Context(), taskID)
+			require.NoError(t, err)
+			assert.Equal(t, mcp.TaskStatusCancelled, task.Status)
+			assert.Equal(t, "Task cancelled by request", task.StatusMessage)
+		})
+	}
 }
