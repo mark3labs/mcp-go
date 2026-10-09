@@ -166,6 +166,9 @@ func (c *InProcessTransport) SendNotification(ctx context.Context, notification 
 		return fmt.Errorf("failed to marshal notification: %w", err)
 	}
 	notificationBytes = append(notificationBytes, '\n')
+	if c.session != nil {
+		ctx = c.server.WithContext(ctx, c.session)
+	}
 	c.server.HandleMessage(ctx, notificationBytes)
 
 	return nil
