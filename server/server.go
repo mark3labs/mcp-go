@@ -797,10 +797,16 @@ func (s *MCPServer) AddResources(resources ...ServerResource) {
 
 // SetResources replaces all existing resources with the provided list
 func (s *MCPServer) SetResources(resources ...ServerResource) {
+	s.implicitlyRegisterResourceCapabilities()
 	s.resourcesMu.Lock()
 	s.resources = make(map[string]resourceEntry, len(resources))
+	for _, item := range resources {
+		s.resources[item.Resource.URI] = resourceEntry{resource: item.Resource, handler: item.Handler}
+	}
 	s.resourcesMu.Unlock()
-	s.AddResources(resources...)
+	if s.capabilities.resources.listChanged {
+		s.SendNotificationToAllClients(mcp.MethodNotificationResourcesListChanged, nil)
+	}
 }
 
 // AddResource registers a new resource and its handler
@@ -883,10 +889,16 @@ func (s *MCPServer) AddResourceTemplates(resourceTemplates ...ServerResourceTemp
 
 // SetResourceTemplates replaces all existing resource templates with the provided list
 func (s *MCPServer) SetResourceTemplates(templates ...ServerResourceTemplate) {
+	s.implicitlyRegisterResourceCapabilities()
 	s.resourcesMu.Lock()
 	s.resourceTemplates = make(map[string]resourceTemplateEntry, len(templates))
+	for _, item := range templates {
+		s.resourceTemplates[item.Template.URITemplate.Raw()] = resourceTemplateEntry{template: item.Template, handler: item.Handler}
+	}
 	s.resourcesMu.Unlock()
-	s.AddResourceTemplates(templates...)
+	if s.capabilities.resources.listChanged {
+		s.SendNotificationToAllClients(mcp.MethodNotificationResourcesListChanged, nil)
+	}
 }
 
 // AddResourceTemplate registers a new resource template and its handler
@@ -922,11 +934,18 @@ func (s *MCPServer) AddPrompt(prompt mcp.Prompt, handler PromptHandlerFunc) {
 
 // SetPrompts replaces all existing prompts with the provided list
 func (s *MCPServer) SetPrompts(prompts ...ServerPrompt) {
+	s.implicitlyRegisterPromptCapabilities()
 	s.promptsMu.Lock()
 	s.prompts = make(map[string]mcp.Prompt, len(prompts))
 	s.promptHandlers = make(map[string]PromptHandlerFunc, len(prompts))
+	for _, item := range prompts {
+		s.prompts[item.Prompt.Name] = item.Prompt
+		s.promptHandlers[item.Prompt.Name] = item.Handler
+	}
 	s.promptsMu.Unlock()
-	s.AddPrompts(prompts...)
+	if s.capabilities.prompts.listChanged {
+		s.SendNotificationToAllClients(mcp.MethodNotificationPromptsListChanged, nil)
+	}
 }
 
 // DeletePrompts removes prompts from the server
