@@ -1818,7 +1818,22 @@ type TaskResultResult struct {
 	// Tool call result fields (for task-augmented tool calls)
 	Content           []Content `json:"content,omitempty"`
 	StructuredContent any       `json:"structuredContent,omitempty"`
-	IsError           bool      `json:"isError,omitempty"`
+	// RawStructuredContent preserves structured JSON precision when forwarding a parsed result.
+	RawStructuredContent json.RawMessage `json:"-"`
+	IsError              bool            `json:"isError,omitempty"`
+}
+
+// MarshalJSON preserves the original structured content of a parsed task result.
+func (r TaskResultResult) MarshalJSON() ([]byte, error) {
+	type alias TaskResultResult
+	out := struct {
+		alias
+		StructuredContent any `json:"structuredContent,omitempty"`
+	}{alias: alias(r), StructuredContent: r.StructuredContent}
+	if len(r.RawStructuredContent) > 0 {
+		out.StructuredContent = r.RawStructuredContent
+	}
+	return json.Marshal(out)
 }
 
 // CancelTaskRequest cancels an in-progress task.
