@@ -184,7 +184,12 @@ func (s *schemaFallbackState) schemaForFieldType(
 		if itemErr != nil {
 			return nil, itemErr
 		}
-		return &jsonschema.Schema{Type: "array", Items: items}, nil
+		schema := &jsonschema.Schema{Type: "array", Items: items}
+		if t.Kind() == reflect.Array {
+			schema.MinItems = jsonschema.Ptr(t.Len())
+			schema.MaxItems = jsonschema.Ptr(t.Len())
+		}
+		return schema, nil
 	case reflect.Map:
 		if t.Key().Kind() != reflect.String {
 			return nil, err
