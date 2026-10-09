@@ -1511,7 +1511,7 @@ func listByPagination[T mcp.Named](
 	}
 	endPos := len(allElements)
 	if s.paginationLimit != nil && *s.paginationLimit > 0 {
-		if len(allElements) > startPos+*s.paginationLimit {
+		if len(allElements)-startPos > *s.paginationLimit {
 			endPos = startPos + *s.paginationLimit
 		}
 	}
