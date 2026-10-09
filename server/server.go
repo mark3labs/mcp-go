@@ -2189,13 +2189,13 @@ func (s *MCPServer) handleToolCall(
 	finalHandler := tool.Handler
 
 	s.toolMiddlewareMu.RLock()
-	mw := s.toolHandlerMiddlewares
+	mw := slices.Clone(s.toolHandlerMiddlewares)
+	s.toolMiddlewareMu.RUnlock()
 
 	// Apply middlewares in reverse order
 	for _, m := range slices.Backward(mw) {
 		finalHandler = m(finalHandler)
 	}
-	s.toolMiddlewareMu.RUnlock()
 
 	result, err := finalHandler(ctx, request)
 	if err != nil {
@@ -2479,11 +2479,11 @@ func (s *MCPServer) executeRegularToolAsTask(
 	finalHandler := regularTool.Handler
 
 	s.toolMiddlewareMu.RLock()
-	mw := s.toolHandlerMiddlewares
+	mw := slices.Clone(s.toolHandlerMiddlewares)
+	s.toolMiddlewareMu.RUnlock()
 	for _, m := range slices.Backward(mw) {
 		finalHandler = m(finalHandler)
 	}
-	s.toolMiddlewareMu.RUnlock()
 
 	result, err := finalHandler(taskCtx, request)
 
