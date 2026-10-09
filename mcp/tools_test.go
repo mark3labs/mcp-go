@@ -2742,6 +2742,35 @@ func TestCallToolParamsPreservesLargeIntegerArguments(t *testing.T) {
 	assert.Equal(t, int64(9223372036854775807), bound.ID)
 }
 
+func TestCallToolParamsReplacesArgumentsWhenReused(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		args map[string]any
+	}{
+		{name: "omitted", raw: `{"name":"next"}`},
+		{name: "null", raw: `{"name":"next","arguments":null}`},
+		{name: "empty object", raw: `{"name":"next","arguments":{}}`, args: map[string]any{}},
+		{name: "new object", raw: `{"name":"next","arguments":{"fresh":"value"}}`, args: map[string]any{"fresh": "value"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var request CallToolRequest
+			require.NoError(t, json.Unmarshal([]byte(`{"params":{"name":"previous","arguments":{"stale":"value"}}}`), &request))
+			require.NoError(t, json.Unmarshal([]byte(`{"params":`+tt.raw+`}`), &request))
+
+			assert.Equal(t, "next", request.Params.Name)
+			assert.Equal(t, tt.args, request.GetArguments())
+			var bound map[string]any
+			require.NoError(t, request.BindArguments(&bound))
+			assert.Equal(t, tt.args, bound)
+			out, err := json.Marshal(request.Params)
+			require.NoError(t, err)
+			assert.JSONEq(t, tt.raw, string(out))
+		})
+	}
+}
+
 func TestCallToolResultPreservesLargeIntegerStructuredContent(t *testing.T) {
 	raw := []byte(`{
 		"content": [{"type": "text", "text": "ok"}],
