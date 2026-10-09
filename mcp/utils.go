@@ -344,7 +344,7 @@ func NewToolResultStructuredOnly(structured any) *CallToolResult {
 	// Convert to JSON string for backward compatibility
 	jsonBytes, err := json.Marshal(structured)
 	if err != nil {
-		fallbackText = fmt.Sprintf("Error serializing structured content: %v", err)
+		return NewToolResultError(fmt.Sprintf("Error serializing structured content: %v", err))
 	} else {
 		fallbackText = string(jsonBytes)
 	}
