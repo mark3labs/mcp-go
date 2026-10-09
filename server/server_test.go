@@ -2554,7 +2554,7 @@ func BenchmarkMCPServer_Pagination(b *testing.B) {
 	ctx := b.Context()
 	server := createTestServer()
 	for b.Loop() {
-		_, _, _ = listByPagination(ctx, server, "dG9vbDY1NA==", list, func(tool mcp.Tool) string { return tool.Name })
+		_, _, _ = listByPagination(ctx, server, "dG9vbDY1NA==", list, func(tool mcp.Tool) string { return tool.Name }, nil)
 	}
 }
 

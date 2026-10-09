@@ -12,6 +12,7 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -1485,20 +1486,18 @@ func listByPagination[T any](
 	cursor mcp.Cursor,
 	allElements []T,
 	key func(T) string,
+	tie func(T) string,
 ) ([]T, mcp.Cursor, error) {
 	startPos := 0
 	if cursor != "" {
-		c, err := base64.StdEncoding.DecodeString(string(cursor))
+		var err error
+		startPos, err = paginationStart(allElements, string(cursor), key, tie)
 		if err != nil {
 			return nil, "", err
 		}
-		cString := string(c)
-		startPos = sort.Search(len(allElements), func(i int) bool {
-			return key(allElements[i]) > cString
-		})
 	}
 	endPos := len(allElements)
-	if s.paginationLimit != nil {
+	if s.paginationLimit != nil && *s.paginationLimit > 0 {
 		if len(allElements) > startPos+*s.paginationLimit {
 			endPos = startPos + *s.paginationLimit
 		}
@@ -1512,14 +1511,79 @@ func listByPagination[T any](
 	}
 	// set the next cursor
 	nextCursor := func() mcp.Cursor {
-		if s.paginationLimit != nil && len(elementsToReturn) >= *s.paginationLimit {
-			nc := key(elementsToReturn[len(elementsToReturn)-1])
-			toString := base64.StdEncoding.EncodeToString([]byte(nc))
-			return mcp.Cursor(toString)
+		if s.paginationLimit != nil && *s.paginationLimit > 0 && len(elementsToReturn) >= *s.paginationLimit {
+			last := elementsToReturn[len(elementsToReturn)-1]
+			return encodePaginationCursor(key(last), tieValue(tie, last), tie != nil)
 		}
 		return ""
 	}()
 	return elementsToReturn, nextCursor, nil
+}
+
+// encodePaginationCursor builds a cursor. Name-only lists stay base64(name),
+// which is what older servers produced. Lists that can share a name append
+// "." and base64(tie). "." is not in the standard base64 alphabet, so the
+// two forms do not collide.
+func encodePaginationCursor(name, tie string, withTie bool) mcp.Cursor {
+	encoded := base64.StdEncoding.EncodeToString([]byte(name))
+	if !withTie {
+		return mcp.Cursor(encoded)
+	}
+	return mcp.Cursor(encoded + "." + base64.StdEncoding.EncodeToString([]byte(tie)))
+}
+
+func tieValue[T any](tie func(T) string, item T) string {
+	if tie == nil {
+		return ""
+	}
+	return tie(item)
+}
+
+// paginationStart returns the index of the first item after cursor.
+// A cursor without "." is a legacy name cursor: the next page starts at the
+// first name strictly greater than it, which is what the previous servers did.
+// A cursor with "." is name plus the tie-break (URI or URI template).
+func paginationStart[T any](
+	allElements []T,
+	cursor string,
+	key func(T) string,
+	tie func(T) string,
+) (int, error) {
+	namePart, tiePart, hasTie := strings.Cut(cursor, ".")
+	if !hasTie || tie == nil {
+		raw := cursor
+		if !hasTie {
+			raw = namePart
+		}
+		decoded, err := base64.StdEncoding.DecodeString(raw)
+		if err != nil {
+			return 0, err
+		}
+		name := string(decoded)
+		return sort.Search(len(allElements), func(i int) bool {
+			return key(allElements[i]) > name
+		}), nil
+	}
+	if tiePart == "" {
+		return 0, errors.New("invalid pagination cursor")
+	}
+	nameBytes, err := base64.StdEncoding.DecodeString(namePart)
+	if err != nil {
+		return 0, err
+	}
+	tieBytes, err := base64.StdEncoding.DecodeString(tiePart)
+	if err != nil {
+		return 0, err
+	}
+	cursorName := string(nameBytes)
+	cursorTie := string(tieBytes)
+	return sort.Search(len(allElements), func(i int) bool {
+		itemName := key(allElements[i])
+		if itemName != cursorName {
+			return itemName > cursorName
+		}
+		return tie(allElements[i]) > cursorTie
+	}), nil
 }
 
 func (s *MCPServer) handleListResources(
@@ -1547,9 +1611,12 @@ func (s *MCPServer) handleListResources(
 		}
 	}
 
-	// Sort by URI. Name is a display label and is not unique, so paging on it
-	// skips every later resource that shares the cursor's name.
+	// Name stays the primary order, matching cursors that older servers issued.
+	// URI breaks ties so two resources with the same name both get a page.
 	resourcesList := slices.SortedFunc(maps.Values(resourceMap), func(a, b mcp.Resource) int {
+		if name := cmp.Compare(a.Name, b.Name); name != 0 {
+			return name
+		}
 		return cmp.Compare(a.URI, b.URI)
 	})
 
@@ -1559,6 +1626,7 @@ func (s *MCPServer) handleListResources(
 		s,
 		request.Params.Cursor,
 		resourcesList,
+		func(r mcp.Resource) string { return r.Name },
 		func(r mcp.Resource) string { return r.URI },
 	)
 	if err != nil {
@@ -1612,6 +1680,9 @@ func (s *MCPServer) handleListResourceTemplates(
 	}
 
 	sort.Slice(templates, func(i, j int) bool {
+		if templates[i].Name != templates[j].Name {
+			return templates[i].Name < templates[j].Name
+		}
 		return resourceTemplateKey(templates[i]) < resourceTemplateKey(templates[j])
 	})
 	templatesToReturn, nextCursor, err := listByPagination(
@@ -1619,6 +1690,7 @@ func (s *MCPServer) handleListResourceTemplates(
 		s,
 		request.Params.Cursor,
 		templates,
+		func(template mcp.ResourceTemplate) string { return template.Name },
 		resourceTemplateKey,
 	)
 	if err != nil {
@@ -1848,6 +1920,7 @@ func (s *MCPServer) handleListPrompts(
 		request.Params.Cursor,
 		prompts,
 		func(p mcp.Prompt) string { return p.Name },
+		nil,
 	)
 	if err != nil {
 		return nil, &requestError{
@@ -2058,6 +2131,7 @@ func (s *MCPServer) handleListTools(
 		request.Params.Cursor,
 		tools,
 		func(tool mcp.Tool) string { return tool.Name },
+		nil,
 	)
 	if err != nil {
 		return nil, &requestError{
@@ -2653,6 +2727,7 @@ func (s *MCPServer) handleListTasks(
 		request.Params.Cursor,
 		tasks,
 		func(task mcp.Task) string { return task.TaskId },
+		nil,
 	)
 	if err != nil {
 		return nil, &requestError{
