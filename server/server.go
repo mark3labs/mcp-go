@@ -220,6 +220,11 @@ type MCPServer struct {
 	resourceCompletionProvider ResourceCompletionProvider
 	capabilities               serverCapabilities
 	cacheHints                 map[mcp.MCPMethod]cacheHints
+	// toolHeaderBindings holds each registered tool's x-mcp-header bindings,
+	// extracted once at registration so a tools/call never re-reads the input
+	// schema. Keyed like tools and taskTools and kept in step with them under
+	// toolsMu; session tools are not cached here.
+	toolHeaderBindings map[string][]mcp.ParamHeaderBinding
 	// allowServerInitiatedRequests keeps RequestSampling, RequestElicitation,
 	// and RequestRoots usable against clients speaking protocol version
 	// 2026-07-28 or later. See WithLegacyServerInitiatedRequests.
@@ -300,7 +305,8 @@ func WithLegacyServerInitiatedRequests() ServerOption {
 	}
 }
 
-// WithPaginationLimit sets the pagination limit for the server.
+// WithPaginationLimit sets the maximum page size for list results.
+// Zero and negative limits leave the list unpaged.
 func WithPaginationLimit(limit int) ServerOption {
 	return func(s *MCPServer) {
 		s.paginationLimit = &limit
@@ -743,6 +749,7 @@ func NewMCPServer(
 		promptHandlers:             make(map[string]PromptHandlerFunc),
 		tools:                      make(map[string]ServerTool),
 		taskTools:                  make(map[string]ServerTaskTool),
+		toolHeaderBindings:         make(map[string][]mcp.ParamHeaderBinding),
 		toolHandlerMiddlewares:     make([]ToolHandlerMiddleware, 0),
 		resourceHandlerMiddlewares: make([]ResourceHandlerMiddleware, 0),
 		promptHandlerMiddlewares:   make([]PromptHandlerMiddleware, 0),
@@ -1071,6 +1078,9 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 		staged[name] = entry
 	}
 	maps.Copy(s.tools, staged)
+	for name, entry := range staged {
+		s.toolHeaderBindings[name] = mcp.ExtractParamHeaderBindings(&entry.Tool)
+	}
 	s.toolsMu.Unlock()
 
 	// When the list of available tools changes, servers that declared the listChanged capability SHOULD send a notification.
@@ -1101,6 +1111,9 @@ func (s *MCPServer) AddTaskTools(taskTools ...ServerTaskTool) {
 		staged[name] = entry
 	}
 	maps.Copy(s.taskTools, staged)
+	for name, entry := range staged {
+		s.toolHeaderBindings[name] = mcp.ExtractParamHeaderBindings(&entry.Tool)
+	}
 	s.toolsMu.Unlock()
 
 	// When the list of available tools changes, servers that declared the listChanged capability SHOULD send a notification.
@@ -1130,7 +1143,13 @@ func (s *MCPServer) SetTools(tools ...ServerTool) {
 		}
 		newTools[name] = entry
 	}
+	for name := range s.tools {
+		delete(s.toolHeaderBindings, name)
+	}
 	s.tools = newTools
+	for name, entry := range newTools {
+		s.toolHeaderBindings[name] = mcp.ExtractParamHeaderBindings(&entry.Tool)
+	}
 	s.toolsMu.Unlock()
 	s.inputValidator.invalidateAll()
 	s.outputValidator.invalidateAll()
@@ -1176,6 +1195,7 @@ func (s *MCPServer) DeleteTools(names ...string) {
 	for _, name := range names {
 		if _, ok := s.tools[name]; ok {
 			delete(s.tools, name)
+			delete(s.toolHeaderBindings, name)
 			exists = true
 		}
 	}
@@ -1502,7 +1522,7 @@ func listByPagination[T mcp.Named](
 		})
 	}
 	endPos := len(allElements)
-	if s.paginationLimit != nil {
+	if s.paginationLimit != nil && *s.paginationLimit > 0 {
 		if len(allElements) > startPos+*s.paginationLimit {
 			endPos = startPos + *s.paginationLimit
 		}
@@ -1516,7 +1536,7 @@ func listByPagination[T mcp.Named](
 	}
 	// set the next cursor
 	nextCursor := func() mcp.Cursor {
-		if s.paginationLimit != nil && len(elementsToReturn) >= *s.paginationLimit {
+		if s.paginationLimit != nil && *s.paginationLimit > 0 && len(elementsToReturn) >= *s.paginationLimit {
 			nc := elementsToReturn[len(elementsToReturn)-1].GetName()
 			toString := base64.StdEncoding.EncodeToString([]byte(nc))
 			return mcp.Cursor(toString)

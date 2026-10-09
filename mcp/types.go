@@ -1453,6 +1453,8 @@ func (t *ToolResultContent) UnmarshalJSON(data []byte) error {
 	t.ToolUseID = raw.ToolUseID
 	t.IsError = raw.IsError
 
+	t.RawStructuredContent = nil
+	t.StructuredContent = nil
 	if len(raw.StructuredContent) > 0 {
 		t.RawStructuredContent = append(json.RawMessage(nil), raw.StructuredContent...)
 		if err := json.Unmarshal(raw.StructuredContent, &t.StructuredContent); err != nil {
@@ -1460,7 +1462,8 @@ func (t *ToolResultContent) UnmarshalJSON(data []byte) error {
 		}
 	}
 
-	if len(raw.Content) > 0 {
+	t.Content = nil
+	if raw.Content != nil {
 		t.Content = make([]Content, 0, len(raw.Content))
 		for _, rawContent := range raw.Content {
 			c, err := UnmarshalContent(rawContent)

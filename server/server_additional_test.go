@@ -994,3 +994,25 @@ func TestToolResultSizeLimitOnTasks(t *testing.T) {
 		})
 	}
 }
+
+func TestPaginationLimitZeroReturnsTheFullList(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0",
+		WithToolCapabilities(false),
+		WithPaginationLimit(0),
+	)
+	for i := range 3 {
+		server.AddTool(mcp.NewTool(fmt.Sprintf("tool-%d", i)), nil)
+	}
+
+	response := server.HandleMessage(t.Context(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "tools/list"
+	}`))
+	resp, ok := response.(mcp.JSONRPCResponse)
+	require.True(t, ok)
+	result, ok := resp.Result.(mcp.ListToolsResult)
+	require.True(t, ok)
+	assert.Len(t, result.Tools, 3)
+	assert.Empty(t, result.NextCursor)
+}
