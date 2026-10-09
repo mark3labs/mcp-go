@@ -56,10 +56,11 @@ func (c *Client) maxRoundTrips() int {
 func multiRoundTrip[T any](
 	ctx context.Context,
 	c *Client,
+	initial mcp.MultiRoundTripParams,
 	send func(context.Context, mcp.MultiRoundTripParams) (*T, error),
 	needsInput func(*T) (mcp.InputRequests, string, bool),
 ) (*T, error) {
-	var params mcp.MultiRoundTripParams
+	params := initial
 	loadShedding := 0
 
 	for attempt := 1; ; attempt++ {
