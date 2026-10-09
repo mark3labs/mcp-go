@@ -211,11 +211,11 @@ func (s *MCPServer) validateStandardHeadersForMessage(
 	if method != mcp.MethodToolsCall {
 		return nil
 	}
-	tool := s.toolForHeaderValidation(ctx, wrapper.Params)
-	if tool == nil {
+	bindings, ok := s.headerBindingsForCall(ctx, wrapper.Params)
+	if !ok {
 		return nil
 	}
-	return mcp.ValidateParamHeadersLookup(lookupHeader(headers), tool, wrapper.Params)
+	return mcp.ValidateParamHeadersWithBindings(lookupHeader(headers), bindings, wrapper.Params)
 }
 
 // lookupHeader reports the first value of a header and whether it was sent at
@@ -231,23 +231,24 @@ func lookupHeader(headers http.Header) func(string) (string, bool) {
 	}
 }
 
-// toolForHeaderValidation resolves the tool named by a tools/call request, so
-// its x-mcp-header annotations can be checked against the request headers. It
-// returns nil when the tool is unknown, leaving the not-found error to the
-// handler.
-func (s *MCPServer) toolForHeaderValidation(ctx context.Context, params json.RawMessage) *mcp.Tool {
+// headerBindingsForCall resolves the x-mcp-header bindings of the tool named
+// by a tools/call request. A tool registered on the server has them cached
+// from registration; a session tool is read on the call, since session tool
+// maps can be replaced wholesale through SetSessionTools. It returns ok=false
+// when the tool is unknown, leaving the not-found error to the handler.
+func (s *MCPServer) headerBindingsForCall(ctx context.Context, params json.RawMessage) ([]mcp.ParamHeaderBinding, bool) {
 	var call struct {
 		Name string `json:"name"`
 	}
 	if err := json.Unmarshal(params, &call); err != nil || call.Name == "" {
-		return nil
+		return nil, false
 	}
 
 	if session := ClientSessionFromContext(ctx); session != nil {
 		if withTools, ok := session.(SessionWithTools); ok {
 			if sessionTools := withTools.GetSessionTools(); sessionTools != nil {
 				if tool, ok := sessionTools[call.Name]; ok {
-					return &tool.Tool
+					return mcp.ExtractParamHeaderBindings(&tool.Tool), true
 				}
 			}
 		}
@@ -256,10 +257,21 @@ func (s *MCPServer) toolForHeaderValidation(ctx context.Context, params json.Raw
 	s.toolsMu.RLock()
 	defer s.toolsMu.RUnlock()
 	if tool, ok := s.tools[call.Name]; ok {
-		return &tool.Tool
+		return s.cachedHeaderBindings(call.Name, &tool.Tool), true
 	}
 	if taskTool, ok := s.taskTools[call.Name]; ok {
-		return &taskTool.Tool
+		return s.cachedHeaderBindings(call.Name, &taskTool.Tool), true
 	}
-	return nil
+	return nil, false
+}
+
+// cachedHeaderBindings returns the bindings registration extracted for name.
+// It reads the schema only when the map has no entry for the tool, so a
+// registration path that forgets the cache degrades to the per-call read
+// rather than switching the check off. Called with toolsMu held.
+func (s *MCPServer) cachedHeaderBindings(name string, tool *mcp.Tool) []mcp.ParamHeaderBinding {
+	if bindings, ok := s.toolHeaderBindings[name]; ok {
+		return bindings
+	}
+	return mcp.ExtractParamHeaderBindings(tool)
 }

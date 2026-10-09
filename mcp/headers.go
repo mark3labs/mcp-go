@@ -531,7 +531,14 @@ func ValidateParamHeaders(getHeader func(string) string, tool *Tool, params json
 // header is present. For an absent or null argument only a header with a
 // value is a mismatch, as in ValidateParamHeaders.
 func ValidateParamHeadersLookup(lookupHeader func(string) (string, bool), tool *Tool, params json.RawMessage) error {
-	bindings := ExtractParamHeaderBindings(tool)
+	return ValidateParamHeadersWithBindings(lookupHeader, ExtractParamHeaderBindings(tool), params)
+}
+
+// ValidateParamHeadersWithBindings is [ValidateParamHeadersLookup] for bindings
+// already extracted with ExtractParamHeaderBindings, so a server that
+// registers a tool once can validate every call against it without
+// re-reading the schema.
+func ValidateParamHeadersWithBindings(lookupHeader func(string) (string, bool), bindings []ParamHeaderBinding, params json.RawMessage) error {
 	if len(bindings) == 0 {
 		return nil
 	}
