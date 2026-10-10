@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -900,6 +901,94 @@ func TestMCPServer_PaginationCursorStability(t *testing.T) {
 	// Should handle gracefully (may have different results due to modifications)
 	// The key is that it shouldn't crash or return errors
 	assert.NotNil(t, result.Tools)
+}
+
+func TestToolResultSizeLimit(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0",
+		WithToolCapabilities(true),
+		WithToolResultSizeLimit(64),
+	)
+	server.AddTool(mcp.NewTool("big"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText(strings.Repeat("x", 200)), nil
+	})
+	server.AddTool(mcp.NewTool("small"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("ok"), nil
+	})
+
+	call := func(name string) mcp.JSONRPCResponse {
+		t.Helper()
+		response := server.HandleMessage(t.Context(), fmt.Appendf(nil, `{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {"name": "%s"}
+		}`, name))
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok)
+		return resp
+	}
+
+	big, err := json.Marshal(call("big").Result)
+	require.NoError(t, err)
+	assert.Contains(t, string(big), "tool result exceeds 64 bytes")
+	assert.Contains(t, string(big), `"isError":true`)
+
+	small, err := json.Marshal(call("small").Result)
+	require.NoError(t, err)
+	assert.Contains(t, string(small), "ok")
+	assert.NotContains(t, string(small), "tool result exceeds")
+}
+
+func TestToolResultSizeLimitOnTasks(t *testing.T) {
+	server := NewMCPServer("test", "1.0.0",
+		WithTaskCapabilities(true, true, true),
+		WithToolResultSizeLimit(64),
+	)
+	server.AddTool(
+		mcp.NewTool("regular", mcp.WithTaskSupport(mcp.TaskSupportRequired)),
+		func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText(strings.Repeat("x", 200)), nil
+		},
+	)
+	server.AddTaskTool(
+		mcp.NewTool("taskonly", mcp.WithTaskSupport(mcp.TaskSupportRequired)),
+		func(context.Context, mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			return &mcp.CreateTaskResult{
+				Content: []mcp.Content{mcp.NewTextContent(strings.Repeat("y", 200))},
+			}, nil
+		},
+	)
+
+	for _, name := range []string{"regular", "taskonly"} {
+		t.Run(name, func(t *testing.T) {
+			ctx := t.Context()
+			callResult, callErr := server.handleToolCall(ctx, 1, mcp.CallToolRequest{
+				Params: mcp.CallToolParams{Name: name, Task: &mcp.TaskParams{}},
+			})
+			require.Nil(t, callErr)
+			created, ok := callResult.(*mcp.CreateTaskResult)
+			require.True(t, ok)
+
+			require.Eventually(t, func() bool {
+				task, _, err := server.getTask(ctx, created.Task.TaskId)
+				return err == nil && task.Status.IsTerminal()
+			}, 5*time.Second, 10*time.Millisecond)
+			task, _, err := server.getTask(ctx, created.Task.TaskId)
+			require.NoError(t, err)
+			require.Equal(t, mcp.TaskStatusCompleted, task.Status)
+
+			result, resultErr := server.handleTaskResult(ctx, 2, mcp.TaskResultRequest{
+				Params: mcp.TaskResultParams{TaskId: created.Task.TaskId},
+			})
+			require.Nil(t, resultErr)
+			require.True(t, result.IsError)
+			raw, err := json.Marshal(result)
+			require.NoError(t, err)
+			assert.Contains(t, string(raw), "tool result exceeds 64 bytes")
+			assert.NotContains(t, string(raw), strings.Repeat("x", 50))
+			assert.NotContains(t, string(raw), strings.Repeat("y", 50))
+		})
+	}
 }
 
 func TestPaginationLimitZeroReturnsTheFullList(t *testing.T) {
