@@ -902,6 +902,147 @@ func TestMCPServer_PaginationCursorStability(t *testing.T) {
 	assert.NotNil(t, result.Tools)
 }
 
+func TestPaginationKeepsResourcesThatShareAName(t *testing.T) {
+	t.Run("resources", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithResourceCapabilities(false, false),
+			WithPaginationLimit(1),
+		)
+		server.AddResource(mcp.Resource{URI: "test://b", Name: "same"}, nil)
+		server.AddResource(mcp.Resource{URI: "test://a", Name: "same"}, nil)
+
+		seen := map[string]bool{}
+		var cursor mcp.Cursor
+		for range 3 {
+			params := ""
+			if cursor != "" {
+				params = fmt.Sprintf(`,"params":{"cursor":"%s"}`, cursor)
+			}
+			response := server.HandleMessage(t.Context(), fmt.Appendf(nil, `{
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "resources/list"%s
+			}`, params))
+			resp, ok := response.(mcp.JSONRPCResponse)
+			require.True(t, ok)
+			result, ok := resp.Result.(mcp.ListResourcesResult)
+			require.True(t, ok)
+			for _, resource := range result.Resources {
+				seen[resource.URI] = true
+			}
+			if result.NextCursor == "" {
+				break
+			}
+			assert.Contains(t, string(result.NextCursor), ".")
+			cursor = result.NextCursor
+		}
+		assert.Equal(t, map[string]bool{"test://a": true, "test://b": true}, seen)
+	})
+
+	t.Run("resource templates", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithResourceCapabilities(false, false),
+			WithPaginationLimit(1),
+		)
+		server.AddResourceTemplate(mcp.NewResourceTemplate("test://b/{id}", "same"), nil)
+		server.AddResourceTemplate(mcp.NewResourceTemplate("test://a/{id}", "same"), nil)
+
+		seen := map[string]bool{}
+		var cursor mcp.Cursor
+		for range 3 {
+			params := ""
+			if cursor != "" {
+				params = fmt.Sprintf(`,"params":{"cursor":"%s"}`, cursor)
+			}
+			response := server.HandleMessage(t.Context(), fmt.Appendf(nil, `{
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "resources/templates/list"%s
+			}`, params))
+			resp, ok := response.(mcp.JSONRPCResponse)
+			require.True(t, ok)
+			result, ok := resp.Result.(mcp.ListResourceTemplatesResult)
+			require.True(t, ok)
+			for _, template := range result.ResourceTemplates {
+				seen[template.URITemplate.Raw()] = true
+			}
+			if result.NextCursor == "" {
+				break
+			}
+			cursor = result.NextCursor
+		}
+		assert.Equal(t, map[string]bool{"test://a/{id}": true, "test://b/{id}": true}, seen)
+	})
+}
+
+func TestLegacyResourceCursorPagesByName(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0",
+		WithResourceCapabilities(false, false),
+		WithPaginationLimit(1),
+	)
+	server.AddResource(mcp.Resource{URI: "test://b", Name: "same"}, nil)
+	server.AddResource(mcp.Resource{URI: "test://a", Name: "same"}, nil)
+	server.AddResource(mcp.Resource{URI: "test://c", Name: "zeta"}, nil)
+
+	legacy := base64.StdEncoding.EncodeToString([]byte("same"))
+	response := server.HandleMessage(t.Context(), fmt.Appendf(nil, `{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "resources/list",
+		"params": {"cursor": "%s"}
+	}`, legacy))
+	resp, ok := response.(mcp.JSONRPCResponse)
+	require.True(t, ok)
+	result, ok := resp.Result.(mcp.ListResourcesResult)
+	require.True(t, ok)
+	require.Len(t, result.Resources, 1)
+	assert.Equal(t, "zeta", result.Resources[0].Name)
+	assert.Equal(t, "test://c", result.Resources[0].URI)
+
+	response = server.HandleMessage(t.Context(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 2,
+		"method": "resources/list",
+		"params": {"cursor": "c2FtZQ.!!!"}
+	}`))
+	_, ok = response.(mcp.JSONRPCError)
+	assert.True(t, ok)
+}
+
+func TestResourceCursorWithEmptyURI(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0",
+		WithResourceCapabilities(false, false),
+		WithPaginationLimit(1),
+	)
+	server.AddResource(mcp.Resource{URI: "", Name: "same"}, nil)
+	server.AddResource(mcp.Resource{URI: "test://a", Name: "same"}, nil)
+
+	list := func(cursor mcp.Cursor) mcp.ListResourcesResult {
+		t.Helper()
+		params := ""
+		if cursor != "" {
+			params = fmt.Sprintf(`,"params":{"cursor":"%s"}`, cursor)
+		}
+		response := server.HandleMessage(t.Context(), fmt.Appendf(nil, `{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "resources/list"%s
+		}`, params))
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "response: %#v", response)
+		result, ok := resp.Result.(mcp.ListResourcesResult)
+		require.True(t, ok)
+		return result
+	}
+
+	first := list("")
+	require.Len(t, first.Resources, 1)
+	assert.Equal(t, "", first.Resources[0].URI)
+	second := list(first.NextCursor)
+	require.Len(t, second.Resources, 1)
+	assert.Equal(t, "test://a", second.Resources[0].URI)
+}
+
 func TestPaginationLimitZeroReturnsTheFullList(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0",
 		WithToolCapabilities(false),
