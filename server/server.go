@@ -1584,9 +1584,6 @@ func paginationStart[T any](
 			return key(allElements[i]) > name
 		}), nil
 	}
-	if tiePart == "" {
-		return 0, errors.New("invalid pagination cursor")
-	}
 	nameBytes, err := base64.StdEncoding.DecodeString(namePart)
 	if err != nil {
 		return 0, err

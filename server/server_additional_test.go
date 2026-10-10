@@ -1009,6 +1009,40 @@ func TestLegacyResourceCursorPagesByName(t *testing.T) {
 	assert.True(t, ok)
 }
 
+func TestResourceCursorWithEmptyURI(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0",
+		WithResourceCapabilities(false, false),
+		WithPaginationLimit(1),
+	)
+	server.AddResource(mcp.Resource{URI: "", Name: "same"}, nil)
+	server.AddResource(mcp.Resource{URI: "test://a", Name: "same"}, nil)
+
+	list := func(cursor mcp.Cursor) mcp.ListResourcesResult {
+		t.Helper()
+		params := ""
+		if cursor != "" {
+			params = fmt.Sprintf(`,"params":{"cursor":"%s"}`, cursor)
+		}
+		response := server.HandleMessage(t.Context(), fmt.Appendf(nil, `{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "resources/list"%s
+		}`, params))
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "response: %#v", response)
+		result, ok := resp.Result.(mcp.ListResourcesResult)
+		require.True(t, ok)
+		return result
+	}
+
+	first := list("")
+	require.Len(t, first.Resources, 1)
+	assert.Equal(t, "", first.Resources[0].URI)
+	second := list(first.NextCursor)
+	require.Len(t, second.Resources, 1)
+	assert.Equal(t, "test://a", second.Resources[0].URI)
+}
+
 func TestPaginationLimitZeroReturnsTheFullList(t *testing.T) {
 	server := NewMCPServer("test-server", "1.0.0",
 		WithToolCapabilities(false),
