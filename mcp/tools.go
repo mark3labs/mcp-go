@@ -708,7 +708,7 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 
 	// Determine which input schema to use
 	if t.RawInputSchema != nil {
-		if t.InputSchema.Type != "" {
+		if t.InputSchema.Type != "" || t.InputSchema.Types != nil {
 			return nil, fmt.Errorf("tool %s has both InputSchema and RawInputSchema set: %w", t.Name, errToolSchemaConflict)
 		}
 		m["inputSchema"] = t.RawInputSchema
@@ -719,11 +719,11 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 
 	// Add output schema if present
 	if t.RawOutputSchema != nil {
-		if t.OutputSchema.Type != "" {
+		if t.OutputSchema.Type != "" || t.OutputSchema.Types != nil {
 			return nil, fmt.Errorf("tool %s has both OutputSchema and RawOutputSchema set: %w", t.Name, errToolSchemaConflict)
 		}
 		m["outputSchema"] = t.RawOutputSchema
-	} else if t.OutputSchema.Type != "" { // If no output schema is specified, do not return anything
+	} else if t.OutputSchema.Type != "" || t.OutputSchema.Types != nil {
 		m["outputSchema"] = t.OutputSchema
 	}
 
@@ -751,8 +751,12 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 
 // ToolArgumentsSchema represents a JSON Schema for tool arguments.
 type ToolArgumentsSchema struct {
-	Defs                 map[string]any `json:"$defs,omitempty"`
-	Type                 string         `json:"type"`
+	Defs map[string]any `json:"$defs,omitempty"`
+	Type string         `json:"type"`
+	// Types holds an array-valued JSON Schema type, including a single-element
+	// array. Type remains a string for compatibility and takes precedence when
+	// non-empty. Decoding a string clears Types; decoding an array clears Type.
+	Types                []string       `json:"-"`
 	Properties           map[string]any `json:"properties"`
 	Required             []string       `json:"required,omitempty"`
 	AdditionalProperties any            `json:"additionalProperties,omitempty"`
@@ -803,6 +807,9 @@ func (tis *ToolArgumentsSchema) UnmarshalJSON(data []byte) error {
 func toolArgumentsSchemaMarshalJSON(tis ToolArgumentsSchema) ([]byte, error) {
 	m := make(map[string]any)
 	m["type"] = tis.Type
+	if tis.Type == "" && tis.Types != nil {
+		m["type"] = tis.Types
+	}
 
 	if tis.Defs != nil {
 		m["$defs"] = tis.Defs
@@ -930,7 +937,8 @@ func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) err
 	// Use a temporary type to avoid infinite recursion
 	type Alias ToolArgumentsSchema
 	aux := &struct {
-		Definitions map[string]any `json:"definitions,omitempty"`
+		Definitions map[string]any  `json:"definitions,omitempty"`
+		Type        json.RawMessage `json:"type"`
 		// Properties shadows Alias.Properties so the raw bytes keep the key order.
 		Properties json.RawMessage `json:"properties"`
 		*Alias
@@ -940,6 +948,21 @@ func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) err
 
 	if err := json.Unmarshal(data, aux); err != nil {
 		return err
+	}
+	if len(aux.Type) > 0 {
+		if bytes.TrimSpace(aux.Type)[0] == '[' {
+			var types []string
+			if err := json.Unmarshal(aux.Type, &types); err != nil {
+				return fmt.Errorf("decode schema type array: %w", err)
+			}
+			tis.Type = ""
+			tis.Types = types
+		} else {
+			if err := json.Unmarshal(aux.Type, &tis.Type); err != nil {
+				return fmt.Errorf("decode schema type: %w", err)
+			}
+			tis.Types = nil
+		}
 	}
 
 	if aux.Properties != nil {
@@ -1092,6 +1115,7 @@ func WithInputSchema[T any]() ToolOption {
 		}
 
 		t.InputSchema.Type = ""
+		t.InputSchema.Types = nil
 		t.RawInputSchema = json.RawMessage(mcpSchema)
 	}
 }
