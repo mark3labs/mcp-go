@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestListToolsSchemaTypeArrayHTTP checks discovery, output schema preservation,
+// and subsequent tool calls through each listing API over a local HTTP server.
 func TestListToolsSchemaTypeArrayHTTP(t *testing.T) {
 	const listing = `[
 		{"name":"get_me","inputSchema":{"type":"object"},"outputSchema":{"type":["object","null"]}},

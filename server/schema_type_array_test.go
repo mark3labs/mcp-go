@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestSchemaTypeArrayValidation checks that array-only schemas are extracted and
+// compiled for both input and output, accepting object/null but rejecting strings.
 func TestSchemaTypeArrayValidation(t *testing.T) {
 	tool := mcp.Tool{
 		Name:         "array_types",

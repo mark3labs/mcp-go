@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestListToolsSchemaTypeArrayRegression checks that tool listings decode and
+// re-encode both string and array schema types without changing their form.
 func TestListToolsSchemaTypeArrayRegression(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -41,6 +43,8 @@ func TestListToolsSchemaTypeArrayRegression(t *testing.T) {
 	}
 }
 
+// TestSchemaTypeArrayRepresentation checks that decoding clears the alternate
+// type representation and an explicitly set string type takes precedence.
 func TestSchemaTypeArrayRepresentation(t *testing.T) {
 	var schema ToolArgumentsSchema
 	require.NoError(t, json.Unmarshal([]byte(`{"type":["object","null"]}`), &schema))
@@ -62,6 +66,8 @@ func TestSchemaTypeArrayRepresentation(t *testing.T) {
 	assert.Equal(t, legacyType, encoded["type"])
 }
 
+// TestSchemaTypeArrayInputRoundTrip checks that an array-valued input schema
+// retains nested property types, required keys, and additionalProperties.
 func TestSchemaTypeArrayInputRoundTrip(t *testing.T) {
 	var tool Tool
 	require.NoError(t, json.Unmarshal([]byte(`{"name":"union","inputSchema":{"type":["object","null"],"properties":{"x":{"type":["string","null"]}},"required":["x"],"additionalProperties":false}}`), &tool))
@@ -73,6 +79,8 @@ func TestSchemaTypeArrayInputRoundTrip(t *testing.T) {
 	assert.Equal(t, tool.InputSchema, decoded.InputSchema)
 }
 
+// TestSchemaTypeArrayGeneratedInputReplacement checks that generated and cached
+// input schemas clear the previous array type before installing raw JSON.
 func TestSchemaTypeArrayGeneratedInputReplacement(t *testing.T) {
 	type arguments struct {
 		Name string `json:"name"`
@@ -93,6 +101,8 @@ func TestSchemaTypeArrayGeneratedInputReplacement(t *testing.T) {
 	}
 }
 
+// TestSchemaTypeArrayRejectsWrongJSONTypes checks that unsupported JSON shapes
+// return decoding errors instead of being accepted as schema type strings.
 func TestSchemaTypeArrayRejectsWrongJSONTypes(t *testing.T) {
 	for _, raw := range []string{`1`, `true`, `{}`, `["object",1]`, `["object",{}]`} {
 		t.Run(raw, func(t *testing.T) {
@@ -102,6 +112,8 @@ func TestSchemaTypeArrayRejectsWrongJSONTypes(t *testing.T) {
 	}
 }
 
+// TestSchemaTypeArrayRawSchemaConflict checks that array-valued structured
+// schemas still conflict with raw schemas on both input and output paths.
 func TestSchemaTypeArrayRawSchemaConflict(t *testing.T) {
 	for _, output := range []bool{false, true} {
 		t.Run(fmt.Sprint("output=", output), func(t *testing.T) {
