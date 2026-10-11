@@ -91,15 +91,14 @@ func multiRoundTrip[T any](
 			return nil, fmt.Errorf("%w (%d)", ErrMaxInputRoundTripsExceeded, c.maxRoundTrips())
 		}
 
-		responses, err := c.fulfillInputRequests(ctx, requests)
-		if err != nil {
-			return nil, err
+		if len(requests) > 0 {
+			responses, err := c.fulfillInputRequests(ctx, requests)
+			if err != nil {
+				return nil, err
+			}
+			params.InputResponses = responses
 		}
-
-		params = mcp.MultiRoundTripParams{
-			InputResponses: responses,
-			RequestState:   state,
-		}
+		params.RequestState = state
 	}
 }
 

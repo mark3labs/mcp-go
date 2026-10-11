@@ -32,6 +32,7 @@ func (s *initialRoundTripTransport) SendRequest(_ context.Context, r transport.J
 	return &transport.JSONRPCResponse{JSONRPC: "2.0", ID: r.ID, Result: s.result}, nil
 }
 
+// TestClientPreservesInitialRoundTripResponses verifies that each public request includes caller-supplied state and answers.
 func TestClientPreservesInitialRoundTripResponses(t *testing.T) {
 	tests := []struct {
 		name, result string
