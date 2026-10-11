@@ -44,7 +44,7 @@ func TestRun(t *testing.T) {
 				})
 			}
 			handler := server.NewStreamableHTTPServer(s)
-			defer handler.Shutdown(t.Context())
+			defer func() { assert.NoError(t, handler.Shutdown(t.Context())) }()
 			var methods []string
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "/mcp", r.URL.Path)
@@ -130,7 +130,7 @@ func TestRunErrors(t *testing.T) {
 				})
 			}
 			handler := server.NewStreamableHTTPServer(s)
-			defer handler.Shutdown(t.Context())
+			defer func() { assert.NoError(t, handler.Shutdown(t.Context())) }()
 			ts := httptest.NewServer(handler)
 			defer ts.Close()
 			ctx := t.Context()
