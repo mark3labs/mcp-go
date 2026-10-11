@@ -24,4 +24,4 @@ go run ./examples/parallel_search \
 
 The URL is supplied by you; the example does not automatically fetch search results. When both flags are set, it reuses the search query to focus the page excerpts and a single randomly generated `session_id` for both calls. No `model_name` is sent because no model is involved.
 
-Requests go to `https://search.parallel.ai/mcp` with the example's User-Agent. The client does not load environment keys or saved credentials. Ctrl+C cancels the operation; `-timeout 30s` overrides the default one-minute timeout for the whole run. Connection errors and MCP tool errors exit with a nonzero status; tool error text is printed before exiting.
+Discovery and tool requests go to `https://search.parallel.ai/mcp` with the example's User-Agent. The client does not load environment keys or saved credentials. Ctrl+C cancels the operation; `-timeout 30s` overrides the default one-minute timeout for the whole run. Connection errors and MCP tool errors exit with a nonzero status; tool error text is printed before exiting.
