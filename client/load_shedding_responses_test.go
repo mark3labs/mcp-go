@@ -63,12 +63,12 @@ func TestClientPreservesResponsesAcrossLoadShedding(t *testing.T) {
 					w.WriteHeader(http.StatusAccepted)
 					return
 				}
-				var result interface{}
+				var result any
 				switch request.Method {
 				case string(mcp.MethodServerDiscover):
-					result = map[string]interface{}{
+					result = map[string]any{
 						"supportedVersions": []string{mcp.ProtocolVersion20260728},
-						"capabilities":      map[string]interface{}{},
+						"capabilities":      map[string]any{},
 						"serverInfo":        map[string]string{"name": "retry", "version": "1"},
 					}
 				case tt.method:
@@ -98,7 +98,7 @@ func TestClientPreservesResponsesAcrossLoadShedding(t *testing.T) {
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
-				if err := json.NewEncoder(w).Encode(map[string]interface{}{"jsonrpc": "2.0", "id": request.ID, "result": result}); err != nil {
+				if err := json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result}); err != nil {
 					t.Errorf("encode response: %v", err)
 				}
 			}))
