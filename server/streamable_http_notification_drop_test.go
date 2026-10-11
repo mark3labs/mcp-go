@@ -23,7 +23,7 @@ func countNotifications(t *testing.T, body, method string) int {
 	t.Helper()
 
 	n := 0
-	for _, line := range strings.Split(body, "\n") {
+	for line := range strings.SplitSeq(body, "\n") {
 		data, ok := strings.CutPrefix(strings.TrimSpace(line), "data:")
 		if !ok {
 			continue
