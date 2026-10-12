@@ -106,7 +106,7 @@ func (s *headerToolsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result})
 }
 
-func connectHeaderClient(t *testing.T, server *headerToolsServer, wrap func(transport.Interface) transport.Interface) (*Client, string) {
+func connectHeaderClient(t *testing.T, server *headerToolsServer, wrap func(transport.Interface) transport.Interface, options ...ClientOption) (*Client, string) {
 	t.Helper()
 	httpServer := httptest.NewServer(server)
 	t.Cleanup(httpServer.Close)
@@ -117,7 +117,7 @@ func connectHeaderClient(t *testing.T, server *headerToolsServer, wrap func(tran
 	if wrap != nil {
 		tr = wrap(tr)
 	}
-	client := NewClient(tr)
+	client := NewClient(tr, options...)
 	t.Cleanup(func() { _ = client.Close() })
 	require.NoError(t, client.Start(t.Context()))
 

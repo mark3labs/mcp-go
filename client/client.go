@@ -29,6 +29,7 @@ type Client struct {
 	samplingHandler    SamplingHandler
 	rootsHandler       RootsHandler
 	elicitationHandler ElicitationHandler
+	invalidToolHandler InvalidToolHandler
 	tracer             tracing.Tracer
 	propagator         tracing.Propagator
 	metaPropagator     tracing.MetaPropagator
