@@ -5,17 +5,22 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // mockSamplingHandler implements SamplingHandler for testing
 type mockSamplingHandler struct {
-	result *mcp.CreateMessageResult
-	err    error
+	result  *mcp.CreateMessageResult
+	err     error
+	request mcp.CreateMessageRequest
 }
 
 func (m *mockSamplingHandler) CreateMessage(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
+	m.request = request
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -85,6 +90,63 @@ func TestClient_HandleSamplingRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestClient_HandleSamplingRequestArrayContent(t *testing.T) {
+	handler := &mockSamplingHandler{
+		result: &mcp.CreateMessageResult{
+			SamplingMessage: mcp.SamplingMessage{
+				Role:    mcp.RoleAssistant,
+				Content: mcp.NewTextContent("Paris is warmer than London."),
+			},
+			Model: "test-model",
+		},
+	}
+	client := &Client{samplingHandler: handler}
+
+	params := json.RawMessage(`{
+		"messages": [
+			{"role": "user", "content": {"type": "text", "text": "What's the weather like in Paris and London?"}},
+			{"role": "assistant", "content": [
+				{"type": "tool_use", "id": "call_abc123", "name": "get_weather", "input": {"city": "Paris"}},
+				{"type": "tool_use", "id": "call_def456", "name": "get_weather", "input": {"city": "London"}}
+			]},
+			{"role": "user", "content": [
+				{"type": "tool_result", "toolUseId": "call_abc123", "content": [{"type": "text", "text": "18°C, partly cloudy"}]},
+				{"type": "tool_result", "toolUseId": "call_def456", "content": [{"type": "text", "text": "15°C, rainy"}]}
+			]}
+		],
+		"maxTokens": 1000
+	}`)
+
+	_, err := client.handleIncomingRequest(t.Context(), transport.JSONRPCRequest{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		ID:      mcp.NewRequestId(1),
+		Method:  string(mcp.MethodSamplingCreateMessage),
+		Params:  params,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, []mcp.SamplingMessage{
+		{
+			Role:    mcp.RoleUser,
+			Content: mcp.NewTextContent("What's the weather like in Paris and London?"),
+		},
+		{
+			Role: mcp.RoleAssistant,
+			Content: []mcp.Content{
+				mcp.NewToolUseContent("call_abc123", "get_weather", map[string]any{"city": "Paris"}),
+				mcp.NewToolUseContent("call_def456", "get_weather", map[string]any{"city": "London"}),
+			},
+		},
+		{
+			Role: mcp.RoleUser,
+			Content: []mcp.Content{
+				mcp.NewToolResultContent("call_abc123", []mcp.Content{mcp.NewTextContent("18°C, partly cloudy")}, false),
+				mcp.NewToolResultContent("call_def456", []mcp.Content{mcp.NewTextContent("15°C, rainy")}, false),
+			},
+		},
+	}, handler.request.Messages)
 }
 
 func TestWithSamplingHandler(t *testing.T) {

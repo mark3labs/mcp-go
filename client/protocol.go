@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -177,6 +179,39 @@ func (c *Client) toolForCall(params json.RawMessage) *mcp.Tool {
 		return nil
 	}
 	return &tool
+}
+
+// withoutInvalidHeaderTools drops the tool definitions whose x-mcp-header
+// annotations break the constraints of SEP-2243. A client using Streamable
+// HTTP MUST exclude such a tool from the tools/list result, so that one bad
+// definition does not stop the others from being used. A definition cached
+// from an earlier listing is forgotten too, so the tool is not called with
+// headers mirrored from it. Other transports may ignore the annotations, and
+// connections before protocol version 2026-07-28 do not mirror them at all.
+func (c *Client) withoutInvalidHeaderTools(ctx context.Context, tools []mcp.Tool) []mcp.Tool {
+	if !c.isModern() {
+		return tools
+	}
+	if _, ok := c.transport.(transport.HTTPConnection); !ok {
+		return tools
+	}
+	valid := make([]mcp.Tool, 0, len(tools))
+	for _, tool := range tools {
+		if err := mcp.ValidateParamHeaderAnnotations(&tool); err != nil {
+			slog.WarnContext(ctx, "mcp: excluding a tool with invalid x-mcp-header annotations", "tool", tool.Name, "err", err)
+			c.forgetTool(tool.Name)
+			continue
+		}
+		valid = append(valid, tool)
+	}
+	return valid
+}
+
+// forgetTool drops a cached tool definition.
+func (c *Client) forgetTool(name string) {
+	c.toolsMu.Lock()
+	defer c.toolsMu.Unlock()
+	delete(c.knownTools, name)
 }
 
 // rememberTools caches tool definitions so that subsequent tools/call requests

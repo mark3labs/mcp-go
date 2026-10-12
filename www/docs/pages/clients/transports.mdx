@@ -488,6 +488,8 @@ func createStreamableHTTPClientWithSession() {
 }
 ```
 
+Once the server has answered 404 for the session, every request fails with `transport.ErrSessionTerminated` until `Initialize` succeeds again. With continuous listening, the GET stream moves to the new session.
+
 ## SSE Client
 
 SSE (Server-Sent Events) clients provide real-time communication with servers.

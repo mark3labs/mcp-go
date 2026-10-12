@@ -149,6 +149,20 @@ func (s *MCPServer) handleSubscriptionsListen(
 	return result, nil
 }
 
+// registerListenSession makes a session serving a subscriptions/listen stream
+// reachable by the notifications the server broadcasts. It is for transports
+// that serve each modern request with an ephemeral session they never
+// register, such as Streamable HTTP. It fires no session hooks, because the
+// session is not a client session in its own right.
+func (s *MCPServer) registerListenSession(session ClientSession) {
+	s.listenSessions.Store(session, struct{}{})
+}
+
+// unregisterListenSession undoes registerListenSession.
+func (s *MCPServer) unregisterListenSession(session ClientSession) {
+	s.listenSessions.Delete(session)
+}
+
 // allowedSubscriptions intersects the notification types a client asked for
 // with the capabilities this server actually advertises. The server MUST NOT
 // establish a subscription it cannot serve.
