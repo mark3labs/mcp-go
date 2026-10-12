@@ -1503,20 +1503,28 @@ func listByPagination[T mcp.Named](
 ) ([]T, mcp.Cursor, error) {
 	startPos := 0
 	if cursor != "" {
-		// The cursor is written by encodePageCursor.
-		encodedName, encodedTieBreak, _ := strings.Cut(string(cursor), ".")
+		encodedName, encodedTieBreak, hasTieBreak := strings.Cut(string(cursor), ".")
 		c, err := base64.StdEncoding.DecodeString(encodedName)
 		if err != nil {
 			return nil, "", err
 		}
-		t, err := base64.StdEncoding.DecodeString(encodedTieBreak)
-		if err != nil {
-			return nil, "", err
+		name := string(c)
+		if !hasTieBreak {
+			// Legacy cursors identify only a name. Preserve their continuation
+			// after the whole name group instead of restarting at its first URI.
+			startPos = sort.Search(len(allElements), func(i int) bool {
+				return allElements[i].GetName() > name
+			})
+		} else {
+			t, err := base64.StdEncoding.DecodeString(encodedTieBreak)
+			if err != nil {
+				return nil, "", err
+			}
+			tieBreak := string(t)
+			startPos = sort.Search(len(allElements), func(i int) bool {
+				return comparePageKey(&allElements[i], name, tieBreak) > 0
+			})
 		}
-		name, tieBreak := string(c), string(t)
-		startPos = sort.Search(len(allElements), func(i int) bool {
-			return comparePageKey(&allElements[i], name, tieBreak) > 0
-		})
 	}
 	endPos := len(allElements)
 	if s.paginationLimit != nil && *s.paginationLimit > 0 {
