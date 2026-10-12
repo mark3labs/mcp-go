@@ -75,6 +75,8 @@ func (c *Client) startSendSpan(
 
 	if header == nil {
 		header = make(http.Header)
+	} else {
+		header = header.Clone()
 	}
 	propagator.Inject(ctx, header)
 

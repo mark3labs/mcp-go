@@ -722,12 +722,40 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 			}
 		}
 		c := NewToolResultContent(toolUseID, contentItems, isError)
+		c.StructuredContent = contentMap["structuredContent"]
 		c.Annotations = annotations
 		c.Meta = meta
 		return c, nil
 	}
 
 	return nil, fmt.Errorf("unsupported content type: %s", contentType)
+}
+
+// ParseSamplingContent parses the content of a SamplingMessage that was
+// decoded into generic JSON values. A single content block is returned as a
+// Content and an array of blocks as a []Content. Any other value, such as
+// content that is already typed, is returned unchanged.
+func ParseSamplingContent(content any) (any, error) {
+	switch c := content.(type) {
+	case map[string]any:
+		return ParseContent(c)
+	case []any:
+		blocks := make([]Content, 0, len(c))
+		for i, item := range c {
+			itemMap, ok := item.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("content[%d]: expected object, got %T", i, item)
+			}
+			block, err := ParseContent(itemMap)
+			if err != nil {
+				return nil, fmt.Errorf("content[%d]: %w", i, err)
+			}
+			blocks = append(blocks, block)
+		}
+		return blocks, nil
+	default:
+		return content, nil
+	}
 }
 
 // resultEnvelope holds the fields a result carries outside its payload: the
@@ -832,12 +860,15 @@ func ParseCallToolResult(rawMessage *json.RawMessage) (*CallToolResult, error) {
 	}
 
 	var probe struct {
-		Content json.RawMessage `json:"content"`
+		Content    json.RawMessage `json:"content"`
+		ResultType ResultType      `json:"resultType"`
 	}
 	if err := json.Unmarshal(*rawMessage, &probe); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
-	if probe.Content == nil {
+	// A result asking for more input (SEP-2322) carries only the input
+	// requests and the request state, so it legitimately has no content.
+	if probe.Content == nil && probe.ResultType != ResultTypeInputRequired {
 		return nil, fmt.Errorf("content is missing")
 	}
 

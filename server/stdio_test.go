@@ -639,3 +639,27 @@ func TestStdioJoinsRequestHandlersOnEOF(t *testing.T) {
 		t.Fatal("Listen did not return once the request handler finished")
 	}
 }
+
+func TestStdioSessionSamplingResponseArrayContent(t *testing.T) {
+	session := &stdioSession{pendingRequests: make(map[int64]chan *samplingResponse)}
+	responseChan := make(chan *samplingResponse, 1)
+	session.pendingRequests[1] = responseChan
+
+	handled := session.handleSamplingResponse(json.RawMessage(`{"jsonrpc": "2.0", "id": 1, "result": {
+		"role": "assistant",
+		"content": [
+			{"type": "tool_use", "id": "call_abc123", "name": "get_weather", "input": {"city": "Paris"}},
+			{"type": "tool_use", "id": "call_def456", "name": "get_weather", "input": {"city": "London"}}
+		],
+		"model": "test-model",
+		"stopReason": "toolUse"
+	}}`))
+	require.True(t, handled)
+
+	response := <-responseChan
+	require.NoError(t, response.err)
+	require.Equal(t, []mcp.Content{
+		mcp.NewToolUseContent("call_abc123", "get_weather", map[string]any{"city": "Paris"}),
+		mcp.NewToolUseContent("call_def456", "get_weather", map[string]any{"city": "London"}),
+	}, response.result.Content)
+}

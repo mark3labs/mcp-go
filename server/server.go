@@ -161,6 +161,8 @@ type requestError struct {
 	id   any
 	code int
 	err  error
+	// data, when set, is sent as the data member of the JSON-RPC error.
+	data any
 }
 
 func (e *requestError) Error() string {
@@ -171,7 +173,7 @@ func (e *requestError) ToJSONRPCError() mcp.JSONRPCError {
 	return mcp.JSONRPCError{
 		JSONRPC: mcp.JSONRPC_VERSION,
 		ID:      mcp.NewRequestId(e.id),
-		Error:   mcp.NewJSONRPCErrorDetails(e.code, e.err.Error(), nil),
+		Error:   mcp.NewJSONRPCErrorDetails(e.code, e.err.Error(), e.data),
 	}
 }
 
@@ -218,12 +220,18 @@ type MCPServer struct {
 	resourceCompletionProvider ResourceCompletionProvider
 	capabilities               serverCapabilities
 	cacheHints                 map[mcp.MCPMethod]cacheHints
+	// toolHeaderBindings holds each registered tool's x-mcp-header bindings,
+	// extracted once at registration so a tools/call never re-reads the input
+	// schema. Keyed like tools and taskTools and kept in step with them under
+	// toolsMu; session tools are not cached here.
+	toolHeaderBindings map[string][]mcp.ParamHeaderBinding
 	// allowServerInitiatedRequests keeps RequestSampling, RequestElicitation,
 	// and RequestRoots usable against clients speaking protocol version
 	// 2026-07-28 or later. See WithLegacyServerInitiatedRequests.
 	allowServerInitiatedRequests bool
 	paginationLimit              *int
 	sessions                     sync.Map
+	listenSessions               sync.Map // see registerListenSession
 	hooks                        *Hooks
 	taskHooks                    *TaskHooks
 	tasks                        map[string]*taskEntry
@@ -296,7 +304,8 @@ func WithLegacyServerInitiatedRequests() ServerOption {
 	}
 }
 
-// WithPaginationLimit sets the pagination limit for the server.
+// WithPaginationLimit sets the maximum page size for list results.
+// Zero and negative limits leave the list unpaged.
 func WithPaginationLimit(limit int) ServerOption {
 	return func(s *MCPServer) {
 		s.paginationLimit = &limit
@@ -728,6 +737,7 @@ func NewMCPServer(
 		promptHandlers:             make(map[string]PromptHandlerFunc),
 		tools:                      make(map[string]ServerTool),
 		taskTools:                  make(map[string]ServerTaskTool),
+		toolHeaderBindings:         make(map[string][]mcp.ParamHeaderBinding),
 		toolHandlerMiddlewares:     make([]ToolHandlerMiddleware, 0),
 		resourceHandlerMiddlewares: make([]ResourceHandlerMiddleware, 0),
 		promptHandlerMiddlewares:   make([]PromptHandlerMiddleware, 0),
@@ -1056,6 +1066,9 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 		staged[name] = entry
 	}
 	maps.Copy(s.tools, staged)
+	for name, entry := range staged {
+		s.toolHeaderBindings[name] = mcp.ExtractParamHeaderBindings(&entry.Tool)
+	}
 	s.toolsMu.Unlock()
 
 	// When the list of available tools changes, servers that declared the listChanged capability SHOULD send a notification.
@@ -1086,6 +1099,9 @@ func (s *MCPServer) AddTaskTools(taskTools ...ServerTaskTool) {
 		staged[name] = entry
 	}
 	maps.Copy(s.taskTools, staged)
+	for name, entry := range staged {
+		s.toolHeaderBindings[name] = mcp.ExtractParamHeaderBindings(&entry.Tool)
+	}
 	s.toolsMu.Unlock()
 
 	// When the list of available tools changes, servers that declared the listChanged capability SHOULD send a notification.
@@ -1115,7 +1131,13 @@ func (s *MCPServer) SetTools(tools ...ServerTool) {
 		}
 		newTools[name] = entry
 	}
+	for name := range s.tools {
+		delete(s.toolHeaderBindings, name)
+	}
 	s.tools = newTools
+	for name, entry := range newTools {
+		s.toolHeaderBindings[name] = mcp.ExtractParamHeaderBindings(&entry.Tool)
+	}
 	s.toolsMu.Unlock()
 	s.inputValidator.invalidateAll()
 	s.outputValidator.invalidateAll()
@@ -1161,6 +1183,7 @@ func (s *MCPServer) DeleteTools(names ...string) {
 	for _, name := range names {
 		if _, ok := s.tools[name]; ok {
 			delete(s.tools, name)
+			delete(s.toolHeaderBindings, name)
 			exists = true
 		}
 	}
@@ -1487,15 +1510,21 @@ func listByPagination[T mcp.Named](
 		})
 	}
 	endPos := len(allElements)
-	if s.paginationLimit != nil {
+	if s.paginationLimit != nil && *s.paginationLimit > 0 {
 		if len(allElements) > startPos+*s.paginationLimit {
 			endPos = startPos + *s.paginationLimit
 		}
 	}
 	elementsToReturn := allElements[startPos:endPos]
+	// Every list result holds its items in a required array. allElements can
+	// be nil: the resource and task lists start out that way, and a filter
+	// that hides every item may return nil. A nil slice would go out as null.
+	if elementsToReturn == nil {
+		elementsToReturn = []T{}
+	}
 	// set the next cursor
 	nextCursor := func() mcp.Cursor {
-		if s.paginationLimit != nil && len(elementsToReturn) >= *s.paginationLimit {
+		if s.paginationLimit != nil && *s.paginationLimit > 0 && len(elementsToReturn) >= *s.paginationLimit {
 			nc := elementsToReturn[len(elementsToReturn)-1].GetName()
 			toString := base64.StdEncoding.EncodeToString([]byte(nc))
 			return mcp.Cursor(toString)
@@ -1548,10 +1577,6 @@ func (s *MCPServer) handleListResources(
 			code: mcp.INVALID_PARAMS,
 			err:  err,
 		}
-	}
-
-	if resourcesToReturn == nil {
-		resourcesToReturn = []mcp.Resource{}
 	}
 
 	result := mcp.ListResourcesResult{
@@ -1669,13 +1694,9 @@ func (s *MCPServer) handleReadResource(
 
 		contents, err := finalHandler(ctx, request)
 		if err != nil {
-			return nil, &requestError{
-				id:   id,
-				code: mcp.INTERNAL_ERROR,
-				err:  err,
-			}
+			return nil, handlerError(ctx, id, err)
 		}
-		return &mcp.ReadResourceResult{Contents: contents}, nil
+		return readResourceResult(contents), nil
 	}
 
 	// If no direct handler found, try matching against templates
@@ -1740,13 +1761,9 @@ func (s *MCPServer) handleReadResource(
 		s.resourceMiddlewareMu.RUnlock()
 		contents, err := finalHandler(ctx, request)
 		if err != nil {
-			return nil, &requestError{
-				id:   id,
-				code: mcp.INTERNAL_ERROR,
-				err:  err,
-			}
+			return nil, handlerError(ctx, id, err)
 		}
-		return &mcp.ReadResourceResult{Contents: contents}, nil
+		return readResourceResult(contents), nil
 	}
 
 	return nil, &requestError{
@@ -1758,6 +1775,16 @@ func (s *MCPServer) handleReadResource(
 			ErrResourceNotFound,
 		),
 	}
+}
+
+// readResourceResult wraps the contents a resource handler returned. contents
+// is a required array, so a handler that found nothing still sends [] rather
+// than null.
+func readResourceResult(contents []mcp.ResourceContents) *mcp.ReadResourceResult {
+	if contents == nil {
+		contents = []mcp.ResourceContents{}
+	}
+	return &mcp.ReadResourceResult{Contents: contents}
 }
 
 // matchesTemplate checks if a URI matches a URI template pattern
@@ -1888,11 +1915,7 @@ func (s *MCPServer) handleGetPrompt(
 
 	result, err := finalHandler(ctx, request)
 	if err != nil {
-		return nil, &requestError{
-			id:   id,
-			code: mcp.INTERNAL_ERROR,
-			err:  err,
-		}
+		return nil, handlerError(ctx, id, err)
 	}
 
 	// Bridge a handler asking for more input to clients that predate the
@@ -1904,10 +1927,26 @@ func (s *MCPServer) handleGetPrompt(
 			return finalHandler(ctx, retried)
 		})
 	if err != nil {
+		return nil, handlerError(ctx, id, err)
+	}
+
+	// messages is a required array, so a prompt with no messages still sends
+	// [] rather than null. A result asking for input has no messages yet. The
+	// handler's result is copied rather than modified, as it may be shared.
+	if result != nil && result.Messages == nil && !result.NeedsInput() {
+		withMessages := *result
+		withMessages.Messages = []mcp.PromptMessage{}
+		result = &withMessages
+	}
+
+	// A handler that returns neither a result nor an error, on the first call
+	// or on a retry, must still produce a response. The dispatcher would
+	// otherwise dereference the nil result and panic.
+	if result == nil {
 		return nil, &requestError{
 			id:   id,
 			code: mcp.INTERNAL_ERROR,
-			err:  err,
+			err:  noResultError("prompt", request.Params.Name),
 		}
 	}
 
@@ -2160,11 +2199,7 @@ func (s *MCPServer) handleToolCall(
 
 	result, err := finalHandler(ctx, request)
 	if err != nil {
-		return nil, &requestError{
-			id:   id,
-			code: mcp.INTERNAL_ERROR,
-			err:  err,
-		}
+		return nil, handlerError(ctx, id, err)
 	}
 
 	// A handler may ask the client for more input before it can finish
@@ -2179,10 +2214,17 @@ func (s *MCPServer) handleToolCall(
 			return finalHandler(ctx, retried)
 		})
 	if err != nil {
+		return nil, handlerError(ctx, id, err)
+	}
+
+	// Without this check a handler that returns neither a result nor an
+	// error, on the first call or on a retry, would be answered with a null
+	// result, which no client accepts.
+	if result == nil {
 		return nil, &requestError{
 			id:   id,
 			code: mcp.INTERNAL_ERROR,
-			err:  err,
+			err:  noResultError("tool", request.Params.Name),
 		}
 	}
 
@@ -2212,6 +2254,17 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 	taskTool, isTaskTool := s.taskTools[request.Params.Name]
 	regularTool, isRegularTool := s.tools[request.Params.Name]
 	s.toolsMu.RUnlock()
+
+	// A session's own tool takes precedence over the server's, as it does in
+	// handleToolCall, which routed this call here after finding it there.
+	if session := ClientSessionFromContext(ctx); session != nil {
+		if sessionWithTools, ok := session.(SessionWithTools); ok {
+			if sessionTool, ok := sessionWithTools.GetSessionTools()[request.Params.Name]; ok {
+				regularTool, isRegularTool = sessionTool, true
+				isTaskTool = false
+			}
+		}
+	}
 
 	// Determine which tool to use and validate task support
 	var toolToUse ServerTaskTool
@@ -2376,6 +2429,13 @@ func (s *MCPServer) executeTaskTool(
 		return
 	}
 
+	// tasks/result has nothing to report for a handler that returned neither
+	// a result nor an error, so the task fails.
+	if result == nil {
+		s.completeTask(entry, nil, noResultError("tool", request.Params.Name))
+		return
+	}
+
 	// Task succeeded - store the CreateTaskResult
 	// Note: The actual result will be retrieved later via tasks/result
 	//
@@ -2478,6 +2538,13 @@ func (s *MCPServer) executeRegularToolAsTask(
 
 		// Task failed - complete with error
 		s.completeTask(entry, nil, err)
+		return
+	}
+
+	// tasks/result has nothing to report for a handler that returned neither
+	// a result nor an error, so the task fails.
+	if result == nil {
+		s.completeTask(entry, nil, noResultError("tool", request.Params.Name))
 		return
 	}
 
@@ -2773,12 +2840,18 @@ func (s *MCPServer) handleComplete(
 	// Defensive nil check: default providers always return non-nil completions,
 	// but custom providers might erroneously return nil. Treat as empty result.
 	if completion == nil {
-		return &mcp.CompleteResult{}, nil
+		completion = &mcp.Completion{}
 	}
 
-	return &mcp.CompleteResult{
+	result := &mcp.CompleteResult{
 		Completion: *completion,
-	}, nil
+	}
+	// values is a required array, so a provider with no matches still sends []
+	// rather than null.
+	if result.Completion.Values == nil {
+		result.Completion.Values = []string{}
+	}
+	return result, nil
 }
 
 //
