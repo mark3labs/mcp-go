@@ -148,7 +148,7 @@ not emit log notifications for a request that did not ask for one.
 `Initialize` probes with `server/discover` and falls back to the handshake when
 the probe fails without identifying a modern server. Successful discovery with
 no compatible modern version returns an error. A version error with a supported
-list allows at most one retry at a different mutually supported modern version;
+list allows at most one retry at a mutually supported modern version;
 if negotiation fails, the client returns the error instead of switching eras.
 
 ```go

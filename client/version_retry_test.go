@@ -145,8 +145,7 @@ func newClientAgainst(t *testing.T, server *versionRejectingServer, opts ...Clie
 	return client
 }
 
-// A rejected version is not retried even when the server advertises it.
-func TestInitializeDoesNotRetryRejectedAdvertisedVersion(t *testing.T) {
+func TestInitializeRetriesAnAdvertisedRejectedVersion(t *testing.T) {
 	tests := []struct {
 		name      string
 		supported []string
@@ -160,17 +159,35 @@ func TestInitializeDoesNotRetryRejectedAdvertisedVersion(t *testing.T) {
 			client := newClientAgainst(t, server)
 
 			result, err := client.Initialize(t.Context(), mcp.InitializeRequest{})
-			assert.Nil(t, result)
-			var unsupported mcp.UnsupportedProtocolVersionError
-			if assert.ErrorAs(t, err, &unsupported) {
-				assert.Equal(t, mcp.ProtocolVersion20260728, unsupported.Version)
-				assert.Equal(t, tt.supported, unsupported.Supported)
-			}
-			assert.False(t, client.IsInitialized())
-			assert.Empty(t, client.ProtocolVersion())
-			assert.Equal(t, []string{"server/discover " + mcp.ProtocolVersion20260728}, server.seen())
+			require.NoError(t, err)
+			assert.Equal(t, mcp.ProtocolVersion20260728, result.ProtocolVersion)
+			assert.True(t, client.IsInitialized())
+			assert.Equal(t, mcp.ProtocolVersion20260728, client.ProtocolVersion())
+			assert.Equal(t, []string{
+				"server/discover " + mcp.ProtocolVersion20260728,
+				"server/discover " + mcp.ProtocolVersion20260728,
+			}, server.seen())
+			server.mu.Lock()
+			defer server.mu.Unlock()
+			assert.Equal(t, []string{mcp.ProtocolVersion20260728, mcp.ProtocolVersion20260728}, server.headers)
 		})
 	}
+}
+
+func TestInitializeStopsAfterRepeatedSameVersionRejection(t *testing.T) {
+	server := &versionRejectingServer{supported: []string{mcp.ProtocolVersion20260728}, rejections: -1}
+	client := newClientAgainst(t, server)
+
+	result, err := client.Initialize(t.Context(), mcp.InitializeRequest{})
+	var unsupported mcp.UnsupportedProtocolVersionError
+	require.ErrorAs(t, err, &unsupported)
+	assert.Nil(t, result)
+	assert.False(t, client.IsInitialized())
+	assert.Empty(t, client.ProtocolVersion())
+	assert.Equal(t, []string{
+		"server/discover " + mcp.ProtocolVersion20260728,
+		"server/discover " + mcp.ProtocolVersion20260728,
+	}, server.seen())
 }
 
 func TestInitializeRetriesWithADifferentAdvertisedVersion(t *testing.T) {

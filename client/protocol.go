@@ -312,8 +312,8 @@ func validateDiscoverResult(data json.RawMessage) error {
 //
 // It sends server/discover at the client's preferred version. If the server
 // rejects that version but names the ones it does support, the request is
-// retried once at the highest mutually supported modern version other than
-// the rejected version. It also reports whether a modern server was identified,
+// retried once at the highest mutually supported modern version, even when it
+// matches the rejected version. It also reports whether a modern server was identified,
 // so that a later failure cannot trigger the legacy initialize handshake.
 //
 // The probe is bounded by a timeout: a well-behaved JSON-RPC server answers an
@@ -353,8 +353,8 @@ func (c *Client) negotiateModern(ctx context.Context, preferred string) (*mcp.Di
 		}
 
 		// A recognized modern error identifies a modern server: renegotiate
-		// rather than falling back. If the supported list contradicts the
-		// rejection, exclude the version just rejected from retry candidates.
+		// rather than falling back. The retry remains bounded even when the
+		// advertised version matches the version just rejected.
 		var unsupported mcp.UnsupportedProtocolVersionError
 		if !errors.As(err, &unsupported) || unsupported.Supported == nil {
 			break
@@ -363,10 +363,7 @@ func (c *Client) negotiateModern(ctx context.Context, preferred string) (*mcp.Di
 		if attempt > 0 {
 			break
 		}
-		candidates := slices.DeleteFunc(slices.Clone(unsupported.Supported), func(version string) bool {
-			return version == c.protocolVersion
-		})
-		negotiated := mcp.NegotiateMutuallySupportedVersion(candidates)
+		negotiated := mcp.NegotiateMutuallySupportedVersion(unsupported.Supported)
 		if !mcp.IsModernProtocol(negotiated) {
 			break
 		}
