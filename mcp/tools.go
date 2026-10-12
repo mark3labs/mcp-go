@@ -941,7 +941,7 @@ func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) err
 	// Use a temporary type to avoid infinite recursion
 	type Alias ToolArgumentsSchema
 	aux := &struct {
-		Definitions map[string]any `json:"definitions,omitempty"`
+		Definitions json.RawMessage `json:"definitions,omitempty"`
 		// Properties shadows Alias.Properties so the raw bytes keep the key order.
 		Properties json.RawMessage `json:"properties"`
 		*Alias
@@ -968,7 +968,14 @@ func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) err
 	// competing $defs container. Both containers may have independent refs.
 	_, declaredDialect := tis.AdditionalFields["$schema"]
 	if !declaredDialect && tis.Defs == nil && aux.Definitions != nil {
-		tis.Defs = aux.Definitions
+		var definitions map[string]any
+		if err := json.Unmarshal(aux.Definitions, &definitions); err != nil {
+			return err
+		}
+		if definitions == nil {
+			return nil
+		}
+		tis.Defs = definitions
 		delete(tis.AdditionalFields, "definitions")
 		rewriteDraft07LocalRefs(tis.Defs)
 		rewriteDraft07LocalRefs(tis.Properties)

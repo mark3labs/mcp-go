@@ -19,6 +19,16 @@ func TestToolSchemaRoundTrip_DeclaredDialectValidation(t *testing.T) {
 		invalid string
 	}{
 		{
+			name: "draft-07 definitions retain numbers beyond float64 range",
+			schema: `{
+				"$schema": "http://json-schema.org/draft-07/schema#",
+				"type": "object", "required": ["value"],
+				"definitions": {"huge": {"const": 1e400}},
+				"properties": {"value": {"$ref": "#/definitions/huge"}}
+			}`,
+			valid: `{"value": 1e400}`, invalid: `{"value": 1e399}`,
+		},
+		{
 			name: "draft-07 IDs inside definitions remain discoverable",
 			schema: `{
 				"$schema": "http://json-schema.org/draft-07/schema#",
