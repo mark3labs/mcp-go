@@ -190,6 +190,13 @@ func TestMarkedHandlerJSONRPCError(t *testing.T) {
 	}
 }
 
+// TestNewHandlerErrorWithTypedNilProvider verifies typed nils are treated as nil errors.
+func TestNewHandlerErrorWithTypedNilProvider(t *testing.T) {
+	var provider *testHandlerJSONRPCError
+
+	assert.NoError(t, NewHandlerError(provider))
+}
+
 // Any other handler error is an internal error, including one that carries a
 // unmarked JSON-RPC form of its own from somewhere else.
 func TestHandlerErrorsAreOtherwiseInternal(t *testing.T) {

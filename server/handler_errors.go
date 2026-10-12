@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"reflect"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -17,10 +18,12 @@ type exposedHandlerError struct {
 	provider JSONRPCErrorProvider
 }
 
+// Error returns the underlying provider's error message.
 func (e *exposedHandlerError) Error() string {
 	return e.provider.Error()
 }
 
+// Unwrap returns the underlying JSON-RPC error provider.
 func (e *exposedHandlerError) Unwrap() error {
 	return e.provider
 }
@@ -31,6 +34,13 @@ func (e *exposedHandlerError) Unwrap() error {
 func NewHandlerError(provider JSONRPCErrorProvider) error {
 	if provider == nil {
 		return nil
+	}
+	value := reflect.ValueOf(provider)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+		if value.IsNil() {
+			return nil
+		}
 	}
 	return &exposedHandlerError{provider: provider}
 }
