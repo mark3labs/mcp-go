@@ -1576,12 +1576,14 @@ func comparePageKey[T mcp.Named](element *T, name, tieBreak string) int {
 }
 
 // encodePageCursor returns the cursor for the page after element: the base64
-// of its name, followed, when it has a tie-break, by a dot and the base64 of
-// that. The dot is outside the base64 alphabet.
+// of its name, followed for resources and templates by a dot and the base64 of
+// their URI, even when empty. The dot distinguishes composite cursors from
+// legacy name-only cursors and is outside the base64 alphabet.
 func encodePageCursor[T mcp.Named](element *T) mcp.Cursor {
 	cursor := base64.StdEncoding.EncodeToString([]byte((*element).GetName()))
-	if tieBreak := pageTieBreak(element); tieBreak != "" {
-		cursor += "." + base64.StdEncoding.EncodeToString([]byte(tieBreak))
+	switch any(element).(type) {
+	case *mcp.Resource, *mcp.ResourceTemplate:
+		cursor += "." + base64.StdEncoding.EncodeToString([]byte(pageTieBreak(element)))
 	}
 	return mcp.Cursor(cursor)
 }
