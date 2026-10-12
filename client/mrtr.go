@@ -206,7 +206,7 @@ func (c *Client) fulfillInputRequest(
 		if result == nil {
 			return mcp.InputResponse{}, fmt.Errorf("roots handler returned no result")
 		}
-		return mcp.NewRootsInputResponse(*result), nil
+		return mcp.NewRootsInputResponse(*withRootsArray(result)), nil
 
 	default:
 		return mcp.InputResponse{}, fmt.Errorf("unsupported input request method %q", request.Method)

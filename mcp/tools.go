@@ -608,7 +608,8 @@ func (r *CallToolResult) UnmarshalJSON(data []byte) error {
 	r.InputRequests = raw.InputRequests
 	r.RequestState = raw.RequestState
 
-	if len(raw.Content) > 0 {
+	r.Content = nil
+	if raw.Content != nil {
 		r.Content = make([]Content, len(raw.Content))
 		for i, item := range raw.Content {
 			content, err := UnmarshalContent(item)
@@ -619,6 +620,8 @@ func (r *CallToolResult) UnmarshalJSON(data []byte) error {
 		}
 	}
 
+	r.RawStructuredContent = nil
+	r.StructuredContent = nil
 	if len(raw.StructuredContent) > 0 {
 		r.RawStructuredContent = append(json.RawMessage(nil), raw.StructuredContent...)
 		if err := json.Unmarshal(raw.StructuredContent, &r.StructuredContent); err != nil {

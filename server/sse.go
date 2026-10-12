@@ -517,6 +517,9 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		sessionID:           sessionID,
 		notificationChannel: make(chan mcp.JSONRPCNotification, 100),
 	}
+	// Whichever way the stream ends, release the goroutines waiting to
+	// queue a response for it.
+	defer session.closeDone()
 
 	s.sessions.Store(sessionID, session)
 	defer s.sessions.Delete(sessionID)
@@ -675,14 +678,23 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if r := recover(); r != nil {
 				log.Printf("panic recovered in SSE message handler for session %s: %v", sessionID, r)
-				// Send error response so the client doesn't hang waiting.
-				errResp := createErrorResponse(nil, mcp.INTERNAL_ERROR, fmt.Sprintf("internal panic: %v", r))
+				// Send error response so the client doesn't hang waiting. It
+				// carries the request's id, as that is how the client matches
+				// a response to the call waiting for it. A message without an
+				// id is a notification, as in HandleMessage, and gets no reply.
+				var request struct {
+					ID any `json:"id"`
+				}
+				_ = json.Unmarshal(rawMessage, &request)
+				if request.ID == nil {
+					return
+				}
+				errResp := createErrorResponse(request.ID, mcp.INTERNAL_ERROR, fmt.Sprintf("internal panic: %v", r))
 				if eventData, err := json.Marshal(errResp); err == nil {
 					message := fmt.Sprintf("event: message\ndata: %s\n\n", eventData)
 					select {
 					case session.eventQueue <- message:
 					case <-session.done:
-					default:
 					}
 				}
 			}
@@ -701,15 +713,14 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 				message = fmt.Sprintf("event: message\ndata: %s\n\n", eventData)
 			}
 
-			// Queue the event for sending via SSE
+			// Queue the event for sending via SSE. The client is waiting
+			// for the response, so if the queue is full, wait for room
+			// rather than drop it.
 			select {
 			case session.eventQueue <- message:
 				// Event queued successfully
 			case <-session.done:
 				// Session is closed, don't try to queue
-			default:
-				// Queue is full, log this situation
-				log.Printf("Event queue full for session %s", sessionID)
 			}
 		}
 	}(messageCtx)
