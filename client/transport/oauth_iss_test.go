@@ -47,7 +47,8 @@ func issHandler(t *testing.T, issSupported bool) (*OAuthHandler, string, *atomic
 		AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
 		PKCEEnabled:           true,
 	})
-	handler.SetExpectedState("state")
+	_, err := handler.GetAuthorizationURL(t.Context(), "state", "challenge")
+	require.NoError(t, err)
 	return handler, server.URL, &tokenRequests
 }
 
@@ -196,9 +197,10 @@ func TestOAuthHandler_ProcessAuthorizationCallbackWithoutMetadata(t *testing.T) 
 		PKCEEnabled: true,
 	})
 	handler.SetBaseURL(server.URL)
-	handler.SetExpectedState("state")
+	_, err := handler.GetAuthorizationURL(t.Context(), "state", "challenge")
+	require.NoError(t, err)
 
-	err := handler.ProcessAuthorizationCallback(t.Context(), url.Values{
+	err = handler.ProcessAuthorizationCallback(t.Context(), url.Values{
 		"code":  {"code"},
 		"state": {"state"},
 		"iss":   {server.URL + "/tenant"},
