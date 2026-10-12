@@ -13,7 +13,8 @@ func TestSchemaTagFallbackPreservesArrayLength(t *testing.T) {
 		Mode string `json:"mode" jsonschema:"enum=fast,enum=safe"`
 	}
 	type request struct {
-		Pair [2]item `json:"pair"`
+		Pair  [2]item `json:"pair"`
+		Items []item  `json:"items"`
 	}
 	raw, err := SchemaForRaw[request]()
 	require.NoError(t, err)
@@ -22,4 +23,7 @@ func TestSchemaTagFallbackPreservesArrayLength(t *testing.T) {
 	pair := schema["properties"].(map[string]any)["pair"].(map[string]any)
 	assert.Equal(t, float64(2), pair["minItems"])
 	assert.Equal(t, float64(2), pair["maxItems"])
+	items := schema["properties"].(map[string]any)["items"].(map[string]any)
+	assert.NotContains(t, items, "minItems")
+	assert.NotContains(t, items, "maxItems")
 }
