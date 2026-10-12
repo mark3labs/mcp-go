@@ -266,7 +266,7 @@ func TestClient_NoCancellationNotificationOverHTTP(t *testing.T) {
 		switch message.Method {
 		case string(mcp.MethodServerDiscover):
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + string(message.ID) + `,"result":{"supportedVersions":["` + mcp.ProtocolVersion20260728 + `"],"capabilities":{},"serverInfo":{"name":"s","version":"1"}}}`))
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + string(message.ID) + `,"result":{"supportedVersions":["` + mcp.ProtocolVersion20260728 + `"],"capabilities":{},"resultType":"complete","ttlMs":0,"cacheScope":"private","_meta":{"io.modelcontextprotocol/serverInfo":{"name":"s","version":"1"}}}}`))
 		case string(mcp.MethodToolsCall):
 			<-r.Context().Done()
 		default:

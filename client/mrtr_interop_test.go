@@ -63,7 +63,12 @@ func TestCallToolInputRequiredWithoutContent(t *testing.T) {
 			result = map[string]any{
 				"supportedVersions": []string{mcp.ProtocolVersion20260728},
 				"capabilities":      map[string]any{"tools": map[string]any{}},
-				"serverInfo":        map[string]any{"name": "mrtr", "version": "1.0.0"},
+				"resultType":        "complete",
+				"_meta": map[string]any{
+					mcp.MetaKeyServerInfo: map[string]any{"name": "mrtr", "version": "1.0.0"},
+				},
+				"ttlMs":      0,
+				"cacheScope": "private",
 			}
 		case string(mcp.MethodToolsCall):
 			var params struct {

@@ -2,7 +2,6 @@ package client
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -22,13 +21,16 @@ import (
 // handshake, answering initialize like a legacy server would. It records the
 // method and requested version of every request.
 type versionRejectingServer struct {
-	supported  []string
-	rejections int
-	omitData   bool
+	supported      []string
+	rejections     int
+	omitData       bool
+	retryError     bool
+	discoverResult json.RawMessage
 
 	mu       sync.Mutex
 	rejected int
 	requests []string
+	headers  []string
 }
 
 func (s *versionRejectingServer) seen() []string {
@@ -62,6 +64,7 @@ func (s *versionRejectingServer) ServeHTTP(w http.ResponseWriter, r *http.Reques
 
 	s.mu.Lock()
 	s.requests = append(s.requests, request.Method+" "+version)
+	s.headers = append(s.headers, r.Header.Get("MCP-Protocol-Version"))
 	reject := request.Method == string(mcp.MethodServerDiscover) && (s.rejections < 0 || s.rejected < s.rejections)
 	if reject {
 		s.rejected++
@@ -80,13 +83,30 @@ func (s *versionRejectingServer) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if s.retryError && request.Method == string(mcp.MethodServerDiscover) {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0", "id": request.ID,
+			"error": map[string]any{"code": mcp.METHOD_NOT_FOUND, "message": "Method not found"},
+		})
+		return
+	}
+
 	var result any
 	switch request.Method {
 	case string(mcp.MethodServerDiscover):
 		result = map[string]any{
+			"resultType":        "complete",
 			"supportedVersions": s.supported,
 			"capabilities":      map[string]any{},
-			"serverInfo":        map[string]any{"name": "rejecting", "version": "1.0.0"},
+			"_meta": map[string]any{
+				mcp.MetaKeyServerInfo: map[string]any{"name": "rejecting", "version": "1.0.0"},
+			},
+			"ttlMs":      0,
+			"cacheScope": "private",
+		}
+		if s.discoverResult != nil {
+			result = s.discoverResult
 		}
 	case string(mcp.MethodInitialize):
 		// A legacy server answers with the newest legacy version it supports.
@@ -108,46 +128,99 @@ func (s *versionRejectingServer) ServeHTTP(w http.ResponseWriter, r *http.Reques
 
 func initializeAgainst(t *testing.T, server *versionRejectingServer) (*mcp.InitializeResult, error) {
 	t.Helper()
+	client := newClientAgainst(t, server)
+	return client.Initialize(t.Context(), mcp.InitializeRequest{})
+}
+
+func newClientAgainst(t *testing.T, server *versionRejectingServer, opts ...ClientOption) *Client {
+	t.Helper()
 	httpServer := httptest.NewServer(server)
 	t.Cleanup(httpServer.Close)
 
 	httpTransport, err := transport.NewStreamableHTTP(httpServer.URL)
 	require.NoError(t, err)
-	client := NewClient(httpTransport)
+	client := NewClient(httpTransport, opts...)
 	t.Cleanup(func() { _ = client.Close() })
 	require.NoError(t, client.Start(t.Context()))
-	return client.Initialize(t.Context(), mcp.InitializeRequest{})
+	return client
 }
 
-// UnsupportedProtocolVersionError identifies a modern server, and the client
-// retries with a version from its list, even the one it just tried, rather
-// than falling back to the initialize handshake.
-func TestInitializeRetriesWithAnAdvertisedVersion(t *testing.T) {
-	server := &versionRejectingServer{supported: []string{mcp.ProtocolVersion20260728}, rejections: 1}
+// A rejected version is not retried even when the server advertises it.
+func TestInitializeDoesNotRetryRejectedAdvertisedVersion(t *testing.T) {
+	tests := []struct {
+		name      string
+		supported []string
+	}{
+		{"modern only", []string{mcp.ProtocolVersion20260728}},
+		{"also advertises legacy", []string{mcp.ProtocolVersion20260728, mcp.ProtocolVersion20250618}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := &versionRejectingServer{supported: tt.supported, rejections: 1}
+			client := newClientAgainst(t, server)
 
-	result, err := initializeAgainst(t, server)
+			result, err := client.Initialize(t.Context(), mcp.InitializeRequest{})
+			assert.Nil(t, result)
+			var unsupported mcp.UnsupportedProtocolVersionError
+			if assert.ErrorAs(t, err, &unsupported) {
+				assert.Equal(t, mcp.ProtocolVersion20260728, unsupported.Version)
+				assert.Equal(t, tt.supported, unsupported.Supported)
+			}
+			assert.False(t, client.IsInitialized())
+			assert.Empty(t, client.ProtocolVersion())
+			assert.Equal(t, []string{"server/discover " + mcp.ProtocolVersion20260728}, server.seen())
+		})
+	}
+}
+
+func TestInitializeRetriesWithADifferentAdvertisedVersion(t *testing.T) {
+	server := &versionRejectingServer{supported: []string{mcp.ProtocolVersion20260728}, rejections: 1}
+	client := newClientAgainst(t, server, WithProtocolVersion("2099-01-01"))
+
+	result, err := client.Initialize(t.Context(), mcp.InitializeRequest{})
 	require.NoError(t, err)
 	assert.Equal(t, mcp.ProtocolVersion20260728, result.ProtocolVersion)
+	assert.True(t, client.IsInitialized())
+	assert.Equal(t, mcp.ProtocolVersion20260728, client.ProtocolVersion())
 	assert.Equal(t, []string{
-		"server/discover " + mcp.ProtocolVersion20260728,
+		"server/discover 2099-01-01",
 		"server/discover " + mcp.ProtocolVersion20260728,
 	}, server.seen())
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	assert.Equal(t, []string{"2099-01-01", mcp.ProtocolVersion20260728}, server.headers)
 }
 
-// A server that also lists a legacy version is served through the handshake,
-// here after rejecting both discover attempts.
-func TestInitializeFallsBackToAnAdvertisedLegacyVersion(t *testing.T) {
-	server := &versionRejectingServer{
-		supported:  []string{mcp.ProtocolVersion20260728, mcp.ProtocolVersion20250618},
-		rejections: -1,
+func TestInitializeDoesNotFallBackAfterModernVersionError(t *testing.T) {
+	tests := []struct {
+		name       string
+		rejections int
+		retryError bool
+		wantCalls  []string
+	}{
+		{"legacy versions only", 1, false, []string{"server/discover " + mcp.ProtocolVersion20260728}},
+		{"retry rejected", -1, false, []string{"server/discover 2099-01-01", "server/discover " + mcp.ProtocolVersion20260728}},
+		{"non-modern retry error", 1, true, []string{"server/discover 2099-01-01", "server/discover " + mcp.ProtocolVersion20260728}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			supported := []string{mcp.ProtocolVersion20250618}
+			preferred := mcp.ProtocolVersion20260728
+			if tt.name != "legacy versions only" {
+				supported = append(supported, mcp.ProtocolVersion20260728)
+				preferred = "2099-01-01"
+			}
+			server := &versionRejectingServer{supported: supported, rejections: tt.rejections, retryError: tt.retryError}
+			client := newClientAgainst(t, server, WithProtocolVersion(preferred))
 
-	result, err := initializeAgainst(t, server)
-	require.NoError(t, err)
-	assert.Equal(t, mcp.ProtocolVersion20250618, result.ProtocolVersion)
-	requests := server.seen()
-	require.Len(t, requests, 3)
-	assert.Contains(t, requests[2], "initialize ")
+			result, err := client.Initialize(t.Context(), mcp.InitializeRequest{})
+			assert.Error(t, err)
+			assert.Nil(t, result)
+			assert.False(t, client.IsInitialized())
+			assert.Empty(t, client.ProtocolVersion())
+			assert.Equal(t, tt.wantCalls, server.seen())
+		})
+	}
 }
 
 // With no version in common the client reports the error instead of trying a
@@ -174,21 +247,55 @@ func TestInitializeFallsBackOnUnsupportedVersionWithoutData(t *testing.T) {
 	assert.Contains(t, requests[1], "initialize ")
 }
 
-// A server/discover result identifies a modern server only when it lists a
-// version this client supports. Some legacy servers answer an unknown request
-// with an empty result, and a result listing only unknown versions leaves
-// nothing to continue with; either way the client falls back to the handshake.
-func TestInitializeFallsBackWhenDiscoverListsNoUsableVersion(t *testing.T) {
-	for _, supported := range [][]string{nil, {"2099-01-01"}} {
-		t.Run(fmt.Sprint(supported), func(t *testing.T) {
-			server := &versionRejectingServer{supported: supported}
+func TestInitializeDoesNotFallBackOnEmptyAdvertisedVersions(t *testing.T) {
+	server := &versionRejectingServer{supported: []string{}, rejections: -1}
+	client := newClientAgainst(t, server)
 
-			result, err := initializeAgainst(t, server)
-			require.NoError(t, err)
-			assert.Equal(t, mcp.LATEST_LEGACY_PROTOCOL_VERSION, result.ProtocolVersion)
-			requests := server.seen()
-			require.Len(t, requests, 2)
-			assert.Contains(t, requests[1], "initialize ")
+	result, err := client.Initialize(t.Context(), mcp.InitializeRequest{})
+	var unsupported mcp.UnsupportedProtocolVersionError
+	require.ErrorAs(t, err, &unsupported)
+	assert.NotNil(t, unsupported.Supported)
+	assert.Empty(t, unsupported.Supported)
+	assert.Nil(t, result)
+	assert.False(t, client.IsInitialized())
+	assert.Empty(t, client.ProtocolVersion())
+	assert.Equal(t, []string{"server/discover " + mcp.ProtocolVersion20260728}, server.seen())
+}
+
+func TestInitializeFallsBackOnNullAdvertisedVersions(t *testing.T) {
+	server := &versionRejectingServer{rejections: -1}
+
+	result, err := initializeAgainst(t, server)
+	require.NoError(t, err)
+	assert.Equal(t, mcp.LATEST_LEGACY_PROTOCOL_VERSION, result.ProtocolVersion)
+	assert.Equal(t, []string{
+		"server/discover " + mcp.ProtocolVersion20260728,
+		"initialize " + mcp.LATEST_LEGACY_PROTOCOL_VERSION,
+	}, server.seen())
+}
+
+// A successful discovery stays modern, even without a usable modern version.
+func TestInitializeReportsNoUsableModernDiscoverVersion(t *testing.T) {
+	tests := []struct {
+		name      string
+		supported []string
+	}{
+		{"empty list", []string{}},
+		{"unknown version", []string{"2099-01-01"}},
+		{"legacy only", []string{mcp.ProtocolVersion20250618}},
+		{"unknown and legacy", []string{"2099-01-01", mcp.ProtocolVersion20250618}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := &versionRejectingServer{supported: tt.supported}
+			client := newClientAgainst(t, server)
+
+			result, err := client.Initialize(t.Context(), mcp.InitializeRequest{})
+			assert.ErrorContains(t, err, "server/discover result lists no modern version this client supports")
+			assert.Nil(t, result)
+			assert.False(t, client.IsInitialized())
+			assert.Empty(t, client.ProtocolVersion())
+			assert.Equal(t, []string{"server/discover " + mcp.ProtocolVersion20260728}, server.seen())
 		})
 	}
 }

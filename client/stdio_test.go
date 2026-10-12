@@ -535,7 +535,13 @@ func TestStdio_ConcurrentRequestsAllReceiveResponses(t *testing.T) {
 			}
 
 			var resp map[string]any
-			if method == "initialize" {
+			if method == string(mcp.MethodServerDiscover) {
+				resp = map[string]any{
+					"jsonrpc": "2.0",
+					"id":      id,
+					"error":   map[string]any{"code": mcp.METHOD_NOT_FOUND, "message": "Method not found"},
+				}
+			} else if method == "initialize" {
 				resp = map[string]any{
 					"jsonrpc": "2.0",
 					"id":      id,
@@ -575,6 +581,7 @@ func TestStdio_ConcurrentRequestsAllReceiveResponses(t *testing.T) {
 	initReq.Params.ClientInfo = mcp.Implementation{Name: "stress-test", Version: "1.0"}
 	_, err := c.Initialize(t.Context(), initReq)
 	require.NoError(t, err)
+	require.Equal(t, mcp.ProtocolVersion20241105, c.ProtocolVersion())
 
 	// Fire N concurrent ListTools requests
 	var wg sync.WaitGroup
