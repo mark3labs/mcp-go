@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/url"
+	"strings"
 )
 
 // GenerateRandomString generates a random string of the specified length
@@ -82,7 +83,7 @@ func applicationType(redirectURI string) string {
 	if parsedURL.Scheme != "http" {
 		return "native"
 	}
-	switch parsedURL.Hostname() {
+	switch strings.ToLower(parsedURL.Hostname()) {
 	case "localhost", "127.0.0.1", "::1":
 		return "native"
 	}
