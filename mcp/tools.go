@@ -766,7 +766,7 @@ type ToolArgumentsSchema struct {
 	// such as "$schema", "$id", "title" or "oneOf". UnmarshalJSON fills it
 	// and MarshalJSON writes it back, so decoding and encoding a schema
 	// keeps them. The fields above, when set, take precedence over entries
-	// with the same name.
+	// with the same name. Decoded numbers use json.Number to preserve precision.
 	AdditionalFields map[string]any `json:"-"`
 }
 
@@ -810,9 +810,6 @@ func (tis *ToolArgumentsSchema) UnmarshalJSON(data []byte) error {
 func toolArgumentsSchemaMarshalJSON(tis ToolArgumentsSchema) ([]byte, error) {
 	m := make(map[string]any, len(tis.AdditionalFields)+5)
 	maps.Copy(m, tis.AdditionalFields)
-	if tis.Defs != nil {
-		delete(m, "definitions") // Defs is written as "$defs"; don't write both.
-	}
 	m["type"] = tis.Type
 
 	if tis.Defs != nil {
@@ -938,8 +935,8 @@ func propertyOrder(raw json.RawMessage) []string {
 	return order
 }
 
-// It handles both "$defs" (JSON Schema 2019-09+) and "definitions" (JSON Schema draft-07)
-// by reading either field and storing it in the Defs field.
+// It preserves declared dialects and only normalizes legacy definitions to
+// Defs when no dialect or $defs is provided.
 func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) error {
 	// Use a temporary type to avoid infinite recursion
 	type Alias ToolArgumentsSchema
@@ -966,16 +963,20 @@ func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) err
 		tis.PropertyOrder = propertyOrder(aux.Properties)
 	}
 
-	// If $defs wasn't provided but definitions was, use definitions.
-	// Marshaling re-emits Defs as "$defs", so local "#/definitions/..." $ref
-	// pointers must be rewritten to "#/$defs/..." or the round-tripped schema
-	// carries dangling references that strict validators reject.
-	if tis.Defs == nil && aux.Definitions != nil {
+	// A declared dialect owns its keyword syntax, including unknown dialects.
+	// Without one, retain the compatibility normalization when there is no
+	// competing $defs container. Both containers may have independent refs.
+	_, declaredDialect := tis.AdditionalFields["$schema"]
+	if !declaredDialect && tis.Defs == nil && aux.Definitions != nil {
 		tis.Defs = aux.Definitions
+		delete(tis.AdditionalFields, "definitions")
 		rewriteDraft07LocalRefs(tis.Defs)
 		rewriteDraft07LocalRefs(tis.Properties)
 		rewriteDraft07LocalRefs(tis.AdditionalProperties)
 		rewriteDraft07LocalRefs(tis.AdditionalFields)
+		if len(tis.AdditionalFields) == 0 {
+			tis.AdditionalFields = nil
+		}
 	}
 
 	return nil
@@ -998,7 +999,7 @@ func unmarshalAdditionalSchemaKeywords(data []byte, tis *ToolArgumentsSchema) er
 	if keywords == nil { // JSON null, which leaves the schema as it is
 		return nil
 	}
-	for _, known := range []string{"$defs", "definitions", "type", "properties", "required", "additionalProperties"} {
+	for _, known := range []string{"$defs", "type", "properties", "required", "additionalProperties"} {
 		delete(keywords, known)
 	}
 	if len(keywords) == 0 {
@@ -1008,7 +1009,9 @@ func unmarshalAdditionalSchemaKeywords(data []byte, tis *ToolArgumentsSchema) er
 	tis.AdditionalFields = make(map[string]any, len(keywords))
 	for name, raw := range keywords {
 		var value any
-		if err := json.Unmarshal(raw, &value); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		if err := decoder.Decode(&value); err != nil {
 			return err
 		}
 		tis.AdditionalFields[name] = value

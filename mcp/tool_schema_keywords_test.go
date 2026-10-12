@@ -68,8 +68,8 @@ func TestTool_RoundTripKeepsSchemaKeywords(t *testing.T) {
 	assert.JSONEq(t, schemaWithOtherKeywords, string(decoded.OutputSchema))
 }
 
-// The fields win over entries of AdditionalFields with the same name, and
-// Defs is written only as "$defs".
+// The fields win over entries of AdditionalFields with the same name.
+// Definitions and $defs are distinct reference targets.
 func TestToolArgumentsSchema_FieldsWinOverAdditionalFields(t *testing.T) {
 	schema := ToolArgumentsSchema{
 		Type:       "object",
@@ -92,6 +92,7 @@ func TestToolArgumentsSchema_FieldsWinOverAdditionalFields(t *testing.T) {
 		"properties": {"a": {"type": "string"}},
 		"required": [],
 		"$defs": {"d": {"type": "number"}},
+		"definitions": {"old": {}},
 		"title": "kept"
 	}`, string(encoded))
 
@@ -116,9 +117,7 @@ func TestToolArgumentsSchema_AdditionalFieldsResetOnDecode(t *testing.T) {
 	assert.Nil(t, schema.AdditionalFields)
 }
 
-// Decoding turns draft-07 "definitions" into "$defs" and rewrites the local
-// refs that point into it. Refs in the kept keywords, a top-level oneOf here,
-// have to follow, or they would dangle once "definitions" is gone.
+// A declared draft-07 schema keeps definitions and refs in every keyword.
 func TestToolArgumentsSchema_Draft07RefsInOtherKeywords(t *testing.T) {
 	var schema ToolArgumentsSchema
 	require.NoError(t, json.Unmarshal([]byte(`{
@@ -134,10 +133,10 @@ func TestToolArgumentsSchema_Draft07RefsInOtherKeywords(t *testing.T) {
 	assert.JSONEq(t, `{
 		"$schema": "http://json-schema.org/draft-07/schema#",
 		"type": "object",
-		"$defs": {"sku": {"type": "string"}},
-		"properties": {"sku": {"$ref": "#/$defs/sku"}},
+		"definitions": {"sku": {"type": "string"}},
+		"properties": {"sku": {"$ref": "#/definitions/sku"}},
 		"required": [],
-		"oneOf": [{"properties": {"sku": {"$ref": "#/$defs/sku"}}}]
+		"oneOf": [{"properties": {"sku": {"$ref": "#/definitions/sku"}}}]
 	}`, string(encoded))
 }
 
