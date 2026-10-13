@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestListToolsAdditionalSchemaKeywords checks that typed tool listings retain input and output keywords.
 func TestListToolsAdditionalSchemaKeywords(t *testing.T) {
 	const input = `{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"Order","type":"object","properties":{"sku":{"type":"string"},"quantity":{"type":"integer"}},"oneOf":[{"required":["sku"]},{"required":["quantity"]}]}`
 	const output = `{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","anyOf":[{"required":["id"]},{"required":["error"]}]}`
@@ -45,6 +46,7 @@ func TestListToolsAdditionalSchemaKeywords(t *testing.T) {
 	}
 }
 
+// TestSchemaAdditionalFieldsRoundTrip checks all schema types preserve arbitrary keyword values.
 func TestSchemaAdditionalFieldsRoundTrip(t *testing.T) {
 	const data = `{"type":"object","properties":{"x":{"type":"string"}},"required":["x"],"additionalProperties":false,"$defs":{"value":{"type":"string"}},"$schema":"https://json-schema.org/draft/2020-12/schema","$id":"urn:example","title":"Example","description":"Details","oneOf":[{"required":["x"]}],"anyOf":[true,false],"allOf":[{}],"if":{"required":["x"]},"then":{"title":"yes"},"else":{"title":"no"},"x-vendor":{"nested":[null,false,42]},"unknown-null":null,"unknown-bool":false,"unknown-number":1.25,"unknown-array":[1,"two"]}`
 	tests := []struct {
@@ -79,6 +81,7 @@ func TestSchemaAdditionalFieldsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSchemaAdditionalFieldsCollisions checks structured fields always win without mutating extras.
 func TestSchemaAdditionalFieldsCollisions(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -102,6 +105,7 @@ func TestSchemaAdditionalFieldsCollisions(t *testing.T) {
 	}
 }
 
+// TestSchemaAdditionalFieldsReceiverReuse checks replacement and clearing of additional keywords.
 func TestSchemaAdditionalFieldsReceiverReuse(t *testing.T) {
 	var schema ToolArgumentsSchema
 	require.NoError(t, json.Unmarshal([]byte(`{"title":"first","x-old":true}`), &schema))
@@ -117,6 +121,7 @@ func TestSchemaAdditionalFieldsReceiverReuse(t *testing.T) {
 	}
 }
 
+// TestSchemaAdditionalFieldsErrors checks marshal and modeled-field decode errors propagate.
 func TestSchemaAdditionalFieldsErrors(t *testing.T) {
 	_, err := json.Marshal(ToolArgumentsSchema{AdditionalFields: map[string]any{"unsupported": func() {}}})
 	require.Error(t, err)
@@ -132,6 +137,7 @@ func TestSchemaAdditionalFieldsErrors(t *testing.T) {
 	}
 }
 
+// TestSchemaAdditionalFieldsDraft07Refs checks reference normalization only when definitions is adopted.
 func TestSchemaAdditionalFieldsDraft07Refs(t *testing.T) {
 	tests := []struct{ name, defs, expectedRef string }{
 		{"adopt definitions", `"definitions":{"value":true}`, "#/$defs/value"},

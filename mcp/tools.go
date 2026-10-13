@@ -810,6 +810,7 @@ func (tis *ToolArgumentsSchema) UnmarshalJSON(data []byte) error {
 	return toolArgumentsSchemaUnmarshalJSON(data, tis)
 }
 
+// isModeledToolSchemaKeyword identifies names reserved for structured fields.
 func isModeledToolSchemaKeyword(key string) bool {
 	switch key {
 	case "type", "properties", "required", "additionalProperties", "$defs", "definitions":
