@@ -519,7 +519,7 @@ func (s *StdioServer) Listen(
 	ctx = s.server.WithContext(ctx, &stdioSessionInstance)
 
 	// Set the writer for sending requests to the client
-	stdioSessionInstance.SetWriter(stdout)
+	stdioSessionInstance.SetWriter(&lockedWriter{mu: &s.writeMu, w: stdout})
 
 	// Add in any custom context.
 	if s.contextFunc != nil {
@@ -876,6 +876,20 @@ func (s *StdioServer) writeResponse(
 	}
 
 	return nil
+}
+
+// lockedWriter writes to w while holding mu. The stdio session sends its
+// requests to the client through it, so they take the same lock as the
+// server's responses and notifications.
+type lockedWriter struct {
+	mu *sync.Mutex
+	w  io.Writer
+}
+
+func (lw *lockedWriter) Write(p []byte) (int, error) {
+	lw.mu.Lock()
+	defer lw.mu.Unlock()
+	return lw.w.Write(p)
 }
 
 // ServeStdio is a convenience function that creates and starts a StdioServer with os.Stdin and os.Stdout.
