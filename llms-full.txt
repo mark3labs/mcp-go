@@ -4233,33 +4233,65 @@ func createCustomStreamableHTTPClient() {
 }
 ```
 
+#### Persisting OAuth issuer bindings
+
+Save `handler.GetCredentialsIssuer()` alongside `GetClientID()`,
+`GetClientSecret()` and `GetTokenEndpointAuthMethod()`. Restore that exact issuer
+in `OAuthConfig.CredentialsIssuer`. Custom `TokenStore` implementations must
+also preserve `Token.Issuer`; it is trusted local provenance stamped by the
+handler, not an issuer supplied by the token endpoint.
+
+Configured credentials (including restored dynamic registrations) are never
+silently replaced when discovery changes issuer. Handle the inspectable error
+and explicitly register replacement credentials if appropriate:
+
+```go
+if errors.Is(err, client.ErrAuthorizationServerChanged) {
+    // Verify the new authorization server before opting into registration.
+    if err := handler.RegisterClient(ctx, "My MCP client"); err != nil {
+        return err
+    }
+    // Start a fresh authorization flow; do not reuse the old code or token.
+}
+```
+
+Registrations created by the current handler automatically re-register on
+`GetAuthorizationURL` when the issuer changes, retaining the original client
+name. A failed migration never falls back to the old credentials. Issuers are
+compared exactly, including paths and trailing slashes; changing endpoints
+without changing issuer does not require registration. `SkipIssuerMetadataValidation`
+does not disable credential binding. Leave `AuthServerMetadataURL` unset to follow
+protected-resource authorization server discovery. Setting it explicitly pins
+discovery to that metadata URL and bypasses protected-resource discovery.
+
+For compatibility, configured credentials with no `CredentialsIssuer` bind on
+first authorization use. This trust-on-first-use behavior cannot protect a
+restart that loses provenance: persist the issuer for restart safety. Legacy
+unexpired access tokens remain usable until a known issuer change, but expired
+tokens without `Token.Issuer` require fresh authorization, not inferred refresh.
+`RefreshToken` accepts raw tokens only with matching stored token provenance or
+an explicitly configured `CredentialsIssuer`; a newly learned binding is not
+proof of a raw refresh token's origin.
+
 #### StreamableHTTP Authentication
 
 ```go
-func createAuthenticatedStreamableHTTPClient() {
-    // Create StreamableHTTP client with OAuth
-    c := client.NewStreamableHttpClient("http://localhost:8080/mcp",
-        transport.WithHTTPOAuth(transport.OAuthConfig{
-            ClientID:     "your-client-id",
-            ClientSecret: "your-client-secret",
-            TokenURL:     "https://auth.example.com/token",
-            Scopes:       []string{"mcp:read", "mcp:write"},
-        }),
+func createAuthenticatedStreamableHTTPClient() (*client.Client, error) {
+    c, err := client.NewOAuthStreamableHttpClient("http://localhost:8080/mcp",
+        client.OAuthConfig{
+            ClientID:              "your-client-id",
+            ClientSecret:          "your-client-secret",
+            CredentialsIssuer:     "https://auth.example.com",
+            RedirectURI:           "http://localhost:8085/callback",
+            Scopes:                []string{"mcp:read", "mcp:write"},
+        },
     )
-    defer c.Close()
-
-    ctx := context.Background()
-
-    if err := c.Initialize(ctx); err != nil {
-        log.Fatal(err)
+    if err != nil {
+        return nil, err
     }
-
-    // Use client...
-}
-
-func isAuthError(err error) bool {
-    return errors.Is(err, ErrUnauthorized) ||
-           errors.Is(err, ErrForbidden)
+    // Start and initialize the client, completing OAuth if required.
+    // The caller owns c and must close it when finished.
+    return c, nil
 }
 ```
 
