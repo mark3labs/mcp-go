@@ -77,6 +77,7 @@ func newRefreshTestHandler(t *testing.T, server *refreshServer) (*OAuthHandler, 
 	t.Helper()
 	store := NewMemoryTokenStore()
 	require.NoError(t, store.SaveToken(t.Context(), &Token{
+		Issuer:       server.URL,
 		AccessToken:  "old-access",
 		TokenType:    "Bearer",
 		RefreshToken: "single-use",
