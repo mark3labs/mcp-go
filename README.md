@@ -417,6 +417,29 @@ s := server.NewMCPServer(
 
 When the limit is reached, new task creation requests will fail with an error. Completed, failed, or cancelled tasks don't count toward the limit - only tasks in "working" status. If `WithMaxConcurrentTasks` is not specified or set to 0, there is no limit on concurrent tasks.
 
+##### Transport Considerations for Task Handlers
+
+Task handlers run as background goroutines. The context they receive is cancelled as soon as `HandleMessage` returns, which happens immediately after the `CreateTaskResult` response is written, on **every transport** (HTTP, SSE, stdio, in-process).
+
+This means a task handler that blocks on `ctx.Done()` will unblock almost immediately after the client receives the initial response, before the client has had a chance to poll `tasks/get`.
+
+**Recommended pattern — non-blocking cancellation check:**
+
+```go
+s.AddTaskTool(myTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+    for _, item := range items {
+        // Non-blocking check: honours tasks/cancel without blocking the work loop.
+        select {
+        case <-ctx.Done():
+            return nil, ctx.Err()
+        default:
+        }
+        processItem(item)
+    }
+    return result, nil
+})
+```
+
 For traditional synchronous tools that execute and return results immediately:
 
 Simple calculation example:

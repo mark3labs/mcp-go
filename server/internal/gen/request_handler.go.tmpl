@@ -154,13 +154,31 @@ func (s *MCPServer) HandleMessage(
 				code: mcp.METHOD_NOT_FOUND,
 				err:  fmt.Errorf("%q %w", baseMessage.Method, ErrRemovedInProtocolVersion),
 			}
-		} else {{ end }}{{ if .RequiresModern }}if !protocolInfo.Modern {
+		} else {{ end }}{{ if and .RequiresModern .RequiresExtension }}if !protocolInfo.Modern {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
 				err:  fmt.Errorf("%q %w", baseMessage.Method, ErrRequiresModernProtocol),
 			}
-		} else {{ end }}{{ if .Group }}if s.capabilities.{{.Group}} == nil {
+		} else if clientCaps := protocolInfo.ClientCapabilities; clientCaps == nil || !clientCaps.HasExtension({{.RequiresExtension}}) {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.MISSING_REQUIRED_CLIENT_CAPABILITY,
+				err:  fmt.Errorf("{{toLower .GroupName}} extension %w", ErrUnsupported),
+			}
+		} else {{ else }}{{ if .RequiresModern }}if !protocolInfo.Modern {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.METHOD_NOT_FOUND,
+				err:  fmt.Errorf("%q %w", baseMessage.Method, ErrRequiresModernProtocol),
+			}
+		} else {{ end }}{{ if .RequiresExtension }}if clientCaps := protocolInfo.ClientCapabilities; protocolInfo.Modern && (clientCaps == nil || !clientCaps.HasExtension({{.RequiresExtension}})) {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.MISSING_REQUIRED_CLIENT_CAPABILITY,
+				err:  fmt.Errorf("{{toLower .GroupName}} extension %w", ErrUnsupported),
+			}
+		} else {{ end }}{{ end }}{{ if .Group }}if {{ if .RequiresExtension }}!protocolInfo.Modern && {{ end }}s.capabilities.{{.Group}} == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
