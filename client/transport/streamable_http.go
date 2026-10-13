@@ -739,8 +739,10 @@ func (c *StreamableHTTP) SendRequest(
 		// handle error response
 		var errResponse JSONRPCResponse
 		body, _ := io.ReadAll(resp.Body)
-		if err := json.Unmarshal(body, &errResponse); err == nil {
-			return &errResponse, nil
+		if isJSONRPCErrorBody(body) {
+			if err := json.Unmarshal(body, &errResponse); err == nil && errResponse.Error != nil {
+				return &errResponse, nil
+			}
 		}
 		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, body)
 	}
@@ -794,6 +796,33 @@ func (c *StreamableHTTP) SendRequest(
 	default:
 		return nil, fmt.Errorf("unexpected content type: %s", resp.Header.Get("Content-Type"))
 	}
+}
+
+// isJSONRPCErrorBody reports whether body is a JSON-RPC error message with
+// a numeric code and a string message. Member names are matched exactly,
+// unlike json.Unmarshal into a struct.
+func isJSONRPCErrorBody(body []byte) bool {
+	var msg map[string]json.RawMessage
+	if err := json.Unmarshal(body, &msg); err != nil {
+		return false
+	}
+	var version string
+	if err := json.Unmarshal(msg["jsonrpc"], &version); err != nil || version != mcp.JSONRPC_VERSION {
+		return false
+	}
+	var errObj map[string]json.RawMessage
+	if err := json.Unmarshal(msg["error"], &errObj); err != nil {
+		return false
+	}
+	var code *int
+	if err := json.Unmarshal(errObj["code"], &code); err != nil || code == nil {
+		return false
+	}
+	var message *string
+	if err := json.Unmarshal(errObj["message"], &message); err != nil || message == nil {
+		return false
+	}
+	return true
 }
 
 // sendHTTP sends an HTTP request to the server. Once the session has ended,
