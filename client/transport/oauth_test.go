@@ -1002,6 +1002,7 @@ func TestOAuthHandler_RefreshToken_GitHubErrorIn200Response(t *testing.T) {
 		if r.URL.Path == "/.well-known/oauth-authorization-server" {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                 serverURL,
 				"authorization_endpoint": serverURL + "/authorize",
 				"token_endpoint":         serverURL + "/token",
 			})
@@ -1028,6 +1029,7 @@ func TestOAuthHandler_RefreshToken_GitHubErrorIn200Response(t *testing.T) {
 		ClientSecret:          "test-secret",
 		RedirectURI:           "http://localhost/callback",
 		TokenStore:            tokenStore,
+		CredentialsIssuer:     server.URL,
 		AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
 	}
 
@@ -1060,6 +1062,7 @@ func TestOAuthHandler_RefreshToken_EmptyAccessToken(t *testing.T) {
 		if r.URL.Path == "/.well-known/oauth-authorization-server" {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                 serverURL,
 				"authorization_endpoint": serverURL + "/authorize",
 				"token_endpoint":         serverURL + "/token",
 			})
@@ -1087,6 +1090,7 @@ func TestOAuthHandler_RefreshToken_EmptyAccessToken(t *testing.T) {
 		ClientSecret:          "test-secret",
 		RedirectURI:           "http://localhost/callback",
 		TokenStore:            tokenStore,
+		CredentialsIssuer:     server.URL,
 		AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
 	}
 
@@ -1121,6 +1125,7 @@ func TestOAuthHandler_RefreshToken_RefreshTokenRotation(t *testing.T) {
 		if r.URL.Path == "/.well-known/oauth-authorization-server" {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                 serverURL,
 				"authorization_endpoint": serverURL + "/authorize",
 				"token_endpoint":         serverURL + "/token",
 			})
@@ -1154,6 +1159,7 @@ func TestOAuthHandler_RefreshToken_RefreshTokenRotation(t *testing.T) {
 		ClientSecret:          "test-secret",
 		RedirectURI:           "http://localhost/callback",
 		TokenStore:            tokenStore,
+		CredentialsIssuer:     server.URL,
 		AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
 	}
 
@@ -1188,6 +1194,7 @@ func TestOAuthHandler_RefreshToken_SingleUseRefreshToken(t *testing.T) {
 		if r.URL.Path == "/.well-known/oauth-authorization-server" {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                 serverURL,
 				"authorization_endpoint": serverURL + "/authorize",
 				"token_endpoint":         serverURL + "/token",
 			})
@@ -1232,6 +1239,7 @@ func TestOAuthHandler_RefreshToken_SingleUseRefreshToken(t *testing.T) {
 		ClientSecret:          "test-secret",
 		RedirectURI:           "http://localhost/callback",
 		TokenStore:            tokenStore,
+		CredentialsIssuer:     server.URL,
 		AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
 	}
 
@@ -1270,6 +1278,7 @@ func TestOAuthHandler_ProcessAuthorizationResponse_ErrorIn200(t *testing.T) {
 		if r.URL.Path == "/.well-known/oauth-authorization-server" {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                 serverURL,
 				"authorization_endpoint": serverURL + "/authorize",
 				"token_endpoint":         serverURL + "/token",
 			})
@@ -1328,6 +1337,7 @@ func TestOAuthHandler_RefreshToken_KeepsOldRefreshToken(t *testing.T) {
 		if r.URL.Path == "/.well-known/oauth-authorization-server" {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                 serverURL,
 				"authorization_endpoint": serverURL + "/authorize",
 				"token_endpoint":         serverURL + "/token",
 			})
@@ -1355,6 +1365,7 @@ func TestOAuthHandler_RefreshToken_KeepsOldRefreshToken(t *testing.T) {
 		ClientSecret:          "test-secret",
 		RedirectURI:           "http://localhost/callback",
 		TokenStore:            tokenStore,
+		CredentialsIssuer:     server.URL,
 		AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
 	}
 
@@ -1385,6 +1396,7 @@ func TestOAuthHandler_RefreshToken_ProperHTTP400Error(t *testing.T) {
 		if r.URL.Path == "/.well-known/oauth-authorization-server" {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                 serverURL,
 				"authorization_endpoint": serverURL + "/authorize",
 				"token_endpoint":         serverURL + "/token",
 			})
@@ -1410,6 +1422,7 @@ func TestOAuthHandler_RefreshToken_ProperHTTP400Error(t *testing.T) {
 		ClientSecret:          "test-secret",
 		RedirectURI:           "http://localhost/callback",
 		TokenStore:            tokenStore,
+		CredentialsIssuer:     server.URL,
 		AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
 	}
 
@@ -1763,9 +1776,10 @@ func TestOAuthHandler_RFC8707_ResourceParameter(t *testing.T) {
 		defer server.Close()
 
 		config := OAuthConfig{
-			ClientID:    "test-client",
-			RedirectURI: server.URL + "/callback",
-			TokenStore:  NewMemoryTokenStore(),
+			ClientID:          "test-client",
+			CredentialsIssuer: server.URL,
+			RedirectURI:       server.URL + "/callback",
+			TokenStore:        NewMemoryTokenStore(),
 		}
 
 		handler := NewOAuthHandler(config)
@@ -1815,9 +1829,10 @@ func TestOAuthHandler_RFC8707_ResourceParameter(t *testing.T) {
 		defer server.Close()
 
 		config := OAuthConfig{
-			ClientID:    "test-client",
-			RedirectURI: server.URL + "/callback",
-			TokenStore:  NewMemoryTokenStore(),
+			ClientID:          "test-client",
+			CredentialsIssuer: server.URL,
+			RedirectURI:       server.URL + "/callback",
+			TokenStore:        NewMemoryTokenStore(),
 		}
 
 		handler := NewOAuthHandler(config)
@@ -2362,6 +2377,7 @@ func TestOAuthHandler_RefreshToken_201Created(t *testing.T) {
 		ClientSecret:          "test-secret",
 		RedirectURI:           "http://localhost/callback",
 		TokenStore:            tokenStore,
+		CredentialsIssuer:     server.URL,
 		AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
 	}
 
