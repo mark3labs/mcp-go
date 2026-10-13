@@ -1708,75 +1708,86 @@ func TestSSE_DuplicateEndpointEventDoesNotPanic(t *testing.T) {
 // such as a keep-alive ping, that carries the id of a request still waiting
 // for its response.
 func TestSSE_ServerRequestIsNotTakenAsResponse(t *testing.T) {
-	var (
-		mu        sync.Mutex
-		sseWriter http.ResponseWriter
-		flush     func()
-	)
+	tests := []struct {
+		name string
+		id   mcp.RequestId
+	}{
+		{name: "numeric id", id: mcp.NewRequestId(int64(1))},
+		{name: "string id", id: mcp.NewRequestId("req-1")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var (
+				mu        sync.Mutex
+				sseWriter http.ResponseWriter
+				flush     func()
+			)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-			return
-		}
-		mu.Lock()
-		sseWriter = w
-		flush = flusher.Flush
-		fmt.Fprintf(w, "event: endpoint\ndata: /message\n\n")
-		flusher.Flush()
-		mu.Unlock()
+			mux := http.NewServeMux()
+			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				flusher, ok := w.(http.Flusher)
+				if !ok {
+					http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+					return
+				}
+				mu.Lock()
+				sseWriter = w
+				flush = flusher.Flush
+				fmt.Fprintf(w, "event: endpoint\ndata: /message\n\n")
+				flusher.Flush()
+				mu.Unlock()
 
-		<-r.Context().Done()
-	})
-	mux.HandleFunc("/message", func(w http.ResponseWriter, r *http.Request) {
-		var request map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
-			return
-		}
-		ping, _ := json.Marshal(map[string]any{
-			"jsonrpc": "2.0",
-			"id":      request["id"],
-			"method":  "ping",
+				<-r.Context().Done()
+			})
+			mux.HandleFunc("/message", func(w http.ResponseWriter, r *http.Request) {
+				var request map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+					return
+				}
+				ping, _ := json.Marshal(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      request["id"],
+					"method":  "ping",
+				})
+				response, _ := json.Marshal(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      request["id"],
+					"result":  map[string]any{"answer": 42},
+				})
+				mu.Lock()
+				fmt.Fprintf(sseWriter, "event: message\ndata: %s\n\n", ping)
+				fmt.Fprintf(sseWriter, "event: message\ndata: %s\n\n", response)
+				flush()
+				mu.Unlock()
+				w.WriteHeader(http.StatusAccepted)
+			})
+
+			testServer := httptest.NewServer(mux)
+			defer testServer.Close()
+
+			trans, err := NewSSE(testServer.URL)
+			require.NoError(t, err)
+
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+
+			require.NoError(t, trans.Start(ctx))
+			defer trans.Close()
+
+			reqCtx, reqCancel := context.WithTimeout(ctx, 5*time.Second)
+			defer reqCancel()
+			response, err := trans.SendRequest(reqCtx, JSONRPCRequest{
+				JSONRPC: "2.0",
+				ID:      tt.id,
+				Method:  "tools/call",
+			})
+			require.NoError(t, err)
+			require.Nil(t, response.Error)
+			require.JSONEq(t, `{"answer":42}`, string(response.Result))
 		})
-		response, _ := json.Marshal(map[string]any{
-			"jsonrpc": "2.0",
-			"id":      request["id"],
-			"result":  map[string]any{"answer": 42},
-		})
-		mu.Lock()
-		fmt.Fprintf(sseWriter, "event: message\ndata: %s\n\n", ping)
-		fmt.Fprintf(sseWriter, "event: message\ndata: %s\n\n", response)
-		flush()
-		mu.Unlock()
-		w.WriteHeader(http.StatusAccepted)
-	})
-
-	testServer := httptest.NewServer(mux)
-	defer testServer.Close()
-
-	trans, err := NewSSE(testServer.URL)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
-	defer cancel()
-
-	require.NoError(t, trans.Start(ctx))
-	defer trans.Close()
-
-	reqCtx, reqCancel := context.WithTimeout(ctx, 5*time.Second)
-	defer reqCancel()
-	response, err := trans.SendRequest(reqCtx, JSONRPCRequest{
-		JSONRPC: "2.0",
-		ID:      mcp.NewRequestId(int64(1)),
-		Method:  "tools/call",
-	})
-	require.NoError(t, err)
-	require.Nil(t, response.Error)
-	require.JSONEq(t, `{"answer":42}`, string(response.Result))
+	}
 }
 
 // TestSSE_InvalidEndpointEventsIgnored verifies that malformed or cross-origin
