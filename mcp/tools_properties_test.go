@@ -193,9 +193,16 @@ func TestWithRawInputSchemaOption(t *testing.T) {
 func TestNewToolWithRawInputSchemaOption(t *testing.T) {
 	tests := []struct {
 		name   string
+		types  []string
 		schema json.RawMessage
 		want   map[string]any
 	}{
+		{
+			name:   "raw schema replaces an array-valued type",
+			types:  []string{"object", "null"},
+			schema: json.RawMessage(`{"type":"object"}`),
+			want:   map[string]any{"type": "object"},
+		},
 		{
 			name:   "raw schema replaces the default",
 			schema: json.RawMessage(`{"type":"object","properties":{"count":{"type":"integer","minimum":1}}}`),
@@ -219,7 +226,12 @@ func TestNewToolWithRawInputSchemaOption(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tool := NewTool("test", WithRawInputSchema(tt.schema))
+			tool := NewTool("test", func(tool *Tool) {
+				if tt.types != nil {
+					tool.InputSchema.Type = ""
+					tool.InputSchema.Types = tt.types
+				}
+			}, WithRawInputSchema(tt.schema))
 
 			data, err := json.Marshal(tool)
 			require.NoError(t, err)
