@@ -626,7 +626,7 @@ func (c *Client) ReadResource(
 ) (*mcp.ReadResourceResult, error) {
 	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
 	header := outboundHeader(request.Header, request.Method)
-	return multiRoundTrip(ctx, c,
+	return multiRoundTrip(ctx, c, request.Params.MultiRoundTripParams,
 		func(ctx context.Context, roundTrip mcp.MultiRoundTripParams) (*mcp.ReadResourceResult, error) {
 			return c.readResourceOnce(ctx, request, roundTrip, header)
 		},
@@ -683,7 +683,7 @@ func (c *Client) GetPrompt(
 ) (*mcp.GetPromptResult, error) {
 	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
 	header := outboundHeader(request.Header, request.Method)
-	return multiRoundTrip(ctx, c,
+	return multiRoundTrip(ctx, c, request.Params.MultiRoundTripParams,
 		func(ctx context.Context, roundTrip mcp.MultiRoundTripParams) (*mcp.GetPromptResult, error) {
 			return c.getPromptOnce(ctx, request, roundTrip, header)
 		},
@@ -744,7 +744,7 @@ func (c *Client) CallTool(
 ) (*mcp.CallToolResult, error) {
 	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
 	header := outboundHeader(request.Header, request.Method)
-	return multiRoundTrip(ctx, c,
+	return multiRoundTrip(ctx, c, request.Params.MultiRoundTripParams,
 		func(ctx context.Context, roundTrip mcp.MultiRoundTripParams) (*mcp.CallToolResult, error) {
 			return c.callToolOnce(ctx, request, roundTrip, header)
 		},
