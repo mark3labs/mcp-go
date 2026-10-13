@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -192,8 +193,9 @@ func (c *Client) Start(ctx context.Context) error {
 
 	c.transport.SetNotificationHandler(func(notification mcp.JSONRPCNotification) {
 		c.notifyMu.RLock()
-		defer c.notifyMu.RUnlock()
-		for _, handler := range c.notifications {
+		handlers := slices.Clone(c.notifications)
+		c.notifyMu.RUnlock()
+		for _, handler := range handlers {
 			handler(notification)
 		}
 	})
@@ -213,6 +215,7 @@ func (c *Client) Close() error {
 
 // OnNotification registers a handler function to be called when notifications are received.
 // Multiple handlers can be registered and will be called in the order they were added.
+// Handlers registered during dispatch receive subsequent notifications.
 func (c *Client) OnNotification(
 	handler func(notification mcp.JSONRPCNotification),
 ) {
