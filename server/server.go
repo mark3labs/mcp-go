@@ -2481,13 +2481,15 @@ func (s *MCPServer) executeTaskTool(
 	s.completeTask(entry, s.limitCreateTaskResult(result), nil)
 }
 
-// limitCreateTaskResult measures the payload tasks/result will copy out.
-// Those fields are omitted from CreateTaskResult's own JSON.
+// limitCreateTaskResult measures the payload tasks/result will copy out,
+// including the handler's _meta. The content fields are omitted from
+// CreateTaskResult's own JSON.
 func (s *MCPServer) limitCreateTaskResult(result *mcp.CreateTaskResult) *mcp.CreateTaskResult {
 	if result == nil {
 		return nil
 	}
 	view := &mcp.CallToolResult{
+		Result:            mcp.Result{Meta: result.Meta},
 		Content:           result.Content,
 		StructuredContent: result.StructuredContent,
 		IsError:           result.IsError,
@@ -2496,6 +2498,7 @@ func (s *MCPServer) limitCreateTaskResult(result *mcp.CreateTaskResult) *mcp.Cre
 	if limited == view {
 		return result
 	}
+	result.Meta = nil
 	result.Content = limited.Content
 	result.StructuredContent = limited.StructuredContent
 	result.IsError = limited.IsError

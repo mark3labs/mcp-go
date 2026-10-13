@@ -904,66 +904,114 @@ func TestMCPServer_PaginationCursorStability(t *testing.T) {
 }
 
 func TestToolResultSizeLimit(t *testing.T) {
-	server := NewMCPServer("test-server", "1.0.0",
-		WithToolCapabilities(true),
-		WithToolResultSizeLimit(64),
-	)
-	server.AddTool(mcp.NewTool("big"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return mcp.NewToolResultText(strings.Repeat("x", 200)), nil
-	})
-	server.AddTool(mcp.NewTool("small"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return mcp.NewToolResultText("ok"), nil
-	})
+	exact, err := json.Marshal(mcp.NewToolResultText("exact"))
+	require.NoError(t, err)
 
-	call := func(name string) mcp.JSONRPCResponse {
-		t.Helper()
-		response := server.HandleMessage(t.Context(), fmt.Appendf(nil, `{
-			"jsonrpc": "2.0",
-			"id": 1,
-			"method": "tools/call",
-			"params": {"name": "%s"}
-		}`, name))
-		resp, ok := response.(mcp.JSONRPCResponse)
-		require.True(t, ok)
-		return resp
+	tests := []struct {
+		name    string
+		limit   int
+		text    string
+		meta    string
+		limited bool
+	}{
+		{name: "over the limit", limit: 64, text: strings.Repeat("x", 200), limited: true},
+		{name: "under the limit", limit: 64, text: "ok"},
+		{name: "exactly at the limit", limit: len(exact), text: "exact"},
+		{name: "one byte over the limit", limit: len(exact) - 1, text: "exact", limited: true},
+		{name: "metadata over the limit", limit: 64, text: "ok", meta: strings.Repeat("m", 200), limited: true},
+		{name: "zero disables the limit", limit: 0, text: strings.Repeat("x", 200)},
+		{name: "negative disables the limit", limit: -1, text: strings.Repeat("x", 200)},
 	}
 
-	big, err := json.Marshal(call("big").Result)
-	require.NoError(t, err)
-	assert.Contains(t, string(big), "tool result exceeds 64 bytes")
-	assert.Contains(t, string(big), `"isError":true`)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewMCPServer("test-server", "1.0.0",
+				WithToolCapabilities(true),
+				WithToolResultSizeLimit(tt.limit),
+			)
+			server.AddTool(mcp.NewTool("tool"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				result := mcp.NewToolResultText(tt.text)
+				if tt.meta != "" {
+					result.Meta = mcp.NewMetaFromMap(map[string]any{"note": tt.meta})
+				}
+				return result, nil
+			})
 
-	small, err := json.Marshal(call("small").Result)
-	require.NoError(t, err)
-	assert.Contains(t, string(small), "ok")
-	assert.NotContains(t, string(small), "tool result exceeds")
+			response := server.HandleMessage(t.Context(), []byte(`{
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "tools/call",
+				"params": {"name": "tool"}
+			}`))
+			resp, ok := response.(mcp.JSONRPCResponse)
+			require.True(t, ok)
+			raw, err := json.Marshal(resp.Result)
+			require.NoError(t, err)
+
+			if tt.limited {
+				assert.Contains(t, string(raw), fmt.Sprintf("tool result exceeds %d bytes", tt.limit))
+				assert.Contains(t, string(raw), `"isError":true`)
+				assert.NotContains(t, string(raw), tt.text)
+				if tt.meta != "" {
+					assert.NotContains(t, string(raw), tt.meta)
+				}
+				return
+			}
+			assert.Contains(t, string(raw), tt.text)
+			assert.NotContains(t, string(raw), "tool result exceeds")
+		})
+	}
 }
 
 func TestToolResultSizeLimitOnTasks(t *testing.T) {
-	server := NewMCPServer("test", "1.0.0",
-		WithTaskCapabilities(true, true, true),
-		WithToolResultSizeLimit(64),
-	)
-	server.AddTool(
-		mcp.NewTool("regular", mcp.WithTaskSupport(mcp.TaskSupportRequired)),
-		func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			return mcp.NewToolResultText(strings.Repeat("x", 200)), nil
-		},
-	)
-	server.AddTaskTool(
-		mcp.NewTool("taskonly", mcp.WithTaskSupport(mcp.TaskSupportRequired)),
-		func(context.Context, mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-			return &mcp.CreateTaskResult{
-				Content: []mcp.Content{mcp.NewTextContent(strings.Repeat("y", 200))},
-			}, nil
-		},
-	)
+	big := strings.Repeat("x", 200)
+	bigMeta := strings.Repeat("m", 200)
+	withMeta := func(meta string) *mcp.Meta {
+		if meta == "" {
+			return nil
+		}
+		return mcp.NewMetaFromMap(map[string]any{"note": meta})
+	}
 
-	for _, name := range []string{"regular", "taskonly"} {
-		t.Run(name, func(t *testing.T) {
+	tests := []struct {
+		name     string
+		taskOnly bool
+		text     string
+		meta     string
+		limited  bool
+	}{
+		{name: "regular tool over the limit", text: big, limited: true},
+		{name: "task tool over the limit", taskOnly: true, text: big, limited: true},
+		{name: "regular tool metadata over the limit", text: "ok", meta: bigMeta, limited: true},
+		{name: "task tool metadata over the limit", taskOnly: true, text: "ok", meta: bigMeta, limited: true},
+		{name: "task tool under the limit", taskOnly: true, text: "ok", meta: "small"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewMCPServer("test", "1.0.0",
+				WithTaskCapabilities(true, true, true),
+				WithToolResultSizeLimit(128),
+			)
+			tool := mcp.NewTool("tool", mcp.WithTaskSupport(mcp.TaskSupportRequired))
+			if tt.taskOnly {
+				server.AddTaskTool(tool, func(context.Context, mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+					return &mcp.CreateTaskResult{
+						Result:  mcp.Result{Meta: withMeta(tt.meta)},
+						Content: []mcp.Content{mcp.NewTextContent(tt.text)},
+					}, nil
+				})
+			} else {
+				server.AddTool(tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					result := mcp.NewToolResultText(tt.text)
+					result.Meta = withMeta(tt.meta)
+					return result, nil
+				})
+			}
+
 			ctx := t.Context()
 			callResult, callErr := server.handleToolCall(ctx, 1, mcp.CallToolRequest{
-				Params: mcp.CallToolParams{Name: name, Task: &mcp.TaskParams{}},
+				Params: mcp.CallToolParams{Name: "tool", Task: &mcp.TaskParams{}},
 			})
 			require.Nil(t, callErr)
 			created, ok := callResult.(*mcp.CreateTaskResult)
@@ -981,12 +1029,19 @@ func TestToolResultSizeLimitOnTasks(t *testing.T) {
 				Params: mcp.TaskResultParams{TaskId: created.Task.TaskId},
 			})
 			require.Nil(t, resultErr)
-			require.True(t, result.IsError)
 			raw, err := json.Marshal(result)
 			require.NoError(t, err)
-			assert.Contains(t, string(raw), "tool result exceeds 64 bytes")
-			assert.NotContains(t, string(raw), strings.Repeat("x", 50))
-			assert.NotContains(t, string(raw), strings.Repeat("y", 50))
+
+			if tt.limited {
+				assert.True(t, result.IsError)
+				assert.Contains(t, string(raw), "tool result exceeds 128 bytes")
+				assert.NotContains(t, string(raw), strings.Repeat("x", 50))
+				assert.NotContains(t, string(raw), strings.Repeat("m", 50))
+				return
+			}
+			assert.False(t, result.IsError)
+			assert.Contains(t, string(raw), tt.text)
+			assert.Contains(t, string(raw), tt.meta)
 		})
 	}
 }
