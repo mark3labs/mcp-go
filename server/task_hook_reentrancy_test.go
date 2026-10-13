@@ -19,13 +19,13 @@ func TestTaskHooksCanReadTaskState(t *testing.T) {
 			hooks := &TaskHooks{}
 			s := NewMCPServer("test", "1", WithTaskHooks(hooks))
 			observed := make(chan struct{})
-			observe := func(context.Context, TaskMetrics) { s.listTasks(context.Background()); close(observed) }
+			observe := func(context.Context, TaskMetrics) { s.listTasks(t.Context()); close(observed) }
 			if phase == "created" {
 				hooks.AddOnTaskCreated(observe)
 			}
 			done := make(chan error, 1)
 			go func() {
-				entry, err := s.createTask(context.Background(), "task", "tool", nil, nil)
+				entry, err := s.createTask(t.Context(), "task", "tool", nil, nil)
 				if err != nil {
 					done <- err
 					return
@@ -39,15 +39,15 @@ func TestTaskHooksCanReadTaskState(t *testing.T) {
 					s.completeTask(entry, nil, errors.New("failure"))
 				case "task handler cancellation":
 					hooks.AddOnTaskCancelled(observe)
-					s.executeTaskTool(context.Background(), entry, ServerTaskTool{Handler: func(context.Context, mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+					s.executeTaskTool(t.Context(), entry, ServerTaskTool{Handler: func(context.Context, mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
 						return nil, context.Canceled
 					}}, mcp.CallToolRequest{})
 				case "regular handler cancellation":
 					hooks.AddOnTaskCancelled(observe)
-					s.executeRegularToolAsTask(context.Background(), entry, ServerTool{Handler: func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) { return nil, context.Canceled }}, mcp.CallToolRequest{})
+					s.executeRegularToolAsTask(t.Context(), entry, ServerTool{Handler: func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) { return nil, context.Canceled }}, mcp.CallToolRequest{})
 				case "cancelled":
 					hooks.AddOnTaskCancelled(observe)
-					err = s.cancelTask(context.Background(), "task")
+					err = s.cancelTask(t.Context(), "task")
 				}
 				done <- err
 			}()
