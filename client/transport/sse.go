@@ -42,6 +42,12 @@ type SSE struct {
 	startMu   sync.Mutex
 	startDone chan struct{}
 
+	// lifecycleMu serializes the closed transition with canceler publication.
+	// Start publishes the stream canceler under it and Close flips closed and
+	// reads the canceler under it, so an in-flight start cannot escape
+	// shutdown with a live request context.
+	lifecycleMu sync.Mutex
+
 	started          atomic.Bool
 	closed           atomic.Bool
 	cancelSSEStream  context.CancelFunc
@@ -169,6 +175,12 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 func (c *SSE) Start(ctx context.Context) error {
 	for {
 		c.startMu.Lock()
+		// Reject any start after Close before the started fast-path so a closed
+		// transport reports ErrTransportClosed instead of nil.
+		if c.closed.Load() {
+			c.startMu.Unlock()
+			return ErrTransportClosed
+		}
 		if c.started.Load() {
 			c.startMu.Unlock()
 			return nil
@@ -211,8 +223,24 @@ func (c *SSE) start(ctx context.Context) error {
 	endpointChan := make(chan struct{})
 	endpointOnce := &sync.Once{}
 
+	// Publish the canceler under the same lock Close uses for the closed
+	// transition. Close therefore either rejects this attempt or observes its
+	// canceler.
+	c.lifecycleMu.Lock()
+	if c.closed.Load() {
+		c.lifecycleMu.Unlock()
+		return ErrTransportClosed
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	c.cancelSSEStream = cancel
+	c.lifecycleMu.Unlock()
+
+	startSucceeded := false
+	defer func() {
+		if !startSucceeded {
+			cancel()
+		}
+	}()
 
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL.String(), nil)
 	if err != nil {
@@ -323,7 +351,15 @@ func (c *SSE) start(ctx context.Context) error {
 		return fmt.Errorf("timeout waiting for endpoint after %v", endpointTimeout)
 	}
 
+	// Do not publish a successful start after a concurrent Close has won.
+	c.lifecycleMu.Lock()
+	if c.closed.Load() {
+		c.lifecycleMu.Unlock()
+		return ErrTransportClosed
+	}
 	c.started.Store(true)
+	startSucceeded = true
+	c.lifecycleMu.Unlock()
 	return nil
 }
 
@@ -667,14 +703,21 @@ func (c *SSE) SendRequest(
 // Close shuts down the SSE client connection and cleans up any pending responses.
 // Returns an error if the shutdown process fails.
 func (c *SSE) Close() error {
-	if !c.closed.CompareAndSwap(false, true) {
+	// Synchronize the closed transition with Start's canceler publication so
+	// an in-flight start cannot escape shutdown with a live request context.
+	c.lifecycleMu.Lock()
+	if c.closed.Load() {
+		c.lifecycleMu.Unlock()
 		return nil // Already closed
 	}
+	c.closed.Store(true)
+	cancelSSEStream := c.cancelSSEStream
+	c.lifecycleMu.Unlock()
 
-	if c.cancelSSEStream != nil {
+	if cancelSSEStream != nil {
 		// It could stop the sse stream body, to quit the readSSE loop immediately
 		// Also, it could quit start() immediately if not receiving the endpoint
-		c.cancelSSEStream()
+		cancelSSEStream()
 	}
 
 	// Clean up any pending responses

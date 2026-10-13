@@ -713,6 +713,59 @@ func TestParseContent(t *testing.T) {
 	}
 }
 
+func TestParseSamplingContent(t *testing.T) {
+	tests := []struct {
+		name        string
+		content     any
+		expected    any
+		expectError string
+	}{
+		{
+			name:     "single block",
+			content:  map[string]any{"type": "text", "text": "Hello"},
+			expected: NewTextContent("Hello"),
+		},
+		{
+			name: "array of blocks",
+			content: []any{
+				map[string]any{"type": "tool_use", "id": "call_1", "name": "get_weather", "input": map[string]any{"city": "Paris"}},
+				map[string]any{"type": "tool_use", "id": "call_2", "name": "get_weather", "input": map[string]any{"city": "London"}},
+			},
+			expected: []Content{
+				NewToolUseContent("call_1", "get_weather", map[string]any{"city": "Paris"}),
+				NewToolUseContent("call_2", "get_weather", map[string]any{"city": "London"}),
+			},
+		},
+		{
+			name:     "typed content",
+			content:  NewTextContent("Hello"),
+			expected: NewTextContent("Hello"),
+		},
+		{
+			name:        "array entry that is not an object",
+			content:     []any{"Hello"},
+			expectError: "content[0]: expected object, got string",
+		},
+		{
+			name:        "array entry with an unknown type",
+			content:     []any{map[string]any{"type": "video"}},
+			expectError: "content[0]: unsupported content type: video",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ParseSamplingContent(tt.content)
+			if tt.expectError != "" {
+				require.EqualError(t, err, tt.expectError)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func TestNewJSONRPCResultResponse(t *testing.T) {
 	t.Parallel()
 

@@ -12,6 +12,7 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -168,6 +169,10 @@ type requestError struct {
 	id   any
 	code int
 	err  error
+	// message, when set, is sent instead of err.Error().
+	message *string
+	// data, when set, is sent as the data member of the JSON-RPC error.
+	data any
 }
 
 func (e *requestError) Error() string {
@@ -175,10 +180,14 @@ func (e *requestError) Error() string {
 }
 
 func (e *requestError) ToJSONRPCError() mcp.JSONRPCError {
+	message := e.err.Error()
+	if e.message != nil {
+		message = *e.message
+	}
 	return mcp.JSONRPCError{
 		JSONRPC: mcp.JSONRPC_VERSION,
 		ID:      mcp.NewRequestId(e.id),
-		Error:   mcp.NewJSONRPCErrorDetails(e.code, e.err.Error(), nil),
+		Error:   mcp.NewJSONRPCErrorDetails(e.code, message, e.data),
 	}
 }
 
@@ -225,12 +234,18 @@ type MCPServer struct {
 	resourceCompletionProvider ResourceCompletionProvider
 	capabilities               serverCapabilities
 	cacheHints                 map[mcp.MCPMethod]cacheHints
+	// toolHeaderBindings holds each registered tool's x-mcp-header bindings,
+	// extracted once at registration so a tools/call never re-reads the input
+	// schema. Keyed like tools and taskTools and kept in step with them under
+	// toolsMu; session tools are not cached here.
+	toolHeaderBindings map[string][]mcp.ParamHeaderBinding
 	// allowServerInitiatedRequests keeps RequestSampling, RequestElicitation,
 	// and RequestRoots usable against clients speaking protocol version
 	// 2026-07-28 or later. See WithLegacyServerInitiatedRequests.
 	allowServerInitiatedRequests bool
 	paginationLimit              *int
 	sessions                     sync.Map
+	listenSessions               sync.Map // see registerListenSession
 	hooks                        *Hooks
 	taskHooks                    *TaskHooks
 	tasks                        map[string]*taskEntry
@@ -303,7 +318,8 @@ func WithLegacyServerInitiatedRequests() ServerOption {
 	}
 }
 
-// WithPaginationLimit sets the pagination limit for the server.
+// WithPaginationLimit sets the maximum page size for list results.
+// Zero and negative limits leave the list unpaged.
 func WithPaginationLimit(limit int) ServerOption {
 	return func(s *MCPServer) {
 		s.paginationLimit = &limit
@@ -748,6 +764,7 @@ func NewMCPServer(
 		promptHandlers:             make(map[string]PromptHandlerFunc),
 		tools:                      make(map[string]ServerTool),
 		taskTools:                  make(map[string]ServerTaskTool),
+		toolHeaderBindings:         make(map[string][]mcp.ParamHeaderBinding),
 		toolHandlerMiddlewares:     make([]ToolHandlerMiddleware, 0),
 		resourceHandlerMiddlewares: make([]ResourceHandlerMiddleware, 0),
 		promptHandlerMiddlewares:   make([]PromptHandlerMiddleware, 0),
@@ -994,6 +1011,16 @@ func (s *MCPServer) applyStrictInputSchemaDefault(tool *mcp.Tool) {
 	tool.InputSchema.AdditionalProperties = false
 }
 
+// validateToolHeaderAnnotations rejects a tool definition whose x-mcp-header
+// annotations violate the SEP-2243 constraints, rather than emitting headers
+// that gateways cannot route on. Servers MUST refuse such definitions.
+func validateToolHeaderAnnotations(tool *mcp.Tool) error {
+	if err := mcp.ValidateParamHeaderAnnotations(tool); err != nil {
+		return fmt.Errorf("tool %q has invalid x-mcp-header annotations: %w", tool.Name, err)
+	}
+	return nil
+}
+
 // AddTool registers a new tool and its handler
 func (s *MCPServer) AddTool(tool mcp.Tool, handler ToolHandlerFunc) {
 	s.AddTools(ServerTool{Tool: tool, Handler: handler})
@@ -1048,6 +1075,9 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 	s.implicitlyRegisterToolCapabilities()
 
 	s.toolsMu.Lock()
+	// Stage the whole batch before touching the registry so a rejected entry
+	// leaves earlier ones unregistered as well.
+	staged := make(map[string]ServerTool, len(tools))
 	for _, entry := range tools {
 		name := entry.Tool.Name
 		// Check for collision with task tools
@@ -1056,14 +1086,15 @@ func (s *MCPServer) AddTools(tools ...ServerTool) {
 			panic(fmt.Sprintf("tool name '%s' already registered as task tool", name))
 		}
 		s.applyStrictInputSchemaDefault(&entry.Tool)
-		// Servers MUST reject tool definitions whose x-mcp-header annotations
-		// violate the SEP-2243 constraints, rather than emitting headers that
-		// gateways cannot route on.
-		if err := mcp.ValidateParamHeaderAnnotations(&entry.Tool); err != nil {
+		if err := validateToolHeaderAnnotations(&entry.Tool); err != nil {
 			s.toolsMu.Unlock()
-			panic(fmt.Sprintf("tool %q has invalid x-mcp-header annotations: %v", name, err))
+			panic(err.Error())
 		}
-		s.tools[name] = entry
+		staged[name] = entry
+	}
+	maps.Copy(s.tools, staged)
+	for name, entry := range staged {
+		s.toolHeaderBindings[name] = mcp.ExtractParamHeaderBindings(&entry.Tool)
 	}
 	s.toolsMu.Unlock()
 
@@ -1079,6 +1110,7 @@ func (s *MCPServer) AddTaskTools(taskTools ...ServerTaskTool) {
 	s.implicitlyRegisterToolCapabilities()
 
 	s.toolsMu.Lock()
+	staged := make(map[string]ServerTaskTool, len(taskTools))
 	for _, entry := range taskTools {
 		name := entry.Tool.Name
 		// Check for collision with regular tools
@@ -1087,7 +1119,15 @@ func (s *MCPServer) AddTaskTools(taskTools ...ServerTaskTool) {
 			panic(fmt.Sprintf("task tool name '%s' already registered as regular tool", name))
 		}
 		s.applyStrictInputSchemaDefault(&entry.Tool)
-		s.taskTools[name] = entry
+		if err := validateToolHeaderAnnotations(&entry.Tool); err != nil {
+			s.toolsMu.Unlock()
+			panic(err.Error())
+		}
+		staged[name] = entry
+	}
+	maps.Copy(s.taskTools, staged)
+	for name, entry := range staged {
+		s.toolHeaderBindings[name] = mcp.ExtractParamHeaderBindings(&entry.Tool)
 	}
 	s.toolsMu.Unlock()
 
@@ -1112,9 +1152,19 @@ func (s *MCPServer) SetTools(tools ...ServerTool) {
 			panic(fmt.Sprintf("tool name '%s' already registered as task tool", name))
 		}
 		s.applyStrictInputSchemaDefault(&entry.Tool)
+		if err := validateToolHeaderAnnotations(&entry.Tool); err != nil {
+			s.toolsMu.Unlock()
+			panic(err.Error())
+		}
 		newTools[name] = entry
 	}
+	for name := range s.tools {
+		delete(s.toolHeaderBindings, name)
+	}
 	s.tools = newTools
+	for name, entry := range newTools {
+		s.toolHeaderBindings[name] = mcp.ExtractParamHeaderBindings(&entry.Tool)
+	}
 	s.toolsMu.Unlock()
 	s.inputValidator.invalidateAll()
 	s.outputValidator.invalidateAll()
@@ -1160,6 +1210,7 @@ func (s *MCPServer) DeleteTools(names ...string) {
 	for _, name := range names {
 		if _, ok := s.tools[name]; ok {
 			delete(s.tools, name)
+			delete(s.toolHeaderBindings, name)
 			exists = true
 		}
 	}
@@ -1468,6 +1519,8 @@ func (s *MCPServer) handleSetLevel(
 	return &mcp.EmptyResult{}, nil
 }
 
+// listByPagination returns the page of allElements that follows cursor.
+// allElements must be sorted by name, then by pageTieBreak.
 func listByPagination[T mcp.Named](
 	_ context.Context,
 	s *MCPServer,
@@ -1476,32 +1529,89 @@ func listByPagination[T mcp.Named](
 ) ([]T, mcp.Cursor, error) {
 	startPos := 0
 	if cursor != "" {
-		c, err := base64.StdEncoding.DecodeString(string(cursor))
+		encodedName, encodedTieBreak, hasTieBreak := strings.Cut(string(cursor), ".")
+		c, err := base64.StdEncoding.DecodeString(encodedName)
 		if err != nil {
 			return nil, "", err
 		}
-		cString := string(c)
-		startPos = sort.Search(len(allElements), func(i int) bool {
-			return allElements[i].GetName() > cString
-		})
+		name := string(c)
+		if !hasTieBreak {
+			// Legacy cursors identify only a name. Preserve their continuation
+			// after the whole name group instead of restarting at its first URI.
+			startPos = sort.Search(len(allElements), func(i int) bool {
+				return allElements[i].GetName() > name
+			})
+		} else {
+			t, err := base64.StdEncoding.DecodeString(encodedTieBreak)
+			if err != nil {
+				return nil, "", err
+			}
+			tieBreak := string(t)
+			startPos = sort.Search(len(allElements), func(i int) bool {
+				return comparePageKey(&allElements[i], name, tieBreak) > 0
+			})
+		}
 	}
 	endPos := len(allElements)
-	if s.paginationLimit != nil {
+	if s.paginationLimit != nil && *s.paginationLimit > 0 {
 		if len(allElements) > startPos+*s.paginationLimit {
 			endPos = startPos + *s.paginationLimit
 		}
 	}
 	elementsToReturn := allElements[startPos:endPos]
+	// Every list result holds its items in a required array. allElements can
+	// be nil: the resource and task lists start out that way, and a filter
+	// that hides every item may return nil. A nil slice would go out as null.
+	if elementsToReturn == nil {
+		elementsToReturn = []T{}
+	}
 	// set the next cursor
 	nextCursor := func() mcp.Cursor {
-		if s.paginationLimit != nil && len(elementsToReturn) >= *s.paginationLimit {
-			nc := elementsToReturn[len(elementsToReturn)-1].GetName()
-			toString := base64.StdEncoding.EncodeToString([]byte(nc))
-			return mcp.Cursor(toString)
+		if s.paginationLimit != nil && *s.paginationLimit > 0 && len(elementsToReturn) >= *s.paginationLimit {
+			return encodePageCursor(&elementsToReturn[len(elementsToReturn)-1])
 		}
 		return ""
 	}()
 	return elementsToReturn, nextCursor, nil
+}
+
+// pageTieBreak orders list elements that share a name. Tool, prompt and task
+// names are unique, but resource and resource template names need not be, so
+// those are ordered by URI or URI template within a name. Without it, the
+// cursor could not say where among equally named elements a page ended, and
+// the rest of them would be skipped.
+func pageTieBreak[T mcp.Named](element *T) string {
+	switch e := any(element).(type) {
+	case *mcp.Resource:
+		return e.URI
+	case *mcp.ResourceTemplate:
+		if e.URITemplate != nil {
+			return e.URITemplate.Raw()
+		}
+	}
+	return ""
+}
+
+// comparePageKey compares element with the position given by a name and a
+// tie-break. The tie-break is only looked at when the names are equal.
+func comparePageKey[T mcp.Named](element *T, name, tieBreak string) int {
+	if c := cmp.Compare((*element).GetName(), name); c != 0 {
+		return c
+	}
+	return cmp.Compare(pageTieBreak(element), tieBreak)
+}
+
+// encodePageCursor returns the cursor for the page after element: the base64
+// of its name, followed for resources and templates by a dot and the base64 of
+// their URI, even when empty. The dot distinguishes composite cursors from
+// legacy name-only cursors and is outside the base64 alphabet.
+func encodePageCursor[T mcp.Named](element *T) mcp.Cursor {
+	cursor := base64.StdEncoding.EncodeToString([]byte((*element).GetName()))
+	switch any(element).(type) {
+	case *mcp.Resource, *mcp.ResourceTemplate:
+		cursor += "." + base64.StdEncoding.EncodeToString([]byte(pageTieBreak(element)))
+	}
+	return mcp.Cursor(cursor)
 }
 
 func (s *MCPServer) handleListResources(
@@ -1529,9 +1639,12 @@ func (s *MCPServer) handleListResources(
 		}
 	}
 
-	// Sort the resources by name
+	// Sort the resources by name, then URI
 	resourcesList := slices.SortedFunc(maps.Values(resourceMap), func(a, b mcp.Resource) int {
-		return cmp.Compare(a.Name, b.Name)
+		if c := cmp.Compare(a.Name, b.Name); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.URI, b.URI)
 	})
 
 	// Apply pagination
@@ -1547,10 +1660,6 @@ func (s *MCPServer) handleListResources(
 			code: mcp.INVALID_PARAMS,
 			err:  err,
 		}
-	}
-
-	if resourcesToReturn == nil {
-		resourcesToReturn = []mcp.Resource{}
 	}
 
 	result := mcp.ListResourcesResult{
@@ -1596,7 +1705,10 @@ func (s *MCPServer) handleListResourceTemplates(
 	}
 
 	sort.Slice(templates, func(i, j int) bool {
-		return templates[i].Name < templates[j].Name
+		if c := strings.Compare(templates[i].Name, templates[j].Name); c != 0 {
+			return c < 0
+		}
+		return pageTieBreak(&templates[i]) < pageTieBreak(&templates[j])
 	})
 	templatesToReturn, nextCursor, err := listByPagination(
 		ctx,
@@ -1668,13 +1780,9 @@ func (s *MCPServer) handleReadResource(
 
 		contents, err := finalHandler(ctx, request)
 		if err != nil {
-			return nil, &requestError{
-				id:   id,
-				code: mcp.INTERNAL_ERROR,
-				err:  err,
-			}
+			return nil, handlerError(ctx, id, err)
 		}
-		return &mcp.ReadResourceResult{Contents: contents}, nil
+		return readResourceResult(contents), nil
 	}
 
 	// If no direct handler found, try matching against templates
@@ -1739,13 +1847,9 @@ func (s *MCPServer) handleReadResource(
 		s.resourceMiddlewareMu.RUnlock()
 		contents, err := finalHandler(ctx, request)
 		if err != nil {
-			return nil, &requestError{
-				id:   id,
-				code: mcp.INTERNAL_ERROR,
-				err:  err,
-			}
+			return nil, handlerError(ctx, id, err)
 		}
-		return &mcp.ReadResourceResult{Contents: contents}, nil
+		return readResourceResult(contents), nil
 	}
 
 	return nil, &requestError{
@@ -1757,6 +1861,16 @@ func (s *MCPServer) handleReadResource(
 			ErrResourceNotFound,
 		),
 	}
+}
+
+// readResourceResult wraps the contents a resource handler returned. contents
+// is a required array, so a handler that found nothing still sends [] rather
+// than null.
+func readResourceResult(contents []mcp.ResourceContents) *mcp.ReadResourceResult {
+	if contents == nil {
+		contents = []mcp.ResourceContents{}
+	}
+	return &mcp.ReadResourceResult{Contents: contents}
 }
 
 // matchesTemplate checks if a URI matches a URI template pattern
@@ -1887,11 +2001,7 @@ func (s *MCPServer) handleGetPrompt(
 
 	result, err := finalHandler(ctx, request)
 	if err != nil {
-		return nil, &requestError{
-			id:   id,
-			code: mcp.INTERNAL_ERROR,
-			err:  err,
-		}
+		return nil, handlerError(ctx, id, err)
 	}
 
 	// Bridge a handler asking for more input to clients that predate the
@@ -1903,10 +2013,26 @@ func (s *MCPServer) handleGetPrompt(
 			return finalHandler(ctx, retried)
 		})
 	if err != nil {
+		return nil, handlerError(ctx, id, err)
+	}
+
+	// messages is a required array, so a prompt with no messages still sends
+	// [] rather than null. A result asking for input has no messages yet. The
+	// handler's result is copied rather than modified, as it may be shared.
+	if result != nil && result.Messages == nil && !result.NeedsInput() {
+		withMessages := *result
+		withMessages.Messages = []mcp.PromptMessage{}
+		result = &withMessages
+	}
+
+	// A handler that returns neither a result nor an error, on the first call
+	// or on a retry, must still produce a response. The dispatcher would
+	// otherwise dereference the nil result and panic.
+	if result == nil {
 		return nil, &requestError{
 			id:   id,
 			code: mcp.INTERNAL_ERROR,
-			err:  err,
+			err:  noResultError("prompt", request.Params.Name),
 		}
 	}
 
@@ -2193,11 +2319,7 @@ func (s *MCPServer) handleToolCall(
 
 	result, err := finalHandler(ctx, request)
 	if err != nil {
-		return nil, &requestError{
-			id:   id,
-			code: mcp.INTERNAL_ERROR,
-			err:  err,
-		}
+		return nil, handlerError(ctx, id, err)
 	}
 
 	// A handler may ask the client for more input before it can finish
@@ -2212,10 +2334,17 @@ func (s *MCPServer) handleToolCall(
 			return finalHandler(ctx, retried)
 		})
 	if err != nil {
+		return nil, handlerError(ctx, id, err)
+	}
+
+	// Without this check a handler that returns neither a result nor an
+	// error, on the first call or on a retry, would be answered with a null
+	// result, which no client accepts.
+	if result == nil {
 		return nil, &requestError{
 			id:   id,
 			code: mcp.INTERNAL_ERROR,
-			err:  err,
+			err:  noResultError("tool", request.Params.Name),
 		}
 	}
 
@@ -2245,6 +2374,17 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 	taskTool, isTaskTool := s.taskTools[request.Params.Name]
 	regularTool, isRegularTool := s.tools[request.Params.Name]
 	s.toolsMu.RUnlock()
+
+	// A session's own tool takes precedence over the server's, as it does in
+	// handleToolCall, which routed this call here after finding it there.
+	if session := ClientSessionFromContext(ctx); session != nil {
+		if sessionWithTools, ok := session.(SessionWithTools); ok {
+			if sessionTool, ok := sessionWithTools.GetSessionTools()[request.Params.Name]; ok {
+				regularTool, isRegularTool = sessionTool, true
+				isTaskTool = false
+			}
+		}
+	}
 
 	// Determine which tool to use and validate task support
 	var toolToUse ServerTaskTool
@@ -2347,10 +2487,14 @@ func (s *MCPServer) executeTaskTool(
 	taskCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Store cancel func in entry so it can be cancelled via tasks/cancel
+	// Register cancellation atomically with TTL cleanup, which may have already removed the task.
 	s.tasksMu.Lock()
 	entry.cancelFunc = cancel
+	expired := s.tasks[entry.task.TaskId] != entry
 	s.tasksMu.Unlock()
+	if expired {
+		cancel()
+	}
 
 	// Execute the task tool handler
 	result, err := taskTool.Handler(taskCtx, request)
@@ -2409,6 +2553,13 @@ func (s *MCPServer) executeTaskTool(
 		return
 	}
 
+	// tasks/result has nothing to report for a handler that returned neither
+	// a result nor an error, so the task fails.
+	if result == nil {
+		s.completeTask(entry, nil, noResultError("tool", request.Params.Name))
+		return
+	}
+
 	// Task succeeded - store the CreateTaskResult
 	// Note: The actual result will be retrieved later via tasks/result
 	//
@@ -2439,10 +2590,14 @@ func (s *MCPServer) executeRegularToolAsTask(
 	taskCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Store cancel func in entry so it can be cancelled via tasks/cancel
+	// Register cancellation atomically with TTL cleanup, which may have already removed the task.
 	s.tasksMu.Lock()
 	entry.cancelFunc = cancel
+	expired := s.tasks[entry.task.TaskId] != entry
 	s.tasksMu.Unlock()
+	if expired {
+		cancel()
+	}
 
 	// Execute the regular tool handler with middleware applied
 	finalHandler := regularTool.Handler
@@ -2507,6 +2662,13 @@ func (s *MCPServer) executeRegularToolAsTask(
 
 		// Task failed - complete with error
 		s.completeTask(entry, nil, err)
+		return
+	}
+
+	// tasks/result has nothing to report for a handler that returned neither
+	// a result nor an error, so the task fails.
+	if result == nil {
+		s.completeTask(entry, nil, noResultError("tool", request.Params.Name))
 		return
 	}
 
@@ -2797,6 +2959,9 @@ func (s *MCPServer) handleTaskResult(
 	case *mcp.CallToolResult:
 		result.Content = taskResult.Content
 		result.StructuredContent = taskResult.StructuredContent
+		if len(taskResult.RawStructuredContent) > 0 {
+			result.StructuredContent = append(json.RawMessage(nil), taskResult.RawStructuredContent...)
+		}
 		result.IsError = taskResult.IsError
 		mergeTaskResultMeta(result, taskResult.Meta)
 	case *mcp.CreateTaskResult:
@@ -2901,12 +3066,18 @@ func (s *MCPServer) handleComplete(
 	// Defensive nil check: default providers always return non-nil completions,
 	// but custom providers might erroneously return nil. Treat as empty result.
 	if completion == nil {
-		return &mcp.CompleteResult{}, nil
+		completion = &mcp.Completion{}
 	}
 
-	return &mcp.CompleteResult{
+	result := &mcp.CompleteResult{
 		Completion: *completion,
-	}, nil
+	}
+	// values is a required array, so a provider with no matches still sends []
+	// rather than null.
+	if result.Completion.Values == nil {
+		result.Completion.Values = []string{}
+	}
+	return result, nil
 }
 
 //
@@ -2964,7 +3135,7 @@ func (s *MCPServer) createTask(ctx context.Context, taskID string, toolName stri
 
 	// Start TTL cleanup if specified
 	if ttl != nil && *ttl > 0 {
-		go s.scheduleTaskCleanup(taskID, *ttl)
+		go s.scheduleTaskCleanup(taskID, entry, *ttl)
 	}
 
 	return entry, nil
@@ -3155,15 +3326,29 @@ func (s *MCPServer) cancelTask(ctx context.Context, taskID string) error {
 	return nil
 }
 
-// scheduleTaskCleanup removes the task from storage after its TTL expires so
-// clients have the full TTL window to retrieve results.
-func (s *MCPServer) scheduleTaskCleanup(taskID string, ttlMs int64) {
+// scheduleTaskCleanup cancels unfinished task execution and removes the task from
+// storage after its TTL expires so clients have the full TTL window to retrieve results.
+// It only performs cleanup if the stored task entry matches expected.
+func (s *MCPServer) scheduleTaskCleanup(taskID string, expected *taskEntry, ttlMs int64) {
 	time.Sleep(time.Duration(ttlMs) * time.Millisecond)
 
+	var cancel context.CancelFunc
 	s.tasksMu.Lock()
+	entry, ok := s.tasks[taskID]
+	if !ok || entry != expected {
+		s.tasksMu.Unlock()
+		return
+	}
+	if !entry.completed {
+		cancel = entry.cancelFunc
+	}
 	delete(s.tasks, taskID)
 	s.expiredTasks[taskID] = time.Now()
 	s.tasksMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
 
 	// Remove tombstone after 5 minutes.
 	time.AfterFunc(5*time.Minute, func() {

@@ -722,12 +722,60 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 			}
 		}
 		c := NewToolResultContent(toolUseID, contentItems, isError)
+		c.StructuredContent = contentMap["structuredContent"]
 		c.Annotations = annotations
 		c.Meta = meta
 		return c, nil
 	}
 
 	return nil, fmt.Errorf("unsupported content type: %s", contentType)
+}
+
+// ParseSamplingContent parses the content of a SamplingMessage that was
+// decoded into generic JSON values. A single content block is returned as a
+// Content and an array of blocks as a []Content. Any other value, such as
+// content that is already typed, is returned unchanged.
+func ParseSamplingContent(content any) (any, error) {
+	switch c := content.(type) {
+	case map[string]any:
+		return ParseContent(c)
+	case []any:
+		blocks := make([]Content, 0, len(c))
+		for i, item := range c {
+			itemMap, ok := item.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("content[%d]: expected object, got %T", i, item)
+			}
+			block, err := ParseContent(itemMap)
+			if err != nil {
+				return nil, fmt.Errorf("content[%d]: %w", i, err)
+			}
+			blocks = append(blocks, block)
+		}
+		return blocks, nil
+	default:
+		return content, nil
+	}
+}
+
+// resultEnvelope holds the fields a result carries outside its payload: the
+// SEP-2322 round-trip fields and the SEP-2549 cache hints.
+type resultEnvelope struct {
+	ResultType    ResultType    `json:"resultType"`
+	InputRequests InputRequests `json:"inputRequests"`
+	RequestState  string        `json:"requestState"`
+	TTLMs         *int64        `json:"ttlMs"`
+	CacheScope    CacheScope    `json:"cacheScope"`
+}
+
+// parseResultEnvelope decodes the envelope of a result whose payload holds
+// interface values and therefore has to be walked by hand.
+func parseResultEnvelope(rawMessage json.RawMessage) (resultEnvelope, error) {
+	var envelope resultEnvelope
+	if err := json.Unmarshal(rawMessage, &envelope); err != nil {
+		return resultEnvelope{}, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	return envelope, nil
 }
 
 func ParseGetPromptResult(rawMessage *json.RawMessage) (*GetPromptResult, error) {
@@ -740,7 +788,15 @@ func ParseGetPromptResult(rawMessage *json.RawMessage) (*GetPromptResult, error)
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
+	envelope, err := parseResultEnvelope(*rawMessage)
+	if err != nil {
+		return nil, err
+	}
+
 	result := GetPromptResult{}
+	result.ResultType = envelope.ResultType
+	result.InputRequests = envelope.InputRequests
+	result.RequestState = envelope.RequestState
 
 	meta, ok := jsonContent["_meta"]
 	if ok {
@@ -756,8 +812,10 @@ func ParseGetPromptResult(rawMessage *json.RawMessage) (*GetPromptResult, error)
 		}
 	}
 
+	// A null payload is treated like an absent one: an input_required result
+	// carries no messages, and so does a zero-valued GetPromptResult.
 	messages, ok := jsonContent["messages"]
-	if ok {
+	if ok && messages != nil {
 		messagesArr, ok := messages.([]any)
 		if !ok {
 			return nil, fmt.Errorf("messages is not an array")
@@ -802,17 +860,20 @@ func ParseCallToolResult(rawMessage *json.RawMessage) (*CallToolResult, error) {
 	}
 
 	var probe struct {
-		ResultType ResultType      `json:"resultType"`
-		TaskID     string          `json:"taskId"`
+    TaskID     string          `json:"taskId"`
 		Content    json.RawMessage `json:"content"`
+		ResultType ResultType      `json:"resultType"`
 	}
 	if err := json.Unmarshal(*rawMessage, &probe); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
+
 	if probe.ResultType == ResultTypeTask {
 		return nil, &UnsupportedTaskResultError{TaskID: probe.TaskID}
 	}
-	if probe.Content == nil {
+	// A result asking for more input (SEP-2322) carries only the input
+	// requests and the request state, so it legitimately has no content.
+	if probe.Content == nil && probe.ResultType != ResultTypeInputRequired {
 		return nil, fmt.Errorf("content is missing")
 	}
 
@@ -838,7 +899,11 @@ func ParseResourceContents(contentMap map[string]any) (ResourceContents, error) 
 		return nil, fmt.Errorf("_meta must be an object")
 	}
 
-	if text := ExtractString(contentMap, "text"); text != "" {
+	// Select the variant on the presence of a string "text" or "blob" field,
+	// not on its emptiness. An empty resource is still a resource, and both
+	// fields marshal unconditionally, so treating "" as absent rejected
+	// payloads this library itself produces.
+	if text, ok := contentMap["text"].(string); ok {
 		return TextResourceContents{
 			Meta:     meta,
 			URI:      uri,
@@ -847,7 +912,7 @@ func ParseResourceContents(contentMap map[string]any) (ResourceContents, error) 
 		}, nil
 	}
 
-	if blob := ExtractString(contentMap, "blob"); blob != "" {
+	if blob, ok := contentMap["blob"].(string); ok {
 		return BlobResourceContents{
 			Meta:     meta,
 			URI:      uri,
@@ -869,7 +934,17 @@ func ParseReadResourceResult(rawMessage *json.RawMessage) (*ReadResourceResult, 
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
+	envelope, err := parseResultEnvelope(*rawMessage)
+	if err != nil {
+		return nil, err
+	}
+
 	var result ReadResourceResult
+	result.ResultType = envelope.ResultType
+	result.InputRequests = envelope.InputRequests
+	result.RequestState = envelope.RequestState
+	result.TTLMs = envelope.TTLMs
+	result.CacheScope = envelope.CacheScope
 
 	meta, ok := jsonContent["_meta"]
 	if ok {
@@ -879,7 +954,12 @@ func ParseReadResourceResult(rawMessage *json.RawMessage) (*ReadResourceResult, 
 	}
 
 	contents, ok := jsonContent["contents"]
-	if !ok {
+	if !ok || contents == nil {
+		// An input_required result asks for more input instead of returning
+		// contents, so the payload is legitimately absent.
+		if result.NeedsInput() {
+			return &result, nil
+		}
 		return nil, fmt.Errorf("contents is missing")
 	}
 
@@ -1189,37 +1269,37 @@ func ParseTaskResultResult(rawMessage *json.RawMessage) (*TaskResultResult, erro
 		return nil, fmt.Errorf("response is nil")
 	}
 
-	var jsonContent map[string]any
-	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
+	// Content holds interface values, so it is decoded element by element -
+	// the same shape CallToolResult.UnmarshalJSON handles.
+	var raw struct {
+		Meta              *Meta             `json:"_meta"`
+		ResultType        ResultType        `json:"resultType"`
+		Content           []json.RawMessage `json:"content"`
+		StructuredContent json.RawMessage   `json:"structuredContent"`
+		IsError           bool              `json:"isError"`
+	}
+	if err := json.Unmarshal(*rawMessage, &raw); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
-	resultResult := TaskResultResult{}
-	meta, ok := jsonContent["_meta"]
-	if ok {
-		if metaMap, ok := meta.(map[string]any); ok {
-			resultResult.Meta = NewMetaFromMap(metaMap)
+	resultResult := TaskResultResult{
+		Result:               Result{Meta: raw.Meta, ResultType: raw.ResultType},
+		RawStructuredContent: raw.StructuredContent,
+		IsError:              raw.IsError,
+	}
+
+	if len(raw.StructuredContent) > 0 {
+		if err := json.Unmarshal(raw.StructuredContent, &resultResult.StructuredContent); err != nil {
+			return nil, fmt.Errorf("unmarshal task structured content: %w", err)
 		}
 	}
 
-	result, ok := jsonContent["result"]
-	if ok {
-		if resultMap, ok := result.(map[string]any); ok {
-			if isError, ok := resultMap["isError"].(bool); ok {
-				resultResult.IsError = isError
-			}
-			if contents, ok := resultMap["content"].([]any); ok {
-				for _, content := range contents {
-					if contentMap, ok := content.(map[string]any); ok {
-						parsedContent, err := ParseContent(contentMap)
-						if err != nil {
-							return nil, err
-						}
-						resultResult.Content = append(resultResult.Content, parsedContent)
-					}
-				}
-			}
+	for _, item := range raw.Content {
+		content, err := UnmarshalContent(item)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshal task result content: %w", err)
 		}
+		resultResult.Content = append(resultResult.Content, content)
 	}
 
 	return &resultResult, nil

@@ -8,8 +8,9 @@ import (
 )
 
 // IterTools returns an iterator that lazily fetches pages of tools from the
-// server. Pages are fetched on demand as the iterator is consumed; breaking
-// out of the loop stops further requests.
+// server. Each iteration starts from the cursor in the original request.
+// Pages are fetched on demand as the iterator is consumed; breaking out of the
+// loop stops further requests.
 //
 // If an error occurs while fetching a page, the iterator yields a single
 // (zero-value, error) pair and then stops.
@@ -27,6 +28,8 @@ func (c *Client) IterTools(
 	request mcp.ListToolsRequest,
 ) iter.Seq2[mcp.Tool, error] {
 	return func(yield func(mcp.Tool, error) bool) {
+		request := request
+		seen := map[mcp.Cursor]struct{}{request.Params.Cursor: {}}
 		for {
 			if err := ctx.Err(); err != nil {
 				yield(mcp.Tool{}, err)
@@ -45,14 +48,19 @@ func (c *Client) IterTools(
 			if result.NextCursor == "" {
 				return
 			}
+			if err := noteListCursor(seen, result.NextCursor); err != nil {
+				yield(mcp.Tool{}, err)
+				return
+			}
 			request.Params.Cursor = result.NextCursor
 		}
 	}
 }
 
 // IterResources returns an iterator that lazily fetches pages of resources
-// from the server. Pages are fetched on demand as the iterator is consumed;
-// breaking out of the loop stops further requests.
+// from the server. Each iteration starts from the cursor in the original
+// request. Pages are fetched on demand as the iterator is consumed; breaking
+// out of the loop stops further requests.
 //
 // If an error occurs while fetching a page, the iterator yields a single
 // (zero-value, error) pair and then stops.
@@ -61,6 +69,8 @@ func (c *Client) IterResources(
 	request mcp.ListResourcesRequest,
 ) iter.Seq2[mcp.Resource, error] {
 	return func(yield func(mcp.Resource, error) bool) {
+		request := request
+		seen := map[mcp.Cursor]struct{}{request.Params.Cursor: {}}
 		for {
 			if err := ctx.Err(); err != nil {
 				yield(mcp.Resource{}, err)
@@ -79,14 +89,19 @@ func (c *Client) IterResources(
 			if result.NextCursor == "" {
 				return
 			}
+			if err := noteListCursor(seen, result.NextCursor); err != nil {
+				yield(mcp.Resource{}, err)
+				return
+			}
 			request.Params.Cursor = result.NextCursor
 		}
 	}
 }
 
 // IterResourceTemplates returns an iterator that lazily fetches pages of
-// resource templates from the server. Pages are fetched on demand as the
-// iterator is consumed; breaking out of the loop stops further requests.
+// resource templates from the server. Each iteration starts from the cursor in
+// the original request. Pages are fetched on demand as the iterator is
+// consumed; breaking out of the loop stops further requests.
 //
 // If an error occurs while fetching a page, the iterator yields a single
 // (zero-value, error) pair and then stops.
@@ -95,6 +110,8 @@ func (c *Client) IterResourceTemplates(
 	request mcp.ListResourceTemplatesRequest,
 ) iter.Seq2[mcp.ResourceTemplate, error] {
 	return func(yield func(mcp.ResourceTemplate, error) bool) {
+		request := request
+		seen := map[mcp.Cursor]struct{}{request.Params.Cursor: {}}
 		for {
 			if err := ctx.Err(); err != nil {
 				yield(mcp.ResourceTemplate{}, err)
@@ -113,14 +130,19 @@ func (c *Client) IterResourceTemplates(
 			if result.NextCursor == "" {
 				return
 			}
+			if err := noteListCursor(seen, result.NextCursor); err != nil {
+				yield(mcp.ResourceTemplate{}, err)
+				return
+			}
 			request.Params.Cursor = result.NextCursor
 		}
 	}
 }
 
 // IterPrompts returns an iterator that lazily fetches pages of prompts from
-// the server. Pages are fetched on demand as the iterator is consumed;
-// breaking out of the loop stops further requests.
+// the server. Each iteration starts from the cursor in the original request.
+// Pages are fetched on demand as the iterator is consumed; breaking out of the
+// loop stops further requests.
 //
 // If an error occurs while fetching a page, the iterator yields a single
 // (zero-value, error) pair and then stops.
@@ -129,6 +151,8 @@ func (c *Client) IterPrompts(
 	request mcp.ListPromptsRequest,
 ) iter.Seq2[mcp.Prompt, error] {
 	return func(yield func(mcp.Prompt, error) bool) {
+		request := request
+		seen := map[mcp.Cursor]struct{}{request.Params.Cursor: {}}
 		for {
 			if err := ctx.Err(); err != nil {
 				yield(mcp.Prompt{}, err)
@@ -145,6 +169,10 @@ func (c *Client) IterPrompts(
 				}
 			}
 			if result.NextCursor == "" {
+				return
+			}
+			if err := noteListCursor(seen, result.NextCursor); err != nil {
+				yield(mcp.Prompt{}, err)
 				return
 			}
 			request.Params.Cursor = result.NextCursor

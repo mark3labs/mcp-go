@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -584,6 +585,70 @@ func TestStreamableHTTPErrors(t *testing.T) {
 			t.Errorf("Expected error when sending request to non-existent URL, got nil")
 		}
 	})
+
+	t.Run("NonJSONRPCErrorBody", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			status int
+			body   string
+		}{
+			{name: "bad gateway problem json", status: http.StatusBadGateway, body: `{"title":"Error 502: Bad gateway","status":502}`},
+			{name: "framework detail", status: http.StatusServiceUnavailable, body: `{"detail":"Service Unavailable"}`},
+			{name: "rate limited", status: http.StatusTooManyRequests, body: `{"message":"API rate limit exceeded"}`},
+			{name: "error object without jsonrpc", status: http.StatusInternalServerError, body: `{"error":{"code":-32603,"message":"boom"}}`},
+			{name: "empty error object", status: http.StatusTooManyRequests, body: `{"jsonrpc":"2.0","error":{}}`},
+			{name: "error without message", status: http.StatusBadGateway, body: `{"jsonrpc":"2.0","error":{"code":-32603}}`},
+			{name: "differently cased error member", status: http.StatusInternalServerError, body: `{"jsonrpc":"2.0","Error":{"code":-32603,"message":"failure"}}`},
+			{name: "differently cased jsonrpc member", status: http.StatusInternalServerError, body: `{"JSONRPC":"2.0","error":{"code":-32603,"message":"failure"}}`},
+			{name: "differently cased code member", status: http.StatusInternalServerError, body: `{"jsonrpc":"2.0","error":{"Code":-32603,"message":"failure"}}`},
+			{name: "null code and message", status: http.StatusInternalServerError, body: `{"jsonrpc":"2.0","error":{"code":null,"message":null}}`},
+			{name: "string code", status: http.StatusInternalServerError, body: `{"jsonrpc":"2.0","error":{"code":"-32603","message":"failure"}}`},
+			{name: "error cleared by differently cased member", status: http.StatusInternalServerError, body: `{"jsonrpc":"2.0","error":{"code":-32603,"message":"failure"},"Error":null}`},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(tt.status)
+					_, _ = w.Write([]byte(tt.body))
+				}))
+				defer server.Close()
+
+				trans, err := NewStreamableHTTP(server.URL)
+				require.NoError(t, err)
+
+				resp, err := trans.SendRequest(t.Context(), JSONRPCRequest{
+					JSONRPC: "2.0",
+					ID:      mcp.NewRequestId(int64(1)),
+					Method:  "tools/list",
+				})
+				require.Nil(t, resp)
+				require.ErrorContains(t, err, fmt.Sprintf("request failed with status %d", tt.status))
+			})
+		}
+	})
+
+	t.Run("JSONRPCErrorBody", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"internal error"}}`))
+		}))
+		defer server.Close()
+
+		trans, err := NewStreamableHTTP(server.URL)
+		require.NoError(t, err)
+
+		resp, err := trans.SendRequest(t.Context(), JSONRPCRequest{
+			JSONRPC: "2.0",
+			ID:      mcp.NewRequestId(int64(1)),
+			Method:  "tools/list",
+		})
+		require.NoError(t, err)
+		require.NotNil(t, resp.Error)
+		require.Equal(t, mcp.INTERNAL_ERROR, resp.Error.Code)
+	})
 }
 
 // ---- continuous listening tests ----
@@ -1006,8 +1071,8 @@ func TestContinuousListeningSessionTerminated(t *testing.T) {
 	retryInterval = 20 * time.Millisecond
 	t.Cleanup(func() { retryInterval = origRetryInterval })
 
-	// Start a server that returns 200 on POST (initialize) but 404 on GET
-	// (simulating a server restart where the session no longer exists).
+	// Start a server that returns 200 on POST (initialize) but 404 on GET,
+	// which the listener takes as a server that doesn't offer the stream.
 	sessionID := "test-session-123"
 	var getCalls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1613,4 +1678,35 @@ func TestSendRequestSSEStreamStaysOpenWithContinuousListening(t *testing.T) {
 	resp2, err := trans.SendRequest(ctx, listReq)
 	require.NoError(t, err, "tools/list should not hang even with continuous listening against stateless server")
 	require.NotNil(t, resp2)
+}
+
+func TestStreamableHTTP_SendRequestDoesNotMutateCallerHeader(t *testing.T) {
+	url, closeF := startMockStreamableHTTPServer()
+	defer closeF()
+
+	trans, err := NewStreamableHTTP(url, WithHTTPHeaders(map[string]string{
+		"Authorization": "Bearer secret",
+	}))
+	require.NoError(t, err)
+	defer trans.Close()
+
+	shared := http.Header{"X-Tenant": []string{"acme"}}
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Go(func() {
+			resp, err := trans.SendRequest(t.Context(), JSONRPCRequest{
+				JSONRPC: "2.0",
+				ID:      mcp.NewRequestId(int64(i)),
+				Method:  "debug/echo_header",
+				Header:  shared,
+			})
+			if assert.NoError(t, err) {
+				assert.Contains(t, string(resp.Result), "acme")
+			}
+		})
+	}
+	wg.Wait()
+
+	require.Equal(t, http.Header{"X-Tenant": []string{"acme"}}, shared)
 }

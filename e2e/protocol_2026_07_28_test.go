@@ -235,21 +235,42 @@ func TestE2E_ModernClientAgainstLegacyOnlyServer(t *testing.T) {
 	))
 	defer httpServer.Close()
 
-	handler := &elicitOnce{name: "Alan"}
-	c, result := startHTTPClient(t, httpServer.URL, client.WithElicitationHandler(handler))
+	t.Run("modern error does not select legacy semantics", func(t *testing.T) {
+		httpTransport, err := transport.NewStreamableHTTP(httpServer.URL)
+		require.NoError(t, err)
+		c := client.NewClient(httpTransport)
+		require.NoError(t, c.Start(t.Context()))
+		t.Cleanup(func() { _ = c.Close() })
 
-	// The client probed with server/discover, was told the version it wanted
-	// is unavailable, and negotiated down to the handshake.
-	assert.Equal(t, mcp.LATEST_LEGACY_PROTOCOL_VERSION, result.ProtocolVersion)
-	assert.Equal(t, mcp.LATEST_LEGACY_PROTOCOL_VERSION, c.ProtocolVersion())
+		result, err := c.Initialize(t.Context(), mcp.InitializeRequest{})
+		require.Error(t, err)
+		var unsupported mcp.UnsupportedProtocolVersionError
+		require.ErrorAs(t, err, &unsupported)
+		assert.Equal(t, mcp.ProtocolVersion20260728, unsupported.Version)
+		assert.Equal(t, mcp.LegacyProtocolVersions(), unsupported.Supported)
+		assert.Nil(t, result)
+		assert.False(t, c.IsInitialized())
+		assert.Empty(t, c.ProtocolVersion())
+		assert.Empty(t, httpTransport.GetSessionId())
+	})
 
-	var call mcp.CallToolRequest
-	call.Params.Name = "greet"
+	t.Run("explicit legacy client still works", func(t *testing.T) {
+		handler := &elicitOnce{name: "Alan"}
+		c, result := startHTTPClient(t, httpServer.URL,
+			client.WithElicitationHandler(handler),
+			client.WithProtocolVersion(mcp.LATEST_LEGACY_PROTOCOL_VERSION),
+		)
+		assert.Equal(t, mcp.LATEST_LEGACY_PROTOCOL_VERSION, result.ProtocolVersion)
+		assert.Equal(t, mcp.LATEST_LEGACY_PROTOCOL_VERSION, c.ProtocolVersion())
 
-	greeting, err := c.CallTool(t.Context(), call)
-	require.NoError(t, err)
-	require.Len(t, greeting.Content, 1)
-	assert.Equal(t, "hello Alan", greeting.Content[0].(mcp.TextContent).Text)
+		var call mcp.CallToolRequest
+		call.Params.Name = "greet"
+
+		greeting, err := c.CallTool(t.Context(), call)
+		require.NoError(t, err)
+		require.Len(t, greeting.Content, 1)
+		assert.Equal(t, "hello Alan", greeting.Content[0].(mcp.TextContent).Text)
+	})
 }
 
 func TestE2E_ModernProtocol_InProcess(t *testing.T) {

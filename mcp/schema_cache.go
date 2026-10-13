@@ -340,6 +340,7 @@ func WithCachedInputSchemaKey[T any](cache *SchemaCache, key string) ToolOption 
 			}
 		}
 		t.InputSchema.Type = ""
+		t.InputSchema.Types = nil
 		t.RawInputSchema = raw
 	}
 }
@@ -384,5 +385,8 @@ func WithCachedOutputSchemaKey[T any](cache *SchemaCache, key string) ToolOption
 		// Always set the type to "object" as of the current MCP spec.
 		// https://modelcontextprotocol.io/specification/2025-06-18/server/tools#output-schema
 		t.OutputSchema.Type = "object"
+		// Decoding the generated schema recorded struct field order. Clear it
+		// so these tools keep emitting properties sorted by name.
+		t.OutputSchema.PropertyOrder = nil
 	}
 }
