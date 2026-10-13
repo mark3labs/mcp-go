@@ -497,7 +497,12 @@ server.NewStreamableHTTPServer(srv,
 ```
 
 Modern clients then receive an `UnsupportedProtocolVersionError` naming the
-versions you do support, and negotiate down automatically.
+versions you do support. Configure the client explicitly for a legacy revision
+to use the initialization handshake:
+
+```go
+client.NewClient(httpTransport, client.WithProtocolVersion(mcp.ProtocolVersion20251125))
+```
 
 #### Cache hints
 
@@ -586,8 +591,11 @@ not emit log notifications for a request that did not ask for one.
 
 ### Clients
 
-`Initialize` probes with `server/discover` and falls back to the handshake, so
-the same code connects to servers of either era:
+`Initialize` probes with `server/discover` and falls back to the handshake when
+the probe fails without identifying a modern server. Successful discovery with
+no compatible modern version returns an error. A version error with a supported
+list allows at most one retry at a mutually supported modern version;
+if negotiation fails, the client returns the error instead of switching eras.
 
 ```go
 c := client.NewClient(httpTransport)
