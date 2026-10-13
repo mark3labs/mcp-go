@@ -146,6 +146,8 @@ func (p *CallToolParams) UnmarshalJSON(data []byte) error {
 	p.Meta = raw.Meta
 	p.Task = raw.Task
 	p.MultiRoundTripParams = raw.MultiRoundTripParams
+	p.Arguments = nil
+	p.RawArguments = nil
 
 	if len(raw.Arguments) == 0 {
 		return nil

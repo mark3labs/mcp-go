@@ -1085,6 +1085,41 @@ func handleToolWithErrors(ctx context.Context, req mcp.CallToolRequest) (*mcp.Ca
 }
 ```
 
+Application-defined JSON-RPC errors must be marked explicitly before a handler
+returns them. This prevents an error received from an upstream server from being
+forwarded accidentally:
+
+```go
+type InvalidCustomerIDError struct {
+    CustomerID string
+}
+
+func (e InvalidCustomerIDError) Error() string {
+    return "invalid customer ID"
+}
+
+func (e InvalidCustomerIDError) JSONRPCError() mcp.JSONRPCError {
+    return mcp.JSONRPCError{
+        Error: mcp.NewJSONRPCErrorDetails(
+            mcp.INVALID_PARAMS,
+            e.Error(),
+            map[string]any{"customerId": e.CustomerID},
+        ),
+    }
+}
+
+func handleCustomer(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    customerID := req.GetString("customerId", "")
+    if customerID == "" {
+        return nil, server.NewHandlerError(InvalidCustomerIDError{CustomerID: customerID})
+    }
+    return mcp.NewToolResultText("customer found"), nil
+}
+```
+
+Unmarked Go errors, including errors from another JSON-RPC server, are returned
+as internal errors.
+
 ## Tool Annotations
 
 Provide hints to help LLMs use your tools effectively:
