@@ -1034,12 +1034,12 @@ func signedIntegerArgument(value any, bits int) (int64, bool) {
 	if value != nil {
 		v := reflect.ValueOf(value)
 		if v.Kind() == reflect.Float32 || v.Kind() == reflect.Float64 {
-			f := math.Trunc(v.Float())
+			f := v.Float()
 			limit := math.Ldexp(1, bits-1)
 			if math.IsNaN(f) || f < -limit || f >= limit {
 				return 0, false
 			}
-			return int64(f), true
+			return int64(math.Trunc(f)), true
 		}
 	}
 	text, ok := integerArgumentText(value)

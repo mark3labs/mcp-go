@@ -1122,6 +1122,11 @@ func TestIntegerArgumentContract(t *testing.T) {
 		{"invalid", "bad", 99}, {"overflow", 300, 99},
 		{"underflow", -129, 99}, {"json overflow", json.Number("128"), 99},
 		{"fraction compatibility", 12.75, 12}, {"ordinary", float64(127), 127},
+		{"fraction below signed minimum", float64(-128.5), 99},
+		{"float32 below signed minimum", float32(-128.5), 99},
+		{"signed minimum", float64(-128), -128},
+		{"negative fraction in range", float64(-127.75), -127},
+		{"positive fraction below exclusive bound", float64(127.75), 127},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
