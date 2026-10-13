@@ -2498,11 +2498,12 @@ func (s *MCPServer) limitCreateTaskResult(result *mcp.CreateTaskResult) *mcp.Cre
 	if limited == view {
 		return result
 	}
-	result.Meta = nil
-	result.Content = limited.Content
-	result.StructuredContent = limited.StructuredContent
-	result.IsError = limited.IsError
-	return result
+	stored := *result
+	stored.Meta = nil
+	stored.Content = limited.Content
+	stored.StructuredContent = limited.StructuredContent
+	stored.IsError = limited.IsError
+	return &stored
 }
 
 // executeRegularToolAsTask executes a regular tool handler asynchronously as a task.

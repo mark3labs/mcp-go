@@ -994,12 +994,14 @@ func TestToolResultSizeLimitOnTasks(t *testing.T) {
 				WithToolResultSizeLimit(128),
 			)
 			tool := mcp.NewTool("tool", mcp.WithTaskSupport(mcp.TaskSupportRequired))
+			var handed *mcp.CreateTaskResult
 			if tt.taskOnly {
+				handed = &mcp.CreateTaskResult{
+					Result:  mcp.Result{Meta: withMeta(tt.meta)},
+					Content: []mcp.Content{mcp.NewTextContent(tt.text)},
+				}
 				server.AddTaskTool(tool, func(context.Context, mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-					return &mcp.CreateTaskResult{
-						Result:  mcp.Result{Meta: withMeta(tt.meta)},
-						Content: []mcp.Content{mcp.NewTextContent(tt.text)},
-					}, nil
+					return handed, nil
 				})
 			} else {
 				server.AddTool(tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1037,6 +1039,11 @@ func TestToolResultSizeLimitOnTasks(t *testing.T) {
 				assert.Contains(t, string(raw), "tool result exceeds 128 bytes")
 				assert.NotContains(t, string(raw), strings.Repeat("x", 50))
 				assert.NotContains(t, string(raw), strings.Repeat("m", 50))
+				if handed != nil {
+					assert.False(t, handed.IsError)
+					assert.Equal(t, []mcp.Content{mcp.NewTextContent(tt.text)}, handed.Content)
+					assert.Equal(t, withMeta(tt.meta), handed.Meta)
+				}
 				return
 			}
 			assert.False(t, result.IsError)
