@@ -340,6 +340,7 @@ func WithCachedInputSchemaKey[T any](cache *SchemaCache, key string) ToolOption 
 			}
 		}
 		t.InputSchema.Type = ""
+		t.InputSchema.Types = nil
 		t.RawInputSchema = raw
 	}
 }
