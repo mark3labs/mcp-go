@@ -437,6 +437,7 @@ func (s *SSEServer) Start(addr string) error {
 		if s.srv.Addr == "" {
 			s.srv.Addr = addr
 		} else if s.srv.Addr != addr {
+			s.mu.Unlock()
 			return fmt.Errorf("conflicting listen address: WithHTTPServer(%q) vs Start(%q)", s.srv.Addr, addr)
 		}
 	}
