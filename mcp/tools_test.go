@@ -431,9 +431,11 @@ func TestParseToolCallToolRequest(t *testing.T) {
 
 	param4 := ParseInt16(request, "int16_value", 1)
 	assert.Equal(t, fmt.Sprintf("%T", param4), "int16")
+	assert.Equal(t, int16(1), param4)
 
 	param5 := ParseInt8(request, "int8_value", 1)
 	assert.Equal(t, fmt.Sprintf("%T", param5), "int8")
+	assert.Equal(t, int8(1), param5)
 
 	param6 := ParseInt(request, "int_value", 1)
 	assert.Equal(t, fmt.Sprintf("%T", param6), "int")
@@ -449,9 +451,11 @@ func TestParseToolCallToolRequest(t *testing.T) {
 
 	param10 := ParseUInt16(request, "uint16_value", 1)
 	assert.Equal(t, fmt.Sprintf("%T", param10), "uint16")
+	assert.Equal(t, uint16(1), param10)
 
 	param11 := ParseUInt8(request, "uint8_value", 1)
 	assert.Equal(t, fmt.Sprintf("%T", param11), "uint8")
+	assert.Equal(t, uint8(1), param11)
 
 	param12 := ParseFloat32(request, "float32_value", 1.0)
 	assert.Equal(t, fmt.Sprintf("%T", param12), "float32")
@@ -464,6 +468,7 @@ func TestParseToolCallToolRequest(t *testing.T) {
 
 	param15 := ParseInt64(request, "string_value", 1)
 	assert.Equal(t, fmt.Sprintf("%T", param15), "int64")
+	assert.Equal(t, int64(1), param15)
 	t.Logf("param15 type: %T,value:%v", param15, param15)
 }
 
