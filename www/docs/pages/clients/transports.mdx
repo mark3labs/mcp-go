@@ -408,7 +408,9 @@ Registrations created by the current handler automatically re-register on
 name. A failed migration never falls back to the old credentials. Issuers are
 compared exactly, including paths and trailing slashes; changing endpoints
 without changing issuer does not require registration. `SkipIssuerMetadataValidation`
-does not disable credential binding.
+does not disable credential binding. Leave `AuthServerMetadataURL` unset to follow
+protected-resource authorization server discovery. Setting it explicitly pins
+discovery to that metadata URL and bypasses protected-resource discovery.
 
 For compatibility, configured credentials with no `CredentialsIssuer` bind on
 first authorization use. This trust-on-first-use behavior cannot protect a
@@ -428,7 +430,6 @@ func createAuthenticatedStreamableHTTPClient() (*client.Client, error) {
             ClientID:              "your-client-id",
             ClientSecret:          "your-client-secret",
             CredentialsIssuer:     "https://auth.example.com",
-            AuthServerMetadataURL: "https://auth.example.com/.well-known/oauth-authorization-server",
             RedirectURI:           "http://localhost:8085/callback",
             Scopes:                []string{"mcp:read", "mcp:write"},
         },
