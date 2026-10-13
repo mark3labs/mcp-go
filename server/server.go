@@ -2809,6 +2809,9 @@ func (s *MCPServer) handleTaskResult(
 	case *mcp.CallToolResult:
 		result.Content = taskResult.Content
 		result.StructuredContent = taskResult.StructuredContent
+		if len(taskResult.RawStructuredContent) > 0 {
+			result.StructuredContent = append(json.RawMessage(nil), taskResult.RawStructuredContent...)
+		}
 		result.IsError = taskResult.IsError
 		mergeTaskResultMeta(result, taskResult.Meta)
 	case *mcp.CreateTaskResult:
