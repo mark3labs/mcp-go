@@ -6,6 +6,7 @@ import (
 	"math"
 	"reflect"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cast"
 )
@@ -1007,7 +1008,7 @@ func ParseBoolean(request CallToolRequest, key string, defaultValue bool) bool {
 func integerArgumentText(value any) (string, bool) {
 	switch v := value.(type) {
 	case string:
-		return v, true
+		return strings.TrimSpace(v), true
 	case json.Number:
 		return string(v), true
 	case bool:
@@ -1054,7 +1055,7 @@ func unsignedIntegerArgument(value any, bits int) (uint64, bool) {
 		v := reflect.ValueOf(value)
 		if v.Kind() == reflect.Float32 || v.Kind() == reflect.Float64 {
 			f := math.Trunc(v.Float())
-			if math.IsNaN(f) || f < 0 || f >= math.Ldexp(1, bits) {
+			if math.IsNaN(f) || v.Float() < 0 || f >= math.Ldexp(1, bits) {
 				return 0, false
 			}
 			return uint64(f), true

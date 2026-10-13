@@ -1170,3 +1170,12 @@ func TestAllIntegerArgumentDefaultsAndDecimalStrings(t *testing.T) {
 		})
 	}
 }
+
+func TestIntegerWhitespaceAndFractionalNegative(t *testing.T) {
+	r := CallToolRequest{}
+	r.Params.Arguments = map[string]any{"signed": " \t010\n", "unsigned": " \t08\n", "negative": -0.5, "positive": 0.5}
+	assert.Equal(t, int64(10), ParseInt64(r, "signed", 99))
+	assert.Equal(t, uint64(8), ParseUInt64(r, "unsigned", 99))
+	assert.Equal(t, uint8(99), ParseUInt8(r, "negative", 99))
+	assert.Equal(t, uint8(0), ParseUInt8(r, "positive", 99))
+}

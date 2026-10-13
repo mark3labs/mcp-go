@@ -14,3 +14,6 @@ Padded decimal strings now mean decimal. Explicit radix strings such as 0x10 and
 
 ## Validation
 Same new assertions evaluated against frozen fd2a63fb9f5e74bfc98415acb18fa97ac7d3d319 fail for padded numbers, malformed conversions and overflow. Candidate focused tests and full MCP package race tests pass on isolated Go1.27.2/macOS with GOMAXPROCS=2 and -p1. Cases cover every signed/unsigned helper, missing/null/container/non-finite controls, signed bounds, unsigned negative/narrowing and maximum uint64. Logs remain in the private campaign evidence. Full repository/submodule race tests and golangci-lint have not yet run; no hosted or live-client behavior is claimed.
+
+## Independent review correction
+The first reviewed candidate4b2e5d4c2ff60aae561636965c768cc1245401c8 was held for whitespace compatibility and negative fractional unsigned input. Strings now retain the existing surrounding-whitespace acceptance before decimal parsing. Unsigned floats reject an originally negative value before truncation; positive fractions still truncate. New exact assertions cover both behaviors; frozen baseline and candidate logs remain separate.
