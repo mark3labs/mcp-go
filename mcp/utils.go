@@ -3,6 +3,9 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"strconv"
+	"strings"
 
 	"github.com/spf13/cast"
 )
@@ -1000,65 +1003,260 @@ func ParseBoolean(request CallToolRequest, key string, defaultValue bool) bool {
 	return cast.ToBool(v)
 }
 
+// checkedSignedInteger validates before narrowing or crossing signedness. Float
+// bounds are exact powers of two with an exclusive upper bound, since converting
+// MaxInt64 or MaxUint64 to float64 rounds up to an unrepresentable integer.
+func checkedSignedInteger(value any, bits int) (int64, bool) {
+	switch v := value.(type) {
+	case string:
+		n, err := strconv.ParseInt(strings.TrimSpace(v), 10, bits)
+		return n, err == nil
+	case json.Number:
+		return checkedSignedInteger(string(v), bits)
+	case int64:
+		max := int64(uint64(1)<<(bits-1) - 1)
+		return v, v >= -max-1 && v <= max
+	case uint64:
+		max := uint64(1)<<(bits-1) - 1
+		if v > max {
+			return 0, false
+		}
+		return int64(v), true
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return 0, false
+		}
+		n := math.Trunc(v)
+		bound := math.Ldexp(1, bits-1)
+		if n < -bound || n >= bound {
+			return 0, false
+		}
+		return int64(n), true
+	case int:
+		return checkedSignedInteger(int64(v), bits)
+	case int8:
+		return checkedSignedInteger(int64(v), bits)
+	case int16:
+		return checkedSignedInteger(int64(v), bits)
+	case int32:
+		return checkedSignedInteger(int64(v), bits)
+	case uint:
+		return checkedSignedInteger(uint64(v), bits)
+	case uint8:
+		return checkedSignedInteger(uint64(v), bits)
+	case uint16:
+		return checkedSignedInteger(uint64(v), bits)
+	case uint32:
+		return checkedSignedInteger(uint64(v), bits)
+	case float32:
+		return checkedSignedInteger(float64(v), bits)
+	case bool:
+		if v {
+			return 1, true
+		}
+		return 0, true
+	default:
+		return 0, false
+	}
+}
+
+// checkedUnsignedInteger never routes unsigned integers through int64 and
+// rejects negative floats before truncation, including fractions above -1.
+func checkedUnsignedInteger(value any, bits int) (uint64, bool) {
+	switch v := value.(type) {
+	case string:
+		n, err := strconv.ParseUint(strings.TrimSpace(v), 10, bits)
+		return n, err == nil
+	case json.Number:
+		return checkedUnsignedInteger(string(v), bits)
+	case uint64:
+		max := ^uint64(0) >> (64 - bits)
+		return v, v <= max
+	case int64:
+		if v < 0 {
+			return 0, false
+		}
+		return checkedUnsignedInteger(uint64(v), bits)
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return 0, false
+		}
+		n := math.Trunc(v)
+		if v < 0 || n >= math.Ldexp(1, bits) {
+			return 0, false
+		}
+		return uint64(n), true
+	case int:
+		return checkedUnsignedInteger(int64(v), bits)
+	case int8:
+		return checkedUnsignedInteger(int64(v), bits)
+	case int16:
+		return checkedUnsignedInteger(int64(v), bits)
+	case int32:
+		return checkedUnsignedInteger(int64(v), bits)
+	case uint:
+		return checkedUnsignedInteger(uint64(v), bits)
+	case uint8:
+		return checkedUnsignedInteger(uint64(v), bits)
+	case uint16:
+		return checkedUnsignedInteger(uint64(v), bits)
+	case uint32:
+		return checkedUnsignedInteger(uint64(v), bits)
+	case float32:
+		return checkedUnsignedInteger(float64(v), bits)
+	case bool:
+		if v {
+			return 1, true
+		}
+		return 0, true
+	default:
+		return 0, false
+	}
+}
+
 // ParseInt64 extracts and converts an int64 parameter from a CallToolRequest.
-// If the key is not found in the Arguments map, the defaultValue is returned.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax with an optional sign; prefixes, decimal points and exponents are invalid.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseInt64(request CallToolRequest, key string, defaultValue int64) int64 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToInt64(v)
+	v, ok := checkedSignedInteger(ParseArgument(request, key, defaultValue), 64)
+	if !ok {
+		return defaultValue
+	}
+	return v
 }
 
 // ParseInt32 extracts and converts an int32 parameter from a CallToolRequest.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax with an optional sign; prefixes, decimal points and exponents are invalid.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseInt32(request CallToolRequest, key string, defaultValue int32) int32 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToInt32(v)
+	v, ok := checkedSignedInteger(ParseArgument(request, key, defaultValue), 32)
+	if !ok {
+		return defaultValue
+	}
+	return int32(v)
 }
 
 // ParseInt16 extracts and converts an int16 parameter from a CallToolRequest.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax with an optional sign; prefixes, decimal points and exponents are invalid.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseInt16(request CallToolRequest, key string, defaultValue int16) int16 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToInt16(v)
+	v, ok := checkedSignedInteger(ParseArgument(request, key, defaultValue), 16)
+	if !ok {
+		return defaultValue
+	}
+	return int16(v)
 }
 
 // ParseInt8 extracts and converts an int8 parameter from a CallToolRequest.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax with an optional sign; prefixes, decimal points and exponents are invalid.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseInt8(request CallToolRequest, key string, defaultValue int8) int8 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToInt8(v)
+	v, ok := checkedSignedInteger(ParseArgument(request, key, defaultValue), 8)
+	if !ok {
+		return defaultValue
+	}
+	return int8(v)
 }
 
 // ParseInt extracts and converts an int parameter from a CallToolRequest.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax with an optional sign; prefixes, decimal points and exponents are invalid.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseInt(request CallToolRequest, key string, defaultValue int) int {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToInt(v)
+	v, ok := checkedSignedInteger(ParseArgument(request, key, defaultValue), strconv.IntSize)
+	if !ok {
+		return defaultValue
+	}
+	return int(v)
 }
 
-// ParseUInt extracts and converts an uint parameter from a CallToolRequest.
+// ParseUInt extracts and converts a uint parameter from a CallToolRequest.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax without a sign; prefixes, decimal points and exponents are invalid.
+// Negative numeric values return defaultValue, even fractional values above -1.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseUInt(request CallToolRequest, key string, defaultValue uint) uint {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToUint(v)
+	v, ok := checkedUnsignedInteger(ParseArgument(request, key, defaultValue), strconv.IntSize)
+	if !ok {
+		return defaultValue
+	}
+	return uint(v)
 }
 
-// ParseUInt64 extracts and converts an uint64 parameter from a CallToolRequest.
+// ParseUInt64 extracts and converts a uint64 parameter from a CallToolRequest.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax without a sign; prefixes, decimal points and exponents are invalid.
+// Negative numeric values return defaultValue, even fractional values above -1.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseUInt64(request CallToolRequest, key string, defaultValue uint64) uint64 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToUint64(v)
+	v, ok := checkedUnsignedInteger(ParseArgument(request, key, defaultValue), 64)
+	if !ok {
+		return defaultValue
+	}
+	return v
 }
 
-// ParseUInt32 extracts and converts an uint32 parameter from a CallToolRequest.
+// ParseUInt32 extracts and converts a uint32 parameter from a CallToolRequest.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax without a sign; prefixes, decimal points and exponents are invalid.
+// Negative numeric values return defaultValue, even fractional values above -1.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseUInt32(request CallToolRequest, key string, defaultValue uint32) uint32 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToUint32(v)
+	v, ok := checkedUnsignedInteger(ParseArgument(request, key, defaultValue), 32)
+	if !ok {
+		return defaultValue
+	}
+	return uint32(v)
 }
 
-// ParseUInt16 extracts and converts an uint16 parameter from a CallToolRequest.
+// ParseUInt16 extracts and converts a uint16 parameter from a CallToolRequest.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax without a sign; prefixes, decimal points and exponents are invalid.
+// Negative numeric values return defaultValue, even fractional values above -1.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseUInt16(request CallToolRequest, key string, defaultValue uint16) uint16 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToUint16(v)
+	v, ok := checkedUnsignedInteger(ParseArgument(request, key, defaultValue), 16)
+	if !ok {
+		return defaultValue
+	}
+	return uint16(v)
 }
 
-// ParseUInt8 extracts and converts an uint8 parameter from a CallToolRequest.
+// ParseUInt8 extracts and converts a uint8 parameter from a CallToolRequest.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax without a sign; prefixes, decimal points and exponents are invalid.
+// Negative numeric values return defaultValue, even fractional values above -1.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseUInt8(request CallToolRequest, key string, defaultValue uint8) uint8 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToUint8(v)
+	v, ok := checkedUnsignedInteger(ParseArgument(request, key, defaultValue), 8)
+	if !ok {
+		return defaultValue
+	}
+	return uint8(v)
 }
 
 // ParseFloat32 extracts and converts a float32 parameter from a CallToolRequest.
