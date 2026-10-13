@@ -162,6 +162,8 @@ type requestError struct {
 	id   any
 	code int
 	err  error
+	// message, when set, is sent instead of err.Error().
+	message *string
 	// data, when set, is sent as the data member of the JSON-RPC error.
 	data any
 }
@@ -171,10 +173,14 @@ func (e *requestError) Error() string {
 }
 
 func (e *requestError) ToJSONRPCError() mcp.JSONRPCError {
+	message := e.err.Error()
+	if e.message != nil {
+		message = *e.message
+	}
 	return mcp.JSONRPCError{
 		JSONRPC: mcp.JSONRPC_VERSION,
 		ID:      mcp.NewRequestId(e.id),
-		Error:   mcp.NewJSONRPCErrorDetails(e.code, e.err.Error(), e.data),
+		Error:   mcp.NewJSONRPCErrorDetails(e.code, message, e.data),
 	}
 }
 
