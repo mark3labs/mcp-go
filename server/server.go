@@ -2309,8 +2309,8 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 	taskCopy := entry.task
 	s.tasksMu.RUnlock()
 
-	// Execute tool asynchronously
-	// For regular tools being used as tasks, we need different execution logic
+	// Execute tool asynchronously. The goroutine's context is cancelled when
+	// HandleMessage returns on every transport.
 	if hasTaskHandler {
 		go s.executeTaskTool(ctx, entry, toolToUse, request)
 	} else {
