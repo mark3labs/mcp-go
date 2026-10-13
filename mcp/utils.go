@@ -3,6 +3,9 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"reflect"
+	"strconv"
 
 	"github.com/spf13/cast"
 )
@@ -1000,65 +1003,169 @@ func ParseBoolean(request CallToolRequest, key string, defaultValue bool) bool {
 	return cast.ToBool(v)
 }
 
-// ParseInt64 extracts and converts an int64 parameter from a CallToolRequest.
-// If the key is not found in the Arguments map, the defaultValue is returned.
+// integerArgumentText retains numeric values without narrowing them before validation.
+func integerArgumentText(value any) (string, bool) {
+	switch v := value.(type) {
+	case string:
+		return v, true
+	case json.Number:
+		return string(v), true
+	case bool:
+		if v {
+			return "1", true
+		}
+		return "0", true
+	}
+	if value == nil {
+		return "", false
+	}
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return strconv.FormatInt(v.Int(), 10), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return strconv.FormatUint(v.Uint(), 10), true
+	}
+	return "", false
+}
+
+func signedIntegerArgument(value any, bits int) (int64, bool) {
+	if value != nil {
+		v := reflect.ValueOf(value)
+		if v.Kind() == reflect.Float32 || v.Kind() == reflect.Float64 {
+			f := math.Trunc(v.Float())
+			limit := math.Ldexp(1, bits-1)
+			if math.IsNaN(f) || f < -limit || f >= limit {
+				return 0, false
+			}
+			return int64(f), true
+		}
+	}
+	text, ok := integerArgumentText(value)
+	if !ok {
+		return 0, false
+	}
+	result, err := strconv.ParseInt(text, 10, bits)
+	return result, err == nil
+}
+
+func unsignedIntegerArgument(value any, bits int) (uint64, bool) {
+	if value != nil {
+		v := reflect.ValueOf(value)
+		if v.Kind() == reflect.Float32 || v.Kind() == reflect.Float64 {
+			f := math.Trunc(v.Float())
+			if math.IsNaN(f) || f < 0 || f >= math.Ldexp(1, bits) {
+				return 0, false
+			}
+			return uint64(f), true
+		}
+	}
+	text, ok := integerArgumentText(value)
+	if !ok {
+		return 0, false
+	}
+	result, err := strconv.ParseUint(text, 10, bits)
+	return result, err == nil
+}
+
+// ParseInt64 extracts a decimal int64 parameter from a CallToolRequest.
+// Missing, invalid, and out-of-range values return defaultValue.
 func ParseInt64(request CallToolRequest, key string, defaultValue int64) int64 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToInt64(v)
+	value, ok := signedIntegerArgument(ParseArgument(request, key, defaultValue), 64)
+	if !ok {
+		return defaultValue
+	}
+	return int64(value)
 }
 
-// ParseInt32 extracts and converts an int32 parameter from a CallToolRequest.
+// ParseInt32 extracts a decimal int32 parameter from a CallToolRequest.
+// Missing, invalid, and out-of-range values return defaultValue.
 func ParseInt32(request CallToolRequest, key string, defaultValue int32) int32 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToInt32(v)
+	value, ok := signedIntegerArgument(ParseArgument(request, key, defaultValue), 32)
+	if !ok {
+		return defaultValue
+	}
+	return int32(value)
 }
 
-// ParseInt16 extracts and converts an int16 parameter from a CallToolRequest.
+// ParseInt16 extracts a decimal int16 parameter from a CallToolRequest.
+// Missing, invalid, and out-of-range values return defaultValue.
 func ParseInt16(request CallToolRequest, key string, defaultValue int16) int16 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToInt16(v)
+	value, ok := signedIntegerArgument(ParseArgument(request, key, defaultValue), 16)
+	if !ok {
+		return defaultValue
+	}
+	return int16(value)
 }
 
-// ParseInt8 extracts and converts an int8 parameter from a CallToolRequest.
+// ParseInt8 extracts a decimal int8 parameter from a CallToolRequest.
+// Missing, invalid, and out-of-range values return defaultValue.
 func ParseInt8(request CallToolRequest, key string, defaultValue int8) int8 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToInt8(v)
+	value, ok := signedIntegerArgument(ParseArgument(request, key, defaultValue), 8)
+	if !ok {
+		return defaultValue
+	}
+	return int8(value)
 }
 
-// ParseInt extracts and converts an int parameter from a CallToolRequest.
+// ParseInt extracts a decimal int parameter from a CallToolRequest.
+// Missing, invalid, and out-of-range values return defaultValue.
 func ParseInt(request CallToolRequest, key string, defaultValue int) int {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToInt(v)
+	value, ok := signedIntegerArgument(ParseArgument(request, key, defaultValue), strconv.IntSize)
+	if !ok {
+		return defaultValue
+	}
+	return int(value)
 }
 
-// ParseUInt extracts and converts an uint parameter from a CallToolRequest.
+// ParseUInt extracts a decimal uint parameter from a CallToolRequest.
+// Missing, invalid, and out-of-range values return defaultValue.
 func ParseUInt(request CallToolRequest, key string, defaultValue uint) uint {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToUint(v)
+	value, ok := unsignedIntegerArgument(ParseArgument(request, key, defaultValue), strconv.IntSize)
+	if !ok {
+		return defaultValue
+	}
+	return uint(value)
 }
 
-// ParseUInt64 extracts and converts an uint64 parameter from a CallToolRequest.
+// ParseUInt64 extracts a decimal uint64 parameter from a CallToolRequest.
+// Missing, invalid, and out-of-range values return defaultValue.
 func ParseUInt64(request CallToolRequest, key string, defaultValue uint64) uint64 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToUint64(v)
+	value, ok := unsignedIntegerArgument(ParseArgument(request, key, defaultValue), 64)
+	if !ok {
+		return defaultValue
+	}
+	return uint64(value)
 }
 
-// ParseUInt32 extracts and converts an uint32 parameter from a CallToolRequest.
+// ParseUInt32 extracts a decimal uint32 parameter from a CallToolRequest.
+// Missing, invalid, and out-of-range values return defaultValue.
 func ParseUInt32(request CallToolRequest, key string, defaultValue uint32) uint32 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToUint32(v)
+	value, ok := unsignedIntegerArgument(ParseArgument(request, key, defaultValue), 32)
+	if !ok {
+		return defaultValue
+	}
+	return uint32(value)
 }
 
-// ParseUInt16 extracts and converts an uint16 parameter from a CallToolRequest.
+// ParseUInt16 extracts a decimal uint16 parameter from a CallToolRequest.
+// Missing, invalid, and out-of-range values return defaultValue.
 func ParseUInt16(request CallToolRequest, key string, defaultValue uint16) uint16 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToUint16(v)
+	value, ok := unsignedIntegerArgument(ParseArgument(request, key, defaultValue), 16)
+	if !ok {
+		return defaultValue
+	}
+	return uint16(value)
 }
 
-// ParseUInt8 extracts and converts an uint8 parameter from a CallToolRequest.
+// ParseUInt8 extracts a decimal uint8 parameter from a CallToolRequest.
+// Missing, invalid, and out-of-range values return defaultValue.
 func ParseUInt8(request CallToolRequest, key string, defaultValue uint8) uint8 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToUint8(v)
+	value, ok := unsignedIntegerArgument(ParseArgument(request, key, defaultValue), 8)
+	if !ok {
+		return defaultValue
+	}
+	return uint8(value)
 }
 
 // ParseFloat32 extracts and converts a float32 parameter from a CallToolRequest.

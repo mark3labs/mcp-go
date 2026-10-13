@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -1109,4 +1110,63 @@ func TestToolUseContent_IsContent(t *testing.T) {
 func TestToolResultContent_IsContent(t *testing.T) {
 	var c Content = ToolResultContent{Type: ContentTypeToolResult, ToolUseID: "tu_1"}
 	assert.NotNil(t, c)
+}
+
+func TestIntegerArgumentContract(t *testing.T) {
+	tests := []struct {
+		name  string
+		value any
+		want  int8
+	}{
+		{"decimal padded", "010", 10}, {"decimal eight", "08", 8},
+		{"invalid", "bad", 99}, {"overflow", 300, 99},
+		{"underflow", -129, 99}, {"json overflow", json.Number("128"), 99},
+		{"fraction compatibility", 12.75, 12}, {"ordinary", float64(127), 127},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := CallToolRequest{}
+			request.Params.Arguments = map[string]any{"value": tt.value}
+			assert.Equal(t, tt.want, ParseInt8(request, "value", 99))
+		})
+	}
+	request := CallToolRequest{}
+	request.Params.Arguments = map[string]any{"negative": -1, "overflow": uint64(256), "max": "18446744073709551615"}
+	assert.Equal(t, uint8(99), ParseUInt8(request, "negative", 99))
+	assert.Equal(t, uint8(99), ParseUInt8(request, "overflow", 99))
+	assert.Equal(t, ^uint64(0), ParseUInt64(request, "max", 99))
+	assert.Equal(t, int64(99), ParseInt64(request, "max", 99))
+}
+
+func TestAllIntegerArgumentDefaultsAndDecimalStrings(t *testing.T) {
+	parsers := []struct {
+		name     string
+		parse    func(CallToolRequest) any
+		want     any
+		fallback any
+	}{
+		{"int64", func(r CallToolRequest) any { return ParseInt64(r, "value", 99) }, int64(10), int64(99)},
+		{"int32", func(r CallToolRequest) any { return ParseInt32(r, "value", 99) }, int32(10), int32(99)},
+		{"int16", func(r CallToolRequest) any { return ParseInt16(r, "value", 99) }, int16(10), int16(99)},
+		{"int8", func(r CallToolRequest) any { return ParseInt8(r, "value", 99) }, int8(10), int8(99)},
+		{"int", func(r CallToolRequest) any { return ParseInt(r, "value", 99) }, int(10), int(99)},
+		{"uint64", func(r CallToolRequest) any { return ParseUInt64(r, "value", 99) }, uint64(10), uint64(99)},
+		{"uint32", func(r CallToolRequest) any { return ParseUInt32(r, "value", 99) }, uint32(10), uint32(99)},
+		{"uint16", func(r CallToolRequest) any { return ParseUInt16(r, "value", 99) }, uint16(10), uint16(99)},
+		{"uint8", func(r CallToolRequest) any { return ParseUInt8(r, "value", 99) }, uint8(10), uint8(99)},
+		{"uint", func(r CallToolRequest) any { return ParseUInt(r, "value", 99) }, uint(10), uint(99)},
+	}
+	for _, tt := range parsers {
+		t.Run(tt.name, func(t *testing.T) {
+			r := CallToolRequest{}
+			r.Params.Arguments = map[string]any{"value": "010"}
+			assert.Equal(t, tt.want, tt.parse(r))
+			for _, value := range []any{"invalid", nil, []int{10}, math.NaN(), math.Inf(1)} {
+				r.Params.Arguments = map[string]any{"value": value}
+				assert.Equal(t, tt.fallback, tt.parse(r))
+			}
+			r.Params.Arguments = map[string]any{}
+			assert.Equal(t, tt.fallback, tt.parse(r))
+		})
+	}
 }
