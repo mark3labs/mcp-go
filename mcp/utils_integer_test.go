@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestParseIntegerJSONRegression reproduces decimal parsing and fallback failures
+// with the float64 values supplied by JSON request decoding.
 func TestParseIntegerJSONRegression(t *testing.T) {
 	var request CallToolRequest
 	require.NoError(t, json.Unmarshal([]byte(`{"params":{"name":"test","arguments":{"padded":"010","eight":"08","large":300,"bad":"abc","negative":-1}}}`), &request))
@@ -29,6 +31,8 @@ type integerConversionCase[T comparable] struct {
 	want  T
 }
 
+// testIntegerWrapper checks the shared conversion contract at a target width
+// while preserving the wrapper result and default types.
 func testIntegerWrapper[T comparable](t *testing.T, parse func(CallToolRequest, string, T) T, convert func(string) T, bits int, signed bool, fallback T) {
 	t.Helper()
 	one := convert("1")
@@ -127,6 +131,7 @@ func testIntegerWrapper[T comparable](t *testing.T, parse func(CallToolRequest, 
 	}
 }
 
+// TestParseIntegerWrappers exercises each exported integer helper independently.
 func TestParseIntegerWrappers(t *testing.T) {
 	t.Run("int", func(t *testing.T) {
 		testIntegerWrapper(t, ParseInt, func(s string) int {

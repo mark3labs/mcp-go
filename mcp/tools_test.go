@@ -401,6 +401,7 @@ func TestToolWithAny(t *testing.T) {
 	}
 }
 
+// TestParseToolCallToolRequest checks helper result types and invalid integer defaults.
 func TestParseToolCallToolRequest(t *testing.T) {
 	request := CallToolRequest{}
 	request.Params.Name = "test-tool"
