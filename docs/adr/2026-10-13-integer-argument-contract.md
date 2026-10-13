@@ -17,3 +17,6 @@ Same new assertions evaluated against frozen fd2a63fb9f5e74bfc98415acb18fa97ac7d
 
 ## Independent review correction
 The first reviewed candidate4b2e5d4c2ff60aae561636965c768cc1245401c8 was held for whitespace compatibility and negative fractional unsigned input. Strings now retain the existing surrounding-whitespace acceptance before decimal parsing. Unsigned floats reject an originally negative value before truncation; positive fractions still truncate. New exact assertions cover both behaviors; frozen baseline and candidate logs remain separate.
+
+## Frozen broader validation
+Corrected frozen b7d724fe1b39e6ceaa51a5aa259765e2a40d6f20 completed `GOMAXPROCS=2 go test -p 1 ./... -race -count=1 -timeout=10m` successfully for the root module. The separate `otel` module race command also passed. Focused transport teardown test passed on both baseline (20.189s) and candidate (30.111s), each with a declared2m cap. An earlier unfrozen broad run hit its5m transport-package cap while review correction overlapped; it remains diagnostic history, not exact revision evidence. No cause/flakiness conclusion is inferred from these runs. Golangci-lint and hosted CI remain unverified. This record-only revision changes no implementation or assertions.
