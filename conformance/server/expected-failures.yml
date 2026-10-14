@@ -1,6 +1,3 @@
-# Notification delivery on current main is intermittent until #969 is merged.
-# The checker repeats these scenarios and only considers the baseline stale
-# after ten consecutive passes.
-server:
-  - tools-call-with-logging
-  - tools-call-with-progress
+# No known intermittent failures; every conformance scenario must pass.
+# Scenarios excluded here are retried ten times and fail the check once they
+# consistently pass, so keep this file empty while the suite is honest.
