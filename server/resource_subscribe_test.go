@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/v2/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -87,7 +87,7 @@ func (s *sessionWithSubscriptionErrors) SubscribeToResourceErr(uri string) error
 var _ SessionWithResourceSubscriptionsErr = (*sessionWithSubscriptionErrors)(nil)
 
 // TestMCPServer_SubscribeUnsubscribe_DispatcherWiring is the regression test
-// for https://github.com/mark3labs/mcp-go/issues/865. It verifies that
+// for https://github.com/mark3labs/mcp-go/v2/issues/865. It verifies that
 // resources/subscribe and resources/unsubscribe are dispatched (not
 // METHOD_NOT_FOUND) when the server advertises the resources.subscribe
 // capability, and that they round-trip an empty result.

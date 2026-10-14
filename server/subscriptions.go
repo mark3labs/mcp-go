@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/v2/mcp"
 )
 
 // subscriptionsListenKey carries the JSON-RPC ID of the subscriptions/listen

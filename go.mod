@@ -1,4 +1,4 @@
-module github.com/mark3labs/mcp-go
+module github.com/mark3labs/mcp-go/v2
 
 go 1.25.5
 

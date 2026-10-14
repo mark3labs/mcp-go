@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/mark3labs/mcp-go/client/transport"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
-	servertest "github.com/mark3labs/mcp-go/server/servertest"
+	"github.com/mark3labs/mcp-go/v2/client/transport"
+	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/v2/server"
+	servertest "github.com/mark3labs/mcp-go/v2/server/servertest"
 	"github.com/stretchr/testify/require"
 )
 

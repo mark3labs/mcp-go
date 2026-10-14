@@ -2526,7 +2526,7 @@ func TestCallToolRequest_WithTaskParams(t *testing.T) {
 
 // TestToolInputSchema_NoDoubleWrapping_Issue671 verifies that Tool schema
 // serialization does not wrap the inputSchema in an extra "properties" key.
-// See https://github.com/mark3labs/mcp-go/issues/671
+// See https://github.com/mark3labs/mcp-go/v2/issues/671
 func TestToolInputSchema_NoDoubleWrapping_Issue671(t *testing.T) {
 	tests := []struct {
 		name string
@@ -2607,7 +2607,7 @@ func TestToolInputSchema_NoDoubleWrapping_Issue671(t *testing.T) {
 // TestToolSchema_MarshalUnmarshal_RoundTrip_Issue671 verifies that
 // marshaling a Tool to JSON and unmarshaling it back produces the same
 // inputSchema structure without double-wrapping.
-// See https://github.com/mark3labs/mcp-go/issues/671
+// See https://github.com/mark3labs/mcp-go/v2/issues/671
 func TestToolSchema_MarshalUnmarshal_RoundTrip_Issue671(t *testing.T) {
 	original := NewTool("test_tool",
 		WithDescription("Test tool"),
@@ -2645,7 +2645,7 @@ func TestToolSchema_MarshalUnmarshal_RoundTrip_Issue671(t *testing.T) {
 
 // TestListToolsResult_Schema_Issue671 verifies that Tool schemas within a
 // ListToolsResult are serialized correctly without double-wrapping.
-// See https://github.com/mark3labs/mcp-go/issues/671
+// See https://github.com/mark3labs/mcp-go/v2/issues/671
 func TestListToolsResult_Schema_Issue671(t *testing.T) {
 	tool := NewTool("test_tool",
 		WithDescription("Test tool"),

@@ -34,8 +34,8 @@ package main
 
 import (
     "context"
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func main() {
@@ -173,7 +173,7 @@ samplingRequest := mcp.CreateMessageRequest{
 
 ## Capability Gating (2025-11-25)
 
-The 2025-11-25 protocol revision splits sampling into a baseline capability and two opt-in sub-capabilities. Inspect the connected session's [`ClientCapabilities.Sampling`](https://pkg.go.dev/github.com/mark3labs/mcp-go/mcp#SamplingCapability) before sending the gated fields — a conforming client MUST reject a request that violates the matrix below.
+The 2025-11-25 protocol revision splits sampling into a baseline capability and two opt-in sub-capabilities. Inspect the connected session's [`ClientCapabilities.Sampling`](https://pkg.go.dev/github.com/mark3labs/mcp-go/v2/mcp#SamplingCapability) before sending the gated fields — a conforming client MUST reject a request that violates the matrix below.
 
 | Field on `CreateMessageParams` | Required client sub-capability | Sub-capability is `nil` ⇒ |
 |--------------------------------|--------------------------------|---------------------------|
@@ -351,8 +351,8 @@ import (
     "log"
     "time"
     
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func main() {

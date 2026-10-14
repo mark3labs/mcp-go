@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/client/transport"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/mark3labs/mcp-go/v2/client/transport"
+	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/v2/server"
 )
 
 // NewInProcessClient connect directly to a mcp server object in the same process

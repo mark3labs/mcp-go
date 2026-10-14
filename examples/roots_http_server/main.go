@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/v2/server"
 )
 
 // handleNotification prints the method name of the received MCP JSON-RPC notification to standard output.

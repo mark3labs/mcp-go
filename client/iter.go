@@ -4,7 +4,7 @@ import (
 	"context"
 	"iter"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/v2/mcp"
 )
 
 // IterTools returns an iterator that lazily fetches pages of tools from the

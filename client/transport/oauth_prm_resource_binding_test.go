@@ -21,7 +21,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/v2/mcp"
 )
 
 // prmBindingServers bundles the "attacker" MCP server (RS1) and the

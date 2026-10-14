@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/v2/mcp"
 )
 
 // TestStreamableHTTP_SamplingFlow tests the complete sampling flow with HTTP transport

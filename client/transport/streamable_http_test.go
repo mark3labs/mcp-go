@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/v2/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1254,7 +1254,7 @@ func TestStreamableHTTP_SendNotification_Unauthorized_StaticToken(t *testing.T) 
 
 // TestStreamableHTTP_SendNotification_Accepts204NoContent verifies that SendNotification
 // treats HTTP 204 No Content as a success response per RFC 7231.
-// See: https://github.com/mark3labs/mcp-go/issues/700
+// See: https://github.com/mark3labs/mcp-go/v2/issues/700
 func TestStreamableHTTP_SendNotification_Accepts204NoContent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)

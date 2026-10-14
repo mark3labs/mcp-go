@@ -32,8 +32,8 @@ import (
     "log"
     "time"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func main() {
@@ -324,7 +324,7 @@ instead).
 When using the legacy SSE transport on the client side, you can configure endpoint and response timeouts:
 
 ```go
-import "github.com/mark3labs/mcp-go/client/transport"
+import "github.com/mark3labs/mcp-go/v2/client/transport"
 
 sseTransport, err := transport.NewSSE("http://localhost:8080/sse",
     // Max time to wait for the SSE endpoint URL during Start() (default: 30s)

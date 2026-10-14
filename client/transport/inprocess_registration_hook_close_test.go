@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/mark3labs/mcp-go/v2/server"
 )
 
 func TestInProcessRegistrationHookCanCloseTransport(t *testing.T) {

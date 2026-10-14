@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/v2/mcp"
 )
 
 // TestStdio_StartIdempotency tests that calling Start() multiple times is safe

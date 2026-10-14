@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/v2/mcp"
 )
 
 // sessionProtocolVersionSetter is implemented by sessions that record the

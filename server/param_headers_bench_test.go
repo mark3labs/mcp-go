@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/v2/mcp"
 )
 
 // bigRawSchema builds an input schema of about size bytes; annotated adds one

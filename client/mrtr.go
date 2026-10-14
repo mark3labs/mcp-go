@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/v2/mcp"
 )
 
 // Multi round-trip requests (SEP-2322) replace the server-initiated

@@ -32,8 +32,8 @@ package main
 
 import (
     "context"
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func main() {
@@ -342,7 +342,7 @@ type ElicitationHandler interface {
 Register the handler when creating the client:
 
 ```go
-import "github.com/mark3labs/mcp-go/client"
+import "github.com/mark3labs/mcp-go/v2/client"
 
 handler := &MyElicitationHandler{}
 c := client.NewClient(transport, client.WithElicitationHandler(handler))

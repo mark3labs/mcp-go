@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/v2/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -2726,7 +2726,7 @@ func TestStreamableHTTP_DrainNotifications(t *testing.T) {
 // response), the final response is written as SSE — not as JSON on top of SSE
 // headers, which would corrupt the response.
 //
-// This is a regression test for https://github.com/mark3labs/mcp-go/issues/742
+// This is a regression test for https://github.com/mark3labs/mcp-go/v2/issues/742
 func TestStreamableHTTP_NotificationUpgradeDoesNotCorruptResponse(t *testing.T) {
 	// Run multiple iterations to increase the chance of hitting the race window.
 	// The bug is timing-dependent: a notification must be processed by the

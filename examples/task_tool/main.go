@@ -13,8 +13,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/v2/server"
 )
 
 // This example demonstrates task-augmented tools in MCP.

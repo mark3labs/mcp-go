@@ -3,7 +3,7 @@ package servertest
 import (
 	"net/http/httptest"
 
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/mark3labs/mcp-go/v2/server"
 )
 
 // NewTestServer creates a test SSE server. Replaces server.NewTestServer.

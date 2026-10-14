@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Regression test for https://github.com/mark3labs/mcp-go/issues/903
+// Regression test for https://github.com/mark3labs/mcp-go/v2/issues/903
 //
 // When metadata discovery hits a non-2xx response, fetchMetadataFromURL returns
 // (nil, nil), which previously left getServerMetadata returning (nil, nil) — no

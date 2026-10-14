@@ -33,9 +33,9 @@ import (
     "sync"
     "time"
 
-    "github.com/mark3labs/mcp-go/client"
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/client"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func createStdioClient() {
@@ -289,7 +289,7 @@ StreamableHTTP clients communicate with servers using traditional HTTP requests.
 When connecting to a server that only supports the legacy SSE transport, the StreamableHTTP client will receive a 4xx error during initialization. Use the `ErrLegacySSEServer` sentinel error to detect this and fall back automatically:
 
 ```go
-import "github.com/mark3labs/mcp-go/client/transport"
+import "github.com/mark3labs/mcp-go/v2/client/transport"
 
 func connectWithFallback(ctx context.Context, url string) (*client.Client, error) {
     // Try StreamableHTTP first
@@ -1170,8 +1170,8 @@ import (
     "log/slog"
     "os"
 
-    "github.com/mark3labs/mcp-go/client"
-    "github.com/mark3labs/mcp-go/client/transport"
+    "github.com/mark3labs/mcp-go/v2/client"
+    "github.com/mark3labs/mcp-go/v2/client/transport"
 )
 
 func tracedClient() (*client.Client, error) {

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/mark3labs/mcp-go/client/transport"
+	"github.com/mark3labs/mcp-go/v2/client/transport"
 )
 
 // WithHeaders sets static headers for the SSE client.

@@ -3,8 +3,8 @@
 <img src="./logo.png" alt="MCP Go Logo">
 
 [![Build](https://github.com/mark3labs/mcp-go/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mark3labs/mcp-go/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/mark3labs/mcp-go?cache)](https://goreportcard.com/report/github.com/mark3labs/mcp-go)
-[![GoDoc](https://pkg.go.dev/badge/github.com/mark3labs/mcp-go.svg)](https://pkg.go.dev/github.com/mark3labs/mcp-go)
+[![Go Report Card](https://goreportcard.com/badge/github.com/mark3labs/mcp-go/v2?cache)](https://goreportcard.com/report/github.com/mark3labs/mcp-go/v2)
+[![GoDoc](https://pkg.go.dev/badge/github.com/mark3labs/mcp-go/v2.svg)](https://pkg.go.dev/github.com/mark3labs/mcp-go/v2)
 
 [![AgentRank](https://agentrank-ai.com/api/badge/tool/mark3labs--mcp-go)](https://agentrank-ai.com/tool/mark3labs--mcp-go/)
 <strong>A Go implementation of the Model Context Protocol (MCP), enabling seamless integration between LLM applications and external data sources and tools.</strong>
@@ -27,8 +27,8 @@ import (
     "context"
     "fmt"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func main() {
@@ -108,8 +108,24 @@ MCP Go handles all the complex protocol details and server management, so you ca
 ## Installation
 
 ```bash
-go get github.com/mark3labs/mcp-go
+go get github.com/mark3labs/mcp-go/v2
 ```
+
+## Migrating from v1
+
+Update core imports to `github.com/mark3labs/mcp-go/v2/...` and run
+`go get github.com/mark3labs/mcp-go/v2@v2.0.0`. The separate OpenTelemetry
+adapter retains its `github.com/mark3labs/mcp-go/otel` module path.
+
+Modern discovery no longer falls back to legacy initialization after identifying
+a modern server. Select a legacy protocol explicitly with
+`client.WithProtocolVersion(mcp.ProtocolVersion20251125)` when needed.
+
+Custom OAuth token stores must preserve `Token.Issuer`. Persist
+`GetCredentialsIssuer()` with client credentials and restore it through
+`OAuthConfig.CredentialsIssuer`. Expired tokens without issuer provenance require
+fresh authorization. Integer parsing helpers now reject invalid and out-of-range
+conversions instead of accepting permissive casts.
 
 ## Quickstart
 
@@ -122,8 +138,8 @@ import (
     "context"
     "fmt"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func main() {
