@@ -419,20 +419,17 @@ When the limit is reached, new task creation requests will fail with an error. C
 
 ##### Transport Considerations for Task Handlers
 
-Task handlers run as background goroutines. The context they receive is cancelled as soon as `HandleMessage` returns, which happens immediately after the `CreateTaskResult` response is written, on **every transport** (HTTP, SSE, stdio, in-process).
+Task handlers run as background goroutines whose context is rooted at the server's own lifetime (`s.serverCtx`), not the per-request context. This means the handler context is **not** cancelled when `HandleMessage` returns, it stays alive until `tasks/cancel` is called or the server shuts down.
 
-This means a task handler that blocks on `ctx.Done()` will unblock almost immediately after the client receives the initial response, before the client has had a chance to poll `tasks/get`.
-
-**Recommended pattern — non-blocking cancellation check:**
+Blocking on `ctx.Done()` is therefore safe and is the recommended way to honour cancellation:
 
 ```go
 s.AddTaskTool(myTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
     for _, item := range items {
-        // Non-blocking check: honours tasks/cancel without blocking the work loop.
         select {
         case <-ctx.Done():
             return nil, ctx.Err()
-        default:
+        case <-time.After(perItemDelay * time.Millisecond):
         }
         processItem(item)
     }

@@ -51,26 +51,30 @@ func initStatefulSession(t *testing.T, serverURL string) string {
 	return sessionID
 }
 
-// TestTaskHTTPLifecycle_RequestContextCancelledAfterResponse verifies that the
-// task goroutine's context is cancelled by the time the HTTP response is
-// delivered on Streamable HTTP, demonstrating the known limitation.
-func TestTaskHTTPLifecycle_RequestContextCancelledAfterResponse(t *testing.T) {
+// TestTaskHTTPLifecycle_RequestContextDoesNotCancelTask verifies that
+// task goroutines are NOT cancelled when the HTTP response is written.
+func TestTaskHTTPLifecycle_RequestContextDoesNotCancelTask(t *testing.T) {
 	srv := NewMCPServer("test", "1.0.0",
 		WithTaskCapabilities(true, true, true),
 	)
 
-	ctxCancelledCh := make(chan struct{})
+	handlerCompleted := make(chan struct{})
 	handlerStarted := make(chan struct{})
 
 	tool := mcp.NewTool("blocking_task",
-		mcp.WithDescription("A task that waits for context cancellation"),
+		mcp.WithDescription("A task that completes after a short delay"),
 		mcp.WithTaskSupport(mcp.TaskSupportRequired),
 	)
 	srv.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
 		close(handlerStarted)
-		<-ctx.Done()
-		close(ctxCancelledCh)
-		return nil, ctx.Err()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+			close(handlerCompleted)
+			r := mcp.NewCreateTaskResult(mcp.Task{})
+			return &r, nil
+		}
 	})
 
 	ts := NewTestStreamableHTTPServer(srv, WithStateful(true))
@@ -102,19 +106,24 @@ func TestTaskHTTPLifecycle_RequestContextCancelledAfterResponse(t *testing.T) {
 	require.NotEmpty(t, taskID, "expected a task ID in the response")
 	assert.Equal(t, "working", result.Result.Task.Status)
 
+	// Wait until the goroutine has started before asserting it completes.
+	// Without this barrier the 200ms timer may not have begun yet.
+	<-handlerStarted
+
+	// HTTP response has been sent; handler must still complete.
 	select {
-	case <-ctxCancelledCh:
-		// Expected on HTTP: request context cancelled after response.
+	case <-handlerCompleted:
+		// Correct: task outlived the HTTP request.
 	case <-time.After(2 * time.Second):
-		t.Fatal("task handler context was not cancelled after HTTP response — " +
-			"this may indicate the context lifecycle behaviour changed")
+		t.Fatal("task handler was cancelled after HTTP response — " +
+			"executeTaskTool should use s.serverCtx, not the per-request context")
 	}
 }
 
 // TestTaskHTTPLifecycle_CancelViaTasksCancel verifies that tasks/cancel works
 // correctly over Streamable HTTP regardless of the request-context limitation.
-// tasks/cancel operates via entry.cancelFunc which is set by the task goroutine
-// and is independent of the HTTP request context.
+// tasks/cancel operates which is set by the task goroutine and is independent
+// of the HTTP request context.
 func TestTaskHTTPLifecycle_CancelViaTasksCancel(t *testing.T) {
 	srv := NewMCPServer("test", "1.0.0",
 		WithTaskCapabilities(true, true, true),
@@ -197,34 +206,39 @@ func TestTaskHTTPLifecycle_CancelViaTasksCancel(t *testing.T) {
 	}, 3*time.Second, 100*time.Millisecond, "task status: %s", lastStatus)
 }
 
-// TestTaskHTTPLifecycle_ContextCancelledOnAllTransports verifies that the
-// request-context cancellation limitation applies to ALL transports, not just
-// Streamable HTTP.
-func TestTaskHTTPLifecycle_ContextCancelledOnAllTransports(t *testing.T) {
+// TestTaskHTTPLifecycle_ContextNotCancelledOnAllTransports verifies that task
+// goroutines are not cancelled when the request context is cancelled.
+// Cancelling the caller's context after HandleMessage returns must not affect
+// the running goroutine.
+func TestTaskHTTPLifecycle_ContextNotCancelledOnAllTransports(t *testing.T) {
 	srv := NewMCPServer("test", "1.0.0",
 		WithTaskCapabilities(true, true, true),
 	)
 
-	ctxCancelledCh := make(chan struct{})
-	handlerStarted := make(chan struct{})
+	handlerCompleted := make(chan struct{})
 
 	tool := mcp.NewTool("blocking_task_inprocess",
-		mcp.WithDescription("Blocks on ctx.Done to detect premature cancellation"),
+		mcp.WithDescription("Completes after a short delay; must not be cancelled by request ctx"),
 		mcp.WithTaskSupport(mcp.TaskSupportRequired),
 	)
 	srv.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
-		close(handlerStarted)
-		<-ctx.Done()
-		close(ctxCancelledCh)
-		return nil, ctx.Err()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+			close(handlerCompleted)
+			r := mcp.NewCreateTaskResult(mcp.Task{})
+			return &r, nil
+		}
 	})
 
-	// Drive via HandleMessage, the same code path used by every real transport.
-	ctx := t.Context()
+	// Use a cancellable context. We will cancel it right after HandleMessage
+	// returns to simulate the per-request context being torn down.
+	reqCtx, cancelReq := context.WithCancel(t.Context())
 	notifyChan := make(chan mcp.JSONRPCNotification, 10)
 	session := fakeSess{sessionID: "inprocess-session", notifyChan: notifyChan}
-	require.NoError(t, srv.RegisterSession(ctx, session))
-	sessionCtx := srv.WithContext(ctx, session)
+	require.NoError(t, srv.RegisterSession(reqCtx, session))
+	sessionCtx := srv.WithContext(reqCtx, session)
 
 	msg, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
@@ -234,13 +248,14 @@ func TestTaskHTTPLifecycle_ContextCancelledOnAllTransports(t *testing.T) {
 	})
 	srv.HandleMessage(sessionCtx, msg)
 
-	// HandleMessage has returned, the defer cancel inside it has fired.
-	// The task goroutine must observe ctx.Done() almost immediately.
+	// Cancel the request context immediately.
+	cancelReq()
+
 	select {
-	case <-ctxCancelledCh:
-		// Correct: context is cancelled on in-process transport too.
+	case <-handlerCompleted:
+		// Correct: goroutine is rooted on s.serverCtx and survives request cancellation.
 	case <-time.After(2 * time.Second):
-		t.Fatal("task handler context was not cancelled after HandleMessage returned — " +
-			"the per-request context cancellation applies to all transports")
+		t.Fatal("task handler was cancelled after request ctx was cancelled — " +
+			"executeTaskTool must use s.serverCtx, not the per-request context")
 	}
 }

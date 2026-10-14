@@ -2449,8 +2449,9 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 	taskCopy := entry.task
 	s.tasksMu.RUnlock()
 
-	// Execute tool asynchronously. The goroutine's context is cancelled when
-	// HandleMessage returns on every transport.
+	// Execute tool asynchronously. The goroutine's context is rooted at
+	// s.serverCtx, not the per-request ctx, so it outlives the originating
+	// request on every transport.
 	if hasTaskHandler {
 		go s.executeTaskTool(ctx, entry, toolToUse, request)
 	} else {
@@ -2483,8 +2484,10 @@ func (s *MCPServer) executeTaskTool(
 		}
 	}()
 
-	// Create cancellable context for this task execution
-	taskCtx, cancel := context.WithCancel(ctx)
+	// Preserve ctx values but strip the per-request cancel.
+	taskCtx, cancel := context.WithCancel(
+		context.WithoutCancel(ctx),
+	)
 	defer cancel()
 
 	// Register cancellation atomically with TTL cleanup, which may have already removed the task.
@@ -2540,7 +2543,7 @@ func (s *MCPServer) executeTaskTool(
 							Duration:      duration,
 							SessionID:     entry.sessionID,
 						}
-						s.taskHooks.taskCancelled(ctx, metrics)
+						s.taskHooks.taskCancelled(taskCtx, metrics)
 					}
 				}
 				s.tasksMu.Unlock()
@@ -2586,8 +2589,10 @@ func (s *MCPServer) executeRegularToolAsTask(
 	regularTool ServerTool,
 	request mcp.CallToolRequest,
 ) {
-	// Create cancellable context for this task execution
-	taskCtx, cancel := context.WithCancel(ctx)
+	// Preserve ctx values but strip the per-request cancel.
+	taskCtx, cancel := context.WithCancel(
+		context.WithoutCancel(ctx),
+	)
 	defer cancel()
 
 	// Register cancellation atomically with TTL cleanup, which may have already removed the task.
@@ -2652,7 +2657,7 @@ func (s *MCPServer) executeRegularToolAsTask(
 							Duration:      duration,
 							SessionID:     entry.sessionID,
 						}
-						s.taskHooks.taskCancelled(ctx, metrics)
+						s.taskHooks.taskCancelled(taskCtx, metrics)
 					}
 				}
 				s.tasksMu.Unlock()
