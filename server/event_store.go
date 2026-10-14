@@ -127,7 +127,7 @@ func (s *InMemoryEventStore) ReplayEventsAfter(_ context.Context, sessionID, las
 	s.mu.RUnlock()
 
 	for _, ev := range tail {
-		if err := send(ev.id, ev.message); err != nil {
+		if err := send(ev.id, append(json.RawMessage(nil), ev.message...)); err != nil {
 			return "", err
 		}
 	}
