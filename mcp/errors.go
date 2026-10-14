@@ -153,20 +153,23 @@ func (e UnsupportedProtocolVersionError) Is(target error) bool {
 // IsUnsupportedProtocolVersion checks if an error is an UnsupportedProtocolVersionError
 func IsUnsupportedProtocolVersion(err error) bool {
 	var target UnsupportedProtocolVersionError
-	return errors.As(err, &target)
+	var pointer *UnsupportedProtocolVersionError
+	return errors.As(err, &target) || errors.As(err, &pointer)
 }
 
 // IsHeaderMismatch checks if an error is a [HeaderMismatchError].
 func IsHeaderMismatch(err error) bool {
 	var target HeaderMismatchError
-	return errors.As(err, &target)
+	var pointer *HeaderMismatchError
+	return errors.As(err, &target) || errors.As(err, &pointer)
 }
 
 // IsMissingRequiredClientCapability checks if an error is a
 // [MissingRequiredClientCapabilityError].
 func IsMissingRequiredClientCapability(err error) bool {
 	var target MissingRequiredClientCapabilityError
-	return errors.As(err, &target)
+	var pointer *MissingRequiredClientCapabilityError
+	return errors.As(err, &target) || errors.As(err, &pointer)
 }
 
 // AsError maps JSONRPCErrorDetails to a Go error.
