@@ -645,6 +645,7 @@ Prompts can include:
 For examples, see the [`examples/`](examples/) directory.
 
 Key examples include:
+- [`examples/parallel_search/`](examples/parallel_search/) - Calls anonymous web search and page fetching over Streamable HTTP
 - [`examples/task_tool/`](examples/task_tool/) - Demonstrates task-augmented tools with TaskSupportRequired and TaskSupportOptional modes
 - [`examples/structured_input_and_output/`](examples/structured_input_and_output/) - Shows how to use struct-based input/output schemas with type-safe tool handlers
 - [`examples/typed_tools/`](examples/typed_tools/) - Demonstrates type-safe tool handlers with strongly-typed arguments
