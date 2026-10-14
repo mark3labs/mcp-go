@@ -1236,6 +1236,7 @@ func (h *OAuthHandler) performRegistration(ctx context.Context, metadata *AuthSe
 	regRequest := map[string]any{
 		"client_name":                clientName,
 		"redirect_uris":              []string{h.config.RedirectURI},
+		"application_type":           applicationType(h.config.RedirectURI),
 		"token_endpoint_auth_method": "none", // For public clients
 		"grant_types":                []string{"authorization_code", "refresh_token"},
 		"response_types":             []string{"code"},
