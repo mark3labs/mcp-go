@@ -1184,6 +1184,10 @@ func WithTaskSupport(support TaskSupport) ToolOption {
 // check that out before using this.
 func WithRawInputSchema(schema json.RawMessage) ToolOption {
 	return func(t *Tool) {
+		if schema != nil {
+			t.InputSchema.Type = ""
+			t.InputSchema.Types = nil
+		}
 		t.RawInputSchema = schema
 	}
 }
