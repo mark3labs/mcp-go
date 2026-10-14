@@ -25,10 +25,11 @@ import (
 // later call supersedes an earlier one, and only the owner may clear the
 // state, so a returning call cannot tear down a stream that replaced it.
 type subscriptionState struct {
-	mu         sync.Mutex
-	filter     mcp.SubscriptionFilter
-	cancel     context.CancelFunc
-	generation uint64
+	mu                    sync.Mutex
+	filter                mcp.SubscriptionFilter
+	resourceSubscriptions []string
+	cancel                context.CancelFunc
+	generation            uint64
 }
 
 // Listen opens a subscriptions/listen stream for the given notification
@@ -53,6 +54,12 @@ func (c *Client) Listen(ctx context.Context, filter mcp.SubscriptionFilter) erro
 	defer cancel()
 
 	c.subscriptions.mu.Lock()
+	filter.ResourceSubscriptions = slices.Clone(filter.ResourceSubscriptions)
+	for _, uri := range c.subscriptions.resourceSubscriptions {
+		if !slices.Contains(filter.ResourceSubscriptions, uri) {
+			filter.ResourceSubscriptions = append(filter.ResourceSubscriptions, uri)
+		}
+	}
 	c.subscriptions.filter = filter
 	if previous := c.subscriptions.cancel; previous != nil {
 		previous()
@@ -136,9 +143,9 @@ func (c *Client) Subscribe(
 	if c.isModern() {
 		c.subscriptions.mu.Lock()
 		defer c.subscriptions.mu.Unlock()
-		if !slices.Contains(c.subscriptions.filter.ResourceSubscriptions, request.Params.URI) {
-			c.subscriptions.filter.ResourceSubscriptions = append(
-				c.subscriptions.filter.ResourceSubscriptions, request.Params.URI)
+		if !slices.Contains(c.subscriptions.resourceSubscriptions, request.Params.URI) {
+			c.subscriptions.resourceSubscriptions = append(
+				c.subscriptions.resourceSubscriptions, request.Params.URI)
 		}
 		return nil
 	}
@@ -161,6 +168,10 @@ func (c *Client) Unsubscribe(
 	if c.isModern() {
 		c.subscriptions.mu.Lock()
 		defer c.subscriptions.mu.Unlock()
+		c.subscriptions.resourceSubscriptions = slices.DeleteFunc(
+			c.subscriptions.resourceSubscriptions,
+			func(uri string) bool { return uri == request.Params.URI },
+		)
 		c.subscriptions.filter.ResourceSubscriptions = slices.DeleteFunc(
 			c.subscriptions.filter.ResourceSubscriptions,
 			func(uri string) bool { return uri == request.Params.URI },
@@ -178,5 +189,10 @@ func (c *Client) PendingSubscriptionFilter() mcp.SubscriptionFilter {
 	defer c.subscriptions.mu.Unlock()
 	filter := c.subscriptions.filter
 	filter.ResourceSubscriptions = slices.Clone(filter.ResourceSubscriptions)
+	for _, uri := range c.subscriptions.resourceSubscriptions {
+		if !slices.Contains(filter.ResourceSubscriptions, uri) {
+			filter.ResourceSubscriptions = append(filter.ResourceSubscriptions, uri)
+		}
+	}
 	return filter
 }
