@@ -308,7 +308,7 @@ MCP-Go is designed to make building MCP servers in Go fast, simple, and complete
 Add MCP-Go to your Go project:
 
 ```bash
-go get github.com/mark3labs/mcp-go
+go get github.com/mark3labs/mcp-go/v2
 ```
 
 MCP-Go makes it easy to build Model Context Protocol (MCP) servers in Go. This guide will help you create your first MCP server in just a few minutes.
@@ -324,8 +324,8 @@ import (
     "context"
     "fmt"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func main() {
@@ -700,8 +700,8 @@ import (
     "context"
     "fmt"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func main() {
@@ -761,7 +761,7 @@ Save this as `hello-server/main.go` and run:
 ```bash
 cd hello-server
 go mod init hello-server
-go get github.com/mark3labs/mcp-go
+go get github.com/mark3labs/mcp-go/v2
 go run main.go
 ```
 
@@ -818,9 +818,9 @@ import (
     "log"
     "time"
 
-    "github.com/mark3labs/mcp-go/client"
-    "github.com/mark3labs/mcp-go/client/transport"
-    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/v2/client"
+    "github.com/mark3labs/mcp-go/v2/client/transport"
+    "github.com/mark3labs/mcp-go/v2/mcp"
 )
 
 func main() {
@@ -905,9 +905,9 @@ import (
     "log"
     "time"
 
-    "github.com/mark3labs/mcp-go/client"
-    "github.com/mark3labs/mcp-go/client/transport"
-    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/v2/client"
+    "github.com/mark3labs/mcp-go/v2/client/transport"
+    "github.com/mark3labs/mcp-go/v2/mcp"
 )
 
 func main() {
@@ -1029,9 +1029,9 @@ import (
     "context"
     "fmt"
     
-    "github.com/mark3labs/mcp-go/client"
-    "github.com/mark3labs/mcp-go/client/transport"
-    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/v2/client"
+    "github.com/mark3labs/mcp-go/v2/client/transport"
+    "github.com/mark3labs/mcp-go/v2/mcp"
 )
 
 type MySamplingHandler struct {
@@ -1115,8 +1115,8 @@ import (
     "strings"
     "os"
 
-    "github.com/mark3labs/mcp-go/client"
-    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/v2/client"
+    "github.com/mark3labs/mcp-go/v2/mcp"
 )
 type MockSamplingHandler struct{}
 
@@ -1616,8 +1616,8 @@ import (
     "sync"
     "time"
 
-    "github.com/mark3labs/mcp-go/client"
-    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/v2/client"
+    "github.com/mark3labs/mcp-go/v2/mcp"
 )
 
 func createStdioClient() (client.Client, error) {
@@ -2353,8 +2353,8 @@ import (
     "fmt"
     "log"
 
-    "github.com/mark3labs/mcp-go/client"
-    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/v2/client"
+    "github.com/mark3labs/mcp-go/v2/mcp"
 )
 
 func main() {
@@ -2516,8 +2516,8 @@ import (
     "sync"
     "time"
 
-    "github.com/mark3labs/mcp-go/client"
-    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/v2/client"
+    "github.com/mark3labs/mcp-go/v2/mcp"
 )
 
 type MCPClientManager struct {
@@ -2805,8 +2805,8 @@ import (
     "sync"
     "time"
 
-    "github.com/mark3labs/mcp-go/client"
-    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/v2/client"
+    "github.com/mark3labs/mcp-go/v2/mcp"
 )
 
 func listResources(ctx context.Context, c client.Client) error {
@@ -3710,7 +3710,7 @@ Consider implementing sampling when your client:
 #### Basic Implementation
 
 ```go
-import "github.com/mark3labs/mcp-go/client"
+import "github.com/mark3labs/mcp-go/v2/client"
 
 // Implement the SamplingHandler interface
 type MySamplingHandler struct {
@@ -3885,9 +3885,9 @@ import (
     "sync"
     "time"
 
-    "github.com/mark3labs/mcp-go/client"
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/client"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func createStdioClient() {
@@ -4141,7 +4141,7 @@ StreamableHTTP clients communicate with servers using traditional HTTP requests.
 When connecting to a server that only supports the legacy SSE transport, the StreamableHTTP client will receive a 4xx error during initialization. Use the `ErrLegacySSEServer` sentinel error to detect this and fall back automatically:
 
 ```go
-import "github.com/mark3labs/mcp-go/client/transport"
+import "github.com/mark3labs/mcp-go/v2/client/transport"
 
 func connectWithFallback(ctx context.Context, url string) (*client.Client, error) {
     // Try StreamableHTTP first
@@ -5022,8 +5022,8 @@ import (
     "log/slog"
     "os"
 
-    "github.com/mark3labs/mcp-go/client"
-    "github.com/mark3labs/mcp-go/client/transport"
+    "github.com/mark3labs/mcp-go/v2/client"
+    "github.com/mark3labs/mcp-go/v2/client/transport"
 )
 
 func tracedClient() (*client.Client, error) {
@@ -5100,8 +5100,8 @@ package main
 
 import (
     "context"
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func main() {
@@ -5239,7 +5239,7 @@ samplingRequest := mcp.CreateMessageRequest{
 
 ### Capability Gating (2025-11-25)
 
-The 2025-11-25 protocol revision splits sampling into a baseline capability and two opt-in sub-capabilities. Inspect the connected session's [`ClientCapabilities.Sampling`](https://pkg.go.dev/github.com/mark3labs/mcp-go/mcp#SamplingCapability) before sending the gated fields — a conforming client MUST reject a request that violates the matrix below.
+The 2025-11-25 protocol revision splits sampling into a baseline capability and two opt-in sub-capabilities. Inspect the connected session's [`ClientCapabilities.Sampling`](https://pkg.go.dev/github.com/mark3labs/mcp-go/v2/mcp#SamplingCapability) before sending the gated fields — a conforming client MUST reject a request that violates the matrix below.
 
 | Field on `CreateMessageParams`                   | Required client sub-capability | Sub-capability is `nil` ⇒       |
 | ------------------------------------------------ | ------------------------------ | ------------------------------- |
@@ -5417,8 +5417,8 @@ import (
     "log"
     "time"
     
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func main() {
@@ -5630,8 +5630,8 @@ import (
     "fmt"
     "time"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 // Define input and output types
@@ -6462,8 +6462,8 @@ import (
     "context"
     "fmt"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func main() {
@@ -6669,7 +6669,7 @@ The foundation of any MCP server is the `NewMCPServer()` function. This creates 
 package main
 
 import (
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func main() {
@@ -7247,8 +7247,8 @@ package main
 
 import (
     "context"
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func main() {
@@ -7557,7 +7557,7 @@ type ElicitationHandler interface {
 Register the handler when creating the client:
 
 ```go
-import "github.com/mark3labs/mcp-go/client"
+import "github.com/mark3labs/mcp-go/v2/client"
 
 handler := &MyElicitationHandler{}
 c := client.NewClient(transport, client.WithElicitationHandler(handler))
@@ -7660,8 +7660,8 @@ import (
     "fmt"
     "time"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 var start time.Time
@@ -7838,8 +7838,8 @@ import (
     "context"
     "log"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func loggingMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
@@ -8046,8 +8046,8 @@ import (
     "context"
     "fmt"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func main() {
@@ -8881,8 +8881,8 @@ import (
     "encoding/json"
     "fmt"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 // Database table resource
@@ -9760,8 +9760,8 @@ import (
     "log"
     "time"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func main() {
@@ -11200,8 +11200,8 @@ import (
     "strings"
     "time"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func main() {
@@ -12294,7 +12294,7 @@ import (
     "net/http"
 
     "github.com/valyala/fasthttp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 // fasthttpResponseWriter implements server.HTTPResponseWriter on top of a
@@ -12437,9 +12437,9 @@ import (
     "log"
     "os"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
-    "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
+    "github.com/mark3labs/mcp-go/v2/client"
 )
 
 func main() {
@@ -12725,9 +12725,9 @@ import (
     "fmt"
     "log"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
-    "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
+    "github.com/mark3labs/mcp-go/v2/client"
 )
 
 func main() {
@@ -12981,9 +12981,9 @@ import (
     "fmt"
     "log"
 
-    "github.com/mark3labs/mcp-go/client"
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/client"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 // MockSamplingHandler implements client.SamplingHandler for demonstration
@@ -13353,8 +13353,8 @@ import (
     "log"
     "time"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func main() {
@@ -13646,7 +13646,7 @@ instead).
 When using the legacy SSE transport on the client side, you can configure endpoint and response timeouts:
 
 ```go
-import "github.com/mark3labs/mcp-go/client/transport"
+import "github.com/mark3labs/mcp-go/v2/client/transport"
 
 sseTransport, err := transport.NewSSE("http://localhost:8080/sse",
     // Max time to wait for the SSE endpoint URL during Start() (default: 30s)
@@ -13780,8 +13780,8 @@ import (
     "path/filepath"
     "strings"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func main() {
@@ -13946,8 +13946,8 @@ import (
     "syscall"
     "time"
 
-    "github.com/mark3labs/mcp-go/mcp"
-    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/v2/mcp"
+    "github.com/mark3labs/mcp-go/v2/server"
 )
 
 func main() {
@@ -14063,8 +14063,8 @@ import (
     "time"
 
 
-    "github.com/mark3labs/mcp-go/client"
-    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/v2/client"
+    "github.com/mark3labs/mcp-go/v2/mcp"
 )
 
 func main() {
