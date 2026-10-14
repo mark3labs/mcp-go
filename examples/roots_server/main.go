@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
-	"github.com/mark3labs/mcp-go/v2/server"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 // handleNotification handles JSON-RPC notifications by printing the notification method to standard output.

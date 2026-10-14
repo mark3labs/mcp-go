@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func TestTaskResultPreservesRawStructuredContent(t *testing.T) {

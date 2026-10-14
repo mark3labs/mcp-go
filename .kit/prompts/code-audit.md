@@ -3,7 +3,7 @@ description: Read-only audit for dead code, duplication, boundary violations, an
 ---
 
 Perform a comprehensive **read-only** audit of this repository (the
-`github.com/mark3labs/mcp-go/v2` SDK) and report findings. **Do not edit,
+`github.com/mark3labs/mcp-go` SDK) and report findings. **Do not edit,
 rename, or delete any files.** Optional focus / scope hints from the user:
 $@
 

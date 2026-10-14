@@ -4,7 +4,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func TestStreamableHttpSessionImplementsSessionWithClientInfo(t *testing.T) {

@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/mark3labs/mcp-go/v2/client/transport"
-	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/client/transport"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 type initialRoundTripTransport struct {

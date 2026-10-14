@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // TaskMetrics contains metrics about task execution.

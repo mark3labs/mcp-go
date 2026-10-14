@@ -10,12 +10,12 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/mark3labs/mcp-go/v2/client"
-	"github.com/mark3labs/mcp-go/v2/client/transport"
-	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/client/transport"
+	"github.com/mark3labs/mcp-go/mcp"
 	otelmcp "github.com/mark3labs/mcp-go/otel"
-	"github.com/mark3labs/mcp-go/v2/server"
-	"github.com/mark3labs/mcp-go/v2/server/servertest"
+	"github.com/mark3labs/mcp-go/server"
+	"github.com/mark3labs/mcp-go/server/servertest"
 )
 
 const attrProtocolVersion = "mcp.protocol.version"

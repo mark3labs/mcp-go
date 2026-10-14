@@ -5,8 +5,8 @@ import (
 
 	"go.opentelemetry.io/otel/propagation"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
-	"github.com/mark3labs/mcp-go/v2/tracing"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/tracing"
 )
 
 // NewMetaPropagator returns a tracing.MetaPropagator backed by W3C TraceContext

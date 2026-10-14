@@ -3,7 +3,7 @@ package server
 import (
 	"sync/atomic"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // clientInfoStore provides thread-safe storage for a session's client info,

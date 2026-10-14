@@ -9,8 +9,8 @@ import (
 	"os/exec"
 	"runtime"
 
-	"github.com/mark3labs/mcp-go/v2/client"
-	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 const (

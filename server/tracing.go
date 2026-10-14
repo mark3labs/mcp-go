@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
-	"github.com/mark3labs/mcp-go/v2/tracing"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/tracing"
 )
 
 const (

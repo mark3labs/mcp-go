@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // maxMetadataBodyBytes caps the size of an OAuth metadata document we are

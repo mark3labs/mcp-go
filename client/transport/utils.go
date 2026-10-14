@@ -3,7 +3,7 @@ package transport
 import (
 	"encoding/json"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // NewJSONRPCErrorResponse creates a new JSONRPCResponse with an error.

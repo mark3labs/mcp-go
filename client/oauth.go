@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/v2/client/transport"
+	"github.com/mark3labs/mcp-go/client/transport"
 )
 
 // ErrAuthorizationServerChanged indicates credentials or tokens belong to another issuer.

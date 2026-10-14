@@ -13,7 +13,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // compiledSchemaCache compiles and caches JSON Schema validators keyed by

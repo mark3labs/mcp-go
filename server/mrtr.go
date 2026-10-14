@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // Multi round-trip requests (SEP-2322) are how a server asks a client for

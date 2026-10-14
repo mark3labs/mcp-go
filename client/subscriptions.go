@@ -7,7 +7,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // Protocol version 2026-07-28 replaced the standalone notification stream and

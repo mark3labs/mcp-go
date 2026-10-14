@@ -5,7 +5,7 @@ import (
 	"errors"
 	"reflect"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // JSONRPCErrorProvider provides a typed JSON-RPC error response.

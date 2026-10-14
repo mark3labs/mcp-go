@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 
 	"github.com/google/uuid"
-	"github.com/mark3labs/mcp-go/v2/mcp"
-	"github.com/mark3labs/mcp-go/v2/server"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 // demoElicitationHandler demonstrates how to use elicitation in a tool

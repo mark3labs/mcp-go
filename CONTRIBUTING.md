@@ -49,12 +49,9 @@ go version
 
 The repository contains two Go modules:
 
-- `github.com/mark3labs/mcp-go/v2` (root) — core, no OpenTelemetry deps.
+- `github.com/mark3labs/mcp-go` (root) — core, no OpenTelemetry deps.
 - `github.com/mark3labs/mcp-go/otel` — OpenTelemetry adapter, has its own
   `go.mod`.
-
-Core releases use semantic `v2.X.Y` tags and the `/v2` module path. The
-OpenTelemetry adapter is versioned independently with `otel/vX.Y.Z` tags.
 
 Tag the core module first, then bump `otel/go.mod`'s `require` line to the new
 core tag (replacing the `replace` directive used during development), then tag
@@ -62,18 +59,18 @@ the submodule:
 
 ```bash
 # 1. Tag the core
-git tag -a v2.X.Y -m "v2.X.Y - release summary"
-git push origin refs/tags/v2.X.Y
+git tag v0.X.Y
+git push origin v0.X.Y
 
 # 2. Bump otel/go.mod and remove the replace directive
 cd otel
-go mod edit -require=github.com/mark3labs/mcp-go/v2@v2.X.Y -dropreplace=github.com/mark3labs/mcp-go/v2
+go mod edit -require=github.com/mark3labs/mcp-go@v0.X.Y -dropreplace=github.com/mark3labs/mcp-go
 go mod tidy
 
 # 3. Commit and tag the submodule
-git commit -am "otel: pin core to v2.X.Y"
-git tag -a otel/vX.Y.Z -m "otel/vX.Y.Z - release summary"
-git push origin refs/tags/otel/vX.Y.Z
+git commit -am "otel: pin core to v0.X.Y"
+git tag otel/v0.X.Y
+git push origin otel/v0.X.Y
 ```
 
 Feel free to reach out if you have any questions or need help either by [opening an issue](https://github.com/mark3labs/mcp-go/issues) or by reaching out in the [Discord channel](https://discord.gg/RqSS2NQVsY).

@@ -3,7 +3,7 @@ package client
 import (
 	"context"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // ElicitationHandler defines the interface for handling elicitation requests from servers.

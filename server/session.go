@@ -7,7 +7,7 @@ import (
 	"maps"
 	"net/url"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // ClientSession represents an active session that can be used by MCPServer to interact with client.

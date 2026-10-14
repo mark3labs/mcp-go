@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"reflect"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // defaultCacheTTLMs is the cache freshness hint applied to list and read

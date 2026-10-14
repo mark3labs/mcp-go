@@ -8,11 +8,11 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/v2/client"
-	"github.com/mark3labs/mcp-go/v2/mcp"
-	"github.com/mark3labs/mcp-go/v2/mcptest"
-	"github.com/mark3labs/mcp-go/v2/server"
-	"github.com/mark3labs/mcp-go/v2/server/servertest"
+	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/mcptest"
+	"github.com/mark3labs/mcp-go/server"
+	"github.com/mark3labs/mcp-go/server/servertest"
 )
 
 func TestServerWithTool(t *testing.T) {

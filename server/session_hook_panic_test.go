@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // TestSessionHookGoroutine_PanicsWithoutRecovery proves that a panicking

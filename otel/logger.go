@@ -6,7 +6,7 @@ import (
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	otellog "go.opentelemetry.io/otel/log"
 
-	"github.com/mark3labs/mcp-go/v2/server"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 // NewSlogLogger returns a *slog.Logger that emits records as OTEL log
@@ -32,7 +32,7 @@ func NewSlogLogger(provider otellog.LoggerProvider, scope string) *slog.Logger {
 // the spans emitted via WithServerTracing.
 //
 // The scope is passed to the slog bridge as the OTEL instrumentation
-// scope (typically "github.com/mark3labs/mcp-go/v2" or the host service
+// scope (typically "github.com/mark3labs/mcp-go" or the host service
 // name). A nil provider falls back to the global OTEL log provider;
 // the global lookup happens at record-emission time, so a provider
 // registered after this option is applied is still picked up.

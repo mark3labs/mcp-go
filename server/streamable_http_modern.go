@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // Protocol version 2026-07-28 removed protocol-level sessions from the

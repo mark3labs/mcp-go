@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // resourceNotFoundCode returns the JSON-RPC error code to report when a

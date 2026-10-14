@@ -3,7 +3,7 @@ package client
 import (
 	"fmt"
 
-	"github.com/mark3labs/mcp-go/v2/client/transport"
+	"github.com/mark3labs/mcp-go/client/transport"
 )
 
 // NewStreamableHttpClient is a convenience method that creates a new streamable-http-based MCP client

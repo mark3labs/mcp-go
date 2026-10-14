@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mark3labs/mcp-go/v2/mcp"
-	"github.com/mark3labs/mcp-go/v2/server"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 // Note: The jsonschema tag is added to the JSON schema as description
