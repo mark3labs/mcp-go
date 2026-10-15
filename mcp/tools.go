@@ -1184,6 +1184,10 @@ func WithTaskSupport(support TaskSupport) ToolOption {
 // check that out before using this.
 func WithRawInputSchema(schema json.RawMessage) ToolOption {
 	return func(t *Tool) {
+		if schema != nil {
+			t.InputSchema.Type = ""
+			t.InputSchema.Types = nil
+		}
 		t.RawInputSchema = schema
 	}
 }
@@ -1203,9 +1207,11 @@ func WithOutputSchema[T any]() ToolOption {
 			return
 		}
 
-		if err := json.Unmarshal(mcpSchema, &t.OutputSchema); err != nil {
+		var outputSchema ToolOutputSchema
+		if err := json.Unmarshal(mcpSchema, &outputSchema); err != nil {
 			return
 		}
+		t.OutputSchema = outputSchema
 
 		// Always set the type to "object" as of the current MCP spec
 		// https://modelcontextprotocol.io/specification/2025-06-18/server/tools#output-schema

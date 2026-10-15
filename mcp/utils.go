@@ -347,7 +347,7 @@ func NewToolResultStructuredOnly(structured any) *CallToolResult {
 	// Convert to JSON string for backward compatibility
 	jsonBytes, err := json.Marshal(structured)
 	if err != nil {
-		fallbackText = fmt.Sprintf("Error serializing structured content: %v", err)
+		return NewToolResultError(fmt.Sprintf("Error serializing structured content: %v", err))
 	} else {
 		fallbackText = string(jsonBytes)
 	}
@@ -824,6 +824,7 @@ func ParseGetPromptResult(rawMessage *json.RawMessage) (*GetPromptResult, error)
 			return nil, fmt.Errorf("messages is not an array")
 		}
 
+		result.Messages = make([]PromptMessage, 0, len(messagesArr))
 		for _, message := range messagesArr {
 			messageMap, ok := message.(map[string]any)
 			if !ok {
@@ -966,6 +967,7 @@ func ParseReadResourceResult(rawMessage *json.RawMessage) (*ReadResourceResult, 
 		return nil, fmt.Errorf("contents is not an array")
 	}
 
+	result.Contents = make([]ResourceContents, 0, len(contentArr))
 	for _, content := range contentArr {
 		// Extract content
 		contentMap, ok := content.(map[string]any)
@@ -1321,83 +1323,16 @@ func GetTextFromContent(content any) string {
 	}
 }
 
-// jsonToTask convert json content to GetTaskResult structure
-func jsonToTask(jsonContent map[string]any, result *GetTaskResult) {
-	taskId, ok := jsonContent["taskId"]
-	if ok {
-		if taskIdStr, ok := taskId.(string); ok {
-			result.TaskId = taskIdStr
-		}
-	}
-
-	taskStatus, ok := jsonContent["status"]
-	if ok {
-		if taskStatusStr, ok := taskStatus.(string); ok {
-			result.Status = TaskStatus(taskStatusStr)
-		}
-	}
-
-	taskStatusMessage, ok := jsonContent["statusMessage"]
-	if ok {
-		if taskStatusMessageStr, ok := taskStatusMessage.(string); ok {
-			result.StatusMessage = taskStatusMessageStr
-		}
-	}
-
-	createdAt, ok := jsonContent["createdAt"]
-	if ok {
-		if createdAtStr, ok := createdAt.(string); ok {
-			result.CreatedAt = createdAtStr
-		}
-	}
-
-	lastUpdatedAt, ok := jsonContent["lastUpdatedAt"]
-	if ok {
-		if lastUpdatedAtStr, ok := lastUpdatedAt.(string); ok {
-			result.LastUpdatedAt = lastUpdatedAtStr
-		}
-	}
-
-	ttl, ok := jsonContent["ttl"]
-	if ok {
-		if ttlFloat, ok := ttl.(float64); ok {
-			ttlInt64 := int64(ttlFloat)
-			result.TTL = &ttlInt64
-		}
-	}
-
-	pollInterval, ok := jsonContent["pollInterval"]
-	if ok {
-		if pollIntervalFloat64, ok := pollInterval.(float64); ok {
-			pollIntervalInt := int64(pollIntervalFloat64)
-			result.PollInterval = &pollIntervalInt
-		}
-	}
-}
-
 // ParseCancelTaskResult parses a JSON message and converts it to a CancelTaskResult.
 func ParseCancelTaskResult(rawMessage *json.RawMessage) (*CancelTaskResult, error) {
 	if rawMessage == nil {
 		return nil, fmt.Errorf("response is nil")
 	}
-
-	var jsonContent map[string]any
-	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
+	var result CancelTaskResult
+	if err := json.Unmarshal(*rawMessage, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
-
-	convertResult := GetTaskResult{}
-	jsonToTask(jsonContent, &convertResult)
-	cancelResult := CancelTaskResult(convertResult)
-
-	meta, ok := jsonContent["_meta"]
-	if ok {
-		if metaMap, ok := meta.(map[string]any); ok {
-			cancelResult.Meta = NewMetaFromMap(metaMap)
-		}
-	}
-
-	return &cancelResult, nil
+	return &result, nil
 }
 
 // ParseListTasksResult parses a JSON message and converts it to a ListTasksResult.
@@ -1405,42 +1340,11 @@ func ParseListTasksResult(rawMessage *json.RawMessage) (*ListTasksResult, error)
 	if rawMessage == nil {
 		return nil, fmt.Errorf("response is nil")
 	}
-
-	var jsonContent map[string]any
-	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
+	var result ListTasksResult
+	if err := json.Unmarshal(*rawMessage, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
-
-	listTasksResult := ListTasksResult{}
-
-	meta, ok := jsonContent["_meta"]
-	if ok {
-		if metaMap, ok := meta.(map[string]any); ok {
-			listTasksResult.Meta = NewMetaFromMap(metaMap)
-		}
-	}
-
-	tasks, ok := jsonContent["tasks"]
-	if ok {
-		if taskArr, ok := tasks.([]any); ok {
-			for _, task := range taskArr {
-				if taskJsonContent, ok := task.(map[string]any); ok {
-					getTaskResult := GetTaskResult{}
-					jsonToTask(taskJsonContent, &getTaskResult)
-					listTasksResult.Tasks = append(listTasksResult.Tasks, getTaskResult.Task)
-				}
-			}
-		}
-	}
-
-	nextCursor, ok := jsonContent["nextCursor"]
-	if ok {
-		if cursorStr, ok := nextCursor.(string); ok {
-			listTasksResult.NextCursor = Cursor(cursorStr)
-		}
-	}
-
-	return &listTasksResult, nil
+	return &result, nil
 }
 
 // ParseTaskResultResult parses a JSON message and converts it to a TaskResultResult.
@@ -1490,21 +1394,9 @@ func ParseGetTaskResult(rawMessage *json.RawMessage) (*GetTaskResult, error) {
 	if rawMessage == nil {
 		return nil, fmt.Errorf("response is nil")
 	}
-
-	var jsonContent map[string]any
-	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
+	var result GetTaskResult
+	if err := json.Unmarshal(*rawMessage, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
-
-	result := GetTaskResult{}
-	meta, ok := jsonContent["_meta"]
-	if ok {
-		if metaMap, ok := meta.(map[string]any); ok {
-			result.Meta = NewMetaFromMap(metaMap)
-		}
-	}
-
-	jsonToTask(jsonContent, &result)
-
 	return &result, nil
 }
