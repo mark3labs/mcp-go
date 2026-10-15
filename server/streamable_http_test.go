@@ -1073,6 +1073,31 @@ func TestStreamableHTTPServer_WithOptions(t *testing.T) {
 		}
 	})
 
+	t.Run("Shutdown after Start with conflicting address does not deadlock", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0.0")
+		customServer := &http.Server{Addr: ":9999"}
+		httpServer := NewStreamableHTTPServer(mcpServer, WithStreamableHTTPServer(customServer))
+
+		err := httpServer.Start(":8888")
+		if err == nil || !strings.Contains(err.Error(), "conflicting listen address") {
+			t.Fatalf("Expected a conflicting listen address error, got %v", err)
+		}
+
+		shutdownDone := make(chan error, 1)
+		go func() {
+			shutdownDone <- httpServer.Shutdown(t.Context())
+		}()
+
+		select {
+		case err := <-shutdownDone:
+			if err != nil {
+				t.Fatalf("Shutdown returned an error: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("Shutdown did not return after Start failed")
+		}
+	})
+
 	t.Run("Options consistency test", func(t *testing.T) {
 		mcpServer := NewMCPServer("test", "1.0.0")
 		endpointPath := "/test-mcp"
