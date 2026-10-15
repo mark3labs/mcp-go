@@ -204,9 +204,10 @@ type AuthServerMetadata struct {
 // started by GetAuthorizationURL. It binds the state, issuer, token endpoint,
 // resource and client credentials to that flow. Its zero value is not valid.
 //
-// Keep this value in trusted server-side session storage alongside the PKCE
+// Keep this value in trusted server-side in-memory session storage alongside the PKCE
 // verifier. It contains credentials and must not be sent to the browser. It can
-// be copied between request handlers, but does not support serialization.
+// be copied between request handlers in the same process, but does not support
+// serialization or persistence across process restarts.
 type AuthorizationTransaction struct {
 	state        string
 	metadata     AuthServerMetadata
@@ -216,6 +217,16 @@ type AuthorizationTransaction struct {
 	redirectURI  string
 	pkceEnabled  bool
 	authMethod   string
+}
+
+// String implements fmt.Stringer without exposing transaction data.
+func (AuthorizationTransaction) String() string {
+	return "AuthorizationTransaction{redacted}"
+}
+
+// GoString implements fmt.GoStringer without exposing transaction data.
+func (t AuthorizationTransaction) GoString() string {
+	return t.String()
 }
 
 // OAuthHandler handles OAuth authentication for HTTP requests

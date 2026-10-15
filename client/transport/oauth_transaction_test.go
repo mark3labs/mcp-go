@@ -108,6 +108,48 @@ func (f *authorizationFixture) replaceMetadata(t *testing.T, via401 bool) {
 	require.Equal(t, f.server.URL+"/b", metadata.Issuer)
 }
 
+// TestAuthorizationTransaction_FormattingRedactsCredentials checks that logging
+// hides transaction data without preventing the saved flow from completing.
+func TestAuthorizationTransaction_FormattingRedactsCredentials(t *testing.T) {
+	f := newAuthorizationFixture(t, true, true)
+	transaction, ok := f.handler.GetAuthorizationTransaction()
+	require.True(t, ok)
+
+	for _, tt := range []struct {
+		name  string
+		value any
+	}{
+		{name: "value", value: transaction},
+		{name: "pointer", value: &transaction},
+		{name: "slice", value: []transport.AuthorizationTransaction{transaction}},
+		{name: "map", value: map[string]transport.AuthorizationTransaction{"transaction": transaction}},
+		{name: "struct field", value: struct {
+			Transaction transport.AuthorizationTransaction
+		}{transaction}},
+		{name: "zero value", value: transport.AuthorizationTransaction{}},
+		{name: "zero pointer", value: &transport.AuthorizationTransaction{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, format := range []string{"%v", "%+v", "%#v", "%s", "%q"} {
+				formatted := fmt.Sprintf(format, tt.value)
+				assert.Contains(t, formatted, "AuthorizationTransaction", format)
+				assert.NotContains(t, formatted, f.config.ClientSecret, format)
+				assert.NotContains(t, formatted, "state-a", format)
+				assert.NotContains(t, formatted, "verifier-a", format)
+			}
+		})
+	}
+
+	callback := transport.NewOAuthHandler(f.config)
+	callback.SetBaseURL(f.server.URL + "/mcp")
+	require.NoError(t, callback.SetAuthorizationTransaction(transaction))
+	require.NoError(t, callback.ProcessAuthorizationCallback(t.Context(), url.Values{
+		"code": {"code-a"}, "state": {"state-a"}, "iss": {f.server.URL + "/a"},
+	}, "verifier-a"))
+	request := <-f.tokenData
+	assert.Equal(t, f.config.ClientSecret, request.password)
+}
+
 // A changed issuer invalidates the transaction without sending its code to
 // either endpoint. The original issuer requirement is still checked first.
 func TestOAuthHandler_AuthorizationTransactionRejectsChangedIssuer(t *testing.T) {
