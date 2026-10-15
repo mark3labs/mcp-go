@@ -79,7 +79,12 @@ func (s *headerToolsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		result = map[string]any{
 			"supportedVersions": []string{mcp.ProtocolVersion20260728},
 			"capabilities":      map[string]any{"tools": map[string]any{}},
-			"serverInfo":        map[string]any{"name": "header-tools", "version": "1.0.0"},
+			"resultType":        "complete",
+			"_meta": map[string]any{
+				mcp.MetaKeyServerInfo: map[string]any{"name": "header-tools", "version": "1.0.0"},
+			},
+			"ttlMs":      0,
+			"cacheScope": "private",
 		}
 	case string(mcp.MethodInitialize):
 		result = map[string]any{
@@ -106,7 +111,7 @@ func (s *headerToolsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result})
 }
 
-func connectHeaderClient(t *testing.T, server *headerToolsServer, wrap func(transport.Interface) transport.Interface) (*Client, string) {
+func connectHeaderClient(t *testing.T, server *headerToolsServer, wrap func(transport.Interface) transport.Interface, options ...ClientOption) (*Client, string) {
 	t.Helper()
 	httpServer := httptest.NewServer(server)
 	t.Cleanup(httpServer.Close)
@@ -117,7 +122,7 @@ func connectHeaderClient(t *testing.T, server *headerToolsServer, wrap func(tran
 	if wrap != nil {
 		tr = wrap(tr)
 	}
-	client := NewClient(tr)
+	client := NewClient(tr, options...)
 	t.Cleanup(func() { _ = client.Close() })
 	require.NoError(t, client.Start(t.Context()))
 

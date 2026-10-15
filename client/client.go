@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,6 +30,7 @@ type Client struct {
 	samplingHandler    SamplingHandler
 	rootsHandler       RootsHandler
 	elicitationHandler ElicitationHandler
+	invalidToolHandler InvalidToolHandler
 	tracer             tracing.Tracer
 	propagator         tracing.Propagator
 	metaPropagator     tracing.MetaPropagator
@@ -192,8 +194,9 @@ func (c *Client) Start(ctx context.Context) error {
 
 	c.transport.SetNotificationHandler(func(notification mcp.JSONRPCNotification) {
 		c.notifyMu.RLock()
-		defer c.notifyMu.RUnlock()
-		for _, handler := range c.notifications {
+		handlers := slices.Clone(c.notifications)
+		c.notifyMu.RUnlock()
+		for _, handler := range handlers {
 			handler(notification)
 		}
 	})
@@ -213,6 +216,7 @@ func (c *Client) Close() error {
 
 // OnNotification registers a handler function to be called when notifications are received.
 // Multiple handlers can be registered and will be called in the order they were added.
+// Handlers registered during dispatch receive subsequent notifications.
 func (c *Client) OnNotification(
 	handler func(notification mcp.JSONRPCNotification),
 ) {
@@ -371,9 +375,11 @@ func outboundHeader(header http.Header, requestMethod string) http.Header {
 // its own protocol metadata; the returned InitializeResult is rendered from
 // the discovery response so that callers observe the same value in both eras.
 //
-// When the probe fails with anything other than a recognized modern error the
-// server is taken to be legacy, and the classic initialize handshake is
-// performed instead.
+// When the probe fails without identifying a modern server, the server is
+// taken to be legacy, and the classic initialize handshake is performed instead.
+// A successful discovery or an UnsupportedProtocolVersionError with a supported
+// list identifies a modern server; negotiation failures are returned to the
+// caller rather than falling back to the legacy handshake.
 func (c *Client) Initialize(
 	ctx context.Context,
 	request mcp.InitializeRequest,
@@ -390,14 +396,16 @@ func (c *Client) Initialize(
 	// earlier revision or configured the transport in a way that rules it out.
 	if !c.legacyOnly && !c.transportRequiresLegacyProtocol() &&
 		(preferred == "" || mcp.IsModernProtocol(preferred)) {
-		discovered, err := c.negotiateModern(ctx, preferred)
+		discovered, modern, err := c.negotiateModern(ctx, preferred)
 		if err == nil {
 			c.serverCapabilities = discovered.Capabilities
 			c.applyNegotiatedVersion(c.protocolVersion)
 			c.initialized.Store(true)
 			return initializeResultFromDiscover(c.protocolVersion, discovered), nil
 		}
-		// Fall through to the handshake: the server is not modern.
+		if modern {
+			return nil, err
+		}
 	}
 
 	return c.initializeLegacy(ctx, request, preferred)
@@ -619,7 +627,7 @@ func (c *Client) ReadResource(
 ) (*mcp.ReadResourceResult, error) {
 	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
 	header := outboundHeader(request.Header, request.Method)
-	return multiRoundTrip(ctx, c,
+	return multiRoundTrip(ctx, c, request.Params.MultiRoundTripParams,
 		func(ctx context.Context, roundTrip mcp.MultiRoundTripParams) (*mcp.ReadResourceResult, error) {
 			return c.readResourceOnce(ctx, request, roundTrip, header)
 		},
@@ -676,7 +684,7 @@ func (c *Client) GetPrompt(
 ) (*mcp.GetPromptResult, error) {
 	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
 	header := outboundHeader(request.Header, request.Method)
-	return multiRoundTrip(ctx, c,
+	return multiRoundTrip(ctx, c, request.Params.MultiRoundTripParams,
 		func(ctx context.Context, roundTrip mcp.MultiRoundTripParams) (*mcp.GetPromptResult, error) {
 			return c.getPromptOnce(ctx, request, roundTrip, header)
 		},
@@ -737,7 +745,7 @@ func (c *Client) CallTool(
 ) (*mcp.CallToolResult, error) {
 	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
 	header := outboundHeader(request.Header, request.Method)
-	return multiRoundTrip(ctx, c,
+	return multiRoundTrip(ctx, c, request.Params.MultiRoundTripParams,
 		func(ctx context.Context, roundTrip mcp.MultiRoundTripParams) (*mcp.CallToolResult, error) {
 			return c.callToolOnce(ctx, request, roundTrip, header)
 		},

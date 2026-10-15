@@ -18,9 +18,9 @@ type sessionProtocolVersionSetter interface {
 //
 // The stateless protocol core introduced in 2026-07-28 cannot be served over a
 // session-oriented transport, so a stateful Streamable HTTP server reports
-// only the legacy versions. Clients learn the restriction from
-// server/discover and negotiate down automatically, which keeps existing
-// stateful deployments working unchanged.
+// only the legacy versions. Clients learn the restriction from server/discover
+// and can explicitly select a supported legacy version for the initialize
+// handshake.
 type ProtocolVersionSupporter interface {
 	// SupportsProtocolVersion reports whether the transport can serve the
 	// given protocol version.
