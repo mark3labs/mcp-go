@@ -24,6 +24,9 @@ const maxMetadataBodyBytes = 1 << 20 // 1 MiB
 // ErrNoToken is returned when no token is available in the token store
 var ErrNoToken = errors.New("no token available")
 
+// ErrAuthorizationServerChanged indicates that credentials or tokens belong to another issuer.
+var ErrAuthorizationServerChanged = errors.New("authorization server changed")
+
 // OAuthConfig holds the OAuth configuration for the client
 type OAuthConfig struct {
 	// ClientID is the OAuth client ID
@@ -32,6 +35,9 @@ type OAuthConfig struct {
 	ClientURI string
 	// ClientSecret is the OAuth client secret (for confidential clients)
 	ClientSecret string
+	// CredentialsIssuer is the exact metadata issuer that issued ClientID and ClientSecret.
+	// Persist it with credentials; an empty value enables legacy trust on first use.
+	CredentialsIssuer string
 	// TokenEndpointAuthMethod is how the client authenticates at the token
 	// endpoint: "client_secret_basic", "client_secret_post" or "none". Set it
 	// for pre-registered credentials, or for credentials saved from an
@@ -70,6 +76,7 @@ type OAuthConfig struct {
 // TokenStore is an interface for storing and retrieving OAuth tokens.
 //
 // Implementations must:
+//   - Preserve Token.Issuer when persisting and restoring tokens
 //   - Honor context cancellation and deadlines, returning context.Canceled
 //     or context.DeadlineExceeded as appropriate
 //   - Return ErrNoToken (or a sentinel error that wraps it) when no token
@@ -91,6 +98,8 @@ type TokenStore interface {
 
 // Token represents an OAuth token
 type Token struct {
+	// Issuer records trusted local provenance, not token endpoint response metadata.
+	Issuer string `json:"issuer,omitempty"`
 	// AccessToken is the OAuth access token
 	AccessToken string `json:"access_token"`
 	// TokenType is the type of token (usually "Bearer")
@@ -225,19 +234,30 @@ type OAuthHandler struct {
 	metadataOnce *sync.Once
 	baseURL      string
 	// metadataMu protects baseURL, serverMetadata, metadataFetchErr,
-	// metadataOnce, config.ProtectedResourceMetadataURL, and resourceURL.
+	// metadataOnce, config.ProtectedResourceMetadataURL, knownIssuer, and resourceURL.
 	// It MUST NOT be held across HTTP I/O — see getServerMetadata for the
 	// snapshot/publish discipline that keeps network round trips out of
 	// the critical section (#871).
 	metadataMu  sync.Mutex
+	knownIssuer string // last successfully discovered issuer; retained across resets
 	resourceURL string // RFC 8707 resource indicator; set from protected resource metadata
 
 	// registeredAuthMethod is the token_endpoint_auth_method the
 	// authorization server registered for the client during dynamic client
 	// registration, if any.
 	registeredAuthMethod string
+	assertedIssuer       string // immutable application assertion for raw refresh tokens
+	// credentialsMu protects mutable credentials, binding, registration flights and
+	// publication. Lock order is credentialsMu then metadataMu; neither is held
+	// during HTTP I/O. Publication may hold credentialsMu during TokenStore I/O.
+	credentialsMu      sync.Mutex
+	credentialsVersion uint64
+	credentialsDCR     bool
+	registrationName   string
+	registering        *registrationFlight
+	flowIssuer         string
 
-	mu                       sync.RWMutex // Protects expectedState and authorizationTransaction
+	mu                       sync.RWMutex // Protects expectedState, flowIssuer and authorizationTransaction
 	expectedState            string       // Expected state value for CSRF protection
 	authorizationTransaction *AuthorizationTransaction
 
@@ -266,8 +286,9 @@ func NewOAuthHandler(config OAuthConfig) *OAuthHandler {
 	}
 
 	return &OAuthHandler{
-		config:     config,
-		httpClient: config.HTTPClient,
+		config:         config,
+		assertedIssuer: config.CredentialsIssuer,
+		httpClient:     config.HTTPClient,
 	}
 }
 
@@ -300,6 +321,9 @@ func (h *OAuthHandler) getValidToken(ctx context.Context) (*Token, error) {
 		return nil, err
 	}
 	if err == nil && !token.IsExpired() && token.AccessToken != "" {
+		if err := h.checkKnownTokenIssuer(token); err != nil {
+			return nil, err
+		}
 		return token, nil
 	}
 	if err != nil || token.RefreshToken == "" {
@@ -319,6 +343,9 @@ func (h *OAuthHandler) getValidToken(ctx context.Context) (*Token, error) {
 	}
 	if refresh.err != nil {
 		// If refresh fails, continue to authorization flow
+		if errors.Is(refresh.err, ErrAuthorizationServerChanged) || errors.Is(refresh.err, ErrOAuthAuthorizationRequired) {
+			return nil, refresh.err
+		}
 		return nil, ErrOAuthAuthorizationRequired
 	}
 	return refresh.token, nil
@@ -362,21 +389,37 @@ func (h *OAuthHandler) refreshStoredToken(ctx context.Context) (*Token, error) {
 		return nil, err
 	}
 	if !token.IsExpired() && token.AccessToken != "" {
+		if err := h.checkKnownTokenIssuer(token); err != nil {
+			return nil, err
+		}
 		return token, nil
 	}
 	if token.RefreshToken == "" {
 		return nil, ErrOAuthAuthorizationRequired
 	}
-	return h.refreshToken(ctx, token.RefreshToken)
+	return h.refreshToken(ctx, token.RefreshToken, token.Issuer)
 }
 
 // refreshToken refreshes an OAuth token
-func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken string) (*Token, error) {
+func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken, issuer string) (*Token, error) {
+	if issuer == "" {
+		return nil, ErrOAuthAuthorizationRequired
+	}
 	metadata, err := h.getServerMetadata(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get server metadata: %w", err)
 	}
 
+	if metadata.Issuer == "" {
+		return nil, errors.New("authorization server metadata missing issuer")
+	}
+	if metadata.Issuer != issuer {
+		return nil, serverChanged()
+	}
+	credentials, err := h.boundCredentials(metadata)
+	if err != nil {
+		return nil, err
+	}
 	data := url.Values{}
 	data.Set("grant_type", "refresh_token")
 	data.Set("refresh_token", refreshToken)
@@ -385,7 +428,7 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken string) (*
 		data.Set("resource", resourceURL)
 	}
 
-	req, err := h.newTokenRequest(ctx, metadata, data)
+	req, err := h.newTokenRequest(ctx, metadata, credentials, data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create refresh token request: %w", err)
 	}
@@ -432,20 +475,32 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken string) (*
 	}
 
 	// Save the token
-	if err := h.config.TokenStore.SaveToken(ctx, &tokenResp); err != nil {
+	if err := h.saveBoundToken(ctx, metadata, credentials, &tokenResp); err != nil {
 		return nil, fmt.Errorf("failed to save token: %w", err)
 	}
 
 	return &tokenResp, nil
 }
 
-// RefreshToken is a public wrapper for refreshToken
+// RefreshToken refreshes a token with matching stored provenance. An unknown raw
+// refresh token requires an explicitly configured CredentialsIssuer; a learned
+// first-use binding alone is not an assertion of that token's origin.
 func (h *OAuthHandler) RefreshToken(ctx context.Context, refreshToken string) (*Token, error) {
-	return h.refreshToken(ctx, refreshToken)
+	token, err := h.config.TokenStore.GetToken(ctx)
+	if err != nil && !errors.Is(err, ErrNoToken) {
+		return nil, err
+	}
+	issuer := h.assertedIssuer
+	if err == nil && token != nil && token.RefreshToken == refreshToken {
+		issuer = token.Issuer
+	}
+	return h.refreshToken(ctx, refreshToken, issuer)
 }
 
 // GetClientID returns the client ID
 func (h *OAuthHandler) GetClientID() string {
+	h.credentialsMu.Lock()
+	defer h.credentialsMu.Unlock()
 	return h.config.ClientID
 }
 
@@ -469,6 +524,8 @@ func extractOAuthError(body []byte, statusCode int, context string) error {
 // header, prefer HandleUnauthorizedResponse, which applies origin
 // validation before storing.
 func (h *OAuthHandler) SetProtectedResourceMetadataURL(u string) {
+	h.credentialsMu.Lock()
+	defer h.credentialsMu.Unlock()
 	h.metadataMu.Lock()
 	defer h.metadataMu.Unlock()
 	h.config.ProtectedResourceMetadataURL = u
@@ -565,6 +622,8 @@ func (h *OAuthHandler) getResourceURL() string {
 
 // GetClientSecret returns the client secret
 func (h *OAuthHandler) GetClientSecret() string {
+	h.credentialsMu.Lock()
+	defer h.credentialsMu.Unlock()
 	return h.config.ClientSecret
 }
 
@@ -606,6 +665,7 @@ func (h *OAuthHandler) SetExpectedState(expectedState string) {
 		h.authorizationTransaction = nil
 	}
 	h.expectedState = expectedState
+	h.flowIssuer = ""
 }
 
 // GetAuthorizationTransaction returns a copy of the pending authorization
@@ -629,7 +689,8 @@ func (h *OAuthHandler) GetAuthorizationTransaction() (AuthorizationTransaction, 
 // the new handler and call ProcessAuthorizationCallback. The handler consumes
 // its local copy on a state-valid response; it cannot prevent another handler
 // from restoring the same saved value. TokenStore and HTTPClient come from the
-// receiving handler; authorization credentials come from the saved transaction.
+// receiving handler. Its current issuer and client credentials must still match
+// the saved transaction before the code can be exchanged.
 func (h *OAuthHandler) SetAuthorizationTransaction(transaction AuthorizationTransaction) error {
 	if transaction.state == "" {
 		return errors.New("authorization transaction has no state")
@@ -637,6 +698,7 @@ func (h *OAuthHandler) SetAuthorizationTransaction(transaction AuthorizationTran
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.expectedState = transaction.state
+	h.flowIssuer = transaction.metadata.Issuer
 	h.authorizationTransaction = &transaction
 	return nil
 }
@@ -726,6 +788,7 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		// non-200 responses without touching shared state.
 		if result.metadata != nil {
 			h.serverMetadata = result.metadata
+			h.knownIssuer = result.metadata.Issuer
 			h.metadataFetchErr = nil
 		}
 		if result.resourceURL != "" {
@@ -1228,6 +1291,14 @@ func (h *OAuthHandler) RegisterClient(ctx context.Context, clientName string) er
 		return fmt.Errorf("failed to get server metadata: %w", err)
 	}
 
+	return h.registerClient(ctx, metadata, clientName, false)
+}
+
+func (h *OAuthHandler) performRegistration(ctx context.Context, metadata *AuthServerMetadata, clientName string, version uint64) error {
+	if metadata.Issuer == "" {
+		return errors.New("authorization server metadata missing issuer")
+	}
+
 	if metadata.RegistrationEndpoint == "" {
 		return errors.New("server does not support dynamic client registration")
 	}
@@ -1247,7 +1318,7 @@ func (h *OAuthHandler) RegisterClient(ctx context.Context, clientName string) er
 	}
 
 	// Add client_secret if this is a confidential client
-	if h.config.ClientSecret != "" {
+	if h.GetClientSecret() != "" {
 		regRequest["token_endpoint_auth_method"] = "client_secret_post"
 	}
 
@@ -1295,14 +1366,21 @@ func (h *OAuthHandler) RegisterClient(ctx context.Context, clientName string) er
 		return fmt.Errorf("failed to decode registration response: %w", err)
 	}
 
-	// Update the client configuration
-	h.config.ClientID = regResponse.ClientID
-	if regResponse.ClientSecret != "" {
-		h.config.ClientSecret = regResponse.ClientSecret
+	if regResponse.ClientID == "" {
+		return errors.New("registration response missing client_id")
 	}
-	// RFC 7591 §3.2.1: the response carries the method the server actually
-	// registered, which may differ from the one requested.
+	h.credentialsMu.Lock()
+	defer h.credentialsMu.Unlock()
+	if h.credentialsVersion != version || !h.metadataCurrent(metadata) {
+		return serverChanged()
+	}
+	h.config.ClientID = regResponse.ClientID
+	h.config.ClientSecret = regResponse.ClientSecret
+	h.config.CredentialsIssuer = metadata.Issuer
 	h.registeredAuthMethod = regResponse.TokenEndpointAuthMethod
+	h.credentialsDCR = true
+	h.registrationName = clientName
+	h.credentialsVersion++
 
 	return nil
 }
@@ -1331,7 +1409,8 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 // place of a code as an [OAuthError], but only once the response has passed
 // those checks.
 // The issuer and token exchange use the transaction saved by GetAuthorizationURL
-// or restored by SetAuthorizationTransaction, never newly discovered metadata.
+// or restored by SetAuthorizationTransaction. Current discovery and credential
+// binding may invalidate the flow, but cannot redirect its code exchange.
 // SetExpectedState alone is insufficient for this method.
 func (h *OAuthHandler) ProcessAuthorizationCallback(ctx context.Context, query url.Values, codeVerifier string) error {
 	// RFC 6749 §3.1: response parameters must not be repeated. A second iss
@@ -1391,6 +1470,7 @@ func (h *OAuthHandler) processAuthorizationResponse(ctx context.Context, code, s
 	// Validate the state parameter to prevent CSRF attacks
 	h.mu.Lock()
 	expectedState := h.expectedState
+	flowIssuer := h.flowIssuer
 	if expectedState == "" {
 		h.mu.Unlock()
 		return errors.New("no expected state found, authorization flow may not have been initiated properly")
@@ -1407,29 +1487,42 @@ func (h *OAuthHandler) processAuthorizationResponse(ctx context.Context, code, s
 	h.authorizationTransaction = nil
 	h.mu.Unlock()
 
-	if transaction == nil {
-		if checkResponse != nil {
-			return errors.New("no authorization transaction found; restore it with SetAuthorizationTransaction")
-		}
-		// Preserve state-only reconstruction for the legacy response API.
-		metadata, err := h.getServerMetadata(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to get server metadata: %w", err)
-		}
-		transaction = &AuthorizationTransaction{
-			metadata: *metadata, resourceURL: h.getResourceURL(),
-			clientID: h.config.ClientID, clientSecret: h.config.ClientSecret,
-			redirectURI: h.config.RedirectURI, pkceEnabled: h.config.PKCEEnabled,
-			authMethod: h.tokenEndpointAuthMethod(metadata),
-		}
+	if transaction == nil && checkResponse != nil {
+		return errors.New("no authorization transaction found; restore it with SetAuthorizationTransaction")
 	}
-
 	if checkResponse != nil {
 		if err := checkResponse(&transaction.metadata); err != nil {
 			return err
 		}
 	}
 
+	// Discovery may invalidate a pending transaction, but must never change
+	// the issuer, endpoint or credentials used for its code exchange.
+	metadata, err := h.getServerMetadata(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get server metadata: %w", err)
+	}
+	if flowIssuer != "" && flowIssuer != metadata.Issuer {
+		return serverChanged()
+	}
+	if transaction != nil && transaction.metadata.Issuer != metadata.Issuer {
+		return serverChanged()
+	}
+	credentials, err := h.boundCredentials(metadata)
+	if err != nil {
+		return err
+	}
+	if transaction == nil {
+		// Preserve state-only reconstruction for the legacy response API.
+		transaction = &AuthorizationTransaction{
+			metadata: *metadata, resourceURL: h.getResourceURL(),
+			clientID: credentials.id, clientSecret: credentials.secret,
+			redirectURI: h.config.RedirectURI, pkceEnabled: h.config.PKCEEnabled,
+			authMethod: h.tokenEndpointAuthMethod(metadata, credentials),
+		}
+	} else if transaction.clientID != credentials.id || transaction.clientSecret != credentials.secret {
+		return serverChanged()
+	}
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
 	data.Set("code", code)
@@ -1487,7 +1580,7 @@ func (h *OAuthHandler) processAuthorizationResponse(ctx context.Context, code, s
 	}
 
 	// Save the token
-	if err := h.config.TokenStore.SaveToken(ctx, &tokenResp); err != nil {
+	if err := h.saveBoundToken(ctx, metadata, credentials, &tokenResp); err != nil {
 		return fmt.Errorf("failed to save token: %w", err)
 	}
 
@@ -1511,6 +1604,12 @@ func isClientAuthMethod(method string) bool {
 // authorization server returned from dynamic client registration. Save it
 // along with the client ID and secret to reuse registered credentials.
 func (h *OAuthHandler) GetTokenEndpointAuthMethod() string {
+	h.credentialsMu.Lock()
+	defer h.credentialsMu.Unlock()
+	return h.authMethodLocked()
+}
+
+func (h *OAuthHandler) authMethodLocked() string {
 	if isClientAuthMethod(h.config.TokenEndpointAuthMethod) {
 		return h.config.TokenEndpointAuthMethod
 	}
@@ -1525,11 +1624,11 @@ func (h *OAuthHandler) GetTokenEndpointAuthMethod() string {
 // when that is the only one of the two secret-based methods the server's
 // metadata lists. A server that says nothing keeps getting the secret in the
 // request body, as before.
-func (h *OAuthHandler) tokenEndpointAuthMethod(metadata *AuthServerMetadata) string {
-	if h.config.ClientSecret == "" {
+func (h *OAuthHandler) tokenEndpointAuthMethod(metadata *AuthServerMetadata, credentials credentialSnapshot) string {
+	if credentials.secret == "" {
 		return clientAuthNone
 	}
-	if method := h.GetTokenEndpointAuthMethod(); method != "" {
+	if method := credentials.method; method != "" {
 		return method
 	}
 	supported := metadata.TokenEndpointAuthMethodsSupported
@@ -1541,9 +1640,9 @@ func (h *OAuthHandler) tokenEndpointAuthMethod(metadata *AuthServerMetadata) str
 
 // newTokenRequest builds a token endpoint request carrying data and the
 // client's credentials.
-func (h *OAuthHandler) newTokenRequest(ctx context.Context, metadata *AuthServerMetadata, data url.Values) (*http.Request, error) {
+func (h *OAuthHandler) newTokenRequest(ctx context.Context, metadata *AuthServerMetadata, credentials credentialSnapshot, data url.Values) (*http.Request, error) {
 	return newTokenRequest(ctx, metadata.TokenEndpoint, data,
-		h.config.ClientID, h.config.ClientSecret, h.tokenEndpointAuthMethod(metadata))
+		credentials.id, credentials.secret, h.tokenEndpointAuthMethod(metadata, credentials))
 }
 
 func newTokenRequest(ctx context.Context, tokenEndpoint string, data url.Values, clientID, clientSecret, method string) (*http.Request, error) {
@@ -1575,20 +1674,25 @@ func newTokenRequest(ctx context.Context, tokenEndpoint string, data url.Values,
 }
 
 // GetAuthorizationURL returns the URL for the authorization endpoint and saves
-// an immutable transaction for callback validation and code exchange. Discovery
-// changes after this call affect subsequent flows, not this transaction.
+// an immutable transaction for callback validation and code exchange. A later
+// issuer or credential change invalidates the flow rather than redirecting its code.
 func (h *OAuthHandler) GetAuthorizationURL(ctx context.Context, state, codeChallenge string) (string, error) {
 	metadata, err := h.getServerMetadata(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to get server metadata: %w", err)
 	}
 
-	// Copy the metadata and resource from the same discovery result. A reset
-	// between discovery and this lock must not produce a mixed transaction.
+	credentials, err := h.authorizationCredentials(ctx, metadata)
+	if err != nil {
+		return "", err
+	}
+	// Follow the same lock order as discovery resets and token publication.
+	h.credentialsMu.Lock()
 	h.metadataMu.Lock()
-	if h.serverMetadata != metadata {
+	if h.credentialsVersion != credentials.version || h.serverMetadata != metadata {
 		h.metadataMu.Unlock()
-		return "", errors.New("server metadata changed while preparing authorization; retry GetAuthorizationURL")
+		h.credentialsMu.Unlock()
+		return "", serverChanged()
 	}
 	transaction := AuthorizationTransaction{
 		state: state,
@@ -1597,16 +1701,18 @@ func (h *OAuthHandler) GetAuthorizationURL(ctx context.Context, state, codeChall
 			AuthorizationResponseIssParameterSupported: metadata.AuthorizationResponseIssParameterSupported,
 			guessed: metadata.guessed,
 		},
-		resourceURL: h.resourceURL, clientID: h.config.ClientID,
-		clientSecret: h.config.ClientSecret, redirectURI: h.config.RedirectURI,
-		pkceEnabled: h.config.PKCEEnabled, authMethod: h.tokenEndpointAuthMethod(metadata),
+		resourceURL: h.resourceURL, clientID: credentials.id,
+		clientSecret: credentials.secret, redirectURI: h.config.RedirectURI,
+		pkceEnabled: h.config.PKCEEnabled, authMethod: h.tokenEndpointAuthMethod(metadata, credentials),
 	}
 	authorizationEndpoint := metadata.AuthorizationEndpoint
 	h.metadataMu.Unlock()
 	h.mu.Lock()
 	h.expectedState = state
+	h.flowIssuer = metadata.Issuer
 	h.authorizationTransaction = &transaction
 	h.mu.Unlock()
+	h.credentialsMu.Unlock()
 
 	params := url.Values{}
 	params.Set("response_type", "code")

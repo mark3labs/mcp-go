@@ -20,6 +20,22 @@ var urlElicitationRequired = mcp.URLElicitationRequiredError{
 	}},
 }
 
+type testHandlerJSONRPCError struct{}
+
+func (testHandlerJSONRPCError) Error() string {
+	return "private diagnostic"
+}
+
+func (testHandlerJSONRPCError) JSONRPCError() mcp.JSONRPCError {
+	return mcp.JSONRPCError{
+		Error: mcp.NewJSONRPCErrorDetails(
+			mcp.INVALID_PARAMS,
+			"invalid customer ID",
+			map[string]any{"field": "customer_id"},
+		),
+	}
+}
+
 func newHandlerErrorServer() *MCPServer {
 	srv := NewMCPServer("test-server", "1.0.0",
 		WithToolCapabilities(true),
@@ -34,6 +50,9 @@ func newHandlerErrorServer() *MCPServer {
 	srv.AddTool(mcp.NewTool("protected_pointer_action"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return nil, fmt.Errorf("checking access: %w", &urlElicitationRequired)
 	})
+	srv.AddTool(mcp.NewTool("marked_protected_action"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return nil, NewHandlerError(urlElicitationRequired)
+	})
 	srv.AddTool(mcp.NewTool("failing_action"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return nil, errors.New("backend unavailable")
 	})
@@ -41,6 +60,9 @@ func newHandlerErrorServer() *MCPServer {
 		// An error from an upstream server that happens to have a JSON-RPC
 		// form of its own is still this server's internal error.
 		return nil, fmt.Errorf("upstream: %w", mcp.UnsupportedProtocolVersionError{Version: "2099-01-01"})
+	})
+	srv.AddTool(mcp.NewTool("public_error_action"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return nil, fmt.Errorf("validating request: %w", NewHandlerError(testHandlerJSONRPCError{}))
 	})
 	srv.AddPrompt(mcp.NewPrompt("protected_prompt"), func(context.Context, mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
 		return nil, urlElicitationRequired
@@ -120,19 +142,63 @@ func TestHandlerURLElicitationRequiredError(t *testing.T) {
 func TestHandlerURLElicitationRequiredErrorForModernClients(t *testing.T) {
 	srv := newHandlerErrorServer()
 
-	errorResponse := handleForError(t, srv, `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{
-		"name":"protected_action",
-		"_meta":{
-			"io.modelcontextprotocol/protocolVersion":"2026-07-28",
-			"io.modelcontextprotocol/clientCapabilities":{}
-		}
-	}}`)
-	assert.Equal(t, mcp.INTERNAL_ERROR, errorResponse.Error.Code)
-	assert.Nil(t, errorResponse.Error.Data)
+	for _, name := range []string{"protected_action", "marked_protected_action"} {
+		t.Run(name, func(t *testing.T) {
+			errorResponse := handleForError(t, srv, fmt.Sprintf(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{
+				"name":%q,
+				"_meta":{
+					"io.modelcontextprotocol/protocolVersion":"2026-07-28",
+					"io.modelcontextprotocol/clientCapabilities":{}
+				}
+			}}`, name))
+			assert.Equal(t, mcp.INTERNAL_ERROR, errorResponse.Error.Code)
+			assert.Nil(t, errorResponse.Error.Data)
+		})
+	}
+}
+
+func TestMarkedHandlerJSONRPCError(t *testing.T) {
+	srv := newHandlerErrorServer()
+
+	tests := []struct {
+		name    string
+		request string
+	}{
+		{
+			name:    "legacy protocol",
+			request: `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"public_error_action"}}`,
+		},
+		{
+			name: "modern protocol",
+			request: `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{
+				"name":"public_error_action",
+				"_meta":{
+					"io.modelcontextprotocol/protocolVersion":"2026-07-28",
+					"io.modelcontextprotocol/clientCapabilities":{}
+				}
+			}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errorResponse := handleForError(t, srv, tt.request)
+			assert.Equal(t, mcp.JSONRPC_VERSION, errorResponse.JSONRPC)
+			assert.Equal(t, mcp.INVALID_PARAMS, errorResponse.Error.Code)
+			assert.Equal(t, "invalid customer ID", errorResponse.Error.Message)
+			assert.Equal(t, map[string]any{"field": "customer_id"}, errorResponse.Error.Data)
+		})
+	}
+}
+
+// TestNewHandlerErrorWithTypedNilProvider verifies typed nils are treated as nil errors.
+func TestNewHandlerErrorWithTypedNilProvider(t *testing.T) {
+	var provider *testHandlerJSONRPCError
+
+	assert.NoError(t, NewHandlerError(provider))
 }
 
 // Any other handler error is an internal error, including one that carries a
-// JSON-RPC form of its own from somewhere else.
+// unmarked JSON-RPC form of its own from somewhere else.
 func TestHandlerErrorsAreOtherwiseInternal(t *testing.T) {
 	srv := newHandlerErrorServer()
 

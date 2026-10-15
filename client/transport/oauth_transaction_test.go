@@ -108,9 +108,9 @@ func (f *authorizationFixture) replaceMetadata(t *testing.T, via401 bool) {
 	require.Equal(t, f.server.URL+"/b", metadata.Issuer)
 }
 
-// Re-reading discovery at callback time must neither reject A nor trust B.
-// It must also preserve A's iss requirement and resource in the token request.
-func TestOAuthHandler_AuthorizationTransactionSurvivesRediscovery(t *testing.T) {
+// A changed issuer invalidates the transaction without sending its code to
+// either endpoint. The original issuer requirement is still checked first.
+func TestOAuthHandler_AuthorizationTransactionRejectsChangedIssuer(t *testing.T) {
 	tests := []struct {
 		name          string
 		aSupportsISS  bool
@@ -144,17 +144,8 @@ func TestOAuthHandler_AuthorizationTransactionSurvivesRediscovery(t *testing.T) 
 					require.ErrorIs(t, err, transport.ErrIssuerMismatch)
 					assert.Zero(t, f.tokenRequests[0].Load())
 				} else {
-					assert.NoError(t, err)
-					assert.Equal(t, int32(1), f.tokenRequests[0].Load(), "code must be sent to A")
-					if f.tokenRequests[0].Load() == 1 {
-						request := <-f.tokenData
-						assert.Equal(t, "code-a", request.data.Get("code"))
-						assert.Equal(t, "verifier-a", request.data.Get("code_verifier"))
-						assert.Equal(t, f.server.URL, request.data.Get("resource"))
-						assert.True(t, request.basic)
-						assert.Equal(t, "client", request.username)
-						assert.Equal(t, "secret-a", request.password)
-					}
+					require.ErrorIs(t, err, transport.ErrAuthorizationServerChanged)
+					assert.Zero(t, f.tokenRequests[0].Load(), "invalidated flow must not exchange its code")
 				}
 				assert.Zero(t, f.tokenRequests[1].Load(), "code must never be sent to B")
 			})
@@ -177,6 +168,12 @@ func TestOAuthHandler_AuthorizationTransactionCopiesMetadata(t *testing.T) {
 			err = f.handler.ProcessAuthorizationCallback(t.Context(), url.Values{
 				"code": {"code-a"}, "state": {"state-a"}, "iss": {f.server.URL + "/a"},
 			}, "verifier-a")
+			if changeIssuer {
+				require.ErrorIs(t, err, transport.ErrAuthorizationServerChanged)
+				assert.Zero(t, f.tokenRequests[0].Load())
+				assert.Zero(t, f.tokenRequests[1].Load())
+				return
+			}
 			assert.NoError(t, err)
 			require.Equal(t, int32(1), f.tokenRequests[0].Load())
 			assert.Zero(t, f.tokenRequests[1].Load())
@@ -218,15 +215,13 @@ func TestOAuthHandler_AuthorizationTransactionCrossRequest(t *testing.T) {
 			transaction, ok := f.handler.GetAuthorizationTransaction()
 			require.True(t, ok)
 			f.replaceMetadata(t, true)
-			// Another flow replaces the initiating handler's pending transaction.
+			// The original handler cannot migrate configured credentials to B.
 			_, err := f.handler.GetAuthorizationURL(t.Context(), "state-b", "challenge-b")
-			require.NoError(t, err)
+			require.ErrorIs(t, err, transport.ErrAuthorizationServerChanged)
 			config := f.config
-			config.ClientID, config.ClientSecret = "other-client", "other-secret"
 			config.RedirectURI, config.PKCEEnabled = "http://localhost/other", false
 			callback := transport.NewOAuthHandler(config)
 			callback.SetBaseURL(f.server.URL + "/mcp")
-			callback.SetProtectedResourceMetadataURL(f.server.URL + "/prm/b")
 			require.NoError(t, callback.SetAuthorizationTransaction(transaction))
 			callback.SetExpectedState("state-a") // Keeping the same state preserves its binding.
 			query := url.Values{"code": {"code-a"}, "state": {"state-a"}, "iss": {f.server.URL + "/a"}}
