@@ -562,3 +562,51 @@ func TestLoggingTransport_StartError(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, "cannot start", err.Error())
 }
+
+func TestLoggingTransport_ForwardsRequiresLegacyProtocol(t *testing.T) {
+	listening, err := NewStreamableHTTP("http://localhost", WithContinuousListening())
+	require.NoError(t, err)
+	plain, err := NewStreamableHTTP("http://localhost")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name  string
+		inner Interface
+		want  bool
+	}{
+		{name: "streamable HTTP with continuous listening", inner: listening, want: true},
+		{name: "streamable HTTP without continuous listening", inner: plain, want: false},
+		{name: "transport without the method", inner: &fakeTransport{}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wrapped, ok := NewLogging(tt.inner, nil).(interface{ RequiresLegacyProtocol() bool })
+			require.True(t, ok)
+			assert.Equal(t, tt.want, wrapped.RequiresLegacyProtocol())
+		})
+	}
+}
+
+func TestLoggingTransport_ForwardsConnectionLostHandler(t *testing.T) {
+	type connectionLostSetter interface{ SetConnectionLostHandler(func(error)) }
+
+	sse, err := NewSSE("http://localhost")
+	require.NoError(t, err)
+	setter, ok := NewLogging(sse, nil).(connectionLostSetter)
+	require.True(t, ok)
+
+	var got error
+	setter.SetConnectionLostHandler(func(err error) { got = err })
+	sse.connectionLostMu.RLock()
+	handler := sse.onConnectionLost
+	sse.connectionLostMu.RUnlock()
+	require.NotNil(t, handler)
+	handler(errors.New("lost"))
+	assert.EqualError(t, got, "lost")
+
+	// Inner transports without the hook just ignore it.
+	setter, ok = NewLogging(&fakeTransport{}, nil).(connectionLostSetter)
+	require.True(t, ok)
+	setter.SetConnectionLostHandler(func(error) {})
+}
