@@ -61,6 +61,7 @@ type Stdio struct {
 	logger           *slog.Logger
 	started          bool
 	startedMu        sync.Mutex
+	resourcesReady   bool // guarded by startedMu
 }
 
 const (
@@ -233,9 +234,10 @@ func NewStdioWithOptions(
 // This is useful for testing and simulating client behavior.
 func NewIO(input io.Reader, output io.WriteCloser, logging io.ReadCloser) *Stdio {
 	return &Stdio{
-		stdin:  output,
-		stdout: bufio.NewReader(input),
-		stderr: logging,
+		stdin:          output,
+		stdout:         bufio.NewReader(input),
+		stderr:         logging,
+		resourcesReady: true,
 
 		responses: make(map[string]chan *JSONRPCResponse),
 		done:      make(chan struct{}),
@@ -246,6 +248,12 @@ func NewIO(input io.Reader, output io.WriteCloser, logging io.ReadCloser) *Stdio
 
 func (c *Stdio) Start(ctx context.Context) error {
 	c.startedMu.Lock()
+	select {
+	case <-c.done:
+		c.startedMu.Unlock()
+		return ErrTransportClosed
+	default:
+	}
 	if c.started {
 		c.startedMu.Unlock()
 		return nil
@@ -263,6 +271,11 @@ func (c *Stdio) Start(ctx context.Context) error {
 		c.started = false
 		c.startedMu.Unlock()
 		return err
+	}
+	select {
+	case <-c.done:
+		return errors.Join(ErrTransportClosed, c.Close())
+	default:
 	}
 
 	ready := make(chan struct{})
@@ -293,6 +306,11 @@ func (c *Stdio) spawnCommand(ctx context.Context) error {
 	} else if cmd, err = c.cmdFunc(ctx, c.command, c.env, c.args); err != nil {
 		return err
 	}
+	select {
+	case <-c.done:
+		return ErrTransportClosed
+	default:
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -314,33 +332,29 @@ func (c *Stdio) spawnCommand(ctx context.Context) error {
 		}
 	}
 
-	c.cmd = cmd
-	c.stdin = stdin
-	c.stderr = stderr
-	c.stdout = bufio.NewReader(stdout)
-
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start command: %w", err)
 	}
 
-	// Drain stderr continuously so the subprocess can never deadlock on a
-	// full pipe (see startStderrDrain).
+	var ring *stderrBuffer
 	if stderr != nil {
-		c.startStderrDrain(stderr)
+		ring = newStderrBuffer()
 	}
+	c.startedMu.Lock()
+	c.cmd = cmd
+	c.stdin = stdin
+	c.stderr = stderr
+	c.stdout = bufio.NewReader(stdout)
+	c.stderrRing = ring
+	c.resourcesReady = true
+	c.startedMu.Unlock()
 
+	// Drain stderr continuously so the subprocess can never deadlock on a
+	// full pipe, including when Close wins the race with resource publication.
+	if stderr != nil {
+		go drainStderrIntoRing(ring, stderr, c.stderrWriter, c.logger)
+	}
 	return nil
-}
-
-// startStderrDrain starts the background goroutine that keeps the subprocess
-// stderr pipe empty. An unread pipe holds only about 64KB; once it fills, the
-// child blocks inside write(2) and stops answering on stdout, deadlocking
-// every request (including Ping) with no error. The output is written to the
-// bounded ring buffer (readable through Stderr()) and mirrored to
-// stderrWriter, which defaults to io.Discard.
-func (c *Stdio) startStderrDrain(stderr io.ReadCloser) {
-	c.stderrRing = newStderrBuffer()
-	go drainStderrIntoRing(c.stderrRing, stderr, c.stderrWriter, c.logger)
 }
 
 // drainStderrIntoRing copies src into the ring buffer until the stream ends,
@@ -414,6 +428,13 @@ func (c *Stdio) closeDone() {
 func (c *Stdio) Close() error {
 	// Signal all in-flight requests to unblock.
 	c.closeDone()
+	c.startedMu.Lock()
+	resourcesReady := c.resourcesReady
+	c.startedMu.Unlock()
+	if !resourcesReady {
+		// A pending Start will clean up any resources it publishes after Close.
+		return nil
+	}
 
 	// Perform resource cleanup exactly once, even if readResponses already
 	// called closeDone() (e.g. server died). Without this, the old early-return
