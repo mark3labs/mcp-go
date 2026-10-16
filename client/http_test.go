@@ -3,6 +3,8 @@ package client
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"sync"
 	"testing"
@@ -369,4 +371,46 @@ func TestStreamableHTTP_ReinitializeOnTheModernProtocol(t *testing.T) {
 	require.Equal(t, mcp.ProtocolVersion20260728, result.ProtocolVersion)
 	_, err = c.ListTools(ctx, mcp.ListToolsRequest{})
 	require.NoError(t, err)
+}
+
+func TestHTTPClientContinuousListeningThroughLoggingTransport(t *testing.T) {
+	mcpServer := server.NewMCPServer("test-server", "1.0.0", server.WithToolCapabilities(true))
+	testServer := servertest.NewTestStreamableHTTPServer(mcpServer)
+	defer testServer.Close()
+
+	inner, err := transport.NewStreamableHTTP(testServer.URL, transport.WithContinuousListening())
+	require.NoError(t, err)
+	client := NewClient(transport.NewLogging(inner, slog.New(slog.NewTextHandler(io.Discard, nil))))
+	defer client.Close()
+
+	notifications := make(chan string, 10)
+	client.OnNotification(func(notification mcp.JSONRPCNotification) {
+		notifications <- notification.Method
+	})
+
+	ctx := t.Context()
+	require.NoError(t, client.Start(ctx))
+	_, err = client.Initialize(ctx, mcp.InitializeRequest{
+		Params: mcp.InitializeParams{
+			ClientInfo: mcp.Implementation{Name: "test-client", Version: "1.0.0"},
+		},
+	})
+	require.NoError(t, err)
+
+	// Continuous listening needs the standalone GET stream, so the wrapped
+	// transport must keep the client on a legacy protocol version.
+	require.False(t, mcp.IsModernProtocol(client.ProtocolVersion()), "negotiated %s", client.ProtocolVersion())
+
+	// Give the GET stream a moment to attach before the server broadcasts.
+	time.Sleep(100 * time.Millisecond)
+	mcpServer.AddTool(mcp.NewTool("late"), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("ok"), nil
+	})
+
+	select {
+	case method := <-notifications:
+		require.Equal(t, "notifications/tools/list_changed", method)
+	case <-time.After(2 * time.Second):
+		t.Fatal("no notification received over the continuous listening stream")
+	}
 }
