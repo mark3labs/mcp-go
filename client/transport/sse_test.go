@@ -894,15 +894,9 @@ func TestSSEErrors(t *testing.T) {
 		defer cancel()
 		start := time.Now()
 		err = trans.Start(ctx)
-		if err == nil {
-			t.Fatal("Expected Start to fail with custom timeout, got nil")
-		}
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Errorf("Expected error 'context deadline exceeded', got '%v'", err)
-		}
-		if elapsed := time.Since(start); elapsed > time.Second {
-			t.Errorf("Start took %v, so the custom client's timeout was not used", elapsed)
-		}
+		require.Error(t, err, "Expected Start to fail with custom timeout")
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Less(t, time.Since(start), time.Second, "Start should end on the custom client's timeout, not the context deadline")
 	})
 
 	t.Run("RequestBeforeStart", func(t *testing.T) {
