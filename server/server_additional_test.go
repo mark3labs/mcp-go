@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -900,6 +901,231 @@ func TestMCPServer_PaginationCursorStability(t *testing.T) {
 	// Should handle gracefully (may have different results due to modifications)
 	// The key is that it shouldn't crash or return errors
 	assert.NotNil(t, result.Tools)
+}
+
+func TestToolResultSizeLimit(t *testing.T) {
+	exact, err := json.Marshal(mcp.NewToolResultText("exact"))
+	require.NoError(t, err)
+
+	tests := []struct {
+		name    string
+		limit   int
+		text    string
+		meta    string
+		limited bool
+	}{
+		{name: "over the limit", limit: 64, text: strings.Repeat("x", 200), limited: true},
+		{name: "under the limit", limit: 64, text: "ok"},
+		{name: "exactly at the limit", limit: len(exact), text: "exact"},
+		{name: "one byte over the limit", limit: len(exact) - 1, text: "exact", limited: true},
+		{name: "metadata over the limit", limit: 64, text: "ok", meta: strings.Repeat("m", 200), limited: true},
+		{name: "zero disables the limit", limit: 0, text: strings.Repeat("x", 200)},
+		{name: "negative disables the limit", limit: -1, text: strings.Repeat("x", 200)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewMCPServer("test-server", "1.0.0",
+				WithToolCapabilities(true),
+				WithToolResultSizeLimit(tt.limit),
+			)
+			server.AddTool(mcp.NewTool("tool"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				result := mcp.NewToolResultText(tt.text)
+				if tt.meta != "" {
+					result.Meta = mcp.NewMetaFromMap(map[string]any{"note": tt.meta})
+				}
+				return result, nil
+			})
+
+			response := server.HandleMessage(t.Context(), []byte(`{
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "tools/call",
+				"params": {"name": "tool"}
+			}`))
+			resp, ok := response.(mcp.JSONRPCResponse)
+			require.True(t, ok)
+			raw, err := json.Marshal(resp.Result)
+			require.NoError(t, err)
+
+			if tt.limited {
+				assert.Contains(t, string(raw), fmt.Sprintf("tool result exceeds %d bytes", tt.limit))
+				assert.Contains(t, string(raw), `"isError":true`)
+				assert.NotContains(t, string(raw), tt.text)
+				if tt.meta != "" {
+					assert.NotContains(t, string(raw), tt.meta)
+				}
+				return
+			}
+			assert.Contains(t, string(raw), tt.text)
+			assert.NotContains(t, string(raw), "tool result exceeds")
+		})
+	}
+}
+
+func TestToolResultSizeLimitOnTasks(t *testing.T) {
+	big := strings.Repeat("x", 200)
+	bigMeta := strings.Repeat("m", 200)
+	withMeta := func(meta string) *mcp.Meta {
+		if meta == "" {
+			return nil
+		}
+		return mcp.NewMetaFromMap(map[string]any{"note": meta})
+	}
+
+	tests := []struct {
+		name     string
+		taskOnly bool
+		text     string
+		meta     string
+		limited  bool
+	}{
+		{name: "regular tool over the limit", text: big, limited: true},
+		{name: "task tool over the limit", taskOnly: true, text: big, limited: true},
+		{name: "regular tool metadata over the limit", text: "ok", meta: bigMeta, limited: true},
+		{name: "task tool metadata over the limit", taskOnly: true, text: "ok", meta: bigMeta, limited: true},
+		{name: "task tool under the limit", taskOnly: true, text: "ok", meta: "small"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewMCPServer("test", "1.0.0",
+				WithTaskCapabilities(true, true, true),
+				WithToolResultSizeLimit(128),
+			)
+			tool := mcp.NewTool("tool", mcp.WithTaskSupport(mcp.TaskSupportRequired))
+			var handed *mcp.CreateTaskResult
+			if tt.taskOnly {
+				handed = &mcp.CreateTaskResult{
+					Result:  mcp.Result{Meta: withMeta(tt.meta)},
+					Content: []mcp.Content{mcp.NewTextContent(tt.text)},
+				}
+				server.AddTaskTool(tool, func(context.Context, mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+					return handed, nil
+				})
+			} else {
+				server.AddTool(tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					result := mcp.NewToolResultText(tt.text)
+					result.Meta = withMeta(tt.meta)
+					return result, nil
+				})
+			}
+
+			ctx := t.Context()
+			callResult, callErr := server.handleToolCall(ctx, 1, mcp.CallToolRequest{
+				Params: mcp.CallToolParams{Name: "tool", Task: &mcp.TaskParams{}},
+			})
+			require.Nil(t, callErr)
+			created, ok := callResult.(*mcp.CreateTaskResult)
+			require.True(t, ok)
+
+			require.Eventually(t, func() bool {
+				task, _, err := server.getTask(ctx, created.Task.TaskId)
+				return err == nil && task.Status.IsTerminal()
+			}, 5*time.Second, 10*time.Millisecond)
+			task, _, err := server.getTask(ctx, created.Task.TaskId)
+			require.NoError(t, err)
+			require.Equal(t, mcp.TaskStatusCompleted, task.Status)
+
+			result, resultErr := server.handleTaskResult(ctx, 2, mcp.TaskResultRequest{
+				Params: mcp.TaskResultParams{TaskId: created.Task.TaskId},
+			})
+			require.Nil(t, resultErr)
+			raw, err := json.Marshal(result)
+			require.NoError(t, err)
+
+			if tt.limited {
+				assert.True(t, result.IsError)
+				assert.Contains(t, string(raw), "tool result exceeds 128 bytes")
+				assert.NotContains(t, string(raw), strings.Repeat("x", 50))
+				assert.NotContains(t, string(raw), strings.Repeat("m", 50))
+				if handed != nil {
+					assert.False(t, handed.IsError)
+					assert.Equal(t, []mcp.Content{mcp.NewTextContent(tt.text)}, handed.Content)
+					assert.Equal(t, withMeta(tt.meta), handed.Meta)
+				}
+				return
+			}
+			assert.False(t, result.IsError)
+			assert.Contains(t, string(raw), tt.text)
+			assert.Contains(t, string(raw), tt.meta)
+		})
+	}
+}
+
+// Resource and resource template names need not be unique. Paging one item at
+// a time puts a page boundary between every pair of equally named entries, and
+// none of them may be skipped.
+func TestMCPServer_PaginationWithDuplicateNames(t *testing.T) {
+	pageThrough := func(t *testing.T, server *MCPServer, method string, collect func(result any) ([]string, mcp.Cursor)) []string {
+		t.Helper()
+		var got []string
+		cursor := mcp.Cursor("")
+		for range 10 {
+			params := "{}"
+			if cursor != "" {
+				params = fmt.Sprintf(`{"cursor": %q}`, cursor)
+			}
+			response := server.HandleMessage(t.Context(), fmt.Appendf(nil,
+				`{"jsonrpc": "2.0", "id": 1, "method": %q, "params": %s}`, method, params))
+			resp, ok := response.(mcp.JSONRPCResponse)
+			require.True(t, ok, "unexpected response: %+v", response)
+			var page []string
+			page, cursor = collect(resp.Result)
+			got = append(got, page...)
+			if cursor == "" {
+				return got
+			}
+		}
+		t.Fatalf("%s did not finish paging", method)
+		return nil
+	}
+
+	t.Run("resources", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithResourceCapabilities(false, false),
+			WithPaginationLimit(1),
+		)
+		for _, uri := range []string{"file:///b/README.md", "file:///a/README.md", "file:///c/README.md"} {
+			server.AddResource(mcp.NewResource(uri, "README.md"), nil)
+		}
+		server.AddResource(mcp.NewResource("file:///main.go", "main.go"), nil)
+
+		got := pageThrough(t, server, "resources/list", func(result any) ([]string, mcp.Cursor) {
+			page := result.(mcp.ListResourcesResult)
+			var uris []string
+			for _, resource := range page.Resources {
+				uris = append(uris, resource.URI)
+			}
+			return uris, page.NextCursor
+		})
+		assert.Equal(t, []string{
+			"file:///a/README.md",
+			"file:///b/README.md",
+			"file:///c/README.md",
+			"file:///main.go",
+		}, got)
+	})
+
+	t.Run("resource templates", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithResourceCapabilities(false, false),
+			WithPaginationLimit(1),
+		)
+		for _, uriTemplate := range []string{"repo://b/{path}", "repo://a/{path}"} {
+			server.AddResourceTemplate(mcp.NewResourceTemplate(uriTemplate, "file"), nil)
+		}
+
+		got := pageThrough(t, server, "resources/templates/list", func(result any) ([]string, mcp.Cursor) {
+			page := result.(mcp.ListResourceTemplatesResult)
+			var templates []string
+			for _, template := range page.ResourceTemplates {
+				templates = append(templates, template.URITemplate.Raw())
+			}
+			return templates, page.NextCursor
+		})
+		assert.Equal(t, []string{"repo://a/{path}", "repo://b/{path}"}, got)
+	})
 }
 
 func TestPaginationLimitZeroReturnsTheFullList(t *testing.T) {
