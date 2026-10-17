@@ -12,6 +12,8 @@ import (
 	"sync"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"golang.org/x/text/language"
+	"golang.org/x/text/message"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -274,7 +276,7 @@ func formatLeafMessage(verr *jsonschema.ValidationError) string {
 	if location == "" {
 		location = "<root>"
 	}
-	return fmt.Sprintf("%s: %+v", location, verr.ErrorKind)
+	return fmt.Sprintf("%s: %s", location, verr.ErrorKind.LocalizedString(message.NewPrinter(language.English)))
 }
 
 // jsonPointer renders a list of path segments as a RFC 6901 JSON Pointer.
