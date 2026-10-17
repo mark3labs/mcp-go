@@ -200,6 +200,9 @@ type MCPServer struct {
 	promptFiltersMu        sync.RWMutex
 	tasksMu                sync.RWMutex
 
+	// Test-only checkpoint configured before the server is used concurrently.
+	beforeCapabilityRegistration func()
+
 	name                       string
 	version                    string
 	implementation             mcp.Implementation
@@ -1048,6 +1051,9 @@ func (s *MCPServer) implicitlyRegisterPromptCapabilities() {
 }
 
 func (s *MCPServer) implicitlyRegisterCapabilities(check func() bool, register func()) {
+	if s.beforeCapabilityRegistration != nil {
+		s.beforeCapabilityRegistration()
+	}
 	s.capabilitiesMu.RLock()
 	if check() {
 		s.capabilitiesMu.RUnlock()

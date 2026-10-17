@@ -35,29 +35,37 @@ func TestRegistryReplacementDoesNotExposeEmptyIntermediateState(t *testing.T) {
 				return len(s.resources)
 			}
 			set("old")
-			// Pause capability registration, which every replacement performs. The
-			// existing registry must remain visible until the replacement is ready.
+			// Every setter must reach registration before checking the old registry.
+			// The held lock then keeps the replacement at that exact checkpoint.
 			s.capabilitiesMu.Lock()
+			reached := make(chan struct{})
 			done := make(chan struct{})
-			go func() { set("new"); close(done) }()
-			empty := false
-			deadline := time.After(50 * time.Millisecond)
-		loop:
-			for {
-				if count() == 0 {
-					empty = true
-					break
+			s.beforeCapabilityRegistration = func() { close(reached) }
+			locked := true
+			t.Cleanup(func() {
+				if locked {
+					s.capabilitiesMu.Unlock()
 				}
 				select {
-				case <-deadline:
-					break loop
-				default:
-					time.Sleep(time.Millisecond)
+				case <-done:
+				case <-time.After(2 * time.Second):
+					t.Error("replacement goroutine did not finish after unlocking")
 				}
+			})
+			go func() { set("new"); close(done) }()
+			select {
+			case <-reached:
+			case <-time.After(2 * time.Second):
+				t.Fatal("replacement did not reach capability registration")
 			}
+			require.Equal(t, 1, count(), "replacement exposed an empty registry between clearing and adding")
 			s.capabilitiesMu.Unlock()
-			<-done
-			require.False(t, empty, "replacement exposed an empty registry between clearing and adding")
+			locked = false
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("replacement did not finish")
+			}
 			require.Equal(t, 1, count())
 		})
 	}
