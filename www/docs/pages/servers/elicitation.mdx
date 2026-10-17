@@ -1,0 +1,412 @@
+# Elicitation
+
+Learn how to implement MCP servers that can request additional information from users during interactions.
+
+## Overview
+
+Elicitation allows servers to request additional information from users during an interaction. This is useful when a tool or operation needs clarification, confirmation, or extra input from the user that wasn't provided in the original request.
+
+There are two modes of elicitation:
+
+- **Form mode** (`mcp.ElicitationModeForm`) — the server provides a JSON Schema and the client presents a structured form to the user. This is the default mode.
+- **URL mode** (`mcp.ElicitationModeURL`) — the server provides a URL for the user to visit, enabling out-of-band interactions like authentication flows.
+
+:::info[User Consent Required]
+Elicitation is inherently user-facing. When your server sends an elicitation request:
+- The client will present the request to the user
+- The user may accept, decline, or cancel
+- Response times depend on user interaction
+
+**Design your tools accordingly:**
+- Provide clear, human-readable messages explaining what you need and why
+- Handle all three response actions (accept, decline, cancel) gracefully
+- Consider timeouts for user interaction delays
+:::
+
+## Enabling Elicitation
+
+To enable elicitation in your server, use the `WithElicitation()` option during server creation:
+
+```go
+package main
+
+import (
+    "context"
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func main() {
+    // Create server with elicitation capability
+    s := server.NewMCPServer("Elicitation Server", "1.0.0",
+        server.WithElicitation(),
+    )
+
+    // Add tools that use elicitation...
+
+    // Start server
+    server.ServeStdio(s)
+}
+```
+
+## ElicitationParams
+
+The `ElicitationParams` structure defines what the server is requesting from the user:
+
+```go
+type ElicitationParams struct {
+    Meta            *Meta  `json:"_meta,omitempty"`
+    Mode            string `json:"mode,omitempty"`            // "form" or "url", defaults to "form"
+    Message         string `json:"message"`                   // Human-readable message
+
+    // Form mode fields
+    RequestedSchema any    `json:"requestedSchema,omitempty"` // JSON Schema for the form
+
+    // URL mode fields
+    ElicitationID   string `json:"elicitationId,omitempty"`   // Unique ID for tracking
+    URL             string `json:"url,omitempty"`             // URL for the user to visit
+}
+```
+
+### Validation
+
+`ElicitationParams` has a `Validate()` method that enforces mode-specific requirements:
+
+- **Form mode** requires `RequestedSchema` to be non-nil
+- **URL mode** requires both `ElicitationID` and `URL` to be set
+
+Validation is called automatically when you use `RequestElicitation()`.
+
+## Response Actions
+
+When a user responds to an elicitation request, the result includes one of three actions:
+
+```go
+mcp.ElicitationResponseActionAccept   // User provided the requested information
+mcp.ElicitationResponseActionDecline  // User explicitly declined
+mcp.ElicitationResponseActionCancel   // User cancelled without making a choice
+```
+
+The result is returned as an `ElicitationResult`:
+
+```go
+type ElicitationResult struct {
+    Result
+    ElicitationResponse
+}
+
+type ElicitationResponse struct {
+    Action  ElicitationResponseAction `json:"action"`
+    Content any                       `json:"content,omitempty"` // User's response data
+}
+```
+
+When `Action` is `accept`, the `Content` field contains the user's response data, which should conform to the `RequestedSchema` from the original request.
+
+## Form Mode
+
+Form mode is the default. The server provides a JSON Schema describing the expected input, and the client renders a form for the user.
+
+### Requesting Elicitation in a Tool Handler
+
+Use `RequestElicitation()` within tool handlers to ask the user for information:
+
+```go
+mcpServer.AddTool(
+    mcp.NewTool(
+        "create_project",
+        mcp.WithDescription("Creates a new project with user-specified configuration"),
+    ),
+    func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        // Build the elicitation request with a JSON Schema
+        elicitationRequest := mcp.ElicitationRequest{
+            Params: mcp.ElicitationParams{
+                Message: "Please provide the project details.",
+                RequestedSchema: map[string]any{
+                    "type": "object",
+                    "properties": map[string]any{
+                        "projectName": map[string]any{
+                            "type":        "string",
+                            "description": "Name of the project",
+                            "minLength":   1,
+                        },
+                        "framework": map[string]any{
+                            "type":        "string",
+                            "description": "Frontend framework to use",
+                            "enum":        []string{"react", "vue", "angular", "none"},
+                        },
+                        "includeTests": map[string]any{
+                            "type":        "boolean",
+                            "description": "Include test setup",
+                            "default":     true,
+                        },
+                    },
+                    "required": []string{"projectName"},
+                },
+            },
+        }
+
+        // Send the elicitation request
+        result, err := mcpServer.RequestElicitation(ctx, elicitationRequest)
+        if err != nil {
+            return nil, fmt.Errorf("failed to request elicitation: %w", err)
+        }
+
+        // Handle the user's response
+        switch result.Action {
+        case mcp.ElicitationResponseActionAccept:
+            data, ok := result.Content.(map[string]any)
+            if !ok {
+                return nil, fmt.Errorf("unexpected response format")
+            }
+
+            projectName := data["projectName"].(string)
+            framework := "none"
+            if fw, ok := data["framework"].(string); ok {
+                framework = fw
+            }
+
+            message := fmt.Sprintf("Created project '%s' with framework: %s", projectName, framework)
+            return &mcp.CallToolResult{
+                Content: []mcp.Content{
+                    mcp.NewTextContent(message),
+                },
+            }, nil
+
+        case mcp.ElicitationResponseActionDecline:
+            return &mcp.CallToolResult{
+                Content: []mcp.Content{
+                    mcp.NewTextContent("Project creation cancelled — user declined."),
+                },
+            }, nil
+
+        case mcp.ElicitationResponseActionCancel:
+            return nil, fmt.Errorf("project creation cancelled by user")
+
+        default:
+            return nil, fmt.Errorf("unexpected response action: %s", result.Action)
+        }
+    },
+)
+```
+
+### Conditional Elicitation
+
+You can request elicitation only when needed — for example, to confirm a potentially destructive operation:
+
+```go
+func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    data, _ := request.RequireString("data")
+
+    // Only ask for confirmation if the data is large
+    if len(data) > 100 {
+        result, err := mcpServer.RequestElicitation(ctx, mcp.ElicitationRequest{
+            Params: mcp.ElicitationParams{
+                Message: fmt.Sprintf("The data is %d characters. Proceed?", len(data)),
+                RequestedSchema: map[string]any{
+                    "type": "object",
+                    "properties": map[string]any{
+                        "proceed": map[string]any{
+                            "type":        "boolean",
+                            "description": "Whether to proceed with processing",
+                        },
+                    },
+                    "required": []string{"proceed"},
+                },
+            },
+        })
+        if err != nil {
+            return nil, fmt.Errorf("failed to get confirmation: %w", err)
+        }
+
+        if result.Action != mcp.ElicitationResponseActionAccept {
+            return mcp.NewToolResultText("Processing cancelled by user."), nil
+        }
+
+        responseData := result.Content.(map[string]any)
+        if proceed, ok := responseData["proceed"].(bool); !ok || !proceed {
+            return mcp.NewToolResultText("User chose not to proceed."), nil
+        }
+    }
+
+    // Continue with processing...
+    return mcp.NewToolResultText(fmt.Sprintf("Processed %d characters", len(data))), nil
+}
+```
+
+## URL Mode
+
+URL mode is used for out-of-band interactions where the user needs to visit an external URL — for example, an OAuth flow or an API key setup page.
+
+### Requesting URL Elicitation
+
+Use `RequestURLElicitation()` for a convenient way to send URL mode requests:
+
+```go
+mcpServer.AddTool(
+    mcp.NewTool(
+        "auth_via_url",
+        mcp.WithDescription("Authenticate via browser"),
+    ),
+    func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        session := server.ClientSessionFromContext(ctx)
+        if session == nil {
+            return nil, fmt.Errorf("no active session")
+        }
+
+        // Generate a unique elicitation ID for tracking
+        elicitationID := uuid.New().String()
+        url := fmt.Sprintf("https://myserver.com/auth?id=%s", elicitationID)
+
+        // Send the URL elicitation request
+        result, err := mcpServer.RequestURLElicitation(
+            ctx,
+            session,
+            elicitationID,
+            url,
+            "Please authenticate in your browser to continue.",
+        )
+        if err != nil {
+            return nil, fmt.Errorf("URL elicitation failed: %w", err)
+        }
+
+        if result.Action == mcp.ElicitationResponseActionAccept {
+            return &mcp.CallToolResult{
+                Content: []mcp.Content{
+                    mcp.NewTextContent("Authentication flow initiated. Complete the process in your browser."),
+                },
+            }, nil
+        }
+
+        return &mcp.CallToolResult{
+            Content: []mcp.Content{
+                mcp.NewTextContent(fmt.Sprintf("User declined authentication: %s", result.Action)),
+            },
+        }, nil
+    },
+)
+```
+
+### Completion Notification
+
+For URL mode, once the user completes the out-of-band flow (e.g., submits a form in their browser and the server receives a callback), notify the client that the elicitation is complete:
+
+```go
+// Send after the server receives the callback from the browser
+err := mcpServer.SendElicitationComplete(ctx, session, elicitationID)
+if err != nil {
+    log.Printf("Failed to send completion notification: %v", err)
+}
+```
+
+You can also construct the notification directly:
+
+```go
+notification := mcp.NewElicitationCompleteNotification("elicitation-id-123")
+```
+
+### URLElicitationRequiredError
+
+When a tool requires authorization that hasn't been set up, you can return a `URLElicitationRequiredError` to signal that the client should initiate a URL elicitation flow:
+
+```go
+func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    if !isAuthorized(ctx) {
+        elicitationID := uuid.New().String()
+        return nil, mcp.URLElicitationRequiredError{
+            Elicitations: []mcp.ElicitationParams{
+                {
+                    Mode:          mcp.ElicitationModeURL,
+                    ElicitationID: elicitationID,
+                    URL:           fmt.Sprintf("https://myserver.com/authorize?id=%s", elicitationID),
+                    Message:       "Authorization is required to access this resource.",
+                },
+            },
+        }
+    }
+
+    return mcp.NewToolResultText("Action completed successfully!"), nil
+}
+```
+
+## Client-Side Handler
+
+Clients implement the `ElicitationHandler` interface to handle elicitation requests from servers:
+
+```go
+type ElicitationHandler interface {
+    Elicit(ctx context.Context, request mcp.ElicitationRequest) (*mcp.ElicitationResult, error)
+}
+```
+
+Register the handler when creating the client:
+
+```go
+import "github.com/mark3labs/mcp-go/client"
+
+handler := &MyElicitationHandler{}
+c := client.NewClient(transport, client.WithElicitationHandler(handler))
+```
+
+The implementation should:
+1. Present the request message to the user (and the URL if in URL mode)
+2. Validate input against the requested schema (for form mode)
+3. Allow the user to accept, decline, or cancel
+4. Return the appropriate `ElicitationResult`
+
+## ElicitationCapability
+
+The `ElicitationCapability` struct advertises which elicitation modes a client or server supports during initialization:
+
+```go
+type ElicitationCapability struct {
+    Form *struct{} `json:"form,omitempty"` // Supports form mode
+    URL  *struct{} `json:"url,omitempty"`  // Supports URL mode
+}
+```
+
+This capability is exchanged as part of the `ClientCapabilities` and `ServerCapabilities` during the MCP initialization handshake.
+
+## Error Handling
+
+Always handle elicitation errors and all response actions gracefully:
+
+```go
+result, err := mcpServer.RequestElicitation(ctx, elicitationRequest)
+if err != nil {
+    // Common errors:
+    // - server.ErrNoActiveSession: no session in context
+    // - server.ErrElicitationNotSupported: session/transport doesn't support elicitation
+    // - validation errors from ElicitationParams.Validate()
+    log.Printf("Elicitation failed: %v", err)
+    return mcp.NewToolResultError(fmt.Sprintf("Could not request information: %v", err)), nil
+}
+```
+
+## Context and Timeouts
+
+Use context for timeout control, especially since elicitation requires user interaction:
+
+```go
+ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+defer cancel()
+
+result, err := mcpServer.RequestElicitation(ctx, elicitationRequest)
+```
+
+## Best Practices
+
+1. **Clear Messages**: Write human-readable messages that explain what you need and why
+2. **Minimal Schemas**: Only request the information you actually need
+3. **Handle All Actions**: Always handle accept, decline, and cancel — don't assume the user will accept
+4. **Validate Responses**: Type-assert and validate the `Content` field before using it
+5. **Graceful Degradation**: If elicitation fails or is unsupported, provide a sensible fallback
+6. **Use URL Mode Sparingly**: Reserve URL mode for flows that genuinely require a browser (e.g., OAuth)
+7. **Track Elicitation IDs**: For URL mode, use unique IDs to correlate browser callbacks with sessions
+
+## Next Steps
+
+- Learn about [client-side elicitation handling](/clients)
+- Explore [advanced server features](/servers/advanced)
+- See the [elicitation example](https://github.com/mark3labs/mcp-go/tree/main/examples/elicitation)
+- Read about [sampling](/servers/advanced-sampling) for server-initiated LLM requests

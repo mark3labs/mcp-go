@@ -1,0 +1,1112 @@
+package mcp
+
+import (
+	"encoding/json"
+	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// Test AsXXXContent type assertion helpers
+
+func TestAsTextContent(t *testing.T) {
+	t.Run("valid TextContent", func(t *testing.T) {
+		content := TextContent{Type: ContentTypeText, Text: "hello"}
+		result, ok := AsTextContent(content)
+		assert.True(t, ok)
+		require.NotNil(t, result)
+		assert.Equal(t, "hello", result.Text)
+	})
+
+	t.Run("invalid type", func(t *testing.T) {
+		content := ImageContent{Type: ContentTypeImage, Data: "data"}
+		result, ok := AsTextContent(content)
+		assert.False(t, ok)
+		assert.Nil(t, result)
+	})
+
+	t.Run("wrong type string", func(t *testing.T) {
+		result, ok := AsTextContent("not a text content")
+		assert.False(t, ok)
+		assert.Nil(t, result)
+	})
+}
+
+func TestAsImageContent(t *testing.T) {
+	t.Run("valid ImageContent", func(t *testing.T) {
+		content := ImageContent{Type: ContentTypeImage, Data: "base64", MIMEType: "image/png"}
+		result, ok := AsImageContent(content)
+		assert.True(t, ok)
+		require.NotNil(t, result)
+		assert.Equal(t, "base64", result.Data)
+		assert.Equal(t, "image/png", result.MIMEType)
+	})
+
+	t.Run("invalid type", func(t *testing.T) {
+		content := TextContent{Type: ContentTypeText, Text: "text"}
+		result, ok := AsImageContent(content)
+		assert.False(t, ok)
+		assert.Nil(t, result)
+	})
+}
+
+func TestAsAudioContent(t *testing.T) {
+	t.Run("valid AudioContent", func(t *testing.T) {
+		content := AudioContent{Type: ContentTypeAudio, Data: "base64", MIMEType: "audio/mp3"}
+		result, ok := AsAudioContent(content)
+		assert.True(t, ok)
+		require.NotNil(t, result)
+		assert.Equal(t, "base64", result.Data)
+		assert.Equal(t, "audio/mp3", result.MIMEType)
+	})
+
+	t.Run("invalid type", func(t *testing.T) {
+		result, ok := AsAudioContent(123)
+		assert.False(t, ok)
+		assert.Nil(t, result)
+	})
+}
+
+func TestAsEmbeddedResource(t *testing.T) {
+	t.Run("valid EmbeddedResource", func(t *testing.T) {
+		resource := TextResourceContents{URI: "file:///test.txt", Text: "content"}
+		content := EmbeddedResource{Type: ContentTypeResource, Resource: resource}
+		result, ok := AsEmbeddedResource(content)
+		assert.True(t, ok)
+		require.NotNil(t, result)
+		assert.Equal(t, resource, result.Resource)
+	})
+
+	t.Run("invalid type", func(t *testing.T) {
+		result, ok := AsEmbeddedResource(nil)
+		assert.False(t, ok)
+		assert.Nil(t, result)
+	})
+}
+
+func TestAsTextResourceContents(t *testing.T) {
+	t.Run("valid TextResourceContents", func(t *testing.T) {
+		content := TextResourceContents{URI: "file:///test.txt", Text: "hello"}
+		result, ok := AsTextResourceContents(content)
+		assert.True(t, ok)
+		require.NotNil(t, result)
+		assert.Equal(t, "hello", result.Text)
+	})
+
+	t.Run("invalid type", func(t *testing.T) {
+		content := BlobResourceContents{URI: "file:///test.bin", Blob: "data"}
+		result, ok := AsTextResourceContents(content)
+		assert.False(t, ok)
+		assert.Nil(t, result)
+	})
+}
+
+func TestAsBlobResourceContents(t *testing.T) {
+	t.Run("valid BlobResourceContents", func(t *testing.T) {
+		content := BlobResourceContents{URI: "file:///test.bin", Blob: "base64"}
+		result, ok := AsBlobResourceContents(content)
+		assert.True(t, ok)
+		require.NotNil(t, result)
+		assert.Equal(t, "base64", result.Blob)
+	})
+
+	t.Run("invalid type", func(t *testing.T) {
+		result, ok := AsBlobResourceContents([]byte{1, 2, 3})
+		assert.False(t, ok)
+		assert.Nil(t, result)
+	})
+}
+
+// Test NewJSONRPCError and NewJSONRPCErrorDetails
+
+func TestNewJSONRPCError(t *testing.T) {
+	id := NewRequestId(123)
+	code := METHOD_NOT_FOUND
+	message := "Method not found"
+	data := map[string]any{"method": "unknown"}
+
+	result := NewJSONRPCError(id, code, message, data)
+
+	assert.Equal(t, JSONRPC_VERSION, result.JSONRPC)
+	assert.Equal(t, id, result.ID)
+	assert.Equal(t, code, result.Error.Code)
+	assert.Equal(t, message, result.Error.Message)
+	assert.Equal(t, data, result.Error.Data)
+}
+
+func TestNewJSONRPCErrorDetails(t *testing.T) {
+	code := INVALID_PARAMS
+	message := "Invalid parameters"
+	data := "Additional error info"
+
+	result := NewJSONRPCErrorDetails(code, message, data)
+
+	assert.Equal(t, code, result.Code)
+	assert.Equal(t, message, result.Message)
+	assert.Equal(t, data, result.Data)
+}
+
+// Test helper content creation functions
+
+func TestNewAudioContent(t *testing.T) {
+	result := NewAudioContent("audiodata", "audio/mp3")
+
+	assert.Equal(t, ContentTypeAudio, result.Type)
+	assert.Equal(t, "audiodata", result.Data)
+	assert.Equal(t, "audio/mp3", result.MIMEType)
+}
+
+func TestNewResourceLink(t *testing.T) {
+	result := NewResourceLink("file:///test.txt", "test.txt", "A test file", "text/plain")
+
+	assert.Equal(t, ContentTypeLink, result.Type)
+	assert.Equal(t, "file:///test.txt", result.URI)
+	assert.Equal(t, "test.txt", result.Name)
+	assert.Equal(t, "A test file", result.Description)
+	assert.Equal(t, "text/plain", result.MIMEType)
+}
+
+func TestNewEmbeddedResource(t *testing.T) {
+	resource := TextResourceContents{URI: "file:///test.txt", Text: "content"}
+	result := NewEmbeddedResource(resource)
+
+	assert.Equal(t, ContentTypeResource, result.Type)
+	assert.Equal(t, resource, result.Resource)
+}
+
+// Test ParseResourceContents
+
+func TestParseResourceContents(t *testing.T) {
+	t.Run("text resource", func(t *testing.T) {
+		contentMap := map[string]any{
+			"uri":      "file:///test.txt",
+			"mimeType": "text/plain",
+			"text":     "hello world",
+		}
+
+		result, err := ParseResourceContents(contentMap)
+		require.NoError(t, err)
+
+		textRes, ok := result.(TextResourceContents)
+		require.True(t, ok)
+		assert.Equal(t, "file:///test.txt", textRes.URI)
+		assert.Equal(t, "text/plain", textRes.MIMEType)
+		assert.Equal(t, "hello world", textRes.Text)
+	})
+
+	t.Run("blob resource", func(t *testing.T) {
+		contentMap := map[string]any{
+			"uri":      "file:///test.bin",
+			"mimeType": "application/octet-stream",
+			"blob":     "base64data",
+		}
+
+		result, err := ParseResourceContents(contentMap)
+		require.NoError(t, err)
+
+		blobRes, ok := result.(BlobResourceContents)
+		require.True(t, ok)
+		assert.Equal(t, "file:///test.bin", blobRes.URI)
+		assert.Equal(t, "application/octet-stream", blobRes.MIMEType)
+		assert.Equal(t, "base64data", blobRes.Blob)
+	})
+
+	t.Run("missing uri", func(t *testing.T) {
+		contentMap := map[string]any{
+			"text": "hello",
+		}
+
+		_, err := ParseResourceContents(contentMap)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "uri is missing")
+	})
+
+	t.Run("no text or blob", func(t *testing.T) {
+		contentMap := map[string]any{
+			"uri": "file:///test",
+		}
+
+		_, err := ParseResourceContents(contentMap)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported resource type")
+	})
+
+	tests := []struct {
+		name     string
+		content  map[string]any
+		expected ResourceContents
+		wantErr  string
+	}{
+		{
+			name: "empty text resource",
+			content: map[string]any{
+				"uri":      "file:///empty.txt",
+				"mimeType": "text/plain",
+				"text":     "",
+			},
+			expected: TextResourceContents{
+				URI:      "file:///empty.txt",
+				MIMEType: "text/plain",
+			},
+		},
+		{
+			name: "empty blob resource",
+			content: map[string]any{
+				"uri":      "file:///empty.bin",
+				"mimeType": "application/octet-stream",
+				"blob":     "",
+			},
+			expected: BlobResourceContents{
+				URI:      "file:///empty.bin",
+				MIMEType: "application/octet-stream",
+			},
+		},
+		{
+			name: "non-string text falls through",
+			content: map[string]any{
+				"uri":  "file:///test",
+				"text": 42,
+			},
+			wantErr: "unsupported resource type",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ParseResourceContents(tt.content)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// Test that a resources/read response carrying an empty text resource round
+// trips through ParseReadResourceResult, which is the path Client.ReadResource
+// takes.
+
+func TestParseReadResourceResultEmptyText(t *testing.T) {
+	payload, err := json.Marshal(ReadResourceResult{
+		Contents: []ResourceContents{
+			TextResourceContents{URI: "file:///empty.txt", MIMEType: "text/plain"},
+		},
+	})
+	require.NoError(t, err)
+
+	raw := json.RawMessage(payload)
+	result, err := ParseReadResourceResult(&raw)
+	require.NoError(t, err)
+	require.Len(t, result.Contents, 1)
+
+	textRes, ok := result.Contents[0].(TextResourceContents)
+	require.True(t, ok)
+	assert.Equal(t, "file:///empty.txt", textRes.URI)
+	assert.Empty(t, textRes.Text)
+}
+
+// Test ParseGetPromptResult with malformed JSON
+
+func TestParseGetPromptResult_Errors(t *testing.T) {
+	t.Run("nil raw message", func(t *testing.T) {
+		_, err := ParseGetPromptResult(nil)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "nil")
+	})
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		raw := json.RawMessage(`{invalid json}`)
+		_, err := ParseGetPromptResult(&raw)
+		assert.Error(t, err)
+	})
+
+	t.Run("messages not array", func(t *testing.T) {
+		raw := json.RawMessage(`{"messages": "not an array"}`)
+		_, err := ParseGetPromptResult(&raw)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not an array")
+	})
+
+	t.Run("message not object", func(t *testing.T) {
+		raw := json.RawMessage(`{"messages": ["not an object"]}`)
+		_, err := ParseGetPromptResult(&raw)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not an object")
+	})
+
+	t.Run("unsupported role", func(t *testing.T) {
+		raw := json.RawMessage(`{
+			"messages": [{
+				"role": "system",
+				"content": {"type": "text", "text": "hello"}
+			}]
+		}`)
+		_, err := ParseGetPromptResult(&raw)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported role")
+	})
+
+	t.Run("content not object", func(t *testing.T) {
+		raw := json.RawMessage(`{
+			"messages": [{
+				"role": "user",
+				"content": "not an object"
+			}]
+		}`)
+		_, err := ParseGetPromptResult(&raw)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not an object")
+	})
+}
+
+func TestParseCallToolResult_EmbeddedResource(t *testing.T) {
+	raw := json.RawMessage(`{
+		"content": [{
+			"type": "resource",
+			"resource": {
+				"uri": "file:///main.go",
+				"mimeType": "text/x-go",
+				"text": "package main"
+			}
+		}]
+	}`)
+
+	result, err := ParseCallToolResult(&raw)
+	require.NoError(t, err)
+	require.Len(t, result.Content, 1)
+
+	embedded, ok := result.Content[0].(EmbeddedResource)
+	require.True(t, ok)
+	resource, ok := embedded.Resource.(TextResourceContents)
+	require.True(t, ok)
+	assert.Equal(t, "file:///main.go", resource.URI)
+	assert.Equal(t, "text/x-go", resource.MIMEType)
+	assert.Equal(t, "package main", resource.Text)
+}
+
+func TestEmbeddedResourceUnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		jsonData string
+		expected EmbeddedResource
+	}{
+		{
+			name: "text resource with metadata and annotations",
+			jsonData: `{
+				"type": "resource",
+				"annotations": {
+					"audience": ["user"],
+					"lastModified": "2026-07-22T00:00:00Z"
+				},
+				"_meta": {"source": "github"},
+				"resource": {
+					"uri": "file:///README.md",
+					"mimeType": "text/markdown",
+					"text": "# Project",
+					"_meta": {"etag": "abc123"}
+				}
+			}`,
+			expected: EmbeddedResource{
+				Annotated: Annotated{Annotations: &Annotations{
+					Audience:     []Role{RoleUser},
+					LastModified: "2026-07-22T00:00:00Z",
+				}},
+				Meta: NewMetaFromMap(map[string]any{"source": "github"}),
+				Type: ContentTypeResource,
+				Resource: TextResourceContents{
+					Meta:     map[string]any{"etag": "abc123"},
+					URI:      "file:///README.md",
+					MIMEType: "text/markdown",
+					Text:     "# Project",
+				},
+			},
+		},
+		{
+			name: "blob resource",
+			jsonData: `{
+				"type": "resource",
+				"resource": {
+					"uri": "file:///image.png",
+					"mimeType": "image/png",
+					"blob": "aGVsbG8="
+				}
+			}`,
+			expected: EmbeddedResource{
+				Type: ContentTypeResource,
+				Resource: BlobResourceContents{
+					URI:      "file:///image.png",
+					MIMEType: "image/png",
+					Blob:     "aGVsbG8=",
+				},
+			},
+		},
+		{
+			name:     "empty text resource",
+			jsonData: `{"type":"resource","resource":{"uri":"file:///empty.txt","text":""}}`,
+			expected: EmbeddedResource{
+				Type: ContentTypeResource,
+				Resource: TextResourceContents{
+					URI:  "file:///empty.txt",
+					Text: "",
+				},
+			},
+		},
+		{
+			name:     "empty blob resource",
+			jsonData: `{"type":"resource","resource":{"uri":"file:///empty.bin","blob":""}}`,
+			expected: EmbeddedResource{
+				Type: ContentTypeResource,
+				Resource: BlobResourceContents{
+					URI:  "file:///empty.bin",
+					Blob: "",
+				},
+			},
+		},
+		{
+			name:     "text takes precedence when both variants are present",
+			jsonData: `{"type":"resource","resource":{"uri":"file:///both","text":"text","blob":"YmxvYg=="}}`,
+			expected: EmbeddedResource{
+				Type: ContentTypeResource,
+				Resource: TextResourceContents{
+					URI:  "file:///both",
+					Text: "text",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result EmbeddedResource
+			err := json.Unmarshal([]byte(tt.jsonData), &result)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestEmbeddedResourceUnmarshalJSON_Errors(t *testing.T) {
+	tests := []struct {
+		name       string
+		jsonData   string
+		errMessage string
+		sentinel   error
+	}{
+		{
+			name:       "resource is not an object",
+			jsonData:   `{"type":"resource","resource":"not an object"}`,
+			errMessage: "unmarshaling embedded resource",
+		},
+		{
+			name:       "resource variant is missing",
+			jsonData:   `{"type":"resource","resource":{"uri":"file:///missing"}}`,
+			errMessage: "missing text or blob field",
+			sentinel:   ErrEmbeddedResourceMissingVariant,
+		},
+		{
+			name:       "text resource uri is missing",
+			jsonData:   `{"type":"resource","resource":{"text":"content"}}`,
+			errMessage: "resource uri is missing",
+			sentinel:   ErrEmbeddedResourceMissingURI,
+		},
+		{
+			name:       "blob resource uri is missing",
+			jsonData:   `{"type":"resource","resource":{"blob":"YmxvYg=="}}`,
+			errMessage: "resource uri is missing",
+			sentinel:   ErrEmbeddedResourceMissingURI,
+		},
+		{
+			name:       "text has invalid type",
+			jsonData:   `{"type":"resource","resource":{"uri":"file:///invalid","text":42}}`,
+			errMessage: "unmarshaling embedded text resource",
+		},
+		{
+			name:       "blob has invalid type",
+			jsonData:   `{"type":"resource","resource":{"uri":"file:///invalid","blob":42}}`,
+			errMessage: "unmarshaling embedded blob resource",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result EmbeddedResource
+			err := json.Unmarshal([]byte(tt.jsonData), &result)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errMessage)
+			if tt.sentinel != nil {
+				assert.True(t, errors.Is(err, tt.sentinel))
+			}
+		})
+	}
+}
+
+func TestEmbeddedResourceJSONRoundTrip(t *testing.T) {
+	original := NewEmbeddedResource(TextResourceContents{
+		Meta:     map[string]any{"etag": "abc123"},
+		URI:      "file:///README.md",
+		MIMEType: "text/markdown",
+		Text:     "# Project",
+	})
+
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	var result EmbeddedResource
+	require.NoError(t, json.Unmarshal(data, &result))
+	assert.Equal(t, original, result)
+}
+
+// Test ParseCallToolResult with malformed JSON
+
+func TestParseCallToolResult_Errors(t *testing.T) {
+	t.Run("nil raw message", func(t *testing.T) {
+		_, err := ParseCallToolResult(nil)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "nil")
+	})
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		raw := json.RawMessage(`{invalid}`)
+		_, err := ParseCallToolResult(&raw)
+		assert.Error(t, err)
+	})
+
+	t.Run("missing content", func(t *testing.T) {
+		raw := json.RawMessage(`{"isError": false}`)
+		_, err := ParseCallToolResult(&raw)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "content is missing")
+	})
+
+	t.Run("input required without content", func(t *testing.T) {
+		// The shape other SDKs send: an InputRequiredResult has no content.
+		raw := json.RawMessage(`{
+			"resultType": "input_required",
+			"inputRequests": {"confirm": {"method": "elicitation/create", "params": {"message": "Continue?"}}},
+			"requestState": "{\"step\":1}"
+		}`)
+		result, err := ParseCallToolResult(&raw)
+		require.NoError(t, err)
+		assert.True(t, result.NeedsInput())
+		assert.Equal(t, `{"step":1}`, result.RequestState)
+		require.Contains(t, result.InputRequests, "confirm")
+		assert.Equal(t, MethodElicitationCreate, result.InputRequests["confirm"].Method)
+		assert.Empty(t, result.Content)
+	})
+
+	t.Run("complete result without content", func(t *testing.T) {
+		raw := json.RawMessage(`{"resultType": "complete"}`)
+		_, err := ParseCallToolResult(&raw)
+		assert.ErrorContains(t, err, "content is missing")
+	})
+
+	t.Run("content not array", func(t *testing.T) {
+		raw := json.RawMessage(`{"content": "not an array"}`)
+		_, err := ParseCallToolResult(&raw)
+		assert.Error(t, err)
+	})
+
+	t.Run("content item not object", func(t *testing.T) {
+		raw := json.RawMessage(`{"content": ["not an object"]}`)
+		_, err := ParseCallToolResult(&raw)
+		assert.Error(t, err)
+	})
+}
+
+// Test ParseReadResourceResult with malformed JSON
+
+func TestParseReadResourceResult_Errors(t *testing.T) {
+	t.Run("nil raw message", func(t *testing.T) {
+		_, err := ParseReadResourceResult(nil)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "nil")
+	})
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		raw := json.RawMessage(`{bad json}`)
+		_, err := ParseReadResourceResult(&raw)
+		assert.Error(t, err)
+	})
+
+	t.Run("missing contents", func(t *testing.T) {
+		raw := json.RawMessage(`{}`)
+		_, err := ParseReadResourceResult(&raw)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "contents is missing")
+	})
+
+	t.Run("contents not array", func(t *testing.T) {
+		raw := json.RawMessage(`{"contents": "not an array"}`)
+		_, err := ParseReadResourceResult(&raw)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not an array")
+	})
+
+	t.Run("content item not object", func(t *testing.T) {
+		raw := json.RawMessage(`{"contents": [123]}`)
+		_, err := ParseReadResourceResult(&raw)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not an object")
+	})
+}
+
+// Test ParseStringMap
+
+func TestParseStringMap(t *testing.T) {
+	req := CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"valid_map": map[string]any{
+			"key1": "value1",
+			"key2": 123,
+		},
+		"not_a_map": "string value",
+	}
+
+	t.Run("valid map", func(t *testing.T) {
+		result := ParseStringMap(req, "valid_map", nil)
+		require.NotNil(t, result)
+		assert.Equal(t, "value1", result["key1"])
+		assert.Equal(t, 123, result["key2"])
+	})
+
+	t.Run("invalid type returns empty map", func(t *testing.T) {
+		defaultMap := map[string]any{"default": "value"}
+		result := ParseStringMap(req, "not_a_map", defaultMap)
+		// cast.ToStringMap returns empty map when it can't convert
+		assert.Equal(t, map[string]any{}, result)
+	})
+
+	t.Run("missing key returns converted default", func(t *testing.T) {
+		defaultMap := map[string]any{"default": "value"}
+		result := ParseStringMap(req, "missing", defaultMap)
+		// ParseArgument returns the default, which is then converted by cast.ToStringMap
+		assert.Equal(t, defaultMap, result)
+	})
+}
+
+// Test ExtractMap and ExtractString
+
+func TestExtractMap(t *testing.T) {
+	data := map[string]any{
+		"nested": map[string]any{
+			"key": "value",
+		},
+		"not_map": "string",
+	}
+
+	t.Run("valid map", func(t *testing.T) {
+		result := ExtractMap(data, "nested")
+		require.NotNil(t, result)
+		assert.Equal(t, "value", result["key"])
+	})
+
+	t.Run("not a map", func(t *testing.T) {
+		result := ExtractMap(data, "not_map")
+		assert.Nil(t, result)
+	})
+
+	t.Run("missing key", func(t *testing.T) {
+		result := ExtractMap(data, "missing")
+		assert.Nil(t, result)
+	})
+}
+
+func TestExtractString(t *testing.T) {
+	data := map[string]any{
+		"string_val": "hello",
+		"int_val":    123,
+	}
+
+	t.Run("valid string", func(t *testing.T) {
+		result := ExtractString(data, "string_val")
+		assert.Equal(t, "hello", result)
+	})
+
+	t.Run("not a string", func(t *testing.T) {
+		result := ExtractString(data, "int_val")
+		assert.Equal(t, "", result)
+	})
+
+	t.Run("missing key", func(t *testing.T) {
+		result := ExtractString(data, "missing")
+		assert.Equal(t, "", result)
+	})
+}
+
+// Test all ParseXXX functions
+
+func TestParseIntVariants(t *testing.T) {
+	req := CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"valid": "42",
+	}
+
+	t.Run("ParseInt32", func(t *testing.T) {
+		result := ParseInt32(req, "valid", 0)
+		assert.Equal(t, int32(42), result)
+
+		result = ParseInt32(req, "missing", 10)
+		assert.Equal(t, int32(10), result)
+	})
+
+	t.Run("ParseInt16", func(t *testing.T) {
+		result := ParseInt16(req, "valid", 0)
+		assert.Equal(t, int16(42), result)
+	})
+
+	t.Run("ParseInt8", func(t *testing.T) {
+		result := ParseInt8(req, "valid", 0)
+		assert.Equal(t, int8(42), result)
+	})
+
+	t.Run("ParseUInt", func(t *testing.T) {
+		result := ParseUInt(req, "valid", 0)
+		assert.Equal(t, uint(42), result)
+	})
+
+	t.Run("ParseUInt64", func(t *testing.T) {
+		result := ParseUInt64(req, "valid", 0)
+		assert.Equal(t, uint64(42), result)
+	})
+
+	t.Run("ParseUInt32", func(t *testing.T) {
+		result := ParseUInt32(req, "valid", 0)
+		assert.Equal(t, uint32(42), result)
+	})
+
+	t.Run("ParseUInt16", func(t *testing.T) {
+		result := ParseUInt16(req, "valid", 0)
+		assert.Equal(t, uint16(42), result)
+	})
+
+	t.Run("ParseUInt8", func(t *testing.T) {
+		result := ParseUInt8(req, "valid", 0)
+		assert.Equal(t, uint8(42), result)
+	})
+}
+
+func TestParseFloatVariants(t *testing.T) {
+	req := CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"valid": "3.14",
+	}
+
+	t.Run("ParseFloat32", func(t *testing.T) {
+		result := ParseFloat32(req, "valid", 0.0)
+		assert.InDelta(t, float32(3.14), result, 0.001)
+
+		result = ParseFloat32(req, "missing", 1.5)
+		assert.Equal(t, float32(1.5), result)
+	})
+
+	t.Run("ParseFloat64", func(t *testing.T) {
+		result := ParseFloat64(req, "valid", 0.0)
+		assert.InDelta(t, 3.14, result, 0.001)
+	})
+}
+
+func TestParseString(t *testing.T) {
+	req := CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"valid": "hello",
+		"int":   123,
+	}
+
+	t.Run("valid string", func(t *testing.T) {
+		result := ParseString(req, "valid", "")
+		assert.Equal(t, "hello", result)
+	})
+
+	t.Run("converts int to string", func(t *testing.T) {
+		result := ParseString(req, "int", "")
+		assert.Equal(t, "123", result)
+	})
+
+	t.Run("missing returns default", func(t *testing.T) {
+		result := ParseString(req, "missing", "default")
+		assert.Equal(t, "default", result)
+	})
+}
+
+// Test ToBoolPtr
+
+func TestToBoolPtr(t *testing.T) {
+	t.Run("true", func(t *testing.T) {
+		result := ToBoolPtr(true)
+		require.NotNil(t, result)
+		assert.True(t, *result)
+	})
+
+	t.Run("false", func(t *testing.T) {
+		result := ToBoolPtr(false)
+		require.NotNil(t, result)
+		assert.False(t, *result)
+	})
+}
+
+// Test NewToolResultJSON with error
+
+func TestNewToolResultJSON_Error(t *testing.T) {
+	// Create a type that can't be marshaled
+	type BadType struct {
+		Func func() // functions can't be marshaled
+	}
+
+	_, err := NewToolResultJSON(BadType{Func: func() {}})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unable to marshal JSON")
+}
+
+// Test FormatNumberResult
+
+func TestFormatNumberResult(t *testing.T) {
+	result := FormatNumberResult(42.5678)
+
+	require.Len(t, result.Content, 1)
+	textContent, ok := result.Content[0].(TextContent)
+	require.True(t, ok)
+	assert.Equal(t, "42.57", textContent.Text)
+}
+
+// Test NewToolResultErrorFromErr with nil error
+
+func TestNewToolResultErrorFromErr_NilError(t *testing.T) {
+	result := NewToolResultErrorFromErr("test error", nil)
+
+	assert.True(t, result.IsError)
+	require.Len(t, result.Content, 1)
+	textContent, ok := result.Content[0].(TextContent)
+	require.True(t, ok)
+	assert.Equal(t, "test error", textContent.Text)
+}
+
+func TestNewToolResultErrorFromErr_WithError(t *testing.T) {
+	result := NewToolResultErrorFromErr("test error", errors.New("underlying error"))
+
+	assert.True(t, result.IsError)
+	require.Len(t, result.Content, 1)
+	textContent, ok := result.Content[0].(TextContent)
+	require.True(t, ok)
+	assert.Contains(t, textContent.Text, "test error")
+	assert.Contains(t, textContent.Text, "underlying error")
+}
+
+// Test ToolUseContent and ToolResultContent
+
+func TestNewToolUseContent(t *testing.T) {
+	args := map[string]any{"city": "London"}
+	result := NewToolUseContent("tu_1", "get_weather", args)
+
+	assert.Equal(t, ContentTypeToolUse, result.Type)
+	assert.Equal(t, "tu_1", result.ID)
+	assert.Equal(t, "get_weather", result.Name)
+	assert.Equal(t, args, result.Input)
+}
+
+func TestNewToolResultContent(t *testing.T) {
+	t.Run("with content", func(t *testing.T) {
+		content := []Content{NewTextContent("Sunny, 22°C")}
+		result := NewToolResultContent("tu_1", content, false)
+
+		assert.Equal(t, ContentTypeToolResult, result.Type)
+		assert.Equal(t, "tu_1", result.ToolUseID)
+		assert.False(t, result.IsError)
+		require.Len(t, result.Content, 1)
+		tc, ok := result.Content[0].(TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "Sunny, 22°C", tc.Text)
+	})
+
+	t.Run("with error", func(t *testing.T) {
+		content := []Content{NewTextContent("tool failed")}
+		result := NewToolResultContent("tu_2", content, true)
+
+		assert.Equal(t, ContentTypeToolResult, result.Type)
+		assert.Equal(t, "tu_2", result.ToolUseID)
+		assert.True(t, result.IsError)
+	})
+
+	t.Run("nil content", func(t *testing.T) {
+		result := NewToolResultContent("tu_3", nil, false)
+
+		assert.Equal(t, ContentTypeToolResult, result.Type)
+		assert.Equal(t, "tu_3", result.ToolUseID)
+		assert.Nil(t, result.Content)
+	})
+}
+
+func TestAsToolUseContent(t *testing.T) {
+	t.Run("valid ToolUseContent", func(t *testing.T) {
+		content := ToolUseContent{Type: ContentTypeToolUse, ID: "tu_1", Name: "test_tool"}
+		result, ok := AsToolUseContent(content)
+		assert.True(t, ok)
+		require.NotNil(t, result)
+		assert.Equal(t, "test_tool", result.Name)
+		assert.Equal(t, "tu_1", result.ID)
+	})
+
+	t.Run("invalid type", func(t *testing.T) {
+		content := TextContent{Type: ContentTypeText, Text: "text"}
+		result, ok := AsToolUseContent(content)
+		assert.False(t, ok)
+		assert.Nil(t, result)
+	})
+}
+
+func TestAsToolResultContent(t *testing.T) {
+	t.Run("valid ToolResultContent", func(t *testing.T) {
+		content := ToolResultContent{Type: ContentTypeToolResult, ToolUseID: "tu_1"}
+		result, ok := AsToolResultContent(content)
+		assert.True(t, ok)
+		require.NotNil(t, result)
+		assert.Equal(t, "tu_1", result.ToolUseID)
+	})
+
+	t.Run("invalid type", func(t *testing.T) {
+		content := TextContent{Type: ContentTypeText, Text: "text"}
+		result, ok := AsToolResultContent(content)
+		assert.False(t, ok)
+		assert.Nil(t, result)
+	})
+}
+
+func TestUnmarshalContent_ToolUse(t *testing.T) {
+	data := []byte(`{"type":"tool_use","id":"tu_1","name":"get_weather","input":{"city":"London"}}`)
+	result, err := UnmarshalContent(data)
+	require.NoError(t, err)
+
+	tc, ok := result.(ToolUseContent)
+	require.True(t, ok)
+	assert.Equal(t, ContentTypeToolUse, tc.Type)
+	assert.Equal(t, "tu_1", tc.ID)
+	assert.Equal(t, "get_weather", tc.Name)
+	args, ok := tc.Input.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "London", args["city"])
+}
+
+func TestUnmarshalContent_ToolResult(t *testing.T) {
+	t.Run("with nested content", func(t *testing.T) {
+		data := []byte(`{"type":"tool_result","toolUseId":"tu_1","content":[{"type":"text","text":"Sunny, 22°C"}],"isError":false}`)
+		result, err := UnmarshalContent(data)
+		require.NoError(t, err)
+
+		tc, ok := result.(ToolResultContent)
+		require.True(t, ok)
+		assert.Equal(t, ContentTypeToolResult, tc.Type)
+		assert.Equal(t, "tu_1", tc.ToolUseID)
+		assert.False(t, tc.IsError)
+		require.Len(t, tc.Content, 1)
+		text, ok := tc.Content[0].(TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "Sunny, 22°C", text.Text)
+	})
+
+	t.Run("with isError", func(t *testing.T) {
+		data := []byte(`{"type":"tool_result","toolUseId":"tu_2","isError":true,"content":[{"type":"text","text":"error occurred"}]}`)
+		result, err := UnmarshalContent(data)
+		require.NoError(t, err)
+
+		tc, ok := result.(ToolResultContent)
+		require.True(t, ok)
+		assert.True(t, tc.IsError)
+		assert.Equal(t, "tu_2", tc.ToolUseID)
+	})
+
+	t.Run("without content", func(t *testing.T) {
+		data := []byte(`{"type":"tool_result","toolUseId":"tu_3","content":[]}`)
+		result, err := UnmarshalContent(data)
+		require.NoError(t, err)
+
+		tc, ok := result.(ToolResultContent)
+		require.True(t, ok)
+		assert.Equal(t, "tu_3", tc.ToolUseID)
+		assert.Empty(t, tc.Content)
+	})
+}
+
+func TestToolUseContent_JSONRoundTrip(t *testing.T) {
+	original := NewToolUseContent("tu_1", "get_weather", map[string]any{"city": "London"})
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	result, err := UnmarshalContent(data)
+	require.NoError(t, err)
+
+	tc, ok := result.(ToolUseContent)
+	require.True(t, ok)
+	assert.Equal(t, original.Type, tc.Type)
+	assert.Equal(t, original.ID, tc.ID)
+	assert.Equal(t, original.Name, tc.Name)
+	args, ok := tc.Input.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "London", args["city"])
+}
+
+func TestToolResultContent_JSONRoundTrip(t *testing.T) {
+	original := NewToolResultContent("tu_1", []Content{NewTextContent("Sunny, 22°C")}, false)
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	result, err := UnmarshalContent(data)
+	require.NoError(t, err)
+
+	tc, ok := result.(ToolResultContent)
+	require.True(t, ok)
+	assert.Equal(t, original.Type, tc.Type)
+	assert.Equal(t, original.ToolUseID, tc.ToolUseID)
+	assert.Equal(t, original.IsError, tc.IsError)
+	require.Len(t, tc.Content, 1)
+	text, ok := tc.Content[0].(TextContent)
+	require.True(t, ok)
+	assert.Equal(t, "Sunny, 22°C", text.Text)
+}
+
+func TestToolResultContent_StructuredContent(t *testing.T) {
+	data := []byte(`{"type":"tool_result","toolUseId":"tu_1","content":[{"type":"text","text":"{\"temperature\":22,\"conditions\":\"Sunny\"}"}],"structuredContent":{"temperature":22,"conditions":"Sunny"}}`)
+
+	t.Run("UnmarshalContent", func(t *testing.T) {
+		result, err := UnmarshalContent(data)
+		require.NoError(t, err)
+
+		encoded, err := json.Marshal(result)
+		require.NoError(t, err)
+		assert.JSONEq(t, string(data), string(encoded))
+	})
+
+	t.Run("ParseContent", func(t *testing.T) {
+		var contentMap map[string]any
+		require.NoError(t, json.Unmarshal(data, &contentMap))
+		result, err := ParseContent(contentMap)
+		require.NoError(t, err)
+
+		encoded, err := json.Marshal(result)
+		require.NoError(t, err)
+		assert.JSONEq(t, string(data), string(encoded))
+	})
+
+	t.Run("UnmarshalContent keeps large integers", func(t *testing.T) {
+		data := []byte(`{"type":"tool_result","toolUseId":"tu_1","content":[],"structuredContent":{"id":9007199254740993}}`)
+		result, err := UnmarshalContent(data)
+		require.NoError(t, err)
+
+		encoded, err := json.Marshal(result)
+		require.NoError(t, err)
+		assert.Contains(t, string(encoded), `"structuredContent":{"id":9007199254740993}`)
+	})
+}
+
+func TestToolUseContent_IsContent(t *testing.T) {
+	var c Content = ToolUseContent{Type: ContentTypeToolUse, ID: "tu_1", Name: "test"}
+	assert.NotNil(t, c)
+}
+
+func TestToolResultContent_IsContent(t *testing.T) {
+	var c Content = ToolResultContent{Type: ContentTypeToolResult, ToolUseID: "tu_1"}
+	assert.NotNil(t, c)
+}

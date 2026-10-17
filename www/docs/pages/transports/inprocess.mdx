@@ -1,0 +1,624 @@
+# In-Process Transport
+
+In-process transport enables direct integration of MCP servers within the same process, eliminating network overhead and providing seamless integration for embedded scenarios.
+
+## Use Cases
+
+In-process transport is perfect for:
+
+- **Embedded servers**: MCP functionality within existing applications
+- **Testing and development**: Fast, reliable testing without network overhead
+- **Library integrations**: MCP as a library component
+- **Single-process architectures**: Monolithic applications with MCP capabilities
+
+**Example applications:**
+- Desktop applications with plugin architectures
+- Testing frameworks
+- Embedded analytics engines
+- Game engines with AI tool integration
+
+## Implementation
+
+### Basic In-Process Server
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/client"
+)
+
+func main() {
+    // Create server
+    s := server.NewMCPServer("Calculator Server", "1.0.0",
+        server.WithToolCapabilities(true),
+    )
+
+    // Add calculator tool
+    s.AddTool(
+        mcp.NewTool("calculate",
+            mcp.WithDescription("Perform basic mathematical calculations"),
+            mcp.WithString("operation", 
+                mcp.Required(),
+                mcp.Enum("add", "subtract", "multiply", "divide"),
+                mcp.Description("The operation to perform"),
+            ),
+            mcp.WithNumber("x", mcp.Required(), mcp.Description("First number")),
+            mcp.WithNumber("y", mcp.Required(), mcp.Description("Second number")),
+        ),
+        handleCalculate,
+    )
+
+    // Create in-process client
+    mcpClient, err := client.NewInProcessClient(s)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer mcpClient.Close()
+
+    ctx := context.Background()
+
+    // Initialize
+    _, err = mcpClient.Initialize(ctx, mcp.InitializeRequest{
+        Params: mcp.InitializeRequestParams{
+            ProtocolVersion: "2024-11-05",
+            Capabilities: mcp.ClientCapabilities{
+                Tools: &mcp.ToolsCapability{},
+            },
+            ClientInfo: mcp.Implementation{
+                Name:    "test-client",
+                Version: "1.0.0",
+            },
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Use the calculator
+    result, err := mcpClient.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolParams{
+            Name: "calculate",
+            Arguments: map[string]interface{}{
+                "operation": "add",
+                "x":         10.0,
+                "y":         5.0,
+            },
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Extract text from the first content item
+    if len(result.Content) > 0 {
+        if textContent, ok := mcp.AsTextContent(result.Content[0]); ok {
+            fmt.Printf("Result: %s\n", textContent.Text)
+        }
+    }
+}
+
+func handleCalculate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    operation := req.GetString("operation", "")
+    x := req.GetFloat("x", 0)
+    y := req.GetFloat("y", 0)
+
+    var result float64
+    switch operation {
+    case "add":
+        result = x + y
+    case "subtract":
+        result = x - y
+    case "multiply":
+        result = x * y
+    case "divide":
+        if y == 0 {
+            return mcp.NewToolResultError("division by zero"), nil
+        }
+        result = x / y
+    default:
+        return nil, fmt.Errorf("unknown operation: %s", operation)
+    }
+
+    return mcp.NewToolResultText(fmt.Sprintf("%.2f", result)), nil
+}
+```
+
+### Embedded Application Integration
+
+```go
+// Embedded MCP server in a larger application
+type Application struct {
+    mcpServer *server.MCPServer
+    mcpClient *client.InProcessClient
+    config    *Config
+}
+
+func NewApplication(config *Config) *Application {
+    app := &Application{
+        config: config,
+    }
+
+    // Create embedded MCP server
+    app.mcpServer = server.NewMCPServer("Embedded Server", "1.0.0",
+        server.WithToolCapabilities(true),
+    )
+
+    // Add application-specific tools
+    app.addApplicationTools()
+
+    // Create in-process client for internal use
+    var err error
+    app.mcpClient, err = client.NewInProcessClient(app.mcpServer)
+    if err != nil {
+        panic(err)
+    }
+
+    return app
+}
+
+type Config struct {
+    AppName string
+    Debug   bool
+}
+
+func (app *Application) addApplicationTools() {
+    // Application status tool
+    app.mcpServer.AddTool(
+        mcp.NewTool("get_app_status",
+            mcp.WithDescription("Get current application status"),
+        ),
+        func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            return mcp.NewToolResultText(fmt.Sprintf(`{"app_name":"%s","debug":%t,"status":"running"}`, 
+                app.config.AppName, app.config.Debug)), nil
+        },
+    )
+
+    // Configuration tool
+    app.mcpServer.AddTool(
+        mcp.NewTool("update_config",
+            mcp.WithDescription("Update application configuration"),
+            mcp.WithString("key", mcp.Required()),
+            mcp.WithString("value", mcp.Required()),
+        ),
+        func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            key := req.GetString("key", "")
+            value := req.GetString("value", "")
+
+            // Update configuration based on key
+            switch key {
+            case "debug":
+                app.config.Debug = value == "true"
+            case "app_name":
+                app.config.AppName = value
+            default:
+                return mcp.NewToolResultError(fmt.Sprintf("unknown config key: %s", key)), nil
+            }
+
+            return mcp.NewToolResultText(fmt.Sprintf("Updated %s to %s", key, value)), nil
+        },
+    )
+}
+
+func (app *Application) ProcessWithMCP(ctx context.Context, operation string) (interface{}, error) {
+    // Use MCP tools internally for processing
+    result, err := app.mcpClient.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolParams{
+            Name: "calculate",
+            Arguments: map[string]interface{}{
+                "operation": operation,
+                "x":         10.0,
+                "y":         5.0,
+            },
+        },
+    })
+    if err != nil {
+        return nil, err
+    }
+
+    // Extract text from the first content item
+    if len(result.Content) > 0 {
+        if textContent, ok := mcp.AsTextContent(result.Content[0]); ok {
+            return textContent.Text, nil
+        }
+    }
+    
+    return "no result", nil
+}
+
+// Usage example
+func main() {
+    config := &Config{
+        AppName: "My App",
+        Debug:   true,
+    }
+
+    app := NewApplication(config)
+    ctx := context.Background()
+
+    // Initialize the embedded MCP client
+    _, err := app.mcpClient.Initialize(ctx, mcp.InitializeRequest{
+        Params: mcp.InitializeRequestParams{
+            ProtocolVersion: "2024-11-05",
+            Capabilities: mcp.ClientCapabilities{
+                Tools: &mcp.ToolsCapability{},
+            },
+            ClientInfo: mcp.Implementation{
+                Name:    "embedded-client",
+                Version: "1.0.0",
+            },
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Use MCP functionality within the application
+    result, err := app.ProcessWithMCP(ctx, "add")
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    fmt.Printf("Application result: %v\n", result)
+}
+```
+
+## Sampling Support
+
+In-process transport supports sampling, allowing servers to request LLM completions from clients. This enables bidirectional communication where servers can leverage client-side LLM capabilities.
+
+### Enabling Sampling
+
+To enable sampling in your in-process server, call `EnableSampling()` during server setup:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+// MockSamplingHandler implements client.SamplingHandler for demonstration
+type MockSamplingHandler struct{}
+
+func (h *MockSamplingHandler) CreateMessage(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
+    // Extract the user's message
+    var userMessage string
+    for _, msg := range request.Messages {
+        if msg.Role == mcp.RoleUser {
+            if textContent, ok := msg.Content.(mcp.TextContent); ok {
+                userMessage = textContent.Text
+                break
+            }
+        }
+    }
+
+    // Generate a mock response
+    mockResponse := fmt.Sprintf("Mock LLM response to: '%s'", userMessage)
+
+    return &mcp.CreateMessageResult{
+        SamplingMessage: mcp.SamplingMessage{
+            Role: mcp.RoleAssistant,
+            Content: mcp.TextContent{
+                Type: "text",
+                Text: mockResponse,
+            },
+        },
+        Model:      "mock-llm-v1",
+        StopReason: "endTurn",
+    }, nil
+}
+
+func main() {
+    // Create server with sampling enabled
+    mcpServer := server.NewMCPServer("sampling-server", "1.0.0")
+    mcpServer.EnableSampling()
+
+    // Add a tool that uses sampling
+    mcpServer.AddTool(mcp.Tool{
+        Name:        "ask_llm",
+        Description: "Ask the LLM a question using sampling",
+        InputSchema: mcp.ToolInputSchema{
+            Type: "object",
+            Properties: map[string]any{
+                "question": map[string]any{
+                    "type":        "string",
+                    "description": "The question to ask the LLM",
+                },
+                "system_prompt": map[string]any{
+                    "type":        "string",
+                    "description": "Optional system prompt",
+                },
+            },
+            Required: []string{"question"},
+        },
+    }, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        question, err := request.RequireString("question")
+        if err != nil {
+            return nil, err
+        }
+
+        systemPrompt := request.GetString("system_prompt", "You are a helpful assistant.")
+
+        // Create sampling request
+        samplingRequest := mcp.CreateMessageRequest{
+            CreateMessageParams: mcp.CreateMessageParams{
+                Messages: []mcp.SamplingMessage{
+                    {
+                        Role: mcp.RoleUser,
+                        Content: mcp.TextContent{
+                            Type: "text",
+                            Text: question,
+                        },
+                    },
+                },
+                SystemPrompt: systemPrompt,
+                MaxTokens:    1000,
+                Temperature:  0.7,
+            },
+        }
+
+        // Request sampling from client
+        result, err := mcpServer.RequestSampling(ctx, samplingRequest)
+        if err != nil {
+            return &mcp.CallToolResult{
+                Content: []mcp.Content{
+                    mcp.TextContent{
+                        Type: "text",
+                        Text: fmt.Sprintf("Error requesting sampling: %v", err),
+                    },
+                },
+                IsError: true,
+            }, nil
+        }
+
+        // Return the LLM response
+        return &mcp.CallToolResult{
+            Content: []mcp.Content{
+                mcp.TextContent{
+                    Type: "text",
+                    Text: fmt.Sprintf("LLM Response (model: %s): %s",
+                        result.Model, result.Content.(mcp.TextContent).Text),
+                },
+            },
+        }, nil
+    })
+
+    // Create client with sampling handler
+    mockHandler := &MockSamplingHandler{}
+    mcpClient, err := client.NewInProcessClientWithSamplingHandler(mcpServer, mockHandler)
+    if err != nil {
+        log.Fatalf("Failed to create client: %v", err)
+    }
+    defer mcpClient.Close()
+
+    // Start and initialize the client
+    ctx := context.Background()
+    if err := mcpClient.Start(ctx); err != nil {
+        log.Fatalf("Failed to start client: %v", err)
+    }
+
+    initRequest := mcp.InitializeRequest{}
+    initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+    initRequest.Params.ClientInfo = mcp.Implementation{
+        Name:    "sampling-client",
+        Version: "1.0.0",
+    }
+
+    _, err = mcpClient.Initialize(ctx, initRequest)
+    if err != nil {
+        log.Fatalf("Failed to initialize: %v", err)
+    }
+
+    // Call the tool that uses sampling
+    result, err := mcpClient.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolParams{
+            Name: "ask_llm",
+            Arguments: map[string]any{
+                "question":      "What is the capital of France?",
+                "system_prompt": "You are a helpful geography assistant.",
+            },
+        },
+    })
+    if err != nil {
+        log.Fatalf("Tool call failed: %v", err)
+    }
+
+    // Print the result
+    if len(result.Content) > 0 {
+        if textContent, ok := result.Content[0].(mcp.TextContent); ok {
+            fmt.Printf("Tool result: %s\n", textContent.Text)
+        }
+    }
+}
+```
+
+### Real LLM Integration
+
+For production use, replace the mock handler with a real LLM integration:
+
+#### OpenAI Integration
+
+```go
+import (
+    "github.com/sashabaranov/go-openai"
+)
+
+type OpenAISamplingHandler struct {
+    client *openai.Client
+}
+
+func NewOpenAISamplingHandler(apiKey string) *OpenAISamplingHandler {
+    return &OpenAISamplingHandler{
+        client: openai.NewClient(apiKey),
+    }
+}
+
+func (h *OpenAISamplingHandler) CreateMessage(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
+    // Convert MCP messages to OpenAI format
+    var messages []openai.ChatCompletionMessage
+
+    // Add system message if provided
+    if request.SystemPrompt != "" {
+        messages = append(messages, openai.ChatCompletionMessage{
+            Role:    openai.ChatMessageRoleSystem,
+            Content: request.SystemPrompt,
+        })
+    }
+
+    // Convert MCP messages
+    for _, msg := range request.Messages {
+        var role string
+        switch msg.Role {
+        case mcp.RoleUser:
+            role = openai.ChatMessageRoleUser
+        case mcp.RoleAssistant:
+            role = openai.ChatMessageRoleAssistant
+        }
+
+        if textContent, ok := msg.Content.(mcp.TextContent); ok {
+            messages = append(messages, openai.ChatCompletionMessage{
+                Role:    role,
+                Content: textContent.Text,
+            })
+        }
+    }
+
+    // Create OpenAI request
+    req := openai.ChatCompletionRequest{
+        Model:       openai.GPT3Dot5Turbo,
+        Messages:    messages,
+        MaxTokens:   request.MaxTokens,
+        Temperature: float32(request.Temperature),
+    }
+
+    // Call OpenAI API
+    resp, err := h.client.CreateChatCompletion(ctx, req)
+    if err != nil {
+        return nil, fmt.Errorf("OpenAI API call failed: %w", err)
+    }
+
+    if len(resp.Choices) == 0 {
+        return nil, fmt.Errorf("no response from OpenAI")
+    }
+
+    choice := resp.Choices[0]
+
+    // Convert stop reason
+    var stopReason string
+    switch choice.FinishReason {
+    case "stop":
+        stopReason = "endTurn"
+    case "length":
+        stopReason = "maxTokens"
+    default:
+        stopReason = "other"
+    }
+
+    return &mcp.CreateMessageResult{
+        SamplingMessage: mcp.SamplingMessage{
+            Role: mcp.RoleAssistant,
+            Content: mcp.TextContent{
+                Type: "text",
+                Text: choice.Message.Content,
+            },
+        },
+        Model:      resp.Model,
+        StopReason: stopReason,
+    }, nil
+}
+
+// Usage
+func main() {
+    // Create OpenAI handler
+    openaiHandler := NewOpenAISamplingHandler("your-api-key")
+    
+    // Create client with OpenAI sampling
+    mcpClient, err := client.NewInProcessClientWithSamplingHandler(mcpServer, openaiHandler)
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // ... rest of the setup
+}
+```
+
+### Sampling Request Parameters
+
+The `CreateMessageRequest` supports various parameters to control LLM behavior:
+
+```go
+samplingRequest := mcp.CreateMessageRequest{
+    CreateMessageParams: mcp.CreateMessageParams{
+        // Required: Messages to send to the LLM
+        Messages: []mcp.SamplingMessage{
+            {
+                Role: mcp.RoleUser,        // or mcp.RoleAssistant
+                Content: mcp.TextContent{   // or mcp.ImageContent
+                    Type: "text",
+                    Text: "Your message here",
+                },
+            },
+        },
+        
+        // Optional: System prompt for context
+        SystemPrompt: "You are a helpful assistant.",
+        
+        // Optional: Maximum tokens to generate
+        MaxTokens: 1000,
+        
+        // Optional: Temperature for randomness (0.0 to 1.0)
+        Temperature: 0.7,
+        
+        // Optional: Top-p sampling parameter
+        TopP: 0.9,
+        
+        // Optional: Stop sequences
+        StopSequences: []string{"\\n\\n"},
+    },
+}
+```
+
+### Error Handling
+
+Always handle sampling errors gracefully:
+
+```go
+result, err := mcpServer.RequestSampling(ctx, samplingRequest)
+if err != nil {
+    // Log the error
+    log.Printf("Sampling request failed: %v", err)
+    
+    // Return appropriate error response
+    return &mcp.CallToolResult{
+        Content: []mcp.Content{
+            mcp.TextContent{
+                Type: "text",
+                Text: "Sorry, I couldn't process your request at this time.",
+            },
+        },
+        IsError: true,
+    }, nil
+}
+```
+
+
+
+## Next Steps
+
+- **[Client Development](/clients)** - Build MCP clients for all transports
+- **[HTTP Transport](/transports/http)** - Learn about web-based scenarios
+- **[Server Advanced Features](/servers/advanced)** - Explore production-ready features
+- **[Client Sampling](/clients/advanced-sampling)** - Learn more about client-side sampling implementation

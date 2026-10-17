@@ -1,0 +1,1151 @@
+package server
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestMCPServer_MiddlewarePanicRecovery tests that panics in middleware are properly recovered
+func TestMCPServer_MiddlewarePanicRecovery(t *testing.T) {
+	t.Run("tool handler panic with recovery middleware", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0", WithRecovery())
+
+		server.AddTool(
+			mcp.NewTool("panic-tool"),
+			func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				panic("intentional panic in tool handler")
+			},
+		)
+
+		response := server.HandleMessage(t.Context(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/call",
+			"params": {
+				"name": "panic-tool"
+			}
+		}`))
+
+		errorResponse, ok := response.(mcp.JSONRPCError)
+		require.True(t, ok)
+		assert.Equal(t, mcp.INTERNAL_ERROR, errorResponse.Error.Code)
+		assert.Contains(t, errorResponse.Error.Message, "panic recovered")
+		assert.Contains(t, errorResponse.Error.Message, "intentional panic in tool handler")
+	})
+
+	t.Run("resource handler panic with recovery middleware", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithResourceCapabilities(false, false),
+			WithResourceRecovery(),
+		)
+
+		server.AddResource(
+			mcp.Resource{URI: "test://panic-resource", Name: "Panic Resource"},
+			func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+				panic("intentional panic in resource handler")
+			},
+		)
+
+		response := server.HandleMessage(t.Context(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "resources/read",
+			"params": {
+				"uri": "test://panic-resource"
+			}
+		}`))
+
+		errorResponse, ok := response.(mcp.JSONRPCError)
+		require.True(t, ok)
+		assert.Equal(t, mcp.INTERNAL_ERROR, errorResponse.Error.Code)
+		assert.Contains(t, errorResponse.Error.Message, "panic recovered")
+		assert.Contains(t, errorResponse.Error.Message, "intentional panic in resource handler")
+	})
+}
+
+// TestMCPServer_ConcurrentOperations tests thread safety of Add/Delete operations
+func TestMCPServer_ConcurrentOperations(t *testing.T) {
+	t.Run("concurrent tool add/delete", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(false))
+
+		var wg sync.WaitGroup
+		numGoroutines := 10
+		operationsPerGoroutine := 50
+
+		// Concurrent add operations
+		for i := range numGoroutines {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				for j := range operationsPerGoroutine {
+					toolName := fmt.Sprintf("tool-%d-%d", id, j)
+					server.AddTool(mcp.NewTool(toolName), nil)
+				}
+			}(i)
+		}
+
+		wg.Wait()
+
+		// Verify all tools were added
+		tools := server.ListTools()
+		assert.Len(t, tools, numGoroutines*operationsPerGoroutine)
+
+		// Concurrent delete operations
+		wg = sync.WaitGroup{}
+		for i := range numGoroutines {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				for j := range operationsPerGoroutine {
+					toolName := fmt.Sprintf("tool-%d-%d", id, j)
+					server.DeleteTools(toolName)
+				}
+			}(i)
+		}
+
+		wg.Wait()
+
+		// Verify all tools were deleted
+		tools = server.ListTools()
+		assert.Nil(t, tools)
+	})
+
+	t.Run("concurrent resource add/delete", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0", WithResourceCapabilities(false, false))
+
+		var wg sync.WaitGroup
+		numGoroutines := 10
+		operationsPerGoroutine := 50
+
+		// Concurrent add operations
+		for i := range numGoroutines {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				for j := range operationsPerGoroutine {
+					uri := fmt.Sprintf("test://resource-%d-%d", id, j)
+					server.AddResource(
+						mcp.Resource{URI: uri, Name: uri},
+						func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+							return nil, nil
+						},
+					)
+				}
+			}(i)
+		}
+
+		wg.Wait()
+
+		// Verify all resources were added
+		resources := server.ListResources()
+		assert.Len(t, resources, numGoroutines*operationsPerGoroutine)
+
+		// Concurrent delete operations
+		wg = sync.WaitGroup{}
+		for i := range numGoroutines {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				for j := range operationsPerGoroutine {
+					uri := fmt.Sprintf("test://resource-%d-%d", id, j)
+					server.DeleteResources(uri)
+				}
+			}(i)
+		}
+
+		wg.Wait()
+
+		// Verify all resources were deleted
+		resources = server.ListResources()
+		assert.Nil(t, resources)
+	})
+
+	t.Run("concurrent prompt add/delete", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0", WithPromptCapabilities(false))
+
+		var wg sync.WaitGroup
+		numGoroutines := 10
+		operationsPerGoroutine := 50
+
+		// Concurrent add operations
+		for i := range numGoroutines {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				for j := range operationsPerGoroutine {
+					promptName := fmt.Sprintf("prompt-%d-%d", id, j)
+					server.AddPrompt(
+						mcp.Prompt{Name: promptName, Description: promptName},
+						nil,
+					)
+				}
+			}(i)
+		}
+
+		wg.Wait()
+
+		// Verify all prompts were added
+		prompts := server.ListPrompts()
+		assert.Len(t, prompts, numGoroutines*operationsPerGoroutine)
+
+		// Concurrent delete operations
+		wg = sync.WaitGroup{}
+		for i := range numGoroutines {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+				for j := range operationsPerGoroutine {
+					promptName := fmt.Sprintf("prompt-%d-%d", id, j)
+					server.DeletePrompts(promptName)
+				}
+			}(i)
+		}
+
+		wg.Wait()
+
+		// Verify all prompts were deleted
+		prompts = server.ListPrompts()
+		assert.Nil(t, prompts)
+	})
+}
+
+// TestMCPServer_PaginationEdgeCases tests pagination boundary conditions
+func TestMCPServer_PaginationEdgeCases(t *testing.T) {
+	t.Run("malformed cursor - invalid base64", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithResourceCapabilities(false, false),
+			WithPaginationLimit(5),
+		)
+
+		// Add some resources
+		for i := range 10 {
+			uri := fmt.Sprintf("test://resource-%d", i)
+			server.AddResource(
+				mcp.Resource{URI: uri, Name: fmt.Sprintf("Resource %d", i)},
+				nil,
+			)
+		}
+
+		response := server.HandleMessage(t.Context(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "resources/list",
+			"params": {
+				"cursor": "not-valid-base64!!!"
+			}
+		}`))
+
+		errorResponse, ok := response.(mcp.JSONRPCError)
+		require.True(t, ok)
+		assert.Equal(t, mcp.INVALID_PARAMS, errorResponse.Error.Code)
+	})
+
+	t.Run("cursor pointing beyond list", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithToolCapabilities(false),
+			WithPaginationLimit(5),
+		)
+
+		// Add 3 tools
+		for i := range 3 {
+			server.AddTool(mcp.NewTool(fmt.Sprintf("tool-%d", i)), nil)
+		}
+
+		// Create cursor that points beyond the list
+		beyondCursor := base64.StdEncoding.EncodeToString([]byte("tool-99"))
+
+		response := server.HandleMessage(t.Context(), fmt.Appendf(nil, `{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "tools/list",
+			"params": {
+				"cursor": "%s"
+			}
+		}`, beyondCursor))
+
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok)
+
+		result, ok := resp.Result.(mcp.ListToolsResult)
+		require.True(t, ok)
+
+		// Should return empty list with no cursor
+		assert.Empty(t, result.Tools)
+		assert.Empty(t, result.NextCursor)
+	})
+
+	t.Run("pagination with exactly paginationLimit items", func(t *testing.T) {
+		limit := 5
+		server := NewMCPServer("test-server", "1.0.0",
+			WithPromptCapabilities(false),
+			WithPaginationLimit(limit),
+		)
+
+		// Add exactly paginationLimit prompts
+		for i := range limit {
+			server.AddPrompt(
+				mcp.Prompt{Name: fmt.Sprintf("prompt-%d", i), Description: "Test"},
+				nil,
+			)
+		}
+
+		response := server.HandleMessage(t.Context(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "prompts/list"
+		}`))
+
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok)
+
+		result, ok := resp.Result.(mcp.ListPromptsResult)
+		require.True(t, ok)
+
+		// Should return all items with cursor pointing to last item
+		assert.Len(t, result.Prompts, limit)
+		assert.NotEmpty(t, result.NextCursor, "Cursor should be set when exactly at limit")
+
+		// Request next page - should be empty
+		response = server.HandleMessage(t.Context(), fmt.Appendf(nil, `{
+			"jsonrpc": "2.0",
+			"id": 2,
+			"method": "prompts/list",
+			"params": {
+				"cursor": "%s"
+			}
+		}`, result.NextCursor))
+
+		resp, ok = response.(mcp.JSONRPCResponse)
+		require.True(t, ok)
+
+		result, ok = resp.Result.(mcp.ListPromptsResult)
+		require.True(t, ok)
+
+		assert.Empty(t, result.Prompts)
+		assert.Empty(t, result.NextCursor)
+	})
+
+	t.Run("empty list pagination", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithResourceCapabilities(false, false),
+			WithPaginationLimit(10),
+		)
+
+		response := server.HandleMessage(t.Context(), []byte(`{
+			"jsonrpc": "2.0",
+			"id": 1,
+			"method": "resources/list"
+		}`))
+
+		resp, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok)
+
+		result, ok := resp.Result.(mcp.ListResourcesResult)
+		require.True(t, ok)
+
+		assert.Empty(t, result.Resources)
+		assert.Empty(t, result.NextCursor)
+	})
+}
+
+// TestMCPServer_SessionUnregistrationDuringNotification tests race conditions
+func TestMCPServer_SessionUnregistrationDuringNotification(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(true))
+
+	// Create multiple sessions
+	numSessions := 10
+	sessions := make([]*sessionTestClient, numSessions)
+	for i := range numSessions {
+		sessions[i] = &sessionTestClient{
+			sessionID:           fmt.Sprintf("session-%d", i),
+			notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+		}
+		sessions[i].Initialize()
+		err := server.RegisterSession(t.Context(), sessions[i])
+		require.NoError(t, err)
+	}
+
+	var wg sync.WaitGroup
+	stopCh := make(chan struct{})
+
+	// Goroutine that continuously sends notifications
+	wg.Go(func() {
+		for {
+			select {
+			case <-stopCh:
+				return
+			default:
+				server.SendNotificationToAllClients("test-notification", map[string]any{
+					"data": "test",
+				})
+				time.Sleep(1 * time.Millisecond)
+			}
+		}
+	})
+
+	// Goroutine that unregisters sessions
+	wg.Go(func() {
+		for i := range numSessions {
+			time.Sleep(5 * time.Millisecond)
+			server.UnregisterSession(t.Context(), sessions[i].SessionID())
+		}
+	})
+
+	// Let it run for a bit
+	time.Sleep(100 * time.Millisecond)
+	close(stopCh)
+	wg.Wait()
+
+	// Should complete without panic or deadlock
+}
+
+// TestMCPServer_DuplicateSessionRegistration tests that duplicate session IDs are rejected
+func TestMCPServer_DuplicateSessionRegistration(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0")
+
+	session1 := &sessionTestClient{
+		sessionID:           "duplicate-id",
+		notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+	}
+
+	session2 := &sessionTestClient{
+		sessionID:           "duplicate-id",
+		notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+	}
+
+	// First registration should succeed
+	err := server.RegisterSession(t.Context(), session1)
+	require.NoError(t, err)
+
+	// Second registration with same ID should fail
+	err = server.RegisterSession(t.Context(), session2)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSessionExists)
+}
+
+// TestMCPServer_SessionToolOperationsAfterUnregister tests operations on removed sessions
+func TestMCPServer_SessionToolOperationsAfterUnregister(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(true))
+
+	session := &sessionTestClientWithTools{
+		sessionID:           "test-session",
+		notificationChannel: make(chan mcp.JSONRPCNotification, 10),
+		initialized:         true,
+	}
+
+	err := server.RegisterSession(t.Context(), session)
+	require.NoError(t, err)
+
+	// Add a tool to the session
+	err = server.AddSessionTool(session.SessionID(), mcp.NewTool("test-tool"), nil)
+	require.NoError(t, err)
+
+	// Unregister the session
+	server.UnregisterSession(t.Context(), session.SessionID())
+
+	// Try to add tool to unregistered session
+	err = server.AddSessionTool(session.SessionID(), mcp.NewTool("another-tool"), nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSessionNotFound)
+
+	// Try to delete tool from unregistered session
+	err = server.DeleteSessionTools(session.SessionID(), "test-tool")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSessionNotFound)
+}
+
+// TestMCPServer_ResourceTemplateURIMatching tests URI template edge cases
+func TestMCPServer_ResourceTemplateURIMatching(t *testing.T) {
+	tests := []struct {
+		name            string
+		templateURI     string
+		requestURI      string
+		shouldMatch     bool
+		expectedArgs    map[string]any
+		setupTemplate   func(*MCPServer, string)
+		validateRequest func(*testing.T, mcp.ReadResourceRequest)
+	}{
+		{
+			name:        "exact match no variables",
+			templateURI: "test://fixed/path",
+			requestURI:  "test://fixed/path",
+			shouldMatch: true,
+			setupTemplate: func(s *MCPServer, uri string) {
+				s.AddResourceTemplate(
+					mcp.NewResourceTemplate(uri, "Test"),
+					func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+						return []mcp.ResourceContents{
+							mcp.TextResourceContents{
+								URI:  request.Params.URI,
+								Text: "matched",
+							},
+						}, nil
+					},
+				)
+			},
+		},
+		{
+			name:        "single variable match",
+			templateURI: "test://users/{id}",
+			requestURI:  "test://users/123",
+			shouldMatch: true,
+			expectedArgs: map[string]any{
+				"id": []string{"123"},
+			},
+			setupTemplate: func(s *MCPServer, uri string) {
+				s.AddResourceTemplate(
+					mcp.NewResourceTemplate(uri, "User"),
+					func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+						return []mcp.ResourceContents{
+							mcp.TextResourceContents{
+								URI:  request.Params.URI,
+								Text: fmt.Sprintf("user-id: %v", request.Params.Arguments["id"]),
+							},
+						}, nil
+					},
+				)
+			},
+			validateRequest: func(t *testing.T, request mcp.ReadResourceRequest) {
+				assert.NotNil(t, request.Params.Arguments)
+				assert.Equal(t, []string{"123"}, request.Params.Arguments["id"])
+			},
+		},
+		{
+			name:        "path explosion match",
+			templateURI: "test://files{/path*}",
+			requestURI:  "test://files/a/b/c",
+			shouldMatch: true,
+			expectedArgs: map[string]any{
+				"path": []string{"a", "b", "c"},
+			},
+			setupTemplate: func(s *MCPServer, uri string) {
+				s.AddResourceTemplate(
+					mcp.NewResourceTemplate(uri, "Files"),
+					func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+						return []mcp.ResourceContents{
+							mcp.TextResourceContents{
+								URI:  request.Params.URI,
+								Text: fmt.Sprintf("path: %v", request.Params.Arguments["path"]),
+							},
+						}, nil
+					},
+				)
+			},
+			validateRequest: func(t *testing.T, request mcp.ReadResourceRequest) {
+				assert.NotNil(t, request.Params.Arguments)
+				pathParts, ok := request.Params.Arguments["path"].([]string)
+				require.True(t, ok)
+				assert.Equal(t, []string{"a", "b", "c"}, pathParts)
+			},
+		},
+		{
+			name:        "no match - different scheme",
+			templateURI: "test://resource",
+			requestURI:  "other://resource",
+			shouldMatch: false,
+			setupTemplate: func(s *MCPServer, uri string) {
+				s.AddResourceTemplate(
+					mcp.NewResourceTemplate(uri, "Test"),
+					func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+						return nil, nil
+					},
+				)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewMCPServer("test-server", "1.0.0", WithResourceCapabilities(false, false))
+			tt.setupTemplate(server, tt.templateURI)
+
+			requestBytes, err := json.Marshal(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"method":  "resources/read",
+				"params": map[string]any{
+					"uri": tt.requestURI,
+				},
+			})
+			require.NoError(t, err)
+
+			response := server.HandleMessage(t.Context(), requestBytes)
+
+			if tt.shouldMatch {
+				resp, ok := response.(mcp.JSONRPCResponse)
+				require.True(t, ok, "Expected successful response for matching URI")
+
+				result, ok := resp.Result.(mcp.ReadResourceResult)
+				require.True(t, ok)
+				require.NotEmpty(t, result.Contents)
+
+				// Validate request if validator provided
+				if tt.validateRequest != nil {
+					// We need to capture the request in the handler to validate it
+					// This is a bit tricky, so we'll just check the expected args
+					if tt.expectedArgs != nil {
+						content := result.Contents[0].(mcp.TextResourceContents)
+						// The text should contain our arguments
+						for key, expectedVal := range tt.expectedArgs {
+							assert.Contains(t, content.Text, fmt.Sprintf("%v", expectedVal),
+								"Response should contain argument %s=%v", key, expectedVal)
+						}
+					}
+				}
+			} else {
+				errorResp, ok := response.(mcp.JSONRPCError)
+				require.True(t, ok, "Expected error response for non-matching URI")
+				assert.Equal(t, mcp.RESOURCE_NOT_FOUND, errorResp.Error.Code)
+			}
+		})
+	}
+}
+
+// TestMCPServer_UnsupportedProtocolVersions tests client/server version negotiation
+func TestMCPServer_UnsupportedProtocolVersions(t *testing.T) {
+	tests := []struct {
+		name            string
+		clientVersion   string
+		expectedVersion string
+		description     string
+	}{
+		{
+			name:            "ancient unsupported version",
+			clientVersion:   "2020-01-01",
+			expectedVersion: mcp.LATEST_LEGACY_PROTOCOL_VERSION,
+			description:     "Server should respond with its latest legacy version",
+		},
+		{
+			name:            "future unsupported version",
+			clientVersion:   "2030-12-31",
+			expectedVersion: mcp.LATEST_LEGACY_PROTOCOL_VERSION,
+			description:     "Server should respond with its latest legacy version",
+		},
+		{
+			name:            "supported version",
+			clientVersion:   "2024-11-05",
+			expectedVersion: "2024-11-05",
+			description:     "Server should respond with client's version if supported",
+		},
+		{
+			name:            "latest legacy version",
+			clientVersion:   mcp.LATEST_LEGACY_PROTOCOL_VERSION,
+			expectedVersion: mcp.LATEST_LEGACY_PROTOCOL_VERSION,
+			description:     "Server should respond with matching version",
+		},
+		{
+			name:            "modern version over initialize is capped",
+			clientVersion:   mcp.LATEST_PROTOCOL_VERSION,
+			expectedVersion: mcp.LATEST_LEGACY_PROTOCOL_VERSION,
+			description:     "initialize was removed in 2026-07-28, so it cannot negotiate that version",
+		},
+		{
+			name:            "empty version defaults to 2025-03-26",
+			clientVersion:   "",
+			expectedVersion: "2025-03-26",
+			description:     "Backward compatibility: empty version defaults to 2025-03-26",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewMCPServer("test-server", "1.0.0")
+
+			initRequest := mcp.InitializeRequest{}
+			initRequest.Params.ProtocolVersion = tt.clientVersion
+			initRequest.Params.ClientInfo = mcp.Implementation{
+				Name:    "test-client",
+				Version: "1.0.0",
+			}
+
+			requestBytes, err := json.Marshal(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"method":  "initialize",
+				"params":  initRequest.Params,
+			})
+			require.NoError(t, err)
+
+			response := server.HandleMessage(t.Context(), requestBytes)
+
+			resp, ok := response.(mcp.JSONRPCResponse)
+			require.True(t, ok)
+
+			result, ok := resp.Result.(mcp.InitializeResult)
+			require.True(t, ok)
+
+			assert.Equal(t, tt.expectedVersion, result.ProtocolVersion, tt.description)
+		})
+	}
+}
+
+// TestMCPServer_HooksWithNilSession tests that hooks handle nil session contexts gracefully
+func TestMCPServer_HooksWithNilSession(t *testing.T) {
+	hookCalled := false
+	var receivedSession ClientSession
+
+	hooks := &Hooks{}
+	hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, message any) {
+		hookCalled = true
+		receivedSession = ClientSessionFromContext(ctx)
+	})
+
+	server := NewMCPServer("test-server", "1.0.0", WithHooks(hooks))
+
+	// Make request without session context
+	response := server.HandleMessage(t.Context(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "ping"
+	}`))
+
+	require.NotNil(t, response)
+	assert.True(t, hookCalled, "Hook should be called even without session")
+	assert.Nil(t, receivedSession, "Session should be nil when not in context")
+}
+
+// TestMCPServer_CapabilityImplicitRegistration tests edge cases in capability registration
+func TestMCPServer_CapabilityImplicitRegistration(t *testing.T) {
+	t.Run("implicit registration after explicit false", func(t *testing.T) {
+		// If user explicitly sets listChanged=false, adding tools shouldn't override it
+		server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(false))
+
+		server.capabilitiesMu.RLock()
+		initialListChanged := server.capabilities.tools.listChanged
+		server.capabilitiesMu.RUnlock()
+		assert.False(t, initialListChanged)
+
+		// Add a tool - should not change listChanged to true
+		server.AddTool(mcp.NewTool("test-tool"), nil)
+
+		server.capabilitiesMu.RLock()
+		finalListChanged := server.capabilities.tools.listChanged
+		server.capabilitiesMu.RUnlock()
+		assert.False(t, finalListChanged, "Explicit false should not be overridden by implicit registration")
+	})
+
+	t.Run("implicit registration when no capability set", func(t *testing.T) {
+		// If no capability was set, adding tools should enable it with listChanged=true
+		server := NewMCPServer("test-server", "1.0.0")
+
+		server.capabilitiesMu.RLock()
+		initialTools := server.capabilities.tools
+		server.capabilitiesMu.RUnlock()
+		assert.Nil(t, initialTools)
+
+		// Add a tool - should implicitly register with listChanged=true
+		server.AddTool(mcp.NewTool("test-tool"), nil)
+
+		server.capabilitiesMu.RLock()
+		finalTools := server.capabilities.tools
+		server.capabilitiesMu.RUnlock()
+		require.NotNil(t, finalTools)
+		assert.True(t, finalTools.listChanged)
+	})
+
+	t.Run("resources implicit registration", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Initially nil
+		server.capabilitiesMu.RLock()
+		initialResources := server.capabilities.resources
+		server.capabilitiesMu.RUnlock()
+		assert.Nil(t, initialResources)
+
+		// Add resource - should implicitly register
+		server.AddResource(
+			mcp.Resource{URI: "test://resource", Name: "Test"},
+			nil,
+		)
+
+		server.capabilitiesMu.RLock()
+		finalResources := server.capabilities.resources
+		server.capabilitiesMu.RUnlock()
+		require.NotNil(t, finalResources)
+		// For resources, implicit registration doesn't set listChanged
+		assert.False(t, finalResources.listChanged)
+	})
+
+	t.Run("prompts implicit registration", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0")
+
+		// Initially nil
+		server.capabilitiesMu.RLock()
+		initialPrompts := server.capabilities.prompts
+		server.capabilitiesMu.RUnlock()
+		assert.Nil(t, initialPrompts)
+
+		// Add prompt - should implicitly register
+		server.AddPrompt(
+			mcp.Prompt{Name: "test-prompt", Description: "Test"},
+			nil,
+		)
+
+		server.capabilitiesMu.RLock()
+		finalPrompts := server.capabilities.prompts
+		server.capabilitiesMu.RUnlock()
+		require.NotNil(t, finalPrompts)
+		// For prompts, implicit registration doesn't set listChanged
+		assert.False(t, finalPrompts.listChanged)
+	})
+}
+
+// TestMCPServer_ConcurrentCapabilityChecks tests thread safety of capability access
+func TestMCPServer_ConcurrentCapabilityChecks(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0")
+
+	var wg sync.WaitGroup
+	stopCh := make(chan struct{})
+	errorCount := atomic.Int32{}
+
+	// Goroutine that adds tools (triggers capability registration)
+	wg.Go(func() {
+		i := 0
+		for {
+			select {
+			case <-stopCh:
+				return
+			default:
+				server.AddTool(mcp.NewTool(fmt.Sprintf("tool-%d", i)), nil)
+				i++
+				time.Sleep(1 * time.Millisecond)
+			}
+		}
+	})
+
+	// Goroutines that check capabilities
+	for range 5 {
+		wg.Go(func() {
+			for {
+				select {
+				case <-stopCh:
+					return
+				default:
+					server.capabilitiesMu.RLock()
+					_ = server.capabilities.tools
+					server.capabilitiesMu.RUnlock()
+					time.Sleep(1 * time.Millisecond)
+				}
+			}
+		})
+	}
+
+	// Let it run for a bit
+	time.Sleep(50 * time.Millisecond)
+	close(stopCh)
+	wg.Wait()
+
+	assert.Equal(t, int32(0), errorCount.Load(), "Should complete without errors")
+}
+
+// TestMCPServer_PaginationCursorStability tests pagination behavior when items change
+func TestMCPServer_PaginationCursorStability(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0",
+		WithToolCapabilities(false),
+		WithPaginationLimit(5),
+	)
+
+	// Add initial tools
+	for i := range 10 {
+		server.AddTool(mcp.NewTool(fmt.Sprintf("tool-%02d", i)), nil)
+	}
+
+	// Get first page
+	response := server.HandleMessage(t.Context(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "tools/list"
+	}`))
+
+	resp, ok := response.(mcp.JSONRPCResponse)
+	require.True(t, ok)
+
+	result, ok := resp.Result.(mcp.ListToolsResult)
+	require.True(t, ok)
+
+	assert.Len(t, result.Tools, 5)
+	cursor := result.NextCursor
+	require.NotEmpty(t, cursor)
+
+	// Modify list (add and remove tools)
+	server.AddTool(mcp.NewTool("tool-new-1"), nil)
+	server.DeleteTools("tool-05")
+
+	// Get second page with original cursor
+	response = server.HandleMessage(t.Context(), fmt.Appendf(nil, `{
+		"jsonrpc": "2.0",
+		"id": 2,
+		"method": "tools/list",
+		"params": {
+			"cursor": "%s"
+		}
+	}`, cursor))
+
+	resp, ok = response.(mcp.JSONRPCResponse)
+	require.True(t, ok)
+
+	result, ok = resp.Result.(mcp.ListToolsResult)
+	require.True(t, ok)
+
+	// Should handle gracefully (may have different results due to modifications)
+	// The key is that it shouldn't crash or return errors
+	assert.NotNil(t, result.Tools)
+}
+
+func TestToolResultSizeLimit(t *testing.T) {
+	exact, err := json.Marshal(mcp.NewToolResultText("exact"))
+	require.NoError(t, err)
+
+	tests := []struct {
+		name    string
+		limit   int
+		text    string
+		meta    string
+		limited bool
+	}{
+		{name: "over the limit", limit: 64, text: strings.Repeat("x", 200), limited: true},
+		{name: "under the limit", limit: 64, text: "ok"},
+		{name: "exactly at the limit", limit: len(exact), text: "exact"},
+		{name: "one byte over the limit", limit: len(exact) - 1, text: "exact", limited: true},
+		{name: "metadata over the limit", limit: 64, text: "ok", meta: strings.Repeat("m", 200), limited: true},
+		{name: "zero disables the limit", limit: 0, text: strings.Repeat("x", 200)},
+		{name: "negative disables the limit", limit: -1, text: strings.Repeat("x", 200)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewMCPServer("test-server", "1.0.0",
+				WithToolCapabilities(true),
+				WithToolResultSizeLimit(tt.limit),
+			)
+			server.AddTool(mcp.NewTool("tool"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				result := mcp.NewToolResultText(tt.text)
+				if tt.meta != "" {
+					result.Meta = mcp.NewMetaFromMap(map[string]any{"note": tt.meta})
+				}
+				return result, nil
+			})
+
+			response := server.HandleMessage(t.Context(), []byte(`{
+				"jsonrpc": "2.0",
+				"id": 1,
+				"method": "tools/call",
+				"params": {"name": "tool"}
+			}`))
+			resp, ok := response.(mcp.JSONRPCResponse)
+			require.True(t, ok)
+			raw, err := json.Marshal(resp.Result)
+			require.NoError(t, err)
+
+			if tt.limited {
+				assert.Contains(t, string(raw), fmt.Sprintf("tool result exceeds %d bytes", tt.limit))
+				assert.Contains(t, string(raw), `"isError":true`)
+				assert.NotContains(t, string(raw), tt.text)
+				if tt.meta != "" {
+					assert.NotContains(t, string(raw), tt.meta)
+				}
+				return
+			}
+			assert.Contains(t, string(raw), tt.text)
+			assert.NotContains(t, string(raw), "tool result exceeds")
+		})
+	}
+}
+
+func TestToolResultSizeLimitOnTasks(t *testing.T) {
+	big := strings.Repeat("x", 200)
+	bigMeta := strings.Repeat("m", 200)
+	withMeta := func(meta string) *mcp.Meta {
+		if meta == "" {
+			return nil
+		}
+		return mcp.NewMetaFromMap(map[string]any{"note": meta})
+	}
+
+	tests := []struct {
+		name     string
+		taskOnly bool
+		text     string
+		meta     string
+		limited  bool
+	}{
+		{name: "regular tool over the limit", text: big, limited: true},
+		{name: "task tool over the limit", taskOnly: true, text: big, limited: true},
+		{name: "regular tool metadata over the limit", text: "ok", meta: bigMeta, limited: true},
+		{name: "task tool metadata over the limit", taskOnly: true, text: "ok", meta: bigMeta, limited: true},
+		{name: "task tool under the limit", taskOnly: true, text: "ok", meta: "small"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewMCPServer("test", "1.0.0",
+				WithTaskCapabilities(true, true, true),
+				WithToolResultSizeLimit(128),
+			)
+			tool := mcp.NewTool("tool", mcp.WithTaskSupport(mcp.TaskSupportRequired))
+			var handed *mcp.CreateTaskResult
+			if tt.taskOnly {
+				handed = &mcp.CreateTaskResult{
+					Result:  mcp.Result{Meta: withMeta(tt.meta)},
+					Content: []mcp.Content{mcp.NewTextContent(tt.text)},
+				}
+				server.AddTaskTool(tool, func(context.Context, mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+					return handed, nil
+				})
+			} else {
+				server.AddTool(tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					result := mcp.NewToolResultText(tt.text)
+					result.Meta = withMeta(tt.meta)
+					return result, nil
+				})
+			}
+
+			ctx := t.Context()
+			callResult, callErr := server.handleToolCall(ctx, 1, mcp.CallToolRequest{
+				Params: mcp.CallToolParams{Name: "tool", Task: &mcp.TaskParams{}},
+			})
+			require.Nil(t, callErr)
+			created, ok := callResult.(*mcp.CreateTaskResult)
+			require.True(t, ok)
+
+			require.Eventually(t, func() bool {
+				task, _, err := server.getTask(ctx, created.Task.TaskId)
+				return err == nil && task.Status.IsTerminal()
+			}, 5*time.Second, 10*time.Millisecond)
+			task, _, err := server.getTask(ctx, created.Task.TaskId)
+			require.NoError(t, err)
+			require.Equal(t, mcp.TaskStatusCompleted, task.Status)
+
+			result, resultErr := server.handleTaskResult(ctx, 2, mcp.TaskResultRequest{
+				Params: mcp.TaskResultParams{TaskId: created.Task.TaskId},
+			})
+			require.Nil(t, resultErr)
+			raw, err := json.Marshal(result)
+			require.NoError(t, err)
+
+			if tt.limited {
+				assert.True(t, result.IsError)
+				assert.Contains(t, string(raw), "tool result exceeds 128 bytes")
+				assert.NotContains(t, string(raw), strings.Repeat("x", 50))
+				assert.NotContains(t, string(raw), strings.Repeat("m", 50))
+				if handed != nil {
+					assert.False(t, handed.IsError)
+					assert.Equal(t, []mcp.Content{mcp.NewTextContent(tt.text)}, handed.Content)
+					assert.Equal(t, withMeta(tt.meta), handed.Meta)
+				}
+				return
+			}
+			assert.False(t, result.IsError)
+			assert.Contains(t, string(raw), tt.text)
+			assert.Contains(t, string(raw), tt.meta)
+		})
+	}
+}
+
+// Resource and resource template names need not be unique. Paging one item at
+// a time puts a page boundary between every pair of equally named entries, and
+// none of them may be skipped.
+func TestMCPServer_PaginationWithDuplicateNames(t *testing.T) {
+	pageThrough := func(t *testing.T, server *MCPServer, method string, collect func(result any) ([]string, mcp.Cursor)) []string {
+		t.Helper()
+		var got []string
+		cursor := mcp.Cursor("")
+		for range 10 {
+			params := "{}"
+			if cursor != "" {
+				params = fmt.Sprintf(`{"cursor": %q}`, cursor)
+			}
+			response := server.HandleMessage(t.Context(), fmt.Appendf(nil,
+				`{"jsonrpc": "2.0", "id": 1, "method": %q, "params": %s}`, method, params))
+			resp, ok := response.(mcp.JSONRPCResponse)
+			require.True(t, ok, "unexpected response: %+v", response)
+			var page []string
+			page, cursor = collect(resp.Result)
+			got = append(got, page...)
+			if cursor == "" {
+				return got
+			}
+		}
+		t.Fatalf("%s did not finish paging", method)
+		return nil
+	}
+
+	t.Run("resources", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithResourceCapabilities(false, false),
+			WithPaginationLimit(1),
+		)
+		for _, uri := range []string{"file:///b/README.md", "file:///a/README.md", "file:///c/README.md"} {
+			server.AddResource(mcp.NewResource(uri, "README.md"), nil)
+		}
+		server.AddResource(mcp.NewResource("file:///main.go", "main.go"), nil)
+
+		got := pageThrough(t, server, "resources/list", func(result any) ([]string, mcp.Cursor) {
+			page := result.(mcp.ListResourcesResult)
+			var uris []string
+			for _, resource := range page.Resources {
+				uris = append(uris, resource.URI)
+			}
+			return uris, page.NextCursor
+		})
+		assert.Equal(t, []string{
+			"file:///a/README.md",
+			"file:///b/README.md",
+			"file:///c/README.md",
+			"file:///main.go",
+		}, got)
+	})
+
+	t.Run("resource templates", func(t *testing.T) {
+		server := NewMCPServer("test-server", "1.0.0",
+			WithResourceCapabilities(false, false),
+			WithPaginationLimit(1),
+		)
+		for _, uriTemplate := range []string{"repo://b/{path}", "repo://a/{path}"} {
+			server.AddResourceTemplate(mcp.NewResourceTemplate(uriTemplate, "file"), nil)
+		}
+
+		got := pageThrough(t, server, "resources/templates/list", func(result any) ([]string, mcp.Cursor) {
+			page := result.(mcp.ListResourceTemplatesResult)
+			var templates []string
+			for _, template := range page.ResourceTemplates {
+				templates = append(templates, template.URITemplate.Raw())
+			}
+			return templates, page.NextCursor
+		})
+		assert.Equal(t, []string{"repo://a/{path}", "repo://b/{path}"}, got)
+	})
+}
+
+func TestPaginationLimitZeroReturnsTheFullList(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0",
+		WithToolCapabilities(false),
+		WithPaginationLimit(0),
+	)
+	for i := range 3 {
+		server.AddTool(mcp.NewTool(fmt.Sprintf("tool-%d", i)), nil)
+	}
+
+	response := server.HandleMessage(t.Context(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "tools/list"
+	}`))
+	resp, ok := response.(mcp.JSONRPCResponse)
+	require.True(t, ok)
+	result, ok := resp.Result.(mcp.ListToolsResult)
+	require.True(t, ok)
+	assert.Len(t, result.Tools, 3)
+	assert.Empty(t, result.NextCursor)
+}

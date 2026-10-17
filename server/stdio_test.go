@@ -1,0 +1,761 @@
+package server
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"os"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/mark3labs/mcp-go/mcp"
+)
+
+func TestStdioServer(t *testing.T) {
+	t.Run("Can instantiate", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0.0")
+		stdioServer := NewStdioServer(mcpServer)
+
+		if stdioServer.server == nil {
+			t.Error("MCPServer should not be nil")
+		}
+		if stdioServer.errLogger == nil {
+			t.Error("errLogger should not be nil")
+		}
+	})
+
+	t.Run("Can send and receive messages", func(t *testing.T) {
+		// Create pipes for stdin and stdout
+		stdinReader, stdinWriter := io.Pipe()
+		stdoutReader, stdoutWriter := io.Pipe()
+
+		// Create server
+		mcpServer := NewMCPServer("test", "1.0.0",
+			WithResourceCapabilities(true, true),
+		)
+		stdioServer := NewStdioServer(mcpServer)
+		stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+
+		// Create context with cancel
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		// Create error channel to catch server errors
+		serverErrCh := make(chan error, 1)
+
+		// Start server in goroutine
+		go func() {
+			err := stdioServer.Listen(ctx, stdinReader, stdoutWriter)
+			if err != nil && err != io.EOF && err != context.Canceled {
+				serverErrCh <- err
+			}
+			stdoutWriter.Close()
+			close(serverErrCh)
+		}()
+
+		// Create test message
+		initRequest := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "initialize",
+			"params": map[string]any{
+				"protocolVersion": "2024-11-05",
+				"clientInfo": map[string]any{
+					"name":    "test-client",
+					"version": "1.0.0",
+				},
+			},
+		}
+
+		// Send request
+		requestBytes, err := json.Marshal(initRequest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = stdinWriter.Write(append(requestBytes, '\n'))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Read response
+		scanner := bufio.NewScanner(stdoutReader)
+		if !scanner.Scan() {
+			t.Fatal("failed to read response")
+		}
+		responseBytes := scanner.Bytes()
+
+		var response map[string]any
+		if err := json.Unmarshal(responseBytes, &response); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+
+		// Verify response structure
+		if response["jsonrpc"] != "2.0" {
+			t.Errorf("expected jsonrpc version 2.0, got %v", response["jsonrpc"])
+		}
+		if response["id"].(float64) != 1 {
+			t.Errorf("expected id 1, got %v", response["id"])
+		}
+		if response["error"] != nil {
+			t.Errorf("unexpected error in response: %v", response["error"])
+		}
+		if response["result"] == nil {
+			t.Error("expected result in response")
+		}
+
+		// Clean up
+		cancel()
+		stdinWriter.Close()
+
+		// Check for server errors
+		if err := <-serverErrCh; err != nil {
+			t.Errorf("unexpected server error: %v", err)
+		}
+	})
+
+	t.Run("Can use a custom context function", func(t *testing.T) {
+		// Use a custom context key to store a test value.
+		type testContextKey struct{}
+		testValFromContext := func(ctx context.Context) string {
+			val := ctx.Value(testContextKey{})
+			if val == nil {
+				return ""
+			}
+			return val.(string)
+		}
+		// Create a context function that sets a test value from the environment.
+		// In real life this could be used to send configuration in a similar way,
+		// or from a config file.
+		const testEnvVar = "TEST_ENV_VAR"
+		setTestValFromEnv := func(ctx context.Context) context.Context {
+			return context.WithValue(ctx, testContextKey{}, os.Getenv(testEnvVar))
+		}
+		t.Setenv(testEnvVar, "test_value")
+
+		// Create pipes for stdin and stdout
+		stdinReader, stdinWriter := io.Pipe()
+		stdoutReader, stdoutWriter := io.Pipe()
+
+		// Create server
+		mcpServer := NewMCPServer("test", "1.0.0")
+		// Add a tool which uses the context function.
+		mcpServer.AddTool(mcp.NewTool("test_tool"), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			// Note this is agnostic to the transport type i.e. doesn't know about request headers.
+			testVal := testValFromContext(ctx)
+			return mcp.NewToolResultText(testVal), nil
+		})
+		stdioServer := NewStdioServer(mcpServer)
+		stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+		stdioServer.SetContextFunc(setTestValFromEnv)
+
+		// Create context with cancel
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		// Create error channel to catch server errors
+		serverErrCh := make(chan error, 1)
+
+		// Start server in goroutine
+		go func() {
+			err := stdioServer.Listen(ctx, stdinReader, stdoutWriter)
+			if err != nil && err != io.EOF && err != context.Canceled {
+				serverErrCh <- err
+			}
+			stdoutWriter.Close()
+			close(serverErrCh)
+		}()
+
+		// Create test message
+		initRequest := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "initialize",
+			"params": map[string]any{
+				"protocolVersion": "2024-11-05",
+				"clientInfo": map[string]any{
+					"name":    "test-client",
+					"version": "1.0.0",
+				},
+			},
+		}
+
+		// Send request
+		requestBytes, err := json.Marshal(initRequest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = stdinWriter.Write(append(requestBytes, '\n'))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Read response
+		scanner := bufio.NewScanner(stdoutReader)
+		if !scanner.Scan() {
+			t.Fatal("failed to read response")
+		}
+		responseBytes := scanner.Bytes()
+
+		var response map[string]any
+		if err := json.Unmarshal(responseBytes, &response); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+
+		// Verify response structure
+		if response["jsonrpc"] != "2.0" {
+			t.Errorf("expected jsonrpc version 2.0, got %v", response["jsonrpc"])
+		}
+		if response["id"].(float64) != 1 {
+			t.Errorf("expected id 1, got %v", response["id"])
+		}
+		if response["error"] != nil {
+			t.Errorf("unexpected error in response: %v", response["error"])
+		}
+		if response["result"] == nil {
+			t.Error("expected result in response")
+		}
+
+		// Call the tool.
+		toolRequest := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      2,
+			"method":  "tools/call",
+			"params": map[string]any{
+				"name": "test_tool",
+			},
+		}
+		requestBytes, err = json.Marshal(toolRequest)
+		if err != nil {
+			t.Fatalf("Failed to marshal tool request: %v", err)
+		}
+
+		_, err = stdinWriter.Write(append(requestBytes, '\n'))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !scanner.Scan() {
+			t.Fatal("failed to read response")
+		}
+		responseBytes = scanner.Bytes()
+
+		response = map[string]any{}
+		if err := json.Unmarshal(responseBytes, &response); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+
+		if response["jsonrpc"] != "2.0" {
+			t.Errorf("Expected jsonrpc 2.0, got %v", response["jsonrpc"])
+		}
+		if response["id"].(float64) != 2 {
+			t.Errorf("Expected id 2, got %v", response["id"])
+		}
+		if response["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"] != "test_value" {
+			t.Errorf("Expected result 'test_value', got %v", response["result"])
+		}
+		if response["error"] != nil {
+			t.Errorf("Expected no error, got %v", response["error"])
+		}
+
+		// Clean up
+		cancel()
+		stdinWriter.Close()
+
+		// Check for server errors
+		if err := <-serverErrCh; err != nil {
+			t.Errorf("unexpected server error: %v", err)
+		}
+	})
+
+	t.Run("Can handle concurrent tool calls", func(t *testing.T) {
+		// Create pipes for stdin and stdout
+		stdinReader, stdinWriter := io.Pipe()
+		stdoutReader, stdoutWriter := io.Pipe()
+
+		// Track tool call executions (sync.Map is already thread-safe)
+		var callCount sync.Map
+
+		// Create server with test tools
+		mcpServer := NewMCPServer("test", "1.0.0")
+
+		// Add multiple tools that simulate work and track concurrent execution
+		for i := range 5 {
+			toolName := fmt.Sprintf("test_tool_%d", i)
+			mcpServer.AddTool(
+				mcp.NewTool(toolName),
+				func(name string) func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+						// Track concurrent executions
+						count, _ := callCount.LoadOrStore(name, 0)
+						callCount.Store(name, count.(int)+1)
+
+						// Simulate some work
+						time.Sleep(10 * time.Millisecond)
+
+						return mcp.NewToolResultText(fmt.Sprintf("Result from %s", name)), nil
+					}
+				}(toolName),
+			)
+		}
+
+		stdioServer := NewStdioServer(mcpServer)
+		stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+
+		// Create context with cancel
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		// Start server
+		serverErrCh := make(chan error, 1)
+		go func() {
+			err := stdioServer.Listen(ctx, stdinReader, stdoutWriter)
+			if err != nil && err != io.EOF && err != context.Canceled {
+				serverErrCh <- err
+			}
+			stdoutWriter.Close()
+			close(serverErrCh)
+		}()
+
+		// Initialize the session
+		initRequest := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "initialize",
+			"params": map[string]any{
+				"protocolVersion": "2024-11-05",
+				"clientInfo": map[string]any{
+					"name":    "test-client",
+					"version": "1.0.0",
+				},
+			},
+		}
+
+		requestBytes, _ := json.Marshal(initRequest)
+		if _, err := stdinWriter.Write(append(requestBytes, '\n')); err != nil {
+			t.Fatalf("Failed to write init request: %v", err)
+		}
+
+		// Read init response
+		scanner := bufio.NewScanner(stdoutReader)
+		scanner.Scan()
+
+		// Send multiple concurrent tool calls
+		var wg sync.WaitGroup
+		responseChan := make(chan string, 10)
+
+		// Send 10 concurrent tool calls
+		for i := range 10 {
+			wg.Add(1)
+			go func(id int) {
+				defer wg.Done()
+
+				toolRequest := map[string]any{
+					"jsonrpc": "2.0",
+					"id":      id + 2,
+					"method":  "tools/call",
+					"params": map[string]any{
+						"name": fmt.Sprintf("test_tool_%d", id%5),
+					},
+				}
+
+				requestBytes, _ := json.Marshal(toolRequest)
+				if _, err := stdinWriter.Write(append(requestBytes, '\n')); err != nil {
+					t.Errorf("Failed to write tool request %d: %v", id, err)
+				}
+			}(i)
+		}
+
+		// Read all responses
+		go func() {
+			for range 10 {
+				if scanner.Scan() {
+					responseChan <- scanner.Text()
+				}
+			}
+			close(responseChan)
+		}()
+
+		// Wait for all requests to be sent
+		wg.Wait()
+
+		// Collect responses
+		responses := make([]string, 0, 10)
+		timeout := time.After(2 * time.Second)
+
+	collectLoop:
+		for len(responses) < 10 {
+			select {
+			case resp, ok := <-responseChan:
+				if !ok {
+					break collectLoop
+				}
+				responses = append(responses, resp)
+			case <-timeout:
+				t.Fatal("Timeout waiting for responses")
+			}
+		}
+		// Verify we got all responses
+		if len(responses) != 10 {
+			t.Errorf("Expected 10 responses, got %d", len(responses))
+		}
+
+		// Verify no errors in responses
+		for _, resp := range responses {
+			var response map[string]any
+			if err := json.Unmarshal([]byte(resp), &response); err != nil {
+				t.Errorf("Failed to unmarshal response: %v", err)
+				continue
+			}
+
+			if response["error"] != nil {
+				t.Errorf("Unexpected error in response: %v", response["error"])
+			}
+
+			// Verify response has expected structure
+			if response["result"] == nil {
+				t.Error("Expected result in response")
+			}
+		}
+
+		// Verify tools were called
+		callCount.Range(func(key, value any) bool {
+			toolName := key.(string)
+			count := value.(int)
+			if count == 0 {
+				t.Errorf("Tool %s was not called", toolName)
+			}
+			return true
+		})
+
+		// Clean up
+		cancel()
+		stdinWriter.Close()
+
+		// Check for server errors
+		if err := <-serverErrCh; err != nil {
+			t.Errorf("Server error: %v", err)
+		}
+	})
+
+	t.Run("Configuration options respect bounds", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0.0")
+
+		// Test worker pool size bounds
+		stdioServer := NewStdioServer(mcpServer)
+		WithWorkerPoolSize(150)(stdioServer)
+		if stdioServer.workerPoolSize != 100 { // Should use maximum
+			t.Errorf("Expected maximum worker pool size 100, got %d", stdioServer.workerPoolSize)
+		}
+
+		// Test valid worker pool size
+		stdioServer = NewStdioServer(mcpServer)
+		WithWorkerPoolSize(50)(stdioServer)
+		if stdioServer.workerPoolSize != 50 {
+			t.Errorf("Expected worker pool size 50, got %d", stdioServer.workerPoolSize)
+		}
+
+		// Test queue size bounds
+		stdioServer = NewStdioServer(mcpServer)
+		WithQueueSize(20000)(stdioServer)
+		if stdioServer.queueSize != 10000 { // Should use maximum
+			t.Errorf("Expected maximum queue size 10000, got %d", stdioServer.queueSize)
+		}
+
+		// Test valid queue size
+		stdioServer = NewStdioServer(mcpServer)
+		WithQueueSize(500)(stdioServer)
+		if stdioServer.queueSize != 500 {
+			t.Errorf("Expected queue size 500, got %d", stdioServer.queueSize)
+		}
+
+		// Test zero and negative values
+		stdioServer = NewStdioServer(mcpServer)
+		WithWorkerPoolSize(0)(stdioServer)
+		WithQueueSize(-10)(stdioServer)
+		if stdioServer.workerPoolSize != 5 {
+			t.Errorf("Expected default worker pool size 5 for zero input, got %d", stdioServer.workerPoolSize)
+		}
+		if stdioServer.queueSize != 100 {
+			t.Errorf("Expected default queue size 100 for negative input, got %d", stdioServer.queueSize)
+		}
+	})
+}
+
+func TestStdioServeRequestsDuringSubscriptionsListen(t *testing.T) {
+	// subscriptions/listen holds its stream open for the life of the
+	// subscription. Dispatching it on the read loop would stall every later
+	// request, so the server must keep serving while it is open.
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+
+	mcpServer := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
+	mcpServer.AddTool(mcp.NewTool("ping"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("pong"), nil
+	})
+
+	stdioServer := NewStdioServer(mcpServer)
+	stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = stdioServer.Listen(ctx, stdinReader, stdoutWriter) }()
+
+	responses := make(chan map[string]any, 4)
+	go func() {
+		scanner := bufio.NewScanner(stdoutReader)
+		for scanner.Scan() {
+			var msg map[string]any
+			if json.Unmarshal(scanner.Bytes(), &msg) == nil {
+				responses <- msg
+			}
+		}
+	}()
+
+	meta := map[string]any{
+		"io.modelcontextprotocol/protocolVersion":    mcp.ProtocolVersion20260728,
+		"io.modelcontextprotocol/clientInfo":         map[string]any{"name": "test-client", "version": "1.0.0"},
+		"io.modelcontextprotocol/clientCapabilities": map[string]any{},
+	}
+	send := func(id any, method string, params map[string]any) {
+		params["_meta"] = meta
+		b, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+		if err != nil {
+			t.Errorf("marshalling %s: %v", method, err)
+			return
+		}
+		// Written from a goroutine so a stalled read loop fails the test by
+		// timeout rather than blocking it forever on the unbuffered pipe.
+		go func() { _, _ = stdinWriter.Write(append(b, '\n')) }()
+	}
+
+	// Wait for a message matching want, ignoring anything else on the stream.
+	await := func(want func(map[string]any) bool, describe string) map[string]any {
+		t.Helper()
+		deadline := time.After(5 * time.Second)
+		for {
+			select {
+			case msg := <-responses:
+				if want(msg) {
+					return msg
+				}
+			case <-deadline:
+				t.Fatalf("timed out waiting for %s", describe)
+			}
+		}
+	}
+
+	send("listen-1", string(mcp.MethodSubscriptionsListen), map[string]any{
+		"notifications": map[string]any{"toolsListChanged": true},
+	})
+	await(func(m map[string]any) bool {
+		return m["method"] == string(mcp.MethodNotificationSubscriptionsAcknowledged)
+	}, "subscriptions/listen acknowledgement")
+
+	send(2, string(mcp.MethodToolsList), map[string]any{})
+	listed := await(func(m map[string]any) bool {
+		id, ok := m["id"].(float64)
+		return ok && id == 2
+	}, "tools/list response while the subscription stream is open")
+
+	require.Nil(t, listed["error"], "unexpected error in tools/list response")
+	require.NotNil(t, listed["result"], "expected a result in the tools/list response")
+}
+
+func TestStdioJoinsRequestHandlersOnEOF(t *testing.T) {
+	// EOF does not cancel the caller's context, so Listen must release its own
+	// request handlers and wait for them. Otherwise a handler that blocks - as
+	// subscriptions/listen does for the life of its stream - outlives the
+	// session it was registered against.
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	release := make(chan struct{})
+
+	mcpServer := NewMCPServer("test", "1.0.0", WithResourceCapabilities(false, false))
+	mcpServer.AddResource(
+		mcp.NewResource("test://blocking", "blocking"),
+		func(ctx context.Context, _ mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+			close(started)
+			<-ctx.Done()
+			close(cancelled)
+			// Stay in the handler so the test can tell a Listen that waits from
+			// one that merely cancels.
+			<-release
+			return nil, ctx.Err()
+		},
+	)
+
+	stdinReader, stdinWriter := io.Pipe()
+
+	stdioServer := NewStdioServer(mcpServer)
+	stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+
+	// The caller's context stays live for the whole test, as it would in a
+	// long-running host: only EOF should release the handler.
+	listenDone := make(chan error, 1)
+	go func() { listenDone <- stdioServer.Listen(t.Context(), stdinReader, io.Discard) }()
+
+	request, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  string(mcp.MethodResourcesRead),
+		"params":  map[string]any{"uri": "test://blocking"},
+	})
+	require.NoError(t, err)
+	go func() { _, _ = stdinWriter.Write(append(request, '\n')) }()
+
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("resource handler never started")
+	}
+
+	// The client goes away.
+	require.NoError(t, stdinWriter.Close())
+
+	select {
+	case <-cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Listen did not cancel the request handler on EOF")
+	}
+
+	select {
+	case err := <-listenDone:
+		t.Fatalf("Listen returned while the request handler was still running: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+
+	select {
+	case err := <-listenDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Listen did not return once the request handler finished")
+	}
+}
+
+func TestStdioSessionSamplingResponseArrayContent(t *testing.T) {
+	session := &stdioSession{pendingRequests: make(map[int64]chan *samplingResponse)}
+	responseChan := make(chan *samplingResponse, 1)
+	session.pendingRequests[1] = responseChan
+
+	handled := session.handleSamplingResponse(json.RawMessage(`{"jsonrpc": "2.0", "id": 1, "result": {
+		"role": "assistant",
+		"content": [
+			{"type": "tool_use", "id": "call_abc123", "name": "get_weather", "input": {"city": "Paris"}},
+			{"type": "tool_use", "id": "call_def456", "name": "get_weather", "input": {"city": "London"}}
+		],
+		"model": "test-model",
+		"stopReason": "toolUse"
+	}}`))
+	require.True(t, handled)
+
+	response := <-responseChan
+	require.NoError(t, response.err)
+	require.Equal(t, []mcp.Content{
+		mcp.NewToolUseContent("call_abc123", "get_weather", map[string]any{"city": "Paris"}),
+		mcp.NewToolUseContent("call_def456", "get_weather", map[string]any{"city": "London"}),
+	}, response.result.Content)
+}
+
+// overlapWriter counts the Write calls that start while another one is still
+// running. Each call takes a while, so writes from different goroutines
+// overlap unless the server serializes them.
+type overlapWriter struct {
+	active   atomic.Int32
+	overlaps atomic.Int32
+	messages chan map[string]any
+}
+
+func (w *overlapWriter) Write(p []byte) (int, error) {
+	if w.active.Add(1) > 1 {
+		w.overlaps.Add(1)
+	}
+	defer w.active.Add(-1)
+	time.Sleep(50 * time.Millisecond)
+
+	var message map[string]any
+	if json.Unmarshal(p, &message) == nil {
+		w.messages <- message
+	}
+	return len(p), nil
+}
+
+func TestStdioSessionRequestsAreSerializedWithOtherWrites(t *testing.T) {
+	mcpServer := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
+	mcpServer.EnableSampling()
+	mcpServer.AddTool(mcp.NewTool("ask"), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		// The notification goroutine writes this while the sampling request
+		// below is written from the tool worker.
+		if err := mcpServer.SendNotificationToClient(ctx, "notifications/message", map[string]any{"level": "info", "data": "asking"}); err != nil {
+			return nil, err
+		}
+		samplingCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+		defer cancel()
+		_, _ = mcpServer.RequestSampling(samplingCtx, mcp.CreateMessageRequest{})
+		return mcp.NewToolResultText("done"), nil
+	})
+
+	stdinReader, stdinWriter := io.Pipe()
+	defer stdinWriter.Close()
+	output := &overlapWriter{messages: make(chan map[string]any, 16)}
+
+	stdioServer := NewStdioServer(mcpServer)
+	stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = stdioServer.Listen(ctx, stdinReader, output) }()
+
+	send := func(message map[string]any) {
+		t.Helper()
+		b, err := json.Marshal(message)
+		require.NoError(t, err)
+		_, err = stdinWriter.Write(append(b, '\n'))
+		require.NoError(t, err)
+	}
+	await := func(done func(map[string]any) bool, describe string) {
+		t.Helper()
+		deadline := time.After(5 * time.Second)
+		for {
+			select {
+			case message := <-output.messages:
+				if done(message) {
+					return
+				}
+			case <-deadline:
+				t.Fatalf("timed out waiting for %s", describe)
+			}
+		}
+	}
+
+	send(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{
+		"protocolVersion": mcp.ProtocolVersion20251125,
+		"capabilities":    map[string]any{"sampling": map[string]any{}},
+		"clientInfo":      map[string]any{"name": "test-client", "version": "1.0.0"},
+	}})
+	await(func(m map[string]any) bool { return m["id"] == float64(1) }, "the initialize response")
+
+	send(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
+	send(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "ask"}})
+
+	seen := map[string]bool{}
+	await(func(m map[string]any) bool {
+		if method, ok := m["method"].(string); ok {
+			seen[method] = true
+		}
+		if m["id"] == float64(2) && m["method"] == nil {
+			seen["response"] = true
+		}
+		return seen["notifications/message"] && seen[string(mcp.MethodSamplingCreateMessage)] && seen["response"]
+	}, "the notification, the sampling request and the tool response")
+
+	require.Zero(t, output.overlaps.Load(), "a message was written while another one was being written")
+}

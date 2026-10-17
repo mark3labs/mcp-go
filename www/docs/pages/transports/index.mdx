@@ -1,0 +1,272 @@
+# Transport Options
+
+MCP-Go supports multiple transport methods to fit different deployment scenarios and integration patterns. Choose the right transport based on your use case, performance requirements, and client capabilities.
+
+## Overview
+
+Transport layers handle the communication between MCP clients and servers. Each transport has different characteristics and is optimized for specific scenarios:
+
+- **[STDIO](/transports/stdio)** - Standard input/output for command-line tools
+- **[SSE](/transports/sse)** - Server-Sent Events for web applications  
+- **[StreamableHTTP](/transports/http)** - Traditional HTTP for REST-like interactions
+- **[In-Process](/transports/inprocess)** - Direct integration for embedded scenarios
+
+## Transport Comparison
+
+| Transport | Use Case | Pros | Cons | Sampling Support |
+|-----------|----------|------|------|------------------|
+| **STDIO** | CLI tools, desktop apps | Simple, secure, no network | Single client, local only | ✅ Full support |
+| **SSE** | Web apps, real-time | Multi-client, real-time, web-friendly | HTTP overhead, one-way streaming | ❌ Not supported |
+| **StreamableHTTP** | Web services, APIs | Standard protocol, caching, load balancing | No real-time, more complex | ❌ Not supported |
+| **In-Process** | Embedded, testing | No serialization, fastest | Same process only | ✅ Full support |
+
+## Quick Example
+
+The same server code works with any transport:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "os"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+    "github.com/mark3labs/mcp-go/client"
+)
+
+func main() {
+    // Create server (transport-agnostic)
+    s := server.NewMCPServer("Multi-Transport Server", "1.0.0",
+        server.WithToolCapabilities(true),
+    )
+
+    // Add a simple tool
+    s.AddTool(
+        mcp.NewTool("echo",
+            mcp.WithDescription("Echo back the input"),
+            mcp.WithString("message", mcp.Required()),
+        ),
+        handleEcho,
+    )
+
+    // Choose transport based on environment
+    transport := os.Getenv("MCP_TRANSPORT")
+    port := os.Getenv("PORT")
+    if port == "" {
+        port = "8080"
+    }
+
+    switch transport {
+    case "sse":
+        fmt.Printf("Starting SSE server on port %s\n", port)
+        sseServer := server.NewSSEServer(s)
+        sseServer.Start(":" + port)
+    case "streamablehttp":
+        fmt.Printf("Starting StreamableHTTP server on port %s\n", port)
+        httpServer := server.NewStreamableHTTPServer(s)
+        httpServer.Start(":" + port)
+    default:
+        fmt.Println("Starting STDIO server")
+        server.ServeStdio(s)
+    }
+}
+
+func handleEcho(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    message, err := req.RequireString("message")
+    if err != nil {
+        return nil, err
+    }
+    return mcp.NewToolResultText(fmt.Sprintf("Echo: %s", message)), nil
+}
+```
+
+## Choosing the Right Transport
+
+### STDIO Transport
+**Best for:**
+- Command-line tools and utilities
+- Desktop application integrations
+- Local development and testing
+- Single-user scenarios
+
+**Example use cases:**
+- File system tools for IDEs
+- Local database utilities
+- Development workflow automation
+- System administration tools
+
+### SSE Transport  
+**Best for:**
+- Web applications requiring real-time updates
+- Browser-based LLM interfaces
+- Multi-user collaborative tools
+- Dashboard and monitoring applications
+
+**Example use cases:**
+- Web-based chat interfaces
+- Real-time data visualization
+- Collaborative document editing
+- Live system monitoring
+
+### StreamableHTTP Transport
+**Best for:**
+- Traditional web services
+- REST API integrations
+- Load-balanced deployments
+- Stateless interactions
+
+**Example use cases:**
+- Microservice architectures
+- Public API endpoints
+- Integration with existing HTTP infrastructure
+- Cached or rate-limited services
+
+### In-Process Transport
+**Best for:**
+- Embedded MCP servers
+- Testing and development
+- High-performance scenarios
+- Library integrations
+- Sampling-enabled applications
+
+**Example use cases:**
+- Testing MCP implementations
+- Embedded analytics engines
+- High-frequency trading systems
+- Real-time game servers
+- LLM-powered applications with bidirectional communication
+
+## Transport Configuration
+
+### Environment-Based Selection
+
+```go
+func startServer(s *server.MCPServer) error {
+    switch os.Getenv("MCP_TRANSPORT") {
+    case "sse":
+        sseServer := server.NewSSEServer(s)
+        return sseServer.Start(getPort())
+    case "streamablehttp":
+        httpServer := server.NewStreamableHTTPServer(s)
+        return httpServer.Start(getPort())
+    case "inprocess":
+        // Note: In-process transport doesn't use network ports
+        // This would typically be used differently in practice
+        client := client.NewInProcessClient(s)
+        defer client.Close()
+        // Keep the process running
+        select {}
+    default:
+        return server.ServeStdio(s)
+    }
+}
+
+func getPort() string {
+    if port := os.Getenv("PORT"); port != "" {
+        return ":" + port
+    }
+    return ":8080"
+}
+```
+
+### Multi-Transport Server
+
+```go
+func main() {
+    s := server.NewMCPServer("Multi-Transport", "1.0.0")
+    
+    // Add your tools, resources, prompts...
+    setupServer(s)
+    
+    // Start multiple transports concurrently with proper error handling
+    errChan := make(chan error, 3)
+    
+    go func() {
+        log.Println("Starting STDIO server...")
+        if err := server.ServeStdio(s); err != nil {
+            log.Printf("STDIO server error: %v", err)
+            errChan <- fmt.Errorf("STDIO server failed: %w", err)
+        }
+    }()
+    
+    go func() {
+        log.Println("Starting SSE server on :8080...")
+        sseServer := server.NewSSEServer(s)
+        if err := sseServer.Start(":8080"); err != nil {
+            log.Printf("SSE server error: %v", err)
+            errChan <- fmt.Errorf("SSE server failed: %w", err)
+        }
+    }()
+    
+    log.Println("Starting StreamableHTTP server on :8081...")
+    httpServer := server.NewStreamableHTTPServer(s)
+    if err := httpServer.Start(":8081"); err != nil {
+        log.Printf("StreamableHTTP server error: %v", err)
+        errChan <- fmt.Errorf("StreamableHTTP server failed: %w", err)
+    }
+    
+    // Wait for any server to fail
+    select {
+    case err := <-errChan:
+        log.Printf("Server failed: %v", err)
+        return
+    }
+}
+
+// Helper function for the multi-transport example
+func setupServer(s *server.MCPServer) {
+    // Placeholder implementation - would add tools, resources, etc.
+}
+```
+
+## Performance Considerations
+
+### Latency Comparison
+- **In-Process**: ~1μs (no serialization)
+- **STDIO**: ~100μs (local pipes)
+- **HTTP/SSE**: ~1-10ms (network + HTTP overhead)
+
+### Throughput Comparison
+- **In-Process**: Limited by CPU/memory
+- **STDIO**: Limited by pipe buffers (~64KB)
+- **HTTP/SSE**: Limited by network bandwidth
+
+### Memory Usage
+- **In-Process**: Shared memory space
+- **STDIO**: Minimal overhead
+- **HTTP/SSE**: Connection pooling, request buffering
+
+## Security Considerations
+
+### STDIO Transport
+- **Pros**: No network exposure, process isolation
+- **Cons**: Inherits parent process permissions
+- **Best practices**: Validate all inputs, use least privilege
+
+### Network Transports (SSE/HTTP)
+- **Authentication**: Implement proper auth middleware
+- **Authorization**: Validate permissions per request
+- **Rate limiting**: Prevent abuse and DoS
+- **HTTPS**: Always use TLS in production
+
+```go
+// Example with security middleware
+s := server.NewMCPServer("Secure Server", "1.0.0",
+    server.WithToolMiddleware(authMiddleware),
+    server.WithToolMiddleware(rateLimitMiddleware),
+    server.WithRecovery(),
+)
+```
+
+## Next Steps
+
+Explore each transport in detail:
+
+- **[STDIO Transport](/transports/stdio)** - Command-line integration
+- **[SSE Transport](/transports/sse)** - Real-time web applications
+- **[StreamableHTTP Transport](/transports/http)** - Traditional web services
+- **[In-Process Transport](/transports/inprocess)** - Embedded scenarios

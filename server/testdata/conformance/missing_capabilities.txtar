@@ -1,0 +1,47 @@
+Client capabilities are required on every request from protocol version
+2026-07-28 onward: servers must not infer them from earlier requests. A request
+declaring a modern protocol version without them, or with a value that is not a
+capabilities object, is malformed and is rejected with Invalid params (-32602).
+MissingRequiredClientCapabilityError (-32021) is for a request that needs a
+capability the client did not declare.
+
+-- client --
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/list",
+  "params": {
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/list",
+  "params": {
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": "all"
+    }
+  }
+}
+-- server --
+{
+	"error": {
+		"code": -32602,
+		"message": "missing or invalid _meta field io.modelcontextprotocol/clientCapabilities"
+	},
+	"id": 1,
+	"jsonrpc": "2.0"
+}
+
+{
+	"error": {
+		"code": -32602,
+		"message": "missing or invalid _meta field io.modelcontextprotocol/clientCapabilities"
+	},
+	"id": 2,
+	"jsonrpc": "2.0"
+}

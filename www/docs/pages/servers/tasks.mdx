@@ -1,0 +1,365 @@
+# Task-Augmented Tools
+
+Task-augmented tools allow long-running operations to execute asynchronously. Instead of blocking until completion, the server creates a task and the client can poll for status updates. This is ideal for operations like batch processing, data analysis, or any work that may take more than a few seconds.
+
+## Overview
+
+With regular tools, the handler runs synchronously — the client waits for the full result before continuing. Task-augmented tools change this by returning a `CreateTaskResult` immediately, while the actual work continues in the background. The client can then:
+
+- **Poll** for the task's current status
+- **List** all active tasks
+- **Cancel** a running task
+
+## Task Support Modes
+
+Every tool declares how it interacts with the task system via `mcp.TaskSupport`. There are three modes:
+
+| Mode | Constant | Behavior |
+|------|----------|----------|
+| **Forbidden** | `mcp.TaskSupportForbidden` | Default. The tool cannot be invoked as a task. It runs synchronously like a regular tool. |
+| **Optional** | `mcp.TaskSupportOptional` | The tool can be invoked as a task or run synchronously depending on the client's request. |
+| **Required** | `mcp.TaskSupportRequired` | The tool must be invoked as a task. Synchronous calls are rejected with an error. |
+
+```go
+// Set task support when creating a tool
+tool := mcp.NewTool("long_process",
+    mcp.WithDescription("A long-running operation"),
+    mcp.WithTaskSupport(mcp.TaskSupportRequired),
+)
+```
+
+## Enabling Task Capabilities
+
+To use task-augmented tools, enable both tool and task capabilities on the server. `WithTaskCapabilities` takes three booleans controlling which task operations are available:
+
+1. **list** — allow clients to list tasks
+2. **cancel** — allow clients to cancel running tasks
+3. **toolCallTasks** — enable task augmentation for tool calls
+
+```go
+s := server.NewMCPServer("Task Server", "1.0.0",
+    server.WithToolCapabilities(true),
+    server.WithTaskCapabilities(true, true, true), // list, cancel, toolCallTasks
+)
+```
+
+## Registering Task Tools
+
+### AddTaskTool
+
+Use `AddTaskTool` to register a single task-augmented tool with its handler:
+
+```go
+tool := mcp.NewTool("long_process",
+    mcp.WithDescription("Run a long process asynchronously"),
+    mcp.WithTaskSupport(mcp.TaskSupportRequired),
+    mcp.WithString("input", mcp.Required(), mcp.Description("Input data")),
+)
+
+s.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+    input := req.GetString("input", "")
+
+    // Do the actual work here — this runs in the background.
+    // Check ctx.Done() to support cancellation.
+    for i := 0; i < 100; i++ {
+        select {
+        case <-ctx.Done():
+            return nil, ctx.Err()
+        default:
+            // simulate work
+            time.Sleep(100 * time.Millisecond)
+        }
+    }
+
+    // Return result — the server manages the Task lifecycle
+    return &mcp.CreateTaskResult{
+        Task: mcp.NewTask("unique-task-id",
+            mcp.WithTaskStatusMessage("Processing started"),
+            mcp.WithTaskPollInterval(2000), // suggest polling every 2s
+            mcp.WithTaskTTL(300000),        // task expires after 5 minutes
+        ),
+    }, nil
+})
+```
+
+### AddTaskTools
+
+Register multiple task tools at once with `AddTaskTools`:
+
+```go
+s.AddTaskTools(
+    server.ServerTaskTool{Tool: tool1, Handler: handler1},
+    server.ServerTaskTool{Tool: tool2, Handler: handler2},
+)
+```
+
+## Handler Signature
+
+Task tool handlers use a dedicated function type that returns `*mcp.CreateTaskResult` instead of the regular `*mcp.CallToolResult`:
+
+```go
+type TaskToolHandlerFunc func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error)
+```
+
+The handler runs asynchronously in the background. The server takes care of creating the task entry, tracking status, and sending notifications to the client.
+
+## Task Lifecycle
+
+A task moves through a well-defined set of statuses:
+
+```
+Working ──→ Completed
+       ──→ Failed
+       ──→ Cancelled
+       ──→ InputRequired ──→ Working (resumed)
+```
+
+The available status constants are:
+
+| Status | Constant | Description |
+|--------|----------|-------------|
+| Working | `mcp.TaskStatusWorking` | Task is actively processing |
+| Completed | `mcp.TaskStatusCompleted` | Task finished successfully |
+| Failed | `mcp.TaskStatusFailed` | Task encountered an error |
+| Cancelled | `mcp.TaskStatusCancelled` | Task was cancelled by the client |
+| Input Required | `mcp.TaskStatusInputRequired` | Task needs additional input to continue |
+
+Use `IsTerminal()` to check whether a task has reached a final state:
+
+```go
+task := mcp.NewTask("my-task")
+
+// Later, check if the task is done
+if task.Status.IsTerminal() {
+    // task is Completed, Failed, or Cancelled
+}
+```
+
+## Task Options
+
+When creating a task with `mcp.NewTask`, you can configure it with functional options:
+
+```go
+task := mcp.NewTask("task-123",
+    mcp.WithTaskStatus(mcp.TaskStatusWorking),       // set initial status (default: Working)
+    mcp.WithTaskStatusMessage("Initializing..."),     // human-readable status message
+    mcp.WithTaskTTL(300000),                          // TTL in milliseconds (5 minutes)
+    mcp.WithTaskPollInterval(2000),                   // suggested poll interval in ms
+    mcp.WithTaskCreatedAt("2025-01-15T10:30:00Z"),    // custom creation timestamp
+)
+```
+
+| Option | Description |
+|--------|-------------|
+| `WithTaskStatus` | Set the task's initial status. Defaults to `TaskStatusWorking`. |
+| `WithTaskStatusMessage` | Attach a human-readable message describing the current state. |
+| `WithTaskTTL` | Time-to-live in milliseconds. After this duration, the task may be deleted. |
+| `WithTaskPollInterval` | Suggested polling interval in milliseconds for the client. |
+| `WithTaskCreatedAt` | Override the creation timestamp (defaults to `time.Now()`). |
+
+## Model Immediate Response
+
+Servers can provide an immediate response to the model while the task continues executing in the background. This lets the model acknowledge the request without waiting for the full result:
+
+```go
+s.AddTaskTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+    // ... start processing ...
+
+    task := mcp.NewTask("task-456",
+        mcp.WithTaskStatusMessage("Processing started"),
+        mcp.WithTaskPollInterval(5000),
+    )
+
+    return &mcp.CreateTaskResult{
+        Task: task,
+        Result: mcp.Result{
+            Meta: mcp.WithModelImmediateResponse("Processing your request. This may take a few minutes."),
+        },
+    }, nil
+})
+```
+
+The `WithModelImmediateResponse` helper sets the `io.modelcontextprotocol/model-immediate-response` metadata key, providing a string that the client can pass directly to the model as an interim result.
+
+## Related Task Metadata
+
+You can associate messages or results with a specific task using `WithRelatedTask`. This is useful when sending follow-up data that references an existing task:
+
+```go
+meta := mcp.WithRelatedTask("task-id-123")
+```
+
+The metadata contains the `io.modelcontextprotocol/related-task` key with the task ID, enabling clients to correlate responses with their originating tasks.
+
+## Task Hooks
+
+Task hooks provide observability into the task lifecycle. Use `server.TaskHooks` to register callbacks for creation, completion, failure, cancellation, and any status change:
+
+```go
+taskHooks := &server.TaskHooks{}
+
+taskHooks.AddOnTaskCreated(func(ctx context.Context, metrics server.TaskMetrics) {
+    log.Printf("Task %s created for tool %s", metrics.TaskID, metrics.ToolName)
+})
+
+taskHooks.AddOnTaskCompleted(func(ctx context.Context, metrics server.TaskMetrics) {
+    log.Printf("Task %s completed in %v", metrics.TaskID, metrics.Duration)
+})
+
+taskHooks.AddOnTaskFailed(func(ctx context.Context, metrics server.TaskMetrics) {
+    log.Printf("Task %s failed: %v", metrics.TaskID, metrics.Error)
+})
+
+taskHooks.AddOnTaskCancelled(func(ctx context.Context, metrics server.TaskMetrics) {
+    log.Printf("Task %s was cancelled", metrics.TaskID)
+})
+
+taskHooks.AddOnTaskStatusChanged(func(ctx context.Context, metrics server.TaskMetrics) {
+    log.Printf("Task %s status: %s", metrics.TaskID, metrics.Status)
+})
+```
+
+Pass the hooks to the server with `WithTaskHooks`:
+
+```go
+s := server.NewMCPServer("Task Server", "1.0.0",
+    server.WithToolCapabilities(true),
+    server.WithTaskCapabilities(true, true, true),
+    server.WithTaskHooks(taskHooks),
+)
+```
+
+### TaskMetrics Fields
+
+The `server.TaskMetrics` struct provides rich context for each hook:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `TaskID` | `string` | Unique identifier for the task |
+| `ToolName` | `string` | Name of the tool that created the task |
+| `Status` | `mcp.TaskStatus` | Current status of the task |
+| `StatusMessage` | `string` | Optional status message |
+| `CreatedAt` | `time.Time` | When the task was created |
+| `CompletedAt` | `*time.Time` | When the task completed (nil if still running) |
+| `Duration` | `time.Duration` | How long the task has run (zero if not completed) |
+| `SessionID` | `string` | Session that owns this task |
+| `Error` | `error` | Error if task failed (nil otherwise) |
+
+## Concurrency Limits
+
+Use `WithMaxConcurrentTasks` to limit how many tasks can run simultaneously. When the limit is reached, new task requests are rejected with an error:
+
+```go
+s := server.NewMCPServer("Task Server", "1.0.0",
+    server.WithToolCapabilities(true),
+    server.WithTaskCapabilities(true, true, true),
+    server.WithMaxConcurrentTasks(10),
+)
+```
+
+## Task Status Notifications
+
+The server automatically sends `notifications/tasks/status` to connected clients whenever a task's status changes. This means clients don't have to rely solely on polling — they can also listen for push notifications to react to status transitions in real time.
+
+## Complete Example
+
+Here's a full example combining all the concepts — a server with a required task tool, an optional task tool, and observability hooks:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "time"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func main() {
+    // Set up observability hooks
+    taskHooks := &server.TaskHooks{}
+    taskHooks.AddOnTaskCreated(func(ctx context.Context, metrics server.TaskMetrics) {
+        log.Printf("Task %s created for tool %s", metrics.TaskID, metrics.ToolName)
+    })
+    taskHooks.AddOnTaskCompleted(func(ctx context.Context, metrics server.TaskMetrics) {
+        log.Printf("Task %s completed in %v", metrics.TaskID, metrics.Duration)
+    })
+    taskHooks.AddOnTaskFailed(func(ctx context.Context, metrics server.TaskMetrics) {
+        log.Printf("Task %s failed: %v", metrics.TaskID, metrics.Error)
+    })
+
+    // Create server
+    s := server.NewMCPServer("Task Example", "1.0.0",
+        server.WithToolCapabilities(true),
+        server.WithTaskCapabilities(true, true, true),
+        server.WithTaskHooks(taskHooks),
+        server.WithMaxConcurrentTasks(10),
+    )
+
+    // Task-required tool: must be invoked as a task
+    batchTool := mcp.NewTool("process_batch",
+        mcp.WithDescription("Process a batch of items asynchronously"),
+        mcp.WithTaskSupport(mcp.TaskSupportRequired),
+        mcp.WithArray("items",
+            mcp.Description("Items to process"),
+            mcp.Required(),
+        ),
+    )
+    s.AddTaskTool(batchTool, handleBatch)
+
+    // Task-optional tool: can run sync or async
+    analyzeTool := mcp.NewTool("analyze",
+        mcp.WithDescription("Analyze data — runs async if invoked as a task"),
+        mcp.WithTaskSupport(mcp.TaskSupportOptional),
+        mcp.WithString("data", mcp.Required(), mcp.Description("Data to analyze")),
+    )
+    s.AddTaskTool(analyzeTool, handleAnalyze)
+
+    // Start server
+    if err := server.ServeStdio(s); err != nil {
+        log.Fatalf("Server error: %v", err)
+    }
+}
+
+func handleBatch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+    // Process items — check for cancellation
+    for i := 0; i < 10; i++ {
+        select {
+        case <-ctx.Done():
+            return nil, ctx.Err()
+        default:
+            time.Sleep(1 * time.Second)
+        }
+    }
+
+    return &mcp.CreateTaskResult{
+        Task: mcp.NewTask("batch-task",
+            mcp.WithTaskStatusMessage("Batch processing complete"),
+        ),
+    }, nil
+}
+
+func handleAnalyze(ctx context.Context, req mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+    data := req.GetString("data", "")
+
+    // Simulate analysis
+    time.Sleep(2 * time.Second)
+
+    return &mcp.CreateTaskResult{
+        Task: mcp.NewTask("analyze-task",
+            mcp.WithTaskStatusMessage(fmt.Sprintf("Analyzed %d characters", len(data))),
+        ),
+        Result: mcp.Result{
+            Meta: mcp.WithModelImmediateResponse("Analysis is in progress. Results will be available shortly."),
+        },
+    }, nil
+}
+```
+
+## Next Steps
+
+- **[Tools](/servers/tools)** — Learn about regular synchronous tools
+- **[Advanced Features](/servers/advanced)** — Explore middleware, hooks, and typed handlers

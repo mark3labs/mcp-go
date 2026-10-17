@@ -1,0 +1,840 @@
+package mcp
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestParseAnnotations(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     map[string]any
+		expected *Annotations
+	}{
+		{
+			name:     "nil data",
+			data:     nil,
+			expected: nil,
+		},
+		{
+			name:     "empty data",
+			data:     map[string]any{},
+			expected: &Annotations{},
+		},
+		{
+			name: "priority only",
+			data: map[string]any{
+				"priority": 1.5,
+			},
+			expected: &Annotations{
+				Priority: ptr(1.5),
+			},
+		},
+		{
+			name: "audience only",
+			data: map[string]any{
+				"audience": []any{"user", "assistant"},
+			},
+			expected: &Annotations{
+				Audience: []Role{"user", "assistant"},
+			},
+		},
+		{
+			name: "priority and audience",
+			data: map[string]any{
+				"priority": 2.0,
+				"audience": []any{"user", "assistant", "system"},
+			},
+			expected: &Annotations{
+				Priority: ptr(2.0),
+				Audience: []Role{"user", "assistant"},
+			},
+		},
+		{
+			name: "invalid priority type",
+			data: map[string]any{
+				"priority": "not a number",
+			},
+			expected: &Annotations{},
+		},
+		{
+			name: "invalid audience type",
+			data: map[string]any{
+				"audience": "not an array",
+			},
+			expected: &Annotations{},
+		},
+		{
+			name: "invalid audience element type",
+			data: map[string]any{
+				"audience": []any{"user", 123, "assistant"},
+			},
+			expected: &Annotations{
+				Audience: []Role{"user", "assistant"},
+			},
+		},
+		{
+			name: "audience as []string",
+			data: map[string]any{
+				"audience": []string{"assistant", "user"},
+			},
+			expected: &Annotations{
+				Audience: []Role{"assistant", "user"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ParseAnnotations(tt.data)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestParseContent(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentMap  map[string]any
+		expected    Content
+		expectError bool
+	}{
+		{
+			name: "text content with annotations",
+			contentMap: map[string]any{
+				"type": "text",
+				"text": "Hello, world!",
+				"annotations": map[string]any{
+					"priority": 1.5,
+					"audience": []any{"user"},
+				},
+			},
+			expected: TextContent{
+				Type: ContentTypeText,
+				Text: "Hello, world!",
+				Annotated: Annotated{
+					Annotations: &Annotations{
+						Priority: ptr(1.5),
+						Audience: []Role{"user"},
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "text content without annotations",
+			contentMap: map[string]any{
+				"type": "text",
+				"text": "Hello, world!",
+			},
+			expected: TextContent{
+				Type: ContentTypeText,
+				Text: "Hello, world!",
+			},
+			expectError: false,
+		},
+		{
+			name: "image content with annotations",
+			contentMap: map[string]any{
+				"type":     "image",
+				"data":     "base64data",
+				"mimeType": "image/png",
+				"annotations": map[string]any{
+					"priority": 2.0,
+				},
+			},
+			expected: ImageContent{
+				Type:     ContentTypeImage,
+				Data:     "base64data",
+				MIMEType: "image/png",
+				Annotated: Annotated{
+					Annotations: &Annotations{
+						Priority: ptr(2.0),
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "audio content with annotations",
+			contentMap: map[string]any{
+				"type":     "audio",
+				"data":     "base64data",
+				"mimeType": "audio/mp3",
+				"annotations": map[string]any{
+					"audience": []any{"assistant"},
+				},
+			},
+			expected: AudioContent{
+				Type:     ContentTypeAudio,
+				Data:     "base64data",
+				MIMEType: "audio/mp3",
+				Annotated: Annotated{
+					Annotations: &Annotations{
+						Audience: []Role{"assistant"},
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "resource link with annotations",
+			contentMap: map[string]any{
+				"type":        "resource_link",
+				"uri":         "file:///test.txt",
+				"name":        "Test File",
+				"description": "A test file",
+				"mimeType":    "text/plain",
+				"annotations": map[string]any{
+					"priority": 1.0,
+				},
+			},
+			expected: ResourceLink{
+				Type:        ContentTypeLink,
+				URI:         "file:///test.txt",
+				Name:        "Test File",
+				Description: "A test file",
+				MIMEType:    "text/plain",
+				Annotated: Annotated{
+					Annotations: &Annotations{
+						Priority: ptr(1.0),
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "resource link with title and size",
+			contentMap: map[string]any{
+				"type":        "resource_link",
+				"uri":         "file:///test.txt",
+				"name":        "test.txt",
+				"title":       "Test File",
+				"description": "A test file",
+				"mimeType":    "text/plain",
+				// json.Unmarshal into map[string]any decodes numbers as float64.
+				"size": float64(42),
+			},
+			expected: ResourceLink{
+				Type:        ContentTypeLink,
+				URI:         "file:///test.txt",
+				Name:        "test.txt",
+				Title:       "Test File",
+				Description: "A test file",
+				MIMEType:    "text/plain",
+				Size:        ToInt64Ptr(42),
+			},
+			expectError: false,
+		},
+		{
+			name: "resource link with zero size is preserved",
+			contentMap: map[string]any{
+				"type": "resource_link",
+				"uri":  "file:///empty.txt",
+				"name": "empty.txt",
+				"size": float64(0),
+			},
+			expected: ResourceLink{
+				Type: ContentTypeLink,
+				URI:  "file:///empty.txt",
+				Name: "empty.txt",
+				Size: ToInt64Ptr(0),
+			},
+			expectError: false,
+		},
+		{
+			name: "resource link with negative size is rejected",
+			contentMap: map[string]any{
+				"type": "resource_link",
+				"uri":  "file:///x.txt",
+				"name": "x.txt",
+				"size": float64(-1),
+			},
+			expected: ResourceLink{
+				Type: ContentTypeLink,
+				URI:  "file:///x.txt",
+				Name: "x.txt",
+				Size: nil,
+			},
+			expectError: false,
+		},
+		{
+			name: "embedded resource with annotations",
+			contentMap: map[string]any{
+				"type": "resource",
+				"resource": map[string]any{
+					"uri":      "file:///test.txt",
+					"mimeType": "text/plain",
+					"text":     "Hello, world!",
+				},
+				"annotations": map[string]any{
+					"audience": []any{"user", "assistant"},
+				},
+			},
+			expected: EmbeddedResource{
+				Type: ContentTypeResource,
+				Resource: TextResourceContents{
+					URI:      "file:///test.txt",
+					MIMEType: "text/plain",
+					Text:     "Hello, world!",
+				},
+				Annotated: Annotated{
+					Annotations: &Annotations{
+						Audience: []Role{"user", "assistant"},
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "missing type",
+			contentMap: map[string]any{
+				"text": "Hello, world!",
+			},
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			name: "unsupported type",
+			contentMap: map[string]any{
+				"type": "unsupported",
+			},
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			name: "text content missing text field",
+			contentMap: map[string]any{
+				"type": "text",
+			},
+			expected:    TextContent{Type: ContentTypeText, Text: ""},
+			expectError: false,
+		},
+		{
+			name: "image content missing data",
+			contentMap: map[string]any{
+				"type":     "image",
+				"mimeType": "image/png",
+			},
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			name: "audio content missing mimeType",
+			contentMap: map[string]any{
+				"type": "audio",
+				"data": "base64data",
+			},
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			name: "resource link missing uri",
+			contentMap: map[string]any{
+				"type": "resource_link",
+				"name": "Test File",
+			},
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			name: "resource link missing name",
+			contentMap: map[string]any{
+				"type": "resource_link",
+				"uri":  "file:///test.txt",
+			},
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			name: "embedded resource missing resource",
+			contentMap: map[string]any{
+				"type": "resource",
+			},
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			name: "text content with _meta",
+			contentMap: map[string]any{
+				"type": "text",
+				"text": "Hello, world!",
+				"_meta": map[string]any{
+					"source_url": "https://example.com",
+				},
+			},
+			expected: TextContent{
+				Type: ContentTypeText,
+				Text: "Hello, world!",
+				Meta: &Meta{
+					AdditionalFields: map[string]any{
+						"source_url": "https://example.com",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "image content with _meta",
+			contentMap: map[string]any{
+				"type":     "image",
+				"data":     "base64data",
+				"mimeType": "image/png",
+				"_meta": map[string]any{
+					"source": "camera",
+				},
+			},
+			expected: ImageContent{
+				Type:     ContentTypeImage,
+				Data:     "base64data",
+				MIMEType: "image/png",
+				Meta: &Meta{
+					AdditionalFields: map[string]any{
+						"source": "camera",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "audio content with _meta",
+			contentMap: map[string]any{
+				"type":     "audio",
+				"data":     "base64data",
+				"mimeType": "audio/mp3",
+				"_meta": map[string]any{
+					"duration": 120.5,
+				},
+			},
+			expected: AudioContent{
+				Type:     ContentTypeAudio,
+				Data:     "base64data",
+				MIMEType: "audio/mp3",
+				Meta: &Meta{
+					AdditionalFields: map[string]any{
+						"duration": 120.5,
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "embedded resource with _meta",
+			contentMap: map[string]any{
+				"type": "resource",
+				"resource": map[string]any{
+					"uri":      "file:///test.txt",
+					"mimeType": "text/plain",
+					"text":     "Hello, world!",
+				},
+				"_meta": map[string]any{
+					"version": "1.0",
+				},
+			},
+			expected: EmbeddedResource{
+				Type: ContentTypeResource,
+				Resource: TextResourceContents{
+					URI:      "file:///test.txt",
+					MIMEType: "text/plain",
+					Text:     "Hello, world!",
+				},
+				Meta: &Meta{
+					AdditionalFields: map[string]any{
+						"version": "1.0",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "resource link with _meta",
+			contentMap: map[string]any{
+				"type": "resource_link",
+				"uri":  "file:///test.txt",
+				"name": "test.txt",
+				"_meta": map[string]any{
+					"source_url": "https://example.com",
+				},
+			},
+			expected: ResourceLink{
+				Type: ContentTypeLink,
+				URI:  "file:///test.txt",
+				Name: "test.txt",
+				Meta: &Meta{
+					AdditionalFields: map[string]any{
+						"source_url": "https://example.com",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "text content with _meta containing progressToken",
+			contentMap: map[string]any{
+				"type": "text",
+				"text": "data",
+				"_meta": map[string]any{
+					"progressToken": "tok-123",
+					"custom_field":  "value",
+				},
+			},
+			expected: TextContent{
+				Type: ContentTypeText,
+				Text: "data",
+				Meta: &Meta{
+					ProgressToken: "tok-123",
+					AdditionalFields: map[string]any{
+						"custom_field": "value",
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "tool_use content",
+			contentMap: map[string]any{
+				"type": "tool_use",
+				"id":   "tu_1",
+				"name": "get_weather",
+				"input": map[string]any{
+					"city": "London",
+				},
+			},
+			expected: ToolUseContent{
+				Type: ContentTypeToolUse,
+				ID:   "tu_1",
+				Name: "get_weather",
+				Input: map[string]any{
+					"city": "London",
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "tool_use content with annotations",
+			contentMap: map[string]any{
+				"type":  "tool_use",
+				"id":    "tu_2",
+				"name":  "search",
+				"input": map[string]any{},
+				"annotations": map[string]any{
+					"priority": 1.0,
+				},
+			},
+			expected: ToolUseContent{
+				Type:  ContentTypeToolUse,
+				ID:    "tu_2",
+				Name:  "search",
+				Input: map[string]any{},
+				Annotated: Annotated{
+					Annotations: &Annotations{
+						Priority: ptr(1.0),
+					},
+				},
+			},
+			expectError: false,
+		},
+		{
+			name: "tool_use content missing id",
+			contentMap: map[string]any{
+				"type":  "tool_use",
+				"name":  "search",
+				"input": map[string]any{},
+			},
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			name: "tool_use content missing name",
+			contentMap: map[string]any{
+				"type":  "tool_use",
+				"id":    "tu_3",
+				"input": map[string]any{},
+			},
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			name: "tool_result content with nested text",
+			contentMap: map[string]any{
+				"type":      "tool_result",
+				"toolUseId": "tu_1",
+				"content": []any{
+					map[string]any{
+						"type": "text",
+						"text": "Sunny, 22°C",
+					},
+				},
+			},
+			expected: ToolResultContent{
+				Type:      ContentTypeToolResult,
+				ToolUseID: "tu_1",
+				Content:   []Content{NewTextContent("Sunny, 22°C")},
+			},
+			expectError: false,
+		},
+		{
+			name: "tool_result content with isError",
+			contentMap: map[string]any{
+				"type":      "tool_result",
+				"toolUseId": "tu_2",
+				"isError":   true,
+				"content": []any{
+					map[string]any{
+						"type": "text",
+						"text": "something went wrong",
+					},
+				},
+			},
+			expected: ToolResultContent{
+				Type:      ContentTypeToolResult,
+				ToolUseID: "tu_2",
+				IsError:   true,
+				Content:   []Content{NewTextContent("something went wrong")},
+			},
+			expectError: false,
+		},
+		{
+			name: "tool_result content missing toolUseId",
+			contentMap: map[string]any{
+				"type": "tool_result",
+			},
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			name: "tool_result content with non-object entry in content array",
+			contentMap: map[string]any{
+				"type":      "tool_result",
+				"toolUseId": "tu_bad",
+				"content": []any{
+					"not an object",
+				},
+			},
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			name: "tool_result content without nested content",
+			contentMap: map[string]any{
+				"type":      "tool_result",
+				"toolUseId": "tu_3",
+			},
+			expected: ToolResultContent{
+				Type:      ContentTypeToolResult,
+				ToolUseID: "tu_3",
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ParseContent(tt.contentMap)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+			} else {
+				assert.NoError(t, err)
+
+				// Compare the actual content values
+				switch exp := tt.expected.(type) {
+				case TextContent:
+					act, ok := result.(TextContent)
+					assert.True(t, ok)
+					assert.Equal(t, exp.Type, act.Type)
+					assert.Equal(t, exp.Text, act.Text)
+					assert.Equal(t, exp.Annotations, act.Annotations)
+					assert.Equal(t, exp.Meta, act.Meta)
+				case ImageContent:
+					act, ok := result.(ImageContent)
+					assert.True(t, ok)
+					assert.Equal(t, exp.Type, act.Type)
+					assert.Equal(t, exp.Data, act.Data)
+					assert.Equal(t, exp.MIMEType, act.MIMEType)
+					assert.Equal(t, exp.Annotations, act.Annotations)
+					assert.Equal(t, exp.Meta, act.Meta)
+				case AudioContent:
+					act, ok := result.(AudioContent)
+					assert.True(t, ok)
+					assert.Equal(t, exp.Type, act.Type)
+					assert.Equal(t, exp.Data, act.Data)
+					assert.Equal(t, exp.MIMEType, act.MIMEType)
+					assert.Equal(t, exp.Annotations, act.Annotations)
+					assert.Equal(t, exp.Meta, act.Meta)
+				case ResourceLink:
+					act, ok := result.(ResourceLink)
+					assert.True(t, ok)
+					assert.Equal(t, exp.Type, act.Type)
+					assert.Equal(t, exp.URI, act.URI)
+					assert.Equal(t, exp.Name, act.Name)
+					assert.Equal(t, exp.Title, act.Title)
+					assert.Equal(t, exp.Description, act.Description)
+					assert.Equal(t, exp.MIMEType, act.MIMEType)
+					assert.Equal(t, exp.Size, act.Size)
+					assert.Equal(t, exp.Annotations, act.Annotations)
+					assert.Equal(t, exp.Meta, act.Meta)
+				case EmbeddedResource:
+					act, ok := result.(EmbeddedResource)
+					assert.True(t, ok)
+					assert.Equal(t, exp.Type, act.Type)
+					assert.Equal(t, exp.Resource, act.Resource)
+					assert.Equal(t, exp.Annotations, act.Annotations)
+					assert.Equal(t, exp.Meta, act.Meta)
+				case ToolUseContent:
+					act, ok := result.(ToolUseContent)
+					assert.True(t, ok)
+					assert.Equal(t, exp.Type, act.Type)
+					assert.Equal(t, exp.ID, act.ID)
+					assert.Equal(t, exp.Name, act.Name)
+					assert.Equal(t, exp.Input, act.Input)
+					assert.Equal(t, exp.Annotations, act.Annotations)
+					assert.Equal(t, exp.Meta, act.Meta)
+				case ToolResultContent:
+					act, ok := result.(ToolResultContent)
+					assert.True(t, ok)
+					assert.Equal(t, exp.Type, act.Type)
+					assert.Equal(t, exp.ToolUseID, act.ToolUseID)
+					assert.Equal(t, exp.IsError, act.IsError)
+					assert.Equal(t, exp.Annotations, act.Annotations)
+					assert.Equal(t, exp.Meta, act.Meta)
+					require.Len(t, act.Content, len(exp.Content))
+					for i := range exp.Content {
+						assert.Equal(t, exp.Content[i], act.Content[i])
+					}
+				default:
+					assert.Equal(t, tt.expected, result)
+				}
+			}
+		})
+	}
+}
+
+func TestParseSamplingContent(t *testing.T) {
+	tests := []struct {
+		name        string
+		content     any
+		expected    any
+		expectError string
+	}{
+		{
+			name:     "single block",
+			content:  map[string]any{"type": "text", "text": "Hello"},
+			expected: NewTextContent("Hello"),
+		},
+		{
+			name: "array of blocks",
+			content: []any{
+				map[string]any{"type": "tool_use", "id": "call_1", "name": "get_weather", "input": map[string]any{"city": "Paris"}},
+				map[string]any{"type": "tool_use", "id": "call_2", "name": "get_weather", "input": map[string]any{"city": "London"}},
+			},
+			expected: []Content{
+				NewToolUseContent("call_1", "get_weather", map[string]any{"city": "Paris"}),
+				NewToolUseContent("call_2", "get_weather", map[string]any{"city": "London"}),
+			},
+		},
+		{
+			name:     "typed content",
+			content:  NewTextContent("Hello"),
+			expected: NewTextContent("Hello"),
+		},
+		{
+			name:        "array entry that is not an object",
+			content:     []any{"Hello"},
+			expectError: "content[0]: expected object, got string",
+		},
+		{
+			name:        "array entry with an unknown type",
+			content:     []any{map[string]any{"type": "video"}},
+			expectError: "content[0]: unsupported content type: video",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ParseSamplingContent(tt.content)
+			if tt.expectError != "" {
+				require.EqualError(t, err, tt.expectError)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestNewJSONRPCResultResponse(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		id     RequestId
+		result any
+		want   JSONRPCResponse
+	}{
+		"string result": {
+			id:     NewRequestId(1),
+			result: "test result",
+			want: JSONRPCResponse{
+				JSONRPC: JSONRPC_VERSION,
+				ID:      NewRequestId(1),
+				Result:  "test result",
+			},
+		},
+		"map result": {
+			id:     NewRequestId("test-id"),
+			result: map[string]any{"key": "value"},
+			want: JSONRPCResponse{
+				JSONRPC: JSONRPC_VERSION,
+				ID:      NewRequestId("test-id"),
+				Result:  map[string]any{"key": "value"},
+			},
+		},
+		"nil result": {
+			id:     NewRequestId(42),
+			result: nil,
+			want: JSONRPCResponse{
+				JSONRPC: JSONRPC_VERSION,
+				ID:      NewRequestId(42),
+				Result:  nil,
+			},
+		},
+		"struct result": {
+			id:     NewRequestId(0),
+			result: struct{ Name string }{Name: "test"},
+			want: JSONRPCResponse{
+				JSONRPC: JSONRPC_VERSION,
+				ID:      NewRequestId(0),
+				Result:  struct{ Name string }{Name: "test"},
+			},
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got := NewJSONRPCResultResponse(tc.id, tc.result)
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestNewJSONRPCResponse(t *testing.T) {
+	t.Parallel()
+
+	// Test the existing constructor that takes Result struct
+	id := NewRequestId(1)
+	result := Result{Meta: &Meta{}}
+
+	got := NewJSONRPCResponse(id, result)
+	want := JSONRPCResponse{
+		JSONRPC: JSONRPC_VERSION,
+		ID:      id,
+		Result:  result,
+	}
+
+	require.Equal(t, want, got)
+}

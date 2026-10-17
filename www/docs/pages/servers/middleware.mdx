@@ -1,0 +1,194 @@
+# Middleware
+
+Middleware lets you wrap tool handlers with cross-cutting logic such as logging, authentication, and rate limiting. Middlewares execute in registration order (first registered runs first) and form a chain around the underlying tool handler.
+
+## Overview
+
+A `ToolHandlerMiddleware` is a function that takes a `ToolHandlerFunc` and returns a new `ToolHandlerFunc`. This pattern is identical to HTTP middleware in Go's standard library.
+
+```go
+type ToolHandlerFunc func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+
+type ToolHandlerMiddleware func(ToolHandlerFunc) ToolHandlerFunc
+```
+
+## Registering Middleware
+
+### Using `Use()` (Runtime)
+
+The `Use()` method registers one or more tool handler middlewares on a running server. Middlewares can be added at any time — `Use()` is concurrency-safe.
+
+```go
+s := server.NewMCPServer("my-server", "1.0.0")
+
+// Register a single middleware
+s.Use(loggingMiddleware)
+
+// Register multiple middlewares at once
+s.Use(authMiddleware, rateLimitMiddleware)
+```
+
+Middlewares registered via `Use()` execute in the order they were added. In the example above, a tool call passes through `loggingMiddleware` → `authMiddleware` → `rateLimitMiddleware` → tool handler.
+
+### Using Server Options (Construction Time)
+
+You can also register middleware when constructing the server:
+
+```go
+s := server.NewMCPServer("my-server", "1.0.0",
+    server.WithToolHandlerMiddleware(loggingMiddleware),
+    server.WithResourceHandlerMiddleware(resourceLogger),
+    server.WithPromptHandlerMiddleware(promptLogger),
+)
+```
+
+`WithToolHandlerMiddleware`, `WithResourceHandlerMiddleware`, and `WithPromptHandlerMiddleware` register middleware for their respective handler types at construction time.
+
+## Writing Middleware
+
+### Simple Middleware
+
+A basic middleware that logs every tool call:
+
+```go
+import (
+    "context"
+    "log"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func loggingMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
+    return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        log.Printf("tool call: %s", req.Params.Name)
+        return next(ctx, req)
+    }
+}
+
+s := server.NewMCPServer("my-server", "1.0.0")
+s.Use(loggingMiddleware)
+```
+
+### Timing Middleware
+
+Measure how long each tool call takes:
+
+```go
+func timingMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
+    return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        start := time.Now()
+        result, err := next(ctx, req)
+        log.Printf("tool=%s duration=%v", req.Params.Name, time.Since(start))
+        return result, err
+    }
+}
+```
+
+### Authentication Middleware
+
+Reject unauthenticated requests before they reach the tool handler. You need to provide your own `extractToken`, `validateToken`, and `userKey` implementations:
+
+```go
+// userKey is a custom context key for storing the authenticated user.
+type contextKey string
+const userKey contextKey = "user"
+
+func authMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
+    return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        token := extractToken(ctx) // your token extraction logic
+        if token == "" {
+            return nil, fmt.Errorf("authentication required")
+        }
+
+        user, err := validateToken(token) // your token validation logic
+        if err != nil {
+            return nil, fmt.Errorf("invalid token: %w", err)
+        }
+
+        ctx = context.WithValue(ctx, userKey, user)
+        return next(ctx, req)
+    }
+}
+```
+
+### Rate-Limiting Middleware
+
+Limit the number of tool calls per session. This example uses [`golang.org/x/time/rate`](https://pkg.go.dev/golang.org/x/time/rate) and `server.GetSessionID()` to identify the caller:
+
+```go
+type rateLimiter struct {
+    limiters sync.Map
+    rate     rate.Limit
+    burst    int
+}
+
+func newRateLimiter(rps float64, burst int) *rateLimiter {
+    return &rateLimiter{rate: rate.Limit(rps), burst: burst}
+}
+
+func (r *rateLimiter) middleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
+    return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        sessionID := server.GetSessionID(ctx)
+        limiter, _ := r.limiters.LoadOrStore(sessionID, rate.NewLimiter(r.rate, r.burst))
+        if !limiter.(*rate.Limiter).Allow() {
+            return nil, fmt.Errorf("rate limit exceeded")
+        }
+        return next(ctx, req)
+    }
+}
+
+// Usage
+rl := newRateLimiter(10, 20)
+s.Use(rl.middleware)
+```
+
+## Execution Order
+
+Middlewares execute in registration order — the first middleware registered is the outermost wrapper and runs first:
+
+```go
+s.Use(A, B)
+s.Use(C)
+
+// Call order: A → B → C → tool handler → C → B → A
+```
+
+This matches the convention used by `net/http` middleware in Go.
+
+## Task-Augmented Tools
+
+Middleware registered via `Use()` also applies to regular tools executed via the task path (when a tool has `TaskSupportOptional` or `TaskSupportPreferred` and the client requests task execution). The same middleware chain wraps the regular tool handler automatically.
+
+**Note:** Native task tools (those registered with a `TaskToolHandlerFunc`) do not have `Use()` middleware applied. If you need cross-cutting logic for native task tools, implement it directly in your task handler.
+
+```go
+tool := mcp.NewTool("long-running",
+    mcp.WithDescription("A tool that supports task mode"),
+    mcp.WithTaskSupport(mcp.TaskSupportOptional),
+)
+s.AddTool(tool, handler)
+
+// This middleware applies to regular calls and when this regular tool is executed via the task path
+s.Use(loggingMiddleware)
+```
+
+## Built-in Middleware
+
+MCP-Go includes built-in recovery middleware that catches panics in tool handlers and returns an error response instead of crashing the server:
+
+```go
+s := server.NewMCPServer("my-server", "1.0.0",
+    server.WithRecovery(),
+)
+```
+
+## Concurrency Safety
+
+`Use()` is safe to call from multiple goroutines concurrently. Internally, it uses a read-write mutex to protect the middleware slice. This means you can dynamically add middleware at runtime without stopping the server.
+
+## Next Steps
+
+- **[Tools](/servers/tools)** — Define tools that middleware wraps
+- **[Task-Augmented Tools](/servers/tasks)** — Long-running tools with task support
+- **[Advanced Features](/servers/advanced)** — Hooks, session management, and more

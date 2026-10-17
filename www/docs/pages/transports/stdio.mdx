@@ -1,0 +1,726 @@
+# STDIO Transport
+
+STDIO (Standard Input/Output) transport is the most common MCP transport method, perfect for command-line tools, desktop applications, and local integrations.
+
+## Use Cases
+
+STDIO transport excels in scenarios where:
+
+- **Command-line tools**: CLI utilities that LLMs can invoke
+- **Desktop applications**: IDE plugins, text editors, local tools
+- **Subprocess communication**: Parent processes managing MCP servers
+- **Local development**: Testing and debugging MCP implementations
+- **Single-user scenarios**: Personal productivity tools
+
+**Example applications:**
+- File system browsers for IDEs
+- Local database query tools
+- Git repository analyzers
+- System monitoring utilities
+- Development workflow automation
+
+## Implementation
+
+### Basic STDIO Server
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "os"
+    "path/filepath"
+    "strings"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func main() {
+    s := server.NewMCPServer("File Tools", "1.0.0",
+        server.WithToolCapabilities(true),
+        server.WithResourceCapabilities(true, true),
+    )
+
+    // Add file listing tool
+    s.AddTool(
+        mcp.NewTool("list_files",
+            mcp.WithDescription("List files in a directory"),
+            mcp.WithString("path", 
+                mcp.Required(),
+                mcp.Description("Directory path to list"),
+            ),
+            mcp.WithBoolean("recursive",
+                mcp.DefaultBool(false),
+                mcp.Description("List files recursively"),
+            ),
+        ),
+        handleListFiles,
+    )
+
+    // Add file content resource
+    s.AddResource(
+        mcp.NewResource(
+            "file://{path}",
+            "File Content",
+            mcp.WithResourceDescription("Read file contents"),
+            mcp.WithMIMEType("text/plain"),
+        ),
+        handleFileContent,
+    )
+
+    // Start STDIO server
+    if err := server.ServeStdio(s); err != nil {
+        fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
+        os.Exit(1)
+    }
+}
+
+func handleListFiles(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    path, err := req.RequireString("path")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    recursive, err := req.RequireBool("recursive")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+
+    // Security: validate path
+    if !isValidPath(path) {
+        return mcp.NewToolResultError(fmt.Sprintf("invalid path: %s", path)), nil
+    }
+
+    files, err := listFiles(path, recursive)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to list files: %v", err)), nil
+    }
+
+    return mcp.NewToolResultText(fmt.Sprintf(`{"path":"%s","files":%v,"count":%d,"recursive":%t}`, 
+        path, files, len(files), recursive)), nil
+}
+
+func handleFileContent(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+    // Extract path from URI: "file:///path/to/file" -> "/path/to/file"
+    path := extractPathFromURI(req.Params.URI)
+    
+    if !isValidPath(path) {
+        return nil, fmt.Errorf("invalid path: %s", path)
+    }
+
+    content, err := os.ReadFile(path)
+    if err != nil {
+        return nil, fmt.Errorf("failed to read file: %w", err)
+    }
+
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: detectMIMEType(path),
+            Text:     string(content),
+        },
+    }, nil
+}
+
+func isValidPath(path string) bool {
+    // Clean the path to resolve any . or .. components
+    clean := filepath.Clean(path)
+    
+    // Check for directory traversal patterns
+    if strings.Contains(clean, "..") {
+        return false
+    }
+    
+    // For absolute paths, ensure they're within a safe base directory
+    if filepath.IsAbs(clean) {
+        // Define safe base directories (adjust as needed for your use case)
+        safeBaseDirs := []string{
+            "/tmp",
+            "/var/tmp", 
+            "/home",
+            "/Users", // macOS
+        }
+        
+        // Check if the path starts with any safe base directory
+        for _, baseDir := range safeBaseDirs {
+            if strings.HasPrefix(clean, baseDir) {
+                return true
+            }
+        }
+        return false
+    }
+    
+    // For relative paths, ensure they don't escape the current directory
+    return !strings.HasPrefix(clean, "..")
+}
+
+// Helper functions for the examples
+func listFiles(path string, recursive bool) ([]string, error) {
+    // Placeholder implementation
+    return []string{"file1.txt", "file2.txt"}, nil
+}
+
+func extractPathFromURI(uri string) string {
+    // Extract path from URI: "file:///path/to/file" -> "/path/to/file"
+    if strings.HasPrefix(uri, "file://") {
+        return strings.TrimPrefix(uri, "file://")
+    }
+    return uri
+}
+
+func detectMIMEType(path string) string {
+    // Simple MIME type detection based on extension
+    ext := filepath.Ext(path)
+    switch ext {
+    case ".txt":
+        return "text/plain"
+    case ".json":
+        return "application/json"
+    case ".html":
+        return "text/html"
+    default:
+        return "application/octet-stream"
+    }
+}
+```
+
+### Advanced STDIO Server
+
+```go
+package main
+import (
+    "context"
+    "fmt"
+    "log"
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func main() {
+    s := server.NewMCPServer("Advanced CLI Tool", "1.0.0",
+        server.WithResourceCapabilities(true, true),
+        server.WithPromptCapabilities(true),
+        server.WithToolCapabilities(true),
+        server.WithLogging(),
+    )
+
+    // Add comprehensive tools
+    addSystemTools(s)
+    addFileTools(s)
+    addGitTools(s)
+    addDatabaseTools(s)
+
+    // Handle graceful shutdown
+    setupGracefulShutdown(s)
+
+    // Start with error handling
+    if err := server.ServeStdio(s); err != nil {
+        logError(fmt.Sprintf("Server error: %v", err))
+        os.Exit(1)
+    }
+}
+
+// Helper functions for the advanced example
+func logToFile(message string) {
+    // Placeholder implementation
+    log.Println(message)
+}
+
+func logError(message string) {
+    // Placeholder implementation
+    log.Printf("ERROR: %s", message)
+}
+
+func addSystemTools(s *server.MCPServer) {
+    // Placeholder implementation
+}
+
+func addFileTools(s *server.MCPServer) {
+    // Placeholder implementation
+}
+
+func addGitTools(s *server.MCPServer) {
+    // Placeholder implementation
+}
+
+func addDatabaseTools(s *server.MCPServer) {
+    // Placeholder implementation
+}
+
+func setupGracefulShutdown(s *server.MCPServer) {
+    c := make(chan os.Signal, 1)
+    signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+    
+    go func() {
+        <-c
+        logToFile("Received shutdown signal")
+        
+        ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+        defer cancel()
+        
+        if err := s.Shutdown(ctx); err != nil {
+            logError(fmt.Sprintf("Shutdown error: %v", err))
+        }
+        
+        os.Exit(0)
+    }()
+}
+```
+
+## Client Integration
+
+### How LLM Applications Connect
+
+LLM applications typically connect to STDIO MCP servers by:
+
+1. **Spawning the process**: Starting your server as a subprocess
+2. **Pipe communication**: Using stdin/stdout for JSON-RPC messages
+3. **Lifecycle management**: Handling process startup, shutdown, and errors
+
+### Claude Desktop Integration
+
+Configure your STDIO server in Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "file-tools": {
+      "command": "go",
+      "args": ["run", "/path/to/your/server/main.go"],
+      "env": {
+        "LOG_LEVEL": "info"
+      }
+    }
+  }
+}
+```
+
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+### Custom Client Integration
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "time"
+
+
+    "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/mcp"
+)
+
+func main() {
+    // Create STDIO client
+    c, err := client.NewStdioClient(
+        "go", nil /* inherit env */, "run", "/path/to/server/main.go",
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer c.Close()
+
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+
+    // Initialize connection
+    _, err = c.Initialize(ctx, mcp.InitializeRequest{
+        Params: mcp.InitializeRequestParams{
+            ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+            ClientInfo: mcp.Implementation{
+                Name:    "test-client",
+                Version: "1.0.0",
+            },
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // List available tools
+    tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    log.Printf("Available tools: %d", len(tools.Tools))
+    for _, tool := range tools.Tools {
+        log.Printf("- %s: %s", tool.Name, tool.Description)
+    }
+
+    // Call a tool
+    result, err := c.CallTool(ctx, mcp.CallToolRequest{
+        Params: mcp.CallToolParams{
+            Name: "list_files",
+            Arguments: map[string]interface{}{
+                "path":      ".",
+                "recursive": false,
+            },
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    log.Printf("Tool result: %+v", result)
+}
+```
+
+#### Customizing Subprocess Execution
+
+If you need more control over how a sub-process is spawned when creating a new STDIO client, you can use
+`NewStdioMCPClientWithOptions` instead of `NewStdioMCPClient`.
+
+By passing the `WithCommandFunc` option, you can supply a custom factory function to create the `exec.Cmd` that launches
+the server. This allows configuration of environment variables, working directories, and system-level process attributes.
+
+Referring to the previous example, we can replace the line that creates the client:
+
+```go
+c, err := client.NewStdioClient(
+    "go", nil, "run", "/path/to/server/main.go",
+)
+```
+
+With the options-aware version:
+
+```go
+c, err := client.NewStdioMCPClientWithOptions(
+	"go",
+	nil,
+	[]string {"run", "/path/to/server/main.go"},
+	transport.WithCommandFunc(func(ctx context.Context, command string, args []string, env []string) (*exec.Cmd, error) {
+        cmd := exec.CommandContext(ctx, command, args...)
+        cmd.Env = env // Explicit environment for the subprocess.
+        cmd.Dir = "/var/sandbox/mcp-server" // Working directory (not isolated unless paired with chroot or namespace).
+
+        // Apply low-level process isolation and privilege dropping.
+        cmd.SysProcAttr = &syscall.SysProcAttr{
+            // Drop to non-root user (e.g., user/group ID 1001)
+            Credential: &syscall.Credential{
+                Uid: 1001,
+                Gid: 1001,
+            },
+            // File system isolation: only works if running as root.
+            Chroot: "/var/sandbox/mcp-server",
+
+            // Linux namespace isolation (Linux only):
+            // Prevents access to other processes, mounts, IPC, networks, etc.
+            Cloneflags: syscall.CLONE_NEWIPC | // Isolate inter-process comms
+                syscall.CLONE_NEWNS  | // Isolate filesystem mounts
+                syscall.CLONE_NEWPID | // Isolate PID namespace (child sees itself as PID 1)
+                syscall.CLONE_NEWUTS | // Isolate hostname
+                syscall.CLONE_NEWNET,  // Isolate networking (optional)
+        }
+
+		return cmd, nil
+	}),
+)
+```
+
+## Debugging
+
+### Command Line Testing
+
+Test your STDIO server directly from the command line:
+
+```bash
+# Start your server
+go run main.go
+
+# Send initialization request
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"clientInfo":{"name":"test","version":"1.0.0"}}}' | go run main.go
+
+# List tools
+echo '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | go run main.go
+
+# Call a tool
+echo '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_files","arguments":{"path":".","recursive":false}}}' | go run main.go
+```
+
+### Interactive Testing Script
+
+```bash
+#!/bin/bash
+
+# interactive_test.sh
+SERVER_CMD="go run main.go"
+
+echo "Starting MCP STDIO server test..."
+
+# Function to send JSON-RPC request
+send_request() {
+    local request="$1"
+    echo "Sending: $request"
+    echo "$request" | $SERVER_CMD
+    echo "---"
+}
+
+# Initialize
+send_request '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"clientInfo":{"name":"test","version":"1.0.0"}}}'
+
+# List tools
+send_request '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+
+# List resources
+send_request '{"jsonrpc":"2.0","id":3,"method":"resources/list","params":{}}'
+
+# Call tool
+send_request '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_files","arguments":{"path":".","recursive":false}}}'
+
+echo "Test completed."
+```
+
+### Debug Logging
+
+Add debug logging to your STDIO server:
+
+```go
+func main() {
+    // Setup debug logging
+    logFile, err := os.OpenFile("mcp-server.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer logFile.Close()
+
+    logger := log.New(logFile, "[MCP] ", log.LstdFlags|log.Lshortfile)
+
+    s := server.NewMCPServer("Debug Server", "1.0.0",
+        server.WithToolCapabilities(true),
+        server.WithLogging(),
+    )
+
+    // Add tools with debug logging
+    s.AddTool(
+        mcp.NewTool("debug_echo",
+            mcp.WithDescription("Echo with debug logging"),
+            mcp.WithString("message", mcp.Required()),
+        ),
+        func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            message := req.GetString("message", "")
+            logger.Printf("Echo tool called with message: %s", message)
+            return mcp.NewToolResultText(fmt.Sprintf("Echo: %s", message)), nil
+        },
+    )
+
+    logger.Println("Starting STDIO server...")
+    if err := server.ServeStdio(s); err != nil {
+        logger.Printf("Server error: %v", err)
+    }
+}
+```
+
+### MCP Inspector Integration
+
+Use the MCP Inspector for visual debugging:
+
+```bash
+# Install MCP Inspector
+npm install -g @modelcontextprotocol/inspector
+
+# Run your server with inspector
+mcp-inspector go run main.go
+```
+
+This opens a web interface where you can:
+- View available tools and resources
+- Test tool calls interactively
+- Inspect request/response messages
+- Debug protocol issues
+
+## Error Handling
+
+### Robust Error Handling
+
+```go
+func handleToolWithErrors(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Validate required parameters
+    path, err := req.RequireString("path")
+    if err != nil {
+        return nil, fmt.Errorf("path parameter is required and must be a string")
+    }
+
+    // Validate path security
+    if !isValidPath(path) {
+        return nil, fmt.Errorf("invalid or unsafe path: %s", path)
+    }
+
+    // Check if path exists
+    if _, err := os.Stat(path); os.IsNotExist(err) {
+        return nil, fmt.Errorf("path does not exist: %s", path)
+    }
+
+    // Handle context cancellation
+    select {
+    case <-ctx.Done():
+        return nil, ctx.Err()
+    default:
+    }
+
+    // Perform operation with timeout
+    ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+    defer cancel()
+
+    result, err := performOperation(ctx, path)
+    if err != nil {
+        // Log error for debugging
+        logError(fmt.Sprintf("Operation failed for path %s: %v", path, err))
+        
+        // Return user-friendly error
+        if errors.Is(err, context.DeadlineExceeded) {
+            return nil, fmt.Errorf("operation timed out")
+        }
+        
+        return nil, fmt.Errorf("operation failed: %w", err)
+    }
+
+    return mcp.NewToolResultText(fmt.Sprintf("%v", result)), nil
+}
+```
+
+### Process Management
+
+```go
+func main() {
+    // Handle panics gracefully
+    defer func() {
+        if r := recover(); r != nil {
+            logError(fmt.Sprintf("Server panic: %v", r))
+            os.Exit(1)
+        }
+    }()
+
+    s := server.NewMCPServer("Robust Server", "1.0.0",
+        server.WithRecovery(), // Built-in panic recovery
+    )
+
+    // Setup signal handling
+    setupSignalHandling()
+
+    // Start server with retry logic
+    for attempts := 0; attempts < 3; attempts++ {
+        if err := server.ServeStdio(s); err != nil {
+            logError(fmt.Sprintf("Server attempt %d failed: %v", attempts+1, err))
+            if attempts == 2 {
+                os.Exit(1)
+            }
+            time.Sleep(time.Second * time.Duration(attempts+1))
+        } else {
+            break
+        }
+    }
+}
+
+func setupSignalHandling() {
+    c := make(chan os.Signal, 1)
+    signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+    
+    go func() {
+        sig := <-c
+        logToFile(fmt.Sprintf("Received signal: %v", sig))
+        os.Exit(0)
+    }()
+}
+```
+
+## Performance Optimization
+
+### Efficient Resource Usage
+
+```go
+// Use connection pooling for database tools
+var dbPool *sql.DB
+
+func init() {
+    var err error
+    dbPool, err = sql.Open("sqlite3", "data.db")
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    dbPool.SetMaxOpenConns(10)
+    dbPool.SetMaxIdleConns(5)
+    dbPool.SetConnMaxLifetime(time.Hour)
+}
+
+// Cache frequently accessed data
+var fileCache = make(map[string]cacheEntry)
+var cacheMutex sync.RWMutex
+
+type cacheEntry struct {
+    content   string
+    timestamp time.Time
+}
+
+func getCachedFile(path string) (string, bool) {
+    cacheMutex.RLock()
+    defer cacheMutex.RUnlock()
+    
+    entry, exists := fileCache[path]
+    if !exists || time.Since(entry.timestamp) > 5*time.Minute {
+        return "", false
+    }
+    
+    return entry.content, true
+}
+```
+
+### Memory Management
+
+```go
+func handleLargeFile(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    path := req.GetString("path", "")
+    
+    // Stream large files instead of loading into memory
+    file, err := os.Open(path)
+    if err != nil {
+        return nil, err
+    }
+    defer file.Close()
+
+    // Process in chunks
+    const chunkSize = 64 * 1024
+    buffer := make([]byte, chunkSize)
+    
+    var result strings.Builder
+    for {
+        n, err := file.Read(buffer)
+        if err == io.EOF {
+            break
+        }
+        if err != nil {
+            return nil, err
+        }
+        
+        // Process chunk
+        processed := processChunk(buffer[:n])
+        result.WriteString(processed)
+        
+        // Check for cancellation
+        select {
+        case <-ctx.Done():
+            return nil, ctx.Err()
+        default:
+        }
+    }
+
+    return mcp.NewToolResultText(result.String()), nil
+}
+```
+
+## Next Steps
+
+- **[SSE Transport](/transports/sse)** - Learn about real-time web communication
+- **[HTTP Transport](/transports/http)** - Explore traditional web service patterns
+- **[In-Process Transport](/transports/inprocess)** - Understand embedded scenarios

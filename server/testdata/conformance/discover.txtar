@@ -1,0 +1,57 @@
+Protocol version 2026-07-28 (SEP-2575) replaces the initialize handshake with
+per-request metadata. The client declares its protocol version, identity, and
+capabilities in the _meta of a server/discover request; the server answers with
+the versions it supports, its capabilities, its identity in
+_meta."io.modelcontextprotocol/serverInfo", and the caching hints required of
+every discover result.
+
+-- client --
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "server/discover",
+  "params": {
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientInfo": { "name": "ExampleClient", "version": "1.0.0" },
+      "io.modelcontextprotocol/clientCapabilities": {}
+    }
+  }
+}
+-- server --
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"_meta": {
+			"io.modelcontextprotocol/serverInfo": {
+				"name": "testServer",
+				"version": "v1.0.0"
+			}
+		},
+		"cacheScope": "private",
+		"capabilities": {
+			"elicitation": {},
+			"prompts": {
+				"listChanged": true
+			},
+			"resources": {
+				"listChanged": true,
+				"subscribe": true
+			},
+			"tools": {
+				"listChanged": true
+			}
+		},
+		"instructions": "a server for conformance testing",
+		"resultType": "complete",
+		"supportedVersions": [
+			"2026-07-28",
+			"2025-11-25",
+			"2025-06-18",
+			"2025-03-26",
+			"2024-11-05"
+		],
+		"ttlMs": 0
+	}
+}

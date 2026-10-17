@@ -1,0 +1,300 @@
+# Quick Start
+
+Get up and running with MCP-Go in minutes. This guide walks you through creating your first MCP server and client.
+
+## Hello World Server
+
+Let's start with the simplest possible MCP server - a "hello world" tool:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func main() {
+    // Create a new MCP server
+    s := server.NewMCPServer(
+        "Hello World Server",
+        "1.0.0",
+        server.WithToolCapabilities(true),
+    )
+
+    // Define a simple tool
+    tool := mcp.NewTool("hello_world",
+        mcp.WithDescription("Say hello to someone"),
+        mcp.WithString("name",
+            mcp.Required(),
+            mcp.Description("Name of the person to greet"),
+        ),
+    )
+
+    // Add tool handler
+    s.AddTool(tool, helloHandler)
+
+    // Start the stdio server
+    if err := server.ServeStdio(s); err != nil {
+        fmt.Printf("Server error: %v\n", err)
+    }
+}
+
+func helloHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    arguments := request.GetArguments()
+    name, ok := arguments["name"].(string)
+    if !ok {
+        return &mcp.CallToolResult{
+            Content: []mcp.Content{
+                mcp.TextContent{
+                    Type: "text",
+                    Text: "Error: name parameter is required and must be a string",
+                },
+            },
+            IsError: true,
+        }, nil
+    }
+
+    return &mcp.CallToolResult{
+        Content: []mcp.Content{
+            mcp.TextContent{
+                Type: "text",
+                Text: fmt.Sprintf("Hello, %s! 👋", name),
+            },
+        },
+    }, nil
+}
+```
+
+Save this as `hello-server/main.go` and run:
+
+```bash
+cd hello-server
+go mod init hello-server
+go get github.com/mark3labs/mcp-go
+go run main.go
+```
+
+## Running Your First Server
+
+### Testing with Claude Desktop
+
+1. **Install Claude Desktop** from [Anthropic's website](https://claude.ai/download)
+
+2. **Configure your server** by editing Claude's config file:
+
+   **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+   **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+   ```json
+   {
+     "mcpServers": {
+       "hello-world": {
+         "command": "go",
+         "args": ["run", "/path/to/your/hello-server/main.go"]
+       }
+     }
+   }
+   ```
+
+3. **Restart Claude Desktop** and look for the 🔌 icon indicating MCP connection
+
+4. **Test your tool** by asking Claude: "Use the hello_world tool to greet Alice"
+
+### Testing with MCP Inspector
+
+For debugging and development, use the MCP Inspector:
+
+```bash
+# Install the MCP Inspector
+npm install -g @modelcontextprotocol/inspector
+
+# Run your server with the inspector
+mcp-inspector go run main.go
+```
+
+This opens a web interface where you can test your tools interactively.
+
+## Basic Client Example
+
+You can also create MCP clients to connect to other servers:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "time"
+
+    "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/client/transport"
+    "github.com/mark3labs/mcp-go/mcp"
+)
+
+func main() {
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+
+    // Create stdio transport
+    stdioTransport := transport.NewStdio("go", nil, "run", "path/to/server/main.go")
+
+    // Create client with the transport
+    c := client.NewClient(stdioTransport)
+
+    // Start the client
+    if err := c.Start(ctx); err != nil {
+        log.Fatalf("Failed to start client: %v", err)
+    }
+    defer c.Close()
+
+    // Initialize the client
+    initRequest := mcp.InitializeRequest{}
+    initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+    initRequest.Params.ClientInfo = mcp.Implementation{
+        Name:    "Hello World Client",
+        Version: "1.0.0",
+    }
+    initRequest.Params.Capabilities = mcp.ClientCapabilities{}
+
+    serverInfo, err := c.Initialize(ctx, initRequest)
+    if err != nil {
+        log.Fatalf("Failed to initialize: %v", err)
+    }
+
+    fmt.Printf("Connected to server: %s (version %s)\n",
+        serverInfo.ServerInfo.Name,
+        serverInfo.ServerInfo.Version)
+
+    // List available tools
+    if serverInfo.Capabilities.Tools != nil {
+        toolsRequest := mcp.ListToolsRequest{}
+        toolsResult, err := c.ListTools(ctx, toolsRequest)
+        if err != nil {
+            log.Fatalf("Failed to list tools: %v", err)
+        }
+
+        fmt.Printf("Available tools: %d\n", len(toolsResult.Tools))
+        for _, tool := range toolsResult.Tools {
+            fmt.Printf("- %s: %s\n", tool.Name, tool.Description)
+        }
+
+        // Call a tool
+        callRequest := mcp.CallToolRequest{}
+        callRequest.Params.Name = "hello_world"
+        callRequest.Params.Arguments = map[string]interface{}{
+            "name": "World",
+        }
+
+        result, err := c.CallTool(ctx, callRequest)
+        if err != nil {
+            log.Fatalf("Failed to call tool: %v", err)
+        }
+
+        // Print the result
+        for _, content := range result.Content {
+            if textContent, ok := content.(mcp.TextContent); ok {
+                fmt.Printf("Result: %s\n", textContent.Text)
+            }
+        }
+    }
+}
+```
+
+### StreamableHTTP Client Example
+
+For StreamableHTTP-based servers, use the StreamableHTTP client:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "time"
+
+    "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/client/transport"
+    "github.com/mark3labs/mcp-go/mcp"
+)
+
+func main() {
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+
+    // Create HTTP transport
+    httpTransport, err := transport.NewStreamableHTTP("http://localhost:8080/mcp")
+    if err != nil {
+        log.Fatalf("Failed to create HTTP transport: %v", err)
+    }
+
+    // Create client with the transport
+    c := client.NewClient(httpTransport)
+    defer c.Close()
+
+    // Initialize the client
+    initRequest := mcp.InitializeRequest{}
+    initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+    initRequest.Params.ClientInfo = mcp.Implementation{
+        Name:    "StreamableHTTP Client",
+        Version: "1.0.0",
+    }
+    initRequest.Params.Capabilities = mcp.ClientCapabilities{}
+
+    serverInfo, err := c.Initialize(ctx, initRequest)
+    if err != nil {
+        log.Fatalf("Failed to initialize: %v", err)
+    }
+
+    fmt.Printf("Connected to server: %s (version %s)\n",
+        serverInfo.ServerInfo.Name,
+        serverInfo.ServerInfo.Version)
+
+    // Call a tool
+    if serverInfo.Capabilities.Tools != nil {
+        callRequest := mcp.CallToolRequest{}
+        callRequest.Params.Name = "hello_world"
+        callRequest.Params.Arguments = map[string]interface{}{
+            "name": "StreamableHTTP World",
+        }
+
+        result, err := c.CallTool(ctx, callRequest)
+        if err != nil {
+            log.Fatalf("Failed to call tool: %v", err)
+        }
+
+        fmt.Printf("Tool result: %+v\n", result)
+    }
+}
+```
+
+## What's Next?
+
+Now that you have a working MCP server and client:
+
+- **Learn about [Tools](/servers/tools)** - Create powerful tool interfaces
+- **Add [Resources](/servers/resources)** - Expose data sources to LLMs
+- **Create [Prompts](/servers/prompts)** - Build reusable prompt templates
+- **Explore [Advanced Features](/servers/advanced)** - Production-ready features
+
+## Common Issues
+
+### Server Won't Start
+- Check that the port isn't already in use
+- Verify Go module dependencies are installed
+- Ensure proper file permissions
+
+### Client Connection Failed
+- Verify the server is running and accessible
+- Check network connectivity for StreamableHTTP clients
+- Validate stdio command paths for stdio clients
+
+### Tool Calls Failing
+- Verify tool parameter types match the schema
+- Check error handling in your tool functions
+- Use the MCP Inspector for debugging

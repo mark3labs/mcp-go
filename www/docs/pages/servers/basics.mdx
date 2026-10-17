@@ -1,0 +1,374 @@
+# Server Basics
+
+Learn how to create, configure, and start MCP servers with different transport options.
+
+## Creating a Server
+
+The foundation of any MCP server is the `NewMCPServer()` function. This creates a server instance with basic metadata and optional configuration.
+
+### Basic Server Creation
+
+```go
+package main
+
+import (
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func main() {
+    // Create a basic server
+    s := server.NewMCPServer(
+        "My MCP Server",  // Server name
+        "1.0.0",          // Server version
+    )
+    
+    // Start the server (stdio transport)
+    server.ServeStdio(s)
+}
+```
+
+### Server with Options
+
+Use server options to configure capabilities and behavior:
+
+```go
+s := server.NewMCPServer(
+    "Advanced Server",
+    "2.0.0",
+    server.WithToolCapabilities(true),      // Enable tools
+    server.WithResourceCapabilities(true, true),  // Enable resources
+    server.WithPromptCapabilities(true),    // Enable prompts
+    server.WithRecovery(),                  // Add panic recovery
+    server.WithHooks(myHooks),              // Add lifecycle hooks
+    server.WithIcons(                       // Add server icons
+        mcp.Icon{
+            Src:      "https://example.com/server-icon.png",
+            MIMEType: "image/png",
+            Sizes:    []string{"48x48"},
+        },
+    ),
+)
+```
+
+## Server Configuration
+
+### Capabilities
+
+Capabilities tell clients what features your server supports:
+
+```go
+// Enable specific capabilities
+s := server.NewMCPServer(
+    "Specialized Server",
+    "1.0.0",
+    server.WithToolCapabilities(true),      // Can execute tools
+    server.WithResourceCapabilities(true, true),  // Can provide resources
+    server.WithPromptCapabilities(true),    // Can provide prompts
+)
+
+// Or enable all capabilities
+s := server.NewMCPServer(
+    "Full-Featured Server", 
+    "1.0.0",
+    server.WithToolCapabilities(true),
+    server.WithResourceCapabilities(true, true),
+    server.WithPromptCapabilities(true),
+)
+```
+
+**Capability types:**
+- **Tools**: Server can execute function calls from LLMs
+- **Resources**: Server can provide data/content to LLMs  
+- **Prompts**: Server can provide prompt templates
+- **Tasks**: Server supports asynchronous task-augmented tool execution (see [Task-Augmented Tools](/servers/tasks))
+- **Completions**: Server provides argument auto-completion (see [Completions](/servers/completions))
+- **Elicitation**: Server can request additional user input (see [Elicitation](/servers/elicitation))
+- **Roots**: Server can request root directory information from clients
+
+### Recovery Middleware
+
+Add automatic panic recovery to prevent server crashes:
+
+```go
+s := server.NewMCPServer(
+    "Robust Server",
+    "1.0.0", 
+    server.WithRecovery(), // Automatically recover from panics
+)
+```
+
+This catches panics in handlers and returns proper error responses instead of crashing.
+
+### Custom Metadata
+
+Add additional server information:
+
+```go
+s := server.NewMCPServer(
+    "My Server",
+    "1.0.0",
+    server.WithInstructions("A server that does amazing things"),
+)
+```
+
+### Implementation Metadata
+
+The server's `Implementation` struct supports additional optional fields for richer metadata sent during initialization:
+
+```go
+// These fields are set automatically from NewMCPServer args:
+//   Name    string — server name
+//   Version string — server version
+//
+// Additional optional fields on mcp.Implementation:
+//   Title       string — human-readable display title
+//   Description string — brief description of the server
+//   WebsiteURL  string — URL for the server's website or docs
+//   Icons       []Icon — visual identifiers for the implementation
+```
+
+You can set these via server options:
+
+```go
+s := server.NewMCPServer(
+    "My Server",
+    "1.0.0",
+    server.WithTitle("My Server"),                                    // Human-readable display title
+    server.WithDescription("A server that does amazing things"),     // Brief description
+    server.WithWebsiteURL("https://example.com"),                    // Website or docs URL
+    server.WithIcons(                                                // Visual identifiers
+        mcp.Icon{
+            Src:      "https://example.com/icon.png",
+            MIMEType: "image/png",
+            Sizes:    []string{"48x48"},
+        },
+    ),
+)
+```
+
+### Extensions vs Experimental Capabilities
+
+Servers can advertise two kinds of non-standard capabilities:
+
+- **Extensions** (`ServerCapabilities.Extensions`) — standardized extension points for advertising well-known extension support
+- **Experimental** (`ServerCapabilities.Experimental`) — non-standard, experimental capabilities
+
+```go
+s := server.NewMCPServer("My Server", "1.0.0",
+    // Set experimental capabilities
+    server.WithExperimental(map[string]any{
+        "claude/channel": map[string]any{
+            "supported": true,
+        },
+    }),
+)
+```
+
+Both fields are `map[string]any` and are included in the server's capabilities during initialization. The same `Extensions` field is available on `ClientCapabilities` for clients to advertise extension support.
+
+## Starting Servers
+
+MCP-Go supports multiple transport methods for different deployment scenarios.
+
+### Stdio Transport
+
+Standard input/output - most common for local tools:
+
+```go
+func main() {
+    s := server.NewMCPServer("My Server", "1.0.0")
+    
+    // Start stdio server (blocks until terminated)
+    if err := server.ServeStdio(s); err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+**Best for:**
+- Local development tools
+- CLI integrations  
+- Desktop applications
+- Single-client scenarios
+
+### HTTP Transport
+
+Traditional HTTP request/response:
+
+```go
+func main() {
+    s := server.NewMCPServer("HTTP Server", "1.0.0")
+    
+    // Create HTTP server
+    httpServer := server.NewStreamableHTTPServer(s)
+    
+    // Start HTTP server on port 8080
+    if err := httpServer.Start(":8080"); err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+**Best for:**
+- Web services
+- Load-balanced deployments
+- REST-like APIs
+- Caching scenarios
+
+### Server-Sent Events (SSE)
+
+HTTP-based streaming for real-time updates:
+
+```go
+func main() {
+    s := server.NewMCPServer("SSE Server", "1.0.0")
+    
+    // Create SSE server
+    sseServer := server.NewSSEServer(s)
+    
+    // Start SSE server on port 8080
+    if err := sseServer.Start(":8080"); err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+**Best for:**
+- Web applications
+- Real-time notifications
+- Multiple concurrent clients
+- Browser-based tools
+
+### Custom Transport Options
+
+Configure transport-specific options:
+
+```go
+// HTTP with custom options
+httpServer := server.NewStreamableHTTPServer(s,
+    server.WithEndpointPath("/mcp"),
+    server.WithStateLess(true),
+    server.WithTLSCert("/path/to/cert.pem", "/path/to/key.pem"),
+)
+
+if err := httpServer.Start(":8080"); err != nil {
+    log.Fatal(err)
+}
+
+// SSE with custom options
+sseServer := server.NewSSEServer(s,
+    server.WithSSEEndpoint("/events"),
+    server.WithMessageEndpoint("/message"),
+    server.WithKeepAlive(true),
+)
+
+if err := sseServer.Start(":8080"); err != nil {
+    log.Fatal(err)
+}
+```
+
+## Environment-Based Configuration
+
+Configure servers based on environment variables:
+
+```go
+func main() {
+    s := server.NewMCPServer("Configurable Server", "1.0.0")
+    
+    // Choose transport based on environment
+    transport := os.Getenv("MCP_TRANSPORT")
+    port := os.Getenv("PORT")
+    if port == "" {
+        port = "8080"
+    }
+    
+    switch transport {
+    case "http":
+        httpServer := server.NewStreamableHTTPServer(s)
+        httpServer.Start(":"+port)
+    case "sse":
+        sseServer := server.NewSSEServer(s)
+        sseServer.Start(":"+port)
+    default:
+        server.ServeStdio(s)
+    }
+}
+}
+```
+
+## Server Lifecycle
+
+Understanding the server lifecycle helps with proper resource management:
+
+```go
+func main() {
+    hooks := &server.Hooks{}
+    
+    // Add session lifecycle hooks
+    hooks.AddOnRegisterSession(func(ctx context.Context, session server.ClientSession) {
+        log.Printf("Client %s connected", session.ID())
+    })
+    
+    hooks.AddOnUnregisterSession(func(ctx context.Context, session server.ClientSession) {
+        log.Printf("Client %s disconnected", session.ID())
+    })
+    
+    // Add request hooks
+    hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, message any) {
+        log.Printf("Processing %s request", method)
+    })
+    
+    hooks.AddOnError(func(ctx context.Context, id any, method mcp.MCPMethod, message any, err error) {
+        log.Printf("Error in %s: %v", method, err)
+    })
+    
+    s := server.NewMCPServer("Lifecycle Server", "1.0.0",
+        server.WithHooks(hooks),
+    )
+    
+    // Graceful shutdown
+    c := make(chan os.Signal, 1)
+    signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+    
+    go func() {
+        <-c
+        log.Println("Shutting down server...")
+        s.Shutdown()
+    }()
+    
+    server.ServeStdio(s)
+}
+```
+
+## Error Handling
+
+Proper error handling ensures robust server operation:
+
+```go
+func main() {
+    s := server.NewMCPServer("Error-Safe Server", "1.0.0",
+        server.WithRecovery(), // Panic recovery
+    )
+    
+    // Add error handling for server startup
+    if err := server.ServeStdio(s); err != nil {
+        if errors.Is(err, server.ErrServerClosed) {
+            log.Println("Server closed gracefully")
+        } else {
+            log.Fatalf("Server error: %v", err)
+        }
+    }
+}
+```
+
+## Next Steps
+
+Now that you understand server basics, learn how to add functionality:
+
+- **[Resources](/servers/resources)** - Expose data to LLMs
+- **[Tools](/servers/tools)** - Provide functionality to LLMs  
+- **[Prompts](/servers/prompts)** - Create reusable interaction templates
+- **[Task-Augmented Tools](/servers/tasks)** - Asynchronous long-running tool execution
+- **[Completions](/servers/completions)** - Argument auto-completion
+- **[Elicitation](/servers/elicitation)** - Request additional user input
+- **[Advanced Features](/servers/advanced)** - Hooks, middleware, and more

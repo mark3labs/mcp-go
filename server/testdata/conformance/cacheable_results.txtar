@@ -1,0 +1,127 @@
+List and read results carry the ttlMs and cacheScope hints that protocol
+version 2026-07-28 requires (SEP-2549), alongside resultType and the server
+identity in _meta.
+
+-- client --
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/list",
+  "params": {
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {}
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "prompts/list",
+  "params": {
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {}
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "resources/list",
+  "params": {
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {}
+    }
+  }
+}
+-- server --
+{
+	"id": 1,
+	"jsonrpc": "2.0",
+	"result": {
+		"_meta": {
+			"io.modelcontextprotocol/serverInfo": {
+				"name": "testServer",
+				"version": "v1.0.0"
+			}
+		},
+		"cacheScope": "private",
+		"resultType": "complete",
+		"tools": [
+			{
+				"annotations": {
+					"destructiveHint": true,
+					"idempotentHint": false,
+					"openWorldHint": true,
+					"readOnlyHint": false
+				},
+				"description": "greets after confirming a name",
+				"inputSchema": {
+					"properties": {},
+					"required": [],
+					"type": "object"
+				},
+				"name": "confirmThenGreet"
+			},
+			{
+				"annotations": {
+					"destructiveHint": true,
+					"idempotentHint": false,
+					"openWorldHint": true,
+					"readOnlyHint": false
+				},
+				"description": "greets the caller",
+				"inputSchema": {
+					"properties": {
+						"name": {
+							"description": "who to greet",
+							"type": "string"
+						}
+					},
+					"required": [
+						"name"
+					],
+					"type": "object"
+				},
+				"name": "greet"
+			}
+		],
+		"ttlMs": 0
+	}
+}
+
+{
+	"id": 2,
+	"jsonrpc": "2.0",
+	"result": {
+		"_meta": {
+			"io.modelcontextprotocol/serverInfo": {
+				"name": "testServer",
+				"version": "v1.0.0"
+			}
+		},
+		"cacheScope": "private",
+		"prompts": [],
+		"resultType": "complete",
+		"ttlMs": 0
+	}
+}
+
+{
+	"id": 3,
+	"jsonrpc": "2.0",
+	"result": {
+		"_meta": {
+			"io.modelcontextprotocol/serverInfo": {
+				"name": "testServer",
+				"version": "v1.0.0"
+			}
+		},
+		"cacheScope": "private",
+		"resources": [],
+		"resultType": "complete",
+		"ttlMs": 0
+	}
+}

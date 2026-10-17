@@ -1,0 +1,274 @@
+// Package mcptest implements helper functions for testing MCP servers.
+package mcptest
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"log"
+	"sync"
+	"testing"
+
+	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/client/transport"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
+)
+
+// Server encapsulates an MCP server and manages resources like pipes and context.
+type Server struct {
+	name string
+
+	tools             []server.ServerTool
+	prompts           []server.ServerPrompt
+	resources         []server.ServerResource
+	resourceTemplates []server.ServerResourceTemplate
+	serverOpts        []server.ServerOption
+	clientInfo        mcp.Implementation
+
+	samplingHandler    client.SamplingHandler
+	elicitationHandler client.ElicitationHandler
+	rootsHandler       client.RootsHandler
+
+	cancel func()
+
+	serverReader *io.PipeReader
+	serverWriter *io.PipeWriter
+	clientReader *io.PipeReader
+	clientWriter *io.PipeWriter
+
+	logBuffer bytes.Buffer
+
+	transport transport.Interface
+	client    *client.Client
+
+	wg sync.WaitGroup
+}
+
+// NewServer starts a new MCP server with the provided tools and returns the server instance.
+// The server's lifetime is managed by Close(), not by the test context, so it can be
+// safely created in setup helpers and used across multiple subtests.
+func NewServer(t *testing.T, tools ...server.ServerTool) (*Server, error) {
+	server := NewUnstartedServer(t)
+	server.AddTools(tools...)
+
+	if err := server.Start(t.Context()); err != nil {
+		return nil, err
+	}
+
+	return server, nil
+}
+
+// NewUnstartedServer creates a new MCP server instance with the given name, but does not start the server.
+// Useful for tests where you need to add tools before starting the server.
+func NewUnstartedServer(t *testing.T) *Server {
+	server := &Server{
+		name: t.Name(),
+	}
+
+	// Set up pipes for client-server communication
+	server.serverReader, server.clientWriter = io.Pipe()
+	server.clientReader, server.serverWriter = io.Pipe()
+
+	// Return the configured server
+	return server
+}
+
+// AddTools adds multiple tools to an unstarted server.
+func (s *Server) AddTools(tools ...server.ServerTool) {
+	s.tools = append(s.tools, tools...)
+}
+
+// AddTool adds a tool to an unstarted server.
+func (s *Server) AddTool(tool mcp.Tool, handler server.ToolHandlerFunc) {
+	s.tools = append(s.tools, server.ServerTool{
+		Tool:    tool,
+		Handler: handler,
+	})
+}
+
+// AddPrompt adds a prompt to an unstarted server.
+func (s *Server) AddPrompt(prompt mcp.Prompt, handler server.PromptHandlerFunc) {
+	s.prompts = append(s.prompts, server.ServerPrompt{
+		Prompt:  prompt,
+		Handler: handler,
+	})
+}
+
+// AddPrompts adds multiple prompts to an unstarted server.
+func (s *Server) AddPrompts(prompts ...server.ServerPrompt) {
+	s.prompts = append(s.prompts, prompts...)
+}
+
+// AddResource adds a resource to an unstarted server.
+func (s *Server) AddResource(resource mcp.Resource, handler server.ResourceHandlerFunc) {
+	s.resources = append(s.resources, server.ServerResource{
+		Resource: resource,
+		Handler:  handler,
+	})
+}
+
+// AddResources adds multiple resources to an unstarted server.
+func (s *Server) AddResources(resources ...server.ServerResource) {
+	s.resources = append(s.resources, resources...)
+}
+
+// AddResourceTemplate adds a resource template to an unstarted server.
+func (s *Server) AddResourceTemplate(template mcp.ResourceTemplate, handler server.ResourceTemplateHandlerFunc) {
+	s.resourceTemplates = append(s.resourceTemplates, server.ServerResourceTemplate{
+		Template: template,
+		Handler:  handler,
+	})
+}
+
+// AddResourceTemplates adds multiple resource templates to an unstarted server.
+func (s *Server) AddResourceTemplates(templates ...server.ServerResourceTemplate) {
+	s.resourceTemplates = append(s.resourceTemplates, templates...)
+}
+
+// AddServerOptions adds server options to an unstarted server.
+// These options are passed to server.NewMCPServer when the server is started,
+// allowing configuration of hooks, middleware, tool filters, and other server settings.
+func (s *Server) AddServerOptions(opts ...server.ServerOption) {
+	s.serverOpts = append(s.serverOpts, opts...)
+}
+
+// SetClientInfo sets the client info for the test client.
+func (s *Server) SetClientInfo(info mcp.Implementation) {
+	s.clientInfo = info
+}
+
+// SetSamplingHandler registers a handler that responds to sampling requests
+// (server.RequestSampling) made by tools under test. Must be called before Start().
+// The test client will advertise the sampling capability during initialization so
+// that the server is allowed to issue sampling requests.
+func (s *Server) SetSamplingHandler(h client.SamplingHandler) {
+	s.samplingHandler = h
+}
+
+// SetElicitationHandler registers a handler that responds to elicitation requests
+// (server.RequestElicitation) made by tools under test. Must be called before Start().
+// The test client will advertise the elicitation capability during initialization so
+// that the server is allowed to issue elicitation requests.
+func (s *Server) SetElicitationHandler(h client.ElicitationHandler) {
+	s.elicitationHandler = h
+}
+
+// SetRootsHandler registers a handler that responds to roots/list requests
+// (server.RequestRoots) made by tools under test. Must be called before Start().
+// The test client will advertise the roots capability during initialization.
+func (s *Server) SetRootsHandler(h client.RootsHandler) {
+	s.rootsHandler = h
+}
+
+// Start starts the server in a goroutine. Make sure to defer Close() after Start().
+// When using NewServer(), the returned server is already started.
+func (s *Server) Start(ctx context.Context) error {
+	s.wg.Add(1)
+
+	ctx, s.cancel = context.WithCancel(ctx)
+
+	// Handler setters must be called before Start, so there is no data race.
+	samplingHandler := s.samplingHandler
+
+	// Start the MCP server in a goroutine
+	go func() {
+		defer s.wg.Done()
+
+		// Tools under test may still call server.RequestSampling,
+		// server.RequestElicitation, and server.RequestRoots directly.
+		// Protocol version 2026-07-28
+		// replaced that pattern with multi round-trip requests, but the
+		// harness runs over stdio, which is genuinely bidirectional, so the
+		// old pattern is kept working here.
+		serverOpts := append([]server.ServerOption{
+			server.WithLegacyServerInitiatedRequests(),
+		}, s.serverOpts...)
+
+		mcpServer := server.NewMCPServer(s.name, "1.0.0", serverOpts...)
+
+		mcpServer.AddTools(s.tools...)
+		mcpServer.AddPrompts(s.prompts...)
+		mcpServer.AddResources(s.resources...)
+		mcpServer.AddResourceTemplates(s.resourceTemplates...)
+
+		// Automatically enable sampling on the server when the test supplies a
+		// sampling handler, so tools can call server.RequestSampling without
+		// any additional server-side setup.
+		if samplingHandler != nil {
+			mcpServer.EnableSampling()
+		}
+
+		logger := log.New(&s.logBuffer, "", 0)
+
+		stdioServer := server.NewStdioServer(mcpServer)
+		stdioServer.SetErrorLogger(logger)
+
+		if err := stdioServer.Listen(ctx, s.serverReader, s.serverWriter); err != nil {
+			logger.Println("StdioServer.Listen failed:", err)
+		}
+	}()
+
+	s.transport = transport.NewIO(s.clientReader, s.clientWriter, io.NopCloser(&s.logBuffer))
+
+	// Build client options from registered handlers.
+	var clientOpts []client.ClientOption
+	if s.samplingHandler != nil {
+		clientOpts = append(clientOpts, client.WithSamplingHandler(s.samplingHandler))
+	}
+	if s.elicitationHandler != nil {
+		clientOpts = append(clientOpts, client.WithElicitationHandler(s.elicitationHandler))
+	}
+	if s.rootsHandler != nil {
+		clientOpts = append(clientOpts, client.WithRootsHandler(s.rootsHandler))
+	}
+
+	s.client = client.NewClient(s.transport, clientOpts...)
+
+	// Use client.Start instead of transport.Start so that bidirectional request
+	// handlers (sampling, elicitation, roots) are registered before the Initialize handshake.
+	if err := s.client.Start(ctx); err != nil {
+		return fmt.Errorf("client.Start(): %w", err)
+	}
+
+	var initReq mcp.InitializeRequest
+	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initReq.Params.ClientInfo = s.clientInfo
+	if _, err := s.client.Initialize(ctx, initReq); err != nil {
+		return fmt.Errorf("client.Initialize(): %w", err)
+	}
+
+	return nil
+}
+
+// Close stops the server and cleans up resources like temporary directories.
+func (s *Server) Close() {
+	if s.transport != nil {
+		s.transport.Close()
+		s.transport = nil
+		s.client = nil
+	}
+
+	if s.cancel != nil {
+		s.cancel()
+		s.cancel = nil
+	}
+
+	// Wait for server goroutine to finish
+	s.wg.Wait()
+
+	s.serverWriter.Close()
+	s.serverReader.Close()
+	s.serverReader, s.serverWriter = nil, nil
+
+	s.clientWriter.Close()
+	s.clientReader.Close()
+	s.clientReader, s.clientWriter = nil, nil
+}
+
+// Client returns an MCP client connected to the server.
+// The client is already initialized, i.e. you do _not_ need to call Client.Initialize().
+func (s *Server) Client() *client.Client {
+	return s.client
+}

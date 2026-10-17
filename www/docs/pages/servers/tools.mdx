@@ -1,0 +1,1307 @@
+# Implementing Tools
+
+Tools provide functionality that LLMs can invoke to take actions or perform computations. Think of them as function calls that extend the LLM's capabilities.
+
+## Tool Fundamentals
+
+Tools are the primary way LLMs interact with your server to perform actions. They have structured schemas that define parameters, types, and constraints, ensuring type-safe interactions.
+
+### Basic Tool Structure
+
+```go
+// Create a simple tool
+tool := mcp.NewTool("calculate",
+    mcp.WithDescription("Perform arithmetic operations"),
+    mcp.WithString("operation", 
+        mcp.Required(),
+        mcp.Enum("add", "subtract", "multiply", "divide"),
+        mcp.Description("The arithmetic operation to perform"),
+    ),
+    mcp.WithNumber("x", mcp.Required(), mcp.Description("First number")),
+    mcp.WithNumber("y", mcp.Required(), mcp.Description("Second number")),
+)
+```
+
+## Tool Definition
+
+### Display Title
+
+Tools can carry a human-readable display title separate from their programmatic `name`. Clients display titles in tool pickers and UI surfaces; the `name` is reserved for model-facing identifiers.
+
+```go
+tool := mcp.NewTool("calculate_arithmetic",
+    mcp.WithToolTitle("Calculator"),               // Shown in UI
+    mcp.WithDescription("Perform arithmetic operations"),
+    // ... parameters
+)
+```
+
+Per the [MCP spec](https://modelcontextprotocol.io/specification/2025-06-18/server/tools), clients should resolve the display label in this order:
+
+1. `Title` (the top-level field set by `WithToolTitle`)
+2. `Annotations.Title` (legacy hint set by `WithTitleAnnotation`, see [Tool Annotations](#tool-annotations))
+3. `Name`
+
+Both fields are optional; omitting them falls back to the next candidate.
+
+### Tool Icons
+
+Tools can include visual identifiers using icons. Icons must use HTTPS or data URIs:
+
+```go
+tool := mcp.NewTool("calculate",
+    mcp.WithDescription("Perform arithmetic operations"),
+    mcp.WithToolIcons(
+        mcp.Icon{
+            Src:      "https://example.com/icons/calculator.png",
+            MIMEType: "image/png",
+            Sizes:    []string{"32x32", "64x64"},
+        },
+    ),
+    // ... parameters
+)
+```
+
+### Parameter Types
+
+MCP-Go supports various parameter types with validation:
+
+```go
+// String parameters
+mcp.WithString("name", 
+    mcp.Required(),
+    mcp.Description("User's name"),
+    mcp.MinLength(1),
+    mcp.MaxLength(100),
+)
+
+// Number parameters  
+mcp.WithNumber("age",
+    mcp.Required(),
+    mcp.Description("User's age"),
+    mcp.Min(0),
+    mcp.Max(150),
+)
+
+// Integer parameters
+mcp.WithInteger("count",
+    mcp.DefaultNumber(10),
+    mcp.Description("Number of items"),
+    mcp.Min(1),
+    mcp.Max(1000),
+)
+
+// Boolean parameters
+mcp.WithBoolean("enabled",
+    mcp.DefaultBool(true),
+    mcp.Description("Whether feature is enabled"),
+)
+
+// Array parameters
+mcp.WithArray("tags",
+    mcp.Description("List of tags"),
+    mcp.Items(map[string]any{"type": "string"}),
+)
+
+// Object parameters
+mcp.WithObject("config",
+    mcp.Description("Configuration object"),
+    mcp.Properties(map[string]any{
+        "timeout": map[string]any{"type": "number"},
+        "retries": map[string]any{"type": "integer"},
+    }),
+)
+```
+
+### Enums and Constraints
+
+```go
+// Enum values
+mcp.WithString("priority",
+    mcp.Required(),
+    mcp.Enum("low", "medium", "high", "critical"),
+    mcp.Description("Task priority level"),
+)
+
+// String constraints
+mcp.WithString("email",
+    mcp.Required(),
+    mcp.Pattern(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`),
+    mcp.Description("Valid email address"),
+)
+
+// Number constraints
+mcp.WithNumber("price",
+    mcp.Required(),
+    mcp.Min(0),
+    mcp.Max(10000),
+    mcp.Description("Product price in USD"),
+)
+```
+
+## Struct-Based Schema Definition
+
+MCP-Go supports defining input and output schemas using Go structs with automatic JSON schema generation. This provides a type-safe alternative to manual parameter definition, especially useful for complex tools with structured inputs and outputs.
+
+### Input Schema with Go Structs
+
+Define your input parameters as a Go struct and use `WithInputSchema`:
+
+```go
+// Define input struct with JSON schema tags
+type SearchRequest struct {
+    Query      string   `json:"query" jsonschema:"Search query"`
+    Limit      int      `json:"limit,omitempty" jsonschema:"Maximum results"`
+    Categories []string `json:"categories,omitempty" jsonschema:"Filter by categories"`
+    SortBy     string   `json:"sortBy,omitempty" jsonschema:"Sort field"`
+}
+
+// Create tool with struct-based input schema
+searchTool := mcp.NewTool("search_products",
+    mcp.WithDescription("Search product catalog"),
+    mcp.WithInputSchema[SearchRequest](),
+)
+```
+
+### Output Schema with Go Structs
+
+Define structured output for predictable tool responses:
+
+```go
+// Define output struct
+type SearchResponse struct {
+    Query       string    `json:"query" jsonschema:"Original search query"`
+    TotalCount  int       `json:"totalCount" jsonschema:"Total matching products"`
+    Products    []Product `json:"products" jsonschema:"Search results"`
+    ProcessedAt time.Time `json:"processedAt" jsonschema:"When search was performed"`
+}
+
+type Product struct {
+    ID          string  `json:"id" jsonschema:"Product ID"`
+    Name        string  `json:"name" jsonschema:"Product name"`
+    Price       float64 `json:"price" jsonschema:"Price in USD"`
+    InStock     bool    `json:"inStock" jsonschema:"Availability"`
+}
+
+// Create tool with both input and output schemas
+searchTool := mcp.NewTool("search_products",
+    mcp.WithDescription("Search product catalog with structured output"),
+    mcp.WithInputSchema[SearchRequest](),
+    mcp.WithOutputSchema[SearchResponse](),
+)
+```
+
+### Structured Tool Handlers
+
+Use `NewStructuredToolHandler` for type-safe handler implementation:
+
+```go
+func main() {
+    s := server.NewMCPServer("Product Search", "1.0.0",
+        server.WithToolCapabilities(false),
+    )
+
+    // Define tool with input and output schemas
+    searchTool := mcp.NewTool("search_products",
+        mcp.WithDescription("Search product catalog"),
+        mcp.WithInputSchema[SearchRequest](),
+        mcp.WithOutputSchema[SearchResponse](),
+    )
+
+    // Add tool with structured handler
+    s.AddTool(searchTool, mcp.NewStructuredToolHandler(searchProductsHandler))
+    
+    server.ServeStdio(s)
+}
+
+// Handler receives typed input and returns typed output
+func searchProductsHandler(ctx context.Context, req mcp.CallToolRequest, args SearchRequest) (SearchResponse, error) {
+    // Input is already validated and bound to SearchRequest struct
+    limit := args.Limit
+    if limit <= 0 {
+        limit = 10
+    }
+
+    // Perform search logic
+    products := searchDatabase(args.Query, args.Categories, limit)
+
+    // Return structured response
+    return SearchResponse{
+        Query:       args.Query,
+        TotalCount:  len(products),
+        Products:    products,
+        ProcessedAt: time.Now(),
+    }, nil
+}
+```
+
+### Validating Output Against the Schema
+
+Declaring an output schema is a contract: clients can rely on the shape of
+`structuredContent` matching the schema you advertised. To enforce that
+contract at runtime, opt in to output schema validation when constructing
+the server:
+
+```go
+s := server.NewMCPServer("Product Search", "1.0.0",
+    server.WithToolCapabilities(false),
+    server.WithOutputSchemaValidation(), // reject results that don't match outputSchema
+)
+```
+
+When enabled, every tool result whose `StructuredContent` does not conform
+to the declared `outputSchema` is replaced with a tool execution error
+(`IsError: true`). This catches handler bugs server-side instead of letting
+them reach the client as a silent protocol violation. Tools without an
+output schema, results without `StructuredContent`, and error results are
+all passed through unchanged.
+
+### Array Output Schema
+
+Tools can return arrays of structured data:
+
+```go
+// Define asset struct
+type Asset struct {
+    ID       string  `json:"id" jsonschema:"Asset identifier"`
+    Name     string  `json:"name" jsonschema:"Asset name"`
+    Value    float64 `json:"value" jsonschema:"Current value"`
+    Currency string  `json:"currency" jsonschema:"Currency code"`
+}
+
+// Tool that returns array of assets
+assetsTool := mcp.NewTool("list_assets",
+    mcp.WithDescription("List portfolio assets"),
+    mcp.WithInputSchema[struct {
+        Portfolio string `json:"portfolio" jsonschema:"Portfolio ID"`
+    }](),
+    mcp.WithOutputSchema[[]Asset](), // Array output schema
+)
+
+func listAssetsHandler(ctx context.Context, req mcp.CallToolRequest, args struct{ Portfolio string }) ([]Asset, error) {
+    // Return array of assets
+    return []Asset{
+        {ID: "btc", Name: "Bitcoin", Value: 45000.50, Currency: "USD"},
+        {ID: "eth", Name: "Ethereum", Value: 3200.75, Currency: "USD"},
+    }, nil
+}
+```
+
+### Caching Schemas for Stateless / Serverless Deployments
+
+Generating JSON schemas with `WithInputSchema[T]()` and `WithOutputSchema[T]()`
+uses reflection at server start-up. In long-running servers this is a one-time
+cost, but in serverless environments (AWS Lambda, Cloud Functions, Cloud Run
+with scale-to-zero) the server is reconstructed on every cold start and the
+reflection cost is paid again and again.
+
+Use `mcp.SchemaCache` to pre-compute schemas at build time, persist them to
+disk, and reload them at start-up:
+
+```go
+// build/warm-cache.go — run as part of your build pipeline
+func main() {
+    cache := mcp.NewSchemaCache()
+    if err := mcp.WarmFor[WeatherRequest](cache); err != nil {
+        log.Fatal(err)
+    }
+    if err := mcp.WarmFor[WeatherResponse](cache); err != nil {
+        log.Fatal(err)
+    }
+    if err := cache.Save("schemas.json"); err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+At runtime, load the cache once and pass it to the cache-aware tool options.
+On a cache hit the schema is served straight from memory; on a miss the cache
+falls back to reflection and stores the result for next time, so the same
+code works locally without a pre-built cache file:
+
+```go
+var cache = func() *mcp.SchemaCache {
+    c, err := mcp.LoadSchemaCache("schemas.json")
+    if err != nil {
+        return mcp.NewSchemaCache() // fall back to live reflection
+    }
+    return c
+}()
+
+weatherTool := mcp.NewTool("get_weather",
+    mcp.WithDescription("Get current weather"),
+    mcp.WithCachedInputSchema[WeatherRequest](cache),
+    mcp.WithCachedOutputSchema[WeatherResponse](cache),
+)
+```
+
+The cache key defaults to the package-qualified Go type name
+(e.g. `main.WeatherRequest`). If you need a stable key that survives renames
+or package moves, use the explicit-key variants:
+
+```go
+if err := mcp.WarmFor[WeatherRequest](cache, "weather.v1.input"); err != nil {
+    log.Fatal(err)
+}
+
+mcp.WithCachedInputSchemaKey[WeatherRequest](cache, "weather.v1.input")
+```
+
+`SchemaCache` is safe for concurrent use, marshals to deterministic JSON
+(sorted keys), and writes via an atomic temp-file-and-rename in `Save`.
+
+### Schema Tags Reference
+
+MCP-Go uses the [`google/jsonschema-go`](https://github.com/google/jsonschema-go) library with the `jsonschema` struct tag for schema generation:
+
+```go
+type ExampleStruct struct {
+    // Required field (no omitempty in json tag means required)
+    Name string `json:"name" jsonschema:"User's full name"`
+
+    // Field with description
+    Age int `json:"age" jsonschema:"User age in years"`
+
+    // Optional field (omitempty makes it optional)
+    PageSize int `json:"pageSize,omitempty" jsonschema:"Number of items per page"`
+
+    // Optional field with description
+    Status string `json:"status,omitempty" jsonschema:"Current status"`
+}
+```
+
+:::info Migration Note
+MCP-Go migrated from `invopop/jsonschema` to `google/jsonschema-go`. If you are upgrading from an older version, note these breaking changes:
+
+- **Description tag**: Changed from `jsonschema_description:"text"` to `jsonschema:"text"`
+- **Required fields**: The `jsonschema:"required"` tag is no longer supported. Fields without `omitempty` in their `json` tag are automatically required.
+- **Validation constraints**: Tags like `jsonschema:"enum=..."`, `jsonschema:"minimum=..."` are no longer supported in struct tags. Use `mcp.WithRawInputSchema()` for these constraints or define them with the builder API (`mcp.WithString`, `mcp.WithNumber`, etc.).
+- **Additional properties**: `additionalProperties: false` is now automatically included in generated schemas.
+:::
+
+### Manual Structured Results
+
+For more control over the response, use `NewTypedToolHandler` with manual result creation:
+
+```go
+manualTool := mcp.NewTool("process_data",
+    mcp.WithDescription("Process data with custom result"),
+    mcp.WithInputSchema[ProcessRequest](),
+    mcp.WithOutputSchema[ProcessResponse](),
+)
+
+s.AddTool(manualTool, mcp.NewTypedToolHandler(manualProcessHandler))
+
+func manualProcessHandler(ctx context.Context, req mcp.CallToolRequest, args ProcessRequest) (*mcp.CallToolResult, error) {
+    // Process the data
+    response := ProcessResponse{
+        Status:      "completed",
+        ProcessedAt: time.Now(),
+        ItemCount:   42,
+    }
+    
+    // Create custom fallback text for backward compatibility
+    fallbackText := fmt.Sprintf("Processed %d items successfully", response.ItemCount)
+    
+    // Return structured result with custom text
+    return mcp.NewToolResultStructured(response, fallbackText), nil
+}
+```
+
+### Complete Example: File Operations with Structured I/O
+
+Here's a complete example using the file operations pattern from earlier, enhanced with structured schemas:
+
+```go
+// Define structured input for file operations
+type FileOperationRequest struct {
+    Path     string `json:"path" jsonschema:"File path"`
+    Content  string `json:"content,omitempty" jsonschema:"File content (for write operations)"`
+    Encoding string `json:"encoding,omitempty" jsonschema:"File encoding"`
+}
+
+// Define structured output
+type FileOperationResponse struct {
+    Success   bool      `json:"success" jsonschema:"Operation success status"`
+    Path      string    `json:"path" jsonschema:"File path"`
+    Message   string    `json:"message" jsonschema:"Result message"`
+    Content   string    `json:"content,omitempty" jsonschema:"File content (for read operations)"`
+    Size      int64     `json:"size,omitempty" jsonschema:"File size in bytes"`
+    Modified  time.Time `json:"modified,omitempty" jsonschema:"Last modified time"`
+}
+
+func main() {
+    s := server.NewMCPServer("File Manager", "1.0.0",
+        server.WithToolCapabilities(true),
+    )
+
+    // Create file tool with structured I/O
+    createFileTool := mcp.NewTool("create_file",
+        mcp.WithDescription("Create a new file with content"),
+        mcp.WithInputSchema[FileOperationRequest](),
+        mcp.WithOutputSchema[FileOperationResponse](),
+    )
+
+    // Read file tool
+    readFileTool := mcp.NewTool("read_file",
+        mcp.WithDescription("Read file contents"),
+        mcp.WithInputSchema[struct {
+            Path string `json:"path" jsonschema:"File path to read"`
+        }](),
+        mcp.WithOutputSchema[FileOperationResponse](),
+    )
+
+    s.AddTool(createFileTool, mcp.NewStructuredToolHandler(handleCreateFile))
+    s.AddTool(readFileTool, mcp.NewStructuredToolHandler(handleReadFile))
+    
+    server.ServeStdio(s)
+}
+
+func handleCreateFile(ctx context.Context, req mcp.CallToolRequest, args FileOperationRequest) (FileOperationResponse, error) {
+    // Validate path for security
+    if strings.Contains(args.Path, "..") {
+        return FileOperationResponse{
+            Success: false,
+            Path:    args.Path,
+            Message: "Invalid path: directory traversal not allowed",
+        }, nil
+    }
+
+    // Handle different encodings
+    var data []byte
+    switch args.Encoding {
+    case "base64":
+        var err error
+        data, err = base64.StdEncoding.DecodeString(args.Content)
+        if err != nil {
+            return FileOperationResponse{
+                Success: false,
+                Path:    args.Path,
+                Message: fmt.Sprintf("Invalid base64 content: %v", err),
+            }, nil
+        }
+    default:
+        data = []byte(args.Content)
+    }
+
+    // Create file
+    if err := os.WriteFile(args.Path, data, 0644); err != nil {
+        return FileOperationResponse{
+            Success: false,
+            Path:    args.Path,
+            Message: fmt.Sprintf("Failed to create file: %v", err),
+        }, nil
+    }
+
+    // Get file info
+    info, _ := os.Stat(args.Path)
+
+    return FileOperationResponse{
+        Success:  true,
+        Path:     args.Path,
+        Message:  "File created successfully",
+        Size:     info.Size(),
+        Modified: info.ModTime(),
+    }, nil
+}
+
+func handleReadFile(ctx context.Context, req mcp.CallToolRequest, args struct{ Path string }) (FileOperationResponse, error) {
+    // Read file
+    data, err := os.ReadFile(args.Path)
+    if err != nil {
+        return FileOperationResponse{
+            Success: false,
+            Path:    args.Path,
+            Message: fmt.Sprintf("Failed to read file: %v", err),
+        }, nil
+    }
+
+    // Get file info
+    info, _ := os.Stat(args.Path)
+
+    return FileOperationResponse{
+        Success:  true,
+        Path:     args.Path,
+        Message:  "File read successfully",
+        Content:  string(data),
+        Size:     info.Size(),
+        Modified: info.ModTime(),
+    }, nil
+}
+```
+
+## Tool Handlers
+
+Tool handlers process the actual function calls from LLMs. MCP-Go provides convenient helper methods for safe parameter extraction.
+
+### Parameter Extraction Methods
+
+MCP-Go offers several helper methods on `CallToolRequest` for type-safe parameter access:
+
+```go
+// Required parameters - return error if missing or wrong type
+name, err := req.RequireString("name")
+age, err := req.RequireInt("age") 
+price, err := req.RequireFloat("price")
+enabled, err := req.RequireBool("enabled")
+
+// Optional parameters with defaults
+name := req.GetString("name", "default")
+count := req.GetInt("count", 10)
+price := req.GetFloat("price", 0.0)
+enabled := req.GetBool("enabled", false)
+
+// Structured data binding
+type Config struct {
+    Timeout int    `json:"timeout"`
+    Retries int    `json:"retries"`
+    Debug   bool   `json:"debug"`
+}
+var config Config
+if err := req.BindArguments(&config); err != nil {
+    return mcp.NewToolResultError(err.Error()), nil
+}
+
+// Raw access (for backward compatibility)
+args := req.GetArguments() // returns map[string]any
+rawArgs := req.GetRawArguments() // returns any
+```
+
+### Basic Handler Pattern
+
+```go
+func handleCalculate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Extract parameters using helper methods
+    operation, err := req.RequireString("operation")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    x, err := req.RequireFloat("x")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    y, err := req.RequireFloat("y")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    // Perform calculation
+    var result float64
+    switch operation {
+    case "add":
+        result = x + y
+    case "subtract":
+        result = x - y
+    case "multiply":
+        result = x * y
+    case "divide":
+        if y == 0 {
+            return mcp.NewToolResultError("division by zero"), nil
+        }
+        result = x / y
+    default:
+        return mcp.NewToolResultError(fmt.Sprintf("unknown operation: %s", operation)), nil
+    }
+    
+    // Return result
+    return mcp.NewToolResultText(fmt.Sprintf("%.2f", result)), nil
+}
+```
+
+### File Operations Tool
+
+```go
+func main() {
+    s := server.NewMCPServer("File Tools", "1.0.0",
+        server.WithToolCapabilities(true),
+    )
+
+    // File creation tool
+    createFileTool := mcp.NewTool("create_file",
+        mcp.WithDescription("Create a new file with content"),
+        mcp.WithString("path", 
+            mcp.Required(),
+            mcp.Description("File path to create"),
+        ),
+        mcp.WithString("content",
+            mcp.Required(), 
+            mcp.Description("File content"),
+        ),
+        mcp.WithString("encoding",
+            mcp.DefaultString("utf-8"),
+            mcp.Enum("utf-8", "ascii", "base64"),
+            mcp.Description("File encoding"),
+        ),
+    )
+
+    s.AddTool(createFileTool, handleCreateFile)
+    server.ServeStdio(s)
+}
+
+func handleCreateFile(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    path, err := req.RequireString("path")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    content, err := req.RequireString("content")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    encoding := req.GetString("encoding", "utf-8")
+    
+    // Validate path for security
+    if strings.Contains(path, "..") {
+        return mcp.NewToolResultError("invalid path: directory traversal not allowed"), nil
+    }
+    
+    // Handle different encodings
+    var data []byte
+    switch encoding {
+    case "utf-8":
+        data = []byte(content)
+    case "ascii":
+        data = []byte(content)
+    case "base64":
+        var err error
+        data, err = base64.StdEncoding.DecodeString(content)
+        if err != nil {
+            return mcp.NewToolResultError(fmt.Sprintf("invalid base64 content: %v", err)), nil
+        }
+    }
+    
+    // Create file
+    if err := os.WriteFile(path, data, 0644); err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to create file: %v", err)), nil
+    }
+    
+    return mcp.NewToolResultText(fmt.Sprintf("File created successfully: %s", path)), nil
+}
+```
+
+### Database Query Tool
+
+```go
+func handleDatabaseQuery(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Define struct to bind both Query and Params
+    var args struct {
+        Query  string        `json:"query"`
+        Params []interface{} `json:"params"`
+    }
+    
+    // Bind arguments to the struct
+    if err := req.BindArguments(&args); err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    // Extract values from the bound struct
+    query := args.Query
+    params := args.Params
+    
+    // Validate query for security (basic example)
+    if !isSelectQuery(query) {
+        return mcp.NewToolResultError("only SELECT queries are allowed"), nil
+    }
+    
+    // Execute query with timeout
+    ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+    defer cancel()
+    
+    rows, err := db.QueryContext(ctx, query, params...)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("query failed: %v", err)), nil
+    }
+    defer rows.Close()
+    
+    // Convert results to JSON
+    results, err := rowsToJSON(rows)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to process results: %v", err)), nil
+    }
+    
+    resultData := map[string]interface{}{
+        "query":   query,
+        "results": results,
+        "count":   len(results),
+    }
+    
+    jsonData, err := json.Marshal(resultData)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to marshal results: %v", err)), nil
+    }
+    
+    return mcp.NewToolResultText(string(jsonData)), nil
+}
+
+func isSelectQuery(query string) bool {
+    trimmed := strings.TrimSpace(strings.ToUpper(query))
+    return strings.HasPrefix(trimmed, "SELECT")
+}
+```
+
+### HTTP Request Tool
+
+```go
+func handleHTTPRequest(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    url, err := req.RequireString("url")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    method, err := req.RequireString("method")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    body := req.GetString("body", "")
+    
+    // Handle headers (optional object parameter)
+    var headers map[string]interface{}
+    if args := req.GetArguments(); args != nil {
+        if h, ok := args["headers"].(map[string]interface{}); ok {
+            headers = h
+        }
+    }
+    
+    // Create HTTP request
+    httpReq, err := http.NewRequestWithContext(ctx, method, url, strings.NewReader(body))
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to create request: %v", err)), nil
+    }
+    
+    // Add headers
+    for key, value := range headers {
+        httpReq.Header.Set(key, fmt.Sprintf("%v", value))
+    }
+    
+    // Execute request with timeout
+    client := &http.Client{Timeout: 30 * time.Second}
+    resp, err := client.Do(httpReq)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("request failed: %v", err)), nil
+    }
+    defer resp.Body.Close()
+    
+    // Read response
+    respBody, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to read response: %v", err)), nil
+    }
+    
+    resultData := map[string]interface{}{
+        "status_code": resp.StatusCode,
+        "headers":     resp.Header,
+        "body":        string(respBody),
+    }
+    
+    jsonData, err := json.Marshal(resultData)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to marshal result: %v", err)), nil
+    }
+    
+    return mcp.NewToolResultText(string(jsonData)), nil
+}
+```
+
+## Argument Validation
+
+### Type-Safe Parameter Extraction
+
+MCP-Go provides helper methods for safe parameter extraction:
+
+```go
+func handleValidatedTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // Required parameters with validation
+    name, err := req.RequireString("name")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    age, err := req.RequireFloat("age")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    // Optional parameter with default
+    enabled := req.GetBool("enabled", true)
+    
+    // Validate constraints
+    if len(name) == 0 {
+        return mcp.NewToolResultError("name cannot be empty"), nil
+    }
+    
+    if age < 0 || age > 150 {
+        return mcp.NewToolResultError("age must be between 0 and 150"), nil
+    }
+    
+    // Process with validated parameters
+    result := processUser(name, int(age), enabled)
+    
+    jsonData, err := json.Marshal(result)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to marshal result: %v", err)), nil
+    }
+    
+    return mcp.NewToolResultText(string(jsonData)), nil
+}
+```
+
+### Available Helper Methods
+
+```go
+// Required parameters (return error if missing or wrong type)
+name, err := req.RequireString("name")
+age, err := req.RequireInt("age")
+price, err := req.RequireFloat("price")
+enabled, err := req.RequireBool("enabled")
+
+// Optional parameters with defaults
+name := req.GetString("name", "default")
+count := req.GetInt("count", 10)
+price := req.GetFloat("price", 0.0)
+enabled := req.GetBool("enabled", false)
+
+// Structured data binding
+type UserData struct {
+    Name string `json:"name"`
+    Age  int    `json:"age"`
+}
+var user UserData
+if err := req.BindArguments(&user); err != nil {
+    return mcp.NewToolResultError(err.Error()), nil
+}
+```
+```
+
+### Custom Validation Functions
+
+```go
+func validateEmail(email string) error {
+    emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+    if !emailRegex.MatchString(email) {
+        return fmt.Errorf("invalid email format")
+    }
+    return nil
+}
+
+func validateURL(url string) error {
+    parsed, err := url.Parse(url)
+    if err != nil {
+        return fmt.Errorf("invalid URL format: %w", err)
+    }
+    
+    if parsed.Scheme != "http" && parsed.Scheme != "https" {
+        return fmt.Errorf("URL must use http or https scheme")
+    }
+    
+    return nil
+}
+```
+
+## Result Types
+
+### Text Results
+
+```go
+func handleTextTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    message := "Operation completed successfully"
+    return mcp.NewToolResultText(message), nil
+}
+```
+
+### JSON Results
+
+```go
+func handleJSONTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    result := map[string]interface{}{
+        "status":    "success",
+        "timestamp": time.Now().Unix(),
+        "data": map[string]interface{}{
+            "processed": 42,
+            "errors":    0,
+        },
+    }
+    
+    jsonData, err := json.Marshal(result)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to marshal result: %v", err)), nil
+    }
+    
+    return mcp.NewToolResultText(string(jsonData)), nil
+}
+```
+
+### Multiple Content Types
+
+```go
+func handleMultiContentTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    data := map[string]interface{}{
+        "name": "John Doe",
+        "age":  30,
+    }
+    
+    return &mcp.CallToolResult{
+        Content: []mcp.Content{
+            {
+                Type: "text",
+                Text: "User information retrieved successfully",
+            },
+            {
+                Type: "text",
+                Text: fmt.Sprintf("Name: %s, Age: %d", data["name"], data["age"]),
+            },
+        },
+    }, nil
+}
+```
+
+### Resource Links
+
+Tools can return resource links that reference other resources in your MCP server. This is useful when you want to point to existing data without duplicating content:
+
+```go
+func handleGetResourceLinkTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	resourceID, err := req.RequireString("resource_id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Create a resource link pointing to an existing resource
+	uri := fmt.Sprintf("file://documents/%s", resourceID)
+	resourceLink := mcp.NewResourceLink(uri, "Document", "The requested document", "application/pdf")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.NewTextContent("Found the requested document:"),
+			resourceLink,
+		},
+	}, nil
+}
+```
+
+### Mixed Content with Resource Links
+
+You can combine different content types including resource links in a single tool result:
+
+```go
+func handleSearchDocumentsTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	query, err := req.RequireString("query")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Simulate document search
+	foundDocs := []string{"doc1.pdf", "doc2.txt", "doc3.md"}
+
+	content := []mcp.Content{
+		mcp.NewTextContent(fmt.Sprintf("Found %d documents matching '%s':", len(foundDocs), query)),
+	}
+
+	// Add resource links for each found document
+	for _, doc := range foundDocs {
+		uri := fmt.Sprintf("file://documents/%s", doc)
+		parts := strings.SplitN(doc, ".", 2)
+		name := parts[0]
+		mimeType := "application/octet-stream" // default
+		if len(parts) > 1 {
+			// Map extension to MIME type (simplified)
+			switch parts[1] {
+			case "pdf":
+				mimeType = "application/pdf"
+			case "txt":
+				mimeType = "text/plain"
+			case "md":
+				mimeType = "text/markdown"
+			}
+		}
+		resourceLink := mcp.NewResourceLink(uri, name, fmt.Sprintf("Document: %s", doc), mimeType)
+		content = append(content, resourceLink)
+	}
+
+	return &mcp.CallToolResult{
+		Content: content,
+	}, nil
+}
+```
+
+### Resource Link with Annotations
+
+Resource links can include additional metadata through annotations:
+
+```go
+func handleGetAnnotatedResourceTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	docType := req.GetString("type", "general")
+	// Create resource link with annotations
+	annotated := mcp.Annotated{
+		Annotations: &mcp.Annotations{
+			Audience:     []mcp.Role{mcp.RoleUser},
+			LastModified: "2025-01-12T15:00:58Z",
+		},
+	}
+	url := "file://documents/test.pdf"
+	resourceLink := mcp.NewResourceLink(url, "Test Document", fmt.Sprintf("A %s document", docType), "application/pdf")
+	resourceLink.Annotated = annotated
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.NewTextContent("Here's the important document you requested:"),
+			resourceLink,
+		},
+	}, nil
+}
+```
+
+### Error Results
+
+```go
+func handleToolWithErrors(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // For validation errors, return error result (not Go error)
+    name, err := req.RequireString("name")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+    
+    // For business logic errors, also return error result
+    if someCondition {
+        return mcp.NewToolResultError("invalid input: " + reason), nil
+    }
+    
+    // For system errors, you can return Go errors
+    if systemError {
+        return nil, fmt.Errorf("system failure: %v", err)
+    }
+    
+    // Or return structured error information
+    return &mcp.CallToolResult{
+        Content: []mcp.Content{
+            {
+                Type: "text", 
+                Text: "Operation failed",
+            },
+        },
+        IsError: true,
+    }, nil
+}
+```
+
+Application-defined JSON-RPC errors must be marked explicitly before a handler
+returns them. This prevents an error received from an upstream server from being
+forwarded accidentally:
+
+```go
+type InvalidCustomerIDError struct {
+    CustomerID string
+}
+
+func (e InvalidCustomerIDError) Error() string {
+    return "invalid customer ID"
+}
+
+func (e InvalidCustomerIDError) JSONRPCError() mcp.JSONRPCError {
+    return mcp.JSONRPCError{
+        Error: mcp.NewJSONRPCErrorDetails(
+            mcp.INVALID_PARAMS,
+            e.Error(),
+            map[string]any{"customerId": e.CustomerID},
+        ),
+    }
+}
+
+func handleCustomer(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    customerID := req.GetString("customerId", "")
+    if customerID == "" {
+        return nil, server.NewHandlerError(InvalidCustomerIDError{CustomerID: customerID})
+    }
+    return mcp.NewToolResultText("customer found"), nil
+}
+```
+
+Unmarked Go errors, including errors from another JSON-RPC server, are returned
+as internal errors.
+
+## Tool Annotations
+
+Provide hints to help LLMs use your tools effectively:
+
+```go
+tool := mcp.NewTool("search_database",
+    mcp.WithDescription("Search the product database"),
+    mcp.WithString("query",
+        mcp.Required(),
+        mcp.Description("Search query (supports wildcards with *)"),
+    ),
+    mcp.WithNumber("limit",
+        mcp.DefaultNumber(10),
+        mcp.Min(1),
+        mcp.Max(100),
+        mcp.Description("Maximum number of results to return"),
+    ),
+    mcp.WithArray("categories",
+        mcp.Description("Filter by product categories"),
+        mcp.Items(map[string]any{"type": "string"}),
+    ),
+)
+
+s.AddTool(tool, handleSearchDatabase)
+```
+
+## Advanced Tool Patterns
+
+### Streaming Results
+
+For long-running operations, consider streaming results:
+
+```go
+func handleStreamingTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    // For operations that take time, provide progress updates
+    results := []string{}
+    
+    for i := 0; i < 10; i++ {
+        // Simulate work
+        time.Sleep(100 * time.Millisecond)
+        
+        // Check for cancellation
+        select {
+        case <-ctx.Done():
+            return nil, ctx.Err()
+        default:
+        }
+        
+        results = append(results, fmt.Sprintf("Processed item %d", i+1))
+    }
+    
+    resultData := map[string]interface{}{
+        "status":  "completed",
+        "results": results,
+    }
+    
+    jsonData, err := json.Marshal(resultData)
+    if err != nil {
+        return mcp.NewToolResultError(fmt.Sprintf("failed to marshal result: %v", err)), nil
+    }
+    
+    return mcp.NewToolResultText(string(jsonData)), nil
+}
+```
+
+### Conditional Tools
+
+Tools that are only available under certain conditions:
+
+```go
+func addConditionalTools(s *server.MCPServer, userRole string) {
+    // Admin-only tools
+    if userRole == "admin" {
+        adminTool := mcp.NewTool("delete_user",
+            mcp.WithDescription("Delete a user account (admin only)"),
+            mcp.WithString("user_id", mcp.Required()),
+        )
+        s.AddTool(adminTool, handleDeleteUser)
+    }
+    
+    // User tools available to all
+    userTool := mcp.NewTool("get_profile",
+        mcp.WithDescription("Get user profile information"),
+    )
+    s.AddTool(userTool, handleGetProfile)
+}
+```
+
+### Session-specific Tools
+
+You can add tools to a specific client session, allowing different clients to have access to different tools or different implementations of the same tool.
+
+#### Using Helper Functions (Recommended)
+
+The server provides convenient helper functions for managing session tools:
+
+```go
+// Add a single session tool
+userTool := mcp.NewTool(
+    "get_user_data",
+    mcp.WithDescription("Get current user's data"),
+)
+
+err := s.AddSessionTool(
+    sessionID,
+    userTool,
+    func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        // This handler is only available to this specific session
+        return mcp.NewToolResultText("User data for " + sessionID), nil
+    },
+)
+if err != nil {
+    log.Printf("Failed to add session tool: %v", err)
+}
+
+// Add multiple session tools at once
+err = s.AddSessionTools(
+    sessionID,
+    server.ServerTool{
+        Tool: mcp.NewTool("user_settings", mcp.WithDescription("Manage user settings")),
+        Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            return handleUserSettings(sessionID, req)
+        },
+    },
+    server.ServerTool{
+        Tool: mcp.NewTool("user_history", mcp.WithDescription("Access user history")),
+        Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            return handleUserHistory(sessionID, req)
+        },
+    },
+)
+if err != nil {
+    log.Printf("Failed to add session tools: %v", err)
+}
+
+// Delete session tools when no longer needed
+err = s.DeleteSessionTools(sessionID, "get_user_data", "user_settings")
+if err != nil {
+    log.Printf("Failed to delete session tools: %v", err)
+}
+```
+
+#### Direct Interface Usage
+
+You can also work directly with the `SessionWithTools` interface:
+
+```go
+sseServer := server.NewSSEServer(
+    s,
+    server.WithAppendQueryToMessageEndpoint(),
+    server.WithSSEContextFunc(func(ctx context.Context, r *http.Request) context.Context {
+        withNewTools := r.URL.Query().Get("withNewTools")
+        if withNewTools != "1" {
+            return ctx
+        }
+
+        session := server.ClientSessionFromContext(ctx)
+        if sessionWithTools, ok := session.(server.SessionWithTools); ok {
+            // Add the new tools
+            sessionWithTools.SetSessionTools(map[string]server.ServerTool{
+                myNewTool.Name: {
+                    Tool:    myNewTool,
+                    Handler: NewToolHandler(myNewToolHandler),
+                },
+            })
+        }
+
+        return ctx
+    }),
+)
+```
+
+#### Important Notes
+
+- Session tools override global tools with the same name
+- Notifications (`tools/list_changed`) are automatically sent when tools are added/removed
+- The server automatically registers tool capabilities when session tools are first added
+- Operations are thread-safe and can be called concurrently
+- Tools are only available to initialized sessions unless explicitly added before initialization
+
+## Next Steps
+
+- **[Prompts](/servers/prompts)** - Learn to create reusable interaction templates
+- **[Advanced Features](/servers/advanced)** - Explore typed tools, middleware, and hooks
+- **[Resources](/servers/resources)** - Learn about exposing data sources

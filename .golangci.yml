@@ -1,0 +1,25 @@
+version: "2"
+linters:
+  enable:
+    - modernize
+    - usetesting
+  settings:
+    usetesting:
+      context-background: true
+      context-todo: true
+      os-temp-dir: true
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      # Exclude examples directory from modernize.stringsbuilder linter.
+      - path: ^examples/
+        text: "stringsbuilder:"
+
+      # Features deprecated by MCP protocol version 2026-07-28 remain
+      # supported for at least the twelve-month deprecation window, so this
+      # module must keep exercising them: the tests prove the compatibility
+      # paths still work, and the examples document them for users who have
+      # not migrated yet.
+      - path: (_test\.go|^examples/|^e2e/|^mcptest/)
+        text: "SA1019: .*(2026-07-28|SEP-2575|SEP-2577|SEP-2567)"

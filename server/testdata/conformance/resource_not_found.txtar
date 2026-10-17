@@ -1,0 +1,43 @@
+Protocol version 2026-07-28 aligns the resource-not-found condition with
+JSON-RPC by reporting InvalidParams (-32602) instead of the MCP-specific
+-32002. The code is chosen per request, so a client using an earlier revision
+still sees the code its revision specifies, even on a long-lived session that
+has already served a modern request.
+
+-- client --
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "resources/read",
+  "params": {
+    "uri": "file:///missing",
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {}
+    }
+  }
+}
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "resources/read",
+  "params": { "uri": "file:///missing" }
+}
+-- server --
+{
+	"error": {
+		"code": -32602,
+		"message": "handler not found for resource URI 'file:///missing': resource not found"
+	},
+	"id": 1,
+	"jsonrpc": "2.0"
+}
+
+{
+	"error": {
+		"code": -32002,
+		"message": "handler not found for resource URI 'file:///missing': resource not found"
+	},
+	"id": 2,
+	"jsonrpc": "2.0"
+}

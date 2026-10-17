@@ -1,0 +1,160 @@
+# Getting Started
+
+## Introduction
+
+### What is MCP?
+
+The Model Context Protocol (MCP) is an open standard that enables secure, controlled connections between AI applications and external data sources and tools. It provides a standardized way for Large Language Models (LLMs) to access and interact with external systems while maintaining security and user control.
+
+### Why MCP Go?
+
+MCP-Go is designed to make building MCP servers in Go fast, simple, and complete:
+
+- **Fast**: Minimal overhead with efficient Go implementation
+- **Simple**: Clean, intuitive API with minimal boilerplate
+- **Complete**: Full support for the MCP specification including tools, resources, and prompts
+
+### Key Features
+
+- **High-level interface**: Focus on your business logic, not protocol details
+- **Minimal boilerplate**: Get started with just a few lines of code
+- **Full MCP spec support**: Tools, resources, prompts, and all transport methods
+- **Type safety**: Leverage Go's type system for robust MCP servers
+- **Multiple transports**: Stdio, StreamableHTTP, Server-Sent Events and In-Process support
+
+### Installation
+
+Add MCP-Go to your Go project:
+
+```bash
+go get github.com/mark3labs/mcp-go
+```
+
+MCP-Go makes it easy to build Model Context Protocol (MCP) servers in Go. This guide will help you create your first MCP server in just a few minutes.
+
+## Your First MCP Server
+
+Let's create a simple MCP server with a "hello world" tool:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+func main() {
+    // Create a new MCP server
+    s := server.NewMCPServer(
+        "Demo 🚀",
+        "1.0.0",
+        server.WithToolCapabilities(false),
+    )
+
+    // Add tool
+    tool := mcp.NewTool("hello_world",
+        mcp.WithDescription("Say hello to someone"),
+        mcp.WithString("name",
+            mcp.Required(),
+            mcp.Description("Name of the person to greet"),
+        ),
+    )
+
+    // Add tool handler
+    s.AddTool(tool, helloHandler)
+
+    // Start the stdio server
+    if err := server.ServeStdio(s); err != nil {
+        fmt.Printf("Server error: %v\n", err)
+    }
+}
+
+func helloHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    name, err := request.RequireString("name")
+    if err != nil {
+        return mcp.NewToolResultError(err.Error()), nil
+    }
+
+    return mcp.NewToolResultText(fmt.Sprintf("Hello, %s!", name)), nil
+}
+```
+
+## Running Your Server
+
+1. Save the code above to a file (e.g., `main.go`)
+2. Run it with:
+   ```bash
+   go run main.go
+   ```
+
+Your MCP server is now running and ready to accept connections via stdio!
+
+## What's Next?
+
+Now that you have a basic server running, you can:
+
+- **Add more tools** - Create tools for calculations, file operations, API calls, etc.
+- **Add resources** - Expose data sources like files, databases, or APIs
+- **Add prompts** - Create reusable prompt templates for better LLM interactions
+- **Explore examples** - Check out the `examples/` directory for more complex use cases
+
+## Key Concepts
+
+### Tools
+Tools let LLMs take actions through your server. They're like functions that the LLM can call:
+
+```go
+calculatorTool := mcp.NewTool("calculate",
+    mcp.WithDescription("Perform basic arithmetic operations"),
+    mcp.WithString("operation",
+        mcp.Required(),
+        mcp.Enum("add", "subtract", "multiply", "divide"),
+    ),
+    mcp.WithNumber("x", mcp.Required()),
+    mcp.WithNumber("y", mcp.Required()),
+)
+```
+
+### Resources
+Resources expose data to LLMs. They can be static files or dynamic data:
+
+```go
+resource := mcp.NewResource(
+    "docs://readme",
+    "Project README",
+    mcp.WithResourceDescription("The project's README file"),
+    mcp.WithMIMEType("text/markdown"),
+)
+```
+
+### Server Options
+Customize your server with various options:
+
+```go
+s := server.NewMCPServer(
+    "My Server",
+    "1.0.0",
+    server.WithToolCapabilities(true),
+    server.WithRecovery(),
+    server.WithHooks(myHooks),
+)
+```
+
+## Transport Options
+
+MCP-Go supports multiple transport methods:
+
+- **Stdio** (most common): `server.ServeStdio(s)`
+- **StreamableHTTP**: `server.NewStreamableHTTPServer(s).Start(":8080")`
+- **Server-Sent Events**: `server.ServeSSE(s, ":8080")`
+- **In-Process**: `client.NewInProcessClient(server)`
+
+## Need Help?
+
+- Check out the [examples](https://github.com/mark3labs/mcp-go/tree/main/examples) for more complex use cases
+- Join the discussion on [Discord](https://discord.gg/RqSS2NQVsY)
+- Read the full documentation in the [README](https://github.com/mark3labs/mcp-go/blob/main/README.md)
