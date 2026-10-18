@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -488,4 +489,22 @@ func mustURL(t *testing.T, s string) *url.URL {
 	u, err := url.Parse(s)
 	require.NoError(t, err)
 	return u
+}
+
+// TestSSE_ReadSSE_EventTypeResetsAfterDatalessEvent verifies a stale event
+// type does not leak into the next event when the previous event carried no
+// data. The Server-Sent Events specification resets the event type each time
+// an event is dispatched, whether or not it had data.
+func TestSSE_ReadSSE_EventTypeResetsAfterDatalessEvent(t *testing.T) {
+	sse := newBareSSE()
+	ch := make(chan struct{})
+	once := &sync.Once{}
+	body := "event: endpoint\n\n" +
+		"data: http://127.0.0.1:1/messages\n\n"
+	sse.readSSE(io.NopCloser(strings.NewReader(body)), ch, once)
+	select {
+	case <-ch:
+		t.Fatal("data-only event was handled as the endpoint event left over from the empty block")
+	default:
+	}
 }
