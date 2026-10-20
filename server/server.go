@@ -2352,12 +2352,17 @@ func (s *MCPServer) executeTaskTool(
 	defer cancel()
 
 	// Register cancellation atomically with TTL cleanup, which may have already removed the task.
+	// tasks/cancel may also have finished the task before this worker started.
 	s.tasksMu.Lock()
 	entry.cancelFunc = cancel
 	expired := s.tasks[entry.task.TaskId] != entry
+	cancelled := entry.completed
 	s.tasksMu.Unlock()
-	if expired {
+	if expired || cancelled {
 		cancel()
+	}
+	if cancelled {
+		return
 	}
 
 	// Execute the task tool handler
@@ -2455,12 +2460,17 @@ func (s *MCPServer) executeRegularToolAsTask(
 	defer cancel()
 
 	// Register cancellation atomically with TTL cleanup, which may have already removed the task.
+	// tasks/cancel may also have finished the task before this worker started.
 	s.tasksMu.Lock()
 	entry.cancelFunc = cancel
 	expired := s.tasks[entry.task.TaskId] != entry
+	cancelled := entry.completed
 	s.tasksMu.Unlock()
-	if expired {
+	if expired || cancelled {
 		cancel()
+	}
+	if cancelled {
+		return
 	}
 
 	// Execute the regular tool handler with middleware applied

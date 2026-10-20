@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -860,6 +861,47 @@ func TestTaskAugmentedToolCall_TasksCancelStopsHandler(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, mcp.TaskStatusCancelled, task.Status)
 			assert.Equal(t, "Task cancelled by request", task.StatusMessage)
+		})
+	}
+}
+
+// TestTaskCancelledBeforeWorkerStarts verifies that a task cancelled through
+// tasks/cancel before its worker registers a cancel func never runs its handler.
+func TestTaskCancelledBeforeWorkerStarts(t *testing.T) {
+	for _, taskTool := range []bool{true, false} {
+		name := "regular tool"
+		if taskTool {
+			name = "task tool"
+		}
+		t.Run(name, func(t *testing.T) {
+			s := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+			const taskID = "cancel-before-start"
+			entry, err := s.createTask(t.Context(), taskID, "work", nil, nil)
+			require.NoError(t, err)
+			require.NoError(t, s.cancelTask(t.Context(), taskID))
+
+			var called atomic.Bool
+			request := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "work"}}
+			if taskTool {
+				s.executeTaskTool(t.Context(), entry, ServerTaskTool{
+					Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+						called.Store(true)
+						return &mcp.CreateTaskResult{}, nil
+					},
+				}, request)
+			} else {
+				s.executeRegularToolAsTask(t.Context(), entry, ServerTool{
+					Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+						called.Store(true)
+						return mcp.NewToolResultText("done"), nil
+					},
+				}, request)
+			}
+
+			assert.False(t, called.Load(), "handler must not run for a task cancelled before it started")
+			task, _, err := s.getTask(t.Context(), taskID)
+			require.NoError(t, err)
+			assert.Equal(t, mcp.TaskStatusCancelled, task.Status)
 		})
 	}
 }
