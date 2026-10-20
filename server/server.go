@@ -2501,10 +2501,14 @@ func (s *MCPServer) executeTaskTool(
 	// it while the created hook ran.
 	s.tasksMu.Lock()
 	entry.cancelFunc = cancel
-	ended := s.tasks[entry.task.TaskId] != entry || entry.completed
+	cancelled := entry.completed
+	ended := s.tasks[entry.task.TaskId] != entry || cancelled
 	s.tasksMu.Unlock()
 	if ended {
 		cancel()
+	}
+	if cancelled {
+		return
 	}
 
 	// Execute the task tool handler
@@ -2591,10 +2595,14 @@ func (s *MCPServer) executeRegularToolAsTask(
 	// it while the created hook ran.
 	s.tasksMu.Lock()
 	entry.cancelFunc = cancel
-	ended := s.tasks[entry.task.TaskId] != entry || entry.completed
+	cancelled := entry.completed
+	ended := s.tasks[entry.task.TaskId] != entry || cancelled
 	s.tasksMu.Unlock()
 	if ended {
 		cancel()
+	}
+	if cancelled {
+		return
 	}
 
 	// Execute the regular tool handler with middleware applied
