@@ -45,6 +45,13 @@ type taskEntry struct {
 	cancelFunc context.CancelFunc // Function to cancel the task
 	done       chan struct{}      // Channel to signal task completion
 	completed  bool               // Whether the task has been completed (guards done channel closure)
+	// createdHookDone, under tasksMu, says the created hook has returned;
+	// until then the hook of a completion or cancellation waits in
+	// pendingHooks, which createTask runs after the created hook. A task's
+	// hooks so keep their order with no lock held across hook code: a hook
+	// that cancels its own task does not wait for itself.
+	createdHookDone bool
+	pendingHooks    []func()
 }
 
 // ServerOption is a function that configures an MCPServer.
@@ -2481,12 +2488,14 @@ func (s *MCPServer) executeTaskTool(
 	taskCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Register cancellation atomically with TTL cleanup, which may have already removed the task.
+	// Register cancellation atomically with TTL cleanup, which may have
+	// already removed the task, and with tasks/cancel, which may have ended
+	// it while the created hook ran.
 	s.tasksMu.Lock()
 	entry.cancelFunc = cancel
-	expired := s.tasks[entry.task.TaskId] != entry
+	ended := s.tasks[entry.task.TaskId] != entry || entry.completed
 	s.tasksMu.Unlock()
-	if expired {
+	if ended {
 		cancel()
 	}
 
@@ -2569,12 +2578,14 @@ func (s *MCPServer) executeRegularToolAsTask(
 	taskCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Register cancellation atomically with TTL cleanup, which may have already removed the task.
+	// Register cancellation atomically with TTL cleanup, which may have
+	// already removed the task, and with tasks/cancel, which may have ended
+	// it while the created hook ran.
 	s.tasksMu.Lock()
 	entry.cancelFunc = cancel
-	expired := s.tasks[entry.task.TaskId] != entry
+	ended := s.tasks[entry.task.TaskId] != entry || entry.completed
 	s.tasksMu.Unlock()
-	if expired {
+	if ended {
 		cancel()
 	}
 
@@ -2961,9 +2972,12 @@ func (s *MCPServer) createTask(ctx context.Context, taskID string, toolName stri
 	// Increment active task counter and insert task atomically
 	s.activeTasks++
 	s.tasks[taskID] = entry
+	// With no hooks there is nothing to wait for.
+	entry.createdHookDone = s.taskHooks == nil
 	s.tasksMu.Unlock()
 
-	// Fire task created hook
+	// Fire task created hook, outside the lock: a hook may take time, or
+	// read task state through the server.
 	if s.taskHooks != nil {
 		metrics := TaskMetrics{
 			TaskID:    taskID,
@@ -2972,7 +2986,12 @@ func (s *MCPServer) createTask(ctx context.Context, taskID string, toolName stri
 			CreatedAt: createdAt,
 			SessionID: getSessionID(ctx),
 		}
-		s.taskHooks.taskCreated(ctx, metrics)
+		func() {
+			// However the hook ends: one that panics must not leave the
+			// task's later hooks waiting.
+			defer s.finishCreatedHook(entry)
+			s.taskHooks.taskCreated(ctx, metrics)
+		}()
 	}
 
 	// Start TTL cleanup if specified
@@ -2981,6 +3000,35 @@ func (s *MCPServer) createTask(ctx context.Context, taskID string, toolName stri
 	}
 
 	return entry, nil
+}
+
+// finishCreatedHook records that entry's created hook has returned and runs
+// the hooks that waited for it, in the order they arrived.
+func (s *MCPServer) finishCreatedHook(entry *taskEntry) {
+	s.tasksMu.Lock()
+	entry.createdHookDone = true
+	pending := entry.pendingHooks
+	entry.pendingHooks = nil
+	s.tasksMu.Unlock()
+	for _, fire := range pending {
+		fire()
+	}
+}
+
+// fireTaskHook runs fire, a hook of entry, with ctx now, or after the
+// created hook when that is still running. A hook that waits runs once
+// the request that raised it may have ended, so it gets ctx's values
+// without its cancellation. Never under tasksMu.
+func (s *MCPServer) fireTaskHook(ctx context.Context, entry *taskEntry, fire func(context.Context)) {
+	s.tasksMu.Lock()
+	if !entry.createdHookDone {
+		later := context.WithoutCancel(ctx)
+		entry.pendingHooks = append(entry.pendingHooks, func() { fire(later) })
+		s.tasksMu.Unlock()
+		return
+	}
+	s.tasksMu.Unlock()
+	fire(ctx)
 }
 
 // getTask retrieves a task by ID, checking session isolation if applicable.
@@ -3103,13 +3151,15 @@ func (s *MCPServer) completeTask(entry *taskEntry, result any, err error) {
 	// Send task status notification
 	s.sendTaskStatusNotification(task)
 
-	// Fire task hooks
+	// Fire task hooks, after the created hook if it is still running
 	if s.taskHooks != nil {
-		if err != nil {
-			s.taskHooks.taskFailed(context.Background(), metrics)
-		} else {
-			s.taskHooks.taskCompleted(context.Background(), metrics)
-		}
+		s.fireTaskHook(context.Background(), entry, func(ctx context.Context) {
+			if err != nil {
+				s.taskHooks.taskFailed(ctx, metrics)
+			} else {
+				s.taskHooks.taskCompleted(ctx, metrics)
+			}
+		})
 	}
 }
 
@@ -3155,7 +3205,8 @@ func (s *MCPServer) cancelTaskEntry(ctx context.Context, entry *taskEntry, messa
 	}
 	s.sendTaskStatusNotification(task)
 	if s.taskHooks != nil {
-		s.taskHooks.taskCancelled(ctx, metrics)
+		// After the created hook, if it is still running.
+		s.fireTaskHook(ctx, entry, func(ctx context.Context) { s.taskHooks.taskCancelled(ctx, metrics) })
 	}
 	return nil
 }
