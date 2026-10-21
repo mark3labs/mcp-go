@@ -146,6 +146,8 @@ func (p *CallToolParams) UnmarshalJSON(data []byte) error {
 	p.Meta = raw.Meta
 	p.Task = raw.Task
 	p.MultiRoundTripParams = raw.MultiRoundTripParams
+	p.Arguments = nil
+	p.RawArguments = nil
 
 	if len(raw.Arguments) == 0 {
 		return nil
@@ -608,7 +610,8 @@ func (r *CallToolResult) UnmarshalJSON(data []byte) error {
 	r.InputRequests = raw.InputRequests
 	r.RequestState = raw.RequestState
 
-	if len(raw.Content) > 0 {
+	r.Content = nil
+	if raw.Content != nil {
 		r.Content = make([]Content, len(raw.Content))
 		for i, item := range raw.Content {
 			content, err := UnmarshalContent(item)
@@ -619,6 +622,8 @@ func (r *CallToolResult) UnmarshalJSON(data []byte) error {
 		}
 	}
 
+	r.RawStructuredContent = nil
+	r.StructuredContent = nil
 	if len(raw.StructuredContent) > 0 {
 		r.RawStructuredContent = append(json.RawMessage(nil), raw.StructuredContent...)
 		if err := json.Unmarshal(raw.StructuredContent, &r.StructuredContent); err != nil {
@@ -705,7 +710,7 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 
 	// Determine which input schema to use
 	if t.RawInputSchema != nil {
-		if t.InputSchema.Type != "" {
+		if t.InputSchema.Type != "" || t.InputSchema.Types != nil {
 			return nil, fmt.Errorf("tool %s has both InputSchema and RawInputSchema set: %w", t.Name, errToolSchemaConflict)
 		}
 		m["inputSchema"] = t.RawInputSchema
@@ -716,11 +721,11 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 
 	// Add output schema if present
 	if t.RawOutputSchema != nil {
-		if t.OutputSchema.Type != "" {
+		if t.OutputSchema.Type != "" || t.OutputSchema.Types != nil {
 			return nil, fmt.Errorf("tool %s has both OutputSchema and RawOutputSchema set: %w", t.Name, errToolSchemaConflict)
 		}
 		m["outputSchema"] = t.RawOutputSchema
-	} else if t.OutputSchema.Type != "" { // If no output schema is specified, do not return anything
+	} else if t.OutputSchema.Type != "" || t.OutputSchema.Types != nil {
 		m["outputSchema"] = t.OutputSchema
 	}
 
@@ -748,11 +753,20 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 
 // ToolArgumentsSchema represents a JSON Schema for tool arguments.
 type ToolArgumentsSchema struct {
-	Defs                 map[string]any `json:"$defs,omitempty"`
-	Type                 string         `json:"type"`
+	Defs map[string]any `json:"$defs,omitempty"`
+	Type string         `json:"type"`
+	// Types holds an array-valued JSON Schema type, including a single-element
+	// array. Type remains a string for compatibility and takes precedence when
+	// non-empty. Decoding a string clears Types; decoding an array clears Type.
+	Types                []string       `json:"-"`
 	Properties           map[string]any `json:"properties"`
 	Required             []string       `json:"required,omitempty"`
 	AdditionalProperties any            `json:"additionalProperties,omitempty"`
+	// AdditionalFields contains unmodeled top-level JSON Schema keywords.
+	// Modeled names (type, properties, required, additionalProperties, $defs,
+	// and the compatibility alias definitions) are reserved and cannot override
+	// structured fields, even when those fields are omitted.
+	AdditionalFields map[string]any `json:"-"`
 	// PropertyOrder is the marshal order of the top-level Properties keys.
 	// UnmarshalJSON sets it from the "properties" object. Names that are not
 	// in Properties are skipped, and keys that are not listed follow in
@@ -796,10 +810,28 @@ func (tis *ToolArgumentsSchema) UnmarshalJSON(data []byte) error {
 	return toolArgumentsSchemaUnmarshalJSON(data, tis)
 }
 
+// isModeledToolSchemaKeyword identifies names reserved for structured fields.
+func isModeledToolSchemaKeyword(key string) bool {
+	switch key {
+	case "type", "properties", "required", "additionalProperties", "$defs", "definitions":
+		return true
+	default:
+		return false
+	}
+}
+
 // toolArgumentsSchemaMarshalJSON handles the fields stored in ToolArgumentsSchema when json.Marshaler is called
 func toolArgumentsSchemaMarshalJSON(tis ToolArgumentsSchema) ([]byte, error) {
 	m := make(map[string]any)
+	for key, value := range tis.AdditionalFields {
+		if !isModeledToolSchemaKeyword(key) {
+			m[key] = value
+		}
+	}
 	m["type"] = tis.Type
+	if tis.Type == "" && tis.Types != nil {
+		m["type"] = tis.Types
+	}
 
 	if tis.Defs != nil {
 		m["$defs"] = tis.Defs
@@ -927,7 +959,8 @@ func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) err
 	// Use a temporary type to avoid infinite recursion
 	type Alias ToolArgumentsSchema
 	aux := &struct {
-		Definitions map[string]any `json:"definitions,omitempty"`
+		Definitions map[string]any  `json:"definitions,omitempty"`
+		Type        json.RawMessage `json:"type"`
 		// Properties shadows Alias.Properties so the raw bytes keep the key order.
 		Properties json.RawMessage `json:"properties"`
 		*Alias
@@ -938,12 +971,40 @@ func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) err
 	if err := json.Unmarshal(data, aux); err != nil {
 		return err
 	}
+	if len(aux.Type) > 0 {
+		if bytes.TrimSpace(aux.Type)[0] == '[' {
+			var types []string
+			if err := json.Unmarshal(aux.Type, &types); err != nil {
+				return fmt.Errorf("decode schema type array: %w", err)
+			}
+			tis.Type = ""
+			tis.Types = types
+		} else {
+			if err := json.Unmarshal(aux.Type, &tis.Type); err != nil {
+				return fmt.Errorf("decode schema type: %w", err)
+			}
+			tis.Types = nil
+		}
+	}
 
 	if aux.Properties != nil {
 		if err := json.Unmarshal(aux.Properties, &tis.Properties); err != nil {
 			return err
 		}
 		tis.PropertyOrder = propertyOrder(aux.Properties)
+	}
+
+	var additionalFields map[string]any
+	if err := json.Unmarshal(data, &additionalFields); err != nil {
+		return err
+	}
+	for key := range additionalFields {
+		if isModeledToolSchemaKeyword(key) {
+			delete(additionalFields, key)
+		}
+	}
+	if len(additionalFields) == 0 {
+		additionalFields = nil
 	}
 
 	// If $defs wasn't provided but definitions was, use definitions.
@@ -955,8 +1016,10 @@ func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) err
 		rewriteDraft07LocalRefs(tis.Defs)
 		rewriteDraft07LocalRefs(tis.Properties)
 		rewriteDraft07LocalRefs(tis.AdditionalProperties)
+		rewriteDraft07LocalRefs(additionalFields)
 	}
 
+	tis.AdditionalFields = additionalFields
 	return nil
 }
 
@@ -1089,6 +1152,7 @@ func WithInputSchema[T any]() ToolOption {
 		}
 
 		t.InputSchema.Type = ""
+		t.InputSchema.Types = nil
 		t.RawInputSchema = json.RawMessage(mcpSchema)
 	}
 }
@@ -1120,6 +1184,10 @@ func WithTaskSupport(support TaskSupport) ToolOption {
 // check that out before using this.
 func WithRawInputSchema(schema json.RawMessage) ToolOption {
 	return func(t *Tool) {
+		if schema != nil {
+			t.InputSchema.Type = ""
+			t.InputSchema.Types = nil
+		}
 		t.RawInputSchema = schema
 	}
 }
@@ -1139,9 +1207,11 @@ func WithOutputSchema[T any]() ToolOption {
 			return
 		}
 
-		if err := json.Unmarshal(mcpSchema, &t.OutputSchema); err != nil {
+		var outputSchema ToolOutputSchema
+		if err := json.Unmarshal(mcpSchema, &outputSchema); err != nil {
 			return
 		}
+		t.OutputSchema = outputSchema
 
 		// Always set the type to "object" as of the current MCP spec
 		// https://modelcontextprotocol.io/specification/2025-06-18/server/tools#output-schema

@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"slices"
 	"time"
 
+	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -179,6 +182,64 @@ func (c *Client) toolForCall(params json.RawMessage) *mcp.Tool {
 	return &tool
 }
 
+// InvalidToolHandler is called for each tool definition that ListTools,
+// ListToolsByPage and IterTools exclude because its x-mcp-header annotations
+// violate SEP-2243. err is the error returned by
+// mcp.ValidateParamHeaderAnnotations.
+//
+// The handler runs synchronously on the goroutine that listed the tools, once
+// per excluded tool and page, with that request's context, so a caller can
+// correlate the call with its own span or request. It must not block.
+type InvalidToolHandler func(ctx context.Context, tool mcp.Tool, err error)
+
+// WithInvalidToolHandler sets the handler notified about tools excluded for
+// their invalid x-mcp-header annotations.
+//
+// Exclusion itself is unchanged: the tool is still dropped from the listing and
+// forgotten from the cache, and the warning is still logged. Without this
+// option, that warning is the only signal that a tool disappeared.
+func WithInvalidToolHandler(handler InvalidToolHandler) ClientOption {
+	return func(c *Client) {
+		c.invalidToolHandler = handler
+	}
+}
+
+// withoutInvalidHeaderTools drops the tool definitions whose x-mcp-header
+// annotations break the constraints of SEP-2243. A client using Streamable
+// HTTP MUST exclude such a tool from the tools/list result, so that one bad
+// definition does not stop the others from being used. A definition cached
+// from an earlier listing is forgotten too, so the tool is not called with
+// headers mirrored from it. Other transports may ignore the annotations, and
+// connections before protocol version 2026-07-28 do not mirror them at all.
+func (c *Client) withoutInvalidHeaderTools(ctx context.Context, tools []mcp.Tool) []mcp.Tool {
+	if !c.isModern() {
+		return tools
+	}
+	if _, ok := c.transport.(transport.HTTPConnection); !ok {
+		return tools
+	}
+	valid := make([]mcp.Tool, 0, len(tools))
+	for _, tool := range tools {
+		if err := mcp.ValidateParamHeaderAnnotations(&tool); err != nil {
+			slog.WarnContext(ctx, "mcp: excluding a tool with invalid x-mcp-header annotations", "tool", tool.Name, "err", err)
+			if c.invalidToolHandler != nil {
+				c.invalidToolHandler(ctx, tool, err)
+			}
+			c.forgetTool(tool.Name)
+			continue
+		}
+		valid = append(valid, tool)
+	}
+	return valid
+}
+
+// forgetTool drops a cached tool definition.
+func (c *Client) forgetTool(name string) {
+	c.toolsMu.Lock()
+	defer c.toolsMu.Unlock()
+	delete(c.knownTools, name)
+}
+
 // rememberTools caches tool definitions so that subsequent tools/call requests
 // can mirror x-mcp-header annotated parameters into HTTP headers.
 func (c *Client) rememberTools(tools []mcp.Tool) {
@@ -213,6 +274,10 @@ func (c *Client) Discover(ctx context.Context, request mcp.DiscoverRequest) (*mc
 		return nil, err
 	}
 
+	if err := validateDiscoverResult(*response); err != nil {
+		return nil, fmt.Errorf("invalid server/discover result: %w", err)
+	}
+
 	var result mcp.DiscoverResult
 	if err := json.Unmarshal(*response, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal discover result: %w", err)
@@ -220,18 +285,66 @@ func (c *Client) Discover(ctx context.Context, request mcp.DiscoverRequest) (*mc
 	return &result, nil
 }
 
+// validateDiscoverResult checks the fields that distinguish discovery from a
+// legacy server's unrelated successful result. It is not a full schema check:
+// absent resultType and cache hints retain their existing decoding behavior.
+func validateDiscoverResult(data json.RawMessage) error {
+	var shape struct {
+		SupportedVersions []*string                  `json:"supportedVersions"`
+		Capabilities      map[string]json.RawMessage `json:"capabilities"`
+		Meta              json.RawMessage            `json:"_meta"`
+	}
+	if err := json.Unmarshal(data, &shape); err != nil {
+		return err
+	}
+	if shape.SupportedVersions == nil {
+		return errors.New("supportedVersions must be a non-null array of strings")
+	}
+	for _, version := range shape.SupportedVersions {
+		if version == nil {
+			return errors.New("supportedVersions must contain only strings")
+		}
+	}
+	if shape.Capabilities == nil {
+		return errors.New("capabilities must be an object")
+	}
+	if len(shape.Meta) == 0 {
+		return nil
+	}
+	var meta map[string]json.RawMessage
+	if err := json.Unmarshal(shape.Meta, &meta); err != nil {
+		return err
+	}
+	if meta == nil {
+		return errors.New("_meta must be an object")
+	}
+	if raw, ok := meta[mcp.MetaKeyServerInfo]; ok {
+		var info struct {
+			Name    *string `json:"name"`
+			Version *string `json:"version"`
+		}
+		if err := json.Unmarshal(raw, &info); err != nil {
+			return err
+		}
+		if info.Name == nil || info.Version == nil {
+			return errors.New("_meta serverInfo must be an object with string name and version")
+		}
+	}
+	return nil
+}
+
 // negotiateModern attempts to establish a modern, stateless connection.
 //
 // It sends server/discover at the client's preferred version. If the server
 // rejects that version but names the ones it does support, the request is
-// retried once at the highest mutually supported modern version. Any other
-// failure means the server is not modern, and the caller falls back to the
-// initialize handshake.
+// retried once at the highest mutually supported modern version, even when it
+// matches the rejected version. It also reports whether a modern server was identified,
+// so that a later failure cannot trigger the legacy initialize handshake.
 //
 // The probe is bounded by a timeout: a well-behaved JSON-RPC server answers an
 // unknown method with MethodNotFound, but a server predating this method may
 // simply ignore it, which on stdio would otherwise block forever.
-func (c *Client) negotiateModern(ctx context.Context, preferred string) (*mcp.DiscoverResult, error) {
+func (c *Client) negotiateModern(ctx context.Context, preferred string) (*mcp.DiscoverResult, bool, error) {
 	if preferred == "" {
 		preferred = mcp.LATEST_PROTOCOL_VERSION
 	}
@@ -249,29 +362,54 @@ func (c *Client) negotiateModern(ctx context.Context, preferred string) (*mcp.Di
 	previous := c.protocolVersion
 	c.applyNegotiatedVersion(preferred)
 
-	for range 2 {
-		result, err := c.Discover(probeCtx, mcp.DiscoverRequest{})
+	var err error
+	modern := false
+	for attempt := range 2 {
+		var result *mcp.DiscoverResult
+		result, err = c.Discover(probeCtx, mcp.DiscoverRequest{})
 		if err == nil {
-			return result, nil
+			version := discoveredVersion(c.protocolVersion, result.SupportedVersions)
+			if version == "" {
+				c.applyNegotiatedVersion(previous)
+				return nil, true, fmt.Errorf("server/discover result lists no modern version this client supports: %v", result.SupportedVersions)
+			}
+			c.applyNegotiatedVersion(version)
+			return result, true, nil
 		}
 
 		// A recognized modern error identifies a modern server: renegotiate
-		// rather than falling back.
+		// rather than falling back. The retry remains bounded even when the
+		// advertised version matches the version just rejected.
 		var unsupported mcp.UnsupportedProtocolVersionError
-		if errors.As(err, &unsupported) && len(unsupported.Supported) > 0 {
-			negotiated := mcp.NegotiateMutuallySupportedVersion(unsupported.Supported)
-			if negotiated != "" && mcp.IsModernProtocol(negotiated) && negotiated != c.protocolVersion {
-				c.applyNegotiatedVersion(negotiated)
-				continue
-			}
+		if !errors.As(err, &unsupported) || unsupported.Supported == nil {
+			break
 		}
-
-		c.applyNegotiatedVersion(previous)
-		return nil, err
+		modern = true
+		if attempt > 0 {
+			break
+		}
+		negotiated := mcp.NegotiateMutuallySupportedVersion(unsupported.Supported)
+		if !mcp.IsModernProtocol(negotiated) {
+			break
+		}
+		c.applyNegotiatedVersion(negotiated)
 	}
 
 	c.applyNegotiatedVersion(previous)
-	return nil, fmt.Errorf("server/discover: exhausted version negotiation attempts")
+	return nil, modern, err
+}
+
+// discoveredVersion picks the version to continue with after server/discover
+// lists supported: the one the probe was sent with, when listed, or else the
+// newest modern version both sides support. It returns "" when there is none.
+func discoveredVersion(sent string, supported []string) string {
+	if slices.Contains(supported, sent) {
+		return sent
+	}
+	if negotiated := mcp.NegotiateMutuallySupportedVersion(supported); mcp.IsModernProtocol(negotiated) {
+		return negotiated
+	}
+	return ""
 }
 
 // discoverProbeTimeout returns how long to wait for a server/discover reply

@@ -190,6 +190,59 @@ func TestWithRawInputSchemaOption(t *testing.T) {
 	assert.Equal(t, rawSchema, tool.RawInputSchema)
 }
 
+func TestNewToolWithRawInputSchemaOption(t *testing.T) {
+	tests := []struct {
+		name   string
+		types  []string
+		schema json.RawMessage
+		want   map[string]any
+	}{
+		{
+			name:   "raw schema replaces an array-valued type",
+			types:  []string{"object", "null"},
+			schema: json.RawMessage(`{"type":"object"}`),
+			want:   map[string]any{"type": "object"},
+		},
+		{
+			name:   "raw schema replaces the default",
+			schema: json.RawMessage(`{"type":"object","properties":{"count":{"type":"integer","minimum":1}}}`),
+			want: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"count": map[string]any{"type": "integer", "minimum": float64(1)},
+				},
+			},
+		},
+		{
+			name:   "nil schema keeps the default",
+			schema: nil,
+			want: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+				"required":   []any{},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool := NewTool("test", func(tool *Tool) {
+				if tt.types != nil {
+					tool.InputSchema.Type = ""
+					tool.InputSchema.Types = tt.types
+				}
+			}, WithRawInputSchema(tt.schema))
+
+			data, err := json.Marshal(tool)
+			require.NoError(t, err)
+
+			var result map[string]any
+			require.NoError(t, json.Unmarshal(data, &result))
+			assert.Equal(t, tt.want, result["inputSchema"])
+		})
+	}
+}
+
 func TestWithRawOutputSchema(t *testing.T) {
 	rawSchema := json.RawMessage(`{
 		"type": "object",

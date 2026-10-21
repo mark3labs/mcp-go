@@ -1,0 +1,6 @@
+# Notification delivery on current main is intermittent until #969 is merged.
+# The checker repeats these scenarios and only considers the baseline stale
+# after ten consecutive passes.
+server:
+  - tools-call-with-logging
+  - tools-call-with-progress

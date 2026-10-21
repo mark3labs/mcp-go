@@ -56,10 +56,11 @@ func (c *Client) maxRoundTrips() int {
 func multiRoundTrip[T any](
 	ctx context.Context,
 	c *Client,
+	initial mcp.MultiRoundTripParams,
 	send func(context.Context, mcp.MultiRoundTripParams) (*T, error),
 	needsInput func(*T) (mcp.InputRequests, string, bool),
 ) (*T, error) {
-	var params mcp.MultiRoundTripParams
+	params := initial
 	loadShedding := 0
 
 	for attempt := 1; ; attempt++ {
@@ -90,15 +91,14 @@ func multiRoundTrip[T any](
 			return nil, fmt.Errorf("%w (%d)", ErrMaxInputRoundTripsExceeded, c.maxRoundTrips())
 		}
 
-		responses, err := c.fulfillInputRequests(ctx, requests)
-		if err != nil {
-			return nil, err
+		if len(requests) > 0 {
+			responses, err := c.fulfillInputRequests(ctx, requests)
+			if err != nil {
+				return nil, err
+			}
+			params.InputResponses = responses
 		}
-
-		params = mcp.MultiRoundTripParams{
-			InputResponses: responses,
-			RequestState:   state,
-		}
+		params.RequestState = state
 	}
 }
 
@@ -206,7 +206,7 @@ func (c *Client) fulfillInputRequest(
 		if result == nil {
 			return mcp.InputResponse{}, fmt.Errorf("roots handler returned no result")
 		}
-		return mcp.NewRootsInputResponse(*result), nil
+		return mcp.NewRootsInputResponse(*withRootsArray(result)), nil
 
 	default:
 		return mcp.InputResponse{}, fmt.Errorf("unsupported input request method %q", request.Method)

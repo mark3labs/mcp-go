@@ -2465,7 +2465,7 @@ func TestMCPServer_ToolHandlerPreservesJSONRPCError(t *testing.T) {
 	assert.Equal(t, mcp.JSONRPC_VERSION, errorResponse.JSONRPC)
 	assert.Equal(t, float64(4), errorResponse.ID.Value())
 	assert.Equal(t, mcp.URL_ELICITATION_REQUIRED, errorResponse.Error.Code)
-	assert.Equal(t, handlerErr.Error(), errorResponse.Error.Message)
+	assert.Equal(t, "tool call failed: "+handlerErr.Error(), errorResponse.Error.Message)
 	assert.Equal(t, map[string]any{
 		"elicitations": []mcp.ElicitationParams{elicitation},
 	}, errorResponse.Error.Data)

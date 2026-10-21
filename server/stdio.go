@@ -519,7 +519,7 @@ func (s *StdioServer) Listen(
 	ctx = s.server.WithContext(ctx, &stdioSessionInstance)
 
 	// Set the writer for sending requests to the client
-	stdioSessionInstance.SetWriter(stdout)
+	stdioSessionInstance.SetWriter(&lockedWriter{mu: &s.writeMu, w: stdout})
 
 	// Add in any custom context.
 	if s.contextFunc != nil {
@@ -611,7 +611,7 @@ func (s *StdioServer) processMessage(
 		default:
 			// Queue is full, process synchronously as fallback
 			s.errLogger.Printf("Tool call queue full, processing synchronously")
-			response := s.server.HandleMessage(ctx, rawMessage)
+			response := s.handleMessage(ctx, baseMessage.ID, rawMessage)
 			if response != nil {
 				return s.writeResponse(response, writer)
 			}
@@ -629,7 +629,7 @@ func (s *StdioServer) processMessage(
 	}
 
 	// Notifications carry no response and must not queue behind a request.
-	response := s.server.HandleMessage(ctx, rawMessage)
+	response := s.handleMessage(ctx, baseMessage.ID, rawMessage)
 
 	// Only write response if there is one (not for notifications)
 	if response != nil {
@@ -641,18 +641,25 @@ func (s *StdioServer) processMessage(
 	return nil
 }
 
+// handleMessage runs HandleMessage, recovering a panicking handler so that
+// it can't end the process. A request gets an INTERNAL_ERROR response
+// carrying its id; a notification (nil id) gets no response at all.
+func (s *StdioServer) handleMessage(ctx context.Context, id any, rawMessage json.RawMessage) (response mcp.JSONRPCMessage) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.errLogger.Printf("panic recovered in stdio message handler: %v", r)
+			if id != nil {
+				response = createErrorResponse(id, mcp.INTERNAL_ERROR, fmt.Sprintf("internal panic: %v", r))
+			}
+		}
+	}()
+	return s.server.HandleMessage(ctx, rawMessage)
+}
+
 // handleRequest serves one JSON-RPC request and writes its response. id is the
 // request's JSON-RPC id, so a recovered panic stays correlatable by the client.
 func (s *StdioServer) handleRequest(ctx context.Context, id any, rawMessage json.RawMessage, writer io.Writer) {
-	response := func() (resp mcp.JSONRPCMessage) {
-		defer func() {
-			if r := recover(); r != nil {
-				s.errLogger.Printf("panic recovered in stdio request handler: %v", r)
-				resp = createErrorResponse(id, mcp.INTERNAL_ERROR, fmt.Sprintf("internal panic: %v", r))
-			}
-		}()
-		return s.server.HandleMessage(ctx, rawMessage)
-	}()
+	response := s.handleMessage(ctx, id, rawMessage)
 	if response != nil {
 		if err := s.writeResponse(response, writer); err != nil {
 			s.errLogger.Printf("Error writing response: %v", err)
@@ -706,15 +713,11 @@ func (s *stdioSession) handleSamplingResponse(rawMessage json.RawMessage) bool {
 			samplingResp.err = fmt.Errorf("failed to unmarshal sampling response: %w", err)
 		} else {
 			// Parse content from map[string]any to proper Content type (TextContent, ImageContent, AudioContent)
-			if contentMap, ok := result.Content.(map[string]any); ok {
-				content, err := mcp.ParseContent(contentMap)
-				if err != nil {
-					samplingResp.err = fmt.Errorf("failed to parse sampling response content: %w", err)
-				} else {
-					result.Content = content
-					samplingResp.result = &result
-				}
+			content, err := mcp.ParseSamplingContent(result.Content)
+			if err != nil {
+				samplingResp.err = fmt.Errorf("failed to parse sampling response content: %w", err)
 			} else {
+				result.Content = content
 				samplingResp.result = &result
 			}
 		}
@@ -873,6 +876,20 @@ func (s *StdioServer) writeResponse(
 	}
 
 	return nil
+}
+
+// lockedWriter writes to w while holding mu. The stdio session sends its
+// requests to the client through it, so they take the same lock as the
+// server's responses and notifications.
+type lockedWriter struct {
+	mu *sync.Mutex
+	w  io.Writer
+}
+
+func (lw *lockedWriter) Write(p []byte) (int, error) {
+	lw.mu.Lock()
+	defer lw.mu.Unlock()
+	return lw.w.Write(p)
 }
 
 // ServeStdio is a convenience function that creates and starts a StdioServer with os.Stdin and os.Stdout.

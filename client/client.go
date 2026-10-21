@@ -3,8 +3,10 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +30,7 @@ type Client struct {
 	samplingHandler    SamplingHandler
 	rootsHandler       RootsHandler
 	elicitationHandler ElicitationHandler
+	invalidToolHandler InvalidToolHandler
 	tracer             tracing.Tracer
 	propagator         tracing.Propagator
 	metaPropagator     tracing.MetaPropagator
@@ -191,8 +194,9 @@ func (c *Client) Start(ctx context.Context) error {
 
 	c.transport.SetNotificationHandler(func(notification mcp.JSONRPCNotification) {
 		c.notifyMu.RLock()
-		defer c.notifyMu.RUnlock()
-		for _, handler := range c.notifications {
+		handlers := slices.Clone(c.notifications)
+		c.notifyMu.RUnlock()
+		for _, handler := range handlers {
 			handler(notification)
 		}
 	})
@@ -212,6 +216,7 @@ func (c *Client) Close() error {
 
 // OnNotification registers a handler function to be called when notifications are received.
 // Multiple handlers can be registered and will be called in the order they were added.
+// Handlers registered during dispatch receive subsequent notifications.
 func (c *Client) OnNotification(
 	handler func(notification mcp.JSONRPCNotification),
 ) {
@@ -262,8 +267,19 @@ func (c *Client) sendRequest(
 		Header:  header,
 	}
 
+	// A request whose context has already ended isn't sent, so there is
+	// nothing to cancel.
+	if err := ctx.Err(); err != nil {
+		err = transport.NewError(err)
+		endSendSpan(span, err)
+		return nil, err
+	}
+
 	response, err := c.transport.SendRequest(ctx, request)
 	if err != nil {
+		if ctx.Err() != nil {
+			c.cancelRequest(ctx, request)
+		}
 		err = transport.NewError(err)
 		endSendSpan(span, err)
 		return nil, err
@@ -278,6 +294,66 @@ func (c *Client) sendRequest(
 	endSendSpan(span, nil)
 	return &response.Result, nil
 }
+
+// cancelRequest tells the server to stop working on a request whose context
+// ended before the response arrived, with a notifications/cancelled that
+// references it. Over stdio that is the only way to cancel a request, and
+// protocol version 2026-07-28 requires it there.
+//
+// Over HTTP nothing is sent: on protocol version 2026-07-28 the transport
+// ending the request's stream is the cancellation, and earlier versions keep
+// the behaviour they had. The handshake is left alone, since initialize must
+// not be cancelled and nothing else is sent before it completes, and so are
+// task-augmented requests, which are cancelled with tasks/cancel instead.
+func (c *Client) cancelRequest(ctx context.Context, request transport.JSONRPCRequest) {
+	if !c.initialized.Load() ||
+		request.Method == string(mcp.MethodInitialize) ||
+		request.Method == string(mcp.MethodServerDiscover) ||
+		isTaskAugmented(request.Params) {
+		return
+	}
+	if _, ok := c.transport.(transport.HTTPConnection); ok {
+		return
+	}
+	notification := mcp.JSONRPCNotification{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		Notification: mcp.Notification{
+			Method: string(mcp.MethodNotificationCancelled),
+			Params: mcp.NotificationParams{
+				AdditionalFields: map[string]any{"requestId": request.ID, "reason": ctx.Err().Error()},
+			},
+		},
+	}
+	// The request's context has ended, so send with one of our own, and off
+	// the caller's path: the caller already has its error, and a peer that
+	// doesn't read must not hold it up. The notification is best effort.
+	ctx = context.WithoutCancel(ctx)
+	go func() {
+		ctx, cancel := context.WithTimeout(ctx, cancelNotificationTimeout)
+		defer cancel()
+		_ = c.transport.SendNotification(ctx, notification)
+	}()
+}
+
+// isTaskAugmented reports whether params ask for the request to run as a
+// task.
+func isTaskAugmented(params any) bool {
+	encoded, err := json.Marshal(params)
+	if err != nil {
+		return false
+	}
+	var fields struct {
+		Task json.RawMessage `json:"task"`
+	}
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		return false
+	}
+	return len(fields.Task) > 0 && string(fields.Task) != "null"
+}
+
+// cancelNotificationTimeout bounds how long cancelRequest waits to send a
+// notifications/cancelled.
+const cancelNotificationTimeout = 5 * time.Second
 
 func outboundHeader(header http.Header, requestMethod string) http.Header {
 	// A typed request with Method set was decoded from an inbound JSON-RPC
@@ -299,9 +375,11 @@ func outboundHeader(header http.Header, requestMethod string) http.Header {
 // its own protocol metadata; the returned InitializeResult is rendered from
 // the discovery response so that callers observe the same value in both eras.
 //
-// When the probe fails with anything other than a recognized modern error the
-// server is taken to be legacy, and the classic initialize handshake is
-// performed instead.
+// When the probe fails without identifying a modern server, the server is
+// taken to be legacy, and the classic initialize handshake is performed instead.
+// A successful discovery or an UnsupportedProtocolVersionError with a supported
+// list identifies a modern server; negotiation failures are returned to the
+// caller rather than falling back to the legacy handshake.
 func (c *Client) Initialize(
 	ctx context.Context,
 	request mcp.InitializeRequest,
@@ -318,14 +396,16 @@ func (c *Client) Initialize(
 	// earlier revision or configured the transport in a way that rules it out.
 	if !c.legacyOnly && !c.transportRequiresLegacyProtocol() &&
 		(preferred == "" || mcp.IsModernProtocol(preferred)) {
-		discovered, err := c.negotiateModern(ctx, preferred)
+		discovered, modern, err := c.negotiateModern(ctx, preferred)
 		if err == nil {
 			c.serverCapabilities = discovered.Capabilities
 			c.applyNegotiatedVersion(c.protocolVersion)
 			c.initialized.Store(true)
 			return initializeResultFromDiscover(c.protocolVersion, discovered), nil
 		}
-		// Fall through to the handshake: the server is not modern.
+		if modern {
+			return nil, err
+		}
 	}
 
 	return c.initializeLegacy(ctx, request, preferred)
@@ -454,16 +534,34 @@ func (c *Client) ListResourcesByPage(
 	return result, nil
 }
 
+// ErrRepeatedListCursor is returned when a paginated list repeats a cursor
+// that was already requested. Following it would request the same page again.
+var ErrRepeatedListCursor = errors.New("list cursor did not advance")
+
+// noteListCursor records next before it is requested. A cursor already in
+// seen means the server did not advance.
+func noteListCursor(seen map[mcp.Cursor]struct{}, next mcp.Cursor) error {
+	if _, dup := seen[next]; dup {
+		return fmt.Errorf("%w: %q", ErrRepeatedListCursor, next)
+	}
+	seen[next] = struct{}{}
+	return nil
+}
+
 // ListResources lists all resources by following paginated responses.
 func (c *Client) ListResources(
 	ctx context.Context,
 	request mcp.ListResourcesRequest,
 ) (*mcp.ListResourcesResult, error) {
+	seen := map[mcp.Cursor]struct{}{request.Params.Cursor: {}}
 	result, err := c.ListResourcesByPage(ctx, request)
 	if err != nil {
 		return nil, err
 	}
 	for result.NextCursor != "" {
+		if err := noteListCursor(seen, result.NextCursor); err != nil {
+			return nil, err
+		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -497,11 +595,15 @@ func (c *Client) ListResourceTemplates(
 	ctx context.Context,
 	request mcp.ListResourceTemplatesRequest,
 ) (*mcp.ListResourceTemplatesResult, error) {
+	seen := map[mcp.Cursor]struct{}{request.Params.Cursor: {}}
 	result, err := c.ListResourceTemplatesByPage(ctx, request)
 	if err != nil {
 		return nil, err
 	}
 	for result.NextCursor != "" {
+		if err := noteListCursor(seen, result.NextCursor); err != nil {
+			return nil, err
+		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -525,7 +627,7 @@ func (c *Client) ReadResource(
 ) (*mcp.ReadResourceResult, error) {
 	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
 	header := outboundHeader(request.Header, request.Method)
-	return multiRoundTrip(ctx, c,
+	return multiRoundTrip(ctx, c, request.Params.MultiRoundTripParams,
 		func(ctx context.Context, roundTrip mcp.MultiRoundTripParams) (*mcp.ReadResourceResult, error) {
 			return c.readResourceOnce(ctx, request, roundTrip, header)
 		},
@@ -550,11 +652,15 @@ func (c *Client) ListPrompts(
 	ctx context.Context,
 	request mcp.ListPromptsRequest,
 ) (*mcp.ListPromptsResult, error) {
+	seen := map[mcp.Cursor]struct{}{request.Params.Cursor: {}}
 	result, err := c.ListPromptsByPage(ctx, request)
 	if err != nil {
 		return nil, err
 	}
 	for result.NextCursor != "" {
+		if err := noteListCursor(seen, result.NextCursor); err != nil {
+			return nil, err
+		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -578,7 +684,7 @@ func (c *Client) GetPrompt(
 ) (*mcp.GetPromptResult, error) {
 	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
 	header := outboundHeader(request.Header, request.Method)
-	return multiRoundTrip(ctx, c,
+	return multiRoundTrip(ctx, c, request.Params.MultiRoundTripParams,
 		func(ctx context.Context, roundTrip mcp.MultiRoundTripParams) (*mcp.GetPromptResult, error) {
 			return c.getPromptOnce(ctx, request, roundTrip, header)
 		},
@@ -595,6 +701,7 @@ func (c *Client) ListToolsByPage(
 	if err != nil {
 		return nil, err
 	}
+	result.Tools = c.withoutInvalidHeaderTools(ctx, result.Tools)
 	// Cache the definitions so that tools/call requests can mirror
 	// x-mcp-header annotated parameters into HTTP headers (SEP-2243).
 	c.rememberTools(result.Tools)
@@ -606,11 +713,15 @@ func (c *Client) ListTools(
 	ctx context.Context,
 	request mcp.ListToolsRequest,
 ) (*mcp.ListToolsResult, error) {
+	seen := map[mcp.Cursor]struct{}{request.Params.Cursor: {}}
 	result, err := c.ListToolsByPage(ctx, request)
 	if err != nil {
 		return nil, err
 	}
 	for result.NextCursor != "" {
+		if err := noteListCursor(seen, result.NextCursor); err != nil {
+			return nil, err
+		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -634,7 +745,7 @@ func (c *Client) CallTool(
 ) (*mcp.CallToolResult, error) {
 	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
 	header := outboundHeader(request.Header, request.Method)
-	return multiRoundTrip(ctx, c,
+	return multiRoundTrip(ctx, c, request.Params.MultiRoundTripParams,
 		func(ctx context.Context, roundTrip mcp.MultiRoundTripParams) (*mcp.CallToolResult, error) {
 			return c.callToolOnce(ctx, request, roundTrip, header)
 		},
@@ -742,14 +853,11 @@ func (c *Client) handleSamplingRequestTransport(ctx context.Context, request tra
 	// Fix content parsing - HTTP transport unmarshals TextContent as map[string]any
 	// Use the helper function to properly handle content from different transports
 	for i := range params.Messages {
-		if contentMap, ok := params.Messages[i].Content.(map[string]any); ok {
-			// Parse the content map into a proper Content type
-			content, err := mcp.ParseContent(contentMap)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse content for message %d: %w", i, err)
-			}
-			params.Messages[i].Content = content
+		content, err := mcp.ParseSamplingContent(params.Messages[i].Content)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse content for message %d: %w", i, err)
 		}
+		params.Messages[i].Content = content
 	}
 
 	// Create the MCP request
@@ -765,6 +873,9 @@ func (c *Client) handleSamplingRequestTransport(ctx context.Context, request tra
 	if err != nil {
 		return nil, err
 	}
+	if result == nil {
+		return nil, fmt.Errorf("sampling handler returned no result")
+	}
 
 	// Marshal the result
 	resultBytes, err := json.Marshal(result)
@@ -776,6 +887,18 @@ func (c *Client) handleSamplingRequestTransport(ctx context.Context, request tra
 	response := transport.NewJSONRPCResultResponse(request.ID, json.RawMessage(resultBytes))
 
 	return response, nil
+}
+
+// withRootsArray returns result with a non-nil Roots, so that a client with
+// no roots answers with "roots": [] rather than null, which the schema
+// doesn't allow.
+func withRootsArray(result *mcp.ListRootsResult) *mcp.ListRootsResult {
+	if result.Roots != nil {
+		return result
+	}
+	withRoots := *result
+	withRoots.Roots = []mcp.Root{}
+	return &withRoots
 }
 
 // handleListRootsRequestTransport handles list roots requests at the transport level.
@@ -796,6 +919,10 @@ func (c *Client) handleListRootsRequestTransport(ctx context.Context, request tr
 	if err != nil {
 		return nil, err
 	}
+	if result == nil {
+		return nil, fmt.Errorf("roots handler returned no result")
+	}
+	result = withRootsArray(result)
 
 	// Marshal the result
 	resultBytes, err := json.Marshal(result)
@@ -843,6 +970,9 @@ func (c *Client) handleElicitationRequestTransport(ctx context.Context, request 
 	result, err := c.elicitationHandler.Elicit(ctx, mcpRequest)
 	if err != nil {
 		return nil, err
+	}
+	if result == nil {
+		return nil, fmt.Errorf("elicitation handler returned no result")
 	}
 
 	// Marshal the result
@@ -925,8 +1055,12 @@ func (c *Client) CancelTask(
 	return mcp.ParseCancelTaskResult(response)
 }
 
-// ListTasks returns the list of tasks
-func (c *Client) ListTasks(
+// ErrRepeatedTaskListCursor is returned when tasks/list repeats a cursor that
+// was already requested. Following it would request the same page again.
+var ErrRepeatedTaskListCursor = errors.New("tasks/list cursor did not advance")
+
+// ListTasksByPage lists one page of tasks.
+func (c *Client) ListTasksByPage(
 	ctx context.Context,
 	request mcp.ListTasksRequest,
 ) (*mcp.ListTasksResult, error) {
@@ -936,6 +1070,37 @@ func (c *Client) ListTasks(
 	}
 
 	return mcp.ParseListTasksResult(response)
+}
+
+// ListTasks lists all tasks by following paginated responses.
+func (c *Client) ListTasks(
+	ctx context.Context,
+	request mcp.ListTasksRequest,
+) (*mcp.ListTasksResult, error) {
+	seen := map[mcp.Cursor]struct{}{request.Params.Cursor: {}}
+	result, err := c.ListTasksByPage(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	for result.NextCursor != "" {
+		if _, dup := seen[result.NextCursor]; dup {
+			return nil, fmt.Errorf("%w: %q", ErrRepeatedTaskListCursor, result.NextCursor)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			seen[result.NextCursor] = struct{}{}
+			request.Params.Cursor = result.NextCursor
+			page, err := c.ListTasksByPage(ctx, request)
+			if err != nil {
+				return nil, err
+			}
+			result.Tasks = append(result.Tasks, page.Tasks...)
+			result.NextCursor = page.NextCursor
+		}
+	}
+	return result, nil
 }
 
 // TaskResult returns finished task result

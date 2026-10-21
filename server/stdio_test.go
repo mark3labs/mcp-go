@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -638,4 +639,123 @@ func TestStdioJoinsRequestHandlersOnEOF(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Listen did not return once the request handler finished")
 	}
+}
+
+func TestStdioSessionSamplingResponseArrayContent(t *testing.T) {
+	session := &stdioSession{pendingRequests: make(map[int64]chan *samplingResponse)}
+	responseChan := make(chan *samplingResponse, 1)
+	session.pendingRequests[1] = responseChan
+
+	handled := session.handleSamplingResponse(json.RawMessage(`{"jsonrpc": "2.0", "id": 1, "result": {
+		"role": "assistant",
+		"content": [
+			{"type": "tool_use", "id": "call_abc123", "name": "get_weather", "input": {"city": "Paris"}},
+			{"type": "tool_use", "id": "call_def456", "name": "get_weather", "input": {"city": "London"}}
+		],
+		"model": "test-model",
+		"stopReason": "toolUse"
+	}}`))
+	require.True(t, handled)
+
+	response := <-responseChan
+	require.NoError(t, response.err)
+	require.Equal(t, []mcp.Content{
+		mcp.NewToolUseContent("call_abc123", "get_weather", map[string]any{"city": "Paris"}),
+		mcp.NewToolUseContent("call_def456", "get_weather", map[string]any{"city": "London"}),
+	}, response.result.Content)
+}
+
+// overlapWriter counts the Write calls that start while another one is still
+// running. Each call takes a while, so writes from different goroutines
+// overlap unless the server serializes them.
+type overlapWriter struct {
+	active   atomic.Int32
+	overlaps atomic.Int32
+	messages chan map[string]any
+}
+
+func (w *overlapWriter) Write(p []byte) (int, error) {
+	if w.active.Add(1) > 1 {
+		w.overlaps.Add(1)
+	}
+	defer w.active.Add(-1)
+	time.Sleep(50 * time.Millisecond)
+
+	var message map[string]any
+	if json.Unmarshal(p, &message) == nil {
+		w.messages <- message
+	}
+	return len(p), nil
+}
+
+func TestStdioSessionRequestsAreSerializedWithOtherWrites(t *testing.T) {
+	mcpServer := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
+	mcpServer.EnableSampling()
+	mcpServer.AddTool(mcp.NewTool("ask"), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		// The notification goroutine writes this while the sampling request
+		// below is written from the tool worker.
+		if err := mcpServer.SendNotificationToClient(ctx, "notifications/message", map[string]any{"level": "info", "data": "asking"}); err != nil {
+			return nil, err
+		}
+		samplingCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+		defer cancel()
+		_, _ = mcpServer.RequestSampling(samplingCtx, mcp.CreateMessageRequest{})
+		return mcp.NewToolResultText("done"), nil
+	})
+
+	stdinReader, stdinWriter := io.Pipe()
+	defer stdinWriter.Close()
+	output := &overlapWriter{messages: make(chan map[string]any, 16)}
+
+	stdioServer := NewStdioServer(mcpServer)
+	stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = stdioServer.Listen(ctx, stdinReader, output) }()
+
+	send := func(message map[string]any) {
+		t.Helper()
+		b, err := json.Marshal(message)
+		require.NoError(t, err)
+		_, err = stdinWriter.Write(append(b, '\n'))
+		require.NoError(t, err)
+	}
+	await := func(done func(map[string]any) bool, describe string) {
+		t.Helper()
+		deadline := time.After(5 * time.Second)
+		for {
+			select {
+			case message := <-output.messages:
+				if done(message) {
+					return
+				}
+			case <-deadline:
+				t.Fatalf("timed out waiting for %s", describe)
+			}
+		}
+	}
+
+	send(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{
+		"protocolVersion": mcp.ProtocolVersion20251125,
+		"capabilities":    map[string]any{"sampling": map[string]any{}},
+		"clientInfo":      map[string]any{"name": "test-client", "version": "1.0.0"},
+	}})
+	await(func(m map[string]any) bool { return m["id"] == float64(1) }, "the initialize response")
+
+	send(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
+	send(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "ask"}})
+
+	seen := map[string]bool{}
+	await(func(m map[string]any) bool {
+		if method, ok := m["method"].(string); ok {
+			seen[method] = true
+		}
+		if m["id"] == float64(2) && m["method"] == nil {
+			seen["response"] = true
+		}
+		return seen["notifications/message"] && seen[string(mcp.MethodSamplingCreateMessage)] && seen["response"]
+	}, "the notification, the sampling request and the tool response")
+
+	require.Zero(t, output.overlaps.Load(), "a message was written while another one was being written")
 }

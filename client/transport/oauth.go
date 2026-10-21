@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,9 @@ const maxMetadataBodyBytes = 1 << 20 // 1 MiB
 // ErrNoToken is returned when no token is available in the token store
 var ErrNoToken = errors.New("no token available")
 
+// ErrAuthorizationServerChanged indicates that credentials or tokens belong to another issuer.
+var ErrAuthorizationServerChanged = errors.New("authorization server changed")
+
 // OAuthConfig holds the OAuth configuration for the client
 type OAuthConfig struct {
 	// ClientID is the OAuth client ID
@@ -31,6 +35,18 @@ type OAuthConfig struct {
 	ClientURI string
 	// ClientSecret is the OAuth client secret (for confidential clients)
 	ClientSecret string
+	// CredentialsIssuer is the exact metadata issuer that issued ClientID and ClientSecret.
+	// Persist it with credentials; an empty value enables legacy trust on first use.
+	CredentialsIssuer string
+	// TokenEndpointAuthMethod is how the client authenticates at the token
+	// endpoint: "client_secret_basic", "client_secret_post" or "none". Set it
+	// for pre-registered credentials, or for credentials saved from an
+	// earlier dynamic registration (see GetTokenEndpointAuthMethod), when the
+	// authorization server supports more than one method. When empty, the
+	// method returned by dynamic client registration is used, or else
+	// client_secret_basic if the server's metadata lists it but not
+	// client_secret_post, and client_secret_post otherwise.
+	TokenEndpointAuthMethod string
 	// RedirectURI is the redirect URI for the OAuth flow
 	RedirectURI string
 	// Scopes is the list of OAuth scopes to request
@@ -46,6 +62,12 @@ type OAuthConfig struct {
 	ProtectedResourceMetadataURL string
 	// PKCEEnabled enables PKCE for the OAuth flow (recommended for public clients)
 	PKCEEnabled bool
+	// SkipIssuerMetadataValidation turns off the check that authorization
+	// server metadata found through protected resource metadata declares the
+	// issuer it was requested for (RFC 8414 §3.3). Turning it off weakens
+	// security; it is meant only for authorization servers known to publish
+	// a mismatched issuer.
+	SkipIssuerMetadataValidation bool
 	// HTTPClient is an optional HTTP client to use for requests.
 	// If nil, a default HTTP client with a 30 second timeout will be used.
 	HTTPClient *http.Client
@@ -54,6 +76,7 @@ type OAuthConfig struct {
 // TokenStore is an interface for storing and retrieving OAuth tokens.
 //
 // Implementations must:
+//   - Preserve Token.Issuer when persisting and restoring tokens
 //   - Honor context cancellation and deadlines, returning context.Canceled
 //     or context.DeadlineExceeded as appropriate
 //   - Return ErrNoToken (or a sentinel error that wraps it) when no token
@@ -75,6 +98,8 @@ type TokenStore interface {
 
 // Token represents an OAuth token
 type Token struct {
+	// Issuer records trusted local provenance, not token endpoint response metadata.
+	Issuer string `json:"issuer,omitempty"`
 	// AccessToken is the OAuth access token
 	AccessToken string `json:"access_token"`
 	// TokenType is the type of token (usually "Bearer")
@@ -174,25 +199,55 @@ type OAuthHandler struct {
 	httpClient       *http.Client
 	serverMetadata   *AuthServerMetadata
 	metadataFetchErr error
-	// metadataOnce gates the discovery RPCs so they run exactly once per
-	// OAuthHandler. It is a pointer (rather than an embedded value) so
-	// SetProtectedResourceMetadataURL can swap in a fresh sync.Once
-	// without racing against a concurrently running Do on the previous
-	// instance. The pointer itself is protected by metadataMu; callers
+	// metadataOnce gates the discovery RPCs so they run once per
+	// OAuthHandler, or again after a discovery that failed. It is a pointer
+	// (rather than an embedded value) so SetProtectedResourceMetadataURL
+	// can swap in a fresh sync.Once without racing against a concurrently
+	// running Do on the previous instance. The pointer itself is protected by metadataMu; callers
 	// snapshot the pointer under the lock and then invoke Do without
 	// holding the lock.
 	metadataOnce *sync.Once
 	baseURL      string
 	// metadataMu protects baseURL, serverMetadata, metadataFetchErr,
-	// metadataOnce, config.ProtectedResourceMetadataURL, and resourceURL.
+	// metadataOnce, config.ProtectedResourceMetadataURL, knownIssuer, and resourceURL.
 	// It MUST NOT be held across HTTP I/O — see getServerMetadata for the
 	// snapshot/publish discipline that keeps network round trips out of
 	// the critical section (#871).
 	metadataMu  sync.Mutex
+	knownIssuer string // last successfully discovered issuer; retained across resets
 	resourceURL string // RFC 8707 resource indicator; set from protected resource metadata
 
-	mu            sync.RWMutex // Protects expectedState
+	// registeredAuthMethod is the token_endpoint_auth_method the
+	// authorization server registered for the client during dynamic client
+	// registration, if any.
+	registeredAuthMethod string
+	assertedIssuer       string // immutable application assertion for raw refresh tokens
+	// credentialsMu protects mutable credentials, binding, registration flights and
+	// publication. Lock order is credentialsMu then metadataMu; neither is held
+	// during HTTP I/O. Publication may hold credentialsMu during TokenStore I/O.
+	credentialsMu      sync.Mutex
+	credentialsVersion uint64
+	credentialsDCR     bool
+	registrationName   string
+	registering        *registrationFlight
+	flowIssuer         string
+
+	mu            sync.RWMutex // Protects expectedState and flowIssuer
 	expectedState string       // Expected state value for CSRF protection
+
+	// refreshMu protects refreshing, the token refresh in flight, if any.
+	// Callers of this handler that find the token expired share it: a
+	// refresh token may be good for a single use, so they must not each
+	// send it.
+	refreshMu  sync.Mutex
+	refreshing *tokenRefresh
+}
+
+// tokenRefresh is a token refresh shared by the callers that wait for it.
+type tokenRefresh struct {
+	done  chan struct{}
+	token *Token
+	err   error
 }
 
 // NewOAuthHandler creates a new OAuth handler
@@ -205,12 +260,16 @@ func NewOAuthHandler(config OAuthConfig) *OAuthHandler {
 	}
 
 	return &OAuthHandler{
-		config:     config,
-		httpClient: config.HTTPClient,
+		config:         config,
+		assertedIssuer: config.CredentialsIssuer,
+		httpClient:     config.HTTPClient,
 	}
 }
 
-// GetAuthorizationHeader returns the Authorization header value for a request
+// GetAuthorizationHeader returns the Authorization header value for a request.
+//
+// If the stored token has expired, it refreshes it, or waits for a refresh
+// another caller already started, and returns ctx's error if ctx ends first.
 func (h *OAuthHandler) GetAuthorizationHeader(ctx context.Context) (string, error) {
 	token, err := h.getValidToken(ctx)
 	if err != nil {
@@ -218,9 +277,11 @@ func (h *OAuthHandler) GetAuthorizationHeader(ctx context.Context) (string, erro
 	}
 
 	// Per RFC 6749 §5.1, token_type is case-insensitive.
-	// Normalize to "Bearer" for strict implementations.
+	// Normalize to "Bearer" for strict implementations. A token without a
+	// type, for example one an application put in the store itself, is
+	// sent as a bearer token too, as MCP authorization prescribes.
 	tokenType := token.TokenType
-	if strings.EqualFold(tokenType, "bearer") {
+	if tokenType == "" || strings.EqualFold(tokenType, "bearer") {
 		tokenType = "Bearer"
 	}
 
@@ -234,53 +295,117 @@ func (h *OAuthHandler) getValidToken(ctx context.Context) (*Token, error) {
 		return nil, err
 	}
 	if err == nil && !token.IsExpired() && token.AccessToken != "" {
+		if err := h.checkKnownTokenIssuer(token); err != nil {
+			return nil, err
+		}
 		return token, nil
 	}
-
-	// If we have a refresh token, try to use it
-	if err == nil && token.RefreshToken != "" {
-		newToken, err := h.refreshToken(ctx, token.RefreshToken)
-		if err == nil {
-			return newToken, nil
-		}
-		// If refresh fails, continue to authorization flow
+	if err != nil || token.RefreshToken == "" {
+		// We need to get a new token through the authorization flow
+		return nil, ErrOAuthAuthorizationRequired
 	}
 
-	// We need to get a new token through the authorization flow
-	return nil, ErrOAuthAuthorizationRequired
+	// Share one refresh among the callers that need it. With refresh token
+	// rotation, which the MCP spec requires for public clients, a second
+	// request with the same refresh token is rejected, and a server that
+	// detects the reuse may revoke the tokens the first request got.
+	refresh := h.startRefresh(ctx)
+	select {
+	case <-refresh.done:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if refresh.err != nil {
+		// If refresh fails, continue to authorization flow
+		if errors.Is(refresh.err, ErrAuthorizationServerChanged) || errors.Is(refresh.err, ErrOAuthAuthorizationRequired) {
+			return nil, refresh.err
+		}
+		return nil, ErrOAuthAuthorizationRequired
+	}
+	return refresh.token, nil
+}
+
+// refreshTimeout bounds a token refresh, which doesn't end with the context
+// of the caller that started it.
+const refreshTimeout = 30 * time.Second
+
+// startRefresh returns the token refresh in flight, starting one if there is
+// none.
+//
+// The refresh runs on its own context rather than the caller's. If it ended
+// with the caller, a caller that gives up after the server has used up the
+// refresh token would leave the others to send the spent token again.
+func (h *OAuthHandler) startRefresh(ctx context.Context) *tokenRefresh {
+	h.refreshMu.Lock()
+	defer h.refreshMu.Unlock()
+	if h.refreshing != nil {
+		return h.refreshing
+	}
+	refresh := &tokenRefresh{done: make(chan struct{})}
+	h.refreshing = refresh
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshTimeout)
+	go func() {
+		defer cancel()
+		refresh.token, refresh.err = h.refreshStoredToken(ctx)
+		h.refreshMu.Lock()
+		h.refreshing = nil
+		h.refreshMu.Unlock()
+		close(refresh.done)
+	}()
+	return refresh
+}
+
+// refreshStoredToken refreshes the stored token, unless a refresh that
+// finished since the caller read the store has already replaced it.
+func (h *OAuthHandler) refreshStoredToken(ctx context.Context) (*Token, error) {
+	token, err := h.config.TokenStore.GetToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !token.IsExpired() && token.AccessToken != "" {
+		if err := h.checkKnownTokenIssuer(token); err != nil {
+			return nil, err
+		}
+		return token, nil
+	}
+	if token.RefreshToken == "" {
+		return nil, ErrOAuthAuthorizationRequired
+	}
+	return h.refreshToken(ctx, token.RefreshToken, token.Issuer)
 }
 
 // refreshToken refreshes an OAuth token
-func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken string) (*Token, error) {
+func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken, issuer string) (*Token, error) {
+	if issuer == "" {
+		return nil, ErrOAuthAuthorizationRequired
+	}
 	metadata, err := h.getServerMetadata(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get server metadata: %w", err)
 	}
 
+	if metadata.Issuer == "" {
+		return nil, errors.New("authorization server metadata missing issuer")
+	}
+	if metadata.Issuer != issuer {
+		return nil, serverChanged()
+	}
+	credentials, err := h.boundCredentials(metadata)
+	if err != nil {
+		return nil, err
+	}
 	data := url.Values{}
 	data.Set("grant_type", "refresh_token")
 	data.Set("refresh_token", refreshToken)
-	data.Set("client_id", h.config.ClientID)
-	if h.config.ClientSecret != "" {
-		data.Set("client_secret", h.config.ClientSecret)
-	}
 	// RFC 8707: Include resource parameter on refresh requests
 	if resourceURL := h.getResourceURL(); resourceURL != "" {
 		data.Set("resource", resourceURL)
 	}
 
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		metadata.TokenEndpoint,
-		strings.NewReader(data.Encode()),
-	)
+	req, err := h.newTokenRequest(ctx, metadata, credentials, data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create refresh token request: %w", err)
 	}
-
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
 
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
@@ -324,20 +449,32 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken string) (*
 	}
 
 	// Save the token
-	if err := h.config.TokenStore.SaveToken(ctx, &tokenResp); err != nil {
+	if err := h.saveBoundToken(ctx, metadata, credentials, &tokenResp); err != nil {
 		return nil, fmt.Errorf("failed to save token: %w", err)
 	}
 
 	return &tokenResp, nil
 }
 
-// RefreshToken is a public wrapper for refreshToken
+// RefreshToken refreshes a token with matching stored provenance. An unknown raw
+// refresh token requires an explicitly configured CredentialsIssuer; a learned
+// first-use binding alone is not an assertion of that token's origin.
 func (h *OAuthHandler) RefreshToken(ctx context.Context, refreshToken string) (*Token, error) {
-	return h.refreshToken(ctx, refreshToken)
+	token, err := h.config.TokenStore.GetToken(ctx)
+	if err != nil && !errors.Is(err, ErrNoToken) {
+		return nil, err
+	}
+	issuer := h.assertedIssuer
+	if err == nil && token != nil && token.RefreshToken == refreshToken {
+		issuer = token.Issuer
+	}
+	return h.refreshToken(ctx, refreshToken, issuer)
 }
 
 // GetClientID returns the client ID
 func (h *OAuthHandler) GetClientID() string {
+	h.credentialsMu.Lock()
+	defer h.credentialsMu.Unlock()
 	return h.config.ClientID
 }
 
@@ -361,6 +498,8 @@ func extractOAuthError(body []byte, statusCode int, context string) error {
 // header, prefer HandleUnauthorizedResponse, which applies origin
 // validation before storing.
 func (h *OAuthHandler) SetProtectedResourceMetadataURL(u string) {
+	h.credentialsMu.Lock()
+	defer h.credentialsMu.Unlock()
 	h.metadataMu.Lock()
 	defer h.metadataMu.Unlock()
 	h.config.ProtectedResourceMetadataURL = u
@@ -457,6 +596,8 @@ func (h *OAuthHandler) getResourceURL() string {
 
 // GetClientSecret returns the client secret
 func (h *OAuthHandler) GetClientSecret() string {
+	h.credentialsMu.Lock()
+	defer h.credentialsMu.Unlock()
 	return h.config.ClientSecret
 }
 
@@ -489,6 +630,7 @@ func (h *OAuthHandler) SetExpectedState(expectedState string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.expectedState = expectedState
+	h.flowIssuer = ""
 }
 
 // OAuthError represents a standard OAuth 2.0 error response
@@ -525,12 +667,13 @@ type metadataDiscoveryResult struct {
 // getServerMetadata fetches the OAuth server metadata.
 //
 // Discovery is gated by metadataOnce so the network round trips happen
-// exactly once per OAuthHandler. metadataMu is taken only to snapshot
-// configuration inputs before the fetch and to publish the result
-// afterwards; it is intentionally NOT held while HTTP requests are in
-// flight so that concurrent callers of other metadataMu-guarded methods
-// (e.g. SetProtectedResourceMetadataURL, getResourceURL,
-// validateAdvertisedPRMURL) are not blocked on network I/O. See #871.
+// once per OAuthHandler, or again after a discovery that failed. metadataMu
+// is taken only to snapshot configuration inputs before the fetch and to
+// publish the result afterwards; it is intentionally NOT held while HTTP
+// requests are in flight so that concurrent callers of other
+// metadataMu-guarded methods (e.g. SetProtectedResourceMetadataURL,
+// getResourceURL, validateAdvertisedPRMURL) are not blocked on network I/O.
+// See #871.
 func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetadata, error) {
 	// Snapshot (and lazily initialize) the current sync.Once under the
 	// lock. Using a pointer means SetProtectedResourceMetadataURL can
@@ -555,6 +698,16 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		if h.metadataOnce != once {
 			return
 		}
+		// A failed discovery is reported to the callers waiting on it, but
+		// not kept: it may come from the first caller's context ending or
+		// from a network error, so the next call discovers again. Each
+		// discovery reports its own failure, not one left by the last.
+		h.metadataFetchErr = nil
+		defer func() {
+			if h.metadataFetchErr != nil {
+				h.metadataOnce = &sync.Once{}
+			}
+		}()
 		if err != nil {
 			h.metadataFetchErr = err
 			return
@@ -565,6 +718,7 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		// non-200 responses without touching shared state.
 		if result.metadata != nil {
 			h.serverMetadata = result.metadata
+			h.knownIssuer = result.metadata.Issuer
 			h.metadataFetchErr = nil
 		}
 		if result.resourceURL != "" {
@@ -572,10 +726,10 @@ func (h *OAuthHandler) getServerMetadata(ctx context.Context) (*AuthServerMetada
 		}
 		// Discovery completed without producing metadata or an error (e.g. a
 		// non-2xx response handled by fetchMetadataFromURL). Record an explicit
-		// error — including the discovery target — so callers receive a
-		// consistent cached failure instead of a nil *AuthServerMetadata, which
-		// they would dereference and panic on. Skip when serverMetadata is
-		// already populated: a no-op re-discovery preserves the prior value.
+		// error — including the discovery target — so callers receive an
+		// error instead of a nil *AuthServerMetadata, which they would
+		// dereference and panic on. Skip when serverMetadata is already
+		// populated: a no-op re-discovery preserves the prior value.
 		if h.serverMetadata == nil && h.metadataFetchErr == nil {
 			if h.config.AuthServerMetadataURL != "" {
 				h.metadataFetchErr = fmt.Errorf("authorization server metadata unavailable: discovery at %q returned no metadata", h.config.AuthServerMetadataURL)
@@ -610,6 +764,7 @@ func (h *OAuthHandler) fetchServerMetadata(ctx context.Context) (metadataDiscove
 	h.metadataMu.Lock()
 	authServerMetadataURL := h.config.AuthServerMetadataURL
 	protectedResourceMetadataURL := h.config.ProtectedResourceMetadataURL
+	validateIssuer := !h.config.SkipIssuerMetadataValidation
 	baseURL, baseURLErr := h.extractBaseURL()
 	h.metadataMu.Unlock()
 
@@ -689,19 +844,27 @@ func (h *OAuthHandler) fetchServerMetadata(ctx context.Context) (metadataDiscove
 		return metadataDiscoveryResult{}, fmt.Errorf("failed to decode protected resource response: %w", err)
 	}
 
-	// RFC 9728 §3.3/§7.3: when metadata is fetched from a PRM URL the
-	// server advertised via WWW-Authenticate (an untrusted network
-	// input), the declared resource identifier MUST match the
-	// protected resource the client addressed — otherwise the
-	// response MUST NOT be used. An advertised PRM response that
-	// omits the resource field is also rejected: since the PRM
-	// endpoint may not share an origin with the protected resource,
-	// the response cannot be implicitly trusted without an explicit
-	// binding.
+	// RFC 9728 §3.3/§7.3: the resource identifier a protected resource
+	// metadata document declares must match the protected resource the
+	// client addressed — otherwise the document MUST NOT be used. Without
+	// the check, a malicious MCP server could declare another server as its
+	// resource and have tokens minted for that victim: the RFC 8707
+	// resource parameter taken from the metadata names the victim, so the
+	// authorization server mints a token for the victim's API while the
+	// attacker's server receives it.
 	//
-	// The check is scoped to the advertised path because the
-	// well-known origin-constructed path is already bound to the
-	// protected resource by same-origin URL construction.
+	// Both discovery paths enforce the binding, at different strictness.
+	// A PRM URL advertised via WWW-Authenticate is untrusted input that may
+	// not share an origin with the protected resource, so its document must
+	// declare a resource identifier exactly equal to the base URL, and a
+	// document that omits the resource field is rejected outright: with no
+	// explicit identifier there is no binding at all. The well-known path is
+	// constructed from the base URL, but the document it serves is still
+	// server-controlled, so a declared resource must at least bind to the
+	// addressed resource — same scheme and host, and a path equal to or a
+	// segment-aware prefix of the addressed path (see resourceBindsToURL) —
+	// so servers mounted at /mcp that declare their origin as the resource
+	// keep working while a resource naming another server is rejected.
 	if explicitMetadataURL {
 		if protectedResource.Resource == "" {
 			return metadataDiscoveryResult{}, fmt.Errorf(
@@ -715,6 +878,11 @@ func (h *OAuthHandler) fetchServerMetadata(ctx context.Context) (metadataDiscove
 				protectedResource.Resource, baseURL,
 			)
 		}
+	} else if protectedResource.Resource != "" && !resourceBindsToURL(protectedResource.Resource, baseURL) {
+		return metadataDiscoveryResult{}, fmt.Errorf(
+			"protected resource metadata from %q declares resource %q which does not match base URL %q",
+			protectedResourceURL, protectedResource.Resource, baseURL,
+		)
 	}
 
 	// RFC 8707: Capture the resource identifier for use in authorization requests.
@@ -743,9 +911,23 @@ func (h *OAuthHandler) fetchServerMetadata(ctx context.Context) (metadataDiscove
 	for _, u := range authorizationServerMetadataURLs(authServerURL) {
 		// Intermediate fetch errors are intentionally discarded so the caller
 		// can fall through to the next candidate URL.
-		if metadata, _ := h.fetchMetadataFromURL(ctx, u); metadata != nil {
-			return metadataDiscoveryResult{metadata: metadata, resourceURL: resourceURL}, nil
+		metadata, _ := h.fetchMetadataFromURL(ctx, u)
+		if metadata == nil {
+			continue
 		}
+		// RFC 8414 §3.3 / OpenID Connect Discovery §4.3: the issuer in the
+		// document must be identical to the issuer the well-known URL was
+		// built from, or the metadata must not be used. Otherwise a server
+		// could send the client to one authorization server's endpoints
+		// under another's name. Only a final trailing slash is ignored, as
+		// in the official Go SDK: both spellings name the same server.
+		if validateIssuer && strings.TrimSuffix(metadata.Issuer, "/") != strings.TrimSuffix(authServerURL, "/") {
+			return metadataDiscoveryResult{}, fmt.Errorf(
+				"authorization server metadata from %q declares issuer %q, not %q",
+				u, metadata.Issuer, authServerURL,
+			)
+		}
+		return metadataDiscoveryResult{metadata: metadata, resourceURL: resourceURL}, nil
 	}
 
 	// If both discovery methods fail, use default endpoints based on the authorization server URL
@@ -778,6 +960,26 @@ func buildWellKnownURL(baseURL string, suffix string) (string, error) {
 	return root + "/.well-known/" + suffix + path, nil
 }
 
+// resourceComponentsEqual reports whether two parsed resource identifiers
+// agree on every component an RFC 9728 §3.3 binding check compares outside
+// the path: scheme and host case-insensitively per RFC 3986 §3.1 / §3.2.2,
+// and query, fragment, and userinfo, which are significant.
+func resourceComponentsEqual(a, b *url.URL) bool {
+	if !strings.EqualFold(a.Scheme, b.Scheme) {
+		return false
+	}
+	if !strings.EqualFold(a.Host, b.Host) {
+		return false
+	}
+	if a.RawQuery != b.RawQuery {
+		return false
+	}
+	if a.Fragment != b.Fragment {
+		return false
+	}
+	return a.User.String() == b.User.String()
+}
+
 // resourceIdentifiersEqual reports whether two OAuth protected resource
 // identifiers refer to the same resource for the purposes of RFC 9728 §3.3
 // equality checks. Scheme and host are compared case-insensitively per
@@ -793,26 +995,54 @@ func resourceIdentifiersEqual(a, b string) bool {
 	if errA != nil || errB != nil {
 		return a == b
 	}
-	if !strings.EqualFold(ua.Scheme, ub.Scheme) {
-		return false
-	}
-	if !strings.EqualFold(ua.Host, ub.Host) {
+	if !resourceComponentsEqual(ua, ub) {
 		return false
 	}
 	// Use EscapedPath rather than Path so percent-encoded reserved
 	// characters stay distinct from their decoded forms (e.g. "a%2Fb"
 	// must not compare equal to "a/b"), preserving RFC 3986 segment
 	// semantics.
-	if strings.TrimSuffix(ua.EscapedPath(), "/") != strings.TrimSuffix(ub.EscapedPath(), "/") {
+	return strings.TrimSuffix(ua.EscapedPath(), "/") == strings.TrimSuffix(ub.EscapedPath(), "/")
+}
+
+// resourceBindsToURL reports whether the resource identifier declared in a
+// protected resource metadata document fetched from the RFC 9728 §3.3
+// well-known path binds to the addressed URL (the client's base URL): the
+// two must agree on scheme and host (case-insensitively) and on query,
+// fragment, and userinfo, and the declared resource's path must equal or
+// be a path-prefix of the addressed path at a segment boundary — "/a"
+// binds "/a" and "/a/b" but not "/ab" — with a single trailing slash on
+// either path ignored, as in resourceIdentifiersEqual.
+//
+// The prefix rule is deliberately looser than the exact equality required
+// of a PRM URL advertised via WWW-Authenticate: the well-known URL is
+// constructed from the base URL, so the document is bound to the
+// resource's origin by construction, but real deployments commonly mount
+// their MCP endpoint at a path (e.g. https://host/mcp) while declaring the
+// bare origin (https://host) as their resource.
+//
+// Unparseable inputs fall back to exact string equality, as in
+// resourceIdentifiersEqual.
+func resourceBindsToURL(resource, addressed string) bool {
+	ur, errR := url.Parse(resource)
+	ub, errB := url.Parse(addressed)
+	if errR != nil || errB != nil {
+		return resource == addressed
+	}
+	if !resourceComponentsEqual(ur, ub) {
 		return false
 	}
-	if ua.RawQuery != ub.RawQuery {
-		return false
+	// Use EscapedPath rather than Path for the same RFC 3986 segment
+	// semantics as resourceIdentifiersEqual.
+	resourcePath := strings.TrimSuffix(ur.EscapedPath(), "/")
+	addressedPath := strings.TrimSuffix(ub.EscapedPath(), "/")
+	if resourcePath == addressedPath {
+		return true
 	}
-	if ua.Fragment != ub.Fragment {
-		return false
-	}
-	return ua.User.String() == ub.User.String()
+	// Segment-aware prefix: the resource path must end on a segment
+	// boundary of the addressed path, so "/a" must not bind "/ab". An
+	// empty resource path (a bare origin) binds any path on that origin.
+	return strings.HasPrefix(addressedPath, resourcePath+"/")
 }
 
 // fetchMetadataFromURL fetches and parses OAuth server metadata from a URL.
@@ -990,6 +1220,14 @@ func (h *OAuthHandler) RegisterClient(ctx context.Context, clientName string) er
 		return fmt.Errorf("failed to get server metadata: %w", err)
 	}
 
+	return h.registerClient(ctx, metadata, clientName, false)
+}
+
+func (h *OAuthHandler) performRegistration(ctx context.Context, metadata *AuthServerMetadata, clientName string, version uint64) error {
+	if metadata.Issuer == "" {
+		return errors.New("authorization server metadata missing issuer")
+	}
+
 	if metadata.RegistrationEndpoint == "" {
 		return errors.New("server does not support dynamic client registration")
 	}
@@ -1009,7 +1247,7 @@ func (h *OAuthHandler) RegisterClient(ctx context.Context, clientName string) er
 	}
 
 	// Add client_secret if this is a confidential client
-	if h.config.ClientSecret != "" {
+	if h.GetClientSecret() != "" {
 		regRequest["token_endpoint_auth_method"] = "client_secret_post"
 	}
 
@@ -1048,19 +1286,30 @@ func (h *OAuthHandler) RegisterClient(ctx context.Context, clientName string) er
 	}
 
 	var regResponse struct {
-		ClientID     string `json:"client_id"`
-		ClientSecret string `json:"client_secret,omitempty"`
+		ClientID                string `json:"client_id"`
+		ClientSecret            string `json:"client_secret,omitempty"`
+		TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&regResponse); err != nil {
 		return fmt.Errorf("failed to decode registration response: %w", err)
 	}
 
-	// Update the client configuration
-	h.config.ClientID = regResponse.ClientID
-	if regResponse.ClientSecret != "" {
-		h.config.ClientSecret = regResponse.ClientSecret
+	if regResponse.ClientID == "" {
+		return errors.New("registration response missing client_id")
 	}
+	h.credentialsMu.Lock()
+	defer h.credentialsMu.Unlock()
+	if h.credentialsVersion != version || !h.metadataCurrent(metadata) {
+		return serverChanged()
+	}
+	h.config.ClientID = regResponse.ClientID
+	h.config.ClientSecret = regResponse.ClientSecret
+	h.config.CredentialsIssuer = metadata.Issuer
+	h.registeredAuthMethod = regResponse.TokenEndpointAuthMethod
+	h.credentialsDCR = true
+	h.registrationName = clientName
+	h.credentialsVersion++
 
 	return nil
 }
@@ -1073,6 +1322,7 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 	// Validate the state parameter to prevent CSRF attacks
 	h.mu.Lock()
 	expectedState := h.expectedState
+	flowIssuer := h.flowIssuer
 	if expectedState == "" {
 		h.mu.Unlock()
 		return errors.New("no expected state found, authorization flow may not have been initiated properly")
@@ -1092,15 +1342,17 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 		return fmt.Errorf("failed to get server metadata: %w", err)
 	}
 
+	if flowIssuer != "" && flowIssuer != metadata.Issuer {
+		return serverChanged()
+	}
+	credentials, err := h.boundCredentials(metadata)
+	if err != nil {
+		return err
+	}
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
 	data.Set("code", code)
-	data.Set("client_id", h.config.ClientID)
 	data.Set("redirect_uri", h.config.RedirectURI)
-
-	if h.config.ClientSecret != "" {
-		data.Set("client_secret", h.config.ClientSecret)
-	}
 
 	if h.config.PKCEEnabled && codeVerifier != "" {
 		data.Set("code_verifier", codeVerifier)
@@ -1111,18 +1363,10 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 		data.Set("resource", resourceURL)
 	}
 
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		metadata.TokenEndpoint,
-		strings.NewReader(data.Encode()),
-	)
+	req, err := h.newTokenRequest(ctx, metadata, credentials, data)
 	if err != nil {
 		return fmt.Errorf("failed to create token request: %w", err)
 	}
-
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
 
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
@@ -1161,11 +1405,93 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 	}
 
 	// Save the token
-	if err := h.config.TokenStore.SaveToken(ctx, &tokenResp); err != nil {
+	if err := h.saveBoundToken(ctx, metadata, credentials, &tokenResp); err != nil {
 		return fmt.Errorf("failed to save token: %w", err)
 	}
 
 	return nil
+}
+
+// Client authentication methods at the token endpoint (RFC 6749 §2.3.1,
+// RFC 7591 §2).
+const (
+	clientSecretBasic = "client_secret_basic"
+	clientSecretPost  = "client_secret_post"
+	clientAuthNone    = "none"
+)
+
+func isClientAuthMethod(method string) bool {
+	return method == clientSecretBasic || method == clientSecretPost || method == clientAuthNone
+}
+
+// GetTokenEndpointAuthMethod returns the client authentication method set in
+// OAuthConfig.TokenEndpointAuthMethod or, failing that, the one the
+// authorization server returned from dynamic client registration. Save it
+// along with the client ID and secret to reuse registered credentials.
+func (h *OAuthHandler) GetTokenEndpointAuthMethod() string {
+	h.credentialsMu.Lock()
+	defer h.credentialsMu.Unlock()
+	return h.authMethodLocked()
+}
+
+func (h *OAuthHandler) authMethodLocked() string {
+	if isClientAuthMethod(h.config.TokenEndpointAuthMethod) {
+		return h.config.TokenEndpointAuthMethod
+	}
+	if isClientAuthMethod(h.registeredAuthMethod) {
+		return h.registeredAuthMethod
+	}
+	return ""
+}
+
+// tokenEndpointAuthMethod picks how the client authenticates at the token
+// endpoint: the method configured or registered for it, or else HTTP Basic
+// when that is the only one of the two secret-based methods the server's
+// metadata lists. A server that says nothing keeps getting the secret in the
+// request body, as before.
+func (h *OAuthHandler) tokenEndpointAuthMethod(metadata *AuthServerMetadata, credentials credentialSnapshot) string {
+	if credentials.secret == "" {
+		return clientAuthNone
+	}
+	if method := credentials.method; method != "" {
+		return method
+	}
+	supported := metadata.TokenEndpointAuthMethodsSupported
+	if slices.Contains(supported, clientSecretBasic) && !slices.Contains(supported, clientSecretPost) {
+		return clientSecretBasic
+	}
+	return clientSecretPost
+}
+
+// newTokenRequest builds a token endpoint request carrying data and the
+// client's credentials.
+func (h *OAuthHandler) newTokenRequest(ctx context.Context, metadata *AuthServerMetadata, credentials credentialSnapshot, data url.Values) (*http.Request, error) {
+	method := h.tokenEndpointAuthMethod(metadata, credentials)
+	basic := method == clientSecretBasic
+	if !basic {
+		data.Set("client_id", credentials.id)
+		if method == clientSecretPost {
+			data.Set("client_secret", credentials.secret)
+		}
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		metadata.TokenEndpoint,
+		strings.NewReader(data.Encode()),
+	)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	if basic {
+		// RFC 6749 §2.3.1: the client ID and secret are form-encoded before
+		// they are used as the Basic user name and password.
+		req.SetBasicAuth(url.QueryEscape(credentials.id), url.QueryEscape(credentials.secret))
+	}
+	return req, nil
 }
 
 // GetAuthorizationURL returns the URL for the authorization endpoint
@@ -1175,12 +1501,24 @@ func (h *OAuthHandler) GetAuthorizationURL(ctx context.Context, state, codeChall
 		return "", fmt.Errorf("failed to get server metadata: %w", err)
 	}
 
-	// Store the state for later validation
-	h.SetExpectedState(state)
+	credentials, err := h.authorizationCredentials(ctx, metadata)
+	if err != nil {
+		return "", err
+	}
+	h.credentialsMu.Lock()
+	if h.credentialsVersion != credentials.version || !h.metadataCurrent(metadata) {
+		h.credentialsMu.Unlock()
+		return "", serverChanged()
+	}
+	h.mu.Lock()
+	h.expectedState = state
+	h.flowIssuer = metadata.Issuer
+	h.mu.Unlock()
+	h.credentialsMu.Unlock()
 
 	params := url.Values{}
 	params.Set("response_type", "code")
-	params.Set("client_id", h.config.ClientID)
+	params.Set("client_id", credentials.id)
 	params.Set("redirect_uri", h.config.RedirectURI)
 	params.Set("state", state)
 

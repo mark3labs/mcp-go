@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -60,7 +61,11 @@ type inProcessSamplingHandlerWrapper struct {
 }
 
 func (w *inProcessSamplingHandlerWrapper) CreateMessage(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
-	return w.handler.CreateMessage(ctx, request)
+	result, err := w.handler.CreateMessage(ctx, request)
+	if err == nil && result == nil {
+		return nil, fmt.Errorf("sampling handler returned no result")
+	}
+	return result, err
 }
 
 type inProcessElicitationHandlerAdapter struct {
@@ -68,7 +73,11 @@ type inProcessElicitationHandlerAdapter struct {
 }
 
 func (a *inProcessElicitationHandlerAdapter) Elicit(ctx context.Context, request mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
-	return a.handler.Elicit(ctx, request)
+	result, err := a.handler.Elicit(ctx, request)
+	if err == nil && result == nil {
+		return nil, fmt.Errorf("elicitation handler returned no result")
+	}
+	return result, err
 }
 
 type inProcessRootsHandlerAdapter struct {
@@ -76,5 +85,9 @@ type inProcessRootsHandlerAdapter struct {
 }
 
 func (a *inProcessRootsHandlerAdapter) ListRoots(ctx context.Context, request mcp.ListRootsRequest) (*mcp.ListRootsResult, error) {
-	return a.handler.ListRoots(ctx, request)
+	result, err := a.handler.ListRoots(ctx, request)
+	if err == nil && result == nil {
+		return nil, fmt.Errorf("roots handler returned no result")
+	}
+	return result, err
 }

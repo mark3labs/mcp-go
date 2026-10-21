@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -585,6 +586,70 @@ func TestStreamableHTTPErrors(t *testing.T) {
 			t.Errorf("Expected error when sending request to non-existent URL, got nil")
 		}
 	})
+
+	t.Run("NonJSONRPCErrorBody", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			status int
+			body   string
+		}{
+			{name: "bad gateway problem json", status: http.StatusBadGateway, body: `{"title":"Error 502: Bad gateway","status":502}`},
+			{name: "framework detail", status: http.StatusServiceUnavailable, body: `{"detail":"Service Unavailable"}`},
+			{name: "rate limited", status: http.StatusTooManyRequests, body: `{"message":"API rate limit exceeded"}`},
+			{name: "error object without jsonrpc", status: http.StatusInternalServerError, body: `{"error":{"code":-32603,"message":"boom"}}`},
+			{name: "empty error object", status: http.StatusTooManyRequests, body: `{"jsonrpc":"2.0","error":{}}`},
+			{name: "error without message", status: http.StatusBadGateway, body: `{"jsonrpc":"2.0","error":{"code":-32603}}`},
+			{name: "differently cased error member", status: http.StatusInternalServerError, body: `{"jsonrpc":"2.0","Error":{"code":-32603,"message":"failure"}}`},
+			{name: "differently cased jsonrpc member", status: http.StatusInternalServerError, body: `{"JSONRPC":"2.0","error":{"code":-32603,"message":"failure"}}`},
+			{name: "differently cased code member", status: http.StatusInternalServerError, body: `{"jsonrpc":"2.0","error":{"Code":-32603,"message":"failure"}}`},
+			{name: "null code and message", status: http.StatusInternalServerError, body: `{"jsonrpc":"2.0","error":{"code":null,"message":null}}`},
+			{name: "string code", status: http.StatusInternalServerError, body: `{"jsonrpc":"2.0","error":{"code":"-32603","message":"failure"}}`},
+			{name: "error cleared by differently cased member", status: http.StatusInternalServerError, body: `{"jsonrpc":"2.0","error":{"code":-32603,"message":"failure"},"Error":null}`},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(tt.status)
+					_, _ = w.Write([]byte(tt.body))
+				}))
+				defer server.Close()
+
+				trans, err := NewStreamableHTTP(server.URL)
+				require.NoError(t, err)
+
+				resp, err := trans.SendRequest(t.Context(), JSONRPCRequest{
+					JSONRPC: "2.0",
+					ID:      mcp.NewRequestId(int64(1)),
+					Method:  "tools/list",
+				})
+				require.Nil(t, resp)
+				require.ErrorContains(t, err, fmt.Sprintf("request failed with status %d", tt.status))
+			})
+		}
+	})
+
+	t.Run("JSONRPCErrorBody", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"internal error"}}`))
+		}))
+		defer server.Close()
+
+		trans, err := NewStreamableHTTP(server.URL)
+		require.NoError(t, err)
+
+		resp, err := trans.SendRequest(t.Context(), JSONRPCRequest{
+			JSONRPC: "2.0",
+			ID:      mcp.NewRequestId(int64(1)),
+			Method:  "tools/list",
+		})
+		require.NoError(t, err)
+		require.NotNil(t, resp.Error)
+		require.Equal(t, mcp.INTERNAL_ERROR, resp.Error.Code)
+	})
 }
 
 // ---- continuous listening tests ----
@@ -1007,8 +1072,8 @@ func TestContinuousListeningSessionTerminated(t *testing.T) {
 	retryInterval = 20 * time.Millisecond
 	t.Cleanup(func() { retryInterval = origRetryInterval })
 
-	// Start a server that returns 200 on POST (initialize) but 404 on GET
-	// (simulating a server restart where the session no longer exists).
+	// Start a server that returns 200 on POST (initialize) but 404 on GET,
+	// which the listener takes as a server that doesn't offer the stream.
 	sessionID := "test-session-123"
 	var getCalls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1925,4 +1990,41 @@ func TestStreamableHTTP_SendRequestDoesNotMutateCallerHeader(t *testing.T) {
 	wg.Wait()
 
 	require.Equal(t, http.Header{"X-Tenant": []string{"acme"}}, shared)
+}
+
+func TestStreamableHTTP_PreservesSSEReadErrors(t *testing.T) {
+	readErr := errors.New("broken SSE stream")
+	for _, resumed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("resumed=%t", resumed), func(t *testing.T) {
+			gets := 0
+			trans, err := NewStreamableHTTP("http://example.com/mcp", WithHTTPBasicClient(&http.Client{
+				Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+					gets++
+					assert.Equal(t, http.MethodGet, request.Method)
+					assert.Equal(t, "1", request.Header.Get("Last-Event-ID"))
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     http.Header{"Content-Type": {"text/event-stream"}},
+						Body:       io.NopCloser(iotest.ErrReader(readErr)),
+					}, nil
+				}),
+			}), WithHTTPLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+			require.NoError(t, err)
+			trans.SetProtocolVersion(mcp.ProtocolVersion20251125)
+
+			reader := iotest.ErrReader(readErr)
+			if resumed {
+				reader = strings.NewReader("id: 1\nretry: 0\n\n")
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			_, err = trans.handleSSEResponse(ctx, io.NopCloser(reader), false)
+			require.ErrorIs(t, err, readErr)
+			if resumed {
+				assert.Equal(t, 1, gets)
+			} else {
+				assert.Zero(t, gets)
+			}
+		})
+	}
 }
