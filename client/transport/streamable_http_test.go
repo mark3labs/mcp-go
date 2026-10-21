@@ -1710,3 +1710,16 @@ func TestStreamableHTTP_SendRequestDoesNotMutateCallerHeader(t *testing.T) {
 
 	require.Equal(t, http.Header{"X-Tenant": []string{"acme"}}, shared)
 }
+
+// TestReadSSEEventTypeResetsAfterDatalessEvent verifies a stale event type
+// does not leak into the next event when the previous event carried no data.
+func TestReadSSEEventTypeResetsAfterDatalessEvent(t *testing.T) {
+	c := &StreamableHTTP{}
+	var events []string
+	body := "event: ping\n\n" +
+		"data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n"
+	c.readSSE(t.Context(), io.NopCloser(strings.NewReader(body)), func(event, data string) {
+		events = append(events, event)
+	})
+	require.Equal(t, []string{"message"}, events)
+}
