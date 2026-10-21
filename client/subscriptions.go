@@ -60,7 +60,11 @@ func (c *Client) Listen(ctx context.Context, filter mcp.SubscriptionFilter) erro
 			filter.ResourceSubscriptions = append(filter.ResourceSubscriptions, uri)
 		}
 	}
+	// Retain a filter of our own. The request below is serialized by the
+	// transport after the mutex is released, so the outgoing slice must not
+	// share a backing array with the one Unsubscribe mutates in place.
 	c.subscriptions.filter = filter
+	c.subscriptions.filter.ResourceSubscriptions = slices.Clone(filter.ResourceSubscriptions)
 	if previous := c.subscriptions.cancel; previous != nil {
 		previous()
 	}
@@ -168,12 +172,15 @@ func (c *Client) Unsubscribe(
 	if c.isModern() {
 		c.subscriptions.mu.Lock()
 		defer c.subscriptions.mu.Unlock()
+		// Delete copy-on-write. slices.DeleteFunc shifts elements within
+		// the existing backing array, which an in-flight Listen may still
+		// be serializing, so drop the URI from a clone instead.
 		c.subscriptions.resourceSubscriptions = slices.DeleteFunc(
-			c.subscriptions.resourceSubscriptions,
+			slices.Clone(c.subscriptions.resourceSubscriptions),
 			func(uri string) bool { return uri == request.Params.URI },
 		)
 		c.subscriptions.filter.ResourceSubscriptions = slices.DeleteFunc(
-			c.subscriptions.filter.ResourceSubscriptions,
+			slices.Clone(c.subscriptions.filter.ResourceSubscriptions),
 			func(uri string) bool { return uri == request.Params.URI },
 		)
 		return nil
