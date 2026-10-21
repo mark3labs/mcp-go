@@ -459,6 +459,7 @@ func (s *StreamableHTTPServer) Start(addr string) error {
 		if s.httpServer.Addr == "" {
 			s.httpServer.Addr = addr
 		} else if s.httpServer.Addr != addr {
+			s.mu.Unlock()
 			return fmt.Errorf("conflicting listen address: WithStreamableHTTPServer(%q) vs Start(%q)", s.httpServer.Addr, addr)
 		}
 	}
