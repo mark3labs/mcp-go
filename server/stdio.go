@@ -623,7 +623,7 @@ func (s *StdioServer) processMessage(
 		default:
 			// Queue is full, process synchronously as fallback
 			s.errLogger.Printf("Tool call queue full, processing synchronously")
-			response := s.handleMessage(ctx, baseMessage.ID, rawMessage)
+			response := s.handleMessage(ctx, baseMessage.ID.Value(), rawMessage)
 			if response != nil {
 				return s.writeResponse(response, writer)
 			}
@@ -641,7 +641,7 @@ func (s *StdioServer) processMessage(
 	}
 
 	// Notifications carry no response and must not queue behind a request.
-	response := s.handleMessage(ctx, baseMessage.ID, rawMessage)
+	response := s.handleMessage(ctx, baseMessage.ID.Value(), rawMessage)
 
 	// Only write response if there is one (not for notifications)
 	if response != nil {
