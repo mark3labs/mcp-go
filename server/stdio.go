@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -425,6 +426,13 @@ func (s *StdioServer) processInputStream(ctx context.Context, reader *bufio.Read
 		line, err := s.readNextLine(ctx, reader)
 		if err != nil {
 			if err == io.EOF {
+				// The final message may arrive without a trailing newline.
+				if strings.TrimSpace(line) != "" {
+					if err := s.processMessage(ctx, line, stdout); err != nil && err != io.EOF {
+						s.errLogger.Printf("Error handling message: %v", err)
+						return err
+					}
+				}
 				return nil
 			}
 			s.errLogger.Printf("Error reading input: %v", err)

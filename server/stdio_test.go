@@ -2,12 +2,14 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -758,4 +760,21 @@ func TestStdioSessionRequestsAreSerializedWithOtherWrites(t *testing.T) {
 	}, "the notification, the sampling request and the tool response")
 
 	require.Zero(t, output.overlaps.Load(), "a message was written while another one was being written")
+}
+
+func TestStdioProcessesFinalMessageWithoutTrailingNewline(t *testing.T) {
+	stdioServer := NewStdioServer(NewMCPServer("test", "1.0.0"))
+	stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+
+	var out bytes.Buffer
+	in := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`)
+	require.NoError(t, stdioServer.Listen(t.Context(), in, &out))
+
+	var response struct {
+		ID     int             `json:"id"`
+		Result json.RawMessage `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(out.Bytes()), &response), "output: %q", out.String())
+	require.Equal(t, 1, response.ID)
+	require.JSONEq(t, `{}`, string(response.Result))
 }
