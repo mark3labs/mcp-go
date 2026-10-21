@@ -74,6 +74,13 @@ class CheckConformanceTests(unittest.TestCase):
                 {"ping": (False, False)},
             )
 
+    def test_baseline_without_server_scenarios_is_empty(self):
+        with tempfile.TemporaryDirectory() as output:
+            baseline = Path(output) / "expected-failures.yml"
+            baseline.write_text("# No known intermittent failures.\n")
+
+            self.assertEqual(check_conformance.read_server_baseline(baseline), [])
+
     @patch("check_conformance.subprocess.run", side_effect=check_conformance.subprocess.TimeoutExpired("npx", 120))
     def test_cli_timeout_is_a_runner_error(self, run):
         with self.assertRaisesRegex(check_conformance.ConformanceRunnerError, "timed out"):
