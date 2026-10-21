@@ -1196,14 +1196,11 @@ func (h *OAuthHandler) getDefaultEndpoints(baseURL string) (*AuthServerMetadata,
 		return nil, fmt.Errorf("failed to parse base URL: %w", err)
 	}
 
-	// Discard any path component to get the authorization base URL
-	parsedURL.Path = ""
-	authBaseURL := parsedURL.String()
-
 	// Validate that the URL has a scheme and host
 	if parsedURL.Scheme == "" || parsedURL.Host == "" {
 		return nil, fmt.Errorf("invalid base URL: missing scheme or host in %q", baseURL)
 	}
+	authBaseURL := (&url.URL{Scheme: parsedURL.Scheme, Host: parsedURL.Host}).String()
 
 	return &AuthServerMetadata{
 		Issuer:                authBaseURL,
