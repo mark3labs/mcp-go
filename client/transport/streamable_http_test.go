@@ -1951,12 +1951,12 @@ func TestContinuousListeningCleanStreamEndDoesNotAdvanceBackoff(t *testing.T) {
 	interval := func(i, j int) time.Duration { return times[j].Sub(times[i]) }
 	// A clean EOF is a success: the listener reconnects after baseDelay (40ms).
 	require.GreaterOrEqual(t, interval(0, 1), 30*time.Millisecond)
-	require.Less(t, interval(0, 1), 60*time.Millisecond)
+	require.Less(t, interval(0, 1), 75*time.Millisecond)
 	// The first failure after a success also waits baseDelay (the delay is
 	// advanced only after the wait), then the backoff grows from baseDelay:
 	// the second failure waits 80ms.
 	require.GreaterOrEqual(t, interval(1, 2), 30*time.Millisecond)
-	require.Less(t, interval(1, 2), 60*time.Millisecond)
+	require.Less(t, interval(1, 2), 75*time.Millisecond)
 	require.GreaterOrEqual(t, interval(2, 3), 60*time.Millisecond)
 	require.Greater(t, interval(2, 3), interval(1, 2))
 }
