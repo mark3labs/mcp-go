@@ -2563,22 +2563,24 @@ func (s *MCPServer) executeTaskTool(
 		return
 	}
 
-	// Task succeeded - store the CreateTaskResult
-	// Note: The actual result will be retrieved later via tasks/result
-	//
-	// Validate the StructuredContent against the tool's declared output
-	// schema when WithOutputSchemaValidation is enabled. If validation fails,
-	// persist a tool execution error in place of the bad result so the
-	// client cannot retrieve a result that violates the schema via
-	// tasks/result. handleTaskResult accepts both *CallToolResult and
-	// *CreateTaskResult, so storing a *CallToolResult here is safe.
+	// Convert *CreateTaskResult to *CallToolResult before storing.
+	// CreateTaskResult.Content/StructuredContent/IsError are tagged json:"-"
+	// so marshalling the raw *CreateTaskResult in handleGetTask would silently
+	// drop all tool output. *CallToolResult marshals those fields correctly.
+	callResult := &mcp.CallToolResult{
+		Content: result.Content,
+		IsError: result.IsError,
+	}
+	if result.StructuredContent != nil {
+		callResult.StructuredContent = result.StructuredContent
+	}
 	if s.outputValidator != nil {
 		if _, vErr := s.outputValidator.validateCreateTaskResult(taskTool.Tool, result); vErr != nil {
 			s.completeTask(entry, validationToolResult(vErr), nil)
 			return
 		}
 	}
-	s.completeTask(entry, result, nil)
+	s.completeTask(entry, callResult, nil)
 }
 
 // executeRegularToolAsTask executes a regular tool handler asynchronously as a task.
@@ -3285,9 +3287,10 @@ func (s *MCPServer) cancelTask(ctx context.Context, taskID string) error {
 	s.tasksMu.Lock()
 	defer s.tasksMu.Unlock()
 
-	// Don't allow cancelling already completed tasks
+	// Task already reached a terminal state — ack silently per SEP-2663.
+	// "The server MUST acknowledge the request with an empty result."
 	if entry.completed {
-		return fmt.Errorf("cannot cancel task in terminal status: %s", entry.task.Status)
+		return nil
 	}
 
 	// Cancel the context if available

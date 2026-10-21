@@ -289,7 +289,8 @@ func TestMCPServer_HandleCancelTerminalTask(t *testing.T) {
 	require.NoError(t, err)
 	server.completeTask(entry, "result", nil)
 
-	// Try to cancel completed task
+	// Cancelling a terminal task must return an ack (empty result), not an error.
+	// SEP-2663: "The server MUST acknowledge the request with an empty result."
 	response := server.HandleMessage(ctx, []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
@@ -299,9 +300,9 @@ func TestMCPServer_HandleCancelTerminalTask(t *testing.T) {
 		}
 	}`))
 
-	errResp, ok := response.(mcp.JSONRPCError)
-	require.True(t, ok, "Expected JSONRPCError, got %T", response)
-	assert.Equal(t, mcp.INVALID_PARAMS, errResp.Error.Code)
+	resp, ok := response.(mcp.JSONRPCResponse)
+	require.True(t, ok, "Expected JSONRPCResponse (ack), got %T", response)
+	assert.NotNil(t, resp.Result)
 }
 
 func TestMCPServer_TaskWithoutCapabilities(t *testing.T) {
