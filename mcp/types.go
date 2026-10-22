@@ -324,13 +324,11 @@ func (p *NotificationParams) UnmarshalJSON(data []byte) error {
 		m[name] = value
 	}
 
-	// Initialize maps if they're nil
-	if p.Meta == nil {
-		p.Meta = make(map[string]any)
+	if m == nil {
+		return nil
 	}
-	if p.AdditionalFields == nil {
-		p.AdditionalFields = make(map[string]any)
-	}
+	p.Meta = make(map[string]any)
+	p.AdditionalFields = make(map[string]any)
 
 	// Process all fields
 	for k, v := range m {
