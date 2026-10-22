@@ -17,7 +17,7 @@ import (
 // parseSSEOrJSON extracts the JSON payload from either a plain JSON response
 // or an SSE stream with a single "data: {...}" line.
 func parseSSEOrJSON(body []byte) []byte {
-	for _, line := range strings.Split(string(body), "\n") {
+	for line := range strings.SplitSeq(string(body), "\n") {
 		if after, ok := strings.CutPrefix(line, "data: "); ok {
 			after = strings.TrimSpace(after)
 			if len(after) > 0 {
