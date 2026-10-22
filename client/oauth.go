@@ -7,6 +7,9 @@ import (
 	"github.com/mark3labs/mcp-go/client/transport"
 )
 
+// ErrAuthorizationServerChanged indicates credentials or tokens belong to another issuer.
+var ErrAuthorizationServerChanged = transport.ErrAuthorizationServerChanged
+
 // OAuthConfig is a convenience type that wraps transport.OAuthConfig
 type OAuthConfig = transport.OAuthConfig
 

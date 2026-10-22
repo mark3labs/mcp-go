@@ -414,9 +414,11 @@ func (c *SSE) readSSE(reader io.ReadCloser, endpointChan chan struct{}, endpoint
 					event = "message"
 				}
 				c.handleSSEEvent(event, data, endpointChan, endpointOnce)
-				event = ""
 				data = ""
 			}
+			// The event type resets on every dispatch, even one with no
+			// data, so it cannot leak into the next event.
+			event = ""
 			continue
 		}
 
@@ -471,7 +473,10 @@ func (c *SSE) handleSSEEvent(event, data string, endpointChan chan struct{}, end
 			close(endpointChan)
 		})
 	case "message":
-		var baseMessage JSONRPCResponse
+		var baseMessage struct {
+			JSONRPCResponse
+			Method string `json:"method,omitempty"`
+		}
 		if err := json.Unmarshal([]byte(data), &baseMessage); err != nil {
 			c.logger.Error("Error unmarshaling message", "err", err)
 			return
@@ -491,6 +496,13 @@ func (c *SSE) handleSSEEvent(event, data string, endpointChan chan struct{}, end
 			return
 		}
 
+		// The server numbers its own requests, such as keep-alive pings,
+		// independently of ours, so a request can carry the id of one that
+		// is still waiting for its response.
+		if baseMessage.Method != "" {
+			return
+		}
+
 		// Create string key for map lookup
 		idKey := baseMessage.ID.String()
 
@@ -500,7 +512,7 @@ func (c *SSE) handleSSEEvent(event, data string, endpointChan chan struct{}, end
 		c.mu.Lock()
 		ch, exists := c.responses[idKey]
 		if exists {
-			ch <- &baseMessage
+			ch <- &baseMessage.JSONRPCResponse
 			delete(c.responses, idKey)
 		}
 		c.mu.Unlock()

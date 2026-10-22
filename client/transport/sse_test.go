@@ -873,28 +873,30 @@ func TestSSEErrors(t *testing.T) {
 	})
 
 	t.Run("WithHTTPClient", func(t *testing.T) {
-		// Create a custom client with a very short timeout
-		customClient := &http.Client{Timeout: 1 * time.Nanosecond}
+		// Create a custom client with a short timeout
+		customClient := &http.Client{Timeout: 50 * time.Millisecond}
 
-		url, closeF := startMockSSEEchoServer()
-		defer closeF()
+		// The server never answers, so only the custom client's timeout can
+		// end Start before the context does.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			<-r.Context().Done()
+		}))
+		defer server.Close()
 		// Initialize SSE transport with the custom HTTP client
-		trans, err := NewSSE(url, WithHTTPClient(customClient))
+		trans, err := NewSSE(server.URL, WithHTTPClient(customClient))
 		if err != nil {
 			t.Fatalf("Failed to create SSE with custom client: %v", err)
 		}
+		defer trans.Close()
 
-		// Starting should immediately error due to timeout
+		// Starting should error due to the client timeout
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
+		start := time.Now()
 		err = trans.Start(ctx)
-		if err == nil {
-			t.Error("Expected Start to fail with custom timeout, got nil")
-		}
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Errorf("Expected error 'context deadline exceeded', got '%s'", err.Error())
-		}
-		trans.Close()
+		require.Error(t, err, "Expected Start to fail with custom timeout")
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Less(t, time.Since(start), time.Second, "Start should end on the custom client's timeout, not the context deadline")
 	})
 
 	t.Run("RequestBeforeStart", func(t *testing.T) {
@@ -1702,6 +1704,92 @@ func TestSSE_DuplicateEndpointEventDoesNotPanic(t *testing.T) {
 
 	// The negotiated endpoint must be readable without racing the SSE reader.
 	require.Equal(t, testServer.URL+"/message", trans.GetEndpoint().String())
+}
+
+// TestSSE_ServerRequestIsNotTakenAsResponse covers a request from the server,
+// such as a keep-alive ping, that carries the id of a request still waiting
+// for its response.
+func TestSSE_ServerRequestIsNotTakenAsResponse(t *testing.T) {
+	tests := []struct {
+		name string
+		id   mcp.RequestId
+	}{
+		{name: "numeric id", id: mcp.NewRequestId(int64(1))},
+		{name: "string id", id: mcp.NewRequestId("req-1")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var (
+				mu        sync.Mutex
+				sseWriter http.ResponseWriter
+				flush     func()
+			)
+
+			mux := http.NewServeMux()
+			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				flusher, ok := w.(http.Flusher)
+				if !ok {
+					http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+					return
+				}
+				mu.Lock()
+				sseWriter = w
+				flush = flusher.Flush
+				fmt.Fprintf(w, "event: endpoint\ndata: /message\n\n")
+				flusher.Flush()
+				mu.Unlock()
+
+				<-r.Context().Done()
+			})
+			mux.HandleFunc("/message", func(w http.ResponseWriter, r *http.Request) {
+				var request map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+					return
+				}
+				ping, _ := json.Marshal(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      request["id"],
+					"method":  "ping",
+				})
+				response, _ := json.Marshal(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      request["id"],
+					"result":  map[string]any{"answer": 42},
+				})
+				mu.Lock()
+				fmt.Fprintf(sseWriter, "event: message\ndata: %s\n\n", ping)
+				fmt.Fprintf(sseWriter, "event: message\ndata: %s\n\n", response)
+				flush()
+				mu.Unlock()
+				w.WriteHeader(http.StatusAccepted)
+			})
+
+			testServer := httptest.NewServer(mux)
+			defer testServer.Close()
+
+			trans, err := NewSSE(testServer.URL)
+			require.NoError(t, err)
+
+			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+			defer cancel()
+
+			require.NoError(t, trans.Start(ctx))
+			defer trans.Close()
+
+			reqCtx, reqCancel := context.WithTimeout(ctx, 5*time.Second)
+			defer reqCancel()
+			response, err := trans.SendRequest(reqCtx, JSONRPCRequest{
+				JSONRPC: "2.0",
+				ID:      tt.id,
+				Method:  "tools/call",
+			})
+			require.NoError(t, err)
+			require.Nil(t, response.Error)
+			require.JSONEq(t, `{"answer":42}`, string(response.Result))
+		})
+	}
 }
 
 // TestSSE_InvalidEndpointEventsIgnored verifies that malformed or cross-origin

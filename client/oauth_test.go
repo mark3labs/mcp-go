@@ -209,3 +209,9 @@ func TestIsAuthorizationRequiredError(t *testing.T) {
 		t.Errorf("Expected IsAuthorizationRequiredError to return false for non-authorization error")
 	}
 }
+
+func TestAuthorizationServerChangedAlias(t *testing.T) {
+	if ErrAuthorizationServerChanged != transport.ErrAuthorizationServerChanged {
+		t.Fatal("client sentinel must be identical to transport sentinel")
+	}
+}

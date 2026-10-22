@@ -3,6 +3,9 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"strconv"
+	"strings"
 
 	"github.com/spf13/cast"
 )
@@ -344,7 +347,7 @@ func NewToolResultStructuredOnly(structured any) *CallToolResult {
 	// Convert to JSON string for backward compatibility
 	jsonBytes, err := json.Marshal(structured)
 	if err != nil {
-		fallbackText = fmt.Sprintf("Error serializing structured content: %v", err)
+		return NewToolResultError(fmt.Sprintf("Error serializing structured content: %v", err))
 	} else {
 		fallbackText = string(jsonBytes)
 	}
@@ -821,6 +824,7 @@ func ParseGetPromptResult(rawMessage *json.RawMessage) (*GetPromptResult, error)
 			return nil, fmt.Errorf("messages is not an array")
 		}
 
+		result.Messages = make([]PromptMessage, 0, len(messagesArr))
 		for _, message := range messagesArr {
 			messageMap, ok := message.(map[string]any)
 			if !ok {
@@ -860,16 +864,11 @@ func ParseCallToolResult(rawMessage *json.RawMessage) (*CallToolResult, error) {
 	}
 
 	var probe struct {
-    TaskID     string          `json:"taskId"`
 		Content    json.RawMessage `json:"content"`
 		ResultType ResultType      `json:"resultType"`
 	}
 	if err := json.Unmarshal(*rawMessage, &probe); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
-	}
-
-	if probe.ResultType == ResultTypeTask {
-		return nil, &UnsupportedTaskResultError{TaskID: probe.TaskID}
 	}
 	// A result asking for more input (SEP-2322) carries only the input
 	// requests and the request state, so it legitimately has no content.
@@ -968,6 +967,7 @@ func ParseReadResourceResult(rawMessage *json.RawMessage) (*ReadResourceResult, 
 		return nil, fmt.Errorf("contents is not an array")
 	}
 
+	result.Contents = make([]ResourceContents, 0, len(contentArr))
 	for _, content := range contentArr {
 		// Extract content
 		contentMap, ok := content.(map[string]any)
@@ -1005,65 +1005,260 @@ func ParseBoolean(request CallToolRequest, key string, defaultValue bool) bool {
 	return cast.ToBool(v)
 }
 
+// checkedSignedInteger validates before narrowing or crossing signedness. Float
+// bounds are exact powers of two with an exclusive upper bound, since converting
+// MaxInt64 or MaxUint64 to float64 rounds up to an unrepresentable integer.
+func checkedSignedInteger(value any, bits int) (int64, bool) {
+	switch v := value.(type) {
+	case string:
+		n, err := strconv.ParseInt(strings.TrimSpace(v), 10, bits)
+		return n, err == nil
+	case json.Number:
+		return checkedSignedInteger(string(v), bits)
+	case int64:
+		max := int64(uint64(1)<<(bits-1) - 1)
+		return v, v >= -max-1 && v <= max
+	case uint64:
+		max := uint64(1)<<(bits-1) - 1
+		if v > max {
+			return 0, false
+		}
+		return int64(v), true
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return 0, false
+		}
+		n := math.Trunc(v)
+		bound := math.Ldexp(1, bits-1)
+		if n < -bound || n >= bound {
+			return 0, false
+		}
+		return int64(n), true
+	case int:
+		return checkedSignedInteger(int64(v), bits)
+	case int8:
+		return checkedSignedInteger(int64(v), bits)
+	case int16:
+		return checkedSignedInteger(int64(v), bits)
+	case int32:
+		return checkedSignedInteger(int64(v), bits)
+	case uint:
+		return checkedSignedInteger(uint64(v), bits)
+	case uint8:
+		return checkedSignedInteger(uint64(v), bits)
+	case uint16:
+		return checkedSignedInteger(uint64(v), bits)
+	case uint32:
+		return checkedSignedInteger(uint64(v), bits)
+	case float32:
+		return checkedSignedInteger(float64(v), bits)
+	case bool:
+		if v {
+			return 1, true
+		}
+		return 0, true
+	default:
+		return 0, false
+	}
+}
+
+// checkedUnsignedInteger never routes unsigned integers through int64 and
+// rejects negative floats before truncation, including fractions above -1.
+func checkedUnsignedInteger(value any, bits int) (uint64, bool) {
+	switch v := value.(type) {
+	case string:
+		n, err := strconv.ParseUint(strings.TrimSpace(v), 10, bits)
+		return n, err == nil
+	case json.Number:
+		return checkedUnsignedInteger(string(v), bits)
+	case uint64:
+		max := ^uint64(0) >> (64 - bits)
+		return v, v <= max
+	case int64:
+		if v < 0 {
+			return 0, false
+		}
+		return checkedUnsignedInteger(uint64(v), bits)
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return 0, false
+		}
+		n := math.Trunc(v)
+		if v < 0 || n >= math.Ldexp(1, bits) {
+			return 0, false
+		}
+		return uint64(n), true
+	case int:
+		return checkedUnsignedInteger(int64(v), bits)
+	case int8:
+		return checkedUnsignedInteger(int64(v), bits)
+	case int16:
+		return checkedUnsignedInteger(int64(v), bits)
+	case int32:
+		return checkedUnsignedInteger(int64(v), bits)
+	case uint:
+		return checkedUnsignedInteger(uint64(v), bits)
+	case uint8:
+		return checkedUnsignedInteger(uint64(v), bits)
+	case uint16:
+		return checkedUnsignedInteger(uint64(v), bits)
+	case uint32:
+		return checkedUnsignedInteger(uint64(v), bits)
+	case float32:
+		return checkedUnsignedInteger(float64(v), bits)
+	case bool:
+		if v {
+			return 1, true
+		}
+		return 0, true
+	default:
+		return 0, false
+	}
+}
+
 // ParseInt64 extracts and converts an int64 parameter from a CallToolRequest.
-// If the key is not found in the Arguments map, the defaultValue is returned.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax with an optional sign; prefixes, decimal points and exponents are invalid.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseInt64(request CallToolRequest, key string, defaultValue int64) int64 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToInt64(v)
+	v, ok := checkedSignedInteger(ParseArgument(request, key, defaultValue), 64)
+	if !ok {
+		return defaultValue
+	}
+	return v
 }
 
 // ParseInt32 extracts and converts an int32 parameter from a CallToolRequest.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax with an optional sign; prefixes, decimal points and exponents are invalid.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseInt32(request CallToolRequest, key string, defaultValue int32) int32 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToInt32(v)
+	v, ok := checkedSignedInteger(ParseArgument(request, key, defaultValue), 32)
+	if !ok {
+		return defaultValue
+	}
+	return int32(v)
 }
 
 // ParseInt16 extracts and converts an int16 parameter from a CallToolRequest.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax with an optional sign; prefixes, decimal points and exponents are invalid.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseInt16(request CallToolRequest, key string, defaultValue int16) int16 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToInt16(v)
+	v, ok := checkedSignedInteger(ParseArgument(request, key, defaultValue), 16)
+	if !ok {
+		return defaultValue
+	}
+	return int16(v)
 }
 
 // ParseInt8 extracts and converts an int8 parameter from a CallToolRequest.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax with an optional sign; prefixes, decimal points and exponents are invalid.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseInt8(request CallToolRequest, key string, defaultValue int8) int8 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToInt8(v)
+	v, ok := checkedSignedInteger(ParseArgument(request, key, defaultValue), 8)
+	if !ok {
+		return defaultValue
+	}
+	return int8(v)
 }
 
 // ParseInt extracts and converts an int parameter from a CallToolRequest.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax with an optional sign; prefixes, decimal points and exponents are invalid.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseInt(request CallToolRequest, key string, defaultValue int) int {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToInt(v)
+	v, ok := checkedSignedInteger(ParseArgument(request, key, defaultValue), strconv.IntSize)
+	if !ok {
+		return defaultValue
+	}
+	return int(v)
 }
 
-// ParseUInt extracts and converts an uint parameter from a CallToolRequest.
+// ParseUInt extracts and converts a uint parameter from a CallToolRequest.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax without a sign; prefixes, decimal points and exponents are invalid.
+// Negative numeric values return defaultValue, even fractional values above -1.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseUInt(request CallToolRequest, key string, defaultValue uint) uint {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToUint(v)
+	v, ok := checkedUnsignedInteger(ParseArgument(request, key, defaultValue), strconv.IntSize)
+	if !ok {
+		return defaultValue
+	}
+	return uint(v)
 }
 
-// ParseUInt64 extracts and converts an uint64 parameter from a CallToolRequest.
+// ParseUInt64 extracts and converts a uint64 parameter from a CallToolRequest.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax without a sign; prefixes, decimal points and exponents are invalid.
+// Negative numeric values return defaultValue, even fractional values above -1.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseUInt64(request CallToolRequest, key string, defaultValue uint64) uint64 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToUint64(v)
+	v, ok := checkedUnsignedInteger(ParseArgument(request, key, defaultValue), 64)
+	if !ok {
+		return defaultValue
+	}
+	return v
 }
 
-// ParseUInt32 extracts and converts an uint32 parameter from a CallToolRequest.
+// ParseUInt32 extracts and converts a uint32 parameter from a CallToolRequest.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax without a sign; prefixes, decimal points and exponents are invalid.
+// Negative numeric values return defaultValue, even fractional values above -1.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseUInt32(request CallToolRequest, key string, defaultValue uint32) uint32 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToUint32(v)
+	v, ok := checkedUnsignedInteger(ParseArgument(request, key, defaultValue), 32)
+	if !ok {
+		return defaultValue
+	}
+	return uint32(v)
 }
 
-// ParseUInt16 extracts and converts an uint16 parameter from a CallToolRequest.
+// ParseUInt16 extracts and converts a uint16 parameter from a CallToolRequest.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax without a sign; prefixes, decimal points and exponents are invalid.
+// Negative numeric values return defaultValue, even fractional values above -1.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseUInt16(request CallToolRequest, key string, defaultValue uint16) uint16 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToUint16(v)
+	v, ok := checkedUnsignedInteger(ParseArgument(request, key, defaultValue), 16)
+	if !ok {
+		return defaultValue
+	}
+	return uint16(v)
 }
 
-// ParseUInt8 extracts and converts an uint8 parameter from a CallToolRequest.
+// ParseUInt8 extracts and converts a uint8 parameter from a CallToolRequest.
+// It accepts built-in integers, floats (truncated toward zero), bools (0/1),
+// strings and json.Number. Strings and json.Number use trimmed base-10 integer
+// syntax without a sign; prefixes, decimal points and exponents are invalid.
+// Negative numeric values return defaultValue, even fractional values above -1.
+// Missing, nil, unsupported (including pointers and named types), invalid or
+// out-of-range values (including non-finite floats) return defaultValue.
 func ParseUInt8(request CallToolRequest, key string, defaultValue uint8) uint8 {
-	v := ParseArgument(request, key, defaultValue)
-	return cast.ToUint8(v)
+	v, ok := checkedUnsignedInteger(ParseArgument(request, key, defaultValue), 8)
+	if !ok {
+		return defaultValue
+	}
+	return uint8(v)
 }
 
 // ParseFloat32 extracts and converts a float32 parameter from a CallToolRequest.
@@ -1128,68 +1323,26 @@ func GetTextFromContent(content any) string {
 	}
 }
 
-// jsonToTask convert json content to GetTaskResult structure
+// jsonToTask fills TTL and PollInterval from the SEP-2663 wire names (ttlMs,
+// pollIntervalMs). The Task struct uses the legacy JSON tags (ttl, pollInterval)
+// so plain json.Unmarshal decodes legacy names correctly but skips ttlMs/pollIntervalMs;
+// this helper fills the gap. It only overrides fields that json.Unmarshal left nil,
+// to avoid clobbering a precisely-decoded integer value with a lossy float64.
 func jsonToTask(jsonContent map[string]any, result *GetTaskResult) {
-	taskId, ok := jsonContent["taskId"]
-	if ok {
-		if taskIdStr, ok := taskId.(string); ok {
-			result.TaskId = taskIdStr
+	if result.TTL == nil {
+		if ttl, ok := jsonContent["ttlMs"]; ok {
+			if ttlFloat, ok := ttl.(float64); ok {
+				ttlInt64 := int64(ttlFloat)
+				result.TTL = &ttlInt64
+			}
 		}
 	}
-
-	taskStatus, ok := jsonContent["status"]
-	if ok {
-		if taskStatusStr, ok := taskStatus.(string); ok {
-			result.Status = TaskStatus(taskStatusStr)
-		}
-	}
-
-	taskStatusMessage, ok := jsonContent["statusMessage"]
-	if ok {
-		if taskStatusMessageStr, ok := taskStatusMessage.(string); ok {
-			result.StatusMessage = taskStatusMessageStr
-		}
-	}
-
-	createdAt, ok := jsonContent["createdAt"]
-	if ok {
-		if createdAtStr, ok := createdAt.(string); ok {
-			result.CreatedAt = createdAtStr
-		}
-	}
-
-	lastUpdatedAt, ok := jsonContent["lastUpdatedAt"]
-	if ok {
-		if lastUpdatedAtStr, ok := lastUpdatedAt.(string); ok {
-			result.LastUpdatedAt = lastUpdatedAtStr
-		}
-	}
-
-	// SEP-2663 field name: ttlMs
-	if ttl, ok := jsonContent["ttlMs"]; ok {
-		if ttlFloat, ok := ttl.(float64); ok {
-			ttlInt64 := int64(ttlFloat)
-			result.TTL = &ttlInt64
-		}
-	} else if ttl, ok := jsonContent["ttl"]; ok {
-		// Legacy 2025-11-25 field name fallback
-		if ttlFloat, ok := ttl.(float64); ok {
-			ttlInt64 := int64(ttlFloat)
-			result.TTL = &ttlInt64
-		}
-	}
-
-	// SEP-2663 field name: pollIntervalMs
-	if pollInterval, ok := jsonContent["pollIntervalMs"]; ok {
-		if pollIntervalFloat64, ok := pollInterval.(float64); ok {
-			pollIntervalInt := int64(pollIntervalFloat64)
-			result.PollInterval = &pollIntervalInt
-		}
-	} else if pollInterval, ok := jsonContent["pollInterval"]; ok {
-		// Legacy 2025-11-25 field name fallback
-		if pollIntervalFloat64, ok := pollInterval.(float64); ok {
-			pollIntervalInt := int64(pollIntervalFloat64)
-			result.PollInterval = &pollIntervalInt
+	if result.PollInterval == nil {
+		if pollInterval, ok := jsonContent["pollIntervalMs"]; ok {
+			if pollIntervalFloat64, ok := pollInterval.(float64); ok {
+				pollIntervalInt := int64(pollIntervalFloat64)
+				result.PollInterval = &pollIntervalInt
+			}
 		}
 	}
 }
@@ -1199,25 +1352,19 @@ func ParseCancelTaskResult(rawMessage *json.RawMessage) (*CancelTaskResult, erro
 	if rawMessage == nil {
 		return nil, fmt.Errorf("response is nil")
 	}
-
-	var jsonContent map[string]any
-	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
+	var result CancelTaskResult
+	if err := json.Unmarshal(*rawMessage, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
-
-	// Re-use jsonToTask so legacy task fields (taskId, status, ttl, etc.) are
-	// populated when the server sent them. they stay zero on ack-only responses.
-	getResult := GetTaskResult{}
-	jsonToTask(jsonContent, &getResult)
-
-	cancelResult := &CancelTaskResult{Task: getResult.Task}
-	if meta, ok := jsonContent["_meta"]; ok {
-		if metaMap, ok := meta.(map[string]any); ok {
-			cancelResult.Meta = NewMetaFromMap(metaMap)
-		}
+	// Fix up ttlMs/pollIntervalMs: Task struct tags use legacy names so plain
+	// json.Unmarshal won't decode them from SEP-2663 wire format.
+	var jsonContent map[string]any
+	if err := json.Unmarshal(*rawMessage, &jsonContent); err == nil {
+		getResult := GetTaskResult{Task: result.Task}
+		jsonToTask(jsonContent, &getResult)
+		result.Task = getResult.Task
 	}
-
-	return cancelResult, nil
+	return &result, nil
 }
 
 // ParseListTasksResult parses a JSON message and converts it to a ListTasksResult.
@@ -1225,42 +1372,11 @@ func ParseListTasksResult(rawMessage *json.RawMessage) (*ListTasksResult, error)
 	if rawMessage == nil {
 		return nil, fmt.Errorf("response is nil")
 	}
-
-	var jsonContent map[string]any
-	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
+	var result ListTasksResult
+	if err := json.Unmarshal(*rawMessage, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
-
-	listTasksResult := ListTasksResult{}
-
-	meta, ok := jsonContent["_meta"]
-	if ok {
-		if metaMap, ok := meta.(map[string]any); ok {
-			listTasksResult.Meta = NewMetaFromMap(metaMap)
-		}
-	}
-
-	tasks, ok := jsonContent["tasks"]
-	if ok {
-		if taskArr, ok := tasks.([]any); ok {
-			for _, task := range taskArr {
-				if taskJsonContent, ok := task.(map[string]any); ok {
-					getTaskResult := GetTaskResult{}
-					jsonToTask(taskJsonContent, &getTaskResult)
-					listTasksResult.Tasks = append(listTasksResult.Tasks, getTaskResult.Task)
-				}
-			}
-		}
-	}
-
-	nextCursor, ok := jsonContent["nextCursor"]
-	if ok {
-		if cursorStr, ok := nextCursor.(string); ok {
-			listTasksResult.NextCursor = Cursor(cursorStr)
-		}
-	}
-
-	return &listTasksResult, nil
+	return &result, nil
 }
 
 // ParseTaskResultResult parses a JSON message and converts it to a TaskResultResult.
@@ -1310,24 +1426,16 @@ func ParseGetTaskResult(rawMessage *json.RawMessage) (*GetTaskResult, error) {
 	if rawMessage == nil {
 		return nil, fmt.Errorf("response is nil")
 	}
-
-	var jsonContent map[string]any
-	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
+	var result GetTaskResult
+	if err := json.Unmarshal(*rawMessage, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
-
-	result := GetTaskResult{}
-	meta, ok := jsonContent["_meta"]
-	if ok {
-		if metaMap, ok := meta.(map[string]any); ok {
-			result.Meta = NewMetaFromMap(metaMap)
-		}
+	// Fix up ttlMs/pollIntervalMs from SEP-2663 wire format.
+	var jsonContent map[string]any
+	if err := json.Unmarshal(*rawMessage, &jsonContent); err == nil {
+		jsonToTask(jsonContent, &result)
 	}
-
-	jsonToTask(jsonContent, &result)
-
-	// SEP-2663 inline fields: populate TaskResult, TaskError, InputRequests
-	// directly via json.Unmarshal since jsonToTask doesn't cover them.
+	// Populate SEP-2663 inline fields (result, error, inputRequests).
 	var sep struct {
 		TaskResult    json.RawMessage      `json:"result"`
 		TaskError     *JSONRPCErrorDetails `json:"error"`
@@ -1339,7 +1447,6 @@ func ParseGetTaskResult(rawMessage *json.RawMessage) (*GetTaskResult, error) {
 	result.TaskResult = sep.TaskResult
 	result.TaskError = sep.TaskError
 	result.InputRequests = sep.InputRequests
-
 	return &result, nil
 }
 
@@ -1348,18 +1455,9 @@ func ParseUpdateTaskResult(rawMessage *json.RawMessage) (*UpdateTaskResult, erro
 	if rawMessage == nil {
 		return nil, fmt.Errorf("response is nil")
 	}
-
-	var jsonContent map[string]any
-	if err := json.Unmarshal(*rawMessage, &jsonContent); err != nil {
+	var result UpdateTaskResult
+	if err := json.Unmarshal(*rawMessage, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
-
-	updateResult := &UpdateTaskResult{}
-	if meta, ok := jsonContent["_meta"]; ok {
-		if metaMap, ok := meta.(map[string]any); ok {
-			updateResult.Meta = NewMetaFromMap(metaMap)
-		}
-	}
-
-	return updateResult, nil
+	return &result, nil
 }

@@ -27,8 +27,6 @@ def read_server_baseline(path: Path) -> list[str]:
             in_server = line.strip() == "server:"
         elif in_server and line.strip().startswith("- "):
             scenarios.append(line.strip()[2:])
-    if not scenarios:
-        raise ValueError(f"no server scenarios found in {path}")
     return scenarios
 
 
@@ -145,7 +143,8 @@ def main() -> int:
             print(suite_output[-2000:])
             return 1
 
-    print("\nChecking known intermittent notification scenarios for a stale baseline")
+    if baseline:
+        print("\nChecking known intermittent notification scenarios for a stale baseline")
     stale = []
     for scenario in sorted(baseline):
         failures = 0
@@ -185,7 +184,10 @@ def main() -> int:
         print(f"Baseline is stale; remove consistently passing scenarios: {', '.join(stale)}")
         return 1
 
-    print("Conformance suite passed; only baseline notification failures were observed")
+    if baseline:
+        print("Conformance suite passed; only baseline notification failures were observed")
+    else:
+        print("Conformance suite passed with no baseline exemptions")
     return 0
 
 

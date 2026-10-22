@@ -365,22 +365,22 @@ func TestInputSchemaValidation_ErrorKindReadable(t *testing.T) {
 		wantNotContains []string
 	}{
 		{
-			name:            "minProperties renders Got/Want",
+			name:            "minProperties renders got/want",
 			args:            map[string]any{"id": 23582, "fields": map[string]any{}},
-			wantContains:    []string{"/fields:", "Got:0", "Want:1"},
-			wantNotContains: []string{"%!s"},
+			wantContains:    []string{"/fields: minProperties: got 0, want 1"},
+			wantNotContains: []string{"%!s", "&{"},
 		},
 		{
-			name:            "required renders Missing field names",
+			name:            "required renders missing field names",
 			args:            map[string]any{"id": 23582},
-			wantContains:    []string{"Missing:[fields]"},
-			wantNotContains: []string{"%!s"},
+			wantContains:    []string{"<root>: missing property 'fields'"},
+			wantNotContains: []string{"%!s", "&{"},
 		},
 		{
-			name:            "type renders Got/Want",
+			name:            "type renders got/want",
 			args:            map[string]any{"id": "abc"},
-			wantContains:    []string{"/id:", "Got:string", "Want:[number]"},
-			wantNotContains: []string{"%!s"},
+			wantContains:    []string{"/id: got string, want number"},
+			wantNotContains: []string{"%!s", "&{"},
 		},
 	}
 
