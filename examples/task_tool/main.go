@@ -1,9 +1,3 @@
-//go:build ignore
-// +build ignore
-
-// NOTE: This example will not compile until task tool implementation is complete.
-// Remove the build constraint above once TAS-4 through TAS-10 are implemented.
-
 package main
 
 import (
@@ -18,274 +12,170 @@ import (
 )
 
 // This example demonstrates task-augmented tools in MCP.
-// Task-augmented tools execute asynchronously and return results via polling.
-//
-// NOTE: This example requires the task tool implementation to be complete.
-// Specifically, it requires:
-//   - TaskToolHandlerFunc type (TAS-4)
-//   - ServerTaskTool type (TAS-5)
-//   - AddTaskTool method (TAS-6)
-//   - handleTaskAugmentedToolCall (TAS-9)
-//   - executeTaskTool (TAS-10)
-//
-// The example includes three types of tools:
-// 1. process_batch - A TaskSupportRequired tool that processes items in batch
-// 2. analyze_data - A TaskSupportOptional tool that can run sync or async
-// 3. quick_check - A regular synchronous tool for comparison
+// Task-augmented tools execute asynchronously: the server returns a task handle
+// immediately, and the client polls tasks/get until the task reaches a terminal
+// state (completed, failed, or cancelled).
+// The context passed to a task handler is rooted at the server's lifetime, not
+// the per-request context. It is only cancelled when tasks/cancel is called or
+// the server shuts down. Blocking on ctx.Done() is safe and is the recommended
+// way to honour cancellation.
 //
 // Usage:
-//   go run main.go              # Start with stdio transport
-//   go run main.go -t http      # Start with HTTP transport on :8080
+//	go run main.go              # stdio transport
+//	go run main.go -t http      # Streamable HTTP on :8080
 
 func main() {
-	var transport string
-	flag.StringVar(&transport, "t", "stdio", "Transport type (stdio or http)")
-	flag.StringVar(&transport, "transport", "stdio", "Transport type (stdio or http)")
+	transport := flag.String("t", "stdio", "Transport: stdio or http")
 	flag.Parse()
 
-	mcpServer := NewTaskToolServer()
+	srv := newServer()
 
-	if transport == "http" {
-		httpServer := server.NewStreamableHTTPServer(mcpServer)
-		log.Printf("HTTP server listening on :8080/mcp")
-		if err := httpServer.Start(":8080"); err != nil {
-			log.Fatalf("Server error: %v", err)
+	switch *transport {
+	case "http":
+		log.Println("Streamable HTTP listening on :8080")
+		if err := server.NewStreamableHTTPServer(srv).Start(":8080"); err != nil {
+			log.Fatal(err)
 		}
-	} else {
-		if err := server.ServeStdio(mcpServer); err != nil {
-			log.Fatalf("Server error: %v", err)
+	default:
+		if err := server.ServeStdio(srv); err != nil {
+			log.Fatal(err)
 		}
 	}
 }
 
-// NewTaskToolServer creates a new MCP server with task-augmented tool examples.
-func NewTaskToolServer() *server.MCPServer {
-	// Set up task observability hooks
-	taskHooks := &server.TaskHooks{}
-	taskHooks.AddOnTaskCreated(func(ctx context.Context, metrics server.TaskMetrics) {
-		log.Printf("[METRICS] Task created: %s (tool: %s)", metrics.TaskID, metrics.ToolName)
+func newServer() *server.MCPServer {
+	hooks := &server.TaskHooks{}
+	hooks.AddOnTaskCreated(func(_ context.Context, m server.TaskMetrics) {
+		log.Printf("[task] created  %s  tool=%s", m.TaskID, m.ToolName)
 	})
-	taskHooks.AddOnTaskCompleted(func(ctx context.Context, metrics server.TaskMetrics) {
-		log.Printf("[METRICS] Task completed: %s (tool: %s, duration: %v)",
-			metrics.TaskID, metrics.ToolName, metrics.Duration)
+	hooks.AddOnTaskCompleted(func(_ context.Context, m server.TaskMetrics) {
+		log.Printf("[task] done     %s  tool=%s  duration=%v", m.TaskID, m.ToolName, m.Duration)
 	})
-	taskHooks.AddOnTaskFailed(func(ctx context.Context, metrics server.TaskMetrics) {
-		log.Printf("[METRICS] Task failed: %s (tool: %s, duration: %v, error: %v)",
-			metrics.TaskID, metrics.ToolName, metrics.Duration, metrics.Error)
+	hooks.AddOnTaskFailed(func(_ context.Context, m server.TaskMetrics) {
+		log.Printf("[task] failed   %s  tool=%s  err=%v", m.TaskID, m.ToolName, m.Error)
 	})
-	taskHooks.AddOnTaskCancelled(func(ctx context.Context, metrics server.TaskMetrics) {
-		log.Printf("[METRICS] Task cancelled: %s (tool: %s, duration: %v)",
-			metrics.TaskID, metrics.ToolName, metrics.Duration)
+	hooks.AddOnTaskCancelled(func(_ context.Context, m server.TaskMetrics) {
+		log.Printf("[task] cancelled %s  tool=%s", m.TaskID, m.ToolName)
 	})
 
-	// Create server with task capabilities enabled
-	// listTasks: allows clients to list all tasks
-	// cancel: allows clients to cancel running tasks
-	// toolCallTasks: enables task augmentation for tools
-	mcpServer := server.NewMCPServer(
-		"example-servers/task-tool",
+	srv := server.NewMCPServer(
+		"example-task-tool",
 		"1.0.0",
 		server.WithTaskCapabilities(true, true, true),
+		// advertise io.modelcontextprotocol/tasks for SEP-2663 clients
+		server.WithTasksExtension(),
 		server.WithToolCapabilities(true),
-		server.WithTaskHooks(taskHooks),
-		server.WithMaxConcurrentTasks(10), // Limit to 10 concurrent tasks
-		server.WithLogging(),
+		server.WithTaskHooks(hooks),
+		server.WithMaxConcurrentTasks(10),
 	)
 
-	// Example 1: Task-Required Tool
-	// This tool MUST be called with task augmentation
-	processBatchTool := mcp.NewTool("process_batch",
-		mcp.WithDescription("Process a batch of items asynchronously. This is a long-running operation that must be executed as a task."),
+	// Tool 1: must always run as a task.
+	processBatch := mcp.NewTool("process_batch",
+		mcp.WithDescription("Process items asynchronously (task required)."),
 		mcp.WithTaskSupport(mcp.TaskSupportRequired),
 		mcp.WithArray("items",
-			mcp.Description("Array of items to process"),
+			mcp.Description("Items to process"),
 			mcp.WithStringItems(),
 			mcp.Required(),
 		),
-		mcp.WithNumber("delay",
-			mcp.Description("Delay in seconds per item (simulates processing time)"),
-			mcp.DefaultNumber(1.0),
+		mcp.WithNumber("delay_ms",
+			mcp.Description("Simulated delay per item in ms"),
+			mcp.DefaultNumber(200),
 		),
 	)
-	mcpServer.AddTaskTool(processBatchTool, handleProcessBatch)
+	srv.AddTaskTool(processBatch, handleProcessBatch)
 
-	// Example 2: Task-Optional Tool
-	// This tool can be called with or without task augmentation
-	analyzeDataTool := mcp.NewTool("analyze_data",
-		mcp.WithDescription("Analyze data. Can run synchronously (fast) or asynchronously (thorough) depending on how it's called."),
+	// Tool 2: can run synchronously or as a task.
+	analyzeData := mcp.NewTool("analyze_data",
+		mcp.WithDescription("Analyse text — quick sync or thorough async."),
 		mcp.WithTaskSupport(mcp.TaskSupportOptional),
-		mcp.WithString("data",
-			mcp.Description("Data to analyze"),
-			mcp.Required(),
-		),
-		mcp.WithBoolean("thorough",
-			mcp.Description("Whether to perform thorough analysis (slower)"),
-			mcp.DefaultBool(false),
-		),
+		mcp.WithString("text", mcp.Required()),
+		mcp.WithBoolean("thorough", mcp.DefaultBool(false)),
 	)
-	mcpServer.AddTaskTool(analyzeDataTool, handleAnalyzeData)
+	// For optional-task tools the handler only runs when the tool is invoked
+	// as a task. Synchronous calls go to a separate handler if registered via
+	// AddTool.
+	srv.AddTaskTool(analyzeData, handleAnalyzeData)
 
-	// Example 3: Regular Synchronous Tool (for comparison)
-	quickCheckTool := mcp.NewTool("quick_check",
-		mcp.WithDescription("Perform a quick synchronous check. This tool does not support task augmentation."),
-		mcp.WithString("input",
-			mcp.Description("Input to check"),
-			mcp.Required(),
-		),
+	// Tool 3: plain synchronous tool, no task support.
+	quickCheck := mcp.NewTool("quick_check",
+		mcp.WithDescription("Synchronous sanity check."),
+		mcp.WithString("input", mcp.Required()),
 	)
-	mcpServer.AddTool(quickCheckTool, handleQuickCheck)
+	srv.AddTool(quickCheck, handleQuickCheck)
 
-	return mcpServer
+	return srv
 }
 
-// handleProcessBatch processes items in a batch asynchronously.
-// This demonstrates a task-required tool that performs long-running work.
-func handleProcessBatch(
-	ctx context.Context,
-	request mcp.CallToolRequest,
-) (*mcp.CreateTaskResult, error) {
-	items := request.GetStringSlice("items", []string{})
-	delay := request.GetFloat("delay", 1.0)
+// handleProcessBatch is a TaskToolHandlerFunc, it runs in a background
+// goroutine and returns a *CreateTaskResult when the work is done.
+func handleProcessBatch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+	items := req.GetStringSlice("items", nil)
+	delayMs := req.GetFloat("delay_ms", 200)
+	delay := time.Duration(delayMs) * time.Millisecond
 
-	if len(items) == 0 {
-		return nil, fmt.Errorf("items array cannot be empty")
-	}
+	log.Printf("process_batch: starting %d items, delay=%v", len(items), delay)
 
-	log.Printf("Starting batch processing of %d items with %v second delay per item", len(items), delay)
-
-	// Process each item with delay
-	results := make([]string, 0, len(items))
 	for i, item := range items {
 		select {
 		case <-ctx.Done():
-			// Task was cancelled
-			log.Printf("Batch processing cancelled after %d/%d items", i, len(items))
+			log.Printf("process_batch: cancelled after %d/%d items", i, len(items))
 			return nil, ctx.Err()
-		default:
-			// Simulate processing time
-			time.Sleep(time.Duration(delay * float64(time.Second)))
-			result := fmt.Sprintf("Processed '%s' [%d/%d]", item, i+1, len(items))
-			results = append(results, result)
-			log.Printf("Item %d/%d: %s", i+1, len(items), item)
+		case <-time.After(delay):
 		}
+
+		log.Printf("process_batch: [%d/%d] %s", i+1, len(items), item)
 	}
 
-	log.Printf("Batch processing completed: %d items", len(items))
-
-	// Return the result
-	return &mcp.CreateTaskResult{
-		Task: mcp.Task{
-			// Task fields are managed by the server
-		},
-	}, nil
+	log.Printf("process_batch: finished %d items", len(items))
+	r := mcp.NewCreateTaskResult(mcp.Task{})
+	return &r, nil
 }
 
-// handleAnalyzeData analyzes data either quickly or thoroughly.
-// This demonstrates a task-optional tool that adapts based on how it's called.
-func handleAnalyzeData(
-	ctx context.Context,
-	request mcp.CallToolRequest,
-) (*mcp.CreateTaskResult, error) {
-	data := request.GetString("data", "")
-	thorough := request.GetBool("thorough", false)
+// handleAnalyzeData is a TaskToolHandlerFunc used for the optional-task tool.
+func handleAnalyzeData(ctx context.Context, req mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+	text := req.GetString("text", "")
+	thorough := req.GetBool("thorough", false)
 
-	if data == "" {
-		return nil, fmt.Errorf("data cannot be empty")
-	}
-
-	analysisType := "quick"
-	duration := 500 * time.Millisecond
+	duration := 100 * time.Millisecond
 	if thorough {
-		analysisType = "thorough"
-		duration = 3 * time.Second
+		duration = 2 * time.Second
 	}
 
-	log.Printf("Starting %s analysis of data: %s", analysisType, data)
-
-	// Simulate analysis time
+	// Here we register only the task handler via AddTaskTool so the
+	// synchronous path returns an error when called without a task param.
 	select {
 	case <-ctx.Done():
-		log.Printf("Analysis cancelled")
 		return nil, ctx.Err()
 	case <-time.After(duration):
-		// Analysis complete
 	}
 
-	// Generate analysis results
-	wordCount := len(data)
-	charCount := len([]rune(data))
-
-	result := fmt.Sprintf("Analysis complete (%s mode):\n", analysisType)
-	result += fmt.Sprintf("- Characters: %d\n", charCount)
-	result += fmt.Sprintf("- Words: %d\n", wordCount)
-
+	summary := fmt.Sprintf("analysed %d chars", len([]rune(text)))
 	if thorough {
-		result += fmt.Sprintf("- Uppercase: %d\n", countUppercase(data))
-		result += fmt.Sprintf("- Lowercase: %d\n", countLowercase(data))
-		result += fmt.Sprintf("- Digits: %d\n", countDigits(data))
+		summary += fmt.Sprintf(", upper=%d lower=%d digits=%d",
+			countRunes(text, 'A', 'Z'),
+			countRunes(text, 'a', 'z'),
+			countRunes(text, '0', '9'),
+		)
 	}
+	log.Printf("analyze_data: %s", summary)
 
-	log.Printf("Analysis completed: %s mode, %d characters", analysisType, charCount)
-
-	return &mcp.CreateTaskResult{
-		Task: mcp.Task{
-			// Task fields are managed by the server
-		},
-	}, nil
+	r := mcp.NewCreateTaskResult(mcp.Task{})
+	return &r, nil
 }
 
-// handleQuickCheck performs a quick synchronous check.
-// This demonstrates a regular tool without task support for comparison.
-func handleQuickCheck(
-	ctx context.Context,
-	request mcp.CallToolRequest,
-) (*mcp.CallToolResult, error) {
-	input := request.GetString("input", "")
-
-	if input == "" {
-		return nil, fmt.Errorf("input cannot be empty")
-	}
-
-	log.Printf("Quick check: %s", input)
-
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			mcp.TextContent{
-				Type: "text",
-				Text: fmt.Sprintf("Quick check passed for: %s (length: %d)", input, len(input)),
-			},
-		},
-	}, nil
+// handleQuickCheck is a plain ToolHandlerFunc, synchronous, no task involved.
+func handleQuickCheck(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	input := req.GetString("input", "")
+	return mcp.NewToolResultText(fmt.Sprintf("ok: %q (%d chars)", input, len(input))), nil
 }
 
-// Helper functions for thorough analysis
-
-func countUppercase(s string) int {
-	count := 0
+func countRunes(s string, lo, hi rune) int {
+	n := 0
 	for _, r := range s {
-		if r >= 'A' && r <= 'Z' {
-			count++
+		if r >= lo && r <= hi {
+			n++
 		}
 	}
-	return count
-}
-
-func countLowercase(s string) int {
-	count := 0
-	for _, r := range s {
-		if r >= 'a' && r <= 'z' {
-			count++
-		}
-	}
-	return count
-}
-
-func countDigits(s string) int {
-	count := 0
-	for _, r := range s {
-		if r >= '0' && r <= '9' {
-			count++
-		}
-	}
-	return count
+	return n
 }

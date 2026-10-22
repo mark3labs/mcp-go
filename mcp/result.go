@@ -16,6 +16,11 @@ const (
 	// [InputRequiredResult.InputRequests] and retries the original request with
 	// the answers attached. See the multi round-trip request pattern.
 	ResultTypeInputRequired ResultType = "input_required"
+
+	// ResultTypeTask indicates the server has created an asynchronous task to
+	// handle the request. The client polls tasks/get until the task reaches a
+	// terminal state.
+	ResultTypeTask ResultType = "task"
 )
 
 // IsComplete reports whether the result type denotes a final result. An empty
