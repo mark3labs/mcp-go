@@ -191,6 +191,42 @@ type AuthServerMetadata struct {
 	IntrospectionEndpointAuthMethodsSupported          []string `json:"introspection_endpoint_auth_methods_supported,omitempty"`
 	IntrospectionEndpointAuthSigningAlgValuesSupported []string `json:"introspection_endpoint_auth_signing_alg_values_supported,omitempty"`
 	CodeChallengeMethodsSupported                      []string `json:"code_challenge_methods_supported,omitempty"`
+	// AuthorizationResponseIssParameterSupported reports whether the server
+	// includes the iss parameter in authorization responses (RFC 9207).
+	AuthorizationResponseIssParameterSupported bool `json:"authorization_response_iss_parameter_supported,omitempty"`
+
+	// guessed marks metadata made up from default endpoints because the
+	// server published none, so its Issuer was never confirmed.
+	guessed bool
+}
+
+// AuthorizationTransaction is an immutable snapshot of an authorization flow
+// started by GetAuthorizationURL. It binds the state, issuer, token endpoint,
+// resource and client credentials to that flow. Its zero value is not valid.
+//
+// Keep this value in trusted server-side in-memory session storage alongside the PKCE
+// verifier. It contains credentials and must not be sent to the browser. It can
+// be copied between request handlers in the same process, but does not support
+// serialization or persistence across process restarts.
+type AuthorizationTransaction struct {
+	state        string
+	metadata     AuthServerMetadata
+	resourceURL  string
+	clientID     string
+	clientSecret string
+	redirectURI  string
+	pkceEnabled  bool
+	authMethod   string
+}
+
+// String implements fmt.Stringer without exposing transaction data.
+func (AuthorizationTransaction) String() string {
+	return "AuthorizationTransaction{redacted}"
+}
+
+// GoString implements fmt.GoStringer without exposing transaction data.
+func (t AuthorizationTransaction) GoString() string {
+	return t.String()
 }
 
 // OAuthHandler handles OAuth authentication for HTTP requests
@@ -232,8 +268,9 @@ type OAuthHandler struct {
 	registering        *registrationFlight
 	flowIssuer         string
 
-	mu            sync.RWMutex // Protects expectedState and flowIssuer
-	expectedState string       // Expected state value for CSRF protection
+	mu                       sync.RWMutex // Protects expectedState, flowIssuer and authorizationTransaction
+	expectedState            string       // Expected state value for CSRF protection
+	authorizationTransaction *AuthorizationTransaction
 
 	// refreshMu protects refreshing, the token refresh in flight, if any.
 	// Callers of this handler that find the token expired share it: a
@@ -626,11 +663,55 @@ func (h *OAuthHandler) GetExpectedState() string {
 // In such cases, this should be called with the state value generated
 // during the initial authentication request (e.g. by GenerateState)
 // and included in the authorization URL.
+//
+// State alone supports the legacy ProcessAuthorizationResponse flow. For
+// ProcessAuthorizationCallback, save GetAuthorizationTransaction after creating
+// the authorization URL and restore it with SetAuthorizationTransaction on the
+// callback handler instead. Restoring state alone cannot establish the original
+// issuer or token endpoint. Changing state discards any existing transaction.
 func (h *OAuthHandler) SetExpectedState(expectedState string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.expectedState != expectedState {
+		h.authorizationTransaction = nil
+	}
 	h.expectedState = expectedState
 	h.flowIssuer = ""
+}
+
+// GetAuthorizationTransaction returns a copy of the pending authorization
+// transaction and whether one exists. Call it after GetAuthorizationURL and
+// before redirecting the user. A handler holds only one pending transaction;
+// starting another flow replaces it. Coordinate URL creation and session storage
+// in the caller when starting flows concurrently on the same handler.
+func (h *OAuthHandler) GetAuthorizationTransaction() (AuthorizationTransaction, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.authorizationTransaction == nil || h.expectedState == "" {
+		return AuthorizationTransaction{}, false
+	}
+	return *h.authorizationTransaction, true
+}
+
+// SetAuthorizationTransaction restores a saved transaction and its expected
+// state without discovering metadata. For callbacks handled by another request,
+// retrieve the transaction and PKCE verifier from trusted server-side storage,
+// consume that session record atomically once, then restore the transaction on
+// the new handler and call ProcessAuthorizationCallback. The handler consumes
+// its local copy on a state-valid response; it cannot prevent another handler
+// from restoring the same saved value. TokenStore and HTTPClient come from the
+// receiving handler. Its current issuer and client credentials must still match
+// the saved transaction before the code can be exchanged.
+func (h *OAuthHandler) SetAuthorizationTransaction(transaction AuthorizationTransaction) error {
+	if transaction.state == "" {
+		return errors.New("authorization transaction has no state")
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.expectedState = transaction.state
+	h.flowIssuer = transaction.metadata.Issuer
+	h.authorizationTransaction = &transaction
+	return nil
 }
 
 // OAuthError represents a standard OAuth 2.0 error response
@@ -1207,6 +1288,7 @@ func (h *OAuthHandler) getDefaultEndpoints(baseURL string) (*AuthServerMetadata,
 		AuthorizationEndpoint: authBaseURL + "/authorize",
 		TokenEndpoint:         authBaseURL + "/token",
 		RegistrationEndpoint:  authBaseURL + "/register",
+		guessed:               true,
 	}, nil
 }
 
@@ -1315,8 +1397,85 @@ func (h *OAuthHandler) performRegistration(ctx context.Context, metadata *AuthSe
 // ErrInvalidState is returned when the state parameter doesn't match the expected value
 var ErrInvalidState = errors.New("invalid state parameter, possible CSRF attack")
 
-// ProcessAuthorizationResponse processes the authorization response and exchanges the code for a token
+// ErrIssuerMismatch is returned when the iss parameter of an authorization
+// response doesn't identify the authorization server the client is using
+// (RFC 9207).
+var ErrIssuerMismatch = errors.New("authorization response issuer mismatch, possible mix-up attack")
+
+// ProcessAuthorizationResponse processes the authorization response and exchanges the code for a token.
+// It doesn't check the response's iss parameter; ProcessAuthorizationCallback does.
 func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, state, codeVerifier string) error {
+	return h.processAuthorizationResponse(ctx, code, state, codeVerifier, nil)
+}
+
+// ProcessAuthorizationCallback processes the authorization response the
+// authorization server redirected to the client's redirect URI with, given
+// the redirect's query parameters, and exchanges the code for a token.
+//
+// Besides the state, it checks the iss parameter against the issuer in the
+// authorization server's metadata, as RFC 9207 and the MCP authorization
+// spec require, and it returns an error the authorization server sent in
+// place of a code as an [OAuthError], but only once the response has passed
+// those checks.
+// The issuer and token exchange use the transaction saved by GetAuthorizationURL
+// or restored by SetAuthorizationTransaction. Current discovery and credential
+// binding may invalidate the flow, but cannot redirect its code exchange.
+// SetExpectedState alone is insufficient for this method.
+func (h *OAuthHandler) ProcessAuthorizationCallback(ctx context.Context, query url.Values, codeVerifier string) error {
+	// RFC 6749 §3.1: response parameters must not be repeated. A second iss
+	// or code could otherwise pass the checks while another one is used.
+	for _, name := range []string{"code", "state", "iss", "error"} {
+		if len(query[name]) > 1 {
+			return fmt.Errorf("authorization response repeats the %s parameter", name)
+		}
+	}
+	return h.processAuthorizationResponse(ctx, query.Get("code"), query.Get("state"), codeVerifier,
+		func(metadata *AuthServerMetadata) error {
+			if err := checkAuthorizationResponseIssuer(query, metadata); err != nil {
+				return err
+			}
+			if code := query.Get("error"); code != "" {
+				return fmt.Errorf("authorization request failed: %w", OAuthError{
+					ErrorCode:        code,
+					ErrorDescription: query.Get("error_description"),
+					ErrorURI:         query.Get("error_uri"),
+				})
+			}
+			if query.Get("code") == "" {
+				return errors.New("authorization response has no code")
+			}
+			return nil
+		})
+}
+
+// checkAuthorizationResponseIssuer applies RFC 9207 §2.4 to the query
+// parameters of an authorization response: an iss parameter must be
+// identical to the issuer in the authorization server's metadata, and a
+// server that advertises the parameter must send it. The comparison is
+// exact; normalizing either value could let a look-alike issuer through.
+// An empty iss counts as absent (RFC 6749 §3.1). Without metadata from the
+// server there is no issuer to compare against, so nothing is checked.
+func checkAuthorizationResponseIssuer(query url.Values, metadata *AuthServerMetadata) error {
+	if metadata.guessed {
+		return nil
+	}
+	iss := query.Get("iss")
+	if iss == "" {
+		if metadata.AuthorizationResponseIssParameterSupported {
+			return fmt.Errorf("%w: the authorization server sends iss, but the response has none", ErrIssuerMismatch)
+		}
+		return nil
+	}
+	if iss != metadata.Issuer {
+		return fmt.Errorf("%w: got %q, expected %q", ErrIssuerMismatch, iss, metadata.Issuer)
+	}
+	return nil
+}
+
+// processAuthorizationResponse implements ProcessAuthorizationResponse. When
+// checkResponse isn't nil, it vets the response against the authorization
+// server's metadata after the state check and before the code is exchanged.
+func (h *OAuthHandler) processAuthorizationResponse(ctx context.Context, code, state, codeVerifier string, checkResponse func(*AuthServerMetadata) error) error {
 	// Validate the state parameter to prevent CSRF attacks
 	h.mu.Lock()
 	expectedState := h.expectedState
@@ -1331,37 +1490,64 @@ func (h *OAuthHandler) ProcessAuthorizationResponse(ctx context.Context, code, s
 		return ErrInvalidState
 	}
 
-	// Clear the expected state after validation
+	transaction := h.authorizationTransaction
+	// Consume the state and its transaction together before processing the response.
 	h.expectedState = ""
+	h.authorizationTransaction = nil
 	h.mu.Unlock()
 
+	if transaction == nil && checkResponse != nil {
+		return errors.New("no authorization transaction found; restore it with SetAuthorizationTransaction")
+	}
+	if checkResponse != nil {
+		if err := checkResponse(&transaction.metadata); err != nil {
+			return err
+		}
+	}
+
+	// Discovery may invalidate a pending transaction, but must never change
+	// the issuer, endpoint or credentials used for its code exchange.
 	metadata, err := h.getServerMetadata(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get server metadata: %w", err)
 	}
-
 	if flowIssuer != "" && flowIssuer != metadata.Issuer {
+		return serverChanged()
+	}
+	if transaction != nil && transaction.metadata.Issuer != metadata.Issuer {
 		return serverChanged()
 	}
 	credentials, err := h.boundCredentials(metadata)
 	if err != nil {
 		return err
 	}
+	if transaction == nil {
+		// Preserve state-only reconstruction for the legacy response API.
+		transaction = &AuthorizationTransaction{
+			metadata: *metadata, resourceURL: h.getResourceURL(),
+			clientID: credentials.id, clientSecret: credentials.secret,
+			redirectURI: h.config.RedirectURI, pkceEnabled: h.config.PKCEEnabled,
+			authMethod: h.tokenEndpointAuthMethod(metadata, credentials),
+		}
+	} else if transaction.clientID != credentials.id || transaction.clientSecret != credentials.secret {
+		return serverChanged()
+	}
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
 	data.Set("code", code)
-	data.Set("redirect_uri", h.config.RedirectURI)
+	data.Set("redirect_uri", transaction.redirectURI)
 
-	if h.config.PKCEEnabled && codeVerifier != "" {
+	if transaction.pkceEnabled && codeVerifier != "" {
 		data.Set("code_verifier", codeVerifier)
 	}
 
 	// RFC 8707: Include resource parameter in token exchange
-	if resourceURL := h.getResourceURL(); resourceURL != "" {
+	if resourceURL := transaction.resourceURL; resourceURL != "" {
 		data.Set("resource", resourceURL)
 	}
 
-	req, err := h.newTokenRequest(ctx, metadata, credentials, data)
+	req, err := newTokenRequest(ctx, transaction.metadata.TokenEndpoint, data,
+		transaction.clientID, transaction.clientSecret, transaction.authMethod)
 	if err != nil {
 		return fmt.Errorf("failed to create token request: %w", err)
 	}
@@ -1464,19 +1650,23 @@ func (h *OAuthHandler) tokenEndpointAuthMethod(metadata *AuthServerMetadata, cre
 // newTokenRequest builds a token endpoint request carrying data and the
 // client's credentials.
 func (h *OAuthHandler) newTokenRequest(ctx context.Context, metadata *AuthServerMetadata, credentials credentialSnapshot, data url.Values) (*http.Request, error) {
-	method := h.tokenEndpointAuthMethod(metadata, credentials)
+	return newTokenRequest(ctx, metadata.TokenEndpoint, data,
+		credentials.id, credentials.secret, h.tokenEndpointAuthMethod(metadata, credentials))
+}
+
+func newTokenRequest(ctx context.Context, tokenEndpoint string, data url.Values, clientID, clientSecret, method string) (*http.Request, error) {
 	basic := method == clientSecretBasic
 	if !basic {
-		data.Set("client_id", credentials.id)
+		data.Set("client_id", clientID)
 		if method == clientSecretPost {
-			data.Set("client_secret", credentials.secret)
+			data.Set("client_secret", clientSecret)
 		}
 	}
 
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		metadata.TokenEndpoint,
+		tokenEndpoint,
 		strings.NewReader(data.Encode()),
 	)
 	if err != nil {
@@ -1487,12 +1677,14 @@ func (h *OAuthHandler) newTokenRequest(ctx context.Context, metadata *AuthServer
 	if basic {
 		// RFC 6749 §2.3.1: the client ID and secret are form-encoded before
 		// they are used as the Basic user name and password.
-		req.SetBasicAuth(url.QueryEscape(credentials.id), url.QueryEscape(credentials.secret))
+		req.SetBasicAuth(url.QueryEscape(clientID), url.QueryEscape(clientSecret))
 	}
 	return req, nil
 }
 
-// GetAuthorizationURL returns the URL for the authorization endpoint
+// GetAuthorizationURL returns the URL for the authorization endpoint and saves
+// an immutable transaction for callback validation and code exchange. A later
+// issuer or credential change invalidates the flow rather than redirecting its code.
 func (h *OAuthHandler) GetAuthorizationURL(ctx context.Context, state, codeChallenge string) (string, error) {
 	metadata, err := h.getServerMetadata(ctx)
 	if err != nil {
@@ -1503,36 +1695,53 @@ func (h *OAuthHandler) GetAuthorizationURL(ctx context.Context, state, codeChall
 	if err != nil {
 		return "", err
 	}
+	// Follow the same lock order as discovery resets and token publication.
 	h.credentialsMu.Lock()
-	if h.credentialsVersion != credentials.version || !h.metadataCurrent(metadata) {
+	h.metadataMu.Lock()
+	if h.credentialsVersion != credentials.version || h.serverMetadata != metadata {
+		h.metadataMu.Unlock()
 		h.credentialsMu.Unlock()
 		return "", serverChanged()
 	}
+	transaction := AuthorizationTransaction{
+		state: state,
+		metadata: AuthServerMetadata{
+			Issuer: metadata.Issuer, TokenEndpoint: metadata.TokenEndpoint,
+			AuthorizationResponseIssParameterSupported: metadata.AuthorizationResponseIssParameterSupported,
+			guessed: metadata.guessed,
+		},
+		resourceURL: h.resourceURL, clientID: credentials.id,
+		clientSecret: credentials.secret, redirectURI: h.config.RedirectURI,
+		pkceEnabled: h.config.PKCEEnabled, authMethod: h.tokenEndpointAuthMethod(metadata, credentials),
+	}
+	authorizationEndpoint := metadata.AuthorizationEndpoint
+	h.metadataMu.Unlock()
 	h.mu.Lock()
 	h.expectedState = state
 	h.flowIssuer = metadata.Issuer
+	h.authorizationTransaction = &transaction
 	h.mu.Unlock()
 	h.credentialsMu.Unlock()
 
 	params := url.Values{}
 	params.Set("response_type", "code")
-	params.Set("client_id", credentials.id)
-	params.Set("redirect_uri", h.config.RedirectURI)
+	params.Set("client_id", transaction.clientID)
+	params.Set("redirect_uri", transaction.redirectURI)
 	params.Set("state", state)
 
 	if len(h.config.Scopes) > 0 {
 		params.Set("scope", strings.Join(h.config.Scopes, " "))
 	}
 
-	if h.config.PKCEEnabled && codeChallenge != "" {
+	if transaction.pkceEnabled && codeChallenge != "" {
 		params.Set("code_challenge", codeChallenge)
 		params.Set("code_challenge_method", "S256")
 	}
 
 	// RFC 8707: Include resource parameter in authorization URL
-	if resourceURL := h.getResourceURL(); resourceURL != "" {
+	if resourceURL := transaction.resourceURL; resourceURL != "" {
 		params.Set("resource", resourceURL)
 	}
 
-	return metadata.AuthorizationEndpoint + "?" + params.Encode(), nil
+	return authorizationEndpoint + "?" + params.Encode(), nil
 }
