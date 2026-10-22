@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"maps"
+	"math"
 	"mime"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -127,6 +130,23 @@ func WithEventStore(store EventStore) StreamableHTTPOption {
 func WithDisableStreaming(disable bool) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {
 		s.disableStreaming = disable
+	}
+}
+
+// DefaultMaxRequestBodyBytes is the bound WithMaxRequestBodyBytes puts on a
+// POST body when the option is not given.
+const DefaultMaxRequestBodyBytes = 4 << 20
+
+// WithMaxRequestBodyBytes bounds the body of a POST request served through
+// ServeHTTP: the server reads at most n bytes of it, and answers a larger
+// one 413 Request Entity Too Large with a JSON-RPC error, so a client cannot
+// make the server hold an arbitrary amount of memory. The default is
+// DefaultMaxRequestBodyBytes; zero or less removes the bound. A request
+// brought through Handle arrives with its body already read, so the caller
+// bounds it there.
+func WithMaxRequestBodyBytes(n int64) StreamableHTTPOption {
+	return func(s *StreamableHTTPServer) {
+		s.maxRequestBodyBytes = n
 	}
 }
 
@@ -310,6 +330,10 @@ type StreamableHTTPServer struct {
 	// connections. See WithDisableLocalhostProtection.
 	disableLocalhostProtection bool
 
+	// maxRequestBodyBytes bounds a POST body read by ServeHTTP; zero or less
+	// is no bound. See WithMaxRequestBodyBytes.
+	maxRequestBodyBytes int64
+
 	tlsCertFile string
 	tlsKeyFile  string
 
@@ -343,6 +367,7 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 		endpointPath:             "/mcp",
 		sessionIdManagerResolver: NewDefaultSessionIdManagerResolver(&StatelessGeneratingSessionIdManager{}),
 		logger:                   slog.Default(),
+		maxRequestBodyBytes:      DefaultMaxRequestBodyBytes,
 		sessionResources:         newSessionResourcesStore(),
 		sessionResourceTemplates: newSessionResourceTemplatesStore(),
 	}
@@ -407,7 +432,16 @@ func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	var body []byte
 	var bodyErr error
 	if r.Method == http.MethodPost && r.Body != nil {
-		body, bodyErr = io.ReadAll(r.Body)
+		switch limit := s.maxRequestBodyBytes; {
+		case limit <= 0:
+			body, bodyErr = io.ReadAll(r.Body)
+		case r.ContentLength > limit:
+			// Refused unread: net/http closes the connection rather than
+			// drain the body.
+			bodyErr = errBodyTooLarge
+		default:
+			body, bodyErr = readBounded(r.Body, limit)
+		}
 	}
 
 	hr := &HTTPRequest{
@@ -421,6 +455,13 @@ func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	hw := newHTTPResponseWriterAdapter(w)
 
 	if bodyErr != nil && r.Method == http.MethodPost {
+		if errors.Is(bodyErr, errBodyTooLarge) {
+			writeJSONRPCErrorStatus(hw, http.StatusRequestEntityTooLarge, nil, mcp.INVALID_REQUEST,
+				fmt.Sprintf("request body exceeds %d bytes", s.maxRequestBodyBytes), func(err error) {
+					s.logger.Error("Failed to write JSONRPCError", "err", err)
+				})
+			return
+		}
 		s.writeJSONRPCError(hw, nil, mcp.PARSE_ERROR, fmt.Sprintf("read request body error: %v", bodyErr))
 		return
 	}
@@ -436,6 +477,38 @@ func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusOK)
 	default:
 		http.NotFound(w, r)
+	}
+}
+
+// errBodyTooLarge is the read error of a POST body over the bound.
+var errBodyTooLarge = errors.New("request body too large")
+
+// readBounded reads r to its end, up to limit bytes; a longer r is
+// errBodyTooLarge. It is io.ReadAll with the bound checked as the buffer
+// grows, and without a reader of its own, which would allocate on every
+// request. Content-Length is not trusted: middleware may replace the body.
+func readBounded(r io.Reader, limit int64) ([]byte, error) {
+	// The reader is never offered more than the bound and one byte, the one
+	// that proves the body too long, whatever the buffer's capacity. A bound
+	// at the top of int's range has no room for that byte: a body that
+	// fills it is too long as well.
+	most := int(min(limit, math.MaxInt-1)) + 1
+	b := make([]byte, 0, min(512, most))
+	for {
+		if len(b) == cap(b) {
+			b = slices.Grow(b, min(cap(b), most-len(b)))
+		}
+		n, err := r.Read(b[len(b):min(cap(b), most)])
+		b = b[:len(b)+n]
+		if int64(len(b)) > limit || len(b) == most {
+			return nil, errBodyTooLarge
+		}
+		if err != nil {
+			if err == io.EOF {
+				return b, nil
+			}
+			return b, err
+		}
 	}
 }
 
