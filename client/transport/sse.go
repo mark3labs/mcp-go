@@ -414,9 +414,11 @@ func (c *SSE) readSSE(reader io.ReadCloser, endpointChan chan struct{}, endpoint
 					event = "message"
 				}
 				c.handleSSEEvent(event, data, endpointChan, endpointOnce)
-				event = ""
 				data = ""
 			}
+			// The event type resets on every dispatch, even one with no
+			// data, so it cannot leak into the next event.
+			event = ""
 			continue
 		}
 

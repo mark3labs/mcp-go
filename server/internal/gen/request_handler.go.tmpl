@@ -3,6 +3,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,12 +28,25 @@ func (s *MCPServer) HandleMessage(
 		Result  any           `json:"result,omitempty"`
 	}
 
-	if err := json.Unmarshal(message, &baseMessage); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(message))
+	decoder.UseNumber()
+	if err := decoder.Decode(&baseMessage); err != nil || !json.Valid(message) {
 		return createErrorResponse(
 			nil,
 			mcp.PARSE_ERROR,
 			"Failed to parse message",
 		)
+	}
+
+	if number, ok := baseMessage.ID.(json.Number); ok {
+		var id mcp.RequestId
+		if err := json.Unmarshal([]byte(number), &id); err != nil {
+			return createErrorResponse(nil, mcp.INVALID_REQUEST, "Invalid request id")
+		}
+		baseMessage.ID = id.Value()
+		if value, ok := baseMessage.ID.(int64); ok && value >= -9007199254740991 && value <= 9007199254740991 {
+			baseMessage.ID = float64(value)
+		}
 	}
 
 	// Check for valid JSONRPC version

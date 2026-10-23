@@ -1182,9 +1182,11 @@ func (c *StreamableHTTP) readSSEWithCursor(ctx context.Context, reader io.ReadCl
 					event = "message"
 				}
 				handler(event, data)
-				event = ""
 				data = ""
 			}
+			// The event type resets on every dispatch, even one with no
+			// data, so it cannot leak into the next event.
+			event = ""
 			continue
 		}
 

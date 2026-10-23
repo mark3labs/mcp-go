@@ -1444,6 +1444,30 @@ func TestSSEServer(t *testing.T) {
 		}
 	})
 
+	t.Run("Shutdown() after Start() fails with a conflicting address should not deadlock", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0.0")
+		sseServer := NewSSEServer(mcpServer, WithHTTPServer(&http.Server{Addr: "127.0.0.1:9999"}))
+
+		err := sseServer.Start("127.0.0.1:8888")
+		if err == nil || !strings.Contains(err.Error(), "conflicting listen address") {
+			t.Fatalf("Expected a conflicting listen address error, got %v", err)
+		}
+
+		shutdownDone := make(chan error, 1)
+		go func() {
+			shutdownDone <- sseServer.Shutdown(t.Context())
+		}()
+
+		select {
+		case err := <-shutdownDone:
+			if err != nil {
+				t.Fatalf("Shutdown returned an error: %v", err)
+			}
+		case <-time.After(1 * time.Second):
+			t.Fatal("Shutdown did not return in time (likely deadlocked)")
+		}
+	})
+
 	t.Run("Headers are passed through to tool requests", func(t *testing.T) {
 		hooks := &Hooks{}
 		headerVerified := make(chan struct{})

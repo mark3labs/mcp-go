@@ -2028,3 +2028,17 @@ func TestStreamableHTTP_PreservesSSEReadErrors(t *testing.T) {
 		})
 	}
 }
+
+// TestReadSSEEventTypeResetsAfterDatalessEvent verifies a stale event type
+// does not leak into the next event when the previous event carried no data.
+func TestReadSSEEventTypeResetsAfterDatalessEvent(t *testing.T) {
+	c := &StreamableHTTP{}
+	var events []string
+	body := "event: ping\n\n" +
+		"data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n"
+	err := c.readSSE(t.Context(), io.NopCloser(strings.NewReader(body)), func(event, data string) {
+		events = append(events, event)
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"message"}, events)
+}

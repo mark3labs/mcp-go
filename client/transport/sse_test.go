@@ -873,28 +873,30 @@ func TestSSEErrors(t *testing.T) {
 	})
 
 	t.Run("WithHTTPClient", func(t *testing.T) {
-		// Create a custom client with a very short timeout
-		customClient := &http.Client{Timeout: 1 * time.Nanosecond}
+		// Create a custom client with a short timeout
+		customClient := &http.Client{Timeout: 50 * time.Millisecond}
 
-		url, closeF := startMockSSEEchoServer()
-		defer closeF()
+		// The server never answers, so only the custom client's timeout can
+		// end Start before the context does.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			<-r.Context().Done()
+		}))
+		defer server.Close()
 		// Initialize SSE transport with the custom HTTP client
-		trans, err := NewSSE(url, WithHTTPClient(customClient))
+		trans, err := NewSSE(server.URL, WithHTTPClient(customClient))
 		if err != nil {
 			t.Fatalf("Failed to create SSE with custom client: %v", err)
 		}
+		defer trans.Close()
 
-		// Starting should immediately error due to timeout
+		// Starting should error due to the client timeout
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
+		start := time.Now()
 		err = trans.Start(ctx)
-		if err == nil {
-			t.Error("Expected Start to fail with custom timeout, got nil")
-		}
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Errorf("Expected error 'context deadline exceeded', got '%s'", err.Error())
-		}
-		trans.Close()
+		require.Error(t, err, "Expected Start to fail with custom timeout")
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Less(t, time.Since(start), time.Second, "Start should end on the custom client's timeout, not the context deadline")
 	})
 
 	t.Run("RequestBeforeStart", func(t *testing.T) {

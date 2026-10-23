@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
@@ -447,14 +448,145 @@ func TestStdio_SendResponse_WriteError(t *testing.T) {
 // is a no-op on the second call.
 func TestStdio_Close_CleanupErrors(t *testing.T) {
 	// Both stdin and stderr close errors must be captured by Close.
-	stdio := newBareStdio()
-	stdio.stdin = &errWriteCloser{err: errors.New("stdin close failed")}
-	stdio.stderr = failingReadCloser{err: io.EOF, closeErr: errors.New("stderr close failed")}
+	stdio := NewIO(strings.NewReader(""),
+		&errWriteCloser{err: errors.New("stdin close failed")},
+		failingReadCloser{err: io.EOF, closeErr: errors.New("stderr close failed")})
 
 	err := stdio.Close()
 	require.ErrorContains(t, err, "stdin close failed")
 
 	// Second call is a no-op.
+	require.NoError(t, stdio.Close())
+}
+
+// TestStdio_StartAfterClose verifies that closed transports cannot acquire resources.
+func TestStdio_StartAfterClose(t *testing.T) {
+	output := &errWriteCloser{}
+	logging, loggingWriter := io.Pipe()
+	t.Cleanup(func() { _ = loggingWriter.Close() })
+	tests := []struct {
+		name  string
+		stdio *Stdio
+	}{
+		{
+			name: "command",
+			stdio: NewStdioWithOptions("unused", nil, nil, WithCommandFunc(
+				func(context.Context, string, []string, []string) (*exec.Cmd, error) {
+					t.Error("closed transport must not invoke the command factory")
+					return nil, errors.New("unexpected command factory call")
+				})),
+		},
+		{name: "existing_streams", stdio: NewIO(strings.NewReader(""), output, logging)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, tt.stdio.Close())
+			require.ErrorIs(t, tt.stdio.Start(t.Context()), ErrTransportClosed)
+			require.NoError(t, tt.stdio.Close())
+		})
+	}
+	require.True(t, output.IsClosed())
+	_, err := logging.Read(make([]byte, 1))
+	require.ErrorIs(t, err, io.ErrClosedPipe)
+}
+
+// TestStdio_CloseDuringCommandFactory keeps factory callbacks outside cleanup locks.
+func TestStdio_CloseDuringCommandFactory(t *testing.T) {
+	tests := []struct {
+		name           string
+		closeInFactory bool
+	}{
+		{name: "concurrent_close"},
+		{name: "reentrant_close", closeInFactory: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			t.Cleanup(cancel)
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^$")
+			t.Cleanup(func() {
+				if cmd.Process != nil && cmd.ProcessState == nil {
+					_ = cmd.Process.Kill()
+					_ = cmd.Wait()
+				}
+			})
+			entered, release := make(chan struct{}), make(chan struct{})
+			var stdio *Stdio
+			stdio = NewStdioWithOptions("unused", nil, nil, WithCommandFunc(
+				func(context.Context, string, []string, []string) (*exec.Cmd, error) {
+					close(entered)
+					<-release
+					if tt.closeInFactory {
+						if err := stdio.Close(); err != nil {
+							return nil, err
+						}
+					}
+					return cmd, nil
+				}))
+			result := make(chan error, 1)
+			go func() { result <- stdio.Start(ctx) }()
+			<-entered
+			if !tt.closeInFactory {
+				require.NoError(t, stdio.Close())
+			}
+			close(release)
+			select {
+			case err := <-result:
+				require.ErrorIs(t, err, ErrTransportClosed)
+			case <-time.After(5 * time.Second):
+				t.Fatal("Start did not return after Close")
+			}
+			require.Nil(t, cmd.Process)
+			require.Nil(t, cmd.Stdin)
+			require.Nil(t, cmd.Stdout)
+			require.Nil(t, cmd.Stderr)
+			require.NoError(t, stdio.Close())
+		})
+	}
+}
+
+type closeOnDoneContext struct {
+	context.Context
+	armed bool
+	once  sync.Once
+	close func()
+}
+
+func (c *closeOnDoneContext) Done() <-chan struct{} {
+	if c.armed {
+		c.once.Do(c.close)
+	}
+	return c.Context.Done()
+}
+
+// TestStdio_CloseDuringCommandStart verifies that Start cleans up late resources.
+func TestStdio_CloseDuringCommandStart(t *testing.T) {
+	ctx := &closeOnDoneContext{Context: t.Context()}
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^$")
+	t.Cleanup(func() {
+		if cmd.Process != nil && cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	})
+	stdio := NewStdioWithOptions("unused", nil, nil, WithCommandFunc(
+		func(context.Context, string, []string, []string) (*exec.Cmd, error) {
+			ctx.armed = true
+			return cmd, nil
+		}))
+	var closeErr error
+	ctx.close = func() { closeErr = stdio.Close() }
+	result := make(chan error, 1)
+	go func() { result <- stdio.Start(t.Context()) }()
+	select {
+	case err := <-result:
+		require.ErrorIs(t, err, ErrTransportClosed)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start did not return after Close during command startup")
+	}
+	require.NoError(t, closeErr)
+	require.NotNil(t, cmd.Process)
+	require.NotNil(t, cmd.ProcessState)
 	require.NoError(t, stdio.Close())
 }
 

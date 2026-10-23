@@ -45,6 +45,13 @@ type taskEntry struct {
 	cancelFunc context.CancelFunc // Function to cancel the task
 	done       chan struct{}      // Channel to signal task completion
 	completed  bool               // Whether the task has been completed (guards done channel closure)
+	// createdHookDone, under tasksMu, says the created hook has returned;
+	// until then the hook of a completion or cancellation waits in
+	// pendingHooks, which createTask runs after the created hook. A task's
+	// hooks so keep their order with no lock held across hook code: a hook
+	// that cancels its own task does not wait for itself.
+	createdHookDone bool
+	pendingHooks    []func()
 }
 
 // ServerOption is a function that configures an MCPServer.
@@ -206,6 +213,9 @@ type MCPServer struct {
 	toolFiltersMu          sync.RWMutex
 	promptFiltersMu        sync.RWMutex
 	tasksMu                sync.RWMutex
+
+	// Test-only checkpoint configured before the server is used concurrently.
+	beforeCapabilityRegistration func()
 
 	name                       string
 	version                    string
@@ -816,10 +826,16 @@ func (s *MCPServer) AddResources(resources ...ServerResource) {
 
 // SetResources replaces all existing resources with the provided list
 func (s *MCPServer) SetResources(resources ...ServerResource) {
+	s.implicitlyRegisterResourceCapabilities()
 	s.resourcesMu.Lock()
 	s.resources = make(map[string]resourceEntry, len(resources))
+	for _, item := range resources {
+		s.resources[item.Resource.URI] = resourceEntry{resource: item.Resource, handler: item.Handler}
+	}
 	s.resourcesMu.Unlock()
-	s.AddResources(resources...)
+	if s.capabilities.resources.listChanged {
+		s.SendNotificationToAllClients(mcp.MethodNotificationResourcesListChanged, nil)
+	}
 }
 
 // AddResource registers a new resource and its handler
@@ -902,10 +918,16 @@ func (s *MCPServer) AddResourceTemplates(resourceTemplates ...ServerResourceTemp
 
 // SetResourceTemplates replaces all existing resource templates with the provided list
 func (s *MCPServer) SetResourceTemplates(templates ...ServerResourceTemplate) {
+	s.implicitlyRegisterResourceCapabilities()
 	s.resourcesMu.Lock()
 	s.resourceTemplates = make(map[string]resourceTemplateEntry, len(templates))
+	for _, item := range templates {
+		s.resourceTemplates[item.Template.URITemplate.Raw()] = resourceTemplateEntry{template: item.Template, handler: item.Handler}
+	}
 	s.resourcesMu.Unlock()
-	s.AddResourceTemplates(templates...)
+	if s.capabilities.resources.listChanged {
+		s.SendNotificationToAllClients(mcp.MethodNotificationResourcesListChanged, nil)
+	}
 }
 
 // AddResourceTemplate registers a new resource template and its handler
@@ -941,11 +963,18 @@ func (s *MCPServer) AddPrompt(prompt mcp.Prompt, handler PromptHandlerFunc) {
 
 // SetPrompts replaces all existing prompts with the provided list
 func (s *MCPServer) SetPrompts(prompts ...ServerPrompt) {
+	s.implicitlyRegisterPromptCapabilities()
 	s.promptsMu.Lock()
 	s.prompts = make(map[string]mcp.Prompt, len(prompts))
 	s.promptHandlers = make(map[string]PromptHandlerFunc, len(prompts))
+	for _, item := range prompts {
+		s.prompts[item.Prompt.Name] = item.Prompt
+		s.promptHandlers[item.Prompt.Name] = item.Handler
+	}
 	s.promptsMu.Unlock()
-	s.AddPrompts(prompts...)
+	if s.capabilities.prompts.listChanged {
+		s.SendNotificationToAllClients(mcp.MethodNotificationPromptsListChanged, nil)
+	}
 }
 
 // DeletePrompts removes prompts from the server
@@ -1048,6 +1077,9 @@ func (s *MCPServer) implicitlyRegisterPromptCapabilities() {
 }
 
 func (s *MCPServer) implicitlyRegisterCapabilities(check func() bool, register func()) {
+	if s.beforeCapabilityRegistration != nil {
+		s.beforeCapabilityRegistration()
+	}
 	s.capabilitiesMu.RLock()
 	if check() {
 		s.capabilitiesMu.RUnlock()
@@ -1546,7 +1578,7 @@ func listByPagination[T mcp.Named](
 	}
 	endPos := len(allElements)
 	if s.paginationLimit != nil && *s.paginationLimit > 0 {
-		if len(allElements) > startPos+*s.paginationLimit {
+		if len(allElements)-startPos > *s.paginationLimit {
 			endPos = startPos + *s.paginationLimit
 		}
 	}
@@ -2267,13 +2299,13 @@ func (s *MCPServer) handleToolCall(
 	finalHandler := tool.Handler
 
 	s.toolMiddlewareMu.RLock()
-	mw := s.toolHandlerMiddlewares
+	mw := slices.Clone(s.toolHandlerMiddlewares)
+	s.toolMiddlewareMu.RUnlock()
 
 	// Apply middlewares in reverse order
 	for _, m := range slices.Backward(mw) {
 		finalHandler = m(finalHandler)
 	}
-	s.toolMiddlewareMu.RUnlock()
 
 	result, err := finalHandler(ctx, request)
 	if err != nil {
@@ -2456,12 +2488,14 @@ func (s *MCPServer) executeTaskTool(
 	taskCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Register cancellation atomically with TTL cleanup, which may have already removed the task.
+	// Register cancellation atomically with TTL cleanup, which may have
+	// already removed the task, and with tasks/cancel, which may have ended
+	// it while the created hook ran.
 	s.tasksMu.Lock()
 	entry.cancelFunc = cancel
-	expired := s.tasks[entry.task.TaskId] != entry
+	ended := s.tasks[entry.task.TaskId] != entry || entry.completed
 	s.tasksMu.Unlock()
-	if expired {
+	if ended {
 		cancel()
 	}
 
@@ -2544,12 +2578,14 @@ func (s *MCPServer) executeRegularToolAsTask(
 	taskCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Register cancellation atomically with TTL cleanup, which may have already removed the task.
+	// Register cancellation atomically with TTL cleanup, which may have
+	// already removed the task, and with tasks/cancel, which may have ended
+	// it while the created hook ran.
 	s.tasksMu.Lock()
 	entry.cancelFunc = cancel
-	expired := s.tasks[entry.task.TaskId] != entry
+	ended := s.tasks[entry.task.TaskId] != entry || entry.completed
 	s.tasksMu.Unlock()
-	if expired {
+	if ended {
 		cancel()
 	}
 
@@ -2557,11 +2593,11 @@ func (s *MCPServer) executeRegularToolAsTask(
 	finalHandler := regularTool.Handler
 
 	s.toolMiddlewareMu.RLock()
-	mw := s.toolHandlerMiddlewares
+	mw := slices.Clone(s.toolHandlerMiddlewares)
+	s.toolMiddlewareMu.RUnlock()
 	for _, m := range slices.Backward(mw) {
 		finalHandler = m(finalHandler)
 	}
-	s.toolMiddlewareMu.RUnlock()
 
 	result, err := finalHandler(taskCtx, request)
 
@@ -2633,6 +2669,7 @@ func (s *MCPServer) handleNotification(
 // inflightKey returns a session-scoped key for the inflight cancellation map.
 // This prevents cross-session request ID collisions in multi-client scenarios.
 func inflightKey(ctx context.Context, requestID any) string {
+	requestID = mcp.NewRequestId(requestID).String()
 	if session := ClientSessionFromContext(ctx); session != nil {
 		return fmt.Sprintf("%s:%v", session.SessionID(), requestID)
 	}
@@ -2935,9 +2972,12 @@ func (s *MCPServer) createTask(ctx context.Context, taskID string, toolName stri
 	// Increment active task counter and insert task atomically
 	s.activeTasks++
 	s.tasks[taskID] = entry
+	// With no hooks there is nothing to wait for.
+	entry.createdHookDone = s.taskHooks == nil
 	s.tasksMu.Unlock()
 
-	// Fire task created hook
+	// Fire task created hook, outside the lock: a hook may take time, or
+	// read task state through the server.
 	if s.taskHooks != nil {
 		metrics := TaskMetrics{
 			TaskID:    taskID,
@@ -2946,7 +2986,12 @@ func (s *MCPServer) createTask(ctx context.Context, taskID string, toolName stri
 			CreatedAt: createdAt,
 			SessionID: getSessionID(ctx),
 		}
-		s.taskHooks.taskCreated(ctx, metrics)
+		func() {
+			// However the hook ends: one that panics must not leave the
+			// task's later hooks waiting.
+			defer s.finishCreatedHook(entry)
+			s.taskHooks.taskCreated(ctx, metrics)
+		}()
 	}
 
 	// Start TTL cleanup if specified
@@ -2955,6 +3000,35 @@ func (s *MCPServer) createTask(ctx context.Context, taskID string, toolName stri
 	}
 
 	return entry, nil
+}
+
+// finishCreatedHook records that entry's created hook has returned and runs
+// the hooks that waited for it, in the order they arrived.
+func (s *MCPServer) finishCreatedHook(entry *taskEntry) {
+	s.tasksMu.Lock()
+	entry.createdHookDone = true
+	pending := entry.pendingHooks
+	entry.pendingHooks = nil
+	s.tasksMu.Unlock()
+	for _, fire := range pending {
+		fire()
+	}
+}
+
+// fireTaskHook runs fire, a hook of entry, with ctx now, or after the
+// created hook when that is still running. A hook that waits runs once
+// the request that raised it may have ended, so it gets ctx's values
+// without its cancellation. Never under tasksMu.
+func (s *MCPServer) fireTaskHook(ctx context.Context, entry *taskEntry, fire func(context.Context)) {
+	s.tasksMu.Lock()
+	if !entry.createdHookDone {
+		later := context.WithoutCancel(ctx)
+		entry.pendingHooks = append(entry.pendingHooks, func() { fire(later) })
+		s.tasksMu.Unlock()
+		return
+	}
+	s.tasksMu.Unlock()
+	fire(ctx)
 }
 
 // getTask retrieves a task by ID, checking session isolation if applicable.
@@ -3077,13 +3151,15 @@ func (s *MCPServer) completeTask(entry *taskEntry, result any, err error) {
 	// Send task status notification
 	s.sendTaskStatusNotification(task)
 
-	// Fire task hooks
+	// Fire task hooks, after the created hook if it is still running
 	if s.taskHooks != nil {
-		if err != nil {
-			s.taskHooks.taskFailed(context.Background(), metrics)
-		} else {
-			s.taskHooks.taskCompleted(context.Background(), metrics)
-		}
+		s.fireTaskHook(context.Background(), entry, func(ctx context.Context) {
+			if err != nil {
+				s.taskHooks.taskFailed(ctx, metrics)
+			} else {
+				s.taskHooks.taskCompleted(ctx, metrics)
+			}
+		})
 	}
 }
 
@@ -3129,7 +3205,8 @@ func (s *MCPServer) cancelTaskEntry(ctx context.Context, entry *taskEntry, messa
 	}
 	s.sendTaskStatusNotification(task)
 	if s.taskHooks != nil {
-		s.taskHooks.taskCancelled(ctx, metrics)
+		// After the created hook, if it is still running.
+		s.fireTaskHook(ctx, entry, func(ctx context.Context) { s.taskHooks.taskCancelled(ctx, metrics) })
 	}
 	return nil
 }
