@@ -1344,13 +1344,16 @@ var (
 // createGETConnectionToServer opens the GET stream and reads it until it
 // ends. opened reports whether the server accepted the stream.
 func (c *StreamableHTTP) createGETConnectionToServer(ctx context.Context) (opened bool, err error) {
+	ctx, cancel := c.contextAwareOfClientClose(ctx)
+
 	resp, err := c.sendHTTP(ctx, http.MethodGet, nil, "text/event-stream", nil, false)
 	if err != nil {
+		cancel()
 		return false, fmt.Errorf("failed to send request: %w", err)
 	}
 	// Cancel the context before closing the body to prevent HTTP/2 drain hangs,
 	// matching the pattern used in SendRequest and SendNotification.
-	defer func() { resp.Body.Close() }()
+	defer func() { cancel(); resp.Body.Close() }()
 
 	// Check if we got an error response
 	if resp.StatusCode == http.StatusMethodNotAllowed {
