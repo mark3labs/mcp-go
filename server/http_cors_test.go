@@ -185,7 +185,7 @@ func TestStreamableHTTP_CORS_DefaultAllowedHeadersCoverMCPHeaders(t *testing.T) 
 			t.Cleanup(func() { _ = resp.Body.Close() })
 
 			allowed := map[string]bool{}
-			for _, h := range strings.Split(resp.Header.Get("Access-Control-Allow-Headers"), ",") {
+			for h := range strings.SplitSeq(resp.Header.Get("Access-Control-Allow-Headers"), ",") {
 				allowed[strings.ToLower(strings.TrimSpace(h))] = true
 			}
 			for _, h := range tt.requestHeaders {
