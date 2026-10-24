@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -375,7 +376,15 @@ func TestStreamableHTTP_ReinitializeOnTheModernProtocol(t *testing.T) {
 
 func TestHTTPClientContinuousListeningThroughLoggingTransport(t *testing.T) {
 	mcpServer := server.NewMCPServer("test-server", "1.0.0", server.WithToolCapabilities(true))
-	testServer := servertest.NewTestStreamableHTTPServer(mcpServer)
+	streamable := server.NewStreamableHTTPServer(mcpServer)
+	listening := make(chan struct{})
+	var listenOnce sync.Once
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			listenOnce.Do(func() { close(listening) })
+		}
+		streamable.ServeHTTP(w, r)
+	}))
 	defer testServer.Close()
 
 	inner, err := transport.NewStreamableHTTP(testServer.URL, transport.WithContinuousListening())
@@ -401,8 +410,13 @@ func TestHTTPClientContinuousListeningThroughLoggingTransport(t *testing.T) {
 	// transport must keep the client on a legacy protocol version.
 	require.False(t, mcp.IsModernProtocol(client.ProtocolVersion()), "negotiated %s", client.ProtocolVersion())
 
-	// Give the GET stream a moment to attach before the server broadcasts.
-	time.Sleep(100 * time.Millisecond)
+	// The session is registered at initialize and buffers notifications, so
+	// once the GET has reached the server the broadcast cannot be missed.
+	select {
+	case <-listening:
+	case <-time.After(2 * time.Second):
+		t.Fatal("client never opened the continuous listening stream")
+	}
 	mcpServer.AddTool(mcp.NewTool("late"), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return mcp.NewToolResultText("ok"), nil
 	})
