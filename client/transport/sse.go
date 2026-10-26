@@ -57,6 +57,7 @@ type SSE struct {
 
 	endpointTimeout time.Duration
 	responseTimeout time.Duration
+	maxMessageBytes int64
 
 	// OAuth support
 	oauthHandler *OAuthHandler
@@ -64,6 +65,16 @@ type SSE struct {
 
 // ClientOption configures an SSE transport client.
 type ClientOption func(*SSE)
+
+// WithMaxMessageBytes bounds the size of the data of one event the client
+// reads from the server's SSE stream. A larger event ends the stream, and the
+// connection-lost handler gets ErrMessageTooLarge. The default is
+// DefaultMaxMessageBytes; zero or less removes the bound.
+func WithMaxMessageBytes(n int64) ClientOption {
+	return func(sc *SSE) {
+		sc.maxMessageBytes = n
+	}
+}
 
 // WithSSELogger sets a custom structured logger for the SSE client.
 // A nil logger falls back to slog.Default().
@@ -152,6 +163,7 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 		logger:          slog.Default(),
 		endpointTimeout: 30 * time.Second,
 		responseTimeout: 60 * time.Second,
+		maxMessageBytes: DefaultMaxMessageBytes,
 	}
 
 	for _, opt := range options {
@@ -371,36 +383,41 @@ func (c *SSE) readSSE(reader io.ReadCloser, endpointChan chan struct{}, endpoint
 	br := bufio.NewReader(reader)
 	var event, data string
 
+	// end handles the stream ending with err.
+	end := func(err error) {
+		// Close() cancels the stream context, which surfaces here as a read
+		// error; firing the handler would reconnect a transport the caller
+		// just shut down.
+		if c.closed.Load() {
+			return
+		}
+		if err == io.EOF {
+			// Process any pending event before exit
+			if data != "" {
+				// If no event type is specified, use empty string (default event type)
+				if event == "" {
+					event = "message"
+				}
+				c.handleSSEEvent(event, data, endpointChan, endpointOnce)
+			}
+		}
+		c.connectionLostMu.RLock()
+		handler := c.onConnectionLost
+		c.connectionLostMu.RUnlock()
+		if handler != nil {
+			// Notify that the connection will be closed due to an error
+			handler(err)
+		} else if err == io.EOF || err == ErrMessageTooLarge {
+			c.logger.Error("SSE stream error", "err", err)
+		}
+	}
+
 	for {
 		// when close or start's ctx cancel, the reader will be closed
 		// and the for loop will break.
-		line, err := br.ReadString('\n')
+		line, err := readSSELine(br, c.maxMessageBytes)
 		if err != nil {
-			// Close() cancels the stream context, which surfaces here as a read
-			// error; firing the handler would reconnect a transport the caller
-			// just shut down.
-			if c.closed.Load() {
-				return
-			}
-			if err == io.EOF {
-				// Process any pending event before exit
-				if data != "" {
-					// If no event type is specified, use empty string (default event type)
-					if event == "" {
-						event = "message"
-					}
-					c.handleSSEEvent(event, data, endpointChan, endpointOnce)
-				}
-			}
-			c.connectionLostMu.RLock()
-			handler := c.onConnectionLost
-			c.connectionLostMu.RUnlock()
-			if handler != nil {
-				// Notify that the connection will be closed due to an error
-				handler(err)
-			} else if err == io.EOF {
-				c.logger.Error("SSE stream error", "err", err)
-			}
+			end(err)
 			return
 		}
 
@@ -426,6 +443,10 @@ func (c *SSE) readSSE(reader io.ReadCloser, endpointChan chan struct{}, endpoint
 			event = strings.TrimSpace(after)
 		} else if after, ok := strings.CutPrefix(line, "data:"); ok {
 			data = appendSSEData(data, after)
+			if c.maxMessageBytes > 0 && int64(len(data)) > c.maxMessageBytes {
+				end(ErrMessageTooLarge)
+				return
+			}
 		}
 	}
 }
@@ -634,8 +655,8 @@ func (c *SSE) SendRequest(
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 
-	// Drain any outstanding io
-	body, err := io.ReadAll(resp.Body)
+	// Drain any outstanding io; the body is only used to report an error.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 	resp.Body.Close()
 
 	if err != nil {
@@ -856,7 +877,7 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 		}
 
 		// Handle other error responses
-		body, _ := io.ReadAll(resp.Body)
+		body := readErrorBody(resp.Body)
 		return fmt.Errorf(
 			"notification failed with status %d: %s",
 			resp.StatusCode,
