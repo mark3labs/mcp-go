@@ -135,3 +135,56 @@ func TestRequestScopedSSE_NoSendLandsAfterClose(t *testing.T) {
 		require.Equal(t, int(sent.Load()), queuedAtClose, "a send reported success without being queued before close")
 	}
 }
+
+// TestStreamableHTTP_NotificationHandlerNotificationsReachThePOSTStream proves
+// that notifications a client-notification handler sends are written to the
+// POST that carried the client notification, including those still queued
+// when the forwarder stops.
+func TestStreamableHTTP_NotificationHandlerNotificationsReachThePOSTStream(t *testing.T) {
+	const (
+		iterations = 30
+		perCall    = 5
+		trigger    = "notifications/test"
+		method     = "test/progress"
+	)
+
+	mcpServer := NewMCPServer("test-mcp-server", "1.0")
+	mcpServer.AddNotificationHandler(trigger, func(ctx context.Context, _ mcp.JSONRPCNotification) {
+		srv := ServerFromContext(ctx)
+		for i := range perCall {
+			_ = srv.SendNotificationToClient(ctx, method, map[string]any{"n": i})
+		}
+	})
+
+	server := NewTestStreamableHTTPServer(mcpServer)
+	defer server.Close()
+
+	resp, err := postJSON(server.URL, initRequest)
+	require.NoError(t, err, "initialize")
+	sessionID := resp.Header.Get(HeaderKeySessionID)
+	resp.Body.Close()
+	require.NotEmpty(t, sessionID)
+
+	body, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"method":  trigger,
+	})
+	require.NoError(t, err)
+
+	for i := range iterations {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL, bytes.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		req.Header.Set(HeaderKeySessionID, sessionID)
+
+		resp, err := server.Client().Do(req)
+		require.NoErrorf(t, err, "iteration %d", i)
+		raw, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		require.NoErrorf(t, err, "iteration %d: read body", i)
+
+		assert.Equalf(t, perCall, countNotifications(t, string(raw), method),
+			"iteration %d: every notification of the handler belongs on its POST stream", i)
+	}
+}

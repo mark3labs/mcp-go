@@ -924,40 +924,8 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 		// Stop broadcasts before draining what is already queued.
 		s.server.unregisterListenSession(session)
 	}
-	if response == nil {
-		// Await the forwarder here too. It may be holding a notification it
-		// took off the channel but has not yet written; letting this path
-		// return first would either lose that notification or let the
-		// forwarder write to a ResponseWriter whose handler has already
-		// returned. Waiting settles both. If the forwarder does deliver, it
-		// sets upgradedHeader and this path correctly skips the 202.
-		closeDone()
-		<-forwarderExited
-		mu.Lock()
-		if !upgradedHeader {
-			mu.Unlock()
-			w.WriteHeader(http.StatusAccepted)
-		} else {
-			mu.Unlock()
-		}
-		return
-	}
-
-	// Write response
-	//
-	// Stop the forwarder and wait for it to exit before draining, so that
-	// exactly one consumer handles whatever notifications remain and their
-	// order ahead of the response is preserved.
-	//
-	// The wait is not an event-store concern. The forwarder takes a
-	// notification off the channel and THEN acquires mu; if the response path
-	// were to drain and close done in between, that notification would be
-	// stranded in the forwarder's local variable, where the drain loop cannot
-	// see it. Awaiting the forwarder is what makes delivery deterministic.
-	closeDone()
-	<-forwarderExited
-	mu.Lock()
-
+	// drain writes a notification left queued once the forwarder has exited.
+	// Callers must hold mu.
 	drain := func(nt mcp.JSONRPCNotification) {
 		if listening {
 			nt = tagSubscription(nt, requestID)
@@ -982,6 +950,51 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 		}
 		w.Flush()
 	}
+
+	if response == nil {
+		// Await the forwarder here too. It may be holding a notification it
+		// took off the channel but has not yet written; letting this path
+		// return first would either lose that notification or let the
+		// forwarder write to a ResponseWriter whose handler has already
+		// returned. Waiting settles both. If the forwarder does deliver, it
+		// sets upgradedHeader and this path correctly skips the 202.
+		closeDone()
+		<-forwarderExited
+		mu.Lock()
+		// Notifications queued for this POST by the handler have no other
+		// consumer once the forwarder has exited.
+	scopedDrain:
+		for {
+			select {
+			case nt := <-scopedNotifications:
+				drain(nt)
+			default:
+				break scopedDrain
+			}
+		}
+		if !upgradedHeader {
+			mu.Unlock()
+			w.WriteHeader(http.StatusAccepted)
+		} else {
+			mu.Unlock()
+		}
+		return
+	}
+
+	// Write response
+	//
+	// Stop the forwarder and wait for it to exit before draining, so that
+	// exactly one consumer handles whatever notifications remain and their
+	// order ahead of the response is preserved.
+	//
+	// The wait is not an event-store concern. The forwarder takes a
+	// notification off the channel and THEN acquires mu; if the response path
+	// were to drain and close done in between, that notification would be
+	// stranded in the forwarder's local variable, where the drain loop cannot
+	// see it. Awaiting the forwarder is what makes delivery deterministic.
+	closeDone()
+	<-forwarderExited
+	mu.Lock()
 
 drainLoop:
 	for {
