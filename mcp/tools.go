@@ -1015,8 +1015,12 @@ func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) err
 		}
 		tis.Defs = definitions
 		delete(tis.AdditionalFields, "definitions")
-		rewriteDraft07LocalRefs(tis.Defs)
-		rewriteDraft07LocalRefs(tis.Properties)
+		for _, schema := range tis.Defs {
+			rewriteDraft07LocalRefs(schema)
+		}
+		for _, schema := range tis.Properties {
+			rewriteDraft07LocalRefs(schema)
+		}
 		rewriteDraft07LocalRefs(tis.AdditionalProperties)
 		rewriteDraft07LocalRefs(tis.AdditionalFields)
 		if len(tis.AdditionalFields) == 0 {
@@ -1065,21 +1069,35 @@ func unmarshalAdditionalSchemaKeywords(data []byte, tis *ToolArgumentsSchema) er
 }
 
 // rewriteDraft07LocalRefs rewrites local draft-07 "#/definitions/..." $ref
-// pointers to their 2019-09+ "#/$defs/..." equivalent in place. It walks
-// nested maps and slices; non-local refs are left untouched.
+// pointers to their 2019-09+ "#/$defs/..." equivalent in schema positions.
+// Annotation values and unknown extension keywords are left untouched.
 func rewriteDraft07LocalRefs(node any) {
 	const draft07Prefix = "#/definitions/"
-	switch v := node.(type) {
-	case map[string]any:
-		if ref, ok := v["$ref"].(string); ok && strings.HasPrefix(ref, draft07Prefix) {
-			v["$ref"] = "#/$defs/" + ref[len(draft07Prefix):]
-		}
-		for _, child := range v {
-			rewriteDraft07LocalRefs(child)
-		}
-	case []any:
-		for _, child := range v {
-			rewriteDraft07LocalRefs(child)
+	schema, ok := node.(map[string]any)
+	if !ok {
+		return
+	}
+	if ref, ok := schema["$ref"].(string); ok && strings.HasPrefix(ref, draft07Prefix) {
+		schema["$ref"] = "#/$defs/" + ref[len(draft07Prefix):]
+	}
+	for keyword, value := range schema {
+		switch keyword {
+		case "properties", "patternProperties", "$defs", "definitions", "dependentSchemas", "dependencies":
+			if children, ok := value.(map[string]any); ok {
+				for _, child := range children {
+					rewriteDraft07LocalRefs(child)
+				}
+			}
+		case "additionalProperties", "additionalItems", "contains", "propertyNames", "not", "if", "then", "else", "unevaluatedProperties", "unevaluatedItems", "contentSchema":
+			rewriteDraft07LocalRefs(value)
+		case "items", "allOf", "anyOf", "oneOf", "prefixItems":
+			if children, ok := value.([]any); ok {
+				for _, child := range children {
+					rewriteDraft07LocalRefs(child)
+				}
+			} else if keyword == "items" {
+				rewriteDraft07LocalRefs(value)
+			}
 		}
 	}
 }

@@ -179,6 +179,100 @@ func TestToolSchemaRoundTrip_NoDialectNormalizesDefinitions(t *testing.T) {
 	}
 }
 
+func TestToolSchemaRoundTrip_LegacyRefsPreserveData(t *testing.T) {
+	tests := []struct {
+		name    string
+		keyword string
+		value   string
+	}{
+		{name: "examples", keyword: "examples", value: `[{"$ref":"#/definitions/value"}]`},
+		{name: "default", keyword: "default", value: `{"$ref":"#/definitions/value"}`},
+		{name: "enum", keyword: "enum", value: `[{"$ref":"#/definitions/value"}]`},
+		{name: "const", keyword: "const", value: `{"$ref":"#/definitions/value"}`},
+		{name: "vendor object", keyword: "x-vendor", value: `{"properties":{"value":{"$ref":"#/definitions/value"}}}`},
+		{name: "vendor array", keyword: "x-vendor", value: `[{"allOf":[{"$ref":"#/definitions/value"}]}]`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			keyword := `"` + tt.keyword + `":` + tt.value
+			data := `{"type":"object",` + keyword + `,
+				"properties":{"payload":{"type":"object",` + keyword + `}},
+				"definitions":{"value":{"type":"object",` + keyword + `}}}`
+			for name, encoded := range roundTripToolSchemas(t, data) {
+				t.Run(name, func(t *testing.T) {
+					after := decodeRoundTripJSON(t, string(encoded)).(map[string]any)
+					want := decodeRoundTripJSON(t, tt.value)
+					assert.Equal(t, want, after[tt.keyword])
+					property := after["properties"].(map[string]any)["payload"].(map[string]any)
+					assert.Equal(t, want, property[tt.keyword])
+					definition := after["$defs"].(map[string]any)["value"].(map[string]any)
+					assert.Equal(t, want, definition[tt.keyword])
+				})
+			}
+		})
+	}
+}
+
+func TestToolSchemaRoundTrip_LegacyRefsPreserveConstValidation(t *testing.T) {
+	data := `{
+		"type":"object", "required":["payload"],
+		"properties":{"payload":{"$ref":"#/definitions/payload"}},
+		"definitions":{"payload":{"const":{"$ref":"#/definitions/payload"}}}
+	}`
+	valid := decodeRoundTripJSON(t, `{"payload":{"$ref":"#/definitions/payload"}}`)
+	invalid := decodeRoundTripJSON(t, `{"payload":{"$ref":"#/$defs/payload"}}`)
+	original := compileRoundTripSchema(t, []byte(data))
+	require.NoError(t, original.Validate(valid))
+	require.Error(t, original.Validate(invalid))
+	for name, encoded := range roundTripToolSchemas(t, data) {
+		t.Run(name, func(t *testing.T) {
+			compiled := compileRoundTripSchema(t, encoded)
+			assert.NoError(t, compiled.Validate(valid))
+			assert.Error(t, compiled.Validate(invalid))
+		})
+	}
+}
+
+func TestToolSchemaRoundTrip_LegacyRefsFollowSchemaPositions(t *testing.T) {
+	ref := `{"$ref":"#/definitions/value","default":{"$ref":"#/definitions/value"}}`
+	wantRef := `{"$ref":"#/$defs/value","default":{"$ref":"#/definitions/value"}}`
+	tests := []struct {
+		name string
+		wrap func(string) string
+	}{
+		{name: "properties", wrap: func(s string) string { return `"properties":{"examples":` + s + `,"$ref":` + s + `}` }},
+		{name: "patternProperties", wrap: func(s string) string { return `"patternProperties":{"^value$":` + s + `}` }},
+		{name: "dependentSchemas", wrap: func(s string) string { return `"dependentSchemas":{"value":` + s + `}` }},
+		{name: "dependencies", wrap: func(s string) string { return `"dependencies":{"value":` + s + `,"other":["value"]}` }},
+		{name: "nested definitions", wrap: func(s string) string { return `"allOf":[{"definitions":{"value":` + s + `}}]` }},
+		{name: "nested defs", wrap: func(s string) string { return `"allOf":[{"$defs":{"value":` + s + `}}]` }},
+		{name: "schema items", wrap: func(s string) string { return `"items":` + s }},
+		{name: "tuple items", wrap: func(s string) string { return `"items":[` + s + `,true]` }},
+		{name: "applicators", wrap: func(s string) string {
+			return `"allOf":[` + s + `],"anyOf":[` + s + `],"oneOf":[` + s + `],"prefixItems":[` + s + `]`
+		}},
+		{name: "single schemas", wrap: func(s string) string {
+			return `"additionalProperties":` + s + `,"additionalItems":` + s + `,"contains":` + s +
+				`,"propertyNames":` + s + `,"not":` + s + `,"if":` + s + `,"then":` + s + `,"else":` + s +
+				`,"unevaluatedProperties":` + s + `,"unevaluatedItems":` + s + `,"contentSchema":` + s
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := `{"type":"object","definitions":{"value":{"type":"object"}},` + tt.wrap(ref) + `}`
+			want := decodeRoundTripJSON(t, `{`+tt.wrap(wantRef)+`}`).(map[string]any)
+			for name, encoded := range roundTripToolSchemas(t, data) {
+				t.Run(name, func(t *testing.T) {
+					after := decodeRoundTripJSON(t, string(encoded)).(map[string]any)
+					for key, value := range want {
+						assert.Equal(t, value, after[key], key)
+					}
+				})
+			}
+		})
+	}
+}
+
 func roundTripToolSchemas(t *testing.T, data string) map[string]json.RawMessage {
 	t.Helper()
 	var tool Tool
