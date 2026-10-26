@@ -432,16 +432,7 @@ func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	var body []byte
 	var bodyErr error
 	if r.Method == http.MethodPost && r.Body != nil {
-		switch limit := s.maxRequestBodyBytes; {
-		case limit <= 0:
-			body, bodyErr = io.ReadAll(r.Body)
-		case r.ContentLength > limit:
-			// Refused unread: net/http closes the connection rather than
-			// drain the body.
-			bodyErr = errBodyTooLarge
-		default:
-			body, bodyErr = readBounded(r.Body, limit)
-		}
+		body, bodyErr = readRequestBody(r, s.maxRequestBodyBytes)
 	}
 
 	hr := &HTTPRequest{
@@ -482,6 +473,21 @@ func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request)
 
 // errBodyTooLarge is the read error of a POST body over the bound.
 var errBodyTooLarge = errors.New("request body too large")
+
+// readRequestBody reads r's body up to limit bytes; a longer body is
+// errBodyTooLarge. Zero or a negative limit reads it whole.
+func readRequestBody(r *http.Request, limit int64) ([]byte, error) {
+	switch {
+	case limit <= 0:
+		return io.ReadAll(r.Body)
+	case r.ContentLength > limit:
+		// Refused unread: net/http closes the connection rather than
+		// drain the body.
+		return nil, errBodyTooLarge
+	default:
+		return readBounded(r.Body, limit)
+	}
+}
 
 // readBounded reads r to its end, up to limit bytes; a longer r is
 // errBodyTooLarge. It is io.ReadAll with the bound checked as the buffer
