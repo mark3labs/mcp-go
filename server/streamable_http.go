@@ -782,9 +782,18 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	// (SEP-2575). A modern request also has no session ID, so registering it
 	// would key every concurrent request on "" and let a response reach the
 	// wrong one.
+	//
+	// Notifications sent from a handler of this message (progress, logging)
+	// take the same route: they relate to the originating request, and on the
+	// session's shared channel the standalone GET stream's forwarder races
+	// this POST's for them, so a notification could reach the client on the
+	// GET stream after the response it belongs to.
 	var scopedRequests chan mcp.JSONRPCRequest
+	var scopedNotifications chan mcp.JSONRPCNotification
+	closeDone := func() { close(done) }
 	if canStream && !era.modern {
 		scopedRequests = make(chan mcp.JSONRPCRequest, 8)
+		scopedNotifications = make(chan mcp.JSONRPCNotification, 100)
 		// Registration makes responses to request-scoped server requests
 		// routable when nothing else has registered the session (stateless
 		// mode without a standalone GET stream). It only happens once a
@@ -802,11 +811,15 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 				s.activeSessions.CompareAndDelete(sessionID, session)
 			}
 		}()
-		ctx = context.WithValue(ctx, requestScopedSSEKey{}, &requestScopedSSE{
-			requests: scopedRequests,
-			done:     done,
-			register: register,
-		})
+		scoped := &requestScopedSSE{
+			session:       session,
+			requests:      scopedRequests,
+			notifications: scopedNotifications,
+			done:          done,
+			register:      register,
+		}
+		closeDone = scoped.close
+		ctx = context.WithValue(ctx, requestScopedSSEKey{}, scoped)
 	}
 
 	go func() {
@@ -816,49 +829,54 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 				s.logger.Error("panic in notification forwarder", "panic", r)
 			}
 		}()
+		// forward writes a notification the forwarder took off a channel to
+		// this POST's response.
+		forward := func(nt mcp.JSONRPCNotification) {
+			if listening {
+				nt = tagSubscription(nt, requestID)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			// The notification is already off the channel, so the
+			// response path's drain loop can no longer see it:
+			// returning here because done is closed would lose it
+			// outright. Fall through and deliver it exactly as if done
+			// were still open. Both paths that close done now wait on
+			// forwarderExited before writing, so this cannot interleave
+			// with the final response.
+			if !canStream {
+				// Without streaming we can't deliver notifications mid-flight;
+				// they will be dropped on the floor here. The final response
+				// path remains the buffered JSON reply below.
+				return
+			}
+			defer w.Flush()
+
+			if resumable {
+				deliverResumable(nt, false)
+				return
+			}
+
+			// if there's notifications, upgradedHeader to SSE response
+			if !upgradedHeader {
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.Header().Set("Connection", "keep-alive")
+				w.Header().Set("Cache-Control", "no-cache")
+				w.WriteHeader(http.StatusOK)
+				upgradedHeader = true
+			}
+			err := writeSSEEvent(w, nt)
+			if err != nil {
+				s.logger.Error("Failed to write SSE event", "err", err)
+				return
+			}
+		}
 		for {
 			select {
 			case nt := <-session.notificationChannel:
-				if listening {
-					nt = tagSubscription(nt, requestID)
-				}
-				func() {
-					mu.Lock()
-					defer mu.Unlock()
-					// The notification is already off the channel, so the
-					// response path's drain loop can no longer see it:
-					// returning here because done is closed would lose it
-					// outright. Fall through and deliver it exactly as if done
-					// were still open. Both paths that close done now wait on
-					// forwarderExited before writing, so this cannot interleave
-					// with the final response.
-					if !canStream {
-						// Without streaming we can't deliver notifications mid-flight;
-						// they will be dropped on the floor here. The final response
-						// path remains the buffered JSON reply below.
-						return
-					}
-					defer w.Flush()
-
-					if resumable {
-						deliverResumable(nt, false)
-						return
-					}
-
-					// if there's notifications, upgradedHeader to SSE response
-					if !upgradedHeader {
-						w.Header().Set("Content-Type", "text/event-stream")
-						w.Header().Set("Connection", "keep-alive")
-						w.Header().Set("Cache-Control", "no-cache")
-						w.WriteHeader(http.StatusOK)
-						upgradedHeader = true
-					}
-					err := writeSSEEvent(w, nt)
-					if err != nil {
-						s.logger.Error("Failed to write SSE event", "err", err)
-						return
-					}
-				}()
+				forward(nt)
+			case nt := <-scopedNotifications:
+				forward(nt)
 			case req := <-scopedRequests:
 				func() {
 					mu.Lock()
@@ -906,6 +924,33 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 		// Stop broadcasts before draining what is already queued.
 		s.server.unregisterListenSession(session)
 	}
+	// drain writes a notification left queued once the forwarder has exited.
+	// Callers must hold mu.
+	drain := func(nt mcp.JSONRPCNotification) {
+		if listening {
+			nt = tagSubscription(nt, requestID)
+		}
+		if !canStream {
+			return
+		}
+		if resumable {
+			deliverResumable(nt, false)
+			w.Flush()
+			return
+		}
+		if !upgradedHeader {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Connection", "keep-alive")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.WriteHeader(http.StatusOK)
+			upgradedHeader = true
+		}
+		if err := writeSSEEvent(w, nt); err != nil {
+			s.logger.Error("Failed to write SSE event during drain", "err", err)
+		}
+		w.Flush()
+	}
+
 	if response == nil {
 		// Await the forwarder here too. It may be holding a notification it
 		// took off the channel but has not yet written; letting this path
@@ -913,9 +958,20 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 		// forwarder write to a ResponseWriter whose handler has already
 		// returned. Waiting settles both. If the forwarder does deliver, it
 		// sets upgradedHeader and this path correctly skips the 202.
-		close(done)
+		closeDone()
 		<-forwarderExited
 		mu.Lock()
+		// Notifications queued for this POST by the handler have no other
+		// consumer once the forwarder has exited.
+	scopedDrain:
+		for {
+			select {
+			case nt := <-scopedNotifications:
+				drain(nt)
+			default:
+				break scopedDrain
+			}
+		}
 		if !upgradedHeader {
 			mu.Unlock()
 			w.WriteHeader(http.StatusAccepted)
@@ -936,36 +992,17 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	// were to drain and close done in between, that notification would be
 	// stranded in the forwarder's local variable, where the drain loop cannot
 	// see it. Awaiting the forwarder is what makes delivery deterministic.
-	close(done)
+	closeDone()
 	<-forwarderExited
 	mu.Lock()
 
 drainLoop:
 	for {
 		select {
+		case nt := <-scopedNotifications:
+			drain(nt)
 		case nt := <-session.notificationChannel:
-			if !canStream {
-				continue
-			}
-			if listening {
-				nt = tagSubscription(nt, requestID)
-			}
-			if resumable {
-				deliverResumable(nt, false)
-				w.Flush()
-				continue
-			}
-			if !upgradedHeader {
-				w.Header().Set("Content-Type", "text/event-stream")
-				w.Header().Set("Connection", "keep-alive")
-				w.Header().Set("Cache-Control", "no-cache")
-				w.WriteHeader(http.StatusOK)
-				upgradedHeader = true
-			}
-			if err := writeSSEEvent(w, nt); err != nil {
-				s.logger.Error("Failed to write SSE event during drain", "err", err)
-			}
-			w.Flush()
+			drain(nt)
 		default:
 			break drainLoop
 		}
@@ -1731,13 +1768,31 @@ type rootsRequestItem struct {
 // message handler whose response supports SSE.
 type requestScopedSSEKey struct{}
 
-// requestScopedSSE lets server requests issued while a POST message is being
-// handled be written to that POST's SSE response instead of the standalone
-// GET stream.
+// requestScopedSSE lets server requests and notifications issued while a POST
+// message is being handled be written to that POST's SSE response instead of
+// the standalone GET stream.
 type requestScopedSSE struct {
-	requests chan<- mcp.JSONRPCRequest
-	done     <-chan struct{}
-	register func()
+	// session is the session the POST serves; only messages addressed to it
+	// take the POST's stream.
+	session       ClientSession
+	requests      chan<- mcp.JSONRPCRequest
+	notifications chan<- mcp.JSONRPCNotification
+	done          chan struct{}
+	register      func()
+
+	// sendMu orders sends against close: once close returns, every send that
+	// reported success is queued, and every later send sees done closed, so
+	// nothing is queued once the POST has drained its channels.
+	sendMu sync.Mutex
+}
+
+// close marks the POST stream finished. done closes before close waits for
+// sendMu, so a send blocked on a full channel with no consumer left returns
+// instead of holding sendMu forever.
+func (r *requestScopedSSE) close() {
+	close(r.done)
+	r.sendMu.Lock()
+	defer r.sendMu.Unlock()
 }
 
 // trySend queues the request for the originating POST stream. It reports
@@ -1753,10 +1808,32 @@ func (r *requestScopedSSE) trySend(ctx context.Context, request mcp.JSONRPCReque
 	default:
 	}
 	r.register()
+	r.sendMu.Lock()
+	defer r.sendMu.Unlock()
+	return sendWhileOpen(ctx, r.done, r.requests, request)
+}
+
+// trySendNotification queues the notification for the originating POST
+// stream, with the same semantics as trySend. A notification needs no
+// registration: nothing answers it.
+func (r *requestScopedSSE) trySendNotification(ctx context.Context, notification mcp.JSONRPCNotification) bool {
+	r.sendMu.Lock()
+	defer r.sendMu.Unlock()
+	return sendWhileOpen(ctx, r.done, r.notifications, notification)
+}
+
+// sendWhileOpen sends v on ch unless done is closed or ctx ends first, and
+// reports whether it was sent.
+func sendWhileOpen[T any](ctx context.Context, done <-chan struct{}, ch chan<- T, v T) bool {
 	select {
-	case r.requests <- request:
+	case <-done:
+		return false
+	default:
+	}
+	select {
+	case ch <- v:
 		return true
-	case <-r.done:
+	case <-done:
 		return false
 	case <-ctx.Done():
 		return false
