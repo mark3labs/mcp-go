@@ -1780,17 +1780,19 @@ type requestScopedSSE struct {
 	done          chan struct{}
 	register      func()
 
-	// sendMu orders sends against close: a send that starts before close is
-	// queued before done closes, and one that starts after sees done closed,
-	// so nothing is queued once the POST has drained its channels.
+	// sendMu orders sends against close: once close returns, every send that
+	// reported success is queued, and every later send sees done closed, so
+	// nothing is queued once the POST has drained its channels.
 	sendMu sync.Mutex
 }
 
-// close marks the POST stream finished.
+// close marks the POST stream finished. done closes before close waits for
+// sendMu, so a send blocked on a full channel with no consumer left returns
+// instead of holding sendMu forever.
 func (r *requestScopedSSE) close() {
+	close(r.done)
 	r.sendMu.Lock()
 	defer r.sendMu.Unlock()
-	close(r.done)
 }
 
 // trySend queues the request for the originating POST stream. It reports

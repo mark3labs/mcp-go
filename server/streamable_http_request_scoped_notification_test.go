@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,7 +57,12 @@ func TestStreamableHTTP_RequestNotificationsStayOnThePOSTStream(t *testing.T) {
 	require.NoError(t, err, "open the GET stream")
 	defer getResp.Body.Close()
 	require.Equal(t, http.StatusOK, getResp.StatusCode)
-	go func() { _, _ = io.Copy(io.Discard, getResp.Body) }()
+	var getBody bytes.Buffer
+	getRead := make(chan struct{})
+	go func() {
+		defer close(getRead)
+		_, _ = io.Copy(&getBody, getResp.Body)
+	}()
 
 	body, err := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
@@ -82,6 +88,11 @@ func TestStreamableHTTP_RequestNotificationsStayOnThePOSTStream(t *testing.T) {
 		assert.Equalf(t, perCall, countNotifications(t, string(raw), method),
 			"iteration %d: every notification of the call belongs on its POST stream", i)
 	}
+
+	getResp.Body.Close()
+	<-getRead
+	assert.Zero(t, countNotifications(t, getBody.String(), method),
+		"the standalone GET stream must not carry a call's notifications")
 }
 
 // TestRequestScopedSSE_NotificationForAnotherSession proves that a
@@ -134,6 +145,39 @@ func TestRequestScopedSSE_NoSendLandsAfterClose(t *testing.T) {
 		require.Equal(t, queuedAtClose, len(notifications), "a send landed after close")
 		require.Equal(t, int(sent.Load()), queuedAtClose, "a send reported success without being queued before close")
 	}
+}
+
+// TestRequestScopedSSE_CloseDoesNotWaitOnABlockedSend proves that close
+// returns while a send that cannot be cancelled is blocked on a full channel
+// nobody reads, and that the send then reports failure.
+func TestRequestScopedSSE_CloseDoesNotWaitOnABlockedSend(t *testing.T) {
+	notifications := make(chan mcp.JSONRPCNotification, 1)
+	notifications <- mcp.JSONRPCNotification{}
+	scoped := &requestScopedSSE{notifications: notifications, done: make(chan struct{}), register: func() {}}
+
+	sent := make(chan bool, 1)
+	go func() {
+		sent <- scoped.trySendNotification(context.WithoutCancel(t.Context()), mcp.JSONRPCNotification{})
+	}()
+	require.Eventually(t, func() bool {
+		if !scoped.sendMu.TryLock() {
+			return true
+		}
+		scoped.sendMu.Unlock()
+		return false
+	}, time.Second, time.Millisecond, "the send never blocked")
+
+	closed := make(chan struct{})
+	go func() {
+		scoped.close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("close waited on a send blocked on a full channel")
+	}
+	assert.False(t, <-sent, "a send that never queued must report failure")
 }
 
 // TestStreamableHTTP_NotificationHandlerNotificationsReachThePOSTStream proves
