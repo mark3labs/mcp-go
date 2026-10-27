@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -198,6 +200,10 @@ type SSEServer struct {
 	// connections. See WithSSEDisableLocalhostProtection.
 	disableLocalhostProtection bool
 
+	// maxRequestBodyBytes bounds a message POST body; zero or less is no
+	// bound. See WithSSEMaxRequestBodyBytes.
+	maxRequestBodyBytes int64
+
 	mu sync.RWMutex
 }
 
@@ -385,6 +391,17 @@ func WithSSEDisableLocalhostProtection(disable bool) SSEOption {
 	}
 }
 
+// WithSSEMaxRequestBodyBytes bounds the body of a POST to the message
+// endpoint: the server reads at most n bytes of it, and answers a larger one
+// 413 Request Entity Too Large with a JSON-RPC error, so a client cannot make
+// the server hold an arbitrary amount of memory. The default is
+// DefaultMaxRequestBodyBytes; zero or less removes the bound.
+func WithSSEMaxRequestBodyBytes(n int64) SSEOption {
+	return func(s *SSEServer) {
+		s.maxRequestBodyBytes = n
+	}
+}
+
 // WithSSEContextFunc sets a function that will be called to customise the context
 // to the server using the incoming request.
 func WithSSEContextFunc(fn SSEContextFunc) SSEOption {
@@ -411,6 +428,7 @@ func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
 		useFullURLForMessageEndpoint: true,
 		keepAlive:                    false,
 		keepAliveInterval:            10 * time.Second,
+		maxRequestBodyBytes:          DefaultMaxRequestBodyBytes,
 		sessionIDGenFunc: func(ctx context.Context, r *http.Request) (string, error) {
 			return uuid.New().String(), nil
 		},
@@ -656,9 +674,18 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		ctx = s.contextFunc(ctx, r)
 	}
 
+	body, err := readRequestBody(r, s.maxRequestBodyBytes)
+	if errors.Is(err, errBodyTooLarge) {
+		writeJSONRPCErrorStatus(w, http.StatusRequestEntityTooLarge, nil, mcp.INVALID_REQUEST,
+			fmt.Sprintf("request body exceeds %d bytes", s.maxRequestBodyBytes), func(err error) {
+				log.Printf("Failed to encode response: %v", err)
+			})
+		return
+	}
+
 	// Parse message as raw JSON
 	var rawMessage json.RawMessage
-	if err := json.NewDecoder(r.Body).Decode(&rawMessage); err != nil {
+	if err != nil || json.NewDecoder(bytes.NewReader(body)).Decode(&rawMessage) != nil {
 		s.writeJSONRPCError(w, nil, mcp.PARSE_ERROR, "Parse error")
 		return
 	}
