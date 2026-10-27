@@ -4374,6 +4374,22 @@ func createStreamableHTTPClientWithSession() {
 
 Once the server has answered 404 for the session, every request fails with `transport.ErrSessionTerminated` until `Initialize` succeeds again. With continuous listening, the GET stream moves to the new session.
 
+#### Bounding Message Size
+
+The StreamableHTTP and SSE clients read at most `transport.DefaultMaxMessageBytes` (32 MiB) of one message from the server: a JSON response body, or the data of one SSE event. A request whose response is larger fails with `transport.ErrMessageTooLarge`; on the SSE transport, a larger event ends the stream and the connection-lost handler gets the error. Zero or a negative value removes the bound.
+
+```go
+httpTransport, err := transport.NewStreamableHTTP("https://api.example.com/mcp",
+    transport.WithHTTPMaxMessageBytes(64<<20),
+)
+
+sseTransport, err := transport.NewSSE("https://api.example.com/sse",
+    transport.WithMaxMessageBytes(64<<20),
+)
+```
+
+Error response bodies are read up to 64 KiB for the error message, and OAuth responses (metadata, tokens, client registrations) up to 1 MiB.
+
 ### SSE Client
 
 SSE (Server-Sent Events) clients provide real-time communication with servers.
