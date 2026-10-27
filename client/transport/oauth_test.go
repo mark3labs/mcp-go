@@ -106,6 +106,7 @@ func TestMemoryTokenStore(t *testing.T) {
 	}
 }
 
+// TestValidateRedirectURI verifies case-insensitive localhost matching and the exact loopback allowlist.
 func TestValidateRedirectURI(t *testing.T) {
 	// Test cases
 	testCases := []struct {
