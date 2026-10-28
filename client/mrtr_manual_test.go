@@ -18,6 +18,7 @@ import (
 
 type recordingElicitationHandler struct{ calls atomic.Int32 }
 
+// Elicit counts the call and accepts the request.
 func (h *recordingElicitationHandler) Elicit(context.Context, mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
 	h.calls.Add(1)
 	return &mcp.ElicitationResult{ElicitationResponse: mcp.ElicitationResponse{Action: mcp.ElicitationResponseActionAccept}}, nil

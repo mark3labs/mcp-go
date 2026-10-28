@@ -189,7 +189,13 @@ one request and returns a result that needs input as-is. Check
 request params:
 
 ```go
-c := client.NewClient(httpTransport, client.WithManualInputRoundTrips())
+c := client.NewClient(httpTransport,
+    client.WithManualInputRoundTrips(),
+    // Declare what the relay's own user can answer.
+    client.WithClientCapabilities(mcp.ClientCapabilities{
+        Elicitation: &mcp.ElicitationCapability{},
+    }),
+)
 
 result, err := c.CallTool(ctx, req)
 if err == nil && result.NeedsInput() {
