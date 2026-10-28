@@ -628,9 +628,35 @@ c := client.NewClient(httpTransport,
 result, err := c.CallTool(ctx, req)
 ```
 
-To drive the exchange yourself, disable nothing — just check
-`result.NeedsInput()` and pass `InputResponses` and `RequestState` on the next
-call.
+To drive the exchange yourself, for example in a gateway that relays calls for
+its own caller, set `client.WithManualInputRoundTrips()`. Each call then sends
+one request and returns a result that needs input as-is. Check
+`result.NeedsInput()` and retry with `InputResponses` and `RequestState` in the
+request params:
+
+```go
+c := client.NewClient(httpTransport,
+    client.WithManualInputRoundTrips(),
+    // Declare what the relay's own user can answer.
+    client.WithClientCapabilities(mcp.ClientCapabilities{
+        Elicitation: &mcp.ElicitationCapability{},
+    }),
+)
+
+result, err := c.CallTool(ctx, req)
+if err == nil && result.NeedsInput() {
+    req.Params.InputResponses = answer(result.InputRequests)
+    req.Params.RequestState = result.RequestState
+    result, err = c.CallTool(ctx, req)
+}
+```
+
+`WithMaxInputRoundTrips` has no effect in manual mode. Capabilities are derived
+from registered handlers, so a relay with none should declare what its own user
+can answer, with `client.WithClientCapabilities`; servers should not ask for
+input a client has not declared. Manual mode covers multi round-trip results
+only: on a connection that negotiated an earlier protocol version, the server
+sends its requests directly and they still need handlers.
 
 #### Subscriptions
 
