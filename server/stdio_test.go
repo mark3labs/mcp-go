@@ -664,6 +664,12 @@ func TestStdioCancelsQueuedToolCall(t *testing.T) {
 
 	stdinReader, stdinWriter := io.Pipe()
 	stdoutReader, stdoutWriter := io.Pipe()
+	t.Cleanup(func() {
+		_ = stdinWriter.Close()
+		_ = stdinReader.Close()
+		_ = stdoutWriter.Close()
+		_ = stdoutReader.Close()
+	})
 
 	stdioServer := NewStdioServer(mcpServer)
 	stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
