@@ -1860,25 +1860,34 @@ type CreateTaskResult struct {
 	Legacy bool `json:"-"`
 }
 
+// marshalTaskToMap serialises a Task to a map using SEP-2663 wire field names
+// (ttlMs, pollIntervalMs).
+func marshalTaskToMap(t Task) map[string]any {
+	m := map[string]any{
+		"taskId":        t.TaskId,
+		"status":        t.Status,
+		"createdAt":     t.CreatedAt,
+		"lastUpdatedAt": t.LastUpdatedAt,
+	}
+	if t.StatusMessage != "" {
+		m["statusMessage"] = t.StatusMessage
+	}
+	if t.TTL != nil {
+		m["ttlMs"] = *t.TTL
+	}
+	if t.PollInterval != nil {
+		m["pollIntervalMs"] = *t.PollInterval
+	}
+	return m
+}
+
 // MarshalJSON implements custom JSON marshaling for CreateTaskResult.
 func (r CreateTaskResult) MarshalJSON() ([]byte, error) {
 	if r.Legacy {
 		return r.MarshalJSONLegacyTask()
 	}
-	m := map[string]any{
-		"resultType":    ResultTypeTask,
-		"taskId":        r.Task.TaskId,
-		"status":        r.Task.Status,
-		"createdAt":     r.Task.CreatedAt,
-		"lastUpdatedAt": r.Task.LastUpdatedAt,
-		"ttlMs":         r.Task.TTL,
-	}
-	if r.Task.StatusMessage != "" {
-		m["statusMessage"] = r.Task.StatusMessage
-	}
-	if r.Task.PollInterval != nil {
-		m["pollIntervalMs"] = *r.Task.PollInterval
-	}
+	m := marshalTaskToMap(r.Task)
+	m["resultType"] = ResultTypeTask
 	if r.Meta != nil {
 		m["_meta"] = r.Meta
 	}
@@ -1944,6 +1953,50 @@ type GetTaskResult struct {
 	// InputRequests holds outstanding server-to-client requests when Status
 	// is input_required.
 	InputRequests InputRequests `json:"inputRequests,omitempty"`
+	// Legacy instructs MarshalJSON to emit legacy 2025-11-25 wire field names
+	// (ttl, pollInterval) instead of SEP-2663 names (ttlMs, pollIntervalMs).
+	Legacy bool `json:"-"`
+}
+
+// MarshalJSON emits SEP-2663 field names (ttlMs, pollIntervalMs) by default,
+// or legacy 2025-11-25 field names (ttl, pollInterval) when Legacy is true.
+func (r GetTaskResult) MarshalJSON() ([]byte, error) {
+	var m map[string]any
+	if r.Legacy {
+		m = map[string]any{
+			"taskId":        r.Task.TaskId,
+			"status":        r.Task.Status,
+			"createdAt":     r.Task.CreatedAt,
+			"lastUpdatedAt": r.Task.LastUpdatedAt,
+		}
+		if r.Task.StatusMessage != "" {
+			m["statusMessage"] = r.Task.StatusMessage
+		}
+		if r.Task.TTL != nil {
+			m["ttl"] = *r.Task.TTL
+		}
+		if r.Task.PollInterval != nil {
+			m["pollInterval"] = *r.Task.PollInterval
+		}
+	} else {
+		m = marshalTaskToMap(r.Task)
+	}
+	if r.Meta != nil {
+		m["_meta"] = r.Meta
+	}
+	if r.ResultType != "" {
+		m["resultType"] = r.ResultType
+	}
+	if r.TaskResult != nil {
+		m["result"] = r.TaskResult
+	}
+	if r.TaskError != nil {
+		m["error"] = r.TaskError
+	}
+	if len(r.InputRequests) > 0 {
+		m["inputRequests"] = r.InputRequests
+	}
+	return json.Marshal(m)
 }
 
 // ListTasksRequest retrieves a paginated list of tasks.
@@ -1956,6 +2009,20 @@ type ListTasksRequest struct {
 type ListTasksResult struct {
 	PaginatedResult
 	Tasks []Task `json:"tasks"`
+}
+
+// MarshalJSON emits SEP-2663 field names (ttlMs, pollIntervalMs) for each
+// Task in the list, consistent with tasks/get and tasks/create responses.
+func (r ListTasksResult) MarshalJSON() ([]byte, error) {
+	tasks := make([]map[string]any, len(r.Tasks))
+	for i, t := range r.Tasks {
+		tasks[i] = marshalTaskToMap(t)
+	}
+	type alias struct {
+		PaginatedResult
+		Tasks []map[string]any `json:"tasks"`
+	}
+	return json.Marshal(alias{PaginatedResult: r.PaginatedResult, Tasks: tasks})
 }
 
 // TaskResultRequest retrieves the result of a completed task.
@@ -2014,18 +2081,20 @@ type CancelTaskResult struct {
 // MarshalJSON serialises CancelTaskResult.
 func (r CancelTaskResult) MarshalJSON() ([]byte, error) {
 	if r.TaskId == "" {
-		// Ack-only.
+		// Ack-only (modern SEP-2663 path).
 		type resultOnly struct {
 			Result
 		}
 		return json.Marshal(resultOnly{r.Result})
 	}
-	// Legacy: include all task fields inline.
-	type flat struct {
-		Result
-		Task
+	m := marshalTaskToMap(r.Task)
+	if r.Meta != nil {
+		m["_meta"] = r.Meta
 	}
-	return json.Marshal(flat(r))
+	if r.ResultType != "" {
+		m["resultType"] = r.ResultType
+	}
+	return json.Marshal(m)
 }
 
 // TaskStatusNotification is sent when a task's status changes.

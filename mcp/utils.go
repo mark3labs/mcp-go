@@ -1376,6 +1376,24 @@ func ParseListTasksResult(rawMessage *json.RawMessage) (*ListTasksResult, error)
 	if err := json.Unmarshal(*rawMessage, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
+	// Fix up ttlMs/pollIntervalMs for each task: Task struct tags use legacy
+	// names so plain json.Unmarshal skips SEP-2663 wire names.
+	var envelope struct {
+		Tasks []json.RawMessage `json:"tasks"`
+	}
+	if err := json.Unmarshal(*rawMessage, &envelope); err == nil {
+		for i, raw := range envelope.Tasks {
+			if i >= len(result.Tasks) {
+				break
+			}
+			var taskMap map[string]any
+			if err := json.Unmarshal(raw, &taskMap); err == nil {
+				tmp := GetTaskResult{Task: result.Tasks[i]}
+				jsonToTask(taskMap, &tmp)
+				result.Tasks[i] = tmp.Task
+			}
+		}
+	}
 	return &result, nil
 }
 

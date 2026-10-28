@@ -31,8 +31,9 @@ func TestTaskStatusParsersPreserveEnvelopeAndIntegerFields(t *testing.T) {
 			var fields map[string]json.RawMessage
 			require.NoError(t, json.Unmarshal(encoded, &fields))
 			require.JSONEq(t, `"data"`, string(fields["resultType"]))
-			require.Contains(t, string(encoded), `"ttl":9007199254740993`)
-			require.Contains(t, string(encoded), `"pollInterval":9007199254740993`)
+			// All three response types now emit SEP-2663 field names.
+			require.Contains(t, string(encoded), `"ttlMs":9007199254740993`)
+			require.Contains(t, string(encoded), `"pollIntervalMs":9007199254740993`)
 		})
 	}
 }

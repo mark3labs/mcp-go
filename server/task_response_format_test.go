@@ -113,8 +113,8 @@ func TestTaskAugmentedToolCall_SpecCompliance(t *testing.T) {
 	assert.Equal(t, "working", result["status"])
 	assert.Contains(t, result, "createdAt")
 	assert.Contains(t, result, "lastUpdatedAt")
-	// ttlMs is null when not specified (JSON: "ttlMs": null)
-	assert.Contains(t, result, "ttlMs")
+	// ttlMs is omitted when not specified, the key is absent
+	assert.NotContains(t, result, "ttlMs")
 	// pollIntervalMs is optional per spec, only check if provided
 	// The server sets it to nil when not specified, so it won't appear in JSON
 }

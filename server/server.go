@@ -59,7 +59,6 @@ type taskEntry struct {
 	// that cancels its own task does not wait for itself.
 	createdHookDone bool
 	pendingHooks    []func()
-
 }
 
 // ServerOption is a function that configures an MCPServer.
@@ -263,6 +262,7 @@ type MCPServer struct {
 	tasks                        map[string]*taskEntry
 	expiredTasks                 map[string]time.Time // Tracks recently expired task IDs with expiration timestamp
 	maxConcurrentTasks           *int                 // Optional limit on concurrent running tasks
+	defaultTaskTTLMs             *int64               // Fallback TTL applied when client supplies none
 	activeTasks                  int                  // Current count of running (non-terminal) tasks
 	inflightCancels              sync.Map             // Maps request ID -> context.CancelFunc for in-flight requests
 	inputValidator               *inputSchemaValidator
@@ -681,6 +681,17 @@ func WithTaskCapabilities(list, cancel, toolCallTasks bool) ServerOption {
 			list:          list,
 			cancel:        cancel,
 			toolCallTasks: toolCallTasks,
+		}
+	}
+}
+
+// WithDefaultTaskTTL sets a fallback TTL applied to every task created without
+// a client-supplied TTL. Ensures tasks are evicted even when modern SEP-2663
+// clients do not pass a task param.
+func WithDefaultTaskTTL(ttlMs int64) ServerOption {
+	return func(s *MCPServer) {
+		if ttlMs > 0 {
+			s.defaultTaskTTLMs = &ttlMs
 		}
 	}
 }
@@ -2490,6 +2501,10 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 	if request.Params.Task != nil {
 		ttl = request.Params.Task.TTL
 	}
+	// Fall back to the server default when modern SEP-2663 clients don't pass task params.
+	if ttl == nil {
+		ttl = s.defaultTaskTTLMs
+	}
 
 	// Create task entry (pollInterval is nil - server doesn't set a default)
 	entry, err := s.createTask(ctx, taskID, request.Params.Name, ttl, nil)
@@ -2631,7 +2646,6 @@ func (s *MCPServer) limitCreateTaskResult(result *mcp.CreateTaskResult) *mcp.Cre
 	stored.IsError = limited.IsError
 	return &stored
 }
-
 
 // This is used for hybrid mode where a tool with TaskSupportOptional is called with task params.
 func (s *MCPServer) executeRegularToolAsTask(
@@ -2825,6 +2839,7 @@ func (s *MCPServer) handleGetTask(
 	}
 
 	r := mcp.NewGetTaskResult(task)
+	r.Legacy = true
 	return &r, nil
 }
 
