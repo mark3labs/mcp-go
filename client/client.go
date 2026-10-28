@@ -61,6 +61,9 @@ type Client struct {
 	// maxInputRoundTrips bounds the multi round-trip retry loop.
 	maxInputRoundTrips int
 
+	// manualInputRoundTrips leaves input-required results to the caller.
+	manualInputRoundTrips bool
+
 	// discoverTimeout bounds the server/discover probe sent during Initialize.
 	discoverTimeout time.Duration
 
@@ -139,10 +142,23 @@ func WithLegacyProtocolOnly() ClientOption {
 // WithMaxInputRoundTrips bounds how many times the client will fulfil a
 // server's input requests and retry the original call before giving up.
 //
-// The default is 10. See the multi round-trip request pattern (SEP-2322).
+// The default is 10. It has no effect when [WithManualInputRoundTrips] is set.
+// See the multi round-trip request pattern (SEP-2322).
 func WithMaxInputRoundTrips(limit int) ClientOption {
 	return func(c *Client) {
 		c.maxInputRoundTrips = limit
+	}
+}
+
+// WithManualInputRoundTrips makes CallTool, GetPrompt, and ReadResource send
+// one request and return a multi round-trip result that needs input (SEP-2322)
+// unchanged, without calling a handler. The caller retries with InputResponses
+// and RequestState in the request params. Declare what the caller's user can
+// answer with [WithClientCapabilities], since capabilities come from handlers.
+// Server-initiated requests on earlier protocol versions still need handlers.
+func WithManualInputRoundTrips() ClientOption {
+	return func(c *Client) {
+		c.manualInputRoundTrips = true
 	}
 }
 
