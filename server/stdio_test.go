@@ -643,6 +643,83 @@ func TestStdioJoinsRequestHandlersOnEOF(t *testing.T) {
 	}
 }
 
+func TestStdioCancelsQueuedToolCall(t *testing.T) {
+	// A tools/call waiting in the queue for a worker must still be
+	// cancellable: notifications/cancelled can arrive before any worker
+	// starts it.
+	blocking := make(chan struct{})
+	release := make(chan struct{})
+	queuedErr := make(chan error, 1)
+
+	mcpServer := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
+	mcpServer.AddTool(mcp.NewTool("block"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		close(blocking)
+		<-release
+		return mcp.NewToolResultText("done"), nil
+	})
+	mcpServer.AddTool(mcp.NewTool("queued"), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		queuedErr <- ctx.Err()
+		return mcp.NewToolResultText("done"), nil
+	})
+
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+
+	stdioServer := NewStdioServer(mcpServer)
+	stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+	WithWorkerPoolSize(1)(stdioServer)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = stdioServer.Listen(ctx, stdinReader, stdoutWriter) }()
+
+	responses := make(chan map[string]any, 4)
+	go func() {
+		scanner := bufio.NewScanner(stdoutReader)
+		for scanner.Scan() {
+			var msg map[string]any
+			if json.Unmarshal(scanner.Bytes(), &msg) == nil {
+				responses <- msg
+			}
+		}
+	}()
+
+	send := func(lines ...string) {
+		go func() { _, _ = stdinWriter.Write([]byte(strings.Join(lines, "\n") + "\n")) }()
+	}
+
+	// Occupy the only worker.
+	send(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"block"}}`)
+	select {
+	case <-blocking:
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocking tool never started")
+	}
+
+	// Queue a call behind it and cancel it. The read loop handles these lines
+	// in order, so the ping response means the cancellation was processed.
+	send(
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"queued"}}`,
+		`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"ping"}`,
+	)
+	select {
+	case msg := <-responses:
+		require.Equal(t, float64(3), msg["id"])
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the ping response")
+	}
+
+	close(release)
+
+	select {
+	case err := <-queuedErr:
+		require.ErrorIs(t, err, context.Canceled, "queued tool call should see the cancellation")
+	case <-time.After(5 * time.Second):
+		t.Fatal("queued tool call never ran")
+	}
+}
+
 func TestStdioSessionSamplingResponseArrayContent(t *testing.T) {
 	session := &stdioSession{pendingRequests: make(map[int64]chan *samplingResponse)}
 	responseChan := make(chan *samplingResponse, 1)

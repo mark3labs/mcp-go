@@ -46,6 +46,7 @@ type toolCallWork struct {
 	id      any // JSON-RPC id, so a recovered panic stays correlatable
 	message json.RawMessage
 	writer  io.Writer
+	cancel  context.CancelFunc
 }
 
 // StdioOption defines a function type for configuring StdioServer
@@ -471,6 +472,7 @@ func (s *StdioServer) toolCallWorker(ctx context.Context) {
 				}()
 				return s.server.HandleMessage(work.ctx, work.message)
 			}()
+			work.cancel()
 			if response != nil {
 				if err := s.writeResponse(response, work.writer); err != nil {
 					s.errLogger.Printf("Error writing tool response: %v", err)
@@ -617,21 +619,25 @@ func (s *StdioServer) processMessage(
 		}
 	}
 	if parsed && baseMessage.Method == string(mcp.MethodToolsCall) {
+		reqCtx, cancel := s.trackInflight(ctx, baseMessage.ID.Value())
 		// Queue tool calls for processing by workers
 		select {
 		case s.toolCallQueue <- &toolCallWork{
-			ctx:     ctx,
+			ctx:     reqCtx,
 			id:      baseMessage.ID.Value(),
 			message: rawMessage,
 			writer:  writer,
+			cancel:  cancel,
 		}:
 			return nil
 		case <-ctx.Done():
+			cancel()
 			return ctx.Err()
 		default:
+			defer cancel()
 			// Queue is full, process synchronously as fallback
 			s.errLogger.Printf("Tool call queue full, processing synchronously")
-			response := s.handleMessage(ctx, baseMessage.ID.Value(), rawMessage)
+			response := s.handleMessage(reqCtx, baseMessage.ID.Value(), rawMessage)
 			if response != nil {
 				return s.writeResponse(response, writer)
 			}
@@ -642,8 +648,10 @@ func (s *StdioServer) processMessage(
 	// Serve requests off the read loop: a handler that blocks, such as
 	// subscriptions/listen, must not stall it. writeMu serialises the writes.
 	if parsed && !baseMessage.ID.IsNil() {
+		reqCtx, cancel := s.trackInflight(ctx, baseMessage.ID.Value())
 		s.requestWg.Go(func() {
-			s.handleRequest(ctx, baseMessage.ID.Value(), rawMessage, writer)
+			defer cancel()
+			s.handleRequest(reqCtx, baseMessage.ID.Value(), rawMessage, writer)
 		})
 		return nil
 	}
@@ -659,6 +667,19 @@ func (s *StdioServer) processMessage(
 	}
 
 	return nil
+}
+
+// trackInflight registers the request for notifications/cancelled before it
+// leaves the read loop, so a cancellation read while it waits for a worker or
+// goroutine still reaches it.
+func (s *StdioServer) trackInflight(ctx context.Context, id any) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(ctx)
+	key := inflightKey(ctx, id)
+	s.server.inflightCancels.Store(key, cancel)
+	return ctx, func() {
+		s.server.inflightCancels.Delete(key)
+		cancel()
+	}
 }
 
 // handleMessage runs HandleMessage, recovering a panicking handler so that
