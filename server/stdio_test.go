@@ -861,3 +861,37 @@ func TestStdioProcessesFinalMessageWithoutTrailingNewline(t *testing.T) {
 	require.Equal(t, 1, response.ID)
 	require.JSONEq(t, `{}`, string(response.Result))
 }
+
+func TestStdioAnswersQueuedToolCallsOnEOF(t *testing.T) {
+	// Tool calls accepted into the queue before stdin closes must still be
+	// answered. Listen cancels the request context at EOF, which must not let
+	// a worker exit while calls are still waiting in the queue.
+	mcpServer := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
+	mcpServer.AddTool(mcp.NewTool("ping"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("pong"), nil
+	})
+
+	stdioServer := NewStdioServer(mcpServer)
+	stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+	WithWorkerPoolSize(1)(stdioServer)
+
+	const calls = 20
+	var in strings.Builder
+	for id := 1; id <= calls; id++ {
+		fmt.Fprintf(&in, `{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"ping"}}`+"\n", id)
+	}
+
+	var out bytes.Buffer
+	require.NoError(t, stdioServer.Listen(t.Context(), strings.NewReader(in.String()), &out))
+
+	seen := make(map[int]bool)
+	scanner := bufio.NewScanner(&out)
+	for scanner.Scan() {
+		var response struct {
+			ID int `json:"id"`
+		}
+		require.NoError(t, json.Unmarshal(scanner.Bytes(), &response), "output line: %q", scanner.Text())
+		seen[response.ID] = true
+	}
+	require.Len(t, seen, calls, "every queued tool call should get a response")
+}

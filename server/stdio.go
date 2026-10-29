@@ -450,36 +450,32 @@ func (s *StdioServer) processInputStream(ctx context.Context, reader *bufio.Read
 	}
 }
 
-// toolCallWorker processes tool calls from the queue
-func (s *StdioServer) toolCallWorker(ctx context.Context) {
+// toolCallWorker processes tool calls from the queue until Listen closes it.
+//
+// It does not stop on context cancellation: Listen cancels the request
+// context when input ends and only then closes the queue, so a worker that
+// returned on ctx.Done() could leave accepted calls unanswered. Calls still
+// queued at that point run with the cancelled context and get a response.
+func (s *StdioServer) toolCallWorker() {
 	defer s.workerWg.Done()
 
-	for {
-		select {
-		case work, ok := <-s.toolCallQueue:
-			if !ok {
-				// Channel closed, exit worker
-				return
-			}
-			// Process the tool call with panic recovery so a single
-			// panicking handler does not kill the worker permanently.
-			response := func() (resp mcp.JSONRPCMessage) {
-				defer func() {
-					if r := recover(); r != nil {
-						s.errLogger.Printf("panic recovered in stdio tool call worker: %v", r)
-						resp = createErrorResponse(work.id, mcp.INTERNAL_ERROR, fmt.Sprintf("internal panic: %v", r))
-					}
-				}()
-				return s.server.HandleMessage(work.ctx, work.message)
-			}()
-			work.cancel()
-			if response != nil {
-				if err := s.writeResponse(response, work.writer); err != nil {
-					s.errLogger.Printf("Error writing tool response: %v", err)
+	for work := range s.toolCallQueue {
+		// Process the tool call with panic recovery so a single
+		// panicking handler does not kill the worker permanently.
+		response := func() (resp mcp.JSONRPCMessage) {
+			defer func() {
+				if r := recover(); r != nil {
+					s.errLogger.Printf("panic recovered in stdio tool call worker: %v", r)
+					resp = createErrorResponse(work.id, mcp.INTERNAL_ERROR, fmt.Sprintf("internal panic: %v", r))
 				}
+			}()
+			return s.server.HandleMessage(work.ctx, work.message)
+		}()
+		work.cancel()
+		if response != nil {
+			if err := s.writeResponse(response, work.writer); err != nil {
+				s.errLogger.Printf("Error writing tool response: %v", err)
 			}
-		case <-ctx.Done():
-			return
 		}
 	}
 }
@@ -547,7 +543,7 @@ func (s *StdioServer) Listen(
 	// Start worker pool for tool calls
 	for i := 0; i < s.workerPoolSize; i++ {
 		s.workerWg.Add(1)
-		go s.toolCallWorker(ctx)
+		go s.toolCallWorker()
 	}
 
 	// Start notification handler
