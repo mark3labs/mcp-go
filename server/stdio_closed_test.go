@@ -44,18 +44,18 @@ func (w *stdioRequestSignalWriter) Write(p []byte) (int, error) {
 func TestStdioServerPendingRequestsReturnClosed(t *testing.T) {
 	tests := []struct {
 		name string
-		call func(context.Context) error
+		call func(context.Context, *stdioSession) error
 	}{
-		{name: "sampling", call: func(ctx context.Context) error {
-			_, err := stdioSessionInstance.RequestSampling(ctx, mcp.CreateMessageRequest{})
+		{name: "sampling", call: func(ctx context.Context, session *stdioSession) error {
+			_, err := session.RequestSampling(ctx, mcp.CreateMessageRequest{})
 			return err
 		}},
-		{name: "elicitation", call: func(ctx context.Context) error {
-			_, err := stdioSessionInstance.RequestElicitation(ctx, mcp.ElicitationRequest{})
+		{name: "elicitation", call: func(ctx context.Context, session *stdioSession) error {
+			_, err := session.RequestElicitation(ctx, mcp.ElicitationRequest{})
 			return err
 		}},
-		{name: "roots", call: func(ctx context.Context) error {
-			_, err := stdioSessionInstance.ListRoots(ctx, mcp.ListRootsRequest{})
+		{name: "roots", call: func(ctx context.Context, session *stdioSession) error {
+			_, err := session.ListRoots(ctx, mcp.ListRootsRequest{})
 			return err
 		}},
 	}
@@ -65,16 +65,17 @@ func TestStdioServerPendingRequestsReturnClosed(t *testing.T) {
 			for range 2 {
 				reader, input := io.Pipe()
 				t.Cleanup(func() { _ = reader.Close(); _ = input.Close() })
-				ready := make(chan struct{})
+				ready := make(chan *stdioSession, 1)
 				stdioServer.SetContextFunc(func(ctx context.Context) context.Context {
-					close(ready)
+					ready <- ClientSessionFromContext(ctx).(*stdioSession)
 					return ctx
 				})
 				output := &stdioRequestSignalWriter{written: make(chan struct{})}
 				listenDone := make(chan error, 1)
 				go func() { listenDone <- stdioServer.Listen(t.Context(), reader, output) }()
+				var session *stdioSession
 				select {
-				case <-ready:
+				case session = <-ready:
 				case <-time.After(2 * time.Second):
 					t.Fatal("Listen did not install a writer")
 				}
@@ -82,7 +83,7 @@ func TestStdioServerPendingRequestsReturnClosed(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				t.Cleanup(cancel)
 				requestDone := make(chan error, 1)
-				go func() { requestDone <- tt.call(ctx) }()
+				go func() { requestDone <- tt.call(ctx, session) }()
 				select {
 				case <-output.written:
 				case <-time.After(2 * time.Second):
@@ -104,7 +105,7 @@ func TestStdioServerPendingRequestsReturnClosed(t *testing.T) {
 					t.Fatal("request remained blocked after Listen returned")
 				}
 				require.NoError(t, ctx.Err(), "closure must not depend on request cancellation")
-				require.ErrorIs(t, tt.call(ctx), ErrStdioServerClosed)
+				require.ErrorIs(t, tt.call(ctx, session), ErrStdioServerClosed)
 				cancel()
 			}
 		})
@@ -114,18 +115,18 @@ func TestStdioServerPendingRequestsReturnClosed(t *testing.T) {
 func TestStdioServerShutdownReleasesHandlerRequests(t *testing.T) {
 	tests := []struct {
 		name string
-		call func(context.Context) error
+		call func(context.Context, *stdioSession) error
 	}{
-		{name: "sampling", call: func(ctx context.Context) error {
-			_, err := stdioSessionInstance.RequestSampling(ctx, mcp.CreateMessageRequest{})
+		{name: "sampling", call: func(ctx context.Context, session *stdioSession) error {
+			_, err := session.RequestSampling(ctx, mcp.CreateMessageRequest{})
 			return err
 		}},
-		{name: "elicitation", call: func(ctx context.Context) error {
-			_, err := stdioSessionInstance.RequestElicitation(ctx, mcp.ElicitationRequest{})
+		{name: "elicitation", call: func(ctx context.Context, session *stdioSession) error {
+			_, err := session.RequestElicitation(ctx, mcp.ElicitationRequest{})
 			return err
 		}},
-		{name: "roots", call: func(ctx context.Context) error {
-			_, err := stdioSessionInstance.ListRoots(ctx, mcp.ListRootsRequest{})
+		{name: "roots", call: func(ctx context.Context, session *stdioSession) error {
+			_, err := session.ListRoots(ctx, mcp.ListRootsRequest{})
 			return err
 		}},
 	}
@@ -154,10 +155,11 @@ func TestStdioServerShutdownReleasesHandlerRequests(t *testing.T) {
 					handlerDone := make(chan error, 1)
 					mcpServer := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
 					mcpServer.AddTool(mcp.NewTool("ask"), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+						session := ClientSessionFromContext(ctx).(*stdioSession)
 						if requestContext.independent {
 							ctx = independentCtx
 						}
-						handlerDone <- tt.call(ctx)
+						handlerDone <- tt.call(ctx, session)
 						return mcp.NewToolResultText("done"), nil
 					})
 					stdioServer := NewStdioServer(mcpServer)
@@ -222,32 +224,33 @@ func TestStdioServerShutdownReleasesHandlerRequests(t *testing.T) {
 func TestStdioSessionPendingRequestsReturnContextErrorBeforeClosure(t *testing.T) {
 	tests := []struct {
 		name string
-		call func(context.Context) error
+		call func(context.Context, *stdioSession) error
 	}{
-		{name: "sampling", call: func(ctx context.Context) error {
-			_, err := stdioSessionInstance.RequestSampling(ctx, mcp.CreateMessageRequest{})
+		{name: "sampling", call: func(ctx context.Context, session *stdioSession) error {
+			_, err := session.RequestSampling(ctx, mcp.CreateMessageRequest{})
 			return err
 		}},
-		{name: "elicitation", call: func(ctx context.Context) error {
-			_, err := stdioSessionInstance.RequestElicitation(ctx, mcp.ElicitationRequest{})
+		{name: "elicitation", call: func(ctx context.Context, session *stdioSession) error {
+			_, err := session.RequestElicitation(ctx, mcp.ElicitationRequest{})
 			return err
 		}},
-		{name: "roots", call: func(ctx context.Context) error {
-			_, err := stdioSessionInstance.ListRoots(ctx, mcp.ListRootsRequest{})
+		{name: "roots", call: func(ctx context.Context, session *stdioSession) error {
+			_, err := session.ListRoots(ctx, mcp.ListRootsRequest{})
 			return err
 		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			session := newStdioSession()
 			output := &stdioRequestSignalWriter{written: make(chan struct{})}
-			gen := stdioSessionInstance.SetWriter(output)
-			t.Cleanup(func() { stdioSessionInstance.markStopped(gen) })
+			gen := session.SetWriter(output)
+			t.Cleanup(func() { session.markStopped(gen) })
 			parentCtx, cancelParent := context.WithCancel(t.Context())
 			t.Cleanup(cancelParent)
 			ctx, cancel := context.WithCancel(parentCtx)
 			defer cancel()
 			requestDone := make(chan error, 1)
-			go func() { requestDone <- tt.call(ctx) }()
+			go func() { requestDone <- tt.call(ctx, session) }()
 			select {
 			case <-output.written:
 			case <-time.After(2 * time.Second):
@@ -260,7 +263,7 @@ func TestStdioSessionPendingRequestsReturnContextErrorBeforeClosure(t *testing.T
 			case <-time.After(2 * time.Second):
 				t.Fatal("pending request did not return after parent cancellation")
 			}
-			_, done, err := stdioSessionInstance.outboundWriter()
+			_, done, err := session.outboundWriter()
 			require.NoError(t, err)
 			select {
 			case <-done:
@@ -357,15 +360,22 @@ func TestStdioServerListenRejectsConcurrentCall(t *testing.T) {
 func TestStdioServerSamplingAfterListenReturnsClosed(t *testing.T) {
 	stdioServer := NewStdioServer(NewMCPServer("test", "1.0.0"))
 	stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+	var sessions []*stdioSession
+	stdioServer.SetContextFunc(func(ctx context.Context) context.Context {
+		sessions = append(sessions, ClientSessionFromContext(ctx).(*stdioSession))
+		return ctx
+	})
 	require.NoError(t, stdioServer.Listen(t.Context(), strings.NewReader(""), io.Discard))
+	require.Len(t, sessions, 1)
 
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	_, err := stdioSessionInstance.RequestSampling(ctx, mcp.CreateMessageRequest{})
+	_, err := sessions[0].RequestSampling(ctx, mcp.CreateMessageRequest{})
 	require.ErrorIs(t, err, ErrStdioServerClosed)
 
 	// Listen can run again after it returns; that run ends closed as well.
 	require.NoError(t, stdioServer.Listen(t.Context(), strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`), io.Discard))
-	_, err = stdioSessionInstance.RequestSampling(ctx, mcp.CreateMessageRequest{})
+	require.Len(t, sessions, 2)
+	_, err = sessions[1].RequestSampling(ctx, mcp.CreateMessageRequest{})
 	require.ErrorIs(t, err, ErrStdioServerClosed)
 }
