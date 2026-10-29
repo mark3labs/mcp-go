@@ -738,6 +738,17 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 		// the notifications the server broadcasts, such as
 		// notifications/tools/list_changed.
 		listening = jsonMessage.Method == mcp.MethodSubscriptionsListen && requestID != nil
+		// The stream cannot be delivered when the response writer cannot
+		// stream (for example a middleware wrapper that hides http.Flusher).
+		// Fail now, as handleGet does, rather than hold the request open
+		// with nothing ever written to it.
+		if listening && !w.CanStream() {
+			s.logger.Error("Rejected subscriptions/listen: response writer does not support streaming")
+			s.writeJSONRPCErrorStatus(w, requestID, mcp.INTERNAL_ERROR,
+				"Streaming unsupported: subscriptions/listen requires a response writer that can stream",
+				http.StatusInternalServerError)
+			return
+		}
 	} else {
 		sessionIdManager := s.resolveSessionIdManager(r)
 		if isInitializeRequest {
