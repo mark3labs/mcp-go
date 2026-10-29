@@ -402,3 +402,30 @@ func TestInputSchemaValidation_ErrorKindReadable(t *testing.T) {
 		})
 	}
 }
+
+func TestInputSchemaValidation_PreservesLargeIntegerPrecision(t *testing.T) {
+	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
+	tool := mcp.Tool{
+		Name: "check_even_id",
+		RawInputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"id": {"type": "integer", "multipleOf": 2}
+			},
+			"required": ["id"],
+			"additionalProperties": false
+		}`),
+	}
+	srv.AddTool(tool, okHandler)
+
+	// 9007199254740993 (2^53 + 1) rounds to 9007199254740992 (even) if decoded
+	// via float64, which would falsely satisfy multipleOf: 2 unless RawArguments
+	// is used for validation.
+	oddPayload := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"check_even_id","arguments":{"id":9007199254740993}}}`)
+	resp := srv.HandleMessage(t.Context(), oddPayload)
+	requireToolErrorContaining(t, resp, "id")
+
+	evenPayload := []byte(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"check_even_id","arguments":{"id":9007199254740992}}}`)
+	resp = srv.HandleMessage(t.Context(), evenPayload)
+	requireToolSuccess(t, resp)
+}
