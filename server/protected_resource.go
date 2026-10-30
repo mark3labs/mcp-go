@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 )
 
@@ -102,11 +103,25 @@ func ProtectedResourceMetadataPath(resource string) string {
 	if err != nil || !u.IsAbs() || u.Host == "" {
 		return WellKnownProtectedResourcePath
 	}
-	p := strings.Trim(u.Path, "/")
+	p := strings.Trim(u.EscapedPath(), "/")
 	if p == "" {
 		return WellKnownProtectedResourcePath
 	}
 	return path.Join(WellKnownProtectedResourcePath, p)
+}
+
+// matchProtectedResourceMetadataPath compares escaped paths segment by segment,
+// like http.ServeMux, so an encoded slash is not treated as a path separator.
+func matchProtectedResourceMetadataPath(requestPath, metadataPath string) bool {
+	if requestPath == metadataPath {
+		return true
+	}
+	return slices.EqualFunc(strings.Split(requestPath, "/"), strings.Split(metadataPath, "/"),
+		func(requestSegment, metadataSegment string) bool {
+			requestSegment, requestErr := url.PathUnescape(requestSegment)
+			metadataSegment, metadataErr := url.PathUnescape(metadataSegment)
+			return requestErr == nil && metadataErr == nil && requestSegment == metadataSegment
+		})
 }
 
 // NewProtectedResourceMetadataHandler returns an http.Handler that serves
