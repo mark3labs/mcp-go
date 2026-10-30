@@ -34,17 +34,23 @@ func (b *getErrorBody) Close() error {
 
 // mockGETErrorTransport returns a GET error response whose body blocks in Close()
 // until the request context is canceled.
-type mockGETErrorTransport struct{}
+type mockGETErrorTransport struct {
+	status int
+}
 
-func (mockGETErrorTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (m mockGETErrorTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.Method != http.MethodGet {
 		return &http.Response{
 			StatusCode: http.StatusMethodNotAllowed,
 			Body:       http.NoBody,
 		}, nil
 	}
+	status := m.status
+	if status == 0 {
+		status = http.StatusInternalServerError
+	}
 	return &http.Response{
-		StatusCode: http.StatusInternalServerError,
+		StatusCode: status,
 		Header:     http.Header{"Content-Type": {"text/plain"}},
 		Body: &getErrorBody{
 			data:   []byte("error"),
@@ -80,5 +86,34 @@ func TestStreamableHTTP_GETCloseCancelBeforeClose(t *testing.T) {
 		t.Fatal("BUG: createGETConnectionToServer hung for 5s on GET error response.\n" +
 			"resp.Body.Close() blocks until the request context is canceled, but cancel() " +
 			"must run before Close() (see SendRequest).")
+	}
+}
+
+// TestStreamableHTTP_GET404CloseCancelBeforeClose ensures a GET 404 whose body
+// blocks in Close until the request context is canceled still returns
+// ErrSessionTerminated.
+func TestStreamableHTTP_GET404CloseCancelBeforeClose(t *testing.T) {
+	client := &http.Client{Transport: mockGETErrorTransport{status: http.StatusNotFound}}
+
+	transport, err := NewStreamableHTTP("http://mock-get-server/mcp",
+		WithHTTPBasicClient(client),
+	)
+	require.NoError(t, err)
+	require.NoError(t, transport.Start(t.Context()))
+	defer transport.Close()
+
+	done := make(chan struct{})
+	var connectErr error
+
+	go func() {
+		defer close(done)
+		_, connectErr = transport.createGETConnectionToServer(t.Context())
+	}()
+
+	select {
+	case <-done:
+		require.ErrorIs(t, connectErr, ErrSessionTerminated)
+	case <-time.After(2 * time.Second):
+		t.Fatal("GET 404 hung: sendHTTP closes the body before the caller cancels")
 	}
 }

@@ -909,12 +909,16 @@ func (c *StreamableHTTP) sendHTTP(
 
 	// universal handling for session terminated
 	if resp.StatusCode == http.StatusNotFound {
-		resp.Body.Close()
-		// A 404 for the GET stream may only mean that the server doesn't
-		// offer it, so listenForever decides.
-		if method != http.MethodGet {
-			c.endSession(sentSession)
+		// A 404 on the GET stream may only mean the server doesn't offer it,
+		// so the caller decides. Hand the body back: Close can block until
+		// the request context is canceled, and the caller cancels first.
+		// POST still closes here, then ends the session, before the caller
+		// sees the error.
+		if method == http.MethodGet {
+			return resp, ErrSessionTerminated
 		}
+		resp.Body.Close()
+		c.endSession(sentSession)
 		return nil, ErrSessionTerminated
 	}
 
@@ -1052,6 +1056,10 @@ func (c *StreamableHTTP) resumeSSE(ctx context.Context, cursor *sseCursor, handl
 	resp, err := c.sendHTTP(ctx, http.MethodGet, nil, "text/event-stream", header, false)
 	if err != nil {
 		cancel()
+		// A GET 404 comes back with the body still open.
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
 		return false, err
 	}
 	// Cancel before closing the body, as SendRequest does.
@@ -1349,6 +1357,10 @@ func (c *StreamableHTTP) createGETConnectionToServer(ctx context.Context) (opene
 	resp, err := c.sendHTTP(ctx, http.MethodGet, nil, "text/event-stream", nil, false)
 	if err != nil {
 		cancel()
+		// A GET 404 comes back with the body still open.
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
 		return false, fmt.Errorf("failed to send request: %w", err)
 	}
 	// Cancel the context before closing the body to prevent HTTP/2 drain hangs,
