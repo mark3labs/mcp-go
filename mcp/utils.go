@@ -712,6 +712,7 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		isError, _ := contentMap["isError"].(bool)
 		var contentItems []Content
 		if rawContent, ok := contentMap["content"].([]any); ok {
+			contentItems = make([]Content, 0, len(rawContent))
 			for i, item := range rawContent {
 				itemMap, ok := item.(map[string]any)
 				if !ok {
