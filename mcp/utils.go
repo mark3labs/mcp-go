@@ -720,6 +720,7 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 			if !ok {
 				return nil, fmt.Errorf("tool_result content: expected array, got %T", value)
 			}
+			contentItems = make([]Content, 0, len(rawContent))
 			for i, item := range rawContent {
 				itemMap, ok := item.(map[string]any)
 				if !ok {
