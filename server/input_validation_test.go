@@ -402,3 +402,61 @@ func TestInputSchemaValidation_ErrorKindReadable(t *testing.T) {
 		})
 	}
 }
+
+func TestInputSchemaValidation_PreservesLargeIntegerPrecision(t *testing.T) {
+	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
+	var handlerReceivedID int
+	tool := mcp.Tool{
+		Name: "check_even_id",
+		RawInputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"id": {"type": "integer", "multipleOf": 2, "minimum": 9007199254740993}
+			},
+			"required": ["id"],
+			"additionalProperties": false
+		}`),
+	}
+	srv.AddTool(tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		id, err := req.RequireInt("id")
+		if err != nil {
+			return nil, err
+		}
+		handlerReceivedID = id
+		return mcp.NewToolResultText("ok"), nil
+	})
+
+	// 9007199254740993 (2^53 + 1) rounds to 9007199254740992 (even) if decoded
+	// via float64, which would falsely satisfy multipleOf: 2 unless RawArguments
+	// is used for validation.
+	oddPayload := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"check_even_id","arguments":{"id":9007199254740993}}}`)
+	resp := srv.HandleMessage(t.Context(), oddPayload)
+	requireToolErrorContaining(t, resp, "id")
+
+	// 9007199254740994 (2^53 + 2) is even and >= 9007199254740993.
+	evenPayload := []byte(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"check_even_id","arguments":{"id":9007199254740994}}}`)
+	resp = srv.HandleMessage(t.Context(), evenPayload)
+	requireToolSuccess(t, resp)
+	require.Equal(t, 9007199254740994, handlerReceivedID)
+
+	// Verify a handler also receives an unrounded odd integer > 2^53 (2^53 + 1)
+	// when the schema permits it.
+	minTool := mcp.Tool{
+		Name: "check_min_id",
+		RawInputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"id": {"type": "integer", "minimum": 9007199254740993}
+			},
+			"required": ["id"],
+			"additionalProperties": false
+		}`),
+	}
+	srv.AddTool(minTool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		handlerReceivedID = req.GetInt("id", 0)
+		return mcp.NewToolResultText("ok"), nil
+	})
+	resp = srv.HandleMessage(t.Context(), []byte(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"check_min_id","arguments":{"id":9007199254740993}}}`))
+	requireToolSuccess(t, resp)
+	require.Equal(t, 9007199254740993, handlerReceivedID)
+}

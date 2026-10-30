@@ -192,6 +192,25 @@ func (r CallToolRequest) RequireString(key string) (string, error) {
 	return "", fmt.Errorf("required argument %q not found", key)
 }
 
+func (r CallToolRequest) rawIntArgument(key string) (int, bool) {
+	if len(r.Params.RawArguments) == 0 {
+		return 0, false
+	}
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(r.Params.RawArguments, &rawMap); err != nil {
+		return 0, false
+	}
+	rawVal, ok := rawMap[key]
+	if !ok {
+		return 0, false
+	}
+	i, err := strconv.Atoi(strings.TrimSpace(string(rawVal)))
+	if err != nil {
+		return 0, false
+	}
+	return i, true
+}
+
 // GetInt returns an int argument by key, or the default value if not found
 func (r CallToolRequest) GetInt(key string, defaultValue int) int {
 	args := r.GetArguments()
@@ -200,6 +219,9 @@ func (r CallToolRequest) GetInt(key string, defaultValue int) int {
 		case int:
 			return v
 		case float64:
+			if i, ok := r.rawIntArgument(key); ok {
+				return i
+			}
 			return int(v)
 		case string:
 			if i, err := strconv.Atoi(v); err == nil {
@@ -218,6 +240,9 @@ func (r CallToolRequest) RequireInt(key string) (int, error) {
 		case int:
 			return v, nil
 		case float64:
+			if i, ok := r.rawIntArgument(key); ok {
+				return i, nil
+			}
 			return int(v), nil
 		case string:
 			if i, err := strconv.Atoi(v); err == nil {
@@ -564,7 +589,7 @@ func (r CallToolResult) MarshalJSON() ([]byte, error) {
 	m["content"] = content
 
 	// Marshal StructuredContent if present
-	if len(r.RawStructuredContent) > 0 {
+	if trimmed := bytes.TrimSpace(r.RawStructuredContent); len(trimmed) > 0 && (r.StructuredContent == nil || !bytes.Equal(trimmed, []byte("null"))) {
 		m["structuredContent"] = json.RawMessage(r.RawStructuredContent)
 	} else if r.StructuredContent != nil {
 		m["structuredContent"] = r.StructuredContent
