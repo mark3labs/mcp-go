@@ -956,7 +956,7 @@ func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := r.URL.Path
-	if s.protectedResourceMetadataHandler != nil && path == s.protectedResourceMetadataPath {
+	if s.protectedResourceMetadataHandler != nil && matchProtectedResourceMetadataPath(r.URL.EscapedPath(), s.protectedResourceMetadataPath) {
 		s.protectedResourceMetadataHandler.ServeHTTP(w, r)
 		return
 	}
