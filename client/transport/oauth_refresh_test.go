@@ -254,3 +254,61 @@ func TestOAuthHandler_RefreshAfterAStaleRead(t *testing.T) {
 	assert.Equal(t, "Bearer new-access", header)
 	assert.Equal(t, int32(1), server.refreshes.Load(), "refresh requests")
 }
+
+// An access token that is about to expire is refreshed before it is used, so
+// that it does not expire on its way to the server, which would answer 401 and
+// send the caller back to authorize although the refresh token was still good.
+// A token that cannot be refreshed is used until it expires.
+func TestOAuthHandler_RefreshesShortlyBeforeExpiry(t *testing.T) {
+	tests := []struct {
+		name          string
+		expiresIn     time.Duration
+		refreshToken  string
+		wantHeader    string
+		wantRefreshes int32
+	}{
+		{
+			name:          "expires soon, refreshable",
+			expiresIn:     5 * time.Second,
+			refreshToken:  "single-use",
+			wantHeader:    "Bearer new-access",
+			wantRefreshes: 1,
+		},
+		{
+			name:          "expires soon, not refreshable",
+			expiresIn:     5 * time.Second,
+			wantHeader:    "Bearer old-access",
+			wantRefreshes: 0,
+		},
+		{
+			name:          "not about to expire",
+			expiresIn:     time.Hour,
+			refreshToken:  "single-use",
+			wantHeader:    "Bearer old-access",
+			wantRefreshes: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := newRefreshServer(t, singleUseTokens(0))
+			store := NewMemoryTokenStore()
+			require.NoError(t, store.SaveToken(t.Context(), &Token{
+				Issuer:       server.URL,
+				AccessToken:  "old-access",
+				TokenType:    "Bearer",
+				RefreshToken: tt.refreshToken,
+				ExpiresAt:    time.Now().Add(tt.expiresIn),
+			}))
+			handler := NewOAuthHandler(OAuthConfig{
+				ClientID:              "client",
+				TokenStore:            store,
+				AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
+			})
+
+			header, err := handler.GetAuthorizationHeader(t.Context())
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantHeader, header)
+			assert.Equal(t, tt.wantRefreshes, server.refreshes.Load(), "refresh requests")
+		})
+	}
+}

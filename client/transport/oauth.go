@@ -123,6 +123,23 @@ func (t *Token) IsExpired() bool {
 	return time.Now().After(t.ExpiresAt)
 }
 
+// tokenExpiryDelta is how long before its expiry a token is refreshed, so that
+// it does not expire on its way to the server, or on a server whose clock is
+// slightly ahead. golang.org/x/oauth2 uses the same margin.
+const tokenExpiryDelta = 10 * time.Second
+
+// needsRefresh reports whether the token should not be used as it is: it has
+// expired, or it can be refreshed and expires within tokenExpiryDelta. A token
+// that cannot be refreshed is used until it expires, since the alternative is
+// a new authorization.
+func (t *Token) needsRefresh() bool {
+	if t.IsExpired() {
+		return true
+	}
+	return t.RefreshToken != "" && !t.ExpiresAt.IsZero() &&
+		!time.Now().Add(tokenExpiryDelta).Before(t.ExpiresAt)
+}
+
 // MemoryTokenStore is a simple in-memory token store
 type MemoryTokenStore struct {
 	token *Token
@@ -332,7 +349,7 @@ func (h *OAuthHandler) getValidToken(ctx context.Context) (*Token, error) {
 	if err != nil && !errors.Is(err, ErrNoToken) {
 		return nil, err
 	}
-	if err == nil && !token.IsExpired() && token.AccessToken != "" {
+	if err == nil && !token.needsRefresh() && token.AccessToken != "" {
 		if err := h.checkKnownTokenIssuer(token); err != nil {
 			return nil, err
 		}
@@ -400,7 +417,7 @@ func (h *OAuthHandler) refreshStoredToken(ctx context.Context) (*Token, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !token.IsExpired() && token.AccessToken != "" {
+	if !token.needsRefresh() && token.AccessToken != "" {
 		if err := h.checkKnownTokenIssuer(token); err != nil {
 			return nil, err
 		}
