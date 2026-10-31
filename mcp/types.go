@@ -1964,19 +1964,19 @@ func (r GetTaskResult) MarshalJSON() ([]byte, error) {
 	var m map[string]any
 	if r.Legacy {
 		m = map[string]any{
-			"taskId":        r.Task.TaskId,
-			"status":        r.Task.Status,
-			"createdAt":     r.Task.CreatedAt,
-			"lastUpdatedAt": r.Task.LastUpdatedAt,
+			"taskId":        r.TaskId,
+			"status":        r.Status,
+			"createdAt":     r.CreatedAt,
+			"lastUpdatedAt": r.LastUpdatedAt,
 		}
-		if r.Task.StatusMessage != "" {
-			m["statusMessage"] = r.Task.StatusMessage
+		if r.StatusMessage != "" {
+			m["statusMessage"] = r.StatusMessage
 		}
-		if r.Task.TTL != nil {
-			m["ttl"] = *r.Task.TTL
+		if r.TTL != nil {
+			m["ttl"] = *r.TTL
 		}
-		if r.Task.PollInterval != nil {
-			m["pollInterval"] = *r.Task.PollInterval
+		if r.PollInterval != nil {
+			m["pollInterval"] = *r.PollInterval
 		}
 	} else {
 		m = marshalTaskToMap(r.Task)
