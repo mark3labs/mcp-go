@@ -45,6 +45,13 @@ type taskEntry struct {
 	cancelFunc context.CancelFunc // Function to cancel the task
 	done       chan struct{}      // Channel to signal task completion
 	completed  bool               // Whether the task has been completed (guards done channel closure)
+	// inputResponses holds responses delivered via tasks/update (SEP-2663).
+	inputResponses map[string]json.RawMessage
+	// inputReady is signalled each time tasks/update delivers new inputResponses.
+	inputReady chan struct{}
+	// inputRequests holds the pending input requests the task is waiting on
+	// when it is in the input_required state.
+	inputRequests mcp.InputRequests
 	// createdHookDone, under tasksMu, says the created hook has returned;
 	// until then the hook of a completion or cancellation waits in
 	// pendingHooks, which createTask runs after the created hook. A task's
@@ -255,6 +262,7 @@ type MCPServer struct {
 	tasks                        map[string]*taskEntry
 	expiredTasks                 map[string]time.Time // Tracks recently expired task IDs with expiration timestamp
 	maxConcurrentTasks           *int                 // Optional limit on concurrent running tasks
+	defaultTaskTTLMs             *int64               // Fallback TTL applied when client supplies none
 	activeTasks                  int                  // Current count of running (non-terminal) tasks
 	inflightCancels              sync.Map             // Maps request ID -> context.CancelFunc for in-flight requests
 	inputValidator               *inputSchemaValidator
@@ -677,6 +685,17 @@ func WithTaskCapabilities(list, cancel, toolCallTasks bool) ServerOption {
 	}
 }
 
+// WithDefaultTaskTTL sets a fallback TTL applied to every task created without
+// a client-supplied TTL. Ensures tasks are evicted even when modern SEP-2663
+// clients do not pass a task param.
+func WithDefaultTaskTTL(ttlMs int64) ServerOption {
+	return func(s *MCPServer) {
+		if ttlMs > 0 {
+			s.defaultTaskTTLMs = &ttlMs
+		}
+	}
+}
+
 // WithInstructions sets the server instructions for the client returned in the initialize response
 func WithInstructions(instructions string) ServerOption {
 	return func(s *MCPServer) {
@@ -713,6 +732,19 @@ func WithExperimental(experimental map[string]any) ServerOption {
 func WithExtensions(extensions map[string]any) ServerOption {
 	return func(s *MCPServer) {
 		s.capabilities.extensions = extensions
+	}
+}
+
+// WithTasksExtension advertises support for the MCP Tasks extension
+// in the server's capabilities.
+func WithTasksExtension() ServerOption {
+	return func(s *MCPServer) {
+		s.capabilitiesMu.Lock()
+		defer s.capabilitiesMu.Unlock()
+		if s.capabilities.extensions == nil {
+			s.capabilities.extensions = make(map[string]any)
+		}
+		s.capabilities.extensions[mcp.ExtensionTasks] = map[string]any{}
 	}
 }
 
@@ -2256,8 +2288,23 @@ func (s *MCPServer) handleToolCall(
 	}
 
 	// Validate task support requirements
+	clientDeclaredExtension := false
+	if info := RequestProtocolInfoFromContext(ctx); info != nil && info.Modern && info.ClientCapabilities != nil {
+		clientDeclaredExtension = info.ClientCapabilities.HasExtension(mcp.ExtensionTasks)
+	}
+
 	if tool.Tool.Execution != nil && tool.Tool.Execution.TaskSupport == mcp.TaskSupportRequired {
-		if request.Params.Task == nil {
+		// Modern protocol: client must declare the extension.
+		if info := RequestProtocolInfoFromContext(ctx); info != nil && info.Modern {
+			if !clientDeclaredExtension {
+				return nil, &requestError{
+					id:   id,
+					code: mcp.MISSING_REQUIRED_CLIENT_CAPABILITY,
+					err:  fmt.Errorf("tool '%s' requires the %s extension", request.Params.Name, mcp.ExtensionTasks),
+				}
+			}
+		} else if request.Params.Task == nil {
+			// Legacy: client must set the task param.
 			return nil, &requestError{
 				id:   id,
 				code: mcp.METHOD_NOT_FOUND,
@@ -2268,10 +2315,29 @@ func (s *MCPServer) handleToolCall(
 
 	// Check if this should be executed as a task (hybrid mode support)
 	// Tools with TaskSupportOptional or TaskSupportRequired can be executed as tasks
-	shouldExecuteAsTask := request.Params.Task != nil &&
-		tool.Tool.Execution != nil &&
-		(tool.Tool.Execution.TaskSupport == mcp.TaskSupportOptional ||
-			tool.Tool.Execution.TaskSupport == mcp.TaskSupportRequired)
+	var shouldExecuteAsTask bool
+	if info := RequestProtocolInfoFromContext(ctx); info != nil && info.Modern {
+		shouldExecuteAsTask = clientDeclaredExtension &&
+			tool.Tool.Execution != nil &&
+			(tool.Tool.Execution.TaskSupport == mcp.TaskSupportOptional ||
+				tool.Tool.Execution.TaskSupport == mcp.TaskSupportRequired)
+	} else {
+		shouldExecuteAsTask = request.Params.Task != nil &&
+			tool.Tool.Execution != nil &&
+			(tool.Tool.Execution.TaskSupport == mcp.TaskSupportOptional ||
+				tool.Tool.Execution.TaskSupport == mcp.TaskSupportRequired)
+	}
+
+	// Task-only tools (AddTaskTool) must always go through the task path.
+	// On modern protocol with extension declared, or legacy with task param set.
+	// Otherwise fall through to the error below.
+	if taskToolOnly {
+		if info := RequestProtocolInfoFromContext(ctx); info != nil && info.Modern && clientDeclaredExtension {
+			shouldExecuteAsTask = true
+		} else if request.Params.Task != nil {
+			shouldExecuteAsTask = true
+		}
+	}
 
 	if shouldExecuteAsTask {
 		// Route to task-augmented execution handler
@@ -2435,6 +2501,10 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 	if request.Params.Task != nil {
 		ttl = request.Params.Task.TTL
 	}
+	// Fall back to the server default when modern SEP-2663 clients don't pass task params.
+	if ttl == nil {
+		ttl = s.defaultTaskTTLMs
+	}
 
 	// Create task entry (pollInterval is nil - server doesn't set a default)
 	entry, err := s.createTask(ctx, taskID, request.Params.Name, ttl, nil)
@@ -2454,8 +2524,9 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 	taskCopy := entry.task
 	s.tasksMu.RUnlock()
 
-	// Execute tool asynchronously
-	// For regular tools being used as tasks, we need different execution logic
+	// Execute tool asynchronously. The goroutine's context is rooted at
+	// s.serverCtx, not the per-request ctx, so it outlives the originating
+	// request on every transport.
 	if hasTaskHandler {
 		go s.executeTaskTool(ctx, entry, toolToUse, request)
 	} else {
@@ -2463,10 +2534,14 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 		go s.executeRegularToolAsTask(ctx, entry, regularTool, request)
 	}
 
-	// Return CreateTaskResult immediately with task as top-level field
-	return &mcp.CreateTaskResult{
-		Task: taskCopy,
-	}, nil
+	// Return CreateTaskResult immediately.
+	result := &mcp.CreateTaskResult{Task: taskCopy}
+	if IsModernRequest(ctx) {
+		result.SetResultType(mcp.ResultTypeTask)
+	} else {
+		result.Legacy = true
+	}
+	return result, nil
 }
 
 // executeTaskTool executes a task tool handler asynchronously.
@@ -2484,8 +2559,10 @@ func (s *MCPServer) executeTaskTool(
 		}
 	}()
 
-	// Create cancellable context for this task execution
-	taskCtx, cancel := context.WithCancel(ctx)
+	// Preserve ctx values but strip the per-request cancel.
+	taskCtx, cancel := context.WithCancel(
+		context.WithoutCancel(ctx),
+	)
 	defer cancel()
 
 	// Register cancellation atomically with TTL cleanup, which may have
@@ -2523,22 +2600,26 @@ func (s *MCPServer) executeTaskTool(
 		return
 	}
 
-	// Task succeeded - store the CreateTaskResult
-	// Note: The actual result will be retrieved later via tasks/result
-	//
-	// Validate the StructuredContent against the tool's declared output
-	// schema when WithOutputSchemaValidation is enabled. If validation fails,
-	// persist a tool execution error in place of the bad result so the
-	// client cannot retrieve a result that violates the schema via
-	// tasks/result. handleTaskResult accepts both *CallToolResult and
-	// *CreateTaskResult, so storing a *CallToolResult here is safe.
 	if s.outputValidator != nil {
 		if _, vErr := s.outputValidator.validateCreateTaskResult(taskTool.Tool, result); vErr != nil {
 			s.completeTask(entry, validationToolResult(vErr), nil)
 			return
 		}
 	}
-	s.completeTask(entry, s.limitCreateTaskResult(result), nil)
+	// Apply size limiting via limitCreateTaskResult, then convert to
+	// *CallToolResult for storage. CreateTaskResult.Content/StructuredContent/IsError
+	// are tagged json:"-" so marshalling *CreateTaskResult in handleGetTask would
+	// silently drop all tool output; *CallToolResult marshals those fields correctly.
+	limited := s.limitCreateTaskResult(result)
+	callResult := &mcp.CallToolResult{
+		Result:  mcp.Result{Meta: limited.Meta},
+		Content: limited.Content,
+		IsError: limited.IsError,
+	}
+	if limited.StructuredContent != nil {
+		callResult.StructuredContent = limited.StructuredContent
+	}
+	s.completeTask(entry, callResult, nil)
 }
 
 // limitCreateTaskResult measures the payload tasks/result will copy out,
@@ -2566,7 +2647,6 @@ func (s *MCPServer) limitCreateTaskResult(result *mcp.CreateTaskResult) *mcp.Cre
 	return &stored
 }
 
-// executeRegularToolAsTask executes a regular tool handler asynchronously as a task.
 // This is used for hybrid mode where a tool with TaskSupportOptional is called with task params.
 func (s *MCPServer) executeRegularToolAsTask(
 	ctx context.Context,
@@ -2574,8 +2654,10 @@ func (s *MCPServer) executeRegularToolAsTask(
 	regularTool ServerTool,
 	request mcp.CallToolRequest,
 ) {
-	// Create cancellable context for this task execution
-	taskCtx, cancel := context.WithCancel(ctx)
+	// Preserve ctx values but strip the per-request cancel.
+	taskCtx, cancel := context.WithCancel(
+		context.WithoutCancel(ctx),
+	)
 	defer cancel()
 
 	// Register cancellation atomically with TTL cleanup, which may have
@@ -2607,6 +2689,7 @@ func (s *MCPServer) executeRegularToolAsTask(
 		// However, if cancelTask hasn't been called yet, we should still mark it.
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			_ = s.cancelTaskEntry(ctx, entry, err.Error())
+
 			return
 		}
 
@@ -2702,6 +2785,50 @@ func (s *MCPServer) handleGetTask(
 	id any,
 	request mcp.GetTaskRequest,
 ) (*mcp.GetTaskResult, *requestError) {
+	// For modern protocol (SEP-2663).
+	if IsModernRequest(ctx) {
+		entry, err := s.getTaskEntry(ctx, request.Params.TaskId)
+		if err != nil {
+			return nil, &requestError{
+				id:   id,
+				code: mcp.INVALID_PARAMS,
+				err:  err,
+			}
+		}
+
+		s.tasksMu.RLock()
+		taskCopy := entry.task
+		storedResult := entry.result
+		resultErr := entry.resultErr
+		pendingInputRequests := entry.inputRequests
+		s.tasksMu.RUnlock()
+
+		result := mcp.NewGetTaskResult(taskCopy)
+		result.SetResultType(mcp.ResultTypeComplete)
+
+		switch taskCopy.Status {
+		case mcp.TaskStatusCompleted:
+			if storedResult != nil {
+				raw, marshalErr := json.Marshal(storedResult)
+				if marshalErr == nil {
+					result.TaskResult = json.RawMessage(raw)
+				}
+			}
+		case mcp.TaskStatusFailed:
+			if resultErr != nil {
+				result.TaskError = &mcp.JSONRPCErrorDetails{
+					Code:    mcp.INTERNAL_ERROR,
+					Message: resultErr.Error(),
+				}
+			}
+		case mcp.TaskStatusInputRequired:
+			result.InputRequests = pendingInputRequests
+		}
+
+		return &result, nil
+	}
+
+	// Legacy path: return task state only.
 	task, _, err := s.getTask(ctx, request.Params.TaskId)
 	if err != nil {
 		return nil, &requestError{
@@ -2711,8 +2838,57 @@ func (s *MCPServer) handleGetTask(
 		}
 	}
 
-	result := mcp.NewGetTaskResult(task)
-	return &result, nil
+	r := mcp.NewGetTaskResult(task)
+	r.Legacy = true
+	return &r, nil
+}
+
+// handleUpdateTask handles tasks/update requests.
+func (s *MCPServer) handleUpdateTask(
+	ctx context.Context,
+	id any,
+	request mcp.UpdateTaskRequest,
+) (*mcp.UpdateTaskResult, *requestError) {
+	entry, err := s.getTaskEntry(ctx, request.Params.TaskId)
+	if err != nil {
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  err,
+		}
+	}
+
+	// Deliver responses to the task's pending input channel.
+	s.tasksMu.Lock()
+	if entry.task.Status != mcp.TaskStatusInputRequired {
+		s.tasksMu.Unlock()
+		return nil, &requestError{
+			id:   id,
+			code: mcp.INVALID_PARAMS,
+			err:  fmt.Errorf("task %q is not awaiting input (status: %s)", request.Params.TaskId, entry.task.Status),
+		}
+	}
+	if entry.inputResponses == nil {
+		entry.inputResponses = make(map[string]json.RawMessage)
+	}
+	for key, response := range request.Params.InputResponses {
+		raw, marshalErr := json.Marshal(response)
+		if marshalErr == nil {
+			entry.inputResponses[key] = json.RawMessage(raw)
+		}
+	}
+	// Signal the task handler that responses are available.
+	if entry.inputReady != nil {
+		select {
+		case entry.inputReady <- struct{}{}:
+		default:
+		}
+	}
+	s.tasksMu.Unlock()
+
+	result := &mcp.UpdateTaskResult{}
+	result.SetResultType(mcp.ResultTypeComplete)
+	return result, nil
 }
 
 // handleListTasks handles tasks/list requests to list all tasks.
@@ -2864,7 +3040,14 @@ func (s *MCPServer) handleCancelTask(
 		}
 	}
 
-	// Get the updated task
+	// Modern protocol (SEP-2663): ack-only, no task state in response.
+	if IsModernRequest(ctx) {
+		result := mcp.CancelTaskResult{}
+		result.SetResultType(mcp.ResultTypeComplete)
+		return &result, nil
+	}
+
+	// Legacy: return the cancelled task state.
 	task, _, err := s.getTask(ctx, request.Params.TaskId)
 	if err != nil {
 		return nil, &requestError{
@@ -3175,10 +3358,12 @@ func (s *MCPServer) cancelTask(ctx context.Context, taskID string) error {
 // cancelTaskEntry records a cancellation and invokes observers after unlocking.
 func (s *MCPServer) cancelTaskEntry(ctx context.Context, entry *taskEntry, message string) error {
 	s.tasksMu.Lock()
+
+	// Task already reached a terminal state — ack silently per SEP-2663.
+	// "The server MUST acknowledge the request with an empty result."
 	if entry.completed {
-		status := entry.task.Status
 		s.tasksMu.Unlock()
-		return fmt.Errorf("cannot cancel task in terminal status: %s", status)
+		return nil
 	}
 	cancel := entry.cancelFunc
 	cancelledAt := time.Now()
@@ -3253,16 +3438,22 @@ func (s *MCPServer) sendTaskStatusNotification(task mcp.Task) {
 		"lastUpdatedAt": task.LastUpdatedAt,
 	}
 
+	if task.TTL != nil {
+		taskMap["ttl"] = *task.TTL   // legacy field name (2025-11-25)
+		taskMap["ttlMs"] = *task.TTL // SEP-2663 field name
+	}
+
 	if task.StatusMessage != "" {
 		taskMap["statusMessage"] = task.StatusMessage
 	}
-	if task.TTL != nil {
-		taskMap["ttl"] = *task.TTL
-	}
 	if task.PollInterval != nil {
-		taskMap["pollInterval"] = *task.PollInterval
+		taskMap["pollInterval"] = *task.PollInterval   // legacy field name (2025-11-25)
+		taskMap["pollIntervalMs"] = *task.PollInterval // SEP-2663 field name
 	}
 
+	// Broadcast to all sessions. Each client honours
+	// the method it subscribed to and ignores the other.
+	s.SendNotificationToAllClients(mcp.MethodNotificationTasks, taskMap)
 	s.SendNotificationToAllClients(mcp.MethodNotificationTasksStatus, taskMap)
 }
 

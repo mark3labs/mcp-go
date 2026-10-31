@@ -417,6 +417,26 @@ s := server.NewMCPServer(
 
 When the limit is reached, new task creation requests will fail with an error. Completed, failed, or cancelled tasks don't count toward the limit - only tasks in "working" status. If `WithMaxConcurrentTasks` is not specified or set to 0, there is no limit on concurrent tasks.
 
+##### Transport Considerations for Task Handlers
+
+Task handlers run as background goroutines whose context is rooted at the server's own lifetime (`s.serverCtx`), not the per-request context. This means the handler context is **not** cancelled when `HandleMessage` returns, it stays alive until `tasks/cancel` is called or the server shuts down.
+
+Blocking on `ctx.Done()` is therefore safe and is the recommended way to honour cancellation:
+
+```go
+s.AddTaskTool(myTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+    for _, item := range items {
+        select {
+        case <-ctx.Done():
+            return nil, ctx.Err()
+        case <-time.After(perItemDelay * time.Millisecond):
+        }
+        processItem(item)
+    }
+    return result, nil
+})
+```
+
 For traditional synchronous tools that execute and return results immediately:
 
 Simple calculation example:
@@ -535,6 +555,43 @@ Each tool should:
 - Use appropriate result types
 
 </details>
+
+
+##### Task Authorization
+
+SEP-2663 requires servers to authenticate and authorize every task-related request (`tasks/get`, `tasks/cancel`, `tasks/result`, `tasks/list`, `tasks/update`). The SDK enforces the following default policy:
+
+| Task session | Request session | Result |
+|---|---|---|
+| set | set, **same** | Allowed |
+| set | set, **different** | Denied (`task not found`, to avoid enumeration) |
+| **empty** | any | Allowed — bearer-token model |
+| any | **empty** | Allowed — bearer-token model |
+
+**Bearer-token default.** When either side has no session (e.g. stdio, in-process, or a task created outside a session), possessing the task ID is the only credential. This is the bearer-token model explicitly permitted by SEP-2663: sufficient entropy that a third party cannot enumerate or guess them. This is the intended default for session-less transports.
+
+**Enforcing application-level authorization.** Applications that need finer-grained control (per-user or per-tenant access) can use two existing extension points:
+
+1. **HTTP middleware** on the transport layer. An outer `http.Handler` can validate credentials, attach identity to the request context, and reject unauthorized requests before `HandleMessage` is called. This enforces session-level authorization, one auth token per connection. Since session IDs are assigned per-connection, a session already implies a single authenticated client when the transport enforces one auth token per session. (See `TestTaskAccessControl_HTTPMiddleware` and `TestTaskAccessControl_HTTPMiddlewareIdentityFlowsToHook` in `server/task_auth_contract_test.go`.)
+
+2. **`OnBefore*` hooks** (`AddBeforeGetTask`, `AddBeforeCancelTask`, `AddBeforeUpdateTask`, etc.). These hooks fire before every task operation and receive the full request context. Transport middleware can store authenticated identity in `ctx`, the hook can read it for task-level authorization checks. e.g. confirming the caller owns the specific task ID. The hooks are fire-and-forget and cannot return errors, rejection must be enforced at the transport layer (e.g. HTTP middleware) using a signal set by the hook. (See `TestTaskAccessControl_OnBeforeHookExtensionPoint` in `server/task_auth_contract_test.go`.)
+
+```go
+hooks := &server.Hooks{}
+hooks.AddBeforeGetTask(func(ctx context.Context, id any, req *mcp.GetTaskRequest) {
+    // read identity stored by transport middleware
+    user := ctx.Value(userKey{})
+    if !user.CanAccess(req.Params.TaskId) {
+        // hooks cannot return errors directly, terminate via transport middleware
+        // or use a context cancellation mechanism at the HTTP layer
+    }
+})
+
+s := server.NewMCPServer("My Server", "1.0.0",
+    server.WithTaskCapabilities(true, true, true),
+    server.WithHooks(hooks),
+)
+```
 
 ### Prompts
 

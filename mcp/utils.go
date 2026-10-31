@@ -1323,6 +1323,30 @@ func GetTextFromContent(content any) string {
 	}
 }
 
+// jsonToTask fills TTL and PollInterval from the SEP-2663 wire names (ttlMs,
+// pollIntervalMs). The Task struct uses the legacy JSON tags (ttl, pollInterval)
+// so plain json.Unmarshal decodes legacy names correctly but skips ttlMs/pollIntervalMs;
+// this helper fills the gap. It only overrides fields that json.Unmarshal left nil,
+// to avoid clobbering a precisely-decoded integer value with a lossy float64.
+func jsonToTask(jsonContent map[string]any, result *GetTaskResult) {
+	if result.TTL == nil {
+		if ttl, ok := jsonContent["ttlMs"]; ok {
+			if ttlFloat, ok := ttl.(float64); ok {
+				ttlInt64 := int64(ttlFloat)
+				result.TTL = &ttlInt64
+			}
+		}
+	}
+	if result.PollInterval == nil {
+		if pollInterval, ok := jsonContent["pollIntervalMs"]; ok {
+			if pollIntervalFloat64, ok := pollInterval.(float64); ok {
+				pollIntervalInt := int64(pollIntervalFloat64)
+				result.PollInterval = &pollIntervalInt
+			}
+		}
+	}
+}
+
 // ParseCancelTaskResult parses a JSON message and converts it to a CancelTaskResult.
 func ParseCancelTaskResult(rawMessage *json.RawMessage) (*CancelTaskResult, error) {
 	if rawMessage == nil {
@@ -1331,6 +1355,14 @@ func ParseCancelTaskResult(rawMessage *json.RawMessage) (*CancelTaskResult, erro
 	var result CancelTaskResult
 	if err := json.Unmarshal(*rawMessage, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	// Fix up ttlMs/pollIntervalMs: Task struct tags use legacy names so plain
+	// json.Unmarshal won't decode them from SEP-2663 wire format.
+	var jsonContent map[string]any
+	if err := json.Unmarshal(*rawMessage, &jsonContent); err == nil {
+		getResult := GetTaskResult{Task: result.Task}
+		jsonToTask(jsonContent, &getResult)
+		result.Task = getResult.Task
 	}
 	return &result, nil
 }
@@ -1343,6 +1375,24 @@ func ParseListTasksResult(rawMessage *json.RawMessage) (*ListTasksResult, error)
 	var result ListTasksResult
 	if err := json.Unmarshal(*rawMessage, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	// Fix up ttlMs/pollIntervalMs for each task: Task struct tags use legacy
+	// names so plain json.Unmarshal skips SEP-2663 wire names.
+	var envelope struct {
+		Tasks []json.RawMessage `json:"tasks"`
+	}
+	if err := json.Unmarshal(*rawMessage, &envelope); err == nil {
+		for i, raw := range envelope.Tasks {
+			if i >= len(result.Tasks) {
+				break
+			}
+			var taskMap map[string]any
+			if err := json.Unmarshal(raw, &taskMap); err == nil {
+				tmp := GetTaskResult{Task: result.Tasks[i]}
+				jsonToTask(taskMap, &tmp)
+				result.Tasks[i] = tmp.Task
+			}
+		}
 	}
 	return &result, nil
 }
@@ -1395,6 +1445,35 @@ func ParseGetTaskResult(rawMessage *json.RawMessage) (*GetTaskResult, error) {
 		return nil, fmt.Errorf("response is nil")
 	}
 	var result GetTaskResult
+	if err := json.Unmarshal(*rawMessage, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	// Fix up ttlMs/pollIntervalMs from SEP-2663 wire format.
+	var jsonContent map[string]any
+	if err := json.Unmarshal(*rawMessage, &jsonContent); err == nil {
+		jsonToTask(jsonContent, &result)
+	}
+	// Populate SEP-2663 inline fields (result, error, inputRequests).
+	var sep struct {
+		TaskResult    json.RawMessage      `json:"result"`
+		TaskError     *JSONRPCErrorDetails `json:"error"`
+		InputRequests InputRequests        `json:"inputRequests"`
+	}
+	if err := json.Unmarshal(*rawMessage, &sep); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal SEP-2663 task fields: %w", err)
+	}
+	result.TaskResult = sep.TaskResult
+	result.TaskError = sep.TaskError
+	result.InputRequests = sep.InputRequests
+	return &result, nil
+}
+
+// ParseUpdateTaskResult parses a JSON message and converts it to an UpdateTaskResult.
+func ParseUpdateTaskResult(rawMessage *json.RawMessage) (*UpdateTaskResult, error) {
+	if rawMessage == nil {
+		return nil, fmt.Errorf("response is nil")
+	}
+	var result UpdateTaskResult
 	if err := json.Unmarshal(*rawMessage, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
