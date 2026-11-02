@@ -645,15 +645,25 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	// Body has already been buffered by the caller (ServeHTTP or Handle).
 	rawData := r.Body
 	// First, try to parse as a response (sampling responses don't have a method field)
-	var jsonMessage struct {
+	type postEnvelope struct {
 		ID     json.RawMessage `json:"id"`
 		Result json.RawMessage `json:"result,omitempty"`
 		Error  json.RawMessage `json:"error,omitempty"`
 		Method mcp.MCPMethod   `json:"method,omitempty"`
 	}
+	var jsonMessage struct {
+		postEnvelope
+		Params struct {
+			Meta *mcp.Meta `json:"_meta"`
+		} `json:"params"`
+	}
 	if err := json.Unmarshal(rawData, &jsonMessage); err != nil {
-		s.writeJSONRPCError(w, nil, mcp.PARSE_ERROR, "request body is not valid json")
-		return
+		jsonMessage.postEnvelope = postEnvelope{}
+		jsonMessage.Params.Meta = nil
+		if err := json.Unmarshal(rawData, &jsonMessage.postEnvelope); err != nil {
+			s.writeJSONRPCError(w, nil, mcp.PARSE_ERROR, "request body is not valid json")
+			return
+		}
 	}
 
 	isInitializeRequest := jsonMessage.Method == mcp.MethodInitialize
@@ -662,7 +672,7 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	// its shape. Protocol version 2026-07-28 removed protocol-level sessions,
 	// so a modern message never carries, mints, or echoes a session ID
 	// (SEP-2567), and must not reach a session-dependent path.
-	era := detectRequestEra(r.header(), rawData)
+	era := detectRequestEra(r.header(), jsonMessage.Params.Meta)
 
 	// The header is only required after initialize, which negotiates the
 	// version itself. Responses posted by the client are checked as well.
@@ -715,7 +725,7 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 				http.StatusBadRequest)
 			return
 		}
-		if err := s.handleSamplingResponse(w, r, jsonMessage); err != nil {
+		if err := s.handleSamplingResponse(w, r, jsonMessage.postEnvelope); err != nil {
 			s.logger.Error("Failed to handle sampling response", "err", err)
 			// HTTP Status code is already set in handleSamplingResponse, just return here
 		}

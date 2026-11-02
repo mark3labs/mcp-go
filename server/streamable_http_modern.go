@@ -75,16 +75,10 @@ type requestEra struct {
 // A request is modern when either source names 2026-07-28 or later; naming it
 // in only one of the two is a header mismatch, reported separately by
 // [StreamableHTTPServer.validateModernRequest].
-func detectRequestEra(header http.Header, body []byte) requestEra {
-	era := requestEra{headerVersion: header.Get(mcp.HeaderProtocolVersion)}
-
-	var wrapper struct {
-		Params struct {
-			Meta *mcp.Meta `json:"_meta"`
-		} `json:"params"`
-	}
-	if json.Unmarshal(body, &wrapper) == nil {
-		era.metaVersion = wrapper.Params.Meta.ProtocolVersion()
+func detectRequestEra(header http.Header, meta *mcp.Meta) requestEra {
+	era := requestEra{
+		headerVersion: header.Get(mcp.HeaderProtocolVersion),
+		metaVersion:   meta.ProtocolVersion(),
 	}
 
 	era.modern = mcp.IsModernProtocol(era.metaVersion) || mcp.IsModernProtocol(era.headerVersion)
