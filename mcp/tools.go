@@ -729,7 +729,9 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 		m["outputSchema"] = t.OutputSchema
 	}
 
-	m["annotations"] = t.Annotations
+	if t.Annotations != (ToolAnnotation{}) {
+		m["annotations"] = t.Annotations
+	}
 
 	if t.DeferLoading {
 		m["defer_loading"] = t.DeferLoading
@@ -1230,6 +1232,15 @@ func WithOutputSchema[T any]() ToolOption {
 func WithRawOutputSchema(schema json.RawMessage) ToolOption {
 	return func(t *Tool) {
 		t.RawOutputSchema = schema
+	}
+}
+
+// WithoutDefaultAnnotations clears the default hints that NewTool sets, so the
+// tool sends no annotations unless later options set some. Place it before
+// any other annotation option, since it clears those set before it.
+func WithoutDefaultAnnotations() ToolOption {
+	return func(t *Tool) {
+		t.Annotations = ToolAnnotation{}
 	}
 }
 
