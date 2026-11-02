@@ -177,6 +177,8 @@ type StreamableHTTP struct {
 	closed    chan struct{}
 	closeOnce sync.Once
 
+	retryInterval time.Duration
+
 	// OAuth support
 	oauthHandler *OAuthHandler
 }
@@ -198,6 +200,7 @@ func NewStreamableHTTP(serverURL string, options ...StreamableHTTPCOption) (*Str
 		initialized: make(chan struct{}),
 
 		maxMessageBytes: DefaultMaxMessageBytes,
+		retryInterval:   retryInterval,
 	}
 	smc.sessionID.Store("") // set initial value to simplify later usage
 
@@ -1363,7 +1366,7 @@ func (c *StreamableHTTP) listenForever(ctx context.Context) {
 
 		// Use context-aware sleep
 		select {
-		case <-time.After(retryInterval):
+		case <-time.After(c.retryInterval):
 		case <-ctx.Done():
 			return
 		}
