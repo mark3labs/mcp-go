@@ -212,6 +212,22 @@ input a client has not declared. Manual mode covers multi round-trip results
 only: on a connection that negotiated an earlier protocol version, the server
 sends its requests directly and they still need handlers.
 
+A relay that serves several callers over one client can declare each caller's
+capabilities per request instead. Capabilities set with
+`client.WithRequestClientCapabilities` on a call's context replace the client's
+own in that request's `_meta`:
+
+```go
+// This caller can answer elicitation, but not sampling or roots.
+ctx = client.WithRequestClientCapabilities(ctx, mcp.ClientCapabilities{
+    Elicitation: &mcp.ElicitationCapability{},
+})
+result, err := c.CallTool(ctx, req)
+```
+
+Per-request capabilities apply to protocol version 2026-07-28 and later. An
+earlier connection declares its capabilities once, at initialize.
+
 ### Subscriptions
 
 ```go

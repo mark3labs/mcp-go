@@ -87,7 +87,7 @@ func TestSetLevelIsSafeForConcurrentUse(t *testing.T) {
 		})
 		wg.Go(func() {
 			for range 50 {
-				c.applyRequestMeta(map[string]any{"name": "tool"})
+				c.applyRequestMeta(t.Context(), map[string]any{"name": "tool"})
 			}
 		})
 	}
