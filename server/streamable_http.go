@@ -420,7 +420,7 @@ func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		}
 		s.corsConfig.applySimple(w, r)
 	}
-	if s.protectedResourceMetadataHandler != nil && r.URL.Path == s.protectedResourceMetadataPath {
+	if s.protectedResourceMetadataHandler != nil && matchProtectedResourceMetadataPath(r.URL.EscapedPath(), s.protectedResourceMetadataPath) {
 		s.protectedResourceMetadataHandler.ServeHTTP(w, r)
 		return
 	}
