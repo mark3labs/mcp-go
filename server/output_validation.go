@@ -62,7 +62,11 @@ func (v *outputSchemaValidator) validate(tool mcp.Tool, result *mcp.CallToolResu
 	if v == nil || result == nil {
 		return false, nil
 	}
-	return v.validateStructured(tool, result.StructuredContent, result.IsError)
+	structured := result.StructuredContent
+	if trimmed := bytes.TrimSpace(result.RawStructuredContent); len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) {
+		structured = result.RawStructuredContent
+	}
+	return v.validateStructured(tool, structured, result.IsError)
 }
 
 // validateCreateTaskResult is the *mcp.CreateTaskResult counterpart to
