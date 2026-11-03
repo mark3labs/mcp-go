@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -380,7 +379,7 @@ func (c *SSE) start(ctx context.Context) error {
 func (c *SSE) readSSE(reader io.ReadCloser, endpointChan chan struct{}, endpointOnce *sync.Once) {
 	defer reader.Close()
 
-	br := bufio.NewReader(reader)
+	lines := newSSELineReader(reader)
 	var event, data string
 
 	// end handles the stream ending with err.
@@ -415,14 +414,12 @@ func (c *SSE) readSSE(reader io.ReadCloser, endpointChan chan struct{}, endpoint
 	for {
 		// when close or start's ctx cancel, the reader will be closed
 		// and the for loop will break.
-		line, err := readSSELine(br, c.maxMessageBytes)
+		line, err := lines.readLine(c.maxMessageBytes)
 		if err != nil {
 			end(err)
 			return
 		}
 
-		// Remove only newline markers
-		line = strings.TrimRight(line, "\r\n")
 		if line == "" {
 			// Empty line means end of event
 			if data != "" {

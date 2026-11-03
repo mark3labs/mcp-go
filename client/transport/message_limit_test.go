@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -60,24 +61,34 @@ func TestReadSSELine(t *testing.T) {
 		{name: "under the bound", line: "data: " + strings.Repeat("x", 10) + "\n", limit: 16},
 		{name: "data at the bound", line: "data: " + strings.Repeat("x", 16) + "\r\n", limit: 16},
 		{name: "event field at the bound", line: "event: " + strings.Repeat("x", 16) + "\r\n", limit: 16},
+		{name: "LF event field at the bound", line: "event: " + strings.Repeat("x", 16) + "\n", limit: 16},
+		{name: "LF event field one byte over", line: "event: " + strings.Repeat("x", 17) + "\n", limit: 16, wantErr: ErrMessageTooLarge},
+		{name: "CRLF event field one byte over", line: "event: " + strings.Repeat("x", 17) + "\r\n", limit: 16, wantErr: ErrMessageTooLarge},
+		{name: "CR data at the bound", line: "data: " + strings.Repeat("x", 16) + "\r", limit: 16},
+		{name: "CR event field at the bound", line: "event: " + strings.Repeat("x", 16) + "\r", limit: 16},
+		{name: "CR event field one byte over", line: "event: " + strings.Repeat("x", 17) + "\r", limit: 16, wantErr: ErrMessageTooLarge},
+		{name: "CR over the bound", line: "data: " + strings.Repeat("x", 32) + "\r", limit: 16, wantErr: ErrMessageTooLarge},
 		{name: "over the bound", line: "data: " + strings.Repeat("x", 32) + "\n", limit: 16, wantErr: ErrMessageTooLarge},
 		{name: "longer than the read buffer", line: "data: " + strings.Repeat("x", 3*4096) + "\n", limit: 4 * 4096},
 		{name: "over the bound past the read buffer", line: "data: " + strings.Repeat("x", 3*4096) + "\n", limit: 4096, wantErr: ErrMessageTooLarge},
 		{name: "no bound when disabled", line: "data: " + strings.Repeat("x", 3*4096) + "\n", limit: 0},
+		{name: "no bound when negative", line: "data: " + strings.Repeat("x", 3*4096) + "\r", limit: -1},
+		{name: "maximum bound", line: "data: content\r", limit: math.MaxInt64},
+		{name: "larger than scanner limit", line: "data: " + strings.Repeat("x", 128*1024) + "\r\n", limit: 128 * 1024},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			br := bufio.NewReaderSize(strings.NewReader(tt.line+"data: next\n"), 4096)
-			got, err := readSSELine(br, tt.limit)
+			lines := newSSELineReader(bufio.NewReaderSize(strings.NewReader(tt.line+"data: next\n"), 4096))
+			got, err := lines.readLine(tt.limit)
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, tt.line, got)
-			next, err := readSSELine(br, tt.limit)
+			assert.Equal(t, strings.TrimRight(tt.line, "\r\n"), got)
+			next, err := lines.readLine(tt.limit)
 			require.NoError(t, err)
-			assert.Equal(t, "data: next\n", next)
+			assert.Equal(t, "data: next", next)
 		})
 	}
 }
@@ -146,6 +157,9 @@ func TestStreamableHTTP_ResponseIsBounded(t *testing.T) {
 		{name: "event line over the bound", respond: eventStream("event: message\ndata: " + pingResult(8192) + "\n\n"), opts: []StreamableHTTPCOption{bound}, wantErr: ErrMessageTooLarge},
 		{name: "event line without an end", respond: eventStream("data: " + strings.Repeat("x", 8192)), opts: []StreamableHTTPCOption{bound}, wantErr: ErrMessageTooLarge},
 		{name: "event data lines over the bound", respond: eventStream(splitData(pingResult(8192))), opts: []StreamableHTTPCOption{bound}, wantErr: ErrMessageTooLarge},
+		{name: "CR event under the bound", respond: eventStream("event: message\rdata: " + pingResult(100) + "\r\r"), opts: []StreamableHTTPCOption{bound}},
+		{name: "CR event line over the bound", respond: eventStream("data: " + pingResult(8192) + "\r\r"), opts: []StreamableHTTPCOption{bound}, wantErr: ErrMessageTooLarge},
+		{name: "CR event data lines over the bound", respond: eventStream(strings.ReplaceAll(splitData(pingResult(8192)), "\n", "\r")), opts: []StreamableHTTPCOption{bound}, wantErr: ErrMessageTooLarge},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -183,6 +197,9 @@ func TestSSE_EventIsBounded(t *testing.T) {
 		{name: "event under the bound", body: "data: " + strings.Repeat("x", 100) + "\n\n", wantErr: io.EOF},
 		{name: "event line over the bound", body: "data: " + strings.Repeat("x", 8192) + "\n\n", wantErr: ErrMessageTooLarge},
 		{name: "event data lines over the bound", body: strings.Repeat("data: "+strings.Repeat("x", 512)+"\n", 16) + "\n", wantErr: ErrMessageTooLarge},
+		{name: "CR event under the bound", body: "data: " + strings.Repeat("x", 100) + "\r\r", wantErr: io.EOF},
+		{name: "CR event line over the bound", body: "data: " + strings.Repeat("x", 8192) + "\r\r", wantErr: ErrMessageTooLarge},
+		{name: "CR event data lines over the bound", body: strings.Repeat("data: "+strings.Repeat("x", 512)+"\r", 16) + "\r", wantErr: ErrMessageTooLarge},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
