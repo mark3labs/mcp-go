@@ -667,6 +667,9 @@ func (e *AuthorizationRequiredError) Unwrap() error {
 type OAuthAuthorizationRequiredError struct {
 	Handler *OAuthHandler
 	AuthorizationRequiredError
+
+	// cause is the handler error that required authorization, if any.
+	cause error
 }
 
 func (e *OAuthAuthorizationRequiredError) Error() string {
@@ -674,6 +677,10 @@ func (e *OAuthAuthorizationRequiredError) Error() string {
 }
 
 func (e *OAuthAuthorizationRequiredError) Unwrap() error {
+	// The cause matches ErrOAuthAuthorizationRequired too, so errors.Is keeps working.
+	if e.cause != nil {
+		return e.cause
+	}
 	return ErrOAuthAuthorizationRequired
 }
 
@@ -902,6 +909,7 @@ func (c *StreamableHTTP) sendHTTP(
 			if errors.Is(err, ErrOAuthAuthorizationRequired) {
 				return nil, &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
+					cause:   err,
 					AuthorizationRequiredError: AuthorizationRequiredError{
 						ResourceMetadataURL: "", // No response available in this code path
 					},

@@ -356,11 +356,12 @@ func (h *OAuthHandler) getValidToken(ctx context.Context) (*Token, error) {
 		return nil, ctx.Err()
 	}
 	if refresh.err != nil {
-		// If refresh fails, continue to authorization flow
-		if errors.Is(refresh.err, ErrAuthorizationServerChanged) || errors.Is(refresh.err, ErrOAuthAuthorizationRequired) {
+		// If refresh fails, continue to authorization flow, keeping the
+		// failure inspectable (a revoked grant vs. an unreachable server).
+		if errors.Is(refresh.err, ErrOAuthAuthorizationRequired) {
 			return nil, refresh.err
 		}
-		return nil, ErrOAuthAuthorizationRequired
+		return nil, errors.Join(ErrOAuthAuthorizationRequired, refresh.err)
 	}
 	return refresh.token, nil
 }

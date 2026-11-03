@@ -286,6 +286,7 @@ func (c *SSE) start(ctx context.Context) error {
 			if errors.Is(err, ErrOAuthAuthorizationRequired) {
 				return &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
+					cause:   err,
 					AuthorizationRequiredError: AuthorizationRequiredError{
 						ResourceMetadataURL: "", // No response available in this code path
 					},
@@ -618,6 +619,7 @@ func (c *SSE) SendRequest(
 			if errors.Is(err, ErrOAuthAuthorizationRequired) {
 				return nil, &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
+					cause:   err,
 					AuthorizationRequiredError: AuthorizationRequiredError{
 						ResourceMetadataURL: "", // No response available in this code path
 					},
@@ -820,6 +822,7 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 			if errors.Is(err, ErrOAuthAuthorizationRequired) {
 				return &OAuthAuthorizationRequiredError{
 					Handler: c.oauthHandler,
+					cause:   err,
 					AuthorizationRequiredError: AuthorizationRequiredError{
 						ResourceMetadataURL: "", // No response available in this code path
 					},
