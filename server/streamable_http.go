@@ -188,9 +188,10 @@ func WithDisableLocalhostProtection(disable bool) StreamableHTTPOption {
 // Matching is case-insensitive. An entry without a port ("mcp.example.com")
 // matches that host on any port; an entry with a port
 // ("mcp.example.com:8080") matches only that port, where a Host header
-// without a port also matches entries for port 80 or 443. IPv6 literals may
-// be given with or without brackets. Calling WithAllowedHosts with no hosts
-// clears the allowlist, restoring the default loopback-only protection.
+// without a port also matches entries for port 80 or 443. IP literals are
+// compared by address, and IPv6 literals may be given with or without
+// brackets. Calling WithAllowedHosts with no hosts clears the allowlist,
+// restoring the default loopback-only protection.
 // WithDisableLocalhostProtection(true) disables the allowlist as well.
 func WithAllowedHosts(hosts ...string) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {

@@ -33,24 +33,28 @@ func isLoopbackHost(addr string) bool {
 }
 
 // splitAuthority splits a Host header value or allowlist entry into a
-// lowercased host and an optional port. IPv6 literals are returned without
-// brackets, so "[fe80::1]", "fe80::1" and "[fe80::1]:8080" all yield the host
-// "fe80::1".
+// lowercased host and an optional port. IP literals are returned in canonical
+// form without brackets, so "[fe80::1]", "fe80::1", "[FE80:0:0::1]" and
+// "[fe80::1]:8080" all yield the host "fe80::1".
 func splitAuthority(authority string) (host, port string) {
 	authority = strings.ToLower(strings.TrimSpace(authority))
 	host, port, err := net.SplitHostPort(authority)
 	if err != nil {
-		return strings.Trim(authority, "[]"), ""
+		host, port = strings.Trim(authority, "[]"), ""
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		host = addr.String()
 	}
 	return host, port
 }
 
 // hostAllowed reports whether reqHost, a request's Host header, matches one
-// of allowedHosts. Matching is case-insensitive. An entry without a port
-// ("mcp.example.com") matches that host on any port. An entry with a port
-// ("mcp.example.com:9090") matches only that exact authority; because
-// browsers omit default ports from the Host header, a Host without a port
-// also matches entries for port 80 or 443. Empty entries never match.
+// of allowedHosts. Matching is case-insensitive and compares IP literals by
+// address. An entry without a port ("mcp.example.com") matches that host on
+// any port. An entry with a port ("mcp.example.com:9090") matches only that
+// exact authority; because browsers omit default ports from the Host header,
+// a Host without a port also matches entries for port 80 or 443. Empty
+// entries never match.
 func hostAllowed(reqHost string, allowedHosts []string) bool {
 	reqName, reqPort := splitAuthority(reqHost)
 	if reqName == "" {

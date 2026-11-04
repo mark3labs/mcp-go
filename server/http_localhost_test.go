@@ -224,6 +224,8 @@ func TestHostAllowed(t *testing.T) {
 		{name: "bracketed ipv6 host, unbracketed entry", reqHost: "[fe80::1]", allowedHosts: []string{"fe80::1"}, want: true},
 		{name: "ipv6 host with port, bracketed entry", reqHost: "[fe80::1]:8080", allowedHosts: []string{"[fe80::1]"}, want: true},
 		{name: "ipv6 host with port, unbracketed entry", reqHost: "[fe80::1]:8080", allowedHosts: []string{"fe80::1"}, want: true},
+		{name: "expanded ipv6 host matches compressed entry", reqHost: "[2001:0db8:0:0:0:0:0:1]:8080", allowedHosts: []string{"2001:db8::1"}, want: true},
+		{name: "compressed ipv6 host matches expanded entry", reqHost: "[2001:db8::1]", allowedHosts: []string{"[2001:0DB8::0001]"}, want: true},
 		{name: "ipv6 port entry rejects other port", reqHost: "[fe80::1]:8081", allowedHosts: []string{"[fe80::1]:8080"}, want: false},
 		{name: "different ipv6 rejected", reqHost: "[fe80::2]", allowedHosts: []string{"fe80::1"}, want: false},
 	}
@@ -357,8 +359,8 @@ func TestStreamableHTTP_AllowedHosts(t *testing.T) {
 }
 
 // TestSSE_AllowedHosts verifies that WithSSEAllowedHosts enforces the Host
-// header allowlist on requests arriving via non-loopback addresses, for both
-// ServeHTTP and the MessageHandler sub-handler.
+// header allowlist on requests arriving via non-loopback addresses, for
+// ServeHTTP as well as the SSEHandler and MessageHandler sub-handlers.
 func TestSSE_AllowedHosts(t *testing.T) {
 	for _, tt := range allowedHostsTests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -368,28 +370,34 @@ func TestSSE_AllowedHosts(t *testing.T) {
 				WithSSEDisableLocalhostProtection(tt.disableProtection),
 			)
 
-			handlers := map[string]http.Handler{
-				"ServeHTTP":      sseServer,
-				"MessageHandler": sseServer.MessageHandler(),
+			// Every request is a POST: the message endpoint answers 400 Bad
+			// Request for the missing sessionId, and the SSE endpoint answers
+			// 405 Method Not Allowed without opening an event stream. Either
+			// distinguishes normal handling from the 403 protection response.
+			handlers := []struct {
+				name        string
+				handler     http.Handler
+				path        string
+				wantAllowed int
+			}{
+				{name: "ServeHTTP", handler: sseServer, path: "/message", wantAllowed: http.StatusBadRequest},
+				{name: "SSEHandler", handler: sseServer.SSEHandler(), path: "/sse", wantAllowed: http.StatusMethodNotAllowed},
+				{name: "MessageHandler", handler: sseServer.MessageHandler(), path: "/message", wantAllowed: http.StatusBadRequest},
 			}
-			for name, handler := range handlers {
-				t.Run(name, func(t *testing.T) {
-					// A POST to the message endpoint without a session is
-					// enough to distinguish the 403 protection response from
-					// normal handling (400 Bad Request for the missing
-					// sessionId).
-					req, err := http.NewRequest(http.MethodPost, "http://192.168.1.10:8080/message", bytes.NewReader(nil))
+			for _, h := range handlers {
+				t.Run(h.name, func(t *testing.T) {
+					req, err := http.NewRequest(http.MethodPost, "http://192.168.1.10:8080"+h.path, bytes.NewReader(nil))
 					require.NoError(t, err)
 					req.Host = tt.hostHeader
 					req = withLocalAddr(req, "192.168.1.10")
 
 					rr := httptest.NewRecorder()
-					handler.ServeHTTP(rr, req)
+					h.handler.ServeHTTP(rr, req)
 
 					if tt.wantForbidden {
 						assert.Equal(t, http.StatusForbidden, rr.Code)
 					} else {
-						assert.NotEqual(t, http.StatusForbidden, rr.Code)
+						assert.Equal(t, h.wantAllowed, rr.Code)
 					}
 				})
 			}
