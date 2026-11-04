@@ -467,3 +467,31 @@ func TestInputSchemaValidation_PreservesLargeIntegerPrecision(t *testing.T) {
 		require.Equal(t, 9007199254740993, handlerReceivedID)
 	}
 }
+
+func TestInputSchemaValidation_RejectsCaseFoldedPropertyKeys(t *testing.T) {
+	type args struct {
+		Path string `json:"path"`
+		Host string `json:"host,omitempty"`
+	}
+	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
+	srv.AddTool(mcp.NewTool("read_file",
+		mcp.WithString("path", mcp.Pattern("^/safe/")),
+		mcp.WithString("host", mcp.Enum("internal.example")),
+	), mcp.NewTypedToolHandler(func(_ context.Context, _ mcp.CallToolRequest, a args) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText(a.Path + " " + a.Host), nil
+	}))
+
+	for _, args := range []string{
+		`{"PATH":"/etc/passwd"}`,
+		`{"path":"/safe/a","Path":"/etc/passwd"}`,
+		`{"path":"/safe/a","hoſt":"evil.example"}`,
+	} {
+		t.Run(args, func(t *testing.T) {
+			msg := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file","arguments":` + args + `}}`
+			requireToolErrorContaining(t, srv.HandleMessage(t.Context(), []byte(msg)), "only by case")
+		})
+	}
+
+	resp := srv.HandleMessage(t.Context(), []byte(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"/safe/a"}}}`))
+	requireToolSuccess(t, resp)
+}

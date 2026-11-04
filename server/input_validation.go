@@ -165,7 +165,38 @@ func (v *inputSchemaValidator) validate(tool mcp.Tool, rawArgs any) (bool, error
 	if err := compiled.Validate(value); err != nil {
 		return true, formatValidationError(err)
 	}
+	// encoding/json binds struct fields case-insensitively, so a key the
+	// schema treats as an extra property can still land in a declared field.
+	if path := foldedPropertyKey(compiled, value, ""); path != "" {
+		return true, fmt.Errorf("input schema validation failed: %s: key differs from a declared property only by case", path)
+	}
 	return true, nil
+}
+
+// foldedPropertyKey returns the JSON pointer of the first argument key that is
+// not a declared property but case-folds to one.
+func foldedPropertyKey(schema *jsonschema.Schema, value any, path string) string {
+	for schema != nil && schema.Properties == nil && schema.Ref != nil {
+		schema = schema.Ref
+	}
+	vm, ok := value.(map[string]any)
+	if schema == nil || !ok {
+		return ""
+	}
+	for key, v := range vm {
+		if sub, ok := schema.Properties[key]; ok {
+			if p := foldedPropertyKey(sub, v, path+"/"+escapeJSONPointer(key)); p != "" {
+				return p
+			}
+			continue
+		}
+		for name := range schema.Properties {
+			if strings.EqualFold(name, key) {
+				return path + "/" + escapeJSONPointer(key)
+			}
+		}
+	}
+	return ""
 }
 
 // schemaDigest returns a stable hex-encoded SHA-256 of the canonical schema
