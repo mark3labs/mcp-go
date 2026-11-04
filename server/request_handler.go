@@ -72,6 +72,15 @@ func (s *MCPServer) HandleMessage(
 		}
 	}
 
+	// encoding/json would also accept "Method" or "paramſ" here.
+	if err := validateProtocolMemberNames(message); err != nil {
+		return createErrorResponse(
+			baseMessage.ID,
+			mcp.INVALID_REQUEST,
+			err.Error(),
+		)
+	}
+
 	// Check for valid JSONRPC version
 	if baseMessage.JSONRPC != mcp.JSONRPC_VERSION {
 		return createErrorResponse(
