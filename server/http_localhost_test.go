@@ -197,6 +197,9 @@ func TestStreamableHTTP_LocalhostProtection_NonLoopbackUnaffected(t *testing.T) 
 	assert.Equal(t, http.StatusOK, rr.Code)
 }
 
+// TestHostAllowed verifies Host header allowlist matching: case
+// insensitivity, port handling (including default ports) and IP literal
+// normalization.
 func TestHostAllowed(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -244,6 +247,8 @@ func withLocalAddr(r *http.Request, ip string) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), http.LocalAddrContextKey, localAddr))
 }
 
+// TestRejectDNSRebinding verifies rejectDNSRebinding for loopback,
+// non-loopback and missing local addresses, with and without an allowlist.
 func TestRejectDNSRebinding(t *testing.T) {
 	tests := []struct {
 		name          string
