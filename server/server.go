@@ -2291,7 +2291,7 @@ func (s *MCPServer) handleToolCall(
 	// validation failure is returned as a SEP-1303 tool execution error so the
 	// model receives feedback in its context window and can self-correct.
 	if s.inputValidator != nil {
-		if _, err := s.inputValidator.validate(tool.Tool, request.Params.Arguments); err != nil {
+		if _, err := s.inputValidator.validate(tool.Tool, request.GetRawArguments()); err != nil {
 			return validationToolResult(err), nil
 		}
 	}
@@ -2800,9 +2800,13 @@ func (s *MCPServer) handleTaskResult(
 
 	// Return error if task failed
 	if resultErr != nil {
+		code := mcp.INTERNAL_ERROR
+		if errors.Is(resultErr, context.Canceled) {
+			code = mcp.REQUEST_INTERRUPTED
+		}
 		return nil, &requestError{
 			id:   id,
-			code: mcp.INTERNAL_ERROR,
+			code: code,
 			err:  resultErr,
 		}
 	}
@@ -3185,6 +3189,7 @@ func (s *MCPServer) cancelTaskEntry(ctx context.Context, entry *taskEntry, messa
 	entry.task.Status = mcp.TaskStatusCancelled
 	entry.task.StatusMessage = message
 	entry.task.LastUpdatedAt = cancelledAt.UTC().Format(time.RFC3339)
+	entry.resultErr = context.Canceled
 	entry.completed = true
 	close(entry.done)
 	s.activeTasks--

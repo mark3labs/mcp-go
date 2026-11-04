@@ -52,9 +52,9 @@ func ValidateRedirectURI(redirectURI string) error {
 
 	// Check if it's a localhost URL
 	if parsedURL.Scheme == "http" {
-		hostname := parsedURL.Hostname()
+		hostname := strings.ToLower(parsedURL.Hostname())
 		// Check for various forms of localhost
-		if hostname == "localhost" || hostname == "127.0.0.1" || hostname == "::1" || hostname == "[::1]" {
+		if hostname == "localhost" || hostname == "127.0.0.1" || hostname == "::1" {
 			return nil
 		}
 		return fmt.Errorf("HTTP redirect URI must use localhost or 127.0.0.1")

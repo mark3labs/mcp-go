@@ -17,9 +17,10 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// maxMetadataBodyBytes caps the size of an OAuth metadata document we are
-// willing to read.
-const maxMetadataBodyBytes = 1 << 20 // 1 MiB
+// maxOAuthBodyBytes caps the size of an OAuth response we are willing to
+// read: a metadata document, a token or a client registration. A larger one
+// fails with ErrMessageTooLarge.
+const maxOAuthBodyBytes = 1 << 20 // 1 MiB
 
 // ErrNoToken is returned when no token is available in the token store
 var ErrNoToken = errors.New("no token available")
@@ -60,7 +61,9 @@ type OAuthConfig struct {
 	// per RFC9728. If set, this URL will be used to discover the authorization server.
 	// This is typically extracted from the WWW-Authenticate header's resource_metadata parameter.
 	ProtectedResourceMetadataURL string
-	// PKCEEnabled enables PKCE for the OAuth flow (recommended for public clients)
+	// PKCEEnabled enables PKCE for the OAuth flow (recommended for public clients).
+	// When set, GetAuthorizationURL and the authorization response methods
+	// return ErrPKCERequired for an empty code challenge or code verifier.
 	PKCEEnabled bool
 	// SkipIssuerMetadataValidation turns off the check that authorization
 	// server metadata found through protected resource metadata declares the
@@ -453,12 +456,12 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken, issuer st
 	// Accept any 2xx status; some authorization servers (e.g. Supabase) return
 	// 201 Created for successful token responses.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body := readErrorBody(resp.Body)
 		return nil, extractOAuthError(body, resp.StatusCode, "refresh token request failed")
 	}
 
 	// Read the response body for parsing
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(newBoundedReader(resp.Body, maxOAuthBodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read token response body: %w", err)
 	}
@@ -921,7 +924,7 @@ func (h *OAuthHandler) fetchServerMetadata(ctx context.Context) (metadataDiscove
 
 	// Parse the protected resource metadata
 	var protectedResource OAuthProtectedResource
-	if err := json.NewDecoder(resp.Body).Decode(&protectedResource); err != nil {
+	if err := json.NewDecoder(newBoundedReader(resp.Body, maxOAuthBodyBytes)).Decode(&protectedResource); err != nil {
 		return metadataDiscoveryResult{}, fmt.Errorf("failed to decode protected resource response: %w", err)
 	}
 
@@ -1157,7 +1160,7 @@ func (h *OAuthHandler) fetchMetadataFromURL(ctx context.Context, metadataURL str
 	}
 
 	var metadata AuthServerMetadata
-	dec := json.NewDecoder(io.LimitReader(resp.Body, maxMetadataBodyBytes))
+	dec := json.NewDecoder(newBoundedReader(resp.Body, maxOAuthBodyBytes))
 	if err := dec.Decode(&metadata); err != nil {
 		return nil, fmt.Errorf("failed to decode metadata response: %w", err)
 	}
@@ -1361,7 +1364,7 @@ func (h *OAuthHandler) performRegistration(ctx context.Context, metadata *AuthSe
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body := readErrorBody(resp.Body)
 		return extractOAuthError(body, resp.StatusCode, "registration request failed")
 	}
 
@@ -1371,7 +1374,7 @@ func (h *OAuthHandler) performRegistration(ctx context.Context, metadata *AuthSe
 		TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&regResponse); err != nil {
+	if err := json.NewDecoder(newBoundedReader(resp.Body, maxOAuthBodyBytes)).Decode(&regResponse); err != nil {
 		return fmt.Errorf("failed to decode registration response: %w", err)
 	}
 
@@ -1401,6 +1404,10 @@ var ErrInvalidState = errors.New("invalid state parameter, possible CSRF attack"
 // response doesn't identify the authorization server the client is using
 // (RFC 9207).
 var ErrIssuerMismatch = errors.New("authorization response issuer mismatch, possible mix-up attack")
+
+// ErrPKCERequired is returned when PKCE is enabled but the code challenge or
+// code verifier passed in is empty.
+var ErrPKCERequired = errors.New("PKCE is enabled but the code challenge or verifier is empty")
 
 // ProcessAuthorizationResponse processes the authorization response and exchanges the code for a token.
 // It doesn't check the response's iss parameter; ProcessAuthorizationCallback does.
@@ -1537,7 +1544,10 @@ func (h *OAuthHandler) processAuthorizationResponse(ctx context.Context, code, s
 	data.Set("code", code)
 	data.Set("redirect_uri", transaction.redirectURI)
 
-	if transaction.pkceEnabled && codeVerifier != "" {
+	if transaction.pkceEnabled {
+		if codeVerifier == "" {
+			return ErrPKCERequired
+		}
 		data.Set("code_verifier", codeVerifier)
 	}
 
@@ -1561,12 +1571,12 @@ func (h *OAuthHandler) processAuthorizationResponse(ctx context.Context, code, s
 	// Accept any 2xx status; some authorization servers (e.g. Supabase) return
 	// 201 Created for successful token responses.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body := readErrorBody(resp.Body)
 		return extractOAuthError(body, resp.StatusCode, "token request failed")
 	}
 
 	// Read the response body for parsing
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(newBoundedReader(resp.Body, maxOAuthBodyBytes))
 	if err != nil {
 		return fmt.Errorf("failed to read token response body: %w", err)
 	}
@@ -1686,6 +1696,10 @@ func newTokenRequest(ctx context.Context, tokenEndpoint string, data url.Values,
 // an immutable transaction for callback validation and code exchange. A later
 // issuer or credential change invalidates the flow rather than redirecting its code.
 func (h *OAuthHandler) GetAuthorizationURL(ctx context.Context, state, codeChallenge string) (string, error) {
+	if h.config.PKCEEnabled && codeChallenge == "" {
+		return "", ErrPKCERequired
+	}
+
 	metadata, err := h.getServerMetadata(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to get server metadata: %w", err)
@@ -1733,7 +1747,7 @@ func (h *OAuthHandler) GetAuthorizationURL(ctx context.Context, state, codeChall
 		params.Set("scope", strings.Join(h.config.Scopes, " "))
 	}
 
-	if transaction.pkceEnabled && codeChallenge != "" {
+	if transaction.pkceEnabled {
 		params.Set("code_challenge", codeChallenge)
 		params.Set("code_challenge_method", "S256")
 	}

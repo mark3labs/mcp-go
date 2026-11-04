@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"math/big"
 	"net/http"
 	"os"
 	"reflect"
@@ -153,7 +155,7 @@ func (p *CallToolParams) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
-	p.RawArguments = append(json.RawMessage(nil), raw.Arguments...)
+	p.RawArguments = raw.Arguments
 	return json.Unmarshal(raw.Arguments, &p.Arguments)
 }
 
@@ -192,6 +194,41 @@ func (r CallToolRequest) RequireString(key string) (string, error) {
 	return "", fmt.Errorf("required argument %q not found", key)
 }
 
+// rawIntArgument parses an exact int argument from RawArguments when present.
+func (r CallToolRequest) rawIntArgument(key string) (int, bool) {
+	if len(r.Params.RawArguments) == 0 {
+		return 0, false
+	}
+	var rawMap map[string]json.RawMessage
+	if err := json.Unmarshal(r.Params.RawArguments, &rawMap); err != nil {
+		return 0, false
+	}
+	rawVal, ok := rawMap[key]
+	if !ok {
+		return 0, false
+	}
+	s := strings.TrimSpace(string(rawVal))
+	if i, err := strconv.Atoi(s); err == nil {
+		return i, true
+	}
+	if len(s) > 64 || !strings.ContainsAny(s, ".eE") {
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || (f > -1 && f < 1) || f < float64(math.MinInt) || f > float64(math.MaxInt) {
+		return 0, false
+	}
+	rat, ok := new(big.Rat).SetString(s)
+	if !ok || !rat.IsInt() {
+		return 0, false
+	}
+	i, err := strconv.Atoi(rat.Num().String())
+	if err != nil {
+		return 0, false
+	}
+	return i, true
+}
+
 // GetInt returns an int argument by key, or the default value if not found
 func (r CallToolRequest) GetInt(key string, defaultValue int) int {
 	args := r.GetArguments()
@@ -200,6 +237,9 @@ func (r CallToolRequest) GetInt(key string, defaultValue int) int {
 		case int:
 			return v
 		case float64:
+			if i, ok := r.rawIntArgument(key); ok {
+				return i
+			}
 			return int(v)
 		case string:
 			if i, err := strconv.Atoi(v); err == nil {
@@ -218,6 +258,9 @@ func (r CallToolRequest) RequireInt(key string) (int, error) {
 		case int:
 			return v, nil
 		case float64:
+			if i, ok := r.rawIntArgument(key); ok {
+				return i, nil
+			}
 			return int(v), nil
 		case string:
 			if i, err := strconv.Atoi(v); err == nil {
@@ -564,7 +607,7 @@ func (r CallToolResult) MarshalJSON() ([]byte, error) {
 	m["content"] = content
 
 	// Marshal StructuredContent if present
-	if len(r.RawStructuredContent) > 0 {
+	if trimmed := bytes.TrimSpace(r.RawStructuredContent); len(trimmed) > 0 && (r.StructuredContent == nil || !bytes.Equal(trimmed, []byte("null"))) {
 		m["structuredContent"] = json.RawMessage(r.RawStructuredContent)
 	} else if r.StructuredContent != nil {
 		m["structuredContent"] = r.StructuredContent
@@ -729,7 +772,9 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 		m["outputSchema"] = t.OutputSchema
 	}
 
-	m["annotations"] = t.Annotations
+	if t.Annotations != (ToolAnnotation{}) {
+		m["annotations"] = t.Annotations
+	}
 
 	if t.DeferLoading {
 		m["defer_loading"] = t.DeferLoading
@@ -1230,6 +1275,15 @@ func WithOutputSchema[T any]() ToolOption {
 func WithRawOutputSchema(schema json.RawMessage) ToolOption {
 	return func(t *Tool) {
 		t.RawOutputSchema = schema
+	}
+}
+
+// WithoutDefaultAnnotations clears the default hints that NewTool sets, so the
+// tool sends no annotations unless later options set some. Place it before
+// any other annotation option, since it clears those set before it.
+func WithoutDefaultAnnotations() ToolOption {
+	return func(t *Tool) {
+		t.Annotations = ToolAnnotation{}
 	}
 }
 

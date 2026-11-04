@@ -195,6 +195,21 @@ func (l *LoggingTransport) GetSessionId() string {
 	return l.inner.GetSessionId()
 }
 
+// RequiresLegacyProtocol reports whether the wrapped transport rules out the
+// stateless protocol core, e.g. Streamable HTTP with continuous listening.
+func (l *LoggingTransport) RequiresLegacyProtocol() bool {
+	legacy, ok := l.inner.(interface{ RequiresLegacyProtocol() bool })
+	return ok && legacy.RequiresLegacyProtocol()
+}
+
+// SetConnectionLostHandler forwards the handler to the wrapped transport when
+// it supports one (SSE); otherwise it is a no-op.
+func (l *LoggingTransport) SetConnectionLostHandler(handler func(error)) {
+	if setter, ok := l.inner.(interface{ SetConnectionLostHandler(func(error)) }); ok {
+		setter.SetConnectionLostHandler(handler)
+	}
+}
+
 func (l *LoggingTransport) handleNotification(notification mcp.JSONRPCNotification) {
 	attrs := []slog.Attr{slog.String("method", notification.Method)}
 	if l.logRaw {

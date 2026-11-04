@@ -725,7 +725,8 @@ simple responses with the appropriate `Access-Control-Allow-Origin`,
 `Access-Control-Allow-Credentials`, `Access-Control-Expose-Headers` and
 `Vary` headers. Sensible defaults are used when the corresponding option is
 omitted (`GET, POST, DELETE, OPTIONS` for methods; `Content-Type,
-Mcp-Session-Id, Last-Event-ID, Authorization` for request headers;
+Mcp-Session-Id, Mcp-Protocol-Version, Mcp-Method, Mcp-Name, Last-Event-ID,
+Authorization` for request headers;
 `Mcp-Session-Id` for exposed headers). Combining `WithCORSAllowedOrigins("*")`
 with `WithCORSAllowCredentials()` echoes the request `Origin` to remain
 spec-compliant.

@@ -28,9 +28,21 @@ func writeJSONRPCError(
 	message string,
 	onEncodeErr func(error),
 ) {
+	writeJSONRPCErrorStatus(w, http.StatusBadRequest, id, code, message, onEncodeErr)
+}
+
+// writeJSONRPCErrorStatus is writeJSONRPCError with the HTTP status given.
+func writeJSONRPCErrorStatus(
+	w jsonrpcErrorResponseWriter,
+	status int,
+	id any,
+	code int,
+	message string,
+	onEncodeErr func(error),
+) {
 	response := createErrorResponse(id, code, message)
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusBadRequest)
+	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(response); err != nil && onEncodeErr != nil {
 		onEncodeErr(err)
 	}

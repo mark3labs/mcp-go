@@ -599,6 +599,16 @@ func ValidateParamHeadersWithBindings(lookupHeader func(string) (string, bool), 
 // define these headers. getHeader returns the value of a header, or "" when
 // absent.
 func ValidateStandardHeaders(getHeader func(string) string, protocolVersion string, method MCPMethod, params json.RawMessage) error {
+	return ValidateStandardHeadersFunc(getHeader, protocolVersion, method, func() (string, bool) {
+		return ExtractHeaderName(method, params)
+	})
+}
+
+// ValidateStandardHeadersFunc is ValidateStandardHeaders for a caller that
+// reads the body name itself. bodyName returns what ExtractHeaderName would
+// return for the request params, and is called only when the method requires
+// an Mcp-Name header.
+func ValidateStandardHeadersFunc(getHeader func(string) string, protocolVersion string, method MCPMethod, bodyName func() (string, bool)) error {
 	if !RequiresStandardHeaders(protocolVersion) {
 		return nil
 	}
@@ -629,17 +639,17 @@ func ValidateStandardHeaders(getHeader func(string) string, protocolVersion stri
 	if !ok {
 		return HeaderMismatchError{Header: HeaderName, Reason: "invalid Base64 encoding"}
 	}
-	bodyName, ok := ExtractHeaderName(method, params)
+	name, ok := bodyName()
 	if !ok {
 		return HeaderMismatchError{
 			Header: HeaderName,
 			Reason: fmt.Sprintf("failed to extract name from parameters for method %q", method),
 		}
 	}
-	if decoded != bodyName {
+	if decoded != name {
 		return HeaderMismatchError{
 			Header: HeaderName,
-			Reason: fmt.Sprintf("header value %q does not match body value %q", decoded, bodyName),
+			Reason: fmt.Sprintf("header value %q does not match body value %q", decoded, name),
 		}
 	}
 	return nil
