@@ -196,17 +196,29 @@ func (r CallToolRequest) RequireString(key string) (string, error) {
 
 // rawIntArgument parses an exact int argument from RawArguments when present.
 func (r CallToolRequest) rawIntArgument(key string) (int, bool) {
+	return parseRawInt(r.rawArgument(key))
+}
+
+func (r CallToolRequest) rawArgument(key string) json.RawMessage {
 	if len(r.Params.RawArguments) == 0 {
-		return 0, false
+		return nil
 	}
 	var rawMap map[string]json.RawMessage
 	if err := json.Unmarshal(r.Params.RawArguments, &rawMap); err != nil {
-		return 0, false
+		return nil
 	}
-	rawVal, ok := rawMap[key]
-	if !ok {
-		return 0, false
+	return rawMap[key]
+}
+
+func (r CallToolRequest) rawArgumentSlice(key string) []json.RawMessage {
+	var items []json.RawMessage
+	if err := json.Unmarshal(r.rawArgument(key), &items); err != nil {
+		return nil
 	}
+	return items
+}
+
+func parseRawInt(rawVal json.RawMessage) (int, bool) {
 	s := strings.TrimSpace(string(rawVal))
 	if i, err := strconv.Atoi(s); err == nil {
 		return i, true
@@ -400,7 +412,8 @@ func (r CallToolRequest) RequireStringSlice(key string) ([]string, error) {
 	return nil, fmt.Errorf("required argument %q not found", key)
 }
 
-// GetIntSlice returns an int slice argument by key, or the default value if not found
+// GetIntSlice returns an int slice argument by key, or the default value if not found.
+// When raw JSON arguments are available, representable integer elements retain their exact values.
 func (r CallToolRequest) GetIntSlice(key string, defaultValue []int) []int {
 	args := r.GetArguments()
 	if val, ok := args[key]; ok {
@@ -408,12 +421,19 @@ func (r CallToolRequest) GetIntSlice(key string, defaultValue []int) []int {
 		case []int:
 			return v
 		case []any:
+			rawItems := r.rawArgumentSlice(key)
 			result := make([]int, 0, len(v))
-			for _, item := range v {
+			for i, item := range v {
 				switch num := item.(type) {
 				case int:
 					result = append(result, num)
 				case float64:
+					if i < len(rawItems) {
+						if exact, ok := parseRawInt(rawItems[i]); ok {
+							result = append(result, exact)
+							continue
+						}
+					}
 					result = append(result, int(num))
 				case string:
 					if i, err := strconv.Atoi(num); err == nil {
@@ -427,7 +447,8 @@ func (r CallToolRequest) GetIntSlice(key string, defaultValue []int) []int {
 	return defaultValue
 }
 
-// RequireIntSlice returns an int slice argument by key, or an error if not found or not convertible to int slice
+// RequireIntSlice returns an int slice argument by key, or an error if not found or not convertible to int slice.
+// When raw JSON arguments are available, representable integer elements retain their exact values.
 func (r CallToolRequest) RequireIntSlice(key string) ([]int, error) {
 	args := r.GetArguments()
 	if val, ok := args[key]; ok {
@@ -435,12 +456,19 @@ func (r CallToolRequest) RequireIntSlice(key string) ([]int, error) {
 		case []int:
 			return v, nil
 		case []any:
+			rawItems := r.rawArgumentSlice(key)
 			result := make([]int, 0, len(v))
 			for i, item := range v {
 				switch num := item.(type) {
 				case int:
 					result = append(result, num)
 				case float64:
+					if i < len(rawItems) {
+						if exact, ok := parseRawInt(rawItems[i]); ok {
+							result = append(result, exact)
+							continue
+						}
+					}
 					result = append(result, int(num))
 				case string:
 					if n, err := strconv.Atoi(num); err == nil {
