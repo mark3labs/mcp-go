@@ -542,6 +542,7 @@ func (c *Stdio) SetRequestHandler(handler RequestHandler) {
 // The ready channel, if non-nil, is closed once the read loop is entered, signaling
 // to Start() that the transport is actively processing responses.
 func (c *Stdio) readResponses(ready chan struct{}) {
+	var lastLine bool
 	for {
 		// Signal readiness on the first iteration, inside the loop, so that
 		// Start() only unblocks after the reader is actively processing.
@@ -553,7 +554,15 @@ func (c *Stdio) readResponses(ready chan struct{}) {
 		case <-c.done:
 			return
 		default:
+			if lastLine {
+				c.closeDone()
+				return
+			}
 			line, err := c.stdout.ReadString('\n')
+			// The final message may arrive without a trailing newline.
+			if err == io.EOF && strings.TrimSpace(line) != "" {
+				lastLine, err = true, nil
+			}
 			if err != nil {
 				if err != io.EOF && !errors.Is(err, context.Canceled) && !errors.Is(err, fs.ErrClosed) {
 					c.logger.Error("Error reading from stdout", "err", err)
