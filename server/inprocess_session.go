@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,6 +36,7 @@ type InProcessSession struct {
 	samplingHandler    SamplingHandler
 	elicitationHandler ElicitationHandler
 	rootsHandler       RootsHandler
+	subscriptionFilter mcp.SubscriptionFilter
 	mu                 sync.RWMutex
 }
 
@@ -100,6 +102,25 @@ func (s *InProcessSession) GetLogLevel() mcp.LoggingLevel {
 	return level.(mcp.LoggingLevel)
 }
 
+// SetSubscriptionFilter records the notification types requested by subscriptions/listen.
+// Passing the zero filter clears the subscription. It is safe for concurrent use.
+func (s *InProcessSession) SetSubscriptionFilter(filter mcp.SubscriptionFilter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	filter.ResourceSubscriptions = slices.Clone(filter.ResourceSubscriptions)
+	s.subscriptionFilter = filter
+}
+
+// SubscriptionFilter returns a snapshot of the requested notification types and
+// whether a subscription is active. Sessions without a subscription remain unfiltered.
+func (s *InProcessSession) SubscriptionFilter() (mcp.SubscriptionFilter, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	filter := s.subscriptionFilter
+	filter.ResourceSubscriptions = slices.Clone(filter.ResourceSubscriptions)
+	return filter, !filter.IsEmpty()
+}
+
 func (s *InProcessSession) RequestSampling(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
 	s.mu.RLock()
 	handler := s.samplingHandler
@@ -149,10 +170,11 @@ func GenerateInProcessSessionID() string {
 
 // Ensure interface compliance
 var (
-	_ ClientSession          = (*InProcessSession)(nil)
-	_ SessionWithLogging     = (*InProcessSession)(nil)
-	_ SessionWithClientInfo  = (*InProcessSession)(nil)
-	_ SessionWithSampling    = (*InProcessSession)(nil)
-	_ SessionWithElicitation = (*InProcessSession)(nil)
-	_ SessionWithRoots       = (*InProcessSession)(nil)
+	_ ClientSession                 = (*InProcessSession)(nil)
+	_ SessionWithLogging            = (*InProcessSession)(nil)
+	_ SessionWithClientInfo         = (*InProcessSession)(nil)
+	_ SessionWithSampling           = (*InProcessSession)(nil)
+	_ SessionWithElicitation        = (*InProcessSession)(nil)
+	_ SessionWithRoots              = (*InProcessSession)(nil)
+	_ SessionWithSubscriptionFilter = (*InProcessSession)(nil)
 )
