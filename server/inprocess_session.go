@@ -29,15 +29,16 @@ type RootsHandler interface {
 type InProcessSession struct {
 	clientInfoStore // provides Get/SetClientInfo and Get/SetClientCapabilities via method promotion
 
-	sessionID          string
-	notifications      chan mcp.JSONRPCNotification
-	initialized        atomic.Bool
-	loggingLevel       atomic.Value
-	samplingHandler    SamplingHandler
-	elicitationHandler ElicitationHandler
-	rootsHandler       RootsHandler
-	subscriptionFilter mcp.SubscriptionFilter
-	mu                 sync.RWMutex
+	sessionID              string
+	notifications          chan mcp.JSONRPCNotification
+	initialized            atomic.Bool
+	loggingLevel           atomic.Value
+	samplingHandler        SamplingHandler
+	elicitationHandler     ElicitationHandler
+	rootsHandler           RootsHandler
+	subscriptionFilter     mcp.SubscriptionFilter
+	subscriptionGeneration uint64
+	mu                     sync.RWMutex
 }
 
 func NewInProcessSession(sessionID string, samplingHandler SamplingHandler) *InProcessSession {
@@ -105,10 +106,24 @@ func (s *InProcessSession) GetLogLevel() mcp.LoggingLevel {
 // SetSubscriptionFilter records the notification types requested by subscriptions/listen.
 // Passing the zero filter clears the subscription. It is safe for concurrent use.
 func (s *InProcessSession) SetSubscriptionFilter(filter mcp.SubscriptionFilter) {
+	s.setOwnedSubscriptionFilter(filter)
+}
+
+func (s *InProcessSession) setOwnedSubscriptionFilter(filter mcp.SubscriptionFilter) func() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.subscriptionGeneration++
+	generation := s.subscriptionGeneration
 	filter.ResourceSubscriptions = slices.Clone(filter.ResourceSubscriptions)
 	s.subscriptionFilter = filter
+	s.mu.Unlock()
+
+	return func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.subscriptionGeneration == generation {
+			s.subscriptionFilter = mcp.SubscriptionFilter{}
+		}
+	}
 }
 
 // SubscriptionFilter returns a snapshot of the requested notification types and

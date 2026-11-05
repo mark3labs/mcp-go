@@ -45,6 +45,13 @@ type SessionWithSubscriptionFilter interface {
 	SubscriptionFilter() (mcp.SubscriptionFilter, bool)
 }
 
+// sessionWithOwnedSubscriptionFilter keeps a returning request from clearing a
+// filter installed by its replacement without changing the public session API.
+type sessionWithOwnedSubscriptionFilter interface {
+	SessionWithSubscriptionFilter
+	setOwnedSubscriptionFilter(filter mcp.SubscriptionFilter) func()
+}
+
 // handleSubscriptionsListen serves the subscriptions/listen RPC introduced in
 // protocol version 2026-07-28 (SEP-2575).
 //
@@ -79,7 +86,10 @@ func (s *MCPServer) handleSubscriptionsListen(
 	allowed := s.allowedSubscriptions(request.Params.Notifications)
 
 	// Record the filter so notification fan-out can honour the opt-in.
-	if filtered, ok := session.(SessionWithSubscriptionFilter); ok {
+	if filtered, ok := session.(sessionWithOwnedSubscriptionFilter); ok {
+		clear := filtered.setOwnedSubscriptionFilter(allowed)
+		defer clear()
+	} else if filtered, ok := session.(SessionWithSubscriptionFilter); ok {
 		filtered.SetSubscriptionFilter(allowed)
 		defer filtered.SetSubscriptionFilter(mcp.SubscriptionFilter{})
 	}
