@@ -565,6 +565,7 @@ func TestInProcessMCPClient_SubscriptionFilter(t *testing.T) {
 					return mcp.JSONRPCNotification{}
 				}
 			}
+			var subscriptionID any
 			if tt.listen {
 				listenCtx, stop := context.WithCancel(ctx)
 				done := make(chan error, 1)
@@ -580,7 +581,10 @@ func TestInProcessMCPClient_SubscriptionFilter(t *testing.T) {
 						t.Error("subscription did not close")
 					}
 				}()
-				require.Equal(t, mcp.MethodNotificationSubscriptionsAcknowledged, next().Method)
+				ack := next()
+				require.Equal(t, mcp.MethodNotificationSubscriptionsAcknowledged, ack.Method)
+				subscriptionID = ack.Params.Meta[mcp.MetaKeySubscriptionID]
+				require.NotNil(t, subscriptionID)
 			}
 
 			srv.AddPrompt(mcp.NewPrompt("new-prompt"),
@@ -600,6 +604,7 @@ func TestInProcessMCPClient_SubscriptionFilter(t *testing.T) {
 			var methods []string
 			for {
 				notification := next()
+				require.Equal(t, subscriptionID, notification.Params.Meta[mcp.MetaKeySubscriptionID])
 				methods = append(methods, notification.Method)
 				// All broadcasts share the session's FIFO queue. This last,
 				// opted-in notification is the barrier for the preceding ones.
@@ -659,7 +664,8 @@ func TestInProcessMCPClient_ReplacedSubscriptionKeepsItsFilter(t *testing.T) {
 			t.Error("old subscription did not close")
 		}
 	}()
-	require.Equal(t, mcp.MethodNotificationSubscriptionsAcknowledged, next().Method)
+	oldAck := next()
+	require.Equal(t, mcp.MethodNotificationSubscriptionsAcknowledged, oldAck.Method)
 
 	// Send the replacement through the real client request path so the two RPCs
 	// overlap until we cancel the old one after the replacement is acknowledged.
@@ -679,7 +685,9 @@ func TestInProcessMCPClient_ReplacedSubscriptionKeepsItsFilter(t *testing.T) {
 			t.Error("replacement subscription did not close")
 		}
 	}()
-	require.Equal(t, mcp.MethodNotificationSubscriptionsAcknowledged, next().Method)
+	newAck := next()
+	require.Equal(t, mcp.MethodNotificationSubscriptionsAcknowledged, newAck.Method)
+	require.NotEqual(t, oldAck.Params.Meta[mcp.MetaKeySubscriptionID], newAck.Params.Meta[mcp.MetaKeySubscriptionID])
 	cancelOld()
 	select {
 	case err := <-oldDone:
@@ -692,8 +700,10 @@ func TestInProcessMCPClient_ReplacedSubscriptionKeepsItsFilter(t *testing.T) {
 	// that clears the replacement filter lets the preceding prompt leak through.
 	srv.SendNotificationToAllClients(mcp.MethodNotificationPromptsListChanged, nil)
 	srv.SendNotificationToAllClients(mcp.MethodNotificationToolsListChanged, nil)
-	require.Equal(t, mcp.MethodNotificationToolsListChanged, next().Method,
+	notification := next()
+	require.Equal(t, mcp.MethodNotificationToolsListChanged, notification.Method,
 		"the old subscription must not clear the replacement's filter")
+	require.Equal(t, newAck.Params.Meta[mcp.MetaKeySubscriptionID], notification.Params.Meta[mcp.MetaKeySubscriptionID])
 }
 
 // TestInProcessMCPClient_CloseStopsNotificationForwarding verifies that

@@ -49,7 +49,7 @@ type SessionWithSubscriptionFilter interface {
 // filter installed by its replacement without changing the public session API.
 type sessionWithOwnedSubscriptionFilter interface {
 	SessionWithSubscriptionFilter
-	setOwnedSubscriptionFilter(filter mcp.SubscriptionFilter) func()
+	setOwnedSubscriptionFilter(ctx context.Context, id any, filter mcp.SubscriptionFilter) func()
 }
 
 // handleSubscriptionsListen serves the subscriptions/listen RPC introduced in
@@ -87,7 +87,7 @@ func (s *MCPServer) handleSubscriptionsListen(
 
 	// Record the filter so notification fan-out can honour the opt-in.
 	if filtered, ok := session.(sessionWithOwnedSubscriptionFilter); ok {
-		clear := filtered.setOwnedSubscriptionFilter(allowed)
+		clear := filtered.setOwnedSubscriptionFilter(ctx, id, allowed)
 		defer clear()
 	} else if filtered, ok := session.(SessionWithSubscriptionFilter); ok {
 		filtered.SetSubscriptionFilter(allowed)
@@ -210,6 +210,10 @@ func subscriptionAllowsNotification(session ClientSession, method string) bool {
 	if !active {
 		return true
 	}
+	return subscriptionFilterAllowsNotification(filter, method)
+}
+
+func subscriptionFilterAllowsNotification(filter mcp.SubscriptionFilter, method string) bool {
 	switch method {
 	case mcp.MethodNotificationToolsListChanged:
 		return filter.ToolsListChanged

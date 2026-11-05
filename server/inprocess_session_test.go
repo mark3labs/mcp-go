@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"sync"
 	"testing"
 
@@ -53,4 +54,77 @@ func TestInProcessSession_SubscriptionFilter(t *testing.T) {
 	got, active = session.SubscriptionFilter()
 	require.False(t, active)
 	require.True(t, got.IsEmpty())
+}
+
+func TestInProcessSession_CanceledSubscriptionCannotReplaceFilter(t *testing.T) {
+	session := NewInProcessSession("replacement", nil)
+	filter := mcp.SubscriptionFilter{ToolsListChanged: true}
+	clearCurrent := session.setOwnedSubscriptionFilter(t.Context(), "current", filter)
+	defer clearCurrent()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	checked := false
+	ctx = &subscriptionLockCheckingContext{Context: ctx, check: func() {
+		checked = true
+		if session.mu.TryLock() {
+			session.mu.Unlock()
+			t.Error("cancellation must be checked while holding the session lock")
+		}
+	}}
+	clearCanceled := session.setOwnedSubscriptionFilter(ctx, "old", mcp.SubscriptionFilter{PromptsListChanged: true})
+	got, active := session.SubscriptionFilter()
+	require.True(t, active)
+	require.Equal(t, filter, got)
+	clearCanceled()
+	got, active = session.SubscriptionFilter()
+	require.True(t, active)
+	require.Equal(t, filter, got)
+	require.True(t, checked)
+}
+
+type subscriptionLockCheckingContext struct {
+	context.Context
+	check func()
+}
+
+func (c *subscriptionLockCheckingContext) Err() error {
+	c.check()
+	return c.Context.Err()
+}
+
+func TestInProcessSession_BroadcastSubscriptionMetadata(t *testing.T) {
+	srv := NewMCPServer("metadata", "1.0")
+	first := NewInProcessSession("first", nil)
+	second := NewInProcessSession("second", nil)
+	legacy := NewInProcessSession("legacy", nil)
+	filter := mcp.SubscriptionFilter{ToolsListChanged: true}
+	clearFirst := first.setOwnedSubscriptionFilter(t.Context(), "first-listen", filter)
+	clearSecond := second.setOwnedSubscriptionFilter(t.Context(), "second-listen", filter)
+	defer clearSecond()
+	notification := mcp.JSONRPCNotification{
+		Notification: mcp.Notification{
+			Method: mcp.MethodNotificationToolsListChanged,
+			Params: mcp.NotificationParams{Meta: map[string]any{"other": "preserved"}},
+		},
+	}
+	for _, tt := range []struct {
+		session *InProcessSession
+		id      any
+	}{
+		{first, "first-listen"},
+		{second, "second-listen"},
+		{legacy, nil},
+	} {
+		srv.broadcastToSession(tt.session, notification)
+		got := <-tt.session.ClientNotifications()
+		require.Equal(t, tt.id, got.Params.Meta[mcp.MetaKeySubscriptionID])
+		require.Equal(t, "preserved", got.Params.Meta["other"])
+	}
+	require.Equal(t, map[string]any{"other": "preserved"}, notification.Params.Meta)
+
+	clearFirst()
+	srv.broadcastToSession(first, notification)
+	got := <-first.ClientNotifications()
+	require.NotContains(t, got.Params.Meta, mcp.MetaKeySubscriptionID)
 }

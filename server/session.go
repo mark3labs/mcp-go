@@ -244,7 +244,15 @@ func (s *MCPServer) broadcastToSession(session ClientSession, notification mcp.J
 	// opt-in: a session that opened a subscriptions/listen stream receives
 	// only the types it asked for (SEP-2575). Sessions that never opened one
 	// are unaffected.
-	if !subscriptionAllowsNotification(session, notification.Method) {
+	if filtered, ok := session.(interface {
+		subscriptionNotification(mcp.JSONRPCNotification) (mcp.JSONRPCNotification, bool)
+	}); ok {
+		var allowed bool
+		notification, allowed = filtered.subscriptionNotification(notification)
+		if !allowed {
+			return
+		}
+	} else if !subscriptionAllowsNotification(session, notification.Method) {
 		return
 	}
 	if sessionWithStreamableHTTPConfig, ok := session.(SessionWithStreamableHTTPConfig); ok {

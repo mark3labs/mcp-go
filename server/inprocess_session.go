@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -38,6 +39,7 @@ type InProcessSession struct {
 	rootsHandler           RootsHandler
 	subscriptionFilter     mcp.SubscriptionFilter
 	subscriptionGeneration uint64
+	subscriptionID         any
 	mu                     sync.RWMutex
 }
 
@@ -106,15 +108,20 @@ func (s *InProcessSession) GetLogLevel() mcp.LoggingLevel {
 // SetSubscriptionFilter records the notification types requested by subscriptions/listen.
 // Passing the zero filter clears the subscription. It is safe for concurrent use.
 func (s *InProcessSession) SetSubscriptionFilter(filter mcp.SubscriptionFilter) {
-	s.setOwnedSubscriptionFilter(filter)
+	s.setOwnedSubscriptionFilter(context.Background(), nil, filter)
 }
 
-func (s *InProcessSession) setOwnedSubscriptionFilter(filter mcp.SubscriptionFilter) func() {
+func (s *InProcessSession) setOwnedSubscriptionFilter(ctx context.Context, id any, filter mcp.SubscriptionFilter) func() {
 	s.mu.Lock()
+	if ctx.Err() != nil {
+		s.mu.Unlock()
+		return func() {}
+	}
 	s.subscriptionGeneration++
 	generation := s.subscriptionGeneration
 	filter.ResourceSubscriptions = slices.Clone(filter.ResourceSubscriptions)
 	s.subscriptionFilter = filter
+	s.subscriptionID = id
 	s.mu.Unlock()
 
 	return func() {
@@ -122,6 +129,7 @@ func (s *InProcessSession) setOwnedSubscriptionFilter(filter mcp.SubscriptionFil
 		defer s.mu.Unlock()
 		if s.subscriptionGeneration == generation {
 			s.subscriptionFilter = mcp.SubscriptionFilter{}
+			s.subscriptionID = nil
 		}
 	}
 }
@@ -134,6 +142,27 @@ func (s *InProcessSession) SubscriptionFilter() (mcp.SubscriptionFilter, bool) {
 	filter := s.subscriptionFilter
 	filter.ResourceSubscriptions = slices.Clone(filter.ResourceSubscriptions)
 	return filter, !filter.IsEmpty()
+}
+
+// subscriptionNotification reads the filter and its correlation ID together so
+// a replacement cannot associate a notification with the wrong subscription.
+func (s *InProcessSession) subscriptionNotification(notification mcp.JSONRPCNotification) (mcp.JSONRPCNotification, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.subscriptionFilter.IsEmpty() {
+		return notification, true
+	}
+	if !subscriptionFilterAllowsNotification(s.subscriptionFilter, notification.Method) {
+		return notification, false
+	}
+	if s.subscriptionID != nil {
+		notification.Params.Meta = maps.Clone(notification.Params.Meta)
+		if notification.Params.Meta == nil {
+			notification.Params.Meta = make(map[string]any)
+		}
+		notification.Params.Meta[mcp.MetaKeySubscriptionID] = s.subscriptionID
+	}
+	return notification, true
 }
 
 func (s *InProcessSession) RequestSampling(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
