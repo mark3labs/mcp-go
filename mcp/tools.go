@@ -1007,7 +1007,9 @@ func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) err
 	_, declaredDialect := tis.AdditionalFields["$schema"]
 	if !declaredDialect && tis.Defs == nil && aux.Definitions != nil {
 		var definitions map[string]any
-		if err := json.Unmarshal(aux.Definitions, &definitions); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(aux.Definitions))
+		decoder.UseNumber()
+		if err := decoder.Decode(&definitions); err != nil {
 			return err
 		}
 		if definitions == nil {

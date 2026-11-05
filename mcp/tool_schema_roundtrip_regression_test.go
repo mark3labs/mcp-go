@@ -163,18 +163,61 @@ func TestToolSchemaRoundTrip_AdditionalKeywordNumbers(t *testing.T) {
 }
 
 func TestToolSchemaRoundTrip_NoDialectNormalizesDefinitions(t *testing.T) {
-	data := `{
-		"type": "object", "required": ["value"],
-		"definitions": {"value": {"type": "integer"}},
-		"properties": {"value": {"$ref": "#/definitions/value"}},
-		"allOf": [{"properties": {"value": {"$ref": "#/definitions/value"}}}]
-	}`
-	for name, encoded := range roundTripToolSchemas(t, data) {
-		t.Run(name, func(t *testing.T) {
-			assert.NotContains(t, string(encoded), "#/definitions/")
-			compiled := compileRoundTripSchema(t, encoded)
-			assert.NoError(t, compiled.Validate(decodeRoundTripJSON(t, `{"value": 1}`)))
-			assert.Error(t, compiled.Validate(decodeRoundTripJSON(t, `{"value": "a"}`)))
+	tests := []struct {
+		name       string
+		definition string
+		valid      string
+		invalid    string
+	}{
+		{name: "integer", definition: `{"type": "integer"}`, valid: `1`, invalid: `"a"`},
+		{name: "const beyond float64 precision", definition: `{"const": 9007199254740993}`, valid: `9007199254740993`, invalid: `9007199254740992`},
+		{name: "const beyond float64 range", definition: `{"const": 1e400}`, valid: `1e400`, invalid: `1e399`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := `{
+				"type": "object", "required": ["value"],
+				"definitions": {"value": ` + tt.definition + `},
+				"properties": {"value": {"$ref": "#/definitions/value"}},
+				"allOf": [{"properties": {"value": {"$ref": "#/definitions/value"}}}]
+			}`
+			valid := decodeRoundTripJSON(t, `{"value": `+tt.valid+`}`)
+			invalid := decodeRoundTripJSON(t, `{"value": `+tt.invalid+`}`)
+			original := compileRoundTripSchema(t, []byte(data))
+			require.NoError(t, original.Validate(valid))
+			require.Error(t, original.Validate(invalid))
+			for name, encoded := range roundTripToolSchemas(t, data) {
+				t.Run(name, func(t *testing.T) {
+					assert.NotContains(t, string(encoded), "#/definitions/")
+					compiled := compileRoundTripSchema(t, encoded)
+					assert.NoError(t, compiled.Validate(valid))
+					assert.Error(t, compiled.Validate(invalid))
+				})
+			}
+		})
+	}
+}
+
+func TestToolSchemaUnmarshal_NoDialectDefinitionsTypes(t *testing.T) {
+	for _, field := range []string{"inputSchema", "outputSchema"} {
+		t.Run(field, func(t *testing.T) {
+			for _, definitions := range []string{`[]`, `"not an object"`, `true`, `1`} {
+				t.Run(definitions, func(t *testing.T) {
+					var tool Tool
+					data := `{"name": "definitions_type", "` + field + `": {"definitions": ` + definitions + `}}`
+					err := json.Unmarshal([]byte(data), &tool)
+					var typeError *json.UnmarshalTypeError
+					require.ErrorAs(t, err, &typeError)
+				})
+			}
+		})
+	}
+	for name, encoded := range roundTripToolSchemas(t, `{"type": "object", "definitions": null}`) {
+		t.Run(name+" null", func(t *testing.T) {
+			after := decodeRoundTripJSON(t, string(encoded)).(map[string]any)
+			assert.Contains(t, after, "definitions")
+			assert.Nil(t, after["definitions"])
+			assert.NotContains(t, after, "$defs")
 		})
 	}
 }
