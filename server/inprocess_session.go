@@ -112,17 +112,26 @@ func (s *InProcessSession) SetSubscriptionFilter(filter mcp.SubscriptionFilter) 
 }
 
 func (s *InProcessSession) setOwnedSubscriptionFilter(ctx context.Context, id any, filter mcp.SubscriptionFilter) func() {
+	clear, _ := s.activateSubscription(ctx, id, filter, func() error { return nil })
+	return clear
+}
+
+// activateSubscription queues the acknowledgement and installs its filter under
+// the same lock used to prepare subscription notifications.
+func (s *InProcessSession) activateSubscription(ctx context.Context, id any, filter mcp.SubscriptionFilter, acknowledge func() error) (func(), error) {
 	s.mu.Lock()
-	if ctx.Err() != nil {
-		s.mu.Unlock()
-		return func() {}
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return func() {}, err
+	}
+	if err := acknowledge(); err != nil {
+		return func() {}, err
 	}
 	s.subscriptionGeneration++
 	generation := s.subscriptionGeneration
 	filter.ResourceSubscriptions = slices.Clone(filter.ResourceSubscriptions)
 	s.subscriptionFilter = filter
 	s.subscriptionID = id
-	s.mu.Unlock()
 
 	return func() {
 		s.mu.Lock()
@@ -131,7 +140,7 @@ func (s *InProcessSession) setOwnedSubscriptionFilter(ctx context.Context, id an
 			s.subscriptionFilter = mcp.SubscriptionFilter{}
 			s.subscriptionID = nil
 		}
-	}
+	}, nil
 }
 
 // SubscriptionFilter returns a snapshot of the requested notification types and

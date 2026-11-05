@@ -128,3 +128,76 @@ func TestInProcessSession_BroadcastSubscriptionMetadata(t *testing.T) {
 	got := <-first.ClientNotifications()
 	require.NotContains(t, got.Params.Meta, mcp.MetaKeySubscriptionID)
 }
+
+// An unlocked acknowledgement enqueue lets a concurrent broadcast overtake it.
+type acknowledgementOrderingSession struct {
+	*InProcessSession
+	beforeAck func()
+}
+
+func (s *acknowledgementOrderingSession) NotificationChannel() chan<- mcp.JSONRPCNotification {
+	if s.beforeAck != nil {
+		f := s.beforeAck
+		s.beforeAck = nil
+		f()
+	}
+	return s.InProcessSession.NotificationChannel()
+}
+
+func TestInProcessSession_AcknowledgementPrecedesBroadcast(t *testing.T) {
+	srv := NewMCPServer("ordering", "1.0", WithToolCapabilities(true))
+	session := &acknowledgementOrderingSession{InProcessSession: NewInProcessSession("ordering", nil)}
+	session.Initialize()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	ctx = srv.WithContext(ctx, session)
+	session.beforeAck = func() {
+		if session.mu.TryLock() {
+			session.mu.Unlock()
+			srv.broadcastToSession(session, mcp.JSONRPCNotification{Notification: mcp.Notification{Method: mcp.MethodNotificationToolsListChanged}})
+		}
+		cancel()
+	}
+	request := mcp.SubscriptionsListenRequest{}
+	request.Params.Notifications.ToolsListChanged = true
+	_, err := srv.handleSubscriptionsListen(ctx, "listen", request)
+	require.Nil(t, err)
+	first := <-session.ClientNotifications()
+	require.Equal(t, mcp.MethodNotificationSubscriptionsAcknowledged, first.Method)
+}
+
+func TestInProcessSession_TargetedListChanges(t *testing.T) {
+	srv := NewMCPServer("targeted", "1.0")
+	session := NewInProcessSession("targeted", nil)
+	session.Initialize()
+	srv.sessions.Store(session.SessionID(), session)
+	clear := session.setOwnedSubscriptionFilter(t.Context(), "listen", mcp.SubscriptionFilter{PromptsListChanged: true})
+	defer clear()
+	for _, method := range []string{mcp.MethodNotificationToolsListChanged, mcp.MethodNotificationResourcesListChanged, mcp.MethodNotificationPromptsListChanged, string(mcp.MethodNotificationProgress)} {
+		require.NoError(t, srv.SendNotificationToSpecificClient(session.SessionID(), method, nil))
+	}
+	first := <-session.ClientNotifications()
+	require.Equal(t, mcp.MethodNotificationPromptsListChanged, first.Method)
+	require.Equal(t, "listen", first.Params.Meta[mcp.MetaKeySubscriptionID])
+	second := <-session.ClientNotifications()
+	require.Equal(t, string(mcp.MethodNotificationProgress), second.Method)
+	require.NotContains(t, second.Params.Meta, mcp.MetaKeySubscriptionID)
+}
+
+func TestInProcessSession_FailedAcknowledgementPreservesSubscription(t *testing.T) {
+	session := NewInProcessSession("failed-ack", nil)
+	filter := mcp.SubscriptionFilter{ToolsListChanged: true}
+	clear := session.setOwnedSubscriptionFilter(t.Context(), "current", filter)
+	defer clear()
+	cleanup, err := session.activateSubscription(t.Context(), "replacement", mcp.SubscriptionFilter{PromptsListChanged: true}, func() error {
+		return ErrNotificationChannelBlocked
+	})
+	require.ErrorIs(t, err, ErrNotificationChannelBlocked)
+	cleanup()
+	got, active := session.SubscriptionFilter()
+	require.True(t, active)
+	require.Equal(t, filter, got)
+	notification, allowed := session.subscriptionNotification(mcp.JSONRPCNotification{Notification: mcp.Notification{Method: mcp.MethodNotificationToolsListChanged}})
+	require.True(t, allowed)
+	require.Equal(t, "current", notification.Params.Meta[mcp.MetaKeySubscriptionID])
+}
