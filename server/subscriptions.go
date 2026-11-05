@@ -45,6 +45,13 @@ type SessionWithSubscriptionFilter interface {
 	SubscriptionFilter() (mcp.SubscriptionFilter, bool)
 }
 
+// sessionWithOwnedSubscriptionFilter keeps a returning request from clearing a
+// filter installed by its replacement without changing the public session API.
+type sessionWithOwnedSubscriptionFilter interface {
+	SessionWithSubscriptionFilter
+	activateSubscription(ctx context.Context, id any, filter mcp.SubscriptionFilter, acknowledge func() error) (func(), error)
+}
+
 // handleSubscriptionsListen serves the subscriptions/listen RPC introduced in
 // protocol version 2026-07-28 (SEP-2575).
 //
@@ -79,7 +86,8 @@ func (s *MCPServer) handleSubscriptionsListen(
 	allowed := s.allowedSubscriptions(request.Params.Notifications)
 
 	// Record the filter so notification fan-out can honour the opt-in.
-	if filtered, ok := session.(SessionWithSubscriptionFilter); ok {
+	owned, ownsFilter := session.(sessionWithOwnedSubscriptionFilter)
+	if filtered, ok := session.(SessionWithSubscriptionFilter); ok && !ownsFilter {
 		filtered.SetSubscriptionFilter(allowed)
 		defer filtered.SetSubscriptionFilter(mcp.SubscriptionFilter{})
 	}
@@ -129,11 +137,20 @@ func (s *MCPServer) handleSubscriptionsListen(
 			},
 		},
 	}
-	if err := s.sendNotificationToSpecificClient(session, ack); err != nil {
+	acknowledge := func() error { return s.sendNotificationToSpecificClient(session, ack) }
+	var ackErr error
+	if ownsFilter {
+		var clear func()
+		clear, ackErr = owned.activateSubscription(ctx, id, allowed, acknowledge)
+		defer clear()
+	} else {
+		ackErr = acknowledge()
+	}
+	if ackErr != nil {
 		return nil, &requestError{
 			id:   id,
 			code: mcp.INTERNAL_ERROR,
-			err:  fmt.Errorf("sending subscriptions/acknowledged: %w", err),
+			err:  fmt.Errorf("sending subscriptions/acknowledged: %w", ackErr),
 		}
 	}
 
@@ -200,6 +217,10 @@ func subscriptionAllowsNotification(session ClientSession, method string) bool {
 	if !active {
 		return true
 	}
+	return subscriptionFilterAllowsNotification(filter, method)
+}
+
+func subscriptionFilterAllowsNotification(filter mcp.SubscriptionFilter, method string) bool {
 	switch method {
 	case mcp.MethodNotificationToolsListChanged:
 		return filter.ToolsListChanged
