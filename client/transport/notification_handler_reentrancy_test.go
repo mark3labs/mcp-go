@@ -13,6 +13,9 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// TestTransportNotificationHandlerCanReplaceItself verifies that replacing and
+// removing a notification handler from its callback preserves notification order
+// and allows the receive loop to deliver the following response.
 func TestTransportNotificationHandlerCanReplaceItself(t *testing.T) {
 	const first = `{"jsonrpc":"2.0","method":"notifications/first"}`
 	const second = `{"jsonrpc":"2.0","method":"notifications/second"}`
