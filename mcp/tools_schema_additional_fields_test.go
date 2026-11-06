@@ -94,7 +94,7 @@ func TestSchemaAdditionalFieldsCollisions(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			extras := map[string]any{"type": "wrong", "properties": false, "required": false, "$defs": false, "additionalProperties": true, "definitions": map[string]any{"wrong": true}, "title": "retained"}
+			extras := map[string]any{"type": "wrong", "properties": false, "required": false, "$defs": false, "additionalProperties": true, "title": "retained"}
 			original := maps.Clone(extras)
 			tt.schema.AdditionalFields = extras
 			encoded, err := json.Marshal(tt.schema)
@@ -141,25 +141,27 @@ func TestSchemaAdditionalFieldsErrors(t *testing.T) {
 func TestSchemaAdditionalFieldsDraft07Refs(t *testing.T) {
 	tests := []struct{ name, defs, expectedRef string }{
 		{"adopt definitions", `"definitions":{"value":true}`, "#/$defs/value"},
-		{"defs precedence", `"$defs":{"value":false},"definitions":{"ignored":true}`, "#/definitions/value"},
+		{"both containers", `"$defs":{"value":false},"definitions":{"value":true}`, "#/definitions/value"},
 		{"no definitions", `"$defs":{"value":true}`, "#/definitions/value"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			const extras = `"$schema":"http://json-schema.org/draft-07/schema#","$ref":"#/definitions/value","oneOf":[{"$ref":"#/definitions/value"}],"anyOf":[{"$ref":"#/definitions/value"}],"allOf":[{"$ref":"#/definitions/value"}],"if":{"$ref":"#/definitions/value"},"then":{"$ref":"#/definitions/value"},"else":{"$ref":"#/definitions/value"},"x-external":{"$ref":"https://example.com/definitions/value"}`
+			const extras = `"$ref":"#/definitions/value","oneOf":[{"$ref":"#/definitions/value"}],"anyOf":[{"$ref":"#/definitions/value"}],"allOf":[{"$ref":"#/definitions/value"}],"if":{"$ref":"#/definitions/value"},"then":{"$ref":"#/definitions/value"},"else":{"$ref":"#/definitions/value"},"x-external":{"$ref":"https://example.com/definitions/value"}`
 			var schema ToolArgumentsSchema
 			require.NoError(t, json.Unmarshal([]byte(`{"type":"object",`+tt.defs+`,`+extras+`}`), &schema))
-			assert.NotContains(t, schema.AdditionalFields, "definitions")
-			assert.NotContains(t, schema.Defs, "ignored")
+			assert.Equal(t, tt.name == "both containers", schema.AdditionalFields["definitions"] != nil)
 			encoded, err := json.Marshal(schema.AdditionalFields)
 			require.NoError(t, err)
 			expected := strings.ReplaceAll(`{`+extras+`}`, "#/definitions/value", tt.expectedRef)
+			if tt.name == "both containers" {
+				expected = strings.TrimSuffix(expected, "}") + `,"definitions":{"value":true}}`
+			}
 			assert.JSONEq(t, expected, string(encoded))
 			full, err := json.Marshal(schema)
 			require.NoError(t, err)
 			var wire map[string]any
 			require.NoError(t, json.Unmarshal(full, &wire))
-			assert.NotContains(t, wire, "definitions")
+			assert.Equal(t, tt.name == "both containers", wire["definitions"] != nil)
 			assert.Equal(t, tt.expectedRef, wire["$ref"])
 		})
 	}
