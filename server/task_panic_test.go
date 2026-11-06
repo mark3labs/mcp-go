@@ -198,13 +198,12 @@ func TestScheduleTaskCleanup_CancelsRunningTaskOnTTL(t *testing.T) {
 				}
 			}()
 
-			select {
-			case <-started:
-			case <-time.After(time.Second):
-				t.Fatal("task handler did not start")
-			}
-
 			if !tt.expireBeforeStart {
+				select {
+				case <-started:
+				case <-time.After(time.Second):
+					t.Fatal("task handler did not start")
+				}
 				s.scheduleTaskCleanup(taskID, entry, 50)
 			}
 
@@ -212,6 +211,13 @@ func TestScheduleTaskCleanup_CancelsRunningTaskOnTTL(t *testing.T) {
 			case <-exited:
 			case <-time.After(time.Second):
 				t.Fatal("task execution did not exit after TTL expiration")
+			}
+			if tt.expireBeforeStart {
+				select {
+				case <-started:
+					t.Error("expired task handler must not start")
+				default:
+				}
 			}
 
 			assert.NoError(t, ctx.Err(), "TTL expiration must not cancel the parent context")

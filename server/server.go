@@ -2501,13 +2501,11 @@ func (s *MCPServer) executeTaskTool(
 	// it while the created hook ran.
 	s.tasksMu.Lock()
 	entry.cancelFunc = cancel
-	cancelled := entry.completed
-	ended := s.tasks[entry.task.TaskId] != entry || cancelled
+	ended := s.tasks[entry.task.TaskId] != entry || entry.completed
 	s.tasksMu.Unlock()
 	if ended {
 		cancel()
-	}
-	if cancelled {
+		_ = s.cancelTaskEntry(ctx, entry, context.Canceled.Error())
 		return
 	}
 
@@ -2595,13 +2593,11 @@ func (s *MCPServer) executeRegularToolAsTask(
 	// it while the created hook ran.
 	s.tasksMu.Lock()
 	entry.cancelFunc = cancel
-	cancelled := entry.completed
-	ended := s.tasks[entry.task.TaskId] != entry || cancelled
+	ended := s.tasks[entry.task.TaskId] != entry || entry.completed
 	s.tasksMu.Unlock()
 	if ended {
 		cancel()
-	}
-	if cancelled {
+		_ = s.cancelTaskEntry(ctx, entry, context.Canceled.Error())
 		return
 	}
 

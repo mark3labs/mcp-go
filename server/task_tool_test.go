@@ -902,6 +902,58 @@ func TestTaskCancelledBeforeWorkerStarts(t *testing.T) {
 			task, _, err := s.getTask(t.Context(), taskID)
 			require.NoError(t, err)
 			assert.Equal(t, mcp.TaskStatusCancelled, task.Status)
+			assert.Zero(t, s.activeTasks)
+		})
+	}
+}
+
+func TestTaskExpiredBeforeWorkerStarts(t *testing.T) {
+	tests := []struct {
+		name     string
+		taskTool bool
+	}{
+		{name: "task tool", taskTool: true},
+		{name: "regular tool", taskTool: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true), WithMaxConcurrentTasks(1))
+			const taskID = "expire-before-start"
+			entry, err := s.createTask(t.Context(), taskID, "work", nil, nil)
+			require.NoError(t, err)
+			s.scheduleTaskCleanup(taskID, entry, 0)
+			require.False(t, entry.completed)
+
+			var called atomic.Bool
+			request := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "work"}}
+			if tt.taskTool {
+				s.executeTaskTool(t.Context(), entry, ServerTaskTool{
+					Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+						called.Store(true)
+						return &mcp.CreateTaskResult{}, nil
+					},
+				}, request)
+			} else {
+				s.executeRegularToolAsTask(t.Context(), entry, ServerTool{
+					Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+						called.Store(true)
+						return mcp.NewToolResultText("done"), nil
+					},
+				}, request)
+			}
+
+			assert.False(t, called.Load(), "handler must not run for a task expired before it started")
+			_, _, err = s.getTask(t.Context(), taskID)
+			assert.ErrorContains(t, err, "task has expired")
+			select {
+			case <-entry.done:
+			default:
+				t.Error("expired task must unblock result waiters")
+			}
+			nextEntry, err := s.createTask(t.Context(), "next-task", "work", nil, nil)
+			require.NoError(t, err, "expired task must release its concurrent task slot")
+			s.completeTask(nextEntry, nil, nil)
 		})
 	}
 }
