@@ -777,6 +777,9 @@ func (c *SSE) SetProtocolVersion(version string) {
 
 // SendNotification sends a JSON-RPC notification to the server without expecting a response.
 func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNotification) error {
+	if c.closed.Load() {
+		return ErrTransportClosed
+	}
 	c.mu.RLock()
 	endpoint := c.endpoint
 	c.mu.RUnlock()
