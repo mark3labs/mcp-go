@@ -43,6 +43,8 @@ func WithContinuousListening() StreamableHTTPCOption {
 }
 
 // WithHTTPBasicClient sets a custom HTTP client on the StreamableHTTP transport.
+// The client's own CheckRedirect policy is used as is; the default client only
+// follows same-origin redirects (see ErrCrossOriginRedirect).
 func WithHTTPBasicClient(client *http.Client) StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
 		sc.httpClient = client
@@ -193,7 +195,7 @@ func NewStreamableHTTP(serverURL string, options ...StreamableHTTPCOption) (*Str
 
 	smc := &StreamableHTTP{
 		serverURL:   parsedURL,
-		httpClient:  &http.Client{},
+		httpClient:  newDefaultHTTPClient(),
 		headers:     make(map[string]string),
 		closed:      make(chan struct{}),
 		logger:      slog.Default(),
