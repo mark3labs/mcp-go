@@ -103,6 +103,8 @@ func WithHeaderFunc(headerFunc HTTPHeaderFunc) ClientOption {
 }
 
 // WithHTTPClient sets a custom HTTP client for the SSE transport.
+// The client's own CheckRedirect policy is used as is; the default client only
+// follows same-origin redirects (see ErrCrossOriginRedirect).
 func WithHTTPClient(httpClient *http.Client) ClientOption {
 	return func(sc *SSE) {
 		sc.httpClient = httpClient
@@ -157,7 +159,7 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 
 	smc := &SSE{
 		baseURL:         parsedURL,
-		httpClient:      &http.Client{},
+		httpClient:      newDefaultHTTPClient(),
 		responses:       make(map[string]chan *JSONRPCResponse),
 		headers:         make(map[string]string),
 		logger:          slog.Default(),
@@ -479,7 +481,9 @@ func (c *SSE) handleSSEEvent(event, data string, endpointChan chan struct{}, end
 			c.logger.Error("Error parsing endpoint URL", "err", err)
 			return
 		}
-		if endpoint.Host != c.baseURL.Host {
+		// Scheme and port must match too: an https connection must not
+		// post headers and bodies to an http endpoint on the same host.
+		if !sameOrigin(endpoint, c.baseURL) {
 			c.logger.Error("Endpoint origin does not match connection origin")
 			return
 		}
