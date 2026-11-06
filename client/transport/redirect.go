@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -37,24 +38,43 @@ func sameOriginRedirectPolicy(req *http.Request, via []*http.Request) error {
 		return nil
 	}
 	from := via[0].URL
-	if origin(from.Scheme, from.Host) != origin(req.URL.Scheme, req.URL.Host) {
+	if !sameOrigin(from, req.URL) {
 		return fmt.Errorf("%w from %s://%s to %s://%s",
 			ErrCrossOriginRedirect, from.Scheme, from.Host, req.URL.Scheme, req.URL.Host)
 	}
 	return nil
 }
 
+// sameOrigin reports whether a and b have the same scheme, host and port.
+func sameOrigin(a, b *url.URL) bool {
+	return origin(a.Scheme, a.Host) == origin(b.Scheme, b.Host)
+}
+
 // origin returns a normalized scheme://host:port string, filling in the
-// default port for http and https.
+// default port for http and https when the port is missing or empty.
 func origin(scheme, hostport string) string {
-	scheme = strings.ToLower(scheme)
+	scheme = asciiLower(scheme)
 	host, port, err := net.SplitHostPort(hostport)
 	if err != nil {
 		host = hostport
+	}
+	if port == "" {
 		port = defaultPort(scheme)
 	}
-	host = strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"))
+	host = asciiLower(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"))
 	return scheme + "://" + net.JoinHostPort(host, port)
+}
+
+// asciiLower lowercases only ASCII letters. Unicode case mapping must not be
+// used on hosts: it maps "İ" to "i", while net/http's IDNA conversion dials
+// "İ.example" and "i.example" as different hosts.
+func asciiLower(s string) string {
+	return strings.Map(func(r rune) rune {
+		if 'A' <= r && r <= 'Z' {
+			return r + ('a' - 'A')
+		}
+		return r
+	}, s)
 }
 
 func defaultPort(scheme string) string {

@@ -481,7 +481,9 @@ func (c *SSE) handleSSEEvent(event, data string, endpointChan chan struct{}, end
 			c.logger.Error("Error parsing endpoint URL", "err", err)
 			return
 		}
-		if endpoint.Host != c.baseURL.Host {
+		// Scheme and port must match too: an https connection must not
+		// post headers and bodies to an http endpoint on the same host.
+		if !sameOrigin(endpoint, c.baseURL) {
 			c.logger.Error("Endpoint origin does not match connection origin")
 			return
 		}
