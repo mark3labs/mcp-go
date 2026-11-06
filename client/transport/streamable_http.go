@@ -985,10 +985,11 @@ func (c *StreamableHTTP) handleSSEResponse(ctx context.Context, reader io.ReadCl
 					return
 				}
 				c.notifyMu.RLock()
-				if c.notificationHandler != nil {
-					c.notificationHandler(notification)
-				}
+				handler := c.notificationHandler
 				c.notifyMu.RUnlock()
+				if handler != nil {
+					handler(notification)
+				}
 				return
 			}
 
@@ -1273,6 +1274,7 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 }
 
 // SetNotificationHandler sets the handler for incoming JSON-RPC notifications.
+// A handler may replace or remove itself; the change applies to subsequent notifications.
 func (c *StreamableHTTP) SetNotificationHandler(handler func(mcp.JSONRPCNotification)) {
 	c.notifyMu.Lock()
 	defer c.notifyMu.Unlock()
