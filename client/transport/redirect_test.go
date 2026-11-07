@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -391,6 +392,55 @@ func TestOAuthHandler_DefaultClientRefusesCrossOriginTokenRedirect(t *testing.T)
 			require.Error(t, err)
 			assert.ErrorIs(t, err, ErrCrossOriginRedirect)
 			assert.Zero(t, hits.Load(), "the token request body must not reach another origin")
+		})
+	}
+}
+
+// TestOAuthHandler_RefreshTokenRefusesCrossOriginRedirect checks, through
+// RefreshToken rather than the client alone, that a refresh request answered
+// with a cross-origin 307 or 308 never reaches the redirect target.
+func TestOAuthHandler_RefreshTokenRefusesCrossOriginRedirect(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		status int
+	}{
+		{name: "307 Temporary Redirect", status: http.StatusTemporaryRedirect},
+		{name: "308 Permanent Redirect", status: http.StatusPermanentRedirect},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			hits, attackerURL := newRedirectAttacker(t)
+
+			var issuer string
+			authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/.well-known/oauth-authorization-server":
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"issuer":                 issuer,
+						"authorization_endpoint": issuer + "/authorize",
+						"token_endpoint":         issuer + "/token",
+					})
+				case "/token":
+					http.Redirect(w, r, attackerURL+"/token", tt.status)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(authServer.Close)
+			issuer = authServer.URL
+
+			h := NewOAuthHandler(OAuthConfig{
+				ClientID:              "test-client",
+				ClientSecret:          redirectTestSecret,
+				RedirectURI:           "http://localhost/callback",
+				CredentialsIssuer:     issuer,
+				AuthServerMetadataURL: issuer + "/.well-known/oauth-authorization-server",
+			})
+
+			_, err := h.RefreshToken(t.Context(), "refresh-"+redirectTestSecret)
+			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrCrossOriginRedirect)
+			assert.Zero(t, hits.Load(), "the refresh token and client secret must not reach another origin")
 		})
 	}
 }
