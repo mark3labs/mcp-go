@@ -417,6 +417,26 @@ s := server.NewMCPServer(
 
 When the limit is reached, new task creation requests will fail with an error. Completed, failed, or cancelled tasks don't count toward the limit - only tasks in "working" status. If `WithMaxConcurrentTasks` is not specified or set to 0, there is no limit on concurrent tasks.
 
+##### Transport Considerations for Task Handlers
+
+Task handlers run as background goroutines. Their context is not cancelled when `HandleMessage` returns. It stays alive until `tasks/cancel` cancels it or the task's TTL expires. Server shutdown does not cancel running tasks.
+
+Blocking on `ctx.Done()` is therefore safe and is the recommended way to honour cancellation:
+
+```go
+s.AddTaskTool(myTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+    for _, item := range items {
+        select {
+        case <-ctx.Done():
+            return nil, ctx.Err()
+        case <-time.After(perItemDelay * time.Millisecond):
+        }
+        processItem(item)
+    }
+    return result, nil
+})
+```
+
 For traditional synchronous tools that execute and return results immediately:
 
 Simple calculation example:
@@ -535,6 +555,26 @@ Each tool should:
 - Use appropriate result types
 
 </details>
+
+
+##### Task Authorization
+
+SEP-2663 requires servers to authenticate and authorize every task-related request (`tasks/get`, `tasks/cancel`, `tasks/result`, `tasks/list`, `tasks/update`). The SDK enforces the following default policy:
+
+| Task session | Request session | Result |
+|---|---|---|
+| set | set, **same** | Allowed |
+| set | set, **different** | Denied (`task not found`, to avoid enumeration) |
+| **empty** | any | Allowed — bearer-token model |
+| any | **empty** | Allowed — bearer-token model |
+
+**Bearer-token default.** When either side has no session (e.g. stdio, in-process, or a task created outside a session), possessing the task ID is the only credential. This is the bearer-token model explicitly permitted by SEP-2663: sufficient entropy that a third party cannot enumerate or guess them. This is the intended default for session-less transports.
+
+**Enforcing application-level authorization.** Applications that need finer-grained control (per-user or per-tenant access) can use two existing extension points:
+
+1. **HTTP middleware** on the transport layer. An outer `http.Handler` can validate credentials, attach identity to the request context, and reject unauthorized requests before `HandleMessage` is called. This validates the credential on each request. It does not bind the credential to a session, and a session ID does not identify the caller. To limit a session to one caller, store the authenticated identity for the session and reject requests whose identity differs.
+
+2. **`OnBefore*` hooks** (`AddBeforeGetTask`, `AddBeforeCancelTask`, `AddBeforeUpdateTask`, etc.) are for **observation only** — logging, auditing, or recording the authenticated identity (which transport middleware can place in `ctx`) alongside the task operation. They are fire-and-forget: they cannot return an error, and the handler runs regardless of what the hook does. **Do not use them to enforce authorization.** Enforce task authorization in HTTP middleware (option 1), which can reject the request before `HandleMessage` is called. (See `TestTaskAccessControl_OnBeforeHookExtensionPoint` in `server/task_auth_contract_test.go`, which demonstrates reading the identity — not enforcing it.)
 
 ### Prompts
 

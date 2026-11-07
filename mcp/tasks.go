@@ -1,8 +1,23 @@
 package mcp
 
 import (
+	"fmt"
 	"time"
 )
+
+// ExtensionTasks is the identifier for the MCP Tasks extension.
+const ExtensionTasks = "io.modelcontextprotocol/tasks"
+
+// UnsupportedTaskResultError is returned when a peer responded to a request
+// with a task handle (resultType:"task") from the ExtensionTasks extension,
+// but the local SDK cannot automatically resolve it.
+type UnsupportedTaskResultError struct {
+	TaskID string
+}
+
+func (e *UnsupportedTaskResultError) Error() string {
+	return fmt.Sprintf("peer created task %q: the %s extension is not supported by this client", e.TaskID, ExtensionTasks)
+}
 
 // TaskOption is a function that configures a Task.
 // It provides a flexible way to set various properties of a Task using the functional options pattern.
@@ -80,9 +95,11 @@ func NewTaskParams(ttlMs *int64) TaskParams {
 }
 
 // NewCreateTaskResult creates a CreateTaskResult with the given task.
+// Tasks extension wire format, set Legacy=false.
 func NewCreateTaskResult(task Task) CreateTaskResult {
 	return CreateTaskResult{
-		Task: task,
+		Task:   task,
+		Legacy: true,
 	}
 }
 
