@@ -79,16 +79,21 @@ func sameOrigin(a, b *url.URL) bool {
 	return origin(a) == origin(b)
 }
 
-// origin returns a normalized scheme://host:port string. The scheme and host
-// are lowercased (ASCII only), an IP literal is written in its canonical form
-// (so "[0:0::1]" and "[::1]" compare equal), a missing port becomes the
+// origin returns a normalized scheme://host:port string. The scheme and a
+// host name are lowercased (ASCII only), an IP literal is written in its
+// canonical form (so "[0:0::1]" and "[::1]" compare equal) with its zone
+// unchanged, a missing port becomes the
 // scheme's default, and a numeric port loses leading zeros, so ":0443" and
 // ":443" compare equal as net/http dials them.
 func origin(u *url.URL) string {
 	scheme := asciiLower(u.Scheme)
-	host := asciiLower(u.Hostname())
+	host := u.Hostname()
 	if addr, err := netip.ParseAddr(host); err == nil {
+		// netip writes hex digits in lowercase and keeps the zone as is:
+		// zone names are interface names, which can differ only in case.
 		host = addr.String()
+	} else {
+		host = asciiLower(host)
 	}
 	port := u.Port()
 	if n, err := strconv.ParseUint(port, 10, 16); err == nil {
