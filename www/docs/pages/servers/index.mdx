@@ -28,6 +28,7 @@ import (
     "context"
     "encoding/json"
     "fmt"
+    "os"
     "time"
 
     "github.com/mark3labs/mcp-go/mcp"
@@ -83,7 +84,7 @@ func main() {
 
     // Start the server
     if err := server.ServeStdio(s); err != nil {
-        fmt.Printf("Server error: %v\n", err)
+        fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
     }
 }
 

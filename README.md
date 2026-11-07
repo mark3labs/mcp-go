@@ -26,6 +26,7 @@ package main
 import (
     "context"
     "fmt"
+    "os"
 
     "github.com/mark3labs/mcp-go/mcp"
     "github.com/mark3labs/mcp-go/server"
@@ -53,7 +54,7 @@ func main() {
 
     // Start the stdio server
     if err := server.ServeStdio(s); err != nil {
-        fmt.Printf("Server error: %v\n", err)
+        fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
     }
 }
 
@@ -121,6 +122,7 @@ package main
 import (
     "context"
     "fmt"
+    "os"
 
     "github.com/mark3labs/mcp-go/mcp"
     "github.com/mark3labs/mcp-go/server"
@@ -191,7 +193,7 @@ func main() {
 
     // Start the server
     if err := server.ServeStdio(s); err != nil {
-        fmt.Printf("Server error: %v\n", err)
+        fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
     }
 }
 ```
