@@ -3058,6 +3058,7 @@ func (s *MCPServer) handleCancelTask(
 	}
 
 	result := mcp.NewCancelTaskResult(task)
+	result.Legacy = true
 	return &result, nil
 }
 

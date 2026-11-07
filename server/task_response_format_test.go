@@ -113,8 +113,50 @@ func TestTaskAugmentedToolCall_SpecCompliance(t *testing.T) {
 	assert.Equal(t, "working", result["status"])
 	assert.Contains(t, result, "createdAt")
 	assert.Contains(t, result, "lastUpdatedAt")
-	// ttlMs is omitted when not specified, the key is absent
-	assert.NotContains(t, result, "ttlMs")
+	assert.Contains(t, result, "ttlMs")
+	assert.Nil(t, result["ttlMs"], "ttlMs should be null for a task with no expiration")
 	// pollIntervalMs is optional per spec, only check if provided
 	// The server sets it to nil when not specified, so it won't appear in JSON
+}
+
+// TestLegacyCancelTaskResponseFieldNames verifies that a legacy tasks/cancel response
+// carries the cancelled task state using 2025-11-25 field names (ttl, pollInterval),
+// not the SEP-2663 names (ttlMs, pollIntervalMs).
+func TestLegacyCancelTaskResponseFieldNames(t *testing.T) {
+	server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+
+	ctx := t.Context()
+	ttl := int64(60000)
+	pollInterval := int64(1000)
+	_, err := server.createTask(ctx, "task-legacy-cancel", "test-tool", &ttl, &pollInterval)
+	require.NoError(t, err)
+
+	// t.Context() carries no modern protocol info, so this takes the legacy path.
+	response := server.HandleMessage(ctx, []byte(`{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "tasks/cancel",
+		"params": {"taskId": "task-legacy-cancel"}
+	}`))
+
+	jsonBytes, err := json.Marshal(response)
+	require.NoError(t, err)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(jsonBytes, &parsed))
+	result, ok := parsed["result"].(map[string]any)
+	require.True(t, ok, "result should be an object")
+
+	assert.Equal(t, "task-legacy-cancel", result["taskId"])
+	assert.Equal(t, "cancelled", result["status"])
+
+	// Legacy field names must be present.
+	assert.Contains(t, result, "ttl", "legacy cancel response must use ttl")
+	assert.Equal(t, float64(60000), result["ttl"])
+	assert.Contains(t, result, "pollInterval", "legacy cancel response must use pollInterval")
+	assert.Equal(t, float64(1000), result["pollInterval"])
+
+	// SEP-2663 field names must NOT appear on the legacy path.
+	assert.NotContains(t, result, "ttlMs")
+	assert.NotContains(t, result, "pollIntervalMs")
 }

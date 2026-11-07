@@ -1328,22 +1328,19 @@ func GetTextFromContent(content any) string {
 // so plain json.Unmarshal decodes legacy names correctly but skips ttlMs/pollIntervalMs;
 // this helper fills the gap. It only overrides fields that json.Unmarshal left nil,
 // to avoid clobbering a precisely-decoded integer value with a lossy float64.
-func jsonToTask(jsonContent map[string]any, result *GetTaskResult) {
-	if result.TTL == nil {
-		if ttl, ok := jsonContent["ttlMs"]; ok {
-			if ttlFloat, ok := ttl.(float64); ok {
-				ttlInt64 := int64(ttlFloat)
-				result.TTL = &ttlInt64
-			}
-		}
+func jsonToTask(raw []byte, result *GetTaskResult) {
+	var modern struct {
+		TTLMs          *int64 `json:"ttlMs"`
+		PollIntervalMs *int64 `json:"pollIntervalMs"`
 	}
-	if result.PollInterval == nil {
-		if pollInterval, ok := jsonContent["pollIntervalMs"]; ok {
-			if pollIntervalFloat64, ok := pollInterval.(float64); ok {
-				pollIntervalInt := int64(pollIntervalFloat64)
-				result.PollInterval = &pollIntervalInt
-			}
-		}
+	if err := json.Unmarshal(raw, &modern); err != nil {
+		return
+	}
+	if result.TTL == nil && modern.TTLMs != nil {
+		result.TTL = modern.TTLMs
+	}
+	if result.PollInterval == nil && modern.PollIntervalMs != nil {
+		result.PollInterval = modern.PollIntervalMs
 	}
 }
 
@@ -1358,12 +1355,9 @@ func ParseCancelTaskResult(rawMessage *json.RawMessage) (*CancelTaskResult, erro
 	}
 	// Fix up ttlMs/pollIntervalMs: Task struct tags use legacy names so plain
 	// json.Unmarshal won't decode them from SEP-2663 wire format.
-	var jsonContent map[string]any
-	if err := json.Unmarshal(*rawMessage, &jsonContent); err == nil {
-		getResult := GetTaskResult{Task: result.Task}
-		jsonToTask(jsonContent, &getResult)
-		result.Task = getResult.Task
-	}
+	getResult := GetTaskResult{Task: result.Task}
+	jsonToTask(*rawMessage, &getResult)
+	result.Task = getResult.Task
 	return &result, nil
 }
 
@@ -1386,12 +1380,9 @@ func ParseListTasksResult(rawMessage *json.RawMessage) (*ListTasksResult, error)
 			if i >= len(result.Tasks) {
 				break
 			}
-			var taskMap map[string]any
-			if err := json.Unmarshal(raw, &taskMap); err == nil {
-				tmp := GetTaskResult{Task: result.Tasks[i]}
-				jsonToTask(taskMap, &tmp)
-				result.Tasks[i] = tmp.Task
-			}
+			tmp := GetTaskResult{Task: result.Tasks[i]}
+			jsonToTask(raw, &tmp)
+			result.Tasks[i] = tmp.Task
 		}
 	}
 	return &result, nil
@@ -1449,10 +1440,7 @@ func ParseGetTaskResult(rawMessage *json.RawMessage) (*GetTaskResult, error) {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 	// Fix up ttlMs/pollIntervalMs from SEP-2663 wire format.
-	var jsonContent map[string]any
-	if err := json.Unmarshal(*rawMessage, &jsonContent); err == nil {
-		jsonToTask(jsonContent, &result)
-	}
+	jsonToTask(*rawMessage, &result)
 	// Populate SEP-2663 inline fields (result, error, inputRequests).
 	var sep struct {
 		TaskResult    json.RawMessage      `json:"result"`

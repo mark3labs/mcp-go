@@ -1856,8 +1856,7 @@ type CreateTaskResult struct {
 	Content           []Content `json:"-"`
 	StructuredContent any       `json:"-"`
 	IsError           bool      `json:"-"`
-	// Legacy instructs MarshalJSON to use the 2025-11-25 wire format.
-	Legacy bool `json:"-"`
+	Legacy            bool      `json:"-"`
 }
 
 // marshalTaskToMap serialises a Task to a map using SEP-2663 wire field names
@@ -1872,9 +1871,9 @@ func marshalTaskToMap(t Task) map[string]any {
 	if t.StatusMessage != "" {
 		m["statusMessage"] = t.StatusMessage
 	}
-	if t.TTL != nil {
-		m["ttlMs"] = *t.TTL
-	}
+	// SEP-2663 requires ttlMs in task responses (number or null), emit null for
+	// tasks with no expiration rather than omitting the key.
+	m["ttlMs"] = t.TTL
 	if t.PollInterval != nil {
 		m["pollIntervalMs"] = *t.PollInterval
 	}
@@ -1915,7 +1914,7 @@ func (r *CreateTaskResult) UnmarshalJSON(data []byte) error {
 		r.Legacy = true
 		return nil
 	}
-	// SEP-2663 inline format: task fields at the top level.
+	r.Legacy = false
 	type inlineTask struct {
 		TaskId        string     `json:"taskId"`
 		Status        TaskStatus `json:"status"`
@@ -1972,9 +1971,7 @@ func (r GetTaskResult) MarshalJSON() ([]byte, error) {
 		if r.StatusMessage != "" {
 			m["statusMessage"] = r.StatusMessage
 		}
-		if r.TTL != nil {
-			m["ttl"] = *r.TTL
-		}
+		m["ttl"] = r.TTL
 		if r.PollInterval != nil {
 			m["pollInterval"] = *r.PollInterval
 		}
@@ -2011,12 +2008,23 @@ type ListTasksResult struct {
 	Tasks []Task `json:"tasks"`
 }
 
-// MarshalJSON emits SEP-2663 field names (ttlMs, pollIntervalMs) for each
-// Task in the list, consistent with tasks/get and tasks/create responses.
+// MarshalJSON emits legacy 2025-11-25 field names (ttl, pollInterval) for each
+// Task in the list. tasks/list is served only to non-modern clients — the
+// modern protocol rejects it with METHOD_NOT_FOUND (SEP-2663 removed tasks/list)
+// — so those clients read the legacy field names. ttl is emitted unconditionally
+// (null for unlimited) per the 2025-11-25 TTL requirement; pollInterval is
+// omitted when unset (the legacy schema marks it optional).
 func (r ListTasksResult) MarshalJSON() ([]byte, error) {
 	tasks := make([]map[string]any, len(r.Tasks))
 	for i, t := range r.Tasks {
-		tasks[i] = marshalTaskToMap(t)
+		m := marshalTaskToMap(t)
+		delete(m, "ttlMs")
+		delete(m, "pollIntervalMs")
+		m["ttl"] = t.TTL
+		if t.PollInterval != nil {
+			m["pollInterval"] = *t.PollInterval
+		}
+		tasks[i] = m
 	}
 	type alias struct {
 		PaginatedResult
@@ -2076,6 +2084,9 @@ type CancelTaskParams struct {
 type CancelTaskResult struct {
 	Result
 	Task
+	// Legacy instructs MarshalJSON to emit legacy 2025-11-25 field names
+	// (ttl, pollInterval) for the non-ack cancel response shape.
+	Legacy bool `json:"-"`
 }
 
 // MarshalJSON serialises CancelTaskResult.
@@ -2087,7 +2098,24 @@ func (r CancelTaskResult) MarshalJSON() ([]byte, error) {
 		}
 		return json.Marshal(resultOnly{r.Result})
 	}
-	m := marshalTaskToMap(r.Task)
+	var m map[string]any
+	if r.Legacy {
+		m = map[string]any{
+			"taskId":        r.TaskId,
+			"status":        r.Status,
+			"createdAt":     r.CreatedAt,
+			"lastUpdatedAt": r.LastUpdatedAt,
+		}
+		if r.StatusMessage != "" {
+			m["statusMessage"] = r.StatusMessage
+		}
+		m["ttl"] = r.TTL
+		if r.PollInterval != nil {
+			m["pollInterval"] = *r.PollInterval
+		}
+	} else {
+		m = marshalTaskToMap(r.Task)
+	}
 	if r.Meta != nil {
 		m["_meta"] = r.Meta
 	}

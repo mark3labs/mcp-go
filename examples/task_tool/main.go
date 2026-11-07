@@ -112,6 +112,9 @@ func newServer() *server.MCPServer {
 func handleProcessBatch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
 	items := req.GetStringSlice("items", nil)
 	delayMs := req.GetFloat("delay_ms", 200)
+	if len(items) == 0 {
+		return nil, fmt.Errorf("items array cannot be empty")
+	}
 	delay := time.Duration(delayMs) * time.Millisecond
 
 	log.Printf("process_batch: starting %d items, delay=%v", len(items), delay)

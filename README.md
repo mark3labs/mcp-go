@@ -419,7 +419,7 @@ When the limit is reached, new task creation requests will fail with an error. C
 
 ##### Transport Considerations for Task Handlers
 
-Task handlers run as background goroutines whose context is rooted at the server's own lifetime (`s.serverCtx`), not the per-request context. This means the handler context is **not** cancelled when `HandleMessage` returns, it stays alive until `tasks/cancel` is called or the server shuts down.
+Task handlers run as background goroutines. Their context is not cancelled when `HandleMessage` returns. It stays alive until `tasks/cancel` cancels it or the task's TTL expires. Server shutdown does not cancel running tasks.
 
 Blocking on `ctx.Done()` is therefore safe and is the recommended way to honour cancellation:
 
@@ -572,26 +572,9 @@ SEP-2663 requires servers to authenticate and authorize every task-related reque
 
 **Enforcing application-level authorization.** Applications that need finer-grained control (per-user or per-tenant access) can use two existing extension points:
 
-1. **HTTP middleware** on the transport layer. An outer `http.Handler` can validate credentials, attach identity to the request context, and reject unauthorized requests before `HandleMessage` is called. This enforces session-level authorization, one auth token per connection. Since session IDs are assigned per-connection, a session already implies a single authenticated client when the transport enforces one auth token per session. (See `TestTaskAccessControl_HTTPMiddleware` and `TestTaskAccessControl_HTTPMiddlewareIdentityFlowsToHook` in `server/task_auth_contract_test.go`.)
+1. **HTTP middleware** on the transport layer. An outer `http.Handler` can validate credentials, attach identity to the request context, and reject unauthorized requests before `HandleMessage` is called. This validates the credential on each request. It does not bind the credential to a session, and a session ID does not identify the caller. To limit a session to one caller, store the authenticated identity for the session and reject requests whose identity differs.
 
-2. **`OnBefore*` hooks** (`AddBeforeGetTask`, `AddBeforeCancelTask`, `AddBeforeUpdateTask`, etc.). These hooks fire before every task operation and receive the full request context. Transport middleware can store authenticated identity in `ctx`, the hook can read it for task-level authorization checks. e.g. confirming the caller owns the specific task ID. The hooks are fire-and-forget and cannot return errors, rejection must be enforced at the transport layer (e.g. HTTP middleware) using a signal set by the hook. (See `TestTaskAccessControl_OnBeforeHookExtensionPoint` in `server/task_auth_contract_test.go`.)
-
-```go
-hooks := &server.Hooks{}
-hooks.AddBeforeGetTask(func(ctx context.Context, id any, req *mcp.GetTaskRequest) {
-    // read identity stored by transport middleware
-    user := ctx.Value(userKey{})
-    if !user.CanAccess(req.Params.TaskId) {
-        // hooks cannot return errors directly, terminate via transport middleware
-        // or use a context cancellation mechanism at the HTTP layer
-    }
-})
-
-s := server.NewMCPServer("My Server", "1.0.0",
-    server.WithTaskCapabilities(true, true, true),
-    server.WithHooks(hooks),
-)
-```
+2. **`OnBefore*` hooks** (`AddBeforeGetTask`, `AddBeforeCancelTask`, `AddBeforeUpdateTask`, etc.) are for **observation only** — logging, auditing, or recording the authenticated identity (which transport middleware can place in `ctx`) alongside the task operation. They are fire-and-forget: they cannot return an error, and the handler runs regardless of what the hook does. **Do not use them to enforce authorization.** Enforce task authorization in HTTP middleware (option 1), which can reject the request before `HandleMessage` is called. (See `TestTaskAccessControl_OnBeforeHookExtensionPoint` in `server/task_auth_contract_test.go`, which demonstrates reading the identity — not enforcing it.)
 
 ### Prompts
 
