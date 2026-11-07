@@ -32,6 +32,8 @@ func newRedirectAttacker(t *testing.T) (*atomic.Int64, string) {
 	return &hits, strings.Replace(attacker.URL, "127.0.0.1", "localhost", 1)
 }
 
+// newRedirectingServer returns a server that answers every request with a
+// redirect to location using the given status.
 func newRedirectingServer(t *testing.T, location string, status int) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,6 +43,7 @@ func newRedirectingServer(t *testing.T, location string, status int) *httptest.S
 	return srv
 }
 
+// redirectTestRequest returns the JSON-RPC request the redirect tests send.
 func redirectTestRequest() JSONRPCRequest {
 	return JSONRPCRequest{
 		JSONRPC: mcp.JSONRPC_VERSION,
@@ -50,6 +53,7 @@ func redirectTestRequest() JSONRPCRequest {
 	}
 }
 
+// redirectStatuses lists the redirect statuses net/http follows.
 var redirectStatuses = []struct {
 	name   string
 	status int
@@ -61,6 +65,7 @@ var redirectStatuses = []struct {
 	{name: "308 Permanent Redirect", status: http.StatusPermanentRedirect},
 }
 
+// TestSameOriginRedirectPolicy checks which redirects the default transport clients follow.
 func TestSameOriginRedirectPolicy(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -78,6 +83,11 @@ func TestSameOriginRedirectPolicy(t *testing.T) {
 		{name: "host case differs", from: "https://A.example/mcp", to: "https://a.EXAMPLE/mcp"},
 		{name: "scheme case differs", from: "HTTPS://a.example/mcp", to: "https://a.example/mcp"},
 		{name: "IPv6 same origin", from: "http://[::1]:8080/mcp", to: "http://[::1]:8080/v2"},
+		{name: "IPv6 equivalent literals", from: "http://[::1]:8080/mcp", to: "http://[0:0::1]:8080/v2"},
+		{name: "IPv6 full and compressed form", from: "http://[2001:db8::1]/mcp", to: "http://[2001:0db8:0000:0000:0000:0000:0000:0001]/v2"},
+		{name: "IPv6 hex case", from: "http://[2001:DB8::A]/mcp", to: "http://[2001:db8::a]/v2"},
+		{name: "IPv4-mapped IPv6 is not IPv4", from: "http://127.0.0.1/mcp", to: "http://[::ffff:127.0.0.1]/mcp", wantErr: ErrCrossOriginRedirect},
+		{name: "IPv6 other address", from: "http://[::1]/mcp", to: "http://[::2]/mcp", wantErr: ErrCrossOriginRedirect},
 		{name: "IPv6 other port", from: "http://[::1]:8080/mcp", to: "http://[::1]:9090/mcp", wantErr: ErrCrossOriginRedirect},
 		{name: "dotted capital I is not folded onto i", from: "https://i.example/mcp", to: "https://İ.example/mcp", wantErr: ErrCrossOriginRedirect},
 		{name: "i is not folded onto dotted capital I", from: "https://İ.example/mcp", to: "https://i.example/mcp", wantErr: ErrCrossOriginRedirect},
@@ -108,6 +118,7 @@ func TestSameOriginRedirectPolicy(t *testing.T) {
 	}
 }
 
+// TestOAuthRedirectPolicy checks which redirects the OAuth handler's default client follows.
 func TestOAuthRedirectPolicy(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -157,6 +168,7 @@ func redirectHop(t *testing.T, method, from, to string, hops int) (*http.Request
 	return next, via
 }
 
+// TestStreamableHTTP_RefusesCrossOriginRedirect checks that a request is not sent to another origin, whatever the redirect status.
 func TestStreamableHTTP_RefusesCrossOriginRedirect(t *testing.T) {
 	for _, tt := range redirectStatuses {
 		t.Run(tt.name, func(t *testing.T) {
@@ -179,6 +191,7 @@ func TestStreamableHTTP_RefusesCrossOriginRedirect(t *testing.T) {
 	}
 }
 
+// TestStreamableHTTP_SendNotificationRefusesCrossOriginRedirect checks that notifications get the same redirect policy as requests.
 func TestStreamableHTTP_SendNotificationRefusesCrossOriginRedirect(t *testing.T) {
 	hits, attackerURL := newRedirectAttacker(t)
 	srv := newRedirectingServer(t, attackerURL+"/steal", http.StatusTemporaryRedirect)
@@ -197,6 +210,7 @@ func TestStreamableHTTP_SendNotificationRefusesCrossOriginRedirect(t *testing.T)
 	assert.Zero(t, hits.Load(), "the redirect target must not be contacted")
 }
 
+// TestStreamableHTTP_FollowsSameOriginRedirect checks that a same-origin 308 is followed with its headers and body.
 func TestStreamableHTTP_FollowsSameOriginRedirect(t *testing.T) {
 	var gotKey atomic.Value
 	var gotBody atomic.Bool
@@ -227,6 +241,7 @@ func TestStreamableHTTP_FollowsSameOriginRedirect(t *testing.T) {
 	assert.True(t, gotBody.Load(), "a same-origin 308 must resend the request body")
 }
 
+// TestStreamableHTTP_CustomClientKeepsItsRedirectPolicy checks that a client from WithHTTPBasicClient is used unchanged.
 func TestStreamableHTTP_CustomClientKeepsItsRedirectPolicy(t *testing.T) {
 	hits, attackerURL := newRedirectAttacker(t)
 	srv := newRedirectingServer(t, attackerURL+"/elsewhere", http.StatusFound)
@@ -239,6 +254,7 @@ func TestStreamableHTTP_CustomClientKeepsItsRedirectPolicy(t *testing.T) {
 	assert.Equal(t, int64(1), hits.Load(), "a caller-supplied client must keep its own redirect policy")
 }
 
+// TestStreamableHTTP_TimeoutOptionKeepsRedirectPolicy checks that WithHTTPTimeout does not replace the default client's redirect policy.
 func TestStreamableHTTP_TimeoutOptionKeepsRedirectPolicy(t *testing.T) {
 	hits, attackerURL := newRedirectAttacker(t)
 	srv := newRedirectingServer(t, attackerURL+"/steal", http.StatusTemporaryRedirect)
@@ -252,6 +268,7 @@ func TestStreamableHTTP_TimeoutOptionKeepsRedirectPolicy(t *testing.T) {
 	assert.Zero(t, hits.Load())
 }
 
+// TestSSE_RefusesCrossOriginRedirect checks that the SSE stream request is not sent to another origin.
 func TestSSE_RefusesCrossOriginRedirect(t *testing.T) {
 	for _, tt := range redirectStatuses {
 		t.Run(tt.name, func(t *testing.T) {
@@ -270,6 +287,7 @@ func TestSSE_RefusesCrossOriginRedirect(t *testing.T) {
 	}
 }
 
+// TestSSE_RejectsEndpointOnOtherOrigin checks that an endpoint event naming another scheme, host or port is ignored.
 func TestSSE_RejectsEndpointOnOtherOrigin(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -311,6 +329,7 @@ func TestSSE_RejectsEndpointOnOtherOrigin(t *testing.T) {
 	}
 }
 
+// TestSSE_AcceptsEndpointOnSameOrigin checks that a relative endpoint on the connection's origin is accepted.
 func TestSSE_AcceptsEndpointOnSameOrigin(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -328,6 +347,7 @@ func TestSSE_AcceptsEndpointOnSameOrigin(t *testing.T) {
 	require.NoError(t, tr.Start(t.Context()))
 }
 
+// TestSSE_CustomClientKeepsItsRedirectPolicy checks that a client from WithHTTPClient is used unchanged.
 func TestSSE_CustomClientKeepsItsRedirectPolicy(t *testing.T) {
 	hits, attackerURL := newRedirectAttacker(t)
 	srv := newRedirectingServer(t, attackerURL+"/elsewhere", http.StatusFound)
@@ -340,6 +360,7 @@ func TestSSE_CustomClientKeepsItsRedirectPolicy(t *testing.T) {
 	assert.Equal(t, int64(1), hits.Load(), "a caller-supplied client must keep its own redirect policy")
 }
 
+// TestOAuthHandler_DefaultClientRefusesCrossOriginTokenRedirect checks that a token request body never reaches another origin.
 func TestOAuthHandler_DefaultClientRefusesCrossOriginTokenRedirect(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
@@ -370,6 +391,7 @@ func TestOAuthHandler_DefaultClientRefusesCrossOriginTokenRedirect(t *testing.T)
 	}
 }
 
+// TestOAuthHandler_DefaultClientFollowsDiscoveryRedirect checks that metadata discovery may still be redirected to another origin.
 func TestOAuthHandler_DefaultClientFollowsDiscoveryRedirect(t *testing.T) {
 	var hits atomic.Int64
 	metadata := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -79,11 +80,16 @@ func sameOrigin(a, b *url.URL) bool {
 }
 
 // origin returns a normalized scheme://host:port string. The scheme and host
-// are lowercased (ASCII only), a missing port becomes the scheme's default,
-// and a numeric port loses leading zeros, so ":0443" and ":443" compare equal
-// as net/http dials them.
+// are lowercased (ASCII only), an IP literal is written in its canonical form
+// (so "[0:0::1]" and "[::1]" compare equal), a missing port becomes the
+// scheme's default, and a numeric port loses leading zeros, so ":0443" and
+// ":443" compare equal as net/http dials them.
 func origin(u *url.URL) string {
 	scheme := asciiLower(u.Scheme)
+	host := asciiLower(u.Hostname())
+	if addr, err := netip.ParseAddr(host); err == nil {
+		host = addr.String()
+	}
 	port := u.Port()
 	if n, err := strconv.ParseUint(port, 10, 16); err == nil {
 		port = strconv.FormatUint(n, 10)
@@ -91,7 +97,7 @@ func origin(u *url.URL) string {
 	if port == "" {
 		port = defaultPort(scheme)
 	}
-	return scheme + "://[" + asciiLower(u.Hostname()) + "]:" + port
+	return scheme + "://[" + host + "]:" + port
 }
 
 // asciiLower lowercases only ASCII letters. Unicode case mapping must not be
@@ -106,6 +112,8 @@ func asciiLower(s string) string {
 	}, s)
 }
 
+// defaultPort returns the port net/http dials for scheme when a URL has none,
+// or "" for a scheme it does not know.
 func defaultPort(scheme string) string {
 	switch scheme {
 	case "http":
