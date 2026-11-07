@@ -72,7 +72,8 @@ type OAuthConfig struct {
 	// a mismatched issuer.
 	SkipIssuerMetadataValidation bool
 	// HTTPClient is an optional HTTP client to use for requests.
-	// If nil, a default HTTP client with a 30 second timeout will be used.
+	// If nil, a default HTTP client with a 30 second timeout will be used,
+	// which follows a redirect only to the same scheme, host and port.
 	HTTPClient *http.Client
 }
 
@@ -296,7 +297,7 @@ func NewOAuthHandler(config OAuthConfig) *OAuthHandler {
 		config.TokenStore = NewMemoryTokenStore()
 	}
 	if config.HTTPClient == nil {
-		config.HTTPClient = &http.Client{Timeout: 30 * time.Second}
+		config.HTTPClient = &http.Client{Timeout: 30 * time.Second, CheckRedirect: sameOriginRedirectPolicy}
 	}
 
 	return &OAuthHandler{
