@@ -4,16 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// handleNotification handles JSON-RPC notifications by printing the notification method to standard output.
-func handleNotification(ctx context.Context, notification mcp.JSONRPCNotification) {
-	fmt.Fprintf(os.Stderr, "notification received: %v\n", notification.Method)
-}
+// handleNotification ignores notifications so diagnostic output cannot block the stdio server.
+func handleNotification(context.Context, mcp.JSONRPCNotification) {}
 
 // main sets up and runs an MCP stdio server named "roots-stdio-server" with tool and roots capabilities.
 // It registers a handler for RootsListChanged notifications and adds a "roots" tool
