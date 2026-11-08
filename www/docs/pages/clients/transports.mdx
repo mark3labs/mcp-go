@@ -323,7 +323,10 @@ func connectWithFallback(ctx context.Context, url string) (*client.Client, error
 ```go
 func createStreamableHTTPClient() {
     // Create StreamableHTTP client
-    c := client.NewStreamableHttpClient("http://localhost:8080/mcp")
+    c, err := client.NewStreamableHttpClient("http://localhost:8080/mcp")
+    if err != nil {
+        log.Fatal(err)
+    }
     defer c.Close()
 
     ctx := context.Background()
@@ -351,7 +354,7 @@ func createCustomStreamableHTTPClient() {
     logger := myCustomLogger{}
 
     // Create StreamableHTTP client with options
-    c := client.NewStreamableHttpClient("https://api.example.com/mcp",
+    c, err := client.NewStreamableHttpClient("https://api.example.com/mcp",
         transport.WithLogger(logger),
         transport.WithHTTPTimeout(30*time.Second),
         transport.WithHTTPHeaders(map[string]string{
@@ -369,6 +372,9 @@ func createCustomStreamableHTTPClient() {
             },
         }),
     )
+    if err != nil {
+        log.Fatal(err)
+    }
     defer c.Close()
 
     ctx := context.Background()
@@ -448,31 +454,38 @@ func createAuthenticatedStreamableHTTPClient() (*client.Client, error) {
 ```go
 type StreamableHTTPClientPool struct {
     clients chan *client.Client
-    factory func() *client.Client
+    factory func() (*client.Client, error)
     maxSize int
 }
 
-func NewStreamableHTTPClientPool(baseURL string, maxSize int) *StreamableHTTPClientPool {
+func NewStreamableHTTPClientPool(baseURL string, maxSize int) (*StreamableHTTPClientPool, error) {
     pool := &StreamableHTTPClientPool{
         clients: make(chan *client.Client, maxSize),
         maxSize: maxSize,
-        factory: func() *client.Client {
+        factory: func() (*client.Client, error) {
             return client.NewStreamableHttpClient(baseURL)
         },
     }
 
     // Pre-populate pool
     for i := 0; i < maxSize; i++ {
-        pool.clients <- pool.factory()
+        c, err := pool.factory()
+        if err != nil {
+            for len(pool.clients) > 0 {
+                (<-pool.clients).Close()
+            }
+            return nil, err
+        }
+        pool.clients <- c
     }
 
-    return pool
+    return pool, nil
 }
 
-func (pool *StreamableHTTPClientPool) Get() *client.Client {
+func (pool *StreamableHTTPClientPool) Get() (*client.Client, error) {
     select {
     case c := <-pool.clients:
-        return c
+        return c, nil
     default:
         return pool.factory()
     }
@@ -488,7 +501,10 @@ func (pool *StreamableHTTPClientPool) Put(c *client.Client) {
 }
 
 func (pool *StreamableHTTPClientPool) CallTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    c := pool.Get()
+    c, err := pool.Get()
+    if err != nil {
+        return nil, err
+    }
     defer pool.Put(c)
 
     return c.CallTool(ctx, req)
@@ -502,10 +518,13 @@ You can also create a StreamableHTTP client with a preconfigured session, which 
 ```go
 func createStreamableHTTPClientWithSession() {
     // Create StreamableHTTP client with options
-    sessionID := // fetch existing session ID
-    c := client.NewStreamableHttpClient("https://api.example.com/mcp",
+    sessionID := "existing-session-id" // fetch from the application's session store
+    c, err := client.NewStreamableHttpClient("https://api.example.com/mcp",
         transport.WithSession(sessionID),
     )
+    if err != nil {
+        log.Fatal(err)
+    }
     defer c.Close()
 
     ctx := context.Background()
@@ -868,7 +887,10 @@ func createInProcessClient() {
     )
 
     // Create in-process client
-    c := client.NewInProcessClient(s)
+    c, err := client.NewInProcessClient(s)
+    if err != nil {
+        log.Fatal(err)
+    }
     defer c.Close()
 
     ctx := context.Background()
@@ -900,18 +922,23 @@ func createInProcessClient() {
 ```go
 type TestClient struct {
     server *server.MCPServer
-    client *client.InProcessClient
+    client *client.Client
 }
 
-func NewTestClient() *TestClient {
+func NewTestClient() (*TestClient, error) {
     s := server.NewMCPServer("Test Server", "1.0.0",
         server.WithAllCapabilities(),
     )
 
+    c, err := client.NewInProcessClient(s)
+    if err != nil {
+        return nil, err
+    }
+
     return &TestClient{
         server: s,
-        client: client.NewInProcessClient(s),
-    }
+        client: c,
+    }, nil
 }
 
 func (tc *TestClient) AddTool(name, description string, handler server.ToolHandler) {
@@ -1081,7 +1108,7 @@ func (cf *ClientFactory) SetSSEConfig(baseURL string, headers map[string]string)
     }
 }
 
-func (cf *ClientFactory) CreateClient(transport string) (client.Client, error) {
+func (cf *ClientFactory) CreateClient(transport string) (*client.Client, error) {
     switch transport {
     case "stdio":
         config, ok := cf.configs["stdio"].(client.StdioOptions)
@@ -1104,7 +1131,7 @@ func (cf *ClientFactory) CreateClient(transport string) (client.Client, error) {
             options = append(options, transport.WithHTTPHeaders(config.Headers))
         }
 
-        return client.NewStreamableHttpClient(config.BaseURL, options...), nil
+        return client.NewStreamableHttpClient(config.BaseURL, options...)
 
     case "sse":
         config, ok := cf.configs["sse"].(struct {
