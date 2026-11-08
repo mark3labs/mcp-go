@@ -65,12 +65,13 @@ func main() {
     ctx := context.Background()
 
     // Initialize
+    if err := mcpClient.Start(ctx); err != nil {
+        log.Fatal(err)
+    }
     _, err = mcpClient.Initialize(ctx, mcp.InitializeRequest{
-        Params: mcp.InitializeRequestParams{
+        Params: mcp.InitializeParams{
             ProtocolVersion: "2024-11-05",
-            Capabilities: mcp.ClientCapabilities{
-                Tools: &mcp.ToolsCapability{},
-            },
+            Capabilities: mcp.ClientCapabilities{},
             ClientInfo: mcp.Implementation{
                 Name:    "test-client",
                 Version: "1.0.0",
@@ -204,6 +205,16 @@ func (app *Application) addApplicationTools() {
             return mcp.NewToolResultText(fmt.Sprintf("Updated %s to %s", key, value)), nil
         },
     )
+
+    app.mcpServer.AddTool(
+        mcp.NewTool("calculate",
+            mcp.WithDescription("Perform basic mathematical calculations"),
+            mcp.WithString("operation", mcp.Required(), mcp.Enum("add", "subtract", "multiply", "divide")),
+            mcp.WithNumber("x", mcp.Required()),
+            mcp.WithNumber("y", mcp.Required()),
+        ),
+        handleCalculate,
+    )
 }
 
 func (app *Application) ProcessWithMCP(ctx context.Context, operation string) (interface{}, error) {
@@ -243,12 +254,13 @@ func main() {
     ctx := context.Background()
 
     // Initialize the embedded MCP client
+    if err := app.mcpClient.Start(ctx); err != nil {
+        log.Fatal(err)
+    }
     _, err := app.mcpClient.Initialize(ctx, mcp.InitializeRequest{
-        Params: mcp.InitializeRequestParams{
+        Params: mcp.InitializeParams{
             ProtocolVersion: "2024-11-05",
-            Capabilities: mcp.ClientCapabilities{
-                Tools: &mcp.ToolsCapability{},
-            },
+            Capabilities: mcp.ClientCapabilities{},
             ClientInfo: mcp.Implementation{
                 Name:    "embedded-client",
                 Version: "1.0.0",

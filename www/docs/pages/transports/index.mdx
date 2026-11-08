@@ -160,7 +160,17 @@ func startServer(s *server.MCPServer) error {
             return err
         }
         defer inProcessClient.Close()
-        return inProcessClient.Initialize(context.Background())
+        ctx := context.Background()
+        if err := inProcessClient.Start(ctx); err != nil {
+            return err
+        }
+        _, err = inProcessClient.Initialize(ctx, mcp.InitializeRequest{
+            Params: mcp.InitializeParams{
+                ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+                ClientInfo:      mcp.Implementation{Name: "example-server", Version: "1.0.0"},
+            },
+        })
+        return err
     default:
         return server.ServeStdio(s)
     }

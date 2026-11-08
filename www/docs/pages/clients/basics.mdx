@@ -53,6 +53,19 @@ import (
     "github.com/mark3labs/mcp-go/mcp"
 )
 
+func startAndInitializeExampleClient(ctx context.Context, c *client.Client) error {
+    if err := c.Start(ctx); err != nil {
+        return err
+    }
+    _, err := c.Initialize(ctx, mcp.InitializeRequest{
+        Params: mcp.InitializeParams{
+            ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+            ClientInfo:      mcp.Implementation{Name: "example-client", Version: "1.0.0"},
+        },
+    })
+    return err
+}
+
 func createStdioClient() (*client.Client, error) {
     // Create client that spawns a subprocess
     c, err := client.NewStdioMCPClient(
@@ -111,7 +124,7 @@ func createStreamableHTTPClient() *client.Client {
 ```go
 func createSSEClient() *client.Client {
     // Basic SSE client
-	c, err := client.NewSSEMCPClient(testServer.URL+"/sse",
+	c, err := client.NewSSEMCPClient("http://localhost:8080/sse",
 		// Set custom headers
 		client.WithHeaders(map[string]string{
 			"X-Custom-Header": "custom-value",
@@ -156,7 +169,7 @@ func demonstrateClientLifecycle() error {
     ctx := context.Background()
 
     // 2. Initialization
-    if err := c.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         return fmt.Errorf("client initialization failed: %w", err)
     }
 
@@ -209,21 +222,20 @@ The initialization process establishes the MCP connection and exchanges capabili
 func initializeClientWithDetails(ctx context.Context, c *client.Client) error {
     // Initialize with custom client info
     initReq := mcp.InitializeRequest{
-        Params: mcp.InitializeRequestParams{
+        Params: mcp.InitializeParams{
             ProtocolVersion: "2024-11-05",
-            Capabilities: mcp.ClientCapabilities{
-                Tools:     &mcp.ToolsCapability{},
-                Resources: &mcp.ResourcesCapability{},
-                Prompts:   &mcp.PromptsCapability{},
-            },
-            ClientInfo: mcp.ClientInfo{
+            Capabilities: mcp.ClientCapabilities{},
+            ClientInfo: mcp.Implementation{
                 Name:    "My Application",
                 Version: "1.0.0",
             },
         },
     }
 
-    result, err := c.InitializeWithRequest(ctx, initReq)
+    if err := c.Start(ctx); err != nil {
+        return fmt.Errorf("failed to start client: %w", err)
+    }
+    result, err := c.Initialize(ctx, initReq)
     if err != nil {
         return fmt.Errorf("initialization failed: %w", err)
     }
@@ -254,7 +266,7 @@ func NewManagedClient(clientType, address string) (*ManagedClient, error) {
 
     switch clientType {
     case "stdio":
-        c, err = client.NewStdioMCPClient("server-command", []string{})
+        c, err = client.NewStdioMCPClient(address, []string{})
     case "streamablehttp":
         c, err = client.NewStreamableHttpClient(address)
     case "sse":
@@ -279,7 +291,7 @@ func NewManagedClient(clientType, address string) (*ManagedClient, error) {
     // Initialize in background
     go func() {
         defer close(mc.done)
-        if err := c.Initialize(ctx); err != nil {
+        if err := startAndInitializeExampleClient(ctx, c); err != nil {
             log.Printf("Client initialization failed: %v", err)
         }
     }()
@@ -424,7 +436,7 @@ func reconnectClient(c *client.Client) error {
     ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
     defer cancel()
 
-    return c.Initialize(ctx)
+    return startAndInitializeExampleClient(ctx, c)
 }
 
 func suggestAlternativeTools(ctx context.Context, c *client.Client) {
@@ -712,7 +724,7 @@ func (rc *ResilientClient) ensureConnected(ctx context.Context) error {
     }
 
     // Initialize new client
-    if err := newClient.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, newClient); err != nil {
         newClient.Close()
         return fmt.Errorf("failed to initialize client: %w", err)
     }

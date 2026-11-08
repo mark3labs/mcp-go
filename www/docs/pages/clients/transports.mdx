@@ -38,6 +38,19 @@ import (
     "github.com/mark3labs/mcp-go/server"
 )
 
+func startAndInitializeExampleClient(ctx context.Context, c *client.Client) error {
+    if err := c.Start(ctx); err != nil {
+        return err
+    }
+    _, err := c.Initialize(ctx, mcp.InitializeRequest{
+        Params: mcp.InitializeParams{
+            ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+            ClientInfo:      mcp.Implementation{Name: "example-client", Version: "1.0.0"},
+        },
+    })
+    return err
+}
+
 func createStdioClient() {
     // Create client that spawns a subprocess
     c, err := client.NewStdioMCPClient(
@@ -51,7 +64,7 @@ func createStdioClient() {
     ctx := context.Background()
 
     // Initialize connection
-    if err := c.Initialize(ctx, initRequest); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         log.Fatal(err)
     }
 
@@ -93,7 +106,7 @@ func createCustomStdioClient() {
     ctx := context.Background()
 
     // Initialize connection
-    if err := c.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         log.Fatal(err)
     }
 
@@ -111,7 +124,7 @@ var (
     ErrBrokenPipe     = errors.New("broken pipe")
 )
 
-func handleStdioErrors(c *client.StdioClient) {
+func handleStdioErrors(c *client.Client) {
     ctx := context.Background()
 
     result, err := c.CallTool(ctx, mcp.CallToolRequest{
@@ -158,15 +171,21 @@ func handleStdioErrors(c *client.StdioClient) {
 
 ```go
 type ManagedStdioClient struct {
-    client      *client.StdioClient
-    options     client.StdioOptions
+    client      *client.Client
+    options     StdioConfig
     restartChan chan struct{}
     ctx         context.Context
     cancel      context.CancelFunc
     wg          sync.WaitGroup
 }
 
-func NewManagedStdioClient(options client.StdioOptions) (*ManagedStdioClient, error) {
+type StdioConfig struct {
+    Command string
+    Env     []string
+    Args    []string
+}
+
+func NewManagedStdioClient(options StdioConfig) (*ManagedStdioClient, error) {
     ctx, cancel := context.WithCancel(context.Background())
 
     msc := &ManagedStdioClient{
@@ -188,12 +207,12 @@ func NewManagedStdioClient(options client.StdioOptions) (*ManagedStdioClient, er
 }
 
 func (msc *ManagedStdioClient) start() error {
-    client, err := client.NewStdioClientWithOptions(msc.options)
+    client, err := client.NewStdioMCPClientWithOptions(msc.options.Command, msc.options.Env, msc.options.Args)
     if err != nil {
         return err
     }
 
-    if err := client.Initialize(msc.ctx); err != nil {
+    if err := startAndInitializeExampleClient(msc.ctx, client); err != nil {
         client.Close()
         return err
     }
@@ -332,7 +351,7 @@ func createStreamableHTTPClient() {
     ctx := context.Background()
 
     // Initialize
-    if err := c.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         log.Fatal(err)
     }
 
@@ -379,7 +398,7 @@ func createCustomStreamableHTTPClient() {
 
     ctx := context.Background()
 
-    if err := c.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         log.Fatal(err)
     }
 
@@ -532,7 +551,10 @@ func createStreamableHTTPClientWithSession() {
     _, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     // If the session is terminated, you must reinitialize the client
     if errors.Is(err, transport.ErrSessionTerminated) {
-        c.Initialize(ctx) // Reinitialize if session is terminated
+        if err := startAndInitializeExampleClient(ctx, c); err != nil {
+            log.Printf("Failed to reinitialize client: %v", err)
+            return
+        }
         // The session ID should change after reinitialization
         sessionID = c.GetSessionId() // Update session ID
     }
@@ -579,7 +601,7 @@ func createSSEClient() {
     ctx := context.Background()
 
     // Initialize
-    if err := c.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         log.Fatal(err)
     }
 
@@ -632,7 +654,7 @@ func createCustomSSEClient() {
     ctx := context.Background()
 
     // Initialize
-    if err := c.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         log.Fatal(err)
     }
 
@@ -689,7 +711,7 @@ func (rsc *ResilientSSEClient) connect() error {
         return err
     }
 
-    if err := client.Initialize(rsc.ctx); err != nil {
+    if err := startAndInitializeExampleClient(rsc.ctx, client); err != nil {
         return err
     }
 
@@ -896,7 +918,7 @@ func createInProcessClient() {
     ctx := context.Background()
 
     // Initialize (no network overhead)
-    if err := c.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         log.Fatal(err)
     }
 
@@ -952,7 +974,7 @@ func (tc *TestClient) AddResource(uri, name string, handler server.ResourceHandl
 }
 
 func (tc *TestClient) Initialize(ctx context.Context) error {
-    return tc.client.Initialize(ctx)
+    return startAndInitializeExampleClient(ctx, tc.client)
 }
 
 func (tc *TestClient) CallTool(ctx context.Context, name string, args map[string]interface{}) (*mcp.CallToolResult, error) {
@@ -978,7 +1000,8 @@ func (tc *TestClient) Close() error {
 
 // Usage in tests
 func TestWithInProcessClient(t *testing.T) {
-    tc := NewTestClient()
+    tc, err := NewTestClient()
+    require.NoError(t, err)
     defer tc.Close()
 
     // Add test tool
@@ -988,7 +1011,7 @@ func TestWithInProcessClient(t *testing.T) {
     })
 
     ctx := context.Background()
-    err := tc.Initialize(ctx)
+    err = tc.Initialize(ctx)
     require.NoError(t, err)
 
     // Test tool call
@@ -1082,7 +1105,7 @@ func NewClientFactory() *ClientFactory {
 }
 
 func (cf *ClientFactory) SetStdioConfig(command string, args ...string) {
-    cf.configs["stdio"] = client.StdioOptions{
+    cf.configs["stdio"] = StdioConfig{
         Command: command,
         Args:    args,
     }
@@ -1111,11 +1134,11 @@ func (cf *ClientFactory) SetSSEConfig(baseURL string, headers map[string]string)
 func (cf *ClientFactory) CreateClient(transport string) (*client.Client, error) {
     switch transport {
     case "stdio":
-        config, ok := cf.configs["stdio"].(client.StdioOptions)
+        config, ok := cf.configs["stdio"].(StdioConfig)
         if !ok {
             return nil, fmt.Errorf("stdio config not set")
         }
-        return client.NewStdioClientWithOptions(config)
+        return client.NewStdioMCPClientWithOptions(config.Command, config.Env, config.Args)
 
     case "streamablehttp":
         config, ok := cf.configs["streamablehttp"].(struct {

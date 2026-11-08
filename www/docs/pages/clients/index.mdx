@@ -28,6 +28,19 @@ import (
     "github.com/mark3labs/mcp-go/mcp"
 )
 
+func startAndInitializeExampleClient(ctx context.Context, c *client.Client) error {
+    if err := c.Start(ctx); err != nil {
+        return err
+    }
+    _, err := c.Initialize(ctx, mcp.InitializeRequest{
+        Params: mcp.InitializeParams{
+            ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+            ClientInfo:      mcp.Implementation{Name: "example-client", Version: "1.0.0"},
+        },
+    })
+    return err
+}
+
 func main() {
     // Create STDIO client
     c, err := client.NewStdioMCPClient(
@@ -41,7 +54,10 @@ func main() {
     ctx := context.Background()
 
     // Initialize the connection
-    if err := c.Initialize(ctx, initRequest); err != nil {
+    if err := c.Start(ctx); err != nil {
+        log.Fatal(err)
+    }
+    if _, err := c.Initialize(ctx, initRequest); err != nil {
         log.Fatal(err)
     }
 
@@ -207,7 +223,7 @@ func NewMCPClientManager(clientType, address string) (*MCPClientManager, error) 
 
     switch clientType {
     case "stdio":
-        c, err = client.NewStdioMCPClient("server-command", []string{})
+        c, err = client.NewStdioMCPClient(address, []string{})
     case "http":
         c, err = client.NewStreamableHttpClient(address)
     case "sse":
@@ -229,7 +245,7 @@ func NewMCPClientManager(clientType, address string) (*MCPClientManager, error) 
     }
 
     // Initialize connection
-    if err := c.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         cancel()
         return nil, fmt.Errorf("failed to initialize client: %w", err)
     }
@@ -331,7 +347,7 @@ func NewLLMApplication(mcpAddress string) (*LLMApplication, error) {
     }
     
     ctx := context.Background()
-    if err := mcpClient.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, mcpClient); err != nil {
         return nil, err
     }
 
@@ -411,7 +427,7 @@ func (msc *MultiServerClient) AddServer(name, address string, clientType string)
     }
 
     ctx := context.Background()
-    if err := c.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         return fmt.Errorf("failed to initialize client for %s: %w", name, err)
     }
 
