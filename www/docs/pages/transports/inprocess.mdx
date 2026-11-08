@@ -136,7 +136,7 @@ func handleCalculate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 // Embedded MCP server in a larger application
 type Application struct {
     mcpServer *server.MCPServer
-    mcpClient *client.InProcessClient
+    mcpClient *client.Client
     config    *Config
 }
 

@@ -154,12 +154,13 @@ func startServer(s *server.MCPServer) error {
         httpServer := server.NewStreamableHTTPServer(s)
         return httpServer.Start(getPort())
     case "inprocess":
-        // Note: In-process transport doesn't use network ports
-        // This would typically be used differently in practice
-        client := client.NewInProcessClient(s)
-        defer client.Close()
-        // Keep the process running
-        select {}
+        // In-process clients connect directly without opening a network port.
+        inProcessClient, err := client.NewInProcessClient(s)
+        if err != nil {
+            return err
+        }
+        defer inProcessClient.Close()
+        return inProcessClient.Initialize(context.Background())
     default:
         return server.ServeStdio(s)
     }
