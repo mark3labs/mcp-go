@@ -224,6 +224,13 @@ func NewStreamableHTTP(serverURL string, options ...StreamableHTTPCOption) (*Str
 
 // Start initiates the HTTP connection to the server.
 func (c *StreamableHTTP) Start(ctx context.Context) error {
+	// Reject any start after Close before the initialized fast-path so a closed
+	// transport reports ErrTransportClosed instead of nil. SSE / stdio /
+	// in-process already treat Close as terminal; Streamable HTTP must too.
+	if err := c.errIfClosed(); err != nil {
+		return err
+	}
+
 	// Start is idempotent - check if already initialized
 	select {
 	case <-c.initialized:
@@ -683,6 +690,10 @@ func (c *StreamableHTTP) SendRequest(
 	ctx context.Context,
 	request JSONRPCRequest,
 ) (*JSONRPCResponse, error) {
+	if err := c.errIfClosed(); err != nil {
+		return nil, err
+	}
+
 	// Marshal request
 	requestBody, err := json.Marshal(request)
 	if err != nil {
@@ -696,6 +707,9 @@ func (c *StreamableHTTP) SendRequest(
 	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream", request.Header, c.startsConnection(request))
 	if err != nil {
 		cancel()
+		if closedErr := c.errIfClosed(); closedErr != nil {
+			return nil, closedErr
+		}
 		if errors.Is(err, ErrSessionTerminated) && request.Method == string(mcp.MethodInitialize) {
 			// Per the MCP spec's backwards compatibility section: a 404 on an
 			// initialize POST means the server likely only supports legacy SSE.
@@ -1218,6 +1232,10 @@ func (c *StreamableHTTP) readSSEWithCursor(ctx context.Context, reader io.ReadCl
 
 // SendNotification sends a JSON-RPC notification to the server without expecting a response.
 func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.JSONRPCNotification) error {
+	if err := c.errIfClosed(); err != nil {
+		return err
+	}
+
 	// Marshal request
 	requestBody, err := json.Marshal(notification)
 	if err != nil {
@@ -1230,6 +1248,9 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream", nil, false)
 	if err != nil {
 		cancel()
+		if closedErr := c.errIfClosed(); closedErr != nil {
+			return closedErr
+		}
 		return fmt.Errorf("failed to send request: %w", err)
 	}
 	defer func() { cancel(); resp.Body.Close() }()
@@ -1563,4 +1584,14 @@ func (c *StreamableHTTP) contextAwareOfClientClose(ctx context.Context) (context
 		}
 	}()
 	return newCtx, cancel
+}
+
+// errIfClosed returns ErrTransportClosed when Close has already run.
+func (c *StreamableHTTP) errIfClosed() error {
+	select {
+	case <-c.closed:
+		return ErrTransportClosed
+	default:
+		return nil
+	}
 }
