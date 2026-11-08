@@ -92,10 +92,8 @@ func newServer() *server.MCPServer {
 		mcp.WithString("text", mcp.Required()),
 		mcp.WithBoolean("thorough", mcp.DefaultBool(false)),
 	)
-	// For optional-task tools the handler only runs when the tool is invoked
-	// as a task. Synchronous calls go to a separate handler if registered via
-	// AddTool.
-	srv.AddTaskTool(analyzeData, handleAnalyzeData)
+	// Register as a regular tool with optional task support.
+	srv.AddTool(analyzeData, handleAnalyzeData)
 
 	// Tool 3: plain synchronous tool, no task support.
 	quickCheck := mcp.NewTool("quick_check",
@@ -135,8 +133,9 @@ func handleProcessBatch(ctx context.Context, req mcp.CallToolRequest) (*mcp.Crea
 	return &r, nil
 }
 
-// handleAnalyzeData is a TaskToolHandlerFunc used for the optional-task tool.
-func handleAnalyzeData(ctx context.Context, req mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+// handleAnalyzeData is a ToolHandlerFunc for the optional-task tool. The same
+// handler is used whether the tool is called synchronously or as a task.
+func handleAnalyzeData(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	text := req.GetString("text", "")
 	thorough := req.GetBool("thorough", false)
 
@@ -145,8 +144,8 @@ func handleAnalyzeData(ctx context.Context, req mcp.CallToolRequest) (*mcp.Creat
 		duration = 2 * time.Second
 	}
 
-	// Here we register only the task handler via AddTaskTool so the
-	// synchronous path returns an error when called without a task param.
+	// The same handler runs on both the synchronous and the task path. On the
+	// task path ctx is cancelled by tasks/cancel or TTL expiry.
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -163,8 +162,7 @@ func handleAnalyzeData(ctx context.Context, req mcp.CallToolRequest) (*mcp.Creat
 	}
 	log.Printf("analyze_data: %s", summary)
 
-	r := mcp.NewCreateTaskResult(mcp.Task{})
-	return &r, nil
+	return mcp.NewToolResultText(summary), nil
 }
 
 // handleQuickCheck is a plain ToolHandlerFunc, synchronous, no task involved.

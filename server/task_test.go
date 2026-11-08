@@ -289,8 +289,8 @@ func TestMCPServer_HandleCancelTerminalTask(t *testing.T) {
 	require.NoError(t, err)
 	server.completeTask(entry, "result", nil)
 
-	// Cancelling a terminal task must return an ack (empty result), not an error.
-	// SEP-2663: "The server MUST acknowledge the request with an empty result."
+	// On the legacy 2025-11-25 protocol, cancelling a terminal task MUST be
+	// rejected with INVALID_PARAMS.
 	response := server.HandleMessage(ctx, []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
@@ -300,9 +300,10 @@ func TestMCPServer_HandleCancelTerminalTask(t *testing.T) {
 		}
 	}`))
 
-	resp, ok := response.(mcp.JSONRPCResponse)
-	require.True(t, ok, "Expected JSONRPCResponse (ack), got %T", response)
-	assert.NotNil(t, resp.Result)
+	errResp, ok := response.(mcp.JSONRPCError)
+	require.True(t, ok, "Expected JSONRPCError, got %T", response)
+	assert.Equal(t, mcp.INVALID_PARAMS, errResp.Error.Code)
+	assert.Contains(t, errResp.Error.Message, "terminal status")
 }
 
 func TestMCPServer_TaskWithoutCapabilities(t *testing.T) {
@@ -411,7 +412,7 @@ func TestMCPServer_TaskExpiredVsNotFoundErrors(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "task has expired")
 
-		err = server.cancelTask(ctx, "task-expired")
+		err = server.cancelTask(ctx, "task-expired", false)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "task has expired")
 	})
@@ -428,7 +429,7 @@ func TestMCPServer_TaskExpiredVsNotFoundErrors(t *testing.T) {
 		assert.Contains(t, err.Error(), "task not found")
 		assert.NotContains(t, err.Error(), "expired")
 
-		err = server.cancelTask(ctx, "never-existed")
+		err = server.cancelTask(ctx, "never-existed", false)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "task not found")
 		assert.NotContains(t, err.Error(), "expired")
@@ -858,7 +859,7 @@ func TestMCPServer_TaskLastUpdatedAt(t *testing.T) {
 		time.Sleep(1100 * time.Millisecond)
 
 		// Cancel the task
-		cancelErr := server.cancelTask(ctx, "task-cancel")
+		cancelErr := server.cancelTask(ctx, "task-cancel", false)
 		require.NoError(t, cancelErr)
 
 		assert.Equal(t, mcp.TaskStatusCancelled, entry.task.Status)
@@ -955,7 +956,7 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 		// Check for notification
 		select {
 		case notification := <-notifyChan:
-			assert.Equal(t, mcp.MethodNotificationTasks, notification.Method)
+			assert.Equal(t, mcp.MethodNotificationTasksStatus, notification.Method)
 
 			// Verify notification params contain task data
 			params := notification.Params.AdditionalFields
@@ -990,7 +991,7 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 		// Check for notification
 		select {
 		case notification := <-notifyChan:
-			assert.Equal(t, mcp.MethodNotificationTasks, notification.Method)
+			assert.Equal(t, mcp.MethodNotificationTasksStatus, notification.Method)
 
 			params := notification.Params.AdditionalFields
 			require.NotNil(t, params, "Expected params to be set")
@@ -1015,13 +1016,13 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 		}
 
 		// Cancel the task
-		cancelErr := server.cancelTask(ctx, "task-notify-cancel")
+		cancelErr := server.cancelTask(ctx, "task-notify-cancel", false)
 		require.NoError(t, cancelErr)
 
 		// Check for notification
 		select {
 		case notification := <-notifyChan:
-			assert.Equal(t, mcp.MethodNotificationTasks, notification.Method)
+			assert.Equal(t, mcp.MethodNotificationTasksStatus, notification.Method)
 
 			params := notification.Params.AdditionalFields
 			require.NotNil(t, params, "Expected params to be set")
@@ -1130,14 +1131,14 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 		// Both sessions should receive notification
 		select {
 		case notification := <-notifyChan1:
-			assert.Equal(t, mcp.MethodNotificationTasks, notification.Method)
+			assert.Equal(t, mcp.MethodNotificationTasksStatus, notification.Method)
 		case <-time.After(1 * time.Second):
 			t.Fatal("Expected notification on session1")
 		}
 
 		select {
 		case notification := <-notifyChan2:
-			assert.Equal(t, mcp.MethodNotificationTasks, notification.Method)
+			assert.Equal(t, mcp.MethodNotificationTasksStatus, notification.Method)
 		case <-time.After(1 * time.Second):
 			t.Fatal("Expected notification on session2")
 		}
@@ -1156,14 +1157,12 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 		// Complete the task once
 		server.completeTask(entry, "result", nil)
 
-		// Wait for and consume both notifications (modern + legacy method names)
-		for range 2 {
-			select {
-			case <-notifyChan:
-				// notification received as expected
-			case <-time.After(1 * time.Second):
-				t.Fatal("Expected notification")
-			}
+		// Wait for and consume the status notification.
+		select {
+		case <-notifyChan:
+			// notification received as expected
+		case <-time.After(1 * time.Second):
+			t.Fatal("Expected notification")
 		}
 
 		// Try to complete again (should be ignored due to guard)
@@ -1447,7 +1446,7 @@ func TestMCPServer_ExecuteTaskTool(t *testing.T) {
 		}
 
 		// Verify notification
-		assert.Equal(t, mcp.MethodNotificationTasks, notification.Method)
+		assert.Equal(t, mcp.MethodNotificationTasksStatus, notification.Method)
 		params := notification.Params.AdditionalFields
 		require.NotNil(t, params)
 		assert.Equal(t, "test-task-5", params["taskId"])

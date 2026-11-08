@@ -179,6 +179,7 @@ func (s *MCPServer) HandleMessage(
 				id:   baseMessage.ID,
 				code: mcp.MISSING_REQUIRED_CLIENT_CAPABILITY,
 				err:  fmt.Errorf("{{toLower .GroupName}} extension %w", ErrUnsupported),
+				data: missingExtensionData({{.RequiresExtension}}),
 			}
 		} else {{ else }}{{ if .RequiresModern }}if !protocolInfo.Modern {
 			err = &requestError{
@@ -191,6 +192,7 @@ func (s *MCPServer) HandleMessage(
 				id:   baseMessage.ID,
 				code: mcp.MISSING_REQUIRED_CLIENT_CAPABILITY,
 				err:  fmt.Errorf("{{toLower .GroupName}} extension %w", ErrUnsupported),
+				data: missingExtensionData({{.RequiresExtension}}),
 			}
 		} else {{ end }}{{ end }}{{ if .Group }}if {{ if .RequiresExtension }}!protocolInfo.Modern && {{ end }}s.capabilities.{{.Group}} == nil {
 			err = &requestError{

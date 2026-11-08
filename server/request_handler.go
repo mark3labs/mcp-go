@@ -548,6 +548,7 @@ func (s *MCPServer) HandleMessage(
 				id:   baseMessage.ID,
 				code: mcp.MISSING_REQUIRED_CLIENT_CAPABILITY,
 				err:  fmt.Errorf("tasks extension %w", ErrUnsupported),
+				data: missingExtensionData(mcp.ExtensionTasks),
 			}
 		} else if !protocolInfo.Modern && s.capabilities.tasks == nil {
 			err = &requestError{
@@ -586,6 +587,7 @@ func (s *MCPServer) HandleMessage(
 				id:   baseMessage.ID,
 				code: mcp.MISSING_REQUIRED_CLIENT_CAPABILITY,
 				err:  fmt.Errorf("tasks extension %w", ErrUnsupported),
+				data: missingExtensionData(mcp.ExtensionTasks),
 			}
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
@@ -676,6 +678,7 @@ func (s *MCPServer) HandleMessage(
 				id:   baseMessage.ID,
 				code: mcp.MISSING_REQUIRED_CLIENT_CAPABILITY,
 				err:  fmt.Errorf("tasks extension %w", ErrUnsupported),
+				data: missingExtensionData(mcp.ExtensionTasks),
 			}
 		} else if !protocolInfo.Modern && s.capabilities.tasks == nil {
 			err = &requestError{

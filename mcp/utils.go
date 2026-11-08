@@ -866,9 +866,17 @@ func ParseCallToolResult(rawMessage *json.RawMessage) (*CallToolResult, error) {
 	var probe struct {
 		Content    json.RawMessage `json:"content"`
 		ResultType ResultType      `json:"resultType"`
+		TaskId     string          `json:"taskId"`
 	}
 	if err := json.Unmarshal(*rawMessage, &probe); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	// A server-directed task handle (SEP-2663) carries no content; the peer
+	// created an asynchronous task instead of returning a result. Surface it as
+	// a typed error so the caller can recover the task ID and poll tasks/get,
+	// rather than failing with "content is missing".
+	if probe.ResultType == ResultTypeTask {
+		return nil, &UnsupportedTaskResultError{TaskID: probe.TaskId}
 	}
 	// A result asking for more input (SEP-2322) carries only the input
 	// requests and the request state, so it legitimately has no content.

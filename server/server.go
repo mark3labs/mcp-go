@@ -40,13 +40,14 @@ type taskEntry struct {
 	sessionID  string
 	toolName   string             // Name of the tool that created this task
 	createdAt  time.Time          // When the task was created (for metrics)
+	modernTask bool               // Whether the task was created by a modern (SEP-2663) request
 	result     any                // The actual result once completed
 	resultErr  error              // Error if task failed
 	cancelFunc context.CancelFunc // Function to cancel the task
 	done       chan struct{}      // Channel to signal task completion
 	completed  bool               // Whether the task has been completed (guards done channel closure)
 	// inputResponses holds responses delivered via tasks/update (SEP-2663).
-	inputResponses map[string]json.RawMessage
+	inputResponses mcp.InputResponses
 	// inputReady is signalled each time tasks/update delivers new inputResponses.
 	inputReady chan struct{}
 	// inputRequests holds the pending input requests the task is waiting on
@@ -200,6 +201,18 @@ func (e *requestError) ToJSONRPCError() mcp.JSONRPCError {
 
 func (e *requestError) Unwrap() error {
 	return e.err
+}
+
+// missingExtensionData builds the error data naming the required extension.
+func missingExtensionData(extension string) any {
+	return map[string]any{
+		"capability": extension,
+		"requiredCapabilities": map[string]any{
+			"extensions": map[string]any{
+				extension: map[string]any{},
+			},
+		},
+	}
 }
 
 // NotificationHandlerFunc handles incoming notifications.
@@ -1298,7 +1311,12 @@ func (s *MCPServer) AddNotificationHandler(
 // serverCapabilities builds the capability set advertised by this server.
 // It is shared by the legacy initialize handshake and the modern
 // server/discover RPC.
-func (s *MCPServer) serverCapabilitiesSnapshot() mcp.ServerCapabilities {
+//
+// When modern is true the legacy tasks.* capability block is suppressed: those
+// capabilities are not part of the modern protocol vocabulary (SEP-2663), and
+// modern clients discover task support via the io.modelcontextprotocol/tasks
+// extension in Extensions instead.
+func (s *MCPServer) serverCapabilitiesSnapshot(modern bool) mcp.ServerCapabilities {
 	// Capabilities are registered at runtime - AddTool implicitly enables the
 	// tools capability, for example - so reads must be synchronized against
 	// those writers.
@@ -1352,8 +1370,8 @@ func (s *MCPServer) serverCapabilitiesSnapshot() mcp.ServerCapabilities {
 		capabilities.Roots = &struct{}{}
 	}
 
-	// Only add task capabilities if they're configured
-	if s.capabilities.tasks != nil {
+	// Only add the legacy task capability block on the legacy path.
+	if s.capabilities.tasks != nil && !modern {
 		tasksCapability := &mcp.TasksCapability{}
 
 		if s.capabilities.tasks.list {
@@ -1409,7 +1427,9 @@ func (s *MCPServer) handleInitialize(
 	_ any,
 	request mcp.InitializeRequest,
 ) (*mcp.InitializeResult, *requestError) {
-	capabilities := s.serverCapabilitiesSnapshot()
+	// The initialize handshake exists only on the legacy protocol, so the
+	// legacy task capability block is always advertised here.
+	capabilities := s.serverCapabilitiesSnapshot(false)
 
 	result := mcp.InitializeResult{
 		ProtocolVersion: s.protocolVersion(request.Params.ProtocolVersion),
@@ -2301,6 +2321,7 @@ func (s *MCPServer) handleToolCall(
 					id:   id,
 					code: mcp.MISSING_REQUIRED_CLIENT_CAPABILITY,
 					err:  fmt.Errorf("tool '%s' requires the %s extension", request.Params.Name, mcp.ExtensionTasks),
+					data: missingExtensionData(mcp.ExtensionTasks),
 				}
 			}
 		} else if request.Params.Task == nil {
@@ -2310,6 +2331,16 @@ func (s *MCPServer) handleToolCall(
 				code: mcp.METHOD_NOT_FOUND,
 				err:  fmt.Errorf("tool '%s' requires task augmentation", request.Params.Name),
 			}
+		}
+	}
+
+	// Validate the incoming arguments against the tool's input schema, when
+	// schema validation has been enabled via WithInputSchemaValidation.
+	if s.inputValidator != nil {
+		if _, err := s.inputValidator.validate(tool.Tool, request.Params.Arguments); err != nil {
+			// A validation failure is returned as a SEP-1303 tool execution error
+			// so the model receives feedback in its context window and can self-correct.
+			return validationToolResult(err), nil
 		}
 	}
 
@@ -2332,8 +2363,8 @@ func (s *MCPServer) handleToolCall(
 	// On modern protocol with extension declared, or legacy with task param set.
 	// Otherwise fall through to the error below.
 	if taskToolOnly {
-		if info := RequestProtocolInfoFromContext(ctx); info != nil && info.Modern && clientDeclaredExtension {
-			shouldExecuteAsTask = true
+		if info := RequestProtocolInfoFromContext(ctx); info != nil && info.Modern {
+			shouldExecuteAsTask = clientDeclaredExtension
 		} else if request.Params.Task != nil {
 			shouldExecuteAsTask = true
 		}
@@ -2345,20 +2376,22 @@ func (s *MCPServer) handleToolCall(
 	}
 
 	if taskToolOnly {
+		// A task-only tool cannot run synchronously. For a modern client that
+		// has not declared the tasks extension, the request cannot be served
+		// without returning a CreateTaskResult, so SEP-2663 requires
+		// MISSING_REQUIRED_CLIENT_CAPABILITY naming the extension.
+		if info := RequestProtocolInfoFromContext(ctx); info != nil && info.Modern && !clientDeclaredExtension {
+			return nil, &requestError{
+				id:   id,
+				code: mcp.MISSING_REQUIRED_CLIENT_CAPABILITY,
+				err:  fmt.Errorf("tool '%s' requires the %s extension", request.Params.Name, mcp.ExtensionTasks),
+				data: missingExtensionData(mcp.ExtensionTasks),
+			}
+		}
 		return nil, &requestError{
 			id:   id,
 			code: mcp.METHOD_NOT_FOUND,
 			err:  fmt.Errorf("tool '%s' does not support synchronous execution", request.Params.Name),
-		}
-	}
-
-	// Validate the incoming arguments against the tool's input schema, when
-	// schema validation has been enabled via WithInputSchemaValidation. A
-	// validation failure is returned as a SEP-1303 tool execution error so the
-	// model receives feedback in its context window and can self-correct.
-	if s.inputValidator != nil {
-		if _, err := s.inputValidator.validate(tool.Tool, request.Params.Arguments); err != nil {
-			return validationToolResult(err), nil
 		}
 	}
 
@@ -2496,12 +2529,12 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 	// Generate task ID (UUID v4)
 	taskID := uuid.New().String()
 
-	// Extract TTL from task params
+	// Extract TTL from task params.
 	var ttl *int64
-	if request.Params.Task != nil {
+	if !IsModernRequest(ctx) && request.Params.Task != nil {
 		ttl = request.Params.Task.TTL
 	}
-	// Fall back to the server default when modern SEP-2663 clients don't pass task params.
+	// Fall back to the server default when no client TTL applies.
 	if ttl == nil {
 		ttl = s.defaultTaskTTLMs
 	}
@@ -2584,7 +2617,7 @@ func (s *MCPServer) executeTaskTool(
 		// The cancelTask method will handle setting the proper status.
 		// However, if cancelTask hasn't been called yet, we should still mark it.
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			_ = s.cancelTaskEntry(ctx, entry, err.Error())
+			_ = s.cancelTaskEntry(ctx, entry, err.Error(), false)
 			return
 		}
 
@@ -2681,45 +2714,137 @@ func (s *MCPServer) executeRegularToolAsTask(
 		finalHandler = m(finalHandler)
 	}
 
-	result, err := finalHandler(taskCtx, request)
+	// Drive the SEP-2322 multi round-trip on the task path: on an
+	// input_required result the task parks (surfaced via tasks/get), waits for
+	// the answer via tasks/update, and re-invokes the handler. Like the
+	// synchronous resolveMultiRoundTrip, but spread across polls so the
+	// originating request does not block.
+	call := request
+	for attempt := 0; ; attempt++ {
+		result, err := finalHandler(taskCtx, call)
 
-	if err != nil {
-		// If the error is due to context cancellation, don't mark as failed.
-		// The cancelTask method will handle setting the proper status.
-		// However, if cancelTask hasn't been called yet, we should still mark it.
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			_ = s.cancelTaskEntry(ctx, entry, err.Error())
+		if err != nil {
+			// If the error is due to context cancellation, don't mark as failed.
+			// The cancelTask method will handle setting the proper status.
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				_ = s.cancelTaskEntry(ctx, entry, err.Error(), false)
+				return
+			}
 
+			// Task failed, complete with error
+			s.completeTask(entry, nil, err)
 			return
 		}
 
-		// Task failed - complete with error
-		s.completeTask(entry, nil, err)
-		return
-	}
-
-	// tasks/result has nothing to report for a handler that returned neither
-	// a result nor an error, so the task fails.
-	if result == nil {
-		s.completeTask(entry, nil, noResultError("tool", request.Params.Name))
-		return
-	}
-
-	// Task succeeded - store the CallToolResult directly
-	// When retrieved via tasks/result, this will be returned to the client
-	//
-	// Mirror the synchronous path: validate the result's StructuredContent
-	// against the tool's declared output schema when
-	// WithOutputSchemaValidation is enabled. A validation failure replaces
-	// the result with a tool execution error so the bad payload never
-	// reaches the client via tasks/result.
-	if s.outputValidator != nil {
-		if _, vErr := s.outputValidator.validate(regularTool.Tool, result); vErr != nil {
-			s.completeTask(entry, validationToolResult(vErr), nil)
+		// tasks/result has nothing to report for a handler that returned neither
+		// a result nor an error, so the task fails.
+		if result == nil {
+			s.completeTask(entry, nil, noResultError("tool", request.Params.Name))
 			return
 		}
+
+		if result.NeedsInput() {
+			// An input_required result with no requests is the "retry later" /
+			// load-shedding signal (see resolveMultiRoundTrip). There is nothing
+			// for the client to answer, so parking would hang the task forever.
+			// Fail fast, matching the synchronous path's ErrLoadShedding.
+			if len(result.InputRequests) == 0 {
+				s.completeTask(entry, nil, fmt.Errorf(
+					"tool %q returned input_required with no input requests", request.Params.Name))
+				return
+			}
+			// Parking in input_required is only answerable by modern clients
+			// via tasks/update.
+			if info := RequestProtocolInfoFromContext(ctx); info == nil || !info.Modern {
+				// Fail the task with a clear error instead of parking.
+				s.completeTask(entry, nil, fmt.Errorf(
+					"tool %q requires client input, which is not supported for legacy task execution", request.Params.Name))
+				return
+			}
+			if attempt >= maxLegacyInputRoundTrips {
+				s.completeTask(entry, nil, fmt.Errorf(
+					"tool %q exceeded %d input round trips", request.Params.Name, maxLegacyInputRoundTrips))
+				return
+			}
+			responses, ok := s.awaitTaskInput(taskCtx, entry, result.InputRequests)
+			if !ok {
+				// Task was cancelled or expired while awaiting input, the
+				// cancellation path owns the terminal status.
+				_ = s.cancelTaskEntry(ctx, entry, "Task cancelled while awaiting input", false)
+				return
+			}
+			call = request
+			call.Params.MultiRoundTripParams = mcp.MultiRoundTripParams{
+				InputResponses: responses,
+				RequestState:   result.RequestState,
+			}
+			continue
+		}
+
+		// Validate the result's StructuredContent against the tool's declared output
+		// schema when WithOutputSchemaValidation is enabled.
+		if s.outputValidator != nil {
+			if _, vErr := s.outputValidator.validate(regularTool.Tool, result); vErr != nil {
+				// A validation failure replaces the result with a tool execution error
+				// so the bad payload never reaches the client via tasks/result.
+				s.completeTask(entry, validationToolResult(vErr), nil)
+				return
+			}
+		}
+		s.completeTask(entry, s.limitToolResult(result), nil)
+		return
 	}
-	s.completeTask(entry, s.limitToolResult(result), nil)
+}
+
+// awaitTaskInput parks a task in input_required, publishing requests for the
+// client to answer via tasks/update, and blocks until the answer arrives or the
+// task is cancelled/expired (taskCtx done).
+func (s *MCPServer) awaitTaskInput(
+	taskCtx context.Context,
+	entry *taskEntry,
+	requests mcp.InputRequests,
+) (mcp.InputResponses, bool) {
+	s.tasksMu.Lock()
+	if entry.completed {
+		s.tasksMu.Unlock()
+		return nil, false
+	}
+	entry.task.Status = mcp.TaskStatusInputRequired
+	entry.task.LastUpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	entry.inputRequests = requests
+	entry.inputResponses = nil
+	// Drain any stale ready signal from a previous round so we wait for a fresh
+	// tasks/update rather than returning immediately.
+	select {
+	case <-entry.inputReady:
+	default:
+	}
+	task := entry.task
+	s.tasksMu.Unlock()
+
+	s.sendTaskStatusNotification(task, entry.modernTask)
+
+	select {
+	case <-entry.inputReady:
+	case <-taskCtx.Done():
+		return nil, false
+	}
+
+	s.tasksMu.Lock()
+	if entry.completed {
+		s.tasksMu.Unlock()
+		return nil, false
+	}
+	responses := entry.inputResponses
+	entry.inputResponses = nil
+	entry.inputRequests = nil
+	entry.task.Status = mcp.TaskStatusWorking
+	entry.task.LastUpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	task = entry.task
+	s.tasksMu.Unlock()
+
+	s.sendTaskStatusNotification(task, entry.modernTask)
+	return responses, true
 }
 
 func (s *MCPServer) handleNotification(
@@ -2810,16 +2935,21 @@ func (s *MCPServer) handleGetTask(
 		case mcp.TaskStatusCompleted:
 			if storedResult != nil {
 				raw, marshalErr := json.Marshal(storedResult)
-				if marshalErr == nil {
-					result.TaskResult = json.RawMessage(raw)
+				if marshalErr != nil {
+					// The result cannot be encoded. Report it as a task error
+					// rather than returning a successful but empty result,
+					// which would silently drop the tool output.
+					return nil, &requestError{
+						id:   id,
+						code: mcp.INTERNAL_ERROR,
+						err:  fmt.Errorf("task %q result is not JSON-encodable: %w", request.Params.TaskId, marshalErr),
+					}
 				}
+				result.TaskResult = json.RawMessage(raw)
 			}
 		case mcp.TaskStatusFailed:
 			if resultErr != nil {
-				result.TaskError = &mcp.JSONRPCErrorDetails{
-					Code:    mcp.INTERNAL_ERROR,
-					Message: resultErr.Error(),
-				}
+				result.TaskError = taskErrorDetails(resultErr)
 			}
 		case mcp.TaskStatusInputRequired:
 			result.InputRequests = pendingInputRequests
@@ -2860,22 +2990,19 @@ func (s *MCPServer) handleUpdateTask(
 
 	// Deliver responses to the task's pending input channel.
 	s.tasksMu.Lock()
-	if entry.task.Status != mcp.TaskStatusInputRequired {
+	if status := entry.task.Status; status != mcp.TaskStatusInputRequired {
 		s.tasksMu.Unlock()
 		return nil, &requestError{
 			id:   id,
 			code: mcp.INVALID_PARAMS,
-			err:  fmt.Errorf("task %q is not awaiting input (status: %s)", request.Params.TaskId, entry.task.Status),
+			err:  fmt.Errorf("task %q is not awaiting input (status: %s)", request.Params.TaskId, status),
 		}
 	}
 	if entry.inputResponses == nil {
-		entry.inputResponses = make(map[string]json.RawMessage)
+		entry.inputResponses = make(mcp.InputResponses)
 	}
 	for key, response := range request.Params.InputResponses {
-		raw, marshalErr := json.Marshal(response)
-		if marshalErr == nil {
-			entry.inputResponses[key] = json.RawMessage(raw)
-		}
+		entry.inputResponses[key] = response
 	}
 	// Signal the task handler that responses are available.
 	if entry.inputReady != nil {
@@ -3031,7 +3158,9 @@ func (s *MCPServer) handleCancelTask(
 	id any,
 	request mcp.CancelTaskRequest,
 ) (*mcp.CancelTaskResult, *requestError) {
-	err := s.cancelTask(ctx, request.Params.TaskId)
+	// Legacy rejects cancelling a terminal task, modern acks. The
+	// terminal check happens under the task lock to avoid racing completion.
+	err := s.cancelTask(ctx, request.Params.TaskId, !IsModernRequest(ctx))
 	if err != nil {
 		return nil, &requestError{
 			id:   id,
@@ -3135,11 +3264,13 @@ func (s *MCPServer) createTask(ctx context.Context, taskID string, toolName stri
 	createdAt := time.Now()
 
 	entry := &taskEntry{
-		task:      task,
-		sessionID: getSessionID(ctx),
-		toolName:  toolName,
-		createdAt: createdAt,
-		done:      make(chan struct{}),
+		task:       task,
+		sessionID:  getSessionID(ctx),
+		toolName:   toolName,
+		createdAt:  createdAt,
+		modernTask: IsModernRequest(ctx),
+		done:       make(chan struct{}),
+		inputReady: make(chan struct{}, 1),
 	}
 
 	// Single critical section for check + increment + insert
@@ -3230,14 +3361,20 @@ func (s *MCPServer) getTask(ctx context.Context, taskID string) (mcp.Task, chan 
 		return mcp.Task{}, nil, fmt.Errorf("task not found")
 	}
 
+	// Cross-origin isolation, a request must not reach a task created under a
+	// different protocol surface. This keeps modern (bearer-token) tasks
+	// invisible to legacy callers and vice versa.
+	if entry.modernTask != IsModernRequest(ctx) {
+		s.tasksMu.RUnlock()
+		return mcp.Task{}, nil, fmt.Errorf("task not found")
+	}
+
 	// Verify session isolation
 	sessionID := getSessionID(ctx)
 	if entry.sessionID != "" && sessionID != "" && entry.sessionID != sessionID {
 		s.tasksMu.RUnlock()
 		return mcp.Task{}, nil, fmt.Errorf("task not found")
 	}
-
-	// Return a copy of the task and the done channel
 	taskCopy := entry.task
 	done := entry.done
 	s.tasksMu.RUnlock()
@@ -3260,6 +3397,12 @@ func (s *MCPServer) getTaskEntry(ctx context.Context, taskID string) (*taskEntry
 	}
 	s.tasksMu.RUnlock()
 
+	// Cross-origin isolation. A legacy request must not reach a
+	// modern-origin task or vice versa.
+	if entry.modernTask != IsModernRequest(ctx) {
+		return nil, fmt.Errorf("task not found")
+	}
+
 	// Verify session isolation
 	sessionID := getSessionID(ctx)
 	if entry.sessionID != "" && sessionID != "" && entry.sessionID != sessionID {
@@ -3271,6 +3414,7 @@ func (s *MCPServer) getTaskEntry(ctx context.Context, taskID string) (*taskEntry
 
 // listTasks returns copies of all tasks for the current session.
 func (s *MCPServer) listTasks(ctx context.Context) []mcp.Task {
+	modern := IsModernRequest(ctx)
 	sessionID := getSessionID(ctx)
 
 	s.tasksMu.RLock()
@@ -3278,6 +3422,11 @@ func (s *MCPServer) listTasks(ctx context.Context) []mcp.Task {
 
 	var tasks []mcp.Task
 	for _, entry := range s.tasks {
+		// Cross-origin isolation, never expose a task created under a different
+		// protocol surface.
+		if entry.modernTask != modern {
+			continue
+		}
 		// Filter by session if applicable
 		if sessionID == "" || entry.sessionID == "" || entry.sessionID == sessionID {
 			tasks = append(tasks, entry.task)
@@ -3333,7 +3482,7 @@ func (s *MCPServer) completeTask(entry *taskEntry, result any, err error) {
 	s.tasksMu.Unlock()
 
 	// Send task status notification
-	s.sendTaskStatusNotification(task)
+	s.sendTaskStatusNotification(task, entry.modernTask)
 
 	// Fire task hooks, after the created hook if it is still running
 	if s.taskHooks != nil {
@@ -3347,23 +3496,28 @@ func (s *MCPServer) completeTask(entry *taskEntry, result any, err error) {
 	}
 }
 
-// cancelTask cancels a running task.
-func (s *MCPServer) cancelTask(ctx context.Context, taskID string) error {
+// cancelTask cancels a running task. When rejectTerminal is set (legacy path),
+// cancelling an already-terminal task fails with an error instead of acking.
+func (s *MCPServer) cancelTask(ctx context.Context, taskID string, rejectTerminal bool) error {
 	entry, err := s.getTaskEntry(ctx, taskID)
 	if err != nil {
 		return err
 	}
-	return s.cancelTaskEntry(ctx, entry, "Task cancelled by request")
+	return s.cancelTaskEntry(ctx, entry, "Task cancelled by request", rejectTerminal)
 }
 
 // cancelTaskEntry records a cancellation and invokes observers after unlocking.
-func (s *MCPServer) cancelTaskEntry(ctx context.Context, entry *taskEntry, message string) error {
+func (s *MCPServer) cancelTaskEntry(ctx context.Context, entry *taskEntry, message string, rejectTerminal bool) error {
 	s.tasksMu.Lock()
 
-	// Task already reached a terminal state — ack silently per SEP-2663.
-	// "The server MUST acknowledge the request with an empty result."
+	// Already terminal. legacy (rejectTerminal) returns INVALID_PARAMS, modern acks.
+	// Checked under the lock so a just-completed entry isn't raced.
 	if entry.completed {
+		status := entry.task.Status
 		s.tasksMu.Unlock()
+		if rejectTerminal {
+			return fmt.Errorf("cannot cancel task in terminal status: %s", status)
+		}
 		return nil
 	}
 	cancel := entry.cancelFunc
@@ -3389,7 +3543,7 @@ func (s *MCPServer) cancelTaskEntry(ctx context.Context, entry *taskEntry, messa
 	if cancel != nil {
 		cancel()
 	}
-	s.sendTaskStatusNotification(task)
+	s.sendTaskStatusNotification(task, entry.modernTask)
 	if s.taskHooks != nil {
 		// After the created hook, if it is still running.
 		s.fireTaskHook(ctx, entry, func(ctx context.Context) { s.taskHooks.taskCancelled(ctx, metrics) })
@@ -3430,7 +3584,14 @@ func (s *MCPServer) scheduleTaskCleanup(taskID string, expected *taskEntry, ttlM
 }
 
 // sendTaskStatusNotification sends a notification when a task's status changes.
-func (s *MCPServer) sendTaskStatusNotification(task mcp.Task) {
+func (s *MCPServer) sendTaskStatusNotification(task mcp.Task, modernTask bool) {
+	// Don't broadcast modern tasks, this fans out to every session with no
+	// origin filtering, so the task id would leak its bearer handle. Modern
+	// clients poll tasks/get instead.
+	if modernTask {
+		return
+	}
+
 	// Convert task to map[string]any for notification params
 	taskMap := map[string]any{
 		"taskId":        task.TaskId,
@@ -3452,9 +3613,6 @@ func (s *MCPServer) sendTaskStatusNotification(task mcp.Task) {
 		taskMap["pollIntervalMs"] = *task.PollInterval // SEP-2663 field name
 	}
 
-	// Broadcast to all sessions. Each client honours
-	// the method it subscribed to and ignores the other.
-	s.SendNotificationToAllClients(mcp.MethodNotificationTasks, taskMap)
 	s.SendNotificationToAllClients(mcp.MethodNotificationTasksStatus, taskMap)
 }
 

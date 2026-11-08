@@ -114,9 +114,9 @@ func TestSEP2663_GetTaskInlinesResult(t *testing.T) {
 		WithTaskCapabilities(true, true, true),
 	)
 
-	ctx := t.Context()
+	modernCtx := buildModernContext(t.Context(), srv)
 	ttl := int64(60000)
-	entry, err := srv.createTask(ctx, "task-inline", "tool", &ttl, nil)
+	entry, err := srv.createTask(modernCtx, "task-inline", "tool", &ttl, nil)
 	require.NoError(t, err)
 
 	// Complete the task with a tool result
@@ -127,15 +127,12 @@ func TestSEP2663_GetTaskInlinesResult(t *testing.T) {
 
 	// Wait for completion
 	for range 100 {
-		t, _, _ := srv.getTask(ctx, "task-inline")
+		t, _, _ := srv.getTask(modernCtx, "task-inline")
 		if t.Status.IsTerminal() {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-
-	// Build a modern request context
-	modernCtx := buildModernContext(ctx, srv)
 
 	getResult, reqErr := srv.handleGetTask(modernCtx, 1, mcp.GetTaskRequest{
 		Params: mcp.GetTaskParams{TaskId: "task-inline"},
@@ -148,18 +145,18 @@ func TestSEP2663_GetTaskInlinesResult(t *testing.T) {
 }
 
 // TestSEP2663_CancelTaskAckOnly verifies that tasks/cancel for a modern
-// client returns an ack-only result.
+// client returns an ack-only result, including for an already-terminal task.
 func TestSEP2663_CancelTaskAckOnly(t *testing.T) {
 	srv := NewMCPServer("test", "1.0.0",
 		WithTaskCapabilities(true, true, true),
 	)
 
-	ctx := t.Context()
-	entry, err := srv.createTask(ctx, "task-cancel-ack", "tool", nil, nil)
+	modernCtx := buildModernContext(t.Context(), srv)
+	// Create under the same modern context so the task's protocol origin matches
+	// the canceller (cross-origin isolation rejects mismatches).
+	entry, err := srv.createTask(modernCtx, "task-cancel-ack", "tool", nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, mcp.TaskStatusWorking, entry.task.Status)
-
-	modernCtx := buildModernContext(ctx, srv)
 
 	result, reqErr := srv.handleCancelTask(modernCtx, 1, mcp.CancelTaskRequest{
 		Params: mcp.CancelTaskParams{TaskId: "task-cancel-ack"},
@@ -172,6 +169,13 @@ func TestSEP2663_CancelTaskAckOnly(t *testing.T) {
 	var m map[string]any
 	require.NoError(t, json.Unmarshal(data, &m))
 	assert.NotContains(t, m, "taskId", "ack-only result must not have task fields")
+
+	// Cancelling an already-terminal task on the modern path must still ack silently, not error.
+	result, reqErr = srv.handleCancelTask(modernCtx, 2, mcp.CancelTaskRequest{
+		Params: mcp.CancelTaskParams{TaskId: "task-cancel-ack"},
+	})
+	require.Nil(t, reqErr, "modern cancel of a terminal task must ack, not error")
+	require.NotNil(t, result)
 }
 
 // TestSEP2663_TasksUpdateAck verifies that tasks/update returns an ack.
@@ -180,16 +184,14 @@ func TestSEP2663_TasksUpdateAck(t *testing.T) {
 		WithTaskCapabilities(true, true, true),
 	)
 
-	ctx := t.Context()
-	entry, err := srv.createTask(ctx, "task-update-ack", "tool", nil, nil)
+	modernCtx := buildModernContext(t.Context(), srv)
+	entry, err := srv.createTask(modernCtx, "task-update-ack", "tool", nil, nil)
 	require.NoError(t, err)
 
 	// tasks/update is only valid when the task is in input_required state.
 	srv.tasksMu.Lock()
 	entry.task.Status = mcp.TaskStatusInputRequired
 	srv.tasksMu.Unlock()
-
-	modernCtx := buildModernContext(ctx, srv)
 
 	updateResult, reqErr := srv.handleUpdateTask(modernCtx, 1, mcp.UpdateTaskRequest{
 		Params: mcp.UpdateTaskParams{
