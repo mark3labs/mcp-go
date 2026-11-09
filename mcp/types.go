@@ -1851,15 +1851,18 @@ type TaskResultParams struct {
 type TaskResultResult struct {
 	Result
 	// Tool call result fields (for task-augmented tool calls)
-	Content           []Content `json:"content,omitempty"`
+	Content           []Content `json:"content"`
 	StructuredContent any       `json:"structuredContent,omitempty"`
 	// RawStructuredContent preserves structured JSON precision when forwarding a parsed result.
 	RawStructuredContent json.RawMessage `json:"-"`
 	IsError              bool            `json:"isError,omitempty"`
 }
 
-// MarshalJSON preserves the original structured content of a parsed task result.
+// MarshalJSON preserves structured content and emits an array for tool result content.
 func (r TaskResultResult) MarshalJSON() ([]byte, error) {
+	if r.Content == nil {
+		r.Content = []Content{}
+	}
 	type alias TaskResultResult
 	out := struct {
 		alias
