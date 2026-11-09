@@ -15,7 +15,8 @@ var (
 	jsonrpcParamsMembers = []string{
 		"name", "arguments", "uri", "cursor", "_meta", "protocolVersion",
 		"capabilities", "clientInfo", "level", "ref", "argument", "requestId",
-		"progressToken", "taskId", "reason", "requestState",
+		"progressToken", "taskId", "reason", "requestState", "task", "context",
+		"inputResponses", "notifications", "progress", "total", "message",
 	}
 )
 

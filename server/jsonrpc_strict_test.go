@@ -3,6 +3,9 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -50,7 +53,7 @@ func TestValidateProtocolMemberNames(t *testing.T) {
 		},
 		{
 			name:    "U+212A folds onto k",
-			message: `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"tasKId":"x"}}`,
+			message: "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"tas\u212aId\":\"x\"}}",
 			wantErr: `is not the defined name "params.taskId"`,
 		},
 		{
@@ -109,4 +112,50 @@ func TestHandleMessageRejectsUndefinedMemberNames(t *testing.T) {
 	require.True(t, ok, "expected JSONRPCError, got %T", response)
 	assert.Equal(t, mcp.INVALID_REQUEST, errorResponse.Error.Code)
 	assert.False(t, called)
+}
+
+// TestParamsMembersCoverDecodedRequests checks that jsonrpcParamsMembers lists
+// every params member name of the requests HandleMessage decodes.
+func TestParamsMembersCoverDecodedRequests(t *testing.T) {
+	requests := []any{
+		mcp.InitializeRequest{}, mcp.PingRequest{}, mcp.DiscoverRequest{},
+		mcp.SubscriptionsListenRequest{}, mcp.SetLevelRequest{},
+		mcp.ListResourcesRequest{}, mcp.ListResourceTemplatesRequest{},
+		mcp.ReadResourceRequest{}, mcp.SubscribeRequest{}, mcp.UnsubscribeRequest{},
+		mcp.ListPromptsRequest{}, mcp.GetPromptRequest{}, mcp.ListToolsRequest{},
+		mcp.CallToolRequest{}, mcp.GetTaskRequest{}, mcp.ListTasksRequest{},
+		mcp.TaskResultRequest{}, mcp.CancelTaskRequest{}, mcp.CompleteRequest{},
+	}
+	for _, req := range requests {
+		params, ok := reflect.TypeOf(req).FieldByName("Params")
+		require.True(t, ok, "%T has no Params", req)
+		for _, name := range jsonNames(params.Type) {
+			assert.True(t, slices.Contains(jsonrpcParamsMembers, name), "%T: params.%s is not in jsonrpcParamsMembers", req, name)
+		}
+	}
+}
+
+func jsonNames(typ reflect.Type) []string {
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	if typ.Kind() != reflect.Struct {
+		return nil
+	}
+	var names []string
+	for i := range typ.NumField() {
+		f := typ.Field(i)
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		switch {
+		case name == "-":
+		case f.Anonymous && name == "":
+			names = append(names, jsonNames(f.Type)...)
+		case f.IsExported():
+			if name == "" {
+				name = f.Name
+			}
+			names = append(names, name)
+		}
+	}
+	return names
 }
