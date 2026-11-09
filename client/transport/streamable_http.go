@@ -63,6 +63,10 @@ func WithContinuousListeningBackoff(initialDelay, maxDelay time.Duration) Stream
 }
 
 // WithHTTPBasicClient sets a custom HTTP client on the StreamableHTTP transport.
+//
+// The default client follows a redirect only to the same scheme, host and
+// port, so configured headers and OAuth tokens are not sent elsewhere. A
+// custom client's CheckRedirect policy is used as it is.
 func WithHTTPBasicClient(client *http.Client) StreamableHTTPCOption {
 	return func(sc *StreamableHTTP) {
 		sc.httpClient = client
@@ -216,7 +220,7 @@ func NewStreamableHTTP(serverURL string, options ...StreamableHTTPCOption) (*Str
 
 	smc := &StreamableHTTP{
 		serverURL:   parsedURL,
-		httpClient:  &http.Client{},
+		httpClient:  newDefaultHTTPClient(),
 		headers:     make(map[string]string),
 		closed:      make(chan struct{}),
 		logger:      slog.Default(),
