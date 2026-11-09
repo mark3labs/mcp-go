@@ -520,6 +520,7 @@ func (c *Stdio) GetSessionId() string {
 
 // SetNotificationHandler sets the handler function to be called when a notification is received.
 // Only one handler can be set at a time; setting a new one replaces the previous handler.
+// A handler may replace or remove itself; the change applies to subsequent notifications.
 func (c *Stdio) SetNotificationHandler(
 	handler func(notification mcp.JSONRPCNotification),
 ) {
@@ -582,10 +583,11 @@ func (c *Stdio) readResponses(ready chan struct{}) {
 					continue
 				}
 				c.notifyMu.RLock()
-				if c.onNotification != nil {
-					c.onNotification(notification)
-				}
+				handler := c.onNotification
 				c.notifyMu.RUnlock()
+				if handler != nil {
+					handler(notification)
+				}
 				continue
 			}
 

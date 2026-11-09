@@ -510,10 +510,11 @@ func (c *SSE) handleSSEEvent(event, data string, endpointChan chan struct{}, end
 				return
 			}
 			c.notifyMu.RLock()
-			if c.onNotification != nil {
-				c.onNotification(notification)
-			}
+			handler := c.onNotification
 			c.notifyMu.RUnlock()
+			if handler != nil {
+				handler(notification)
+			}
 			return
 		}
 
@@ -541,6 +542,7 @@ func (c *SSE) handleSSEEvent(event, data string, endpointChan chan struct{}, end
 }
 
 // SetNotificationHandler sets the handler for incoming JSON-RPC notifications.
+// A handler may replace or remove itself; the change applies to subsequent notifications.
 func (c *SSE) SetNotificationHandler(handler func(notification mcp.JSONRPCNotification)) {
 	c.notifyMu.Lock()
 	defer c.notifyMu.Unlock()
