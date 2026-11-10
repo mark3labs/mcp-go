@@ -2108,14 +2108,28 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 	})
 	defer s.samplingRequests.Delete(requestID)
 
-	// Send the sampling request via the channel (non-blocking)
-	select {
-	case s.samplingRequestChan <- samplingRequest:
-		// Request queued successfully
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-		return nil, fmt.Errorf("sampling request queue is full - server overloaded")
+	// Prefer the originating POST's SSE stream, as RequestElicitation does,
+	// so a client without a standalone GET stream still receives the request.
+	// Fall back to the GET stream otherwise.
+	jsonrpcRequest := mcp.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(requestID),
+		Request: mcp.Request{
+			Method: string(mcp.MethodSamplingCreateMessage),
+		},
+		Params: request.CreateMessageParams,
+	}
+	scoped, hasScoped := ctx.Value(requestScopedSSEKey{}).(*requestScopedSSE)
+	if !hasScoped || !scoped.trySend(ctx, jsonrpcRequest) {
+		// Send the sampling request via the channel (non-blocking)
+		select {
+		case s.samplingRequestChan <- samplingRequest:
+			// Request queued successfully
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			return nil, fmt.Errorf("sampling request queue is full - server overloaded")
+		}
 	}
 
 	// Wait for response or context cancellation
@@ -2166,14 +2180,27 @@ func (s *streamableHttpSession) ListRoots(ctx context.Context, request mcp.ListR
 	})
 	defer s.samplingRequests.Delete(requestID)
 
-	// Send the list roots request via the channel (non-blocking)
-	select {
-	case s.rootsRequestChan <- rootsRequest:
-		// Request queued successfully
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-		return nil, fmt.Errorf("list roots request queue is full - server overloaded")
+	// Prefer the originating POST's SSE stream, as RequestElicitation does,
+	// so a client without a standalone GET stream still receives the request.
+	// Fall back to the GET stream otherwise.
+	jsonrpcRequest := mcp.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(requestID),
+		Request: mcp.Request{
+			Method: string(mcp.MethodListRoots),
+		},
+	}
+	scoped, hasScoped := ctx.Value(requestScopedSSEKey{}).(*requestScopedSSE)
+	if !hasScoped || !scoped.trySend(ctx, jsonrpcRequest) {
+		// Send the list roots request via the channel (non-blocking)
+		select {
+		case s.rootsRequestChan <- rootsRequest:
+			// Request queued successfully
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			return nil, fmt.Errorf("list roots request queue is full - server overloaded")
+		}
 	}
 
 	// Wait for response or context cancellation
