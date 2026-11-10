@@ -227,7 +227,7 @@ func normalizeArgumentsForValidation(rawArgs any) (any, error) {
 	}
 	if raw, ok := rawArgs.(json.RawMessage); ok {
 		trimmed := bytes.TrimSpace(raw)
-		if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		if len(trimmed) == 0 {
 			return map[string]any{}, nil
 		}
 		return jsonschema.UnmarshalJSON(bytes.NewReader(trimmed))

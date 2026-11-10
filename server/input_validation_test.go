@@ -403,6 +403,27 @@ func TestInputSchemaValidation_ErrorKindReadable(t *testing.T) {
 	}
 }
 
+func TestInputSchemaValidation_DistinguishesMissingAndNullArguments(t *testing.T) {
+	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
+	tool := mcp.NewTool("no_args")
+	handlerCalled := false
+	srv.AddTool(tool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		handlerCalled = true
+		return mcp.NewToolResultText("ok"), nil
+	})
+
+	// An omitted arguments field means an empty argument object.
+	missing := srv.HandleMessage(t.Context(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"no_args"}}`))
+	requireToolSuccess(t, missing)
+	assert.True(t, handlerCalled)
+
+	// Explicit null is not an object and must fail the tool's root schema.
+	handlerCalled = false
+	null := srv.HandleMessage(t.Context(), []byte(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"no_args","arguments":null}}`))
+	requireToolErrorContaining(t, null, "null")
+	assert.False(t, handlerCalled)
+}
+
 func TestInputSchemaValidation_PreservesLargeIntegerPrecision(t *testing.T) {
 	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
 	var handlerReceivedID int
