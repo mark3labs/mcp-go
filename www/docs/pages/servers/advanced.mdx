@@ -305,7 +305,7 @@ func main() {
     server.ServeStdio(s)
 }
 
-func createSessionAwareTool(sm *SessionManager) server.ToolHandler {
+func createSessionAwareTool(sm *SessionManager) server.ToolHandlerFunc {
     return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
         sessionID := server.GetSessionID(ctx)
         session, exists := sm.GetSession(sessionID)
@@ -373,8 +373,8 @@ func (m *LoggingMiddleware) ToolMiddleware(next server.ToolHandlerFunc) server.T
     }
 }
 
-func (m *LoggingMiddleware) ResourceMiddleware(next server.ResourceHandler) server.ResourceHandler {
-    return func(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+func (m *LoggingMiddleware) ResourceMiddleware(next server.ResourceHandlerFunc) server.ResourceHandlerFunc {
+    return func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
         start := time.Now()
         sessionID := server.GetSessionID(ctx)
         
@@ -429,7 +429,7 @@ func (m *RateLimitMiddleware) getLimiter(sessionID string) *rate.Limiter {
     return limiter
 }
 
-func (m *RateLimitMiddleware) ToolMiddleware(next server.ToolHandler) server.ToolHandler {
+func (m *RateLimitMiddleware) ToolMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
     return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
         sessionID := server.GetSessionID(ctx)
         limiter := m.getLimiter(sessionID)
@@ -454,7 +454,7 @@ func NewAuthMiddleware(validator TokenValidator) *AuthMiddleware {
     return &AuthMiddleware{tokenValidator: validator}
 }
 
-func (m *AuthMiddleware) ToolMiddleware(next server.ToolHandler) server.ToolHandler {
+func (m *AuthMiddleware) ToolMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
     return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
         // Extract token from context or request
         token := extractToken(ctx, req)

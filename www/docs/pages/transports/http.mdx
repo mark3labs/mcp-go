@@ -288,7 +288,7 @@ func logResourceRead(sessionID, uri string, duration time.Duration, err error) {
 
 func addStreamableHTTPMiddleware(s *server.MCPServer) {
     // Authentication middleware
-    s.AddToolMiddleware(func(next server.ToolHandler) server.ToolHandler {
+    s.Use(func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
         return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
             // Extract and validate auth token
             token := extractAuthToken(ctx)
@@ -308,7 +308,7 @@ func addStreamableHTTPMiddleware(s *server.MCPServer) {
     })
 
     // Rate limiting middleware
-    s.AddToolMiddleware(func(next server.ToolHandler) server.ToolHandler {
+    s.Use(func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
         return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
             clientIP := getClientIP(ctx)
             if !rateLimiter.Allow(clientIP) {
@@ -318,23 +318,25 @@ func addStreamableHTTPMiddleware(s *server.MCPServer) {
         }
     })
 
-    // Caching middleware
-    s.AddResourceMiddleware(func(next server.ResourceHandler) server.ResourceHandler {
-        return func(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-            // Check cache first
-            if cached := getFromCache(req.Params.URI); cached != nil {
-                return cached, nil
-            }
-            
-            result, err := next(ctx, req)
-            if err == nil {
-                // Cache successful results
-                setCache(req.Params.URI, result, 5*time.Minute)
-            }
-            
-            return result, err
+}
+
+// Register this resource middleware with server.WithResourceHandlerMiddleware
+// when constructing the MCPServer; resource middleware has no runtime Use method.
+func resourceCacheMiddleware(next server.ResourceHandlerFunc) server.ResourceHandlerFunc {
+    return func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+        // Check cache first
+        if cached := getFromCache(req.Params.URI); cached != nil {
+            return cached, nil
         }
-    })
+
+        result, err := next(ctx, req)
+        if err == nil {
+            // Cache successful results
+            setCache(req.Params.URI, result, 5*time.Minute)
+        }
+
+        return result, err
+    }
 }
 ```
 

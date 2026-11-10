@@ -537,7 +537,7 @@ func main() {
         name        string
         description string
         mimeType    string
-        handler     server.ResourceHandler
+        handler     server.ResourceHandlerFunc
     }{
         {"docs://readme", "README", "Project documentation", "text/markdown", handleReadme},
         {"config://app", "App Config", "Application settings", "application/json", handleConfig},
