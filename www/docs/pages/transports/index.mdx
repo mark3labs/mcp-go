@@ -256,8 +256,8 @@ func setupServer(s *server.MCPServer) {
 ```go
 // Example with security middleware
 s := server.NewMCPServer("Secure Server", "1.0.0",
-    server.WithToolMiddleware(authMiddleware),
-    server.WithToolMiddleware(rateLimitMiddleware),
+    server.WithToolHandlerMiddleware(authMiddleware),
+    server.WithToolHandlerMiddleware(rateLimitMiddleware),
     server.WithRecovery(),
 )
 ```
