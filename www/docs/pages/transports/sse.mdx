@@ -375,11 +375,11 @@ mcpServer.SendNotificationToClient(ctx, "progress_update", progressData)
 
 ### Request Headers
 
-Like the StreamableHTTP transport, the SSE transport passes HTTP request headers to MCP handlers. This allows you to access the original HTTP headers that were sent with the SSE connection in your tool and resource handlers.
+Like the StreamableHTTP transport, the SSE transport passes HTTP request headers to MCP handlers. The headers come from each HTTP POST to the message endpoint, so handlers can use them for authentication, tracing, and other request-specific data.
 
 #### Accessing Headers in Handlers
 
-Headers from the SSE connection are available in all MCP request objects:
+Headers from the message POST are available in all MCP request objects:
 
 ```go
 func handleStreamData(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -410,9 +410,9 @@ This works for all MCP request types including:
 - `InitializeRequest`
 - And other MCP request types
 
-The headers are automatically populated by the SSE transport layer from the initial SSE connection and are available in your handlers without any additional configuration.
+The SSE transport populates request headers from the HTTP POST that carries each MCP message. The initial GET that opens the SSE stream does not supply headers for later message requests. `WithSSEContextFunc` also receives the message POST request, so it can derive context values from that request.
 
-Note: Since SSE maintains a persistent connection, the headers are captured when the connection is established and remain the same for all requests during that connection's lifetime.
+Clients and proxies must include any needed headers on each message POST.
 
 ## Next Steps
 
