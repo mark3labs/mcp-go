@@ -14,6 +14,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestStreamableHTTPStartAfterClose verifies that Start, SendRequest, and
+// SendNotification return ErrTransportClosed once Close has run, whether or
+// not the transport was started first.
 func TestStreamableHTTPStartAfterClose(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -69,6 +72,9 @@ func TestStreamableHTTPStartAfterClose(t *testing.T) {
 	}
 }
 
+// TestStreamableHTTPStartAfterClose_ContinuousListening verifies that a legacy
+// continuous GET listener ends on Close and that Start afterward returns
+// ErrTransportClosed without reopening the transport.
 func TestStreamableHTTPStartAfterClose_ContinuousListening(t *testing.T) {
 	getOpened := make(chan struct{}, 1)
 	getDone := make(chan struct{})
@@ -147,6 +153,9 @@ func TestStreamableHTTPStartAfterClose_ContinuousListening(t *testing.T) {
 	require.ErrorIs(t, err, ErrTransportClosed)
 }
 
+// TestStreamableHTTPCloseInterruptsInFlightSends verifies that Close cancels an
+// in-flight SendRequest or SendNotification and that the interrupted send
+// returns ErrTransportClosed.
 func TestStreamableHTTPCloseInterruptsInFlightSends(t *testing.T) {
 	tests := []struct {
 		name string

@@ -223,6 +223,8 @@ func NewStreamableHTTP(serverURL string, options ...StreamableHTTPCOption) (*Str
 }
 
 // Start initiates the HTTP connection to the server.
+// After Close has run, Start returns ErrTransportClosed and does not reopen
+// the transport.
 func (c *StreamableHTTP) Start(ctx context.Context) error {
 	// Reject any start after Close before the initialized fast-path so a closed
 	// transport reports ErrTransportClosed instead of nil. SSE / stdio /
@@ -686,6 +688,8 @@ func (e *OAuthAuthorizationRequiredError) Unwrap() error {
 
 // SendRequest sends a JSON-RPC request to the server and waits for a response.
 // Returns the raw JSON response message or an error if the request fails.
+// After Close has run, SendRequest returns ErrTransportClosed, including when
+// Close interrupts an in-flight send.
 func (c *StreamableHTTP) SendRequest(
 	ctx context.Context,
 	request JSONRPCRequest,
@@ -1231,6 +1235,8 @@ func (c *StreamableHTTP) readSSEWithCursor(ctx context.Context, reader io.ReadCl
 }
 
 // SendNotification sends a JSON-RPC notification to the server without expecting a response.
+// After Close has run, SendNotification returns ErrTransportClosed, including
+// when Close interrupts an in-flight send.
 func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.JSONRPCNotification) error {
 	if err := c.errIfClosed(); err != nil {
 		return err
@@ -1586,7 +1592,8 @@ func (c *StreamableHTTP) contextAwareOfClientClose(ctx context.Context) (context
 	return newCtx, cancel
 }
 
-// errIfClosed returns ErrTransportClosed when Close has already run.
+// errIfClosed returns ErrTransportClosed when Close has already run, and nil
+// otherwise. Callers use it to treat Close as a terminal transport state.
 func (c *StreamableHTTP) errIfClosed() error {
 	select {
 	case <-c.closed:
