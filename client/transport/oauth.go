@@ -128,6 +128,56 @@ func (t *Token) IsExpired() bool {
 	return time.Now().After(t.ExpiresAt)
 }
 
+// tokenResponse is a token endpoint response as it arrives on the wire
+// (RFC 6749 §5.1). It is kept apart from Token, whose expires_at is the
+// stored form: some servers add a non-standard expires_at of their own, as
+// Unix seconds, which must not fail the exchange.
+type tokenResponse struct {
+	AccessToken  string          `json:"access_token"`
+	TokenType    string          `json:"token_type"`
+	RefreshToken string          `json:"refresh_token,omitempty"`
+	ExpiresIn    int64           `json:"expires_in,omitempty"`
+	Scope        string          `json:"scope,omitempty"`
+	ExpiresAt    json.RawMessage `json:"expires_at,omitempty"`
+}
+
+// decodeTokenResponse decodes a token endpoint response and sets the
+// token's expiry. expires_in decides it; failing that, a server's own
+// expires_at, as Unix seconds or an RFC 3339 string, is used when it can be
+// read and ignored when it can't.
+func decodeTokenResponse(body []byte) (*Token, error) {
+	var resp tokenResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("failed to decode token response: %w", err)
+	}
+	token := &Token{
+		AccessToken:  resp.AccessToken,
+		TokenType:    resp.TokenType,
+		RefreshToken: resp.RefreshToken,
+		ExpiresIn:    resp.ExpiresIn,
+		Scope:        resp.Scope,
+	}
+	if resp.ExpiresIn > 0 {
+		token.ExpiresAt = time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second)
+	} else {
+		token.ExpiresAt = parseExpiresAt(resp.ExpiresAt)
+	}
+	return token, nil
+}
+
+// parseExpiresAt reads a server's expires_at, or returns the zero time.
+func parseExpiresAt(raw json.RawMessage) time.Time {
+	var seconds int64
+	if err := json.Unmarshal(raw, &seconds); err == nil && seconds > 0 {
+		return time.Unix(seconds, 0)
+	}
+	var at time.Time
+	if err := json.Unmarshal(raw, &at); err == nil {
+		return at
+	}
+	return time.Time{}
+}
+
 // MemoryTokenStore is a simple in-memory token store
 type MemoryTokenStore struct {
 	token *Token
@@ -476,14 +526,9 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken, issuer st
 		return nil, fmt.Errorf("refresh token request failed: %w", oauthErr)
 	}
 
-	var tokenResp Token
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return nil, fmt.Errorf("failed to decode token response: %w", err)
-	}
-
-	// Set expiration time
-	if tokenResp.ExpiresIn > 0 {
-		tokenResp.ExpiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	tokenResp, err := decodeTokenResponse(body)
+	if err != nil {
+		return nil, err
 	}
 
 	// If no new refresh token is provided, keep the old one
@@ -492,11 +537,11 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken, issuer st
 	}
 
 	// Save the token
-	if err := h.saveBoundToken(ctx, metadata, credentials, &tokenResp); err != nil {
+	if err := h.saveBoundToken(ctx, metadata, credentials, tokenResp); err != nil {
 		return nil, fmt.Errorf("failed to save token: %w", err)
 	}
 
-	return &tokenResp, nil
+	return tokenResp, nil
 }
 
 // RefreshToken refreshes a token with matching stored provenance. An unknown raw
@@ -1591,18 +1636,13 @@ func (h *OAuthHandler) processAuthorizationResponse(ctx context.Context, code, s
 		return fmt.Errorf("token request failed: %w", oauthErr)
 	}
 
-	var tokenResp Token
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return fmt.Errorf("failed to decode token response: %w", err)
-	}
-
-	// Set expiration time
-	if tokenResp.ExpiresIn > 0 {
-		tokenResp.ExpiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	tokenResp, err := decodeTokenResponse(body)
+	if err != nil {
+		return err
 	}
 
 	// Save the token
-	if err := h.saveBoundToken(ctx, metadata, credentials, &tokenResp); err != nil {
+	if err := h.saveBoundToken(ctx, metadata, credentials, tokenResp); err != nil {
 		return fmt.Errorf("failed to save token: %w", err)
 	}
 
