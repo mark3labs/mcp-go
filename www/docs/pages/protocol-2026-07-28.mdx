@@ -116,6 +116,13 @@ Against a client using an earlier revision, mcp-go issues the
 `elicitation/create` that client understands and re-invokes your handler with
 the answer. You do not write that path.
 
+Resource and resource-template handlers can use the same pattern with
+`AddResourceWithResult` or `AddResourceTemplateWithResult`. On a retry, read
+`req.Params.InputResponses` and `req.Params.RequestState`; return
+`server.NewInputRequestBuilder(...).ResourceResult()` when more input is needed.
+The SDK forwards the `input_required` result to modern clients and performs the
+legacy request-and-retry bridge for earlier clients.
+
 `RequestSampling`, `RequestElicitation`, and `RequestRoots` still exist, but
 return an error when the client speaks `2026-07-28` or later, where the pattern
 was removed. In-process servers are unaffected, since they call the handler

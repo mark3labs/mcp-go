@@ -24,14 +24,16 @@ import (
 
 // resourceEntry holds both a resource and its handler
 type resourceEntry struct {
-	resource mcp.Resource
-	handler  ResourceHandlerFunc
+	resource      mcp.Resource
+	handler       ResourceHandlerFunc
+	resultHandler ResourceResultHandlerFunc
 }
 
 // resourceTemplateEntry holds both a template and its handler
 type resourceTemplateEntry struct {
-	template mcp.ResourceTemplate
-	handler  ResourceTemplateHandlerFunc
+	template      mcp.ResourceTemplate
+	handler       ResourceTemplateHandlerFunc
+	resultHandler ResourceTemplateResultHandlerFunc
 }
 
 // taskEntry holds task state and associated data
@@ -63,6 +65,15 @@ type ResourceHandlerFunc func(ctx context.Context, request mcp.ReadResourceReque
 // ResourceTemplateHandlerFunc is a function that returns a resource template.
 type ResourceTemplateHandlerFunc func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error)
 
+// ResourceResultHandlerFunc handles a resource read and returns the complete
+// protocol result. Use it when the handler may need to return an
+// input_required result or set cache hints.
+type ResourceResultHandlerFunc func(ctx context.Context, request mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error)
+
+// ResourceTemplateResultHandlerFunc handles a resource template read and
+// returns the complete protocol result.
+type ResourceTemplateResultHandlerFunc func(ctx context.Context, request mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error)
+
 // PromptHandlerFunc handles prompt requests with given arguments.
 type PromptHandlerFunc func(ctx context.Context, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error)
 
@@ -79,6 +90,14 @@ type ToolHandlerMiddleware func(ToolHandlerFunc) ToolHandlerFunc
 
 // ResourceHandlerMiddleware is a middleware function that wraps a ResourceHandlerFunc.
 type ResourceHandlerMiddleware func(ResourceHandlerFunc) ResourceHandlerFunc
+
+// ResourceResultHandlerMiddleware wraps a handler that returns a complete
+// resources/read result.
+type ResourceResultHandlerMiddleware func(ResourceResultHandlerFunc) ResourceResultHandlerFunc
+
+// ResourceTemplateResultHandlerMiddleware wraps a resource-template handler
+// that returns a complete resources/read result.
+type ResourceTemplateResultHandlerMiddleware func(ResourceTemplateResultHandlerFunc) ResourceTemplateResultHandlerFunc
 
 // ToolFilterFunc is a function that filters tools based on context, typically
 // using session information. Filters are applied both when listing tools
@@ -118,14 +137,16 @@ type ServerPrompt struct {
 
 // ServerResource combines a Resource with its handler function.
 type ServerResource struct {
-	Resource mcp.Resource
-	Handler  ResourceHandlerFunc
+	Resource      mcp.Resource
+	Handler       ResourceHandlerFunc
+	ResultHandler ResourceResultHandlerFunc
 }
 
 // ServerResourceTemplate combines a ResourceTemplate with its handler function.
 type ServerResourceTemplate struct {
-	Template mcp.ResourceTemplate
-	Handler  ResourceTemplateHandlerFunc
+	Template      mcp.ResourceTemplate
+	Handler       ResourceTemplateHandlerFunc
+	ResultHandler ResourceTemplateResultHandlerFunc
 }
 
 // serverKey is the context key for storing the server instance
@@ -217,26 +238,28 @@ type MCPServer struct {
 	// Test-only checkpoint configured before the server is used concurrently.
 	beforeCapabilityRegistration func()
 
-	name                       string
-	version                    string
-	implementation             mcp.Implementation
-	instructions               string
-	resources                  map[string]resourceEntry
-	resourceTemplates          map[string]resourceTemplateEntry
-	prompts                    map[string]mcp.Prompt
-	promptHandlers             map[string]PromptHandlerFunc
-	tools                      map[string]ServerTool
-	taskTools                  map[string]ServerTaskTool
-	toolHandlerMiddlewares     []ToolHandlerMiddleware
-	resourceHandlerMiddlewares []ResourceHandlerMiddleware
-	promptHandlerMiddlewares   []PromptHandlerMiddleware
-	toolFilters                []ToolFilterFunc
-	promptFilters              []PromptFilterFunc
-	notificationHandlers       map[string]NotificationHandlerFunc
-	promptCompletionProvider   PromptCompletionProvider
-	resourceCompletionProvider ResourceCompletionProvider
-	capabilities               serverCapabilities
-	cacheHints                 map[mcp.MCPMethod]cacheHints
+	name                              string
+	version                           string
+	implementation                    mcp.Implementation
+	instructions                      string
+	resources                         map[string]resourceEntry
+	resourceTemplates                 map[string]resourceTemplateEntry
+	prompts                           map[string]mcp.Prompt
+	promptHandlers                    map[string]PromptHandlerFunc
+	tools                             map[string]ServerTool
+	taskTools                         map[string]ServerTaskTool
+	toolHandlerMiddlewares            []ToolHandlerMiddleware
+	resourceHandlerMiddlewares        []ResourceHandlerMiddleware
+	resourceResultMiddlewares         []ResourceResultHandlerMiddleware
+	resourceTemplateResultMiddlewares []ResourceTemplateResultHandlerMiddleware
+	promptHandlerMiddlewares          []PromptHandlerMiddleware
+	toolFilters                       []ToolFilterFunc
+	promptFilters                     []PromptFilterFunc
+	notificationHandlers              map[string]NotificationHandlerFunc
+	promptCompletionProvider          PromptCompletionProvider
+	resourceCompletionProvider        ResourceCompletionProvider
+	capabilities                      serverCapabilities
+	cacheHints                        map[mcp.MCPMethod]cacheHints
 	// toolHeaderBindings holds each registered tool's x-mcp-header bindings,
 	// extracted once at registration so a tools/call never re-reads the input
 	// schema. Keyed like tools and taskTools and kept in step with them under
@@ -436,22 +459,60 @@ func WithResourceHandlerMiddleware(
 	}
 }
 
+// WithResourceResultHandlerMiddleware adds middleware for resource handlers
+// that return a complete resources/read result.
+func WithResourceResultHandlerMiddleware(mw ResourceResultHandlerMiddleware) ServerOption {
+	return func(s *MCPServer) {
+		s.resourceMiddlewareMu.Lock()
+		s.resourceResultMiddlewares = append(s.resourceResultMiddlewares, mw)
+		s.resourceMiddlewareMu.Unlock()
+	}
+}
+
+// WithResourceTemplateResultHandlerMiddleware adds middleware for resource
+// template handlers that return a complete resources/read result.
+func WithResourceTemplateResultHandlerMiddleware(mw ResourceTemplateResultHandlerMiddleware) ServerOption {
+	return func(s *MCPServer) {
+		s.resourceMiddlewareMu.Lock()
+		s.resourceTemplateResultMiddlewares = append(s.resourceTemplateResultMiddlewares, mw)
+		s.resourceMiddlewareMu.Unlock()
+	}
+}
+
 // WithResourceRecovery adds a middleware that recovers from panics in resource handlers.
 func WithResourceRecovery() ServerOption {
-	return WithResourceHandlerMiddleware(func(next ResourceHandlerFunc) ResourceHandlerFunc {
-		return func(ctx context.Context, request mcp.ReadResourceRequest) (result []mcp.ResourceContents, err error) {
-			defer func() {
-				if r := recover(); r != nil {
-					err = fmt.Errorf(
-						"panic recovered in %s resource handler: %v",
-						request.Params.URI,
-						r,
-					)
-				}
-			}()
-			return next(ctx, request)
-		}
-	})
+	return func(s *MCPServer) {
+		WithResourceHandlerMiddleware(func(next ResourceHandlerFunc) ResourceHandlerFunc {
+			return func(ctx context.Context, request mcp.ReadResourceRequest) (result []mcp.ResourceContents, err error) {
+				defer func() {
+					if r := recover(); r != nil {
+						err = fmt.Errorf("panic recovered in %s resource handler: %v", request.Params.URI, r)
+					}
+				}()
+				return next(ctx, request)
+			}
+		})(s)
+		WithResourceResultHandlerMiddleware(func(next ResourceResultHandlerFunc) ResourceResultHandlerFunc {
+			return func(ctx context.Context, request mcp.ReadResourceRequest) (result *mcp.ReadResourceResult, err error) {
+				defer func() {
+					if r := recover(); r != nil {
+						err = fmt.Errorf("panic recovered in %s resource handler: %v", request.Params.URI, r)
+					}
+				}()
+				return next(ctx, request)
+			}
+		})(s)
+		WithResourceTemplateResultHandlerMiddleware(func(next ResourceTemplateResultHandlerFunc) ResourceTemplateResultHandlerFunc {
+			return func(ctx context.Context, request mcp.ReadResourceRequest) (result *mcp.ReadResourceResult, err error) {
+				defer func() {
+					if r := recover(); r != nil {
+						err = fmt.Errorf("panic recovered in %s resource handler: %v", request.Params.URI, r)
+					}
+				}()
+				return next(ctx, request)
+			}
+		})(s)
+	}
 }
 
 // WithToolFilter adds a filter function that controls tool visibility and access.
@@ -760,23 +821,25 @@ func NewMCPServer(
 	opts ...ServerOption,
 ) *MCPServer {
 	s := &MCPServer{
-		resources:                  make(map[string]resourceEntry),
-		resourceTemplates:          make(map[string]resourceTemplateEntry),
-		prompts:                    make(map[string]mcp.Prompt),
-		promptHandlers:             make(map[string]PromptHandlerFunc),
-		tools:                      make(map[string]ServerTool),
-		taskTools:                  make(map[string]ServerTaskTool),
-		toolHeaderBindings:         make(map[string][]mcp.ParamHeaderBinding),
-		toolHandlerMiddlewares:     make([]ToolHandlerMiddleware, 0),
-		resourceHandlerMiddlewares: make([]ResourceHandlerMiddleware, 0),
-		promptHandlerMiddlewares:   make([]PromptHandlerMiddleware, 0),
-		name:                       name,
-		version:                    version,
-		notificationHandlers:       make(map[string]NotificationHandlerFunc),
-		tasks:                      make(map[string]*taskEntry),
-		expiredTasks:               make(map[string]time.Time),
-		promptCompletionProvider:   &DefaultPromptCompletionProvider{},
-		resourceCompletionProvider: &DefaultResourceCompletionProvider{},
+		resources:                         make(map[string]resourceEntry),
+		resourceTemplates:                 make(map[string]resourceTemplateEntry),
+		prompts:                           make(map[string]mcp.Prompt),
+		promptHandlers:                    make(map[string]PromptHandlerFunc),
+		tools:                             make(map[string]ServerTool),
+		taskTools:                         make(map[string]ServerTaskTool),
+		toolHeaderBindings:                make(map[string][]mcp.ParamHeaderBinding),
+		toolHandlerMiddlewares:            make([]ToolHandlerMiddleware, 0),
+		resourceHandlerMiddlewares:        make([]ResourceHandlerMiddleware, 0),
+		resourceResultMiddlewares:         make([]ResourceResultHandlerMiddleware, 0),
+		resourceTemplateResultMiddlewares: make([]ResourceTemplateResultHandlerMiddleware, 0),
+		promptHandlerMiddlewares:          make([]PromptHandlerMiddleware, 0),
+		name:                              name,
+		version:                           version,
+		notificationHandlers:              make(map[string]NotificationHandlerFunc),
+		tasks:                             make(map[string]*taskEntry),
+		expiredTasks:                      make(map[string]time.Time),
+		promptCompletionProvider:          &DefaultPromptCompletionProvider{},
+		resourceCompletionProvider:        &DefaultResourceCompletionProvider{},
 		capabilities: serverCapabilities{
 			tools:       nil,
 			resources:   nil,
@@ -811,8 +874,9 @@ func (s *MCPServer) AddResources(resources ...ServerResource) {
 	s.resourcesMu.Lock()
 	for _, entry := range resources {
 		s.resources[entry.Resource.URI] = resourceEntry{
-			resource: entry.Resource,
-			handler:  entry.Handler,
+			resource:      entry.Resource,
+			handler:       entry.Handler,
+			resultHandler: entry.ResultHandler,
 		}
 	}
 	s.resourcesMu.Unlock()
@@ -830,7 +894,7 @@ func (s *MCPServer) SetResources(resources ...ServerResource) {
 	s.resourcesMu.Lock()
 	s.resources = make(map[string]resourceEntry, len(resources))
 	for _, item := range resources {
-		s.resources[item.Resource.URI] = resourceEntry{resource: item.Resource, handler: item.Handler}
+		s.resources[item.Resource.URI] = resourceEntry{resource: item.Resource, handler: item.Handler, resultHandler: item.ResultHandler}
 	}
 	s.resourcesMu.Unlock()
 	if s.capabilities.resources.listChanged {
@@ -844,6 +908,12 @@ func (s *MCPServer) AddResource(
 	handler ResourceHandlerFunc,
 ) {
 	s.AddResources(ServerResource{Resource: resource, Handler: handler})
+}
+
+// AddResourceWithResult registers a resource handler that returns the complete
+// resources/read result. Use this for Multi-Round-Trip Requests or cache hints.
+func (s *MCPServer) AddResourceWithResult(resource mcp.Resource, handler ResourceResultHandlerFunc) {
+	s.AddResources(ServerResource{Resource: resource, ResultHandler: handler})
 }
 
 // DeleteResources removes resources from the server
@@ -874,8 +944,9 @@ func (s *MCPServer) ListResources() map[string]*ServerResource {
 	resourcesCopy := make(map[string]*ServerResource, len(s.resources))
 	for uri, entry := range s.resources {
 		resourcesCopy[uri] = &ServerResource{
-			Resource: entry.resource,
-			Handler:  entry.handler,
+			Resource:      entry.resource,
+			Handler:       entry.handler,
+			ResultHandler: entry.resultHandler,
 		}
 	}
 	return resourcesCopy
@@ -903,8 +974,9 @@ func (s *MCPServer) AddResourceTemplates(resourceTemplates ...ServerResourceTemp
 	s.resourcesMu.Lock()
 	for _, entry := range resourceTemplates {
 		s.resourceTemplates[entry.Template.URITemplate.Raw()] = resourceTemplateEntry{
-			template: entry.Template,
-			handler:  entry.Handler,
+			template:      entry.Template,
+			handler:       entry.Handler,
+			resultHandler: entry.ResultHandler,
 		}
 	}
 	s.resourcesMu.Unlock()
@@ -922,7 +994,7 @@ func (s *MCPServer) SetResourceTemplates(templates ...ServerResourceTemplate) {
 	s.resourcesMu.Lock()
 	s.resourceTemplates = make(map[string]resourceTemplateEntry, len(templates))
 	for _, item := range templates {
-		s.resourceTemplates[item.Template.URITemplate.Raw()] = resourceTemplateEntry{template: item.Template, handler: item.Handler}
+		s.resourceTemplates[item.Template.URITemplate.Raw()] = resourceTemplateEntry{template: item.Template, handler: item.Handler, resultHandler: item.ResultHandler}
 	}
 	s.resourcesMu.Unlock()
 	if s.capabilities.resources.listChanged {
@@ -936,6 +1008,13 @@ func (s *MCPServer) AddResourceTemplate(
 	handler ResourceTemplateHandlerFunc,
 ) {
 	s.AddResourceTemplates(ServerResourceTemplate{Template: template, Handler: handler})
+}
+
+// AddResourceTemplateWithResult registers a resource template handler that
+// returns the complete resources/read result. Use this for Multi-Round-Trip
+// Requests or cache hints.
+func (s *MCPServer) AddResourceTemplateWithResult(template mcp.ResourceTemplate, handler ResourceTemplateResultHandlerFunc) {
+	s.AddResourceTemplates(ServerResourceTemplate{Template: template, ResultHandler: handler})
 }
 
 // AddPrompts registers multiple prompts at once
@@ -1765,6 +1844,7 @@ func (s *MCPServer) handleReadResource(
 
 	// First check session-specific resources
 	var handler ResourceHandlerFunc
+	var resultHandler ResourceResultHandlerFunc
 	var ok bool
 
 	session := ClientSessionFromContext(ctx)
@@ -1774,6 +1854,7 @@ func (s *MCPServer) handleReadResource(
 				resource, sessionOk := sessionResources[request.Params.URI]
 				if sessionOk {
 					handler = resource.Handler
+					resultHandler = resource.ResultHandler
 					ok = true
 				}
 			}
@@ -1785,6 +1866,7 @@ func (s *MCPServer) handleReadResource(
 		globalResource, rok := s.resources[request.Params.URI]
 		if rok {
 			handler = globalResource.handler
+			resultHandler = globalResource.resultHandler
 			ok = true
 		}
 	}
@@ -1792,6 +1874,15 @@ func (s *MCPServer) handleReadResource(
 	// First try direct resource handlers
 	if ok {
 		s.resourcesMu.RUnlock()
+		if resultHandler != nil {
+			finalHandler := resultHandler
+			s.resourceMiddlewareMu.RLock()
+			for _, middleware := range slices.Backward(s.resourceResultMiddlewares) {
+				finalHandler = middleware(finalHandler)
+			}
+			s.resourceMiddlewareMu.RUnlock()
+			return s.handleResourceResult(ctx, id, request, finalHandler)
+		}
 
 		finalHandler := handler
 		s.resourceMiddlewareMu.RLock()
@@ -1811,6 +1902,7 @@ func (s *MCPServer) handleReadResource(
 
 	// If no direct handler found, try matching against templates
 	var matchedHandler ResourceTemplateHandlerFunc
+	var matchedResultHandler ResourceTemplateResultHandlerFunc
 	var matched bool
 
 	// First check session templates if available
@@ -1823,6 +1915,7 @@ func (s *MCPServer) handleReadResource(
 				}
 				if matchesTemplate(request.Params.URI, serverTemplate.Template.URITemplate) {
 					matchedHandler = serverTemplate.Handler
+					matchedResultHandler = serverTemplate.ResultHandler
 					matched = true
 					matchedVars := serverTemplate.Template.URITemplate.Match(request.Params.URI)
 					// Convert matched variables to a map
@@ -1845,6 +1938,7 @@ func (s *MCPServer) handleReadResource(
 			}
 			if matchesTemplate(request.Params.URI, template.URITemplate) {
 				matchedHandler = entry.handler
+				matchedResultHandler = entry.resultHandler
 				matched = true
 				matchedVars := template.URITemplate.Match(request.Params.URI)
 				// Convert matched variables to a map
@@ -1859,6 +1953,18 @@ func (s *MCPServer) handleReadResource(
 	s.resourcesMu.RUnlock()
 
 	if matched {
+		if matchedResultHandler != nil {
+			finalHandler := matchedResultHandler
+			s.resourceMiddlewareMu.RLock()
+			for _, middleware := range slices.Backward(s.resourceTemplateResultMiddlewares) {
+				finalHandler = middleware(finalHandler)
+			}
+			s.resourceMiddlewareMu.RUnlock()
+			return s.handleResourceResult(ctx, id, request, func(ctx context.Context, request mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+				return finalHandler(ctx, request)
+			})
+		}
+
 		// If a match is found, then we have a final handler and can
 		// apply middlewares.
 		s.resourceMiddlewareMu.RLock()
@@ -1885,6 +1991,39 @@ func (s *MCPServer) handleReadResource(
 			ErrResourceNotFound,
 		),
 	}
+}
+
+func (s *MCPServer) handleResourceResult(
+	ctx context.Context,
+	id any,
+	request mcp.ReadResourceRequest,
+	handler ResourceResultHandlerFunc,
+) (*mcp.ReadResourceResult, *requestError) {
+	invoke := func(ctx context.Context, request mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		result, err := handler(ctx, request)
+		if err != nil {
+			return nil, err
+		}
+		if result == nil {
+			return nil, noResultError("resource", request.Params.URI)
+		}
+		return result, nil
+	}
+
+	result, err := invoke(ctx, request)
+	if err != nil {
+		return nil, handlerError(ctx, id, err)
+	}
+	result, err = resolveMultiRoundTrip(ctx, s, result, readResourceResultNeedsInput,
+		func(ctx context.Context, roundTrip mcp.MultiRoundTripParams) (*mcp.ReadResourceResult, error) {
+			retried := request
+			retried.Params.MultiRoundTripParams = roundTrip
+			return invoke(ctx, retried)
+		})
+	if err != nil {
+		return nil, handlerError(ctx, id, err)
+	}
+	return result, nil
 }
 
 // readResourceResult wraps the contents a resource handler returned. contents
