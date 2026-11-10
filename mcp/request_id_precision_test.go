@@ -25,6 +25,46 @@ func TestRequestIDIntegerPrecision(t *testing.T) {
 	require.NotEqual(t, left.String(), right.String())
 }
 
+func TestRequestIDFractionalPrecisionAndIdentity(t *testing.T) {
+	const (
+		firstRaw  = "0.123456789012345678"
+		secondRaw = "0.123456789012345679"
+	)
+	var first, second RequestId
+	require.NoError(t, json.Unmarshal([]byte(firstRaw), &first))
+	require.NoError(t, json.Unmarshal([]byte(secondRaw), &second))
+
+	// Parsed fractional IDs retain the existing float64 Value API, while their
+	// wire form and correlation key must not collapse distinct decimal values.
+	require.IsType(t, float64(0), first.Value())
+	require.NotEqual(t, first.String(), second.String())
+	for _, tt := range []struct {
+		id  RequestId
+		raw string
+	}{{first, firstRaw}, {second, secondRaw}} {
+		encoded, err := json.Marshal(tt.id)
+		require.NoError(t, err)
+		require.Equal(t, tt.raw, string(encoded))
+	}
+}
+
+func TestRequestIDFractionalEquivalentFormsShareIdentity(t *testing.T) {
+	var decimal, exponent RequestId
+	require.NoError(t, json.Unmarshal([]byte("0.123456789012345678"), &decimal))
+	require.NoError(t, json.Unmarshal([]byte("123456789012345678e-18"), &exponent))
+	require.Equal(t, decimal.String(), exponent.String())
+}
+
+func TestRequestIDFractionalUnderflowPreservesIdentity(t *testing.T) {
+	const raw = "1e-400"
+	var id RequestId
+	require.NoError(t, json.Unmarshal([]byte(raw), &id))
+	require.NotEqual(t, NewRequestId(int64(0)).String(), id.String())
+	encoded, err := json.Marshal(id)
+	require.NoError(t, err)
+	require.Equal(t, raw, string(encoded))
+}
+
 func TestRequestIDExtendedIntegerIdentity(t *testing.T) {
 	tests := []struct {
 		name  string
