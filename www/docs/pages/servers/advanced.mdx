@@ -819,7 +819,7 @@ func (n *CustomNotifier) BroadcastSystemMessage(message string) {
 ```go
 func main() {
     // Initialize components
-    logger := log.New(os.Stdout, "[MCP] ", log.LstdFlags)
+    logger := log.New(os.Stderr, "[MCP] ", log.LstdFlags)
     metrics := NewPrometheusMetrics()
     sessionManager := NewSessionManager()
     notifier := NewCustomNotifier()
@@ -889,6 +889,7 @@ package main
 import (
     "context"
     "fmt"
+    "os"
 
     "github.com/mark3labs/mcp-go/mcp"
     "github.com/mark3labs/mcp-go/server"
@@ -925,7 +926,7 @@ func handleCalculate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	if clientSession, ok := session.(server.SessionWithClientInfo); ok {
              clientCapabilities := clientSession.GetClientCapabilities()
 			 if clientCapabilities.Sampling == nil {
-				 fmt.Println("sampling is not enabled in client")
+                 fmt.Fprintln(os.Stderr, "sampling is not enabled in client")
 			 }
 	}
 

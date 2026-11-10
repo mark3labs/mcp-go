@@ -644,6 +644,58 @@ func TestModernProtocol_ListenWithoutIDIsNotAStream(t *testing.T) {
 	})
 }
 
+// embeddingResponseWriter wraps an http.ResponseWriter the way ordinary
+// middleware does, embedding it without re-exposing http.Flusher.
+type embeddingResponseWriter struct {
+	http.ResponseWriter
+}
+
+// A subscriptions/listen whose response writer cannot stream is refused at
+// once instead of being held open with nothing ever written to it.
+func TestModernProtocol_ListenWithoutStreamingFailsPromptly(t *testing.T) {
+	mcpServer := NewMCPServer("modern-test", "1.0.0", WithToolCapabilities(true))
+	handler := NewStreamableHTTPServer(mcpServer)
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handler.ServeHTTP(&embeddingResponseWriter{ResponseWriter: w}, r)
+	}))
+	defer httpServer.Close()
+
+	body, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  mcp.MethodSubscriptionsListen,
+		"params": map[string]any{
+			"notifications": map[string]any{"toolsListChanged": true},
+			"_meta":         modernMeta(),
+		},
+	})
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, httpServer.URL, bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set(mcp.HeaderProtocolVersion, mcp.ProtocolVersion20260728)
+	req.Header.Set(mcp.HeaderMethod, string(mcp.MethodSubscriptionsListen))
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err, "subscriptions/listen was not answered")
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	assert.Equal(t, "application/json", resp.Header.Get("Content-Type"))
+	message := decodeJSONRPC(t, resp)
+	assert.Equal(t, float64(2), message["id"])
+	rpcErr, ok := message["error"].(map[string]any)
+	require.True(t, ok, "expected a JSON-RPC error, got %v", message)
+	assert.Equal(t, float64(mcp.INTERNAL_ERROR), rpcErr["code"])
+	assert.Contains(t, rpcErr["message"], "Streaming unsupported")
+	mcpServer.listenSessions.Range(func(key, _ any) bool {
+		t.Errorf("unexpected subscription stream %v", key)
+		return true
+	})
+}
+
 // establishLegacySession performs the legacy handshake and returns the minted
 // session ID.
 func establishLegacySession(t *testing.T, url string) string {

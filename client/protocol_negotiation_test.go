@@ -225,3 +225,60 @@ func TestUnsupportedProtocolVersionError_Is(t *testing.T) {
 		t.Error("expected IsUnsupportedProtocolVersion to return false for different error type")
 	}
 }
+
+// TestWithRequestClientCapabilities verifies that a request declares the
+// capabilities on its context in place of the client's own.
+func TestWithRequestClientCapabilities(t *testing.T) {
+	own := mcp.ClientCapabilities{Elicitation: &mcp.ElicitationCapability{}}
+	samplingOnly := mcp.ClientCapabilities{Sampling: &mcp.SamplingCapability{}}
+	tests := []struct {
+		name     string
+		version  string
+		ctx      func(context.Context) context.Context
+		wantMeta bool
+		want     mcp.ClientCapabilities
+	}{
+		{"client capabilities by default", mcp.ProtocolVersion20260728, func(ctx context.Context) context.Context { return ctx }, true, own},
+		{"context capabilities replace them", mcp.ProtocolVersion20260728, func(ctx context.Context) context.Context {
+			return WithRequestClientCapabilities(ctx, samplingOnly)
+		}, true, samplingOnly},
+		{"an empty override declares none", mcp.ProtocolVersion20260728, func(ctx context.Context) context.Context {
+			return WithRequestClientCapabilities(ctx, mcp.ClientCapabilities{})
+		}, true, mcp.ClientCapabilities{}},
+		{"legacy connections carry no _meta", mcp.ProtocolVersion20251125, func(ctx context.Context) context.Context {
+			return WithRequestClientCapabilities(ctx, samplingOnly)
+		}, false, mcp.ClientCapabilities{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := &initialRoundTripTransport{result: json.RawMessage(`{"content":[]}`)}
+			c := NewClient(tr, WithClientCapabilities(own))
+			c.initialized.Store(true)
+			c.protocolVersion = tt.version
+
+			if _, err := c.CallTool(tt.ctx(t.Context()), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "tool"}}); err != nil {
+				t.Fatalf("CallTool: %v", err)
+			}
+			var sent struct {
+				Meta map[string]json.RawMessage `json:"_meta"`
+			}
+			if err := json.Unmarshal(tr.params, &sent); err != nil {
+				t.Fatalf("decode params %s: %v", tr.params, err)
+			}
+			raw, ok := sent.Meta[mcp.MetaKeyClientCapabilities]
+			if ok != tt.wantMeta {
+				t.Fatalf("clientCapabilities in _meta = %v, want %v (params %s)", ok, tt.wantMeta, tr.params)
+			}
+			if !tt.wantMeta {
+				return
+			}
+			want, err := json.Marshal(tt.want)
+			if err != nil {
+				t.Fatalf("marshal want: %v", err)
+			}
+			if string(raw) != string(want) {
+				t.Errorf("clientCapabilities = %s, want %s", raw, want)
+			}
+		})
+	}
+}

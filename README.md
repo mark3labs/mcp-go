@@ -26,6 +26,7 @@ package main
 import (
     "context"
     "fmt"
+    "os"
 
     "github.com/mark3labs/mcp-go/mcp"
     "github.com/mark3labs/mcp-go/server"
@@ -53,7 +54,7 @@ func main() {
 
     // Start the stdio server
     if err := server.ServeStdio(s); err != nil {
-        fmt.Printf("Server error: %v\n", err)
+        fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
     }
 }
 
@@ -121,6 +122,7 @@ package main
 import (
     "context"
     "fmt"
+    "os"
 
     "github.com/mark3labs/mcp-go/mcp"
     "github.com/mark3labs/mcp-go/server"
@@ -191,7 +193,7 @@ func main() {
 
     // Start the server
     if err := server.ServeStdio(s); err != nil {
-        fmt.Printf("Server error: %v\n", err)
+        fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
     }
 }
 ```
@@ -765,7 +767,8 @@ simple responses with the appropriate `Access-Control-Allow-Origin`,
 `Access-Control-Allow-Credentials`, `Access-Control-Expose-Headers` and
 `Vary` headers. Sensible defaults are used when the corresponding option is
 omitted (`GET, POST, DELETE, OPTIONS` for methods; `Content-Type,
-Mcp-Session-Id, Last-Event-ID, Authorization` for request headers;
+Mcp-Session-Id, Mcp-Protocol-Version, Mcp-Method, Mcp-Name, Last-Event-ID,
+Authorization` for request headers;
 `Mcp-Session-Id` for exposed headers). Combining `WithCORSAllowedOrigins("*")`
 with `WithCORSAllowCredentials()` echoes the request `Origin` to remain
 spec-compliant.

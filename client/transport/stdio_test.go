@@ -663,6 +663,48 @@ func TestStdio_StartGuaranteesReaderReady(t *testing.T) {
 	}
 }
 
+func TestStdio_FinalResponseWithoutTrailingNewline(t *testing.T) {
+	stdoutReader, stdoutWriter := io.Pipe()
+	stdinReader, stdinWriter := io.Pipe()
+	stderrReader, stderrWriter := io.Pipe()
+	t.Cleanup(func() {
+		_ = stdoutWriter.Close()
+		_ = stdinWriter.Close()
+		_ = stderrWriter.Close()
+	})
+
+	stdio := NewIO(stdoutReader, stdinWriter, stderrReader)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	t.Cleanup(cancel)
+
+	require.NoError(t, stdio.Start(ctx))
+	t.Cleanup(func() { _ = stdio.Close() })
+
+	go func() {
+		var req map[string]any
+		if err := json.NewDecoder(stdinReader).Decode(&req); err != nil {
+			return
+		}
+		b, _ := json.Marshal(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      req["id"],
+			"result":  map[string]any{},
+		})
+		_, _ = stdoutWriter.Write(b)
+		_ = stdoutWriter.Close()
+	}()
+
+	resp, err := stdio.SendRequest(ctx, JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(int64(1)),
+		Method:  "ping",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, mcp.NewRequestId(int64(1)), resp.ID)
+}
+
 func TestStdio_SpawnCommand(t *testing.T) {
 	ctx := t.Context()
 	t.Setenv("TEST_ENVIRON_VAR", "true")

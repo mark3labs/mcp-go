@@ -25,10 +25,11 @@ import (
 // later call supersedes an earlier one, and only the owner may clear the
 // state, so a returning call cannot tear down a stream that replaced it.
 type subscriptionState struct {
-	mu         sync.Mutex
-	filter     mcp.SubscriptionFilter
-	cancel     context.CancelFunc
-	generation uint64
+	mu                    sync.Mutex
+	filter                mcp.SubscriptionFilter
+	resourceSubscriptions []string
+	cancel                context.CancelFunc
+	generation            uint64
 }
 
 // Listen opens a subscriptions/listen stream for the given notification
@@ -53,7 +54,17 @@ func (c *Client) Listen(ctx context.Context, filter mcp.SubscriptionFilter) erro
 	defer cancel()
 
 	c.subscriptions.mu.Lock()
+	filter.ResourceSubscriptions = slices.Clone(filter.ResourceSubscriptions)
+	for _, uri := range c.subscriptions.resourceSubscriptions {
+		if !slices.Contains(filter.ResourceSubscriptions, uri) {
+			filter.ResourceSubscriptions = append(filter.ResourceSubscriptions, uri)
+		}
+	}
+	// Retain a filter of our own. The request below is serialized by the
+	// transport after the mutex is released, so the outgoing slice must not
+	// share a backing array with the one Unsubscribe mutates in place.
 	c.subscriptions.filter = filter
+	c.subscriptions.filter.ResourceSubscriptions = slices.Clone(filter.ResourceSubscriptions)
 	if previous := c.subscriptions.cancel; previous != nil {
 		previous()
 	}
@@ -139,9 +150,9 @@ func (c *Client) Subscribe(
 	if c.isModern() {
 		c.subscriptions.mu.Lock()
 		defer c.subscriptions.mu.Unlock()
-		if !slices.Contains(c.subscriptions.filter.ResourceSubscriptions, request.Params.URI) {
-			c.subscriptions.filter.ResourceSubscriptions = append(
-				c.subscriptions.filter.ResourceSubscriptions, request.Params.URI)
+		if !slices.Contains(c.subscriptions.resourceSubscriptions, request.Params.URI) {
+			c.subscriptions.resourceSubscriptions = append(
+				c.subscriptions.resourceSubscriptions, request.Params.URI)
 		}
 		return nil
 	}
@@ -164,8 +175,15 @@ func (c *Client) Unsubscribe(
 	if c.isModern() {
 		c.subscriptions.mu.Lock()
 		defer c.subscriptions.mu.Unlock()
+		// Delete copy-on-write. slices.DeleteFunc shifts elements within
+		// the existing backing array, which an in-flight Listen may still
+		// be serializing, so drop the URI from a clone instead.
+		c.subscriptions.resourceSubscriptions = slices.DeleteFunc(
+			slices.Clone(c.subscriptions.resourceSubscriptions),
+			func(uri string) bool { return uri == request.Params.URI },
+		)
 		c.subscriptions.filter.ResourceSubscriptions = slices.DeleteFunc(
-			c.subscriptions.filter.ResourceSubscriptions,
+			slices.Clone(c.subscriptions.filter.ResourceSubscriptions),
 			func(uri string) bool { return uri == request.Params.URI },
 		)
 		return nil
@@ -181,5 +199,10 @@ func (c *Client) PendingSubscriptionFilter() mcp.SubscriptionFilter {
 	defer c.subscriptions.mu.Unlock()
 	filter := c.subscriptions.filter
 	filter.ResourceSubscriptions = slices.Clone(filter.ResourceSubscriptions)
+	for _, uri := range c.subscriptions.resourceSubscriptions {
+		if !slices.Contains(filter.ResourceSubscriptions, uri) {
+			filter.ResourceSubscriptions = append(filter.ResourceSubscriptions, uri)
+		}
+	}
 	return filter
 }

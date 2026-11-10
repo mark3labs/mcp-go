@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // CORSConfig holds the Cross-Origin Resource Sharing configuration shared by
@@ -27,8 +29,8 @@ type CORSConfig struct {
 
 	// AllowedHeaders is the list of headers a client may send with the
 	// actual request. When empty, a sensible MCP-aware default of
-	// Content-Type, Mcp-Session-Id, Last-Event-ID and Authorization is
-	// advertised.
+	// Content-Type, Mcp-Session-Id, Mcp-Protocol-Version, Mcp-Method,
+	// Mcp-Name, Last-Event-ID and Authorization is advertised.
 	AllowedHeaders []string
 
 	// ExposedHeaders is the list of response headers the browser is
@@ -178,7 +180,10 @@ func (c *CORSConfig) handlePreflight(w http.ResponseWriter, r *http.Request) boo
 
 	headers := c.AllowedHeaders
 	if len(headers) == 0 {
-		headers = []string{"Content-Type", HeaderKeySessionID, "Last-Event-ID", "Authorization"}
+		headers = []string{
+			"Content-Type", HeaderKeySessionID, HeaderKeyProtocolVersion, mcp.HeaderMethod, mcp.HeaderName,
+			"Last-Event-ID", "Authorization",
+		}
 	}
 	h.Set("Access-Control-Allow-Headers", strings.Join(headers, ", "))
 

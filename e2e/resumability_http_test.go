@@ -487,6 +487,39 @@ func TestResumability_InterruptedRequestCaptured(t *testing.T) {
 	requireEOF(t, br2)
 }
 
+// A client can resume while its request is still executing and its POST is
+// still open. The resumed connection takes the stream over and carries the
+// rest of the request live, and it closes once the response has been
+// delivered, just as it does when the response is replayed.
+func TestResumability_ResumeDuringRequestClosesAfterResponse(t *testing.T) {
+	store := newRecordingStore()
+	_, ts, cmds := startServer(t, store)
+	sid := initSession(t, ts)
+
+	respCh, _ := startToolCall(t, ts, sid, 42)
+	cmds <- "p1"
+	postResp := waitResponse(t, respCh)
+	evP1 := requireEvent(t, bufio.NewReader(postResp.Body))
+	require.NotEmpty(t, evP1.id)
+
+	resp2, _ := openGET(t, ts, sid, evP1.id)
+	br2 := bufio.NewReader(resp2.Body)
+
+	// Seeing p2 here means the resumed connection is attached, so the
+	// response below has to arrive live rather than through a replay.
+	cmds <- "p2"
+	evP2 := requireEvent(t, br2)
+	assert.Equal(t, "p2", notificationData(t, evP2.data))
+
+	cmds <- "return"
+	evR := requireEvent(t, br2)
+	id, text := toolResponse(t, evR.data)
+	assert.Equal(t, 42, id)
+	assert.Equal(t, "done", text)
+
+	requireEOF(t, br2)
+}
+
 // Replay never mixes streams: resuming from an event of one request stream
 // redelivers only that stream's messages, and ids are unique across all of a
 // session's streams.

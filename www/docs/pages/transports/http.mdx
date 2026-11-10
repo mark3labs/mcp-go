@@ -848,7 +848,7 @@ Available `CORSOption` helpers:
 |---------------------------------|------------------------------------------------------------------------|
 | `WithCORSAllowedOrigins(...)`   | Origins permitted to access the server. `"*"` allows any origin.       |
 | `WithCORSAllowedMethods(...)`   | Methods advertised in preflight (defaults to `GET, POST, DELETE, OPTIONS`). |
-| `WithCORSAllowedHeaders(...)`   | Request headers advertised in preflight (defaults to `Content-Type, Mcp-Session-Id, Last-Event-ID, Authorization`). |
+| `WithCORSAllowedHeaders(...)`   | Request headers advertised in preflight (defaults to `Content-Type, Mcp-Session-Id, Mcp-Protocol-Version, Mcp-Method, Mcp-Name, Last-Event-ID, Authorization`). |
 | `WithCORSExposedHeaders(...)`   | Response headers exposed to JavaScript (defaults to `Mcp-Session-Id`). |
 | `WithCORSAllowCredentials()`    | Sends `Access-Control-Allow-Credentials: true`.                        |
 | `WithCORSMaxAge(seconds)`       | Sets `Access-Control-Max-Age` for preflight caching.                   |

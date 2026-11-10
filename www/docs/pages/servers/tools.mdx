@@ -1146,6 +1146,28 @@ tool := mcp.NewTool("search_database",
 s.AddTool(tool, handleSearchDatabase)
 ```
 
+### Behavior Hints
+
+`NewTool` sends the spec's default hints unless you override them: `readOnlyHint: false`, `destructiveHint: true`, `idempotentHint: false` and `openWorldHint: true`. Set the ones that describe your tool:
+
+```go
+tool := mcp.NewTool("search_database",
+    mcp.WithReadOnlyHintAnnotation(true),
+    mcp.WithOpenWorldHintAnnotation(false),
+)
+```
+
+If you have no hints for a tool, `WithoutDefaultAnnotations` drops the defaults and the tool is sent without an `annotations` field, so clients can tell it apart from an explicitly annotated one. Hints set after it are the only ones sent:
+
+```go
+tool := mcp.NewTool("lookup",
+    mcp.WithoutDefaultAnnotations(),
+    mcp.WithReadOnlyHintAnnotation(true), // sends {"readOnlyHint": true}
+)
+```
+
+A tool whose annotations are empty, such as one built with `NewToolWithRawSchema` or as a struct literal, is sent without the field.
+
 ## Advanced Tool Patterns
 
 ### Streaming Results

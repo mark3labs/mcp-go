@@ -57,6 +57,7 @@ type SSE struct {
 
 	endpointTimeout time.Duration
 	responseTimeout time.Duration
+	maxMessageBytes int64
 
 	// OAuth support
 	oauthHandler *OAuthHandler
@@ -64,6 +65,16 @@ type SSE struct {
 
 // ClientOption configures an SSE transport client.
 type ClientOption func(*SSE)
+
+// WithMaxMessageBytes bounds the size of the data of one event the client
+// reads from the server's SSE stream. A larger event ends the stream, and the
+// connection-lost handler gets ErrMessageTooLarge. The default is
+// DefaultMaxMessageBytes; zero or less removes the bound.
+func WithMaxMessageBytes(n int64) ClientOption {
+	return func(sc *SSE) {
+		sc.maxMessageBytes = n
+	}
+}
 
 // WithSSELogger sets a custom structured logger for the SSE client.
 // A nil logger falls back to slog.Default().
@@ -92,6 +103,10 @@ func WithHeaderFunc(headerFunc HTTPHeaderFunc) ClientOption {
 }
 
 // WithHTTPClient sets a custom HTTP client for the SSE transport.
+//
+// The default client follows a redirect only to the same scheme, host and
+// port, so configured headers and OAuth tokens are not sent elsewhere. A
+// custom client's CheckRedirect policy is used as it is.
 func WithHTTPClient(httpClient *http.Client) ClientOption {
 	return func(sc *SSE) {
 		sc.httpClient = httpClient
@@ -146,12 +161,13 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 
 	smc := &SSE{
 		baseURL:         parsedURL,
-		httpClient:      &http.Client{},
+		httpClient:      newDefaultHTTPClient(),
 		responses:       make(map[string]chan *JSONRPCResponse),
 		headers:         make(map[string]string),
 		logger:          slog.Default(),
 		endpointTimeout: 30 * time.Second,
 		responseTimeout: 60 * time.Second,
+		maxMessageBytes: DefaultMaxMessageBytes,
 	}
 
 	for _, opt := range options {
@@ -371,36 +387,41 @@ func (c *SSE) readSSE(reader io.ReadCloser, endpointChan chan struct{}, endpoint
 	br := bufio.NewReader(reader)
 	var event, data string
 
+	// end handles the stream ending with err.
+	end := func(err error) {
+		// Close() cancels the stream context, which surfaces here as a read
+		// error; firing the handler would reconnect a transport the caller
+		// just shut down.
+		if c.closed.Load() {
+			return
+		}
+		if err == io.EOF {
+			// Process any pending event before exit
+			if data != "" {
+				// If no event type is specified, use empty string (default event type)
+				if event == "" {
+					event = "message"
+				}
+				c.handleSSEEvent(event, data, endpointChan, endpointOnce)
+			}
+		}
+		c.connectionLostMu.RLock()
+		handler := c.onConnectionLost
+		c.connectionLostMu.RUnlock()
+		if handler != nil {
+			// Notify that the connection will be closed due to an error
+			handler(err)
+		} else if err == io.EOF || err == ErrMessageTooLarge {
+			c.logger.Error("SSE stream error", "err", err)
+		}
+	}
+
 	for {
 		// when close or start's ctx cancel, the reader will be closed
 		// and the for loop will break.
-		line, err := br.ReadString('\n')
+		line, err := readSSELine(br, c.maxMessageBytes)
 		if err != nil {
-			// Close() cancels the stream context, which surfaces here as a read
-			// error; firing the handler would reconnect a transport the caller
-			// just shut down.
-			if c.closed.Load() {
-				return
-			}
-			if err == io.EOF {
-				// Process any pending event before exit
-				if data != "" {
-					// If no event type is specified, use empty string (default event type)
-					if event == "" {
-						event = "message"
-					}
-					c.handleSSEEvent(event, data, endpointChan, endpointOnce)
-				}
-			}
-			c.connectionLostMu.RLock()
-			handler := c.onConnectionLost
-			c.connectionLostMu.RUnlock()
-			if handler != nil {
-				// Notify that the connection will be closed due to an error
-				handler(err)
-			} else if err == io.EOF {
-				c.logger.Error("SSE stream error", "err", err)
-			}
+			end(err)
 			return
 		}
 
@@ -426,6 +447,10 @@ func (c *SSE) readSSE(reader io.ReadCloser, endpointChan chan struct{}, endpoint
 			event = strings.TrimSpace(after)
 		} else if after, ok := strings.CutPrefix(line, "data:"); ok {
 			data = appendSSEData(data, after)
+			if c.maxMessageBytes > 0 && int64(len(data)) > c.maxMessageBytes {
+				end(ErrMessageTooLarge)
+				return
+			}
 		}
 	}
 }
@@ -458,7 +483,9 @@ func (c *SSE) handleSSEEvent(event, data string, endpointChan chan struct{}, end
 			c.logger.Error("Error parsing endpoint URL", "err", err)
 			return
 		}
-		if endpoint.Host != c.baseURL.Host {
+		// Scheme and port must match too: an https connection must not
+		// post headers and bodies to an http endpoint on the same host.
+		if !sameOrigin(endpoint, c.baseURL) {
 			c.logger.Error("Endpoint origin does not match connection origin")
 			return
 		}
@@ -489,10 +516,11 @@ func (c *SSE) handleSSEEvent(event, data string, endpointChan chan struct{}, end
 				return
 			}
 			c.notifyMu.RLock()
-			if c.onNotification != nil {
-				c.onNotification(notification)
-			}
+			handler := c.onNotification
 			c.notifyMu.RUnlock()
+			if handler != nil {
+				handler(notification)
+			}
 			return
 		}
 
@@ -520,6 +548,7 @@ func (c *SSE) handleSSEEvent(event, data string, endpointChan chan struct{}, end
 }
 
 // SetNotificationHandler sets the handler for incoming JSON-RPC notifications.
+// A handler may replace or remove itself; the change applies to subsequent notifications.
 func (c *SSE) SetNotificationHandler(handler func(notification mcp.JSONRPCNotification)) {
 	c.notifyMu.Lock()
 	defer c.notifyMu.Unlock()
@@ -634,8 +663,8 @@ func (c *SSE) SendRequest(
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 
-	// Drain any outstanding io
-	body, err := io.ReadAll(resp.Body)
+	// Drain any outstanding io; the body is only used to report an error.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 	resp.Body.Close()
 
 	if err != nil {
@@ -756,6 +785,9 @@ func (c *SSE) SetProtocolVersion(version string) {
 
 // SendNotification sends a JSON-RPC notification to the server without expecting a response.
 func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNotification) error {
+	if c.closed.Load() {
+		return ErrTransportClosed
+	}
 	c.mu.RLock()
 	endpoint := c.endpoint
 	c.mu.RUnlock()
@@ -856,7 +888,7 @@ func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNoti
 		}
 
 		// Handle other error responses
-		body, _ := io.ReadAll(resp.Body)
+		body := readErrorBody(resp.Body)
 		return fmt.Errorf(
 			"notification failed with status %d: %s",
 			resp.StatusCode,

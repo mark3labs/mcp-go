@@ -643,6 +643,89 @@ func TestStdioJoinsRequestHandlersOnEOF(t *testing.T) {
 	}
 }
 
+func TestStdioCancelsQueuedToolCall(t *testing.T) {
+	// A tools/call waiting in the queue for a worker must still be
+	// cancellable: notifications/cancelled can arrive before any worker
+	// starts it.
+	blocking := make(chan struct{})
+	release := make(chan struct{})
+	queuedErr := make(chan error, 1)
+
+	mcpServer := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
+	mcpServer.AddTool(mcp.NewTool("block"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		close(blocking)
+		<-release
+		return mcp.NewToolResultText("done"), nil
+	})
+	mcpServer.AddTool(mcp.NewTool("queued"), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		queuedErr <- ctx.Err()
+		return mcp.NewToolResultText("done"), nil
+	})
+
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+	t.Cleanup(func() {
+		_ = stdinWriter.Close()
+		_ = stdinReader.Close()
+		_ = stdoutWriter.Close()
+		_ = stdoutReader.Close()
+	})
+
+	stdioServer := NewStdioServer(mcpServer)
+	stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+	WithWorkerPoolSize(1)(stdioServer)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = stdioServer.Listen(ctx, stdinReader, stdoutWriter) }()
+
+	responses := make(chan map[string]any, 4)
+	go func() {
+		scanner := bufio.NewScanner(stdoutReader)
+		for scanner.Scan() {
+			var msg map[string]any
+			if json.Unmarshal(scanner.Bytes(), &msg) == nil {
+				responses <- msg
+			}
+		}
+	}()
+
+	send := func(lines ...string) {
+		go func() { _, _ = stdinWriter.Write([]byte(strings.Join(lines, "\n") + "\n")) }()
+	}
+
+	// Occupy the only worker.
+	send(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"block"}}`)
+	select {
+	case <-blocking:
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocking tool never started")
+	}
+
+	// Queue a call behind it and cancel it. The read loop handles these lines
+	// in order, so the ping response means the cancellation was processed.
+	send(
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"queued"}}`,
+		`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"ping"}`,
+	)
+	select {
+	case msg := <-responses:
+		require.Equal(t, float64(3), msg["id"])
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the ping response")
+	}
+
+	close(release)
+
+	select {
+	case err := <-queuedErr:
+		require.ErrorIs(t, err, context.Canceled, "queued tool call should see the cancellation")
+	case <-time.After(5 * time.Second):
+		t.Fatal("queued tool call never ran")
+	}
+}
+
 func TestStdioSessionSamplingResponseArrayContent(t *testing.T) {
 	session := &stdioSession{pendingRequests: make(map[int64]chan *samplingResponse)}
 	responseChan := make(chan *samplingResponse, 1)
@@ -777,4 +860,38 @@ func TestStdioProcessesFinalMessageWithoutTrailingNewline(t *testing.T) {
 	require.NoError(t, json.Unmarshal(bytes.TrimSpace(out.Bytes()), &response), "output: %q", out.String())
 	require.Equal(t, 1, response.ID)
 	require.JSONEq(t, `{}`, string(response.Result))
+}
+
+func TestStdioAnswersQueuedToolCallsOnEOF(t *testing.T) {
+	// Tool calls accepted into the queue before stdin closes must still be
+	// answered. Listen cancels the request context at EOF, which must not let
+	// a worker exit while calls are still waiting in the queue.
+	mcpServer := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
+	mcpServer.AddTool(mcp.NewTool("ping"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("pong"), nil
+	})
+
+	stdioServer := NewStdioServer(mcpServer)
+	stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+	WithWorkerPoolSize(1)(stdioServer)
+
+	const calls = 20
+	var in strings.Builder
+	for id := 1; id <= calls; id++ {
+		fmt.Fprintf(&in, `{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"ping"}}`+"\n", id)
+	}
+
+	var out bytes.Buffer
+	require.NoError(t, stdioServer.Listen(t.Context(), strings.NewReader(in.String()), &out))
+
+	seen := make(map[int]bool)
+	scanner := bufio.NewScanner(&out)
+	for scanner.Scan() {
+		var response struct {
+			ID int `json:"id"`
+		}
+		require.NoError(t, json.Unmarshal(scanner.Bytes(), &response), "output line: %q", scanner.Text())
+		seen[response.ID] = true
+	}
+	require.Len(t, seen, calls, "every queued tool call should get a response")
 }

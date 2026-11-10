@@ -312,6 +312,15 @@ func (p *NotificationParams) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
 	}
+	if fields == nil {
+		if p.Meta == nil {
+			p.Meta = make(map[string]any)
+		}
+		if p.AdditionalFields == nil {
+			p.AdditionalFields = make(map[string]any)
+		}
+		return nil
+	}
 	m := make(map[string]any, len(fields))
 	for name, raw := range fields {
 		if name == "requestId" {
@@ -331,26 +340,13 @@ func (p *NotificationParams) UnmarshalJSON(data []byte) error {
 		m[name] = value
 	}
 
-	// Initialize maps if they're nil
-	if p.Meta == nil {
-		p.Meta = make(map[string]any)
+	meta := make(map[string]any)
+	if v, ok := m["_meta"].(map[string]any); ok {
+		meta = v
 	}
-	if p.AdditionalFields == nil {
-		p.AdditionalFields = make(map[string]any)
-	}
-
-	// Process all fields
-	for k, v := range m {
-		if k == "_meta" {
-			// Handle Meta field
-			if meta, ok := v.(map[string]any); ok {
-				p.Meta = meta
-			}
-		} else {
-			// Handle additional fields
-			p.AdditionalFields[k] = v
-		}
-	}
+	delete(m, "_meta")
+	p.Meta = meta
+	p.AdditionalFields = m
 
 	return nil
 }
@@ -2049,15 +2045,18 @@ type TaskResultParams struct {
 type TaskResultResult struct {
 	Result
 	// Tool call result fields (for task-augmented tool calls)
-	Content           []Content `json:"content,omitempty"`
+	Content           []Content `json:"content"`
 	StructuredContent any       `json:"structuredContent,omitempty"`
 	// RawStructuredContent preserves structured JSON precision when forwarding a parsed result.
 	RawStructuredContent json.RawMessage `json:"-"`
 	IsError              bool            `json:"isError,omitempty"`
 }
 
-// MarshalJSON preserves the original structured content of a parsed task result.
+// MarshalJSON preserves structured content and emits an array for tool result content.
 func (r TaskResultResult) MarshalJSON() ([]byte, error) {
+	if r.Content == nil {
+		r.Content = []Content{}
+	}
 	type alias TaskResultResult
 	out := struct {
 		alias

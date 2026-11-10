@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -112,7 +113,7 @@ func maybeAuthorize(err error) {
 		oauthHandler := client.GetOAuthHandler(err)
 
 		// Start a local server to handle the OAuth callback
-		callbackChan := make(chan map[string]string)
+		callbackChan := make(chan url.Values)
 		server := startCallbackServer(callbackChan)
 		defer server.Close()
 
@@ -150,19 +151,10 @@ func maybeAuthorize(err error) {
 		fmt.Println("Waiting for authorization callback...")
 		params := <-callbackChan
 
-		// Verify state parameter
-		if params["state"] != state {
-			log.Fatalf("State mismatch: expected %s, got %s", state, params["state"])
-		}
-
-		// Exchange the authorization code for a token
-		code := params["code"]
-		if code == "" {
-			log.Fatalf("No authorization code received")
-		}
-
+		// Check the response, including its state and iss parameters, and
+		// exchange the authorization code for a token
 		fmt.Println("Exchanging authorization code for token...")
-		err = oauthHandler.ProcessAuthorizationResponse(context.Background(), code, state, codeVerifier)
+		err = oauthHandler.ProcessAuthorizationCallback(context.Background(), params, codeVerifier)
 		if err != nil {
 			log.Fatalf("Failed to process authorization response: %v", err)
 		}
@@ -172,22 +164,14 @@ func maybeAuthorize(err error) {
 }
 
 // startCallbackServer starts a local HTTP server to handle the OAuth callback
-func startCallbackServer(callbackChan chan<- map[string]string) *http.Server {
+func startCallbackServer(callbackChan chan<- url.Values) *http.Server {
 	server := &http.Server{
 		Addr: ":8085",
 	}
 
 	http.HandleFunc("/oauth/callback", func(w http.ResponseWriter, r *http.Request) {
-		// Extract query parameters
-		params := make(map[string]string)
-		for key, values := range r.URL.Query() {
-			if len(values) > 0 {
-				params[key] = values[0]
-			}
-		}
-
-		// Send parameters to the channel
-		callbackChan <- params
+		// Send the query parameters to the channel
+		callbackChan <- r.URL.Query()
 
 		// Respond to the user
 		w.Header().Set("Content-Type", "text/html")

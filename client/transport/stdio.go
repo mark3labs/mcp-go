@@ -520,6 +520,7 @@ func (c *Stdio) GetSessionId() string {
 
 // SetNotificationHandler sets the handler function to be called when a notification is received.
 // Only one handler can be set at a time; setting a new one replaces the previous handler.
+// A handler may replace or remove itself; the change applies to subsequent notifications.
 func (c *Stdio) SetNotificationHandler(
 	handler func(notification mcp.JSONRPCNotification),
 ) {
@@ -542,6 +543,7 @@ func (c *Stdio) SetRequestHandler(handler RequestHandler) {
 // The ready channel, if non-nil, is closed once the read loop is entered, signaling
 // to Start() that the transport is actively processing responses.
 func (c *Stdio) readResponses(ready chan struct{}) {
+	var lastLine bool
 	for {
 		// Signal readiness on the first iteration, inside the loop, so that
 		// Start() only unblocks after the reader is actively processing.
@@ -553,7 +555,15 @@ func (c *Stdio) readResponses(ready chan struct{}) {
 		case <-c.done:
 			return
 		default:
+			if lastLine {
+				c.closeDone()
+				return
+			}
 			line, err := c.stdout.ReadString('\n')
+			// The final message may arrive without a trailing newline.
+			if err == io.EOF && strings.TrimSpace(line) != "" {
+				lastLine, err = true, nil
+			}
 			if err != nil {
 				if err != io.EOF && !errors.Is(err, context.Canceled) && !errors.Is(err, fs.ErrClosed) {
 					c.logger.Error("Error reading from stdout", "err", err)
@@ -582,10 +592,11 @@ func (c *Stdio) readResponses(ready chan struct{}) {
 					continue
 				}
 				c.notifyMu.RLock()
-				if c.onNotification != nil {
-					c.onNotification(notification)
-				}
+				handler := c.onNotification
 				c.notifyMu.RUnlock()
+				if handler != nil {
+					handler(notification)
+				}
 				continue
 			}
 

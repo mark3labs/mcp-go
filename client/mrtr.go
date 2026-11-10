@@ -20,10 +20,11 @@ import (
 // the handlers it already has registered, then retries the original call with
 // the answers attached.
 //
-// The retry loop is transparent: callers of CallTool, GetPrompt, and
+// By default the retry loop is transparent: callers of CallTool, GetPrompt, and
 // ReadResource see only the final result. Set [WithMaxInputRoundTrips] to
-// bound it, or inspect CallToolResult.NeedsInput to drive the exchange
-// manually.
+// bound it. Set [WithManualInputRoundTrips] to disable it: each call sends one
+// request and returns a result whose NeedsInput is true as-is, and the caller
+// retries with InputResponses and RequestState in the request params.
 
 const (
 	// defaultMaxInputRoundTrips bounds how many times a single call may be
@@ -71,6 +72,10 @@ func multiRoundTrip[T any](
 
 		requests, state, pending := needsInput(result)
 		if !pending {
+			return result, nil
+		}
+
+		if c.manualInputRoundTrips {
 			return result, nil
 		}
 
