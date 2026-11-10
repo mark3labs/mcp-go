@@ -3011,9 +3011,7 @@ func (s *MCPServer) handleUpdateTask(
 	if entry.inputResponses == nil {
 		entry.inputResponses = make(mcp.InputResponses)
 	}
-	for key, response := range request.Params.InputResponses {
-		entry.inputResponses[key] = response
-	}
+	maps.Copy(entry.inputResponses, request.Params.InputResponses)
 	// Signal the task handler that responses are available.
 	if entry.inputReady != nil {
 		select {
