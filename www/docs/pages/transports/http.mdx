@@ -287,6 +287,9 @@ func logResourceRead(sessionID, uri string, duration time.Duration, err error) {
 }
 
 func addStreamableHTTPMiddleware(s *server.MCPServer) {
+    // These middleware wrap regular tool handlers only. Resource and prompt
+    // handlers bypass them; wrap the HTTP handler for transport-wide
+    // authentication and rate limiting.
     // Authentication middleware
     s.Use(func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
         return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -318,6 +321,12 @@ func addStreamableHTTPMiddleware(s *server.MCPServer) {
         }
     })
 
+}
+
+func newStreamableHTTPServer() *server.MCPServer {
+    return server.NewMCPServer("Example Server", "1.0.0",
+        server.WithResourceHandlerMiddleware(resourceCacheMiddleware),
+    )
 }
 
 // Register this resource middleware with server.WithResourceHandlerMiddleware
