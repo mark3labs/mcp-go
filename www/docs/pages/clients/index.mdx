@@ -54,10 +54,7 @@ func main() {
     ctx := context.Background()
 
     // Initialize the connection
-    if err := c.Start(ctx); err != nil {
-        log.Fatal(err)
-    }
-    if _, err := c.Initialize(ctx, initRequest); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         log.Fatal(err)
     }
 

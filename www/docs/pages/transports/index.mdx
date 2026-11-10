@@ -145,24 +145,24 @@ func handleEcho(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResu
 ### Environment-Based Selection
 
 ```go
-func startServer(s *server.MCPServer) error {
+func startServer(s *server.MCPServer) (*client.Client, error) {
     switch os.Getenv("MCP_TRANSPORT") {
     case "sse":
         sseServer := server.NewSSEServer(s)
-        return sseServer.Start(getPort())
+        return nil, sseServer.Start(getPort())
     case "streamablehttp":
         httpServer := server.NewStreamableHTTPServer(s)
-        return httpServer.Start(getPort())
+        return nil, httpServer.Start(getPort())
     case "inprocess":
         // In-process clients connect directly without opening a network port.
         inProcessClient, err := client.NewInProcessClient(s)
         if err != nil {
-            return err
+            return nil, err
         }
-        defer inProcessClient.Close()
         ctx := context.Background()
         if err := inProcessClient.Start(ctx); err != nil {
-            return err
+            inProcessClient.Close()
+            return nil, err
         }
         _, err = inProcessClient.Initialize(ctx, mcp.InitializeRequest{
             Params: mcp.InitializeParams{
@@ -170,9 +170,14 @@ func startServer(s *server.MCPServer) error {
                 ClientInfo:      mcp.Implementation{Name: "example-server", Version: "1.0.0"},
             },
         })
-        return err
+        if err != nil {
+            inProcessClient.Close()
+            return nil, err
+        }
+        // The caller owns the client and must close it when finished.
+        return inProcessClient, nil
     default:
-        return server.ServeStdio(s)
+        return nil, server.ServeStdio(s)
     }
 }
 

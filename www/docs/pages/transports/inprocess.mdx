@@ -133,6 +133,8 @@ func handleCalculate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 
 ### Embedded Application Integration
 
+This example reuses the `handleCalculate` implementation from the [basic in-process calculator example](#basic-in-process-server).
+
 ```go
 // Embedded MCP server in a larger application
 type Application struct {
@@ -257,6 +259,7 @@ func main() {
     if err := app.mcpClient.Start(ctx); err != nil {
         log.Fatal(err)
     }
+    defer app.mcpClient.Close()
     _, err := app.mcpClient.Initialize(ctx, mcp.InitializeRequest{
         Params: mcp.InitializeParams{
             ProtocolVersion: "2024-11-05",

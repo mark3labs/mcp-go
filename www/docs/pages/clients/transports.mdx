@@ -124,7 +124,7 @@ var (
     ErrBrokenPipe     = errors.New("broken pipe")
 )
 
-func handleStdioErrors(c *client.Client) {
+func handleStdioErrors(c *client.Client, createClient func() (*client.Client, error)) (*client.Client, error) {
     ctx := context.Background()
 
     result, err := c.CallTool(ctx, mcp.CallToolRequest{
@@ -137,33 +137,34 @@ func handleStdioErrors(c *client.Client) {
         switch {
         case errors.Is(err, ErrProcessExited):
             log.Println("Server process exited unexpectedly")
-            // Attempt to restart
-            if restartErr := c.Restart(); restartErr != nil {
-                log.Printf("Failed to restart: %v", restartErr)
-            }
 
         case errors.Is(err, ErrProcessTimeout):
             log.Println("Server process timed out")
-            // Kill and restart process
-            c.Kill()
-            if restartErr := c.Restart(); restartErr != nil {
-                log.Printf("Failed to restart: %v", restartErr)
-            }
 
         case errors.Is(err, ErrBrokenPipe):
             log.Println("Communication pipe broken")
-            // Process likely crashed, restart
-            if restartErr := c.Restart(); restartErr != nil {
-                log.Printf("Failed to restart: %v", restartErr)
-            }
 
         default:
-            log.Printf("Unexpected error: %v", err)
+            return c, fmt.Errorf("tool call failed: %w", err)
         }
-        return
+
+        // A closed client cannot be restarted. Return a fresh initialized client to the caller.
+        if closeErr := c.Close(); closeErr != nil {
+            log.Printf("Failed to close client after transport error: %v", closeErr)
+        }
+        replacement, createErr := createClient()
+        if createErr != nil {
+            return nil, fmt.Errorf("failed to create replacement client: %w", createErr)
+        }
+        if initErr := startAndInitializeExampleClient(ctx, replacement); initErr != nil {
+            replacement.Close()
+            return nil, fmt.Errorf("failed to initialize replacement client: %w", initErr)
+        }
+        return replacement, nil
     }
 
     log.Printf("Tool result: %+v", result)
+    return c, nil
 }
 ```
 

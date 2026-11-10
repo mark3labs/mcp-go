@@ -50,6 +50,7 @@ import (
     "time"
 
     "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/client/transport"
     "github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -100,7 +101,7 @@ func createStdioClientWithEnv() (*client.Client, error) {
 ```go
 func createStreamableHTTPClient() *client.Client {
     // Basic StreamableHTTP client
-	httpTransport, err := transport.NewStreamableHTTP(server.URL,
+	httpTransport, err := transport.NewStreamableHTTP("http://localhost:8080/mcp",
 		// Set timeout
 		transport.WithHTTPTimeout(30*time.Second),
 		// Set custom headers
@@ -357,7 +358,7 @@ var (
 ### Comprehensive Error Handling
 
 ```go
-func handleClientErrors(ctx context.Context, c *client.Client) {
+func handleClientErrors(ctx context.Context, c *client.Client, createClient func() (*client.Client, error)) {
     result, err := c.CallTool(ctx, mcp.CallToolRequest{
         Params: mcp.CallToolRequestParams{
             Name: "example_tool",
@@ -372,12 +373,13 @@ func handleClientErrors(ctx context.Context, c *client.Client) {
         // Connection errors - may be recoverable
         case errors.Is(err, client.ErrConnectionLost):
             log.Println("Connection lost, attempting reconnect...")
-            if reconnectErr := reconnectClient(c); reconnectErr != nil {
+            replacement, reconnectErr := reconnectClient(c, createClient)
+            if reconnectErr != nil {
                 log.Printf("Reconnection failed: %v", reconnectErr)
                 return
             }
             // Retry the operation
-            return handleClientErrors(ctx, c)
+            return handleClientErrors(ctx, replacement, createClient)
 
         case errors.Is(err, client.ErrTimeout):
             log.Println("Operation timed out, retrying with longer timeout...")
@@ -423,7 +425,7 @@ func handleClientErrors(ctx context.Context, c *client.Client) {
     log.Printf("Tool result: %+v", result)
 }
 
-func reconnectClient(c *client.Client) error {
+func reconnectClient(c *client.Client, createClient func() (*client.Client, error)) (*client.Client, error) {
     // Close existing connection
     if err := c.Close(); err != nil {
         log.Printf("Error closing client: %v", err)
@@ -436,7 +438,15 @@ func reconnectClient(c *client.Client) error {
     ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
     defer cancel()
 
-    return startAndInitializeExampleClient(ctx, c)
+    replacement, err := createClient()
+    if err != nil {
+        return nil, err
+    }
+    if err := startAndInitializeExampleClient(ctx, replacement); err != nil {
+        replacement.Close()
+        return nil, err
+    }
+    return replacement, nil
 }
 
 func suggestAlternativeTools(ctx context.Context, c *client.Client) {
