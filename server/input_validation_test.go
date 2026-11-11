@@ -502,12 +502,18 @@ func TestInputSchemaValidation_RejectsCaseFoldedKeysInSubschemas(t *testing.T) {
 		schema string
 		args   string
 	}{
-		"allOf":                {`{"type": "object", "allOf": [` + path + `]}`, `{"PATH": "/etc/passwd"}`},
-		"anyOf":                {`{"type": "object", "anyOf": [` + path + `]}`, `{"PATH": "/etc/passwd"}`},
-		"oneOf":                {`{"type": "object", "oneOf": [` + path + `]}`, `{"PATH": "/etc/passwd"}`},
-		"items":                {`{"type": "object", "properties": {"files": {"type": "array", "items": ` + path + `}}}`, `{"files": [{"path": "/safe/a"}, {"PATH": "/etc/passwd"}]}`},
-		"additionalProperties": {`{"type": "object", "additionalProperties": ` + path + `}`, `{"first": {"PATH": "/etc/passwd"}}`},
-		"patternProperties":    {`{"type": "object", "patternProperties": {"^f": ` + path + `}}`, `{"first": {"PATH": "/etc/passwd"}}`},
+		"allOf":                            {`{"type": "object", "allOf": [` + path + `]}`, `{"PATH": "/etc/passwd"}`},
+		"anyOf":                            {`{"type": "object", "anyOf": [` + path + `]}`, `{"PATH": "/etc/passwd"}`},
+		"oneOf":                            {`{"type": "object", "oneOf": [` + path + `]}`, `{"PATH": "/etc/passwd"}`},
+		"items":                            {`{"type": "object", "properties": {"files": {"type": "array", "items": ` + path + `}}}`, `{"files": [{"path": "/safe/a"}, {"PATH": "/etc/passwd"}]}`},
+		"additionalProperties":             {`{"type": "object", "additionalProperties": ` + path + `}`, `{"first": {"PATH": "/etc/passwd"}}`},
+		"patternProperties":                {`{"type": "object", "patternProperties": {"^f": ` + path + `}}`, `{"first": {"PATH": "/etc/passwd"}}`},
+		"properties and patternProperties": {`{"type": "object", "properties": {"first": {"type": "object"}}, "patternProperties": {"^f": ` + path + `}}`, `{"first": {"PATH": "/etc/passwd"}}`},
+		"unevaluatedProperties":            {`{"type": "object", "unevaluatedProperties": ` + path + `}`, `{"first": {"PATH": "/etc/passwd"}}`},
+		"exact match in another branch":    {`{"type": "object", "allOf": [` + path + `, {"properties": {"PATH": {}}}]}`, `{"PATH": "/etc/passwd"}`},
+		"if/then":                          {`{"type": "object", "if": {"required": ["mode"]}, "then": ` + path + `}`, `{"mode": "x", "PATH": "/etc/passwd"}`},
+		"dependentSchemas":                 {`{"type": "object", "dependentSchemas": {"mode": ` + path + `}}`, `{"mode": "x", "PATH": "/etc/passwd"}`},
+		"contains":                         {`{"type": "object", "properties": {"files": {"type": "array", "contains": ` + path + `}}}`, `{"files": [{"path": "/safe/a", "PATH": "/etc/passwd"}]}`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
