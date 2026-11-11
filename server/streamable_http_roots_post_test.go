@@ -207,3 +207,146 @@ func TestStreamableHttpSession_ListRootsAndSamplingFallBackToSessionChannel(t *t
 		t.Fatalf("expected model fallback, got %q", sample.Model)
 	}
 }
+
+// sseMessage is any JSON-RPC message on an SSE stream: a server request
+// (Method set) or a response (Result set).
+type sseMessage struct {
+	ID     json.RawMessage `json:"id"`
+	Method string          `json:"method"`
+	Result json.RawMessage `json:"result"`
+}
+
+// nextSSEMessage reads the next data event from an SSE stream.
+func nextSSEMessage(reader *bufio.Reader) (sseMessage, error) {
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return sseMessage{}, err
+		}
+		if data, ok := strings.CutPrefix(strings.TrimRight(line, "\r\n"), "data: "); ok {
+			var msg sseMessage
+			return msg, json.Unmarshal([]byte(data), &msg)
+		}
+	}
+}
+
+// postServerResponse answers a server request without failing the test from
+// a goroutine.
+func postServerResponse(url, sessionID string, id json.RawMessage, result any) error {
+	body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
+	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set(HeaderKeySessionID, sessionID)
+	resp, err := scopedRequestClient.Do(req)
+	if err != nil {
+		return err
+	}
+	return resp.Body.Close()
+}
+
+// A task that outlives its tools/call (a detached context) can issue
+// roots/list while the POST stream is finishing. A request the POST stream
+// queued but never wrote must reach the client on the standalone GET stream,
+// not be dropped with the POST: otherwise the task waits for a response that
+// cannot come.
+func TestStreamableHTTPServer_RequestQueuedAsPOSTEndsFallsBackToGET(t *testing.T) {
+	const calls, tasksPerCall = 20, 8
+	roots := map[string]any{"roots": []map[string]any{{"uri": "file:///w", "name": "w"}}}
+
+	mcpServer := NewMCPServer("test-server", "1.0.0", WithRoots())
+	results := make(chan error, calls*tasksPerCall)
+	mcpServer.AddTool(
+		mcp.NewTool("spawn"),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			for range tasksPerCall {
+				go func() {
+					taskCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+					defer cancel()
+					_, err := mcpServer.RequestRoots(taskCtx, mcp.ListRootsRequest{})
+					results <- err
+				}()
+			}
+			return mcp.NewToolResultText("spawned"), nil
+		},
+	)
+	testServer := httptest.NewServer(NewStreamableHTTPServer(mcpServer))
+	defer testServer.Close()
+	sessionID := initializeSession(t, testServer.URL)
+
+	// The standalone GET stream answers every request that reaches it.
+	getCtx, stopGet := context.WithCancel(t.Context())
+	defer stopGet()
+	getReq, _ := http.NewRequestWithContext(getCtx, http.MethodGet, testServer.URL, nil)
+	getReq.Header.Set("Accept", "text/event-stream")
+	getReq.Header.Set(HeaderKeySessionID, sessionID)
+	getResp, err := http.DefaultClient.Do(getReq)
+	if err != nil {
+		t.Fatalf("GET stream failed: %v", err)
+	}
+	defer getResp.Body.Close()
+	getErr := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(getResp.Body)
+		for {
+			msg, err := nextSSEMessage(reader)
+			if err != nil {
+				return
+			}
+			if msg.Method == "" {
+				continue
+			}
+			if err := postServerResponse(testServer.URL, sessionID, msg.ID, roots); err != nil {
+				select {
+				case getErr <- err:
+				default:
+				}
+			}
+		}
+	}()
+
+	// Each tools/call comes back either as plain JSON, when no task's
+	// request reached the POST stream, or as an SSE stream carrying the
+	// requests that did, followed by the response. Answer the former.
+	body, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+		"params": map[string]any{"name": "spawn"},
+	})
+	for range calls {
+		req, _ := http.NewRequest(http.MethodPost, testServer.URL, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		req.Header.Set(HeaderKeySessionID, sessionID)
+		resp, err := scopedRequestClient.Do(req)
+		if err != nil {
+			t.Fatalf("tools/call request failed: %v", err)
+		}
+		if resp.Header.Get("Content-Type") != "text/event-stream" {
+			resp.Body.Close()
+			continue
+		}
+		reader := bufio.NewReader(resp.Body)
+		for {
+			msg, err := nextSSEMessage(reader)
+			if err != nil {
+				t.Fatalf("reading POST stream: %v", err)
+			}
+			if msg.Method == "" {
+				break // the tools/call response ends the POST stream
+			}
+			answerServerRequest(t, testServer.URL, sessionID, msg.ID, roots)
+		}
+		resp.Body.Close()
+	}
+
+	for range calls * tasksPerCall {
+		if err := <-results; err != nil {
+			t.Fatalf("a roots/list issued as its POST ended got no response: %v", err)
+		}
+	}
+	select {
+	case err := <-getErr:
+		t.Fatalf("answering a roots/list on the GET stream: %v", err)
+	default:
+	}
+}

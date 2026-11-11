@@ -3096,46 +3096,72 @@ func TestStreamableHTTP_ServerRequestIDsDoNotCollide(t *testing.T) {
 
 // TestStreamableHTTP_TrySendWaitsForBufferSpace verifies that transient
 // backpressure on an active POST stream makes trySend wait rather than spill
-// the request to the standalone GET stream, and that it still gives up when
-// the caller's context ends or the POST stream finishes.
+// the request to the standalone GET stream, that it reports what the POST
+// stream did with the request, and that it gives up when the caller's
+// context ends or the POST stream finishes.
 func TestStreamableHTTP_TrySendWaitsForBufferSpace(t *testing.T) {
-	requests := make(chan mcp.JSONRPCRequest, 1)
+	requests := make(chan scopedRequest, 1)
 	done := make(chan struct{})
 	scoped := &requestScopedSSE{requests: requests, done: done, register: func() {}}
 
-	// Fill the buffer so the next send hits backpressure.
-	require.True(t, scoped.trySend(t.Context(), mcp.JSONRPCRequest{}))
-
-	result := make(chan bool, 1)
-	go func() { result <- scoped.trySend(t.Context(), mcp.JSONRPCRequest{}) }()
-
-	select {
-	case r := <-result:
-		t.Fatalf("expected trySend to wait for buffer space, returned %v immediately", r)
-	case <-time.After(50 * time.Millisecond):
+	send := func(ctx context.Context) <-chan bool {
+		result := make(chan bool, 1)
+		go func() { result <- scoped.trySend(ctx, mcp.JSONRPCRequest{}) }()
+		return result
+	}
+	pending := func(result <-chan bool, why string) {
+		t.Helper()
+		select {
+		case r := <-result:
+			t.Fatalf("expected trySend to wait (%s), returned %v", why, r)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	returns := func(result <-chan bool) bool {
+		t.Helper()
+		select {
+		case r := <-result:
+			return r
+		case <-time.After(2 * time.Second):
+			t.Fatal("trySend did not return")
+			return false
+		}
 	}
 
-	// Draining the stream frees a slot and the waiting send completes.
+	// A full buffer makes the send wait for space, then for the stream to
+	// settle the request.
+	requests <- scopedRequest{delivered: make(chan bool, 1)}
+	result := send(t.Context())
+	pending(result, "buffer full")
 	<-requests
-	select {
-	case r := <-result:
-		require.True(t, r, "expected the waiting send to succeed after the stream drained")
-	case <-time.After(2 * time.Second):
-		t.Fatal("trySend did not complete after buffer space freed")
-	}
+	item := <-requests
+	pending(result, "queued, not yet written")
+	item.delivered <- true
+	require.True(t, returns(result), "a written request reports true")
 
-	// The waiting send refilled the buffer; drain it so the next refill is
-	// deterministic.
-	<-requests
+	// A request the stream could not write reports false, so the caller
+	// falls back to the GET stream.
+	result = send(t.Context())
+	item = <-requests
+	item.delivered <- false
+	require.False(t, returns(result), "an unwritten request reports false")
 
-	// With the buffer full again, an ended caller context falls back instead
-	// of waiting forever.
-	require.True(t, scoped.trySend(t.Context(), mcp.JSONRPCRequest{}))
+	// An ended context while the request is queued reports true: the
+	// request may still be written, so it must not be sent again.
+	queuedCtx, cancelQueued := context.WithCancel(t.Context())
+	result = send(queuedCtx)
+	item = <-requests
+	cancelQueued()
+	require.True(t, returns(result))
+
+	// An ended context while the buffer is full never queued the request.
+	requests <- item
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
 	require.False(t, scoped.trySend(cancelled, mcp.JSONRPCRequest{}))
+	<-requests
 
-	// A finished POST stream still reports false immediately.
+	// A finished POST stream reports false immediately.
 	close(done)
 	require.False(t, scoped.trySend(t.Context(), mcp.JSONRPCRequest{}))
 }
