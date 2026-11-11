@@ -2334,12 +2334,11 @@ func (s *MCPServer) handleToolCall(
 		}
 	}
 
-	// Validate the incoming arguments against the tool's input schema, when
-	// schema validation has been enabled via WithInputSchemaValidation.
+	// Validate arguments against the tool's input schema (when enabled via
+	// WithInputSchemaValidation), before task routing so both sync and task
+	// paths are covered.
 	if s.inputValidator != nil {
-		if _, err := s.inputValidator.validate(tool.Tool, request.Params.Arguments); err != nil {
-			// A validation failure is returned as a SEP-1303 tool execution error
-			// so the model receives feedback in its context window and can self-correct.
+		if _, err := s.inputValidator.validate(tool.Tool, request.GetRawArguments()); err != nil {
 			return validationToolResult(err), nil
 		}
 	}
@@ -2392,16 +2391,6 @@ func (s *MCPServer) handleToolCall(
 			id:   id,
 			code: mcp.METHOD_NOT_FOUND,
 			err:  fmt.Errorf("tool '%s' does not support synchronous execution", request.Params.Name),
-		}
-	}
-
-	// Validate the incoming arguments against the tool's input schema, when
-	// schema validation has been enabled via WithInputSchemaValidation. A
-	// validation failure is returned as a SEP-1303 tool execution error so the
-	// model receives feedback in its context window and can self-correct.
-	if s.inputValidator != nil {
-		if _, err := s.inputValidator.validate(tool.Tool, request.GetRawArguments()); err != nil {
-			return validationToolResult(err), nil
 		}
 	}
 
