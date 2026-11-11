@@ -80,6 +80,10 @@ func TestValidateProtocolMemberNames(t *testing.T) {
 			message: `{"jsonrpc":"2.0","id":1,"method":"tools/list","method":"tools/call"}`,
 			wantErr: `duplicate member "method"`,
 		},
+		{
+			name:    "repeated unknown member",
+			message: `{"jsonrpc":"2.0","id":1,"method":"ping","x":1,"x":2}`,
+		},
 	}
 
 	for _, tt := range tests {

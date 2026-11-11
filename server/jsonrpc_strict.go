@@ -51,7 +51,10 @@ func checkMembers(b []byte, i int, defined []string, path string) (int, error) {
 		if err := checkMemberName(key, defined, seen, path); err != nil {
 			return 0, err
 		}
-		seen = append(seen, key)
+		// Tracking only defined names keeps this linear in the member count.
+		if slices.Contains(defined, key) {
+			seen = append(seen, key)
+		}
 
 		i = skipSpace(b, end)
 		if i >= len(b) || b[i] != ':' {
