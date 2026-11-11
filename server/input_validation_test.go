@@ -495,3 +495,25 @@ func TestInputSchemaValidation_RejectsCaseFoldedPropertyKeys(t *testing.T) {
 	resp := srv.HandleMessage(t.Context(), []byte(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"/safe/a"}}}`))
 	requireToolSuccess(t, resp)
 }
+
+func TestInputSchemaValidation_RejectsCaseFoldedKeysInSubschemas(t *testing.T) {
+	path := `{"type": "object", "properties": {"path": {"type": "string", "pattern": "^/safe/"}}}`
+	for name, tc := range map[string]struct {
+		schema string
+		args   string
+	}{
+		"allOf":                {`{"type": "object", "allOf": [` + path + `]}`, `{"PATH": "/etc/passwd"}`},
+		"anyOf":                {`{"type": "object", "anyOf": [` + path + `]}`, `{"PATH": "/etc/passwd"}`},
+		"oneOf":                {`{"type": "object", "oneOf": [` + path + `]}`, `{"PATH": "/etc/passwd"}`},
+		"items":                {`{"type": "object", "properties": {"files": {"type": "array", "items": ` + path + `}}}`, `{"files": [{"path": "/safe/a"}, {"PATH": "/etc/passwd"}]}`},
+		"additionalProperties": {`{"type": "object", "additionalProperties": ` + path + `}`, `{"first": {"PATH": "/etc/passwd"}}`},
+		"patternProperties":    {`{"type": "object", "patternProperties": {"^f": ` + path + `}}`, `{"first": {"PATH": "/etc/passwd"}}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
+			srv.AddTool(mcp.Tool{Name: "t", RawInputSchema: json.RawMessage(tc.schema)}, okHandler)
+			msg := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":` + tc.args + `}}`
+			requireToolErrorContaining(t, srv.HandleMessage(t.Context(), []byte(msg)), "only by case")
+		})
+	}
+}

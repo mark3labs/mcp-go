@@ -176,27 +176,89 @@ func (v *inputSchemaValidator) validate(tool mcp.Tool, rawArgs any) (bool, error
 // foldedPropertyKey returns the JSON pointer of the first argument key that is
 // not a declared property but case-folds to one.
 func foldedPropertyKey(schema *jsonschema.Schema, value any, path string) string {
-	for schema != nil && schema.Properties == nil && schema.Ref != nil {
-		schema = schema.Ref
-	}
-	vm, ok := value.(map[string]any)
-	if schema == nil || !ok {
-		return ""
-	}
-	for key, v := range vm {
-		if sub, ok := schema.Properties[key]; ok {
-			if p := foldedPropertyKey(sub, v, path+"/"+escapeJSONPointer(key)); p != "" {
+	schemas := applicableSchemas(schema, nil, map[*jsonschema.Schema]bool{})
+	switch v := value.(type) {
+	case map[string]any:
+		for key, val := range v {
+			var subs []*jsonschema.Schema
+			declared, folded := false, false
+			for _, s := range schemas {
+				if sub, ok := s.Properties[key]; ok {
+					declared = true
+					subs = append(subs, sub)
+					continue
+				}
+				for name := range s.Properties {
+					folded = folded || strings.EqualFold(name, key)
+				}
+				matched := false
+				for re, sub := range s.PatternProperties {
+					if re.MatchString(key) {
+						matched = true
+						subs = append(subs, sub)
+					}
+				}
+				if sub, ok := s.AdditionalProperties.(*jsonschema.Schema); ok && !matched {
+					subs = append(subs, sub)
+				}
+			}
+			p := path + "/" + escapeJSONPointer(key)
+			if folded && !declared {
 				return p
 			}
-			continue
+			for _, sub := range subs {
+				if bad := foldedPropertyKey(sub, val, p); bad != "" {
+					return bad
+				}
+			}
 		}
-		for name := range schema.Properties {
-			if strings.EqualFold(name, key) {
-				return path + "/" + escapeJSONPointer(key)
+	case []any:
+		for i, val := range v {
+			for _, s := range schemas {
+				if bad := foldedPropertyKey(itemSchema(s, i), val, fmt.Sprintf("%s/%d", path, i)); bad != "" {
+					return bad
+				}
 			}
 		}
 	}
 	return ""
+}
+
+// applicableSchemas flattens schema with the subschemas that apply to the same
+// value: $ref and the allOf/anyOf/oneOf branches.
+func applicableSchemas(schema *jsonschema.Schema, out []*jsonschema.Schema, seen map[*jsonschema.Schema]bool) []*jsonschema.Schema {
+	if schema == nil || seen[schema] {
+		return out
+	}
+	seen[schema] = true
+	out = applicableSchemas(schema.Ref, append(out, schema), seen)
+	for _, branches := range [][]*jsonschema.Schema{schema.AllOf, schema.AnyOf, schema.OneOf} {
+		for _, b := range branches {
+			out = applicableSchemas(b, out, seen)
+		}
+	}
+	return out
+}
+
+// itemSchema returns the schema that applies to array element i, or nil.
+func itemSchema(s *jsonschema.Schema, i int) *jsonschema.Schema {
+	if i < len(s.PrefixItems) {
+		return s.PrefixItems[i]
+	}
+	if s.Items2020 != nil {
+		return s.Items2020
+	}
+	switch items := s.Items.(type) {
+	case *jsonschema.Schema:
+		return items
+	case []*jsonschema.Schema:
+		if i < len(items) {
+			return items[i]
+		}
+		sub, _ := s.AdditionalItems.(*jsonschema.Schema)
+		return sub
+	}
+	return nil
 }
 
 // schemaDigest returns a stable hex-encoded SHA-256 of the canonical schema
