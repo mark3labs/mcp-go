@@ -294,41 +294,89 @@ func (c *StreamableHTTP) Close() error {
 		// Cancel all in-flight requests
 		close(c.closed)
 
-		// Protocol version 2026-07-28 removed protocol-level sessions, so
-		// there is nothing to terminate and DELETE is not part of the
-		// transport any more.
-		sessionId := c.sessionID.Load().(string)
-		if sessionId != "" && !c.isModern() {
+		// Coordinate with publishSessionID: hold sessionMu while deciding
+		// which session ID, if any, this Close terminates. A session ID
+		// published before this point is terminated here; one published
+		// afterwards observes the closed transport and terminates itself,
+		// so a received ID can never stay published on a closed transport
+		// without a cleanup attempt.
+		c.sessionMu.Lock()
+		sessionID := c.sessionID.Load().(string)
+		if sessionID != "" {
 			c.sessionID.Store("")
-			// notify server session closed
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.serverURL.String(), nil)
-			if err != nil {
-				c.logger.Error("failed to create close request", "err", err)
-				return
-			}
-			req.Header.Set(HeaderKeySessionID, sessionId)
-			// Set protocol version header if negotiated
-			if v := c.protocolVersion.Load(); v != nil {
-				if version, ok := v.(string); ok && version != "" {
-					req.Header.Set(HeaderKeyProtocolVersion, version)
-				}
-			}
-
-			// Set custom Host header if provided
-			if c.host != "" {
-				req.Host = c.host
-			}
-			res, err := c.httpClient.Do(req)
-			if err != nil {
-				c.logger.Error("failed to send close request", "err", err)
-				return
-			}
-			res.Body.Close()
 		}
+		c.sessionMu.Unlock()
+
+		c.deleteSession(sessionID)
 	})
 	return nil
+}
+
+// isClosed reports whether Close has begun.
+func (c *StreamableHTTP) isClosed() bool {
+	select {
+	case <-c.closed:
+		return true
+	default:
+		return false
+	}
+}
+
+// deleteSession best-effort terminates a legacy session on the server by
+// sending it a DELETE request. It is a no-op for an empty session ID and
+// for the modern protocol, which has no protocol-level sessions to
+// terminate. DELETE failures are logged, not returned.
+func (c *StreamableHTTP) deleteSession(sessionID string) {
+	// Protocol version 2026-07-28 removed protocol-level sessions, so
+	// there is nothing to terminate and DELETE is not part of the
+	// transport any more.
+	if sessionID == "" || c.isModern() {
+		return
+	}
+	// notify server session closed
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.serverURL.String(), nil)
+	if err != nil {
+		c.logger.Error("failed to create close request", "err", err)
+		return
+	}
+	req.Header.Set(HeaderKeySessionID, sessionID)
+	// Set protocol version header if negotiated
+	if v := c.protocolVersion.Load(); v != nil {
+		if version, ok := v.(string); ok && version != "" {
+			req.Header.Set(HeaderKeyProtocolVersion, version)
+		}
+	}
+
+	// Set custom Host header if provided
+	if c.host != "" {
+		req.Host = c.host
+	}
+	res, err := c.httpClient.Do(req)
+	if err != nil {
+		c.logger.Error("failed to send close request", "err", err)
+		return
+	}
+	res.Body.Close()
+}
+
+// publishSessionID stores a session ID received in an initialize response.
+// Publication is coordinated with Close via sessionMu: if the transport is
+// already closed, the ID is not published; the session is terminated
+// immediately instead, so it cannot leak on the server.
+func (c *StreamableHTTP) publishSessionID(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	c.sessionMu.Lock()
+	if c.isClosed() {
+		c.sessionMu.Unlock()
+		c.deleteSession(sessionID)
+		return
+	}
+	c.sessionID.Store(sessionID)
+	c.sessionMu.Unlock()
 }
 
 // SetProtocolVersion sets the negotiated protocol version for this connection.
@@ -795,7 +843,7 @@ func (c *StreamableHTTP) SendRequest(
 		// saved the received session ID in the response
 		// empty session ID is allowed
 		if sessionID := resp.Header.Get(HeaderKeySessionID); sessionID != "" {
-			c.sessionID.Store(sessionID)
+			c.publishSessionID(sessionID)
 		}
 
 		c.initializedOnce.Do(func() {
