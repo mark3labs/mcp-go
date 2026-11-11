@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // deleteRecorder is a test server that records the session IDs of the
@@ -43,41 +45,68 @@ func newSessionPublishTransport(t *testing.T) (*StreamableHTTP, *deleteRecorder)
 }
 
 // TestPublishSessionIDAfterCloseTerminatesSession covers the late
-// publication ordering from issue #1202: Close observes an empty session
-// ID, then an initialize response's session ID is published. The ID must
-// not stay published on the closed transport, and terminating it must be
-// attempted exactly once.
+// publication ordering from issue #1202. The ID must not remain published;
+// cleanup sends one DELETE for legacy sessions and none for modern protocols.
 func TestPublishSessionIDAfterCloseTerminatesSession(t *testing.T) {
-	c, rec := newSessionPublishTransport(t)
+	tests := []struct {
+		name            string
+		protocolVersion string
+		deleted         []string
+	}{
+		{name: "legacy", deleted: []string{"sess-late"}},
+		{name: "modern", protocolVersion: mcp.ProtocolVersion20260728},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, rec := newSessionPublishTransport(t)
+			if tt.protocolVersion != "" {
+				c.SetProtocolVersion(tt.protocolVersion)
+			}
 
-	require.NoError(t, c.Close())
-	assert.Empty(t, rec.deletedSessions(), "Close with no session ID must not send DELETE")
+			require.NoError(t, c.Close())
+			assert.Empty(t, rec.deletedSessions(), "Close with no session ID must not send DELETE")
 
-	c.publishSessionID("sess-late")
+			c.publishSessionID("sess-late")
 
-	assert.Equal(t, "", c.sessionID.Load().(string),
-		"session ID must not remain published on a closed transport")
-	assert.Equal(t, []string{"sess-late"}, rec.deletedSessions(),
-		"late-published session ID must be terminated exactly once")
+			assert.Equal(t, "", c.sessionID.Load().(string),
+				"session ID must not remain published on a closed transport")
+			assert.Equal(t, tt.deleted, rec.deletedSessions(),
+				"cleanup must follow the negotiated protocol")
+		})
+	}
 }
 
-// TestPublishSessionIDBeforeCloseTerminatesOnce covers the ordering where
-// the session ID is published before Close: Close terminates it, and a
-// second Close does not terminate it again.
+// TestPublishSessionIDBeforeCloseTerminatesOnce covers publication before
+// Close: legacy cleanup happens once, while modern sessions never send DELETE.
 func TestPublishSessionIDBeforeCloseTerminatesOnce(t *testing.T) {
-	c, rec := newSessionPublishTransport(t)
+	tests := []struct {
+		name            string
+		protocolVersion string
+		deleted         []string
+	}{
+		{name: "legacy", deleted: []string{"sess-early"}},
+		{name: "modern", protocolVersion: mcp.ProtocolVersion20260728},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, rec := newSessionPublishTransport(t)
+			if tt.protocolVersion != "" {
+				c.SetProtocolVersion(tt.protocolVersion)
+			}
 
-	c.publishSessionID("sess-early")
-	assert.Equal(t, "sess-early", c.sessionID.Load().(string))
-	assert.Empty(t, rec.deletedSessions(), "publishing on an open transport must not send DELETE")
+			c.publishSessionID("sess-early")
+			assert.Equal(t, "sess-early", c.sessionID.Load().(string))
+			assert.Empty(t, rec.deletedSessions(), "publishing on an open transport must not send DELETE")
 
-	require.NoError(t, c.Close())
-	assert.Equal(t, "", c.sessionID.Load().(string))
-	assert.Equal(t, []string{"sess-early"}, rec.deletedSessions())
+			require.NoError(t, c.Close())
+			assert.Equal(t, "", c.sessionID.Load().(string))
+			assert.Equal(t, tt.deleted, rec.deletedSessions())
 
-	require.NoError(t, c.Close())
-	assert.Equal(t, []string{"sess-early"}, rec.deletedSessions(),
-		"second Close must not send another DELETE")
+			require.NoError(t, c.Close())
+			assert.Equal(t, tt.deleted, rec.deletedSessions(),
+				"second Close must not send another DELETE")
+		})
+	}
 }
 
 // TestPublishSessionIDEmptyIsIgnored ensures an empty ID never publishes
