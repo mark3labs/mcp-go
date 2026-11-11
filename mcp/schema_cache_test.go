@@ -162,6 +162,14 @@ func TestSchemaCache_UnmarshalInvalid(t *testing.T) {
 	require.Error(t, c.UnmarshalJSON([]byte("not json")))
 }
 
+func TestSchemaCache_UnmarshalNullIsInvalid(t *testing.T) {
+	c := NewSchemaCache()
+	c.WarmRaw("Existing", json.RawMessage(`{"type":"string"}`))
+
+	require.ErrorContains(t, c.UnmarshalJSON([]byte("null")), "expected JSON object")
+	assert.True(t, c.Has("Existing"), "invalid input must not replace the existing cache")
+}
+
 func TestSchemaCache_SaveLoad(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "nested", "schemas.json")
