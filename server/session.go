@@ -244,7 +244,9 @@ func (s *MCPServer) broadcastToSession(session ClientSession, notification mcp.J
 	// opt-in: a session that opened a subscriptions/listen stream receives
 	// only the types it asked for (SEP-2575). Sessions that never opened one
 	// are unaffected.
-	if !subscriptionAllowsNotification(session, notification.Method) {
+	var allowed bool
+	notification, allowed = prepareSubscriptionNotification(session, notification)
+	if !allowed {
 		return
 	}
 	if sessionWithStreamableHTTPConfig, ok := session.(SessionWithStreamableHTTPConfig); ok {
@@ -276,7 +278,26 @@ func (s *MCPServer) broadcastToSession(session ClientSession, notification mcp.J
 	}
 }
 
+func prepareSubscriptionNotification(session ClientSession, notification mcp.JSONRPCNotification) (mcp.JSONRPCNotification, bool) {
+	if filtered, ok := session.(interface {
+		subscriptionNotification(mcp.JSONRPCNotification) (mcp.JSONRPCNotification, bool)
+	}); ok {
+		return filtered.subscriptionNotification(notification)
+	}
+	return notification, subscriptionAllowsNotification(session, notification.Method)
+}
+
 func (s *MCPServer) sendNotificationToSpecificClient(session ClientSession, notification mcp.JSONRPCNotification) error {
+	// Only list changes belong to the subscription stream. Acknowledgements
+	// and request-scoped notifications keep their existing delivery path.
+	switch notification.Method {
+	case mcp.MethodNotificationToolsListChanged, mcp.MethodNotificationPromptsListChanged, mcp.MethodNotificationResourcesListChanged:
+		var allowed bool
+		notification, allowed = prepareSubscriptionNotification(session, notification)
+		if !allowed {
+			return nil
+		}
+	}
 	// upgrades the client-server communication to SSE stream when the server sends notifications to the client
 	if sessionWithStreamableHTTPConfig, ok := session.(SessionWithStreamableHTTPConfig); ok {
 		sessionWithStreamableHTTPConfig.UpgradeToSSEWhenReceiveNotification()
