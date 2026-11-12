@@ -1038,6 +1038,10 @@ Now that you have a working MCP server and client:
 
 Learn how to implement MCP clients that can handle sampling requests from servers, enabling bidirectional communication where clients provide LLM capabilities to servers.
 
+:::note[Protocol version]
+This guide demonstrates server-initiated sampling with MCP `2025-11-25`, which the examples select explicitly. For MCP `2026-07-28` and later, use [multi round-trip input requests](/protocol-2026-07-28#multi-round-trip-requests) instead.
+:::
+
 ### Overview
 
 Sampling allows MCP clients to respond to LLM completion requests from servers. When a server needs to generate content, answer questions, or perform reasoning tasks, it can send a sampling request to the client, which then processes it using an LLM and returns the result.
@@ -1072,6 +1076,7 @@ package main
 import (
     "context"
     "fmt"
+    "log"
     
     "github.com/mark3labs/mcp-go/client"
     "github.com/mark3labs/mcp-go/client/transport"
@@ -1098,10 +1103,12 @@ func (h *MySamplingHandler) CreateMessage(ctx context.Context, request mcp.Creat
     // Return MCP-formatted result
     return &mcp.CreateMessageResult{
         Model: "your-model-name",
-        Role:  mcp.RoleAssistant,
-        Content: mcp.TextContent{
-            Type: "text",
-            Text: response,
+        SamplingMessage: mcp.SamplingMessage{
+            Role: mcp.RoleAssistant,
+            Content: mcp.TextContent{
+                Type: "text",
+                Text: response,
+            },
         },
         StopReason: "endTurn",
     }, nil
@@ -1135,104 +1142,118 @@ func main() {
         log.Fatalf("Failed to start client: %v", err)
     }
     defer mcpClient.Close()
-    if err := mcpClient.Connect(ctx); err != nil {
-        log.Fatalf("Failed to connect: %v", err)
+    if _, err := mcpClient.Initialize(ctx, mcp.InitializeRequest{
+        Params: mcp.InitializeParams{
+            ProtocolVersion: mcp.ProtocolVersion20251125,
+            ClientInfo: mcp.Implementation{Name: "sampling-client", Version: "1.0.0"},
+        },
+    }); err != nil {
+        log.Fatalf("Failed to initialize: %v", err)
     }
     
-    // The client will now automatically handle sampling requests
-    // from the server using your handler
+    // Call tools that request sampling here; the client uses your handler.
 }
 ```
 
 ### Mock Implementation Example
 
-Here's a complete mock implementation for testing:
+Save this complete, keyless example as `sampling_client.go`. Build the repository's sampling server, then pass its executable to the client:
+
+```sh
+go build -o sampling-server ./examples/sampling_server
+go run sampling_client.go ./sampling-server
+```
+
+The mock prefixes the question with `Mock LLM response to:` without calling an LLM. The sampling server includes the model name in the tool result.
 
 ```go
 package main
 
 import (
-import (
-    "context"
-    "fmt"
-    "log"
-    "strings"
-    "os"
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"time"
 
-    "github.com/mark3labs/mcp-go/client"
-    "github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/client/transport"
+	"github.com/mark3labs/mcp-go/mcp"
 )
+
 type MockSamplingHandler struct{}
 
 func (h *MockSamplingHandler) CreateMessage(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
-    // Log the request for debugging
-    log.Printf("Mock LLM received sampling request:")
-    log.Printf("  System prompt: %s", request.SystemPrompt)
-    log.Printf("  Max tokens: %d", request.MaxTokens)
-    log.Printf("  Temperature: %f", request.Temperature)
-    
-    // Extract the user's message
-    var userMessage string
-    for _, msg := range request.Messages {
-        if msg.Role == mcp.RoleUser {
-            if textContent, ok := msg.Content.(mcp.TextContent); ok {
-                userMessage = textContent.Text
-                log.Printf("  User message: %s", userMessage)
-                break
-            }
-        }
-    }
-    
-    // Generate a mock response
-    mockResponse := fmt.Sprintf(
-        "Mock LLM response to: '%s'. This is a simulated response from a mock LLM handler.",
-        userMessage,
-    )
-    
-    return &mcp.CreateMessageResult{
-        Model: "mock-llm-v1",
-        Role:  mcp.RoleAssistant,
-        Content: mcp.TextContent{
-            Type: "text",
-            Text: mockResponse,
-        },
-        StopReason: "endTurn",
-    }, nil
+	var userMessage string
+	for _, message := range request.Messages {
+		if message.Role == mcp.RoleUser {
+			userMessage = mcp.GetTextFromContent(message.Content)
+			break
+		}
+	}
+
+	return &mcp.CreateMessageResult{
+		Model: "mock-llm-v1",
+		SamplingMessage: mcp.SamplingMessage{
+			Role: mcp.RoleAssistant,
+			Content: mcp.TextContent{
+				Type: "text",
+				Text: fmt.Sprintf("Mock LLM response to: %s", userMessage),
+			},
+		},
+		StopReason: "endTurn",
+	}, nil
 }
 
 func main() {
-    if len(os.Args) < 2 {
-        log.Fatal("Usage: sampling_client <server_path>")
-    }
-    
-    serverPath := os.Args[1]
-    
-    // Create stdio transport
-    stdioTransport := transport.NewStdio(serverPath, nil)
-    
-    // Create client with mock sampling handler
-    mcpClient := client.NewClient(stdioTransport, client.WithSamplingHandler(&MockSamplingHandler{}))
-    
-    // Start the client
-    ctx := context.Background()
-    if err := mcpClient.Start(ctx); err != nil {
-        log.Fatalf("Failed to start client: %v", err)
-    }
-    defer mcpClient.Close()
-    if err := mcpClient.Connect(ctx); err != nil {
-        log.Fatalf("Failed to connect: %v", err)
-    }
-    
-    // Test server tools that use sampling
-    result, err := mcpClient.CallTool(ctx, "ask_llm", map[string]any{
-        "question": "What is the capital of France?",
-        "system_prompt": "You are a helpful geography assistant.",
-    })
-    if err != nil {
-        log.Fatalf("Tool call failed: %v", err)
-    }
-    
-    fmt.Printf("Tool result: %+v\\n", result)
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
+	if len(os.Args) < 2 {
+		return fmt.Errorf("usage: sampling_client <server_command> [server_args...]")
+	}
+
+	stdioTransport := transport.NewStdio(os.Args[1], nil, os.Args[2:]...)
+	mcpClient := client.NewClient(stdioTransport, client.WithSamplingHandler(&MockSamplingHandler{}))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := mcpClient.Start(ctx); err != nil {
+		return fmt.Errorf("start client: %w", err)
+	}
+	defer mcpClient.Close()
+
+	if _, err := mcpClient.Initialize(ctx, mcp.InitializeRequest{
+		Params: mcp.InitializeParams{
+			ProtocolVersion: mcp.ProtocolVersion20251125,
+			ClientInfo:      mcp.Implementation{Name: "mock-sampling-client", Version: "1.0.0"},
+		},
+	}); err != nil {
+		return fmt.Errorf("initialize client: %w", err)
+	}
+
+	result, err := mcpClient.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "ask_llm",
+			Arguments: map[string]any{
+				"question":      "What is the capital of France?",
+				"system_prompt": "You are a helpful geography assistant.",
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("call tool: %w", err)
+	}
+	if result.IsError {
+		return fmt.Errorf("tool returned an error: %+v", result.Content)
+	}
+	for _, content := range result.Content {
+		fmt.Println(mcp.GetTextFromContent(content))
+	}
+	return nil
 }
 ```
 
@@ -1318,10 +1339,12 @@ func (h *OpenAISamplingHandler) CreateMessage(ctx context.Context, request mcp.C
     
     return &mcp.CreateMessageResult{
         Model: resp.Model,
-        Role:  mcp.RoleAssistant,
-        Content: mcp.TextContent{
-            Type: "text",
-            Text: choice.Message.Content,
+        SamplingMessage: mcp.SamplingMessage{
+            Role: mcp.RoleAssistant,
+            Content: mcp.TextContent{
+                Type: "text",
+                Text: choice.Message.Content,
+            },
         },
         StopReason: stopReason,
     }, nil
@@ -1403,10 +1426,12 @@ func (h *AnthropicSamplingHandler) CreateMessage(ctx context.Context, request mc
     
     return &mcp.CreateMessageResult{
         Model: anthropicResp.Model,
-        Role:  mcp.RoleAssistant,
-        Content: mcp.TextContent{
-            Type: "text",
-            Text: text,
+        SamplingMessage: mcp.SamplingMessage{
+            Role: mcp.RoleAssistant,
+            Content: mcp.TextContent{
+                Type: "text",
+                Text: text,
+            },
         },
         StopReason: anthropicResp.StopReason,
     }, nil
@@ -1444,7 +1469,7 @@ The client will include this in the initialization request:
   "id": 1,
   "method": "initialize",
   "params": {
-    "protocolVersion": "2024-11-05",
+    "protocolVersion": "2025-11-25",
     "capabilities": {
       "sampling": {}
     },
