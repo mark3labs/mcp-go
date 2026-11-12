@@ -602,3 +602,34 @@ func TestConcurrentUpdateAndComplete(t *testing.T) {
 		wg.Wait()
 	}
 }
+
+// TestRegularToolAsTaskRecoversPanic verifies that a panic in a regular tool
+// handler run as a task fails the task instead of crashing the process. The
+// executor goroutine has no caller to recover it, and WithRecovery is not set.
+func TestRegularToolAsTaskRecoversPanic(t *testing.T) {
+	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+
+	srv.AddTool(
+		mcp.NewTool("boom", mcp.WithTaskSupport(mcp.TaskSupportOptional)),
+		func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			panic("handler exploded")
+		})
+
+	ctx := buildModernContext(t.Context(), srv)
+
+	created, reqErr := srv.handleToolCall(ctx, 1, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{Name: "boom"},
+	})
+	require.Nil(t, reqErr)
+	taskID := created.(*mcp.CreateTaskResult).Task.TaskId
+
+	// The task must reach failed (recovered), not crash the process or hang.
+	require.Eventually(t, func() bool {
+		got, e := srv.handleGetTask(ctx, 2, mcp.GetTaskRequest{Params: mcp.GetTaskParams{TaskId: taskID}})
+		return e == nil && got.Status == mcp.TaskStatusFailed
+	}, 5*time.Second, 10*time.Millisecond)
+
+	got, e := srv.handleGetTask(ctx, 3, mcp.GetTaskRequest{Params: mcp.GetTaskParams{TaskId: taskID}})
+	require.Nil(t, e)
+	assert.Contains(t, got.StatusMessage, "handler exploded")
+}

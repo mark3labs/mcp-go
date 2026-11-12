@@ -217,8 +217,11 @@ func (s *MCPServer) validateStandardHeadersForMessage(
 	}
 
 	field := probe.Params.Name
-	if method == mcp.MethodResourcesRead {
+	switch method {
+	case mcp.MethodResourcesRead:
 		field = probe.Params.URI
+	case mcp.MethodTasksGet, mcp.MethodTasksUpdate, mcp.MethodTasksCancel:
+		field = probe.Params.TaskId
 	}
 	if err := mcp.ValidateStandardHeadersFunc(headers.Get, protocolVersion, method, func() (string, bool) {
 		return headerFieldString(field)
@@ -319,8 +322,9 @@ func (s *MCPServer) validateBoundToolHeaders(
 
 // headerFields holds the members of params that header validation reads.
 type headerFields struct {
-	Name json.RawMessage `json:"name"`
-	URI  json.RawMessage `json:"uri"`
+	Name   json.RawMessage `json:"name"`
+	URI    json.RawMessage `json:"uri"`
+	TaskId json.RawMessage `json:"taskId"`
 }
 
 // headerFieldString decodes a name or uri member the way

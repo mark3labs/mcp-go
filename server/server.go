@@ -2520,11 +2520,6 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 		}
 	}
 
-	// Note: input schema validation (WithInputSchemaValidation) is currently
-	// only applied on the synchronous tool call path. The task-augmented path
-	// would need to surface validation failures through tasks/result rather
-	// than the create-task response; that's deferred to a follow-up.
-
 	// Generate task ID (UUID v4)
 	taskID := uuid.New().String()
 
@@ -2556,9 +2551,10 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 	taskCopy := entry.task
 	s.tasksMu.RUnlock()
 
-	// Execute tool asynchronously. The goroutine's context is rooted at
-	// s.serverCtx, not the per-request ctx, so it outlives the originating
-	// request on every transport.
+	// Execute the tool asynchronously. The goroutine derives its context from
+	// the request context with the per-request cancel stripped
+	// (context.WithoutCancel), so it outlives the originating request; it is
+	// cancelled only by tasks/cancel or TTL expiry, not by request return.
 	if hasTaskHandler {
 		go s.executeTaskTool(ctx, entry, toolToUse, request)
 	} else {
@@ -2686,6 +2682,13 @@ func (s *MCPServer) executeRegularToolAsTask(
 	regularTool ServerTool,
 	request mcp.CallToolRequest,
 ) {
+	// This runs in its own goroutine.
+	defer func() {
+		if r := recover(); r != nil {
+			s.completeTask(entry, nil, fmt.Errorf("panic in task tool handler %s: %v", request.Params.Name, r))
+		}
+	}()
+
 	// Preserve ctx values but strip the per-request cancel.
 	taskCtx, cancel := context.WithCancel(
 		context.WithoutCancel(ctx),

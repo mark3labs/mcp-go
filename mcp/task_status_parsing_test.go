@@ -65,3 +65,44 @@ func TestTaskStatusParsersPreserveEnvelopeAndIntegerFields(t *testing.T) {
 		}
 	}
 }
+
+// TestTaskParsersRejectMalformedTiming verifies that a wrong-type or
+// out-of-range ttlMs/pollIntervalMs surfaces an error instead of being silently
+// dropped (a dropped ttlMs would read as "no expiration").
+func TestTaskParsersRejectMalformedTiming(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		task string
+	}{
+		{"string ttlMs", `{"taskId":"t","status":"working","ttlMs":"nope"}`},
+		{"string pollIntervalMs", `{"taskId":"t","status":"working","pollIntervalMs":"nope"}`},
+		{"bool ttlMs", `{"taskId":"t","status":"working","ttlMs":true}`},
+		{"overflow ttlMs", `{"taskId":"t","status":"working","ttlMs":99999999999999999999}`},
+		{"valid ttlMs, bad poll", `{"taskId":"t","status":"working","ttlMs":60000,"pollIntervalMs":"nope"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			get := json.RawMessage(tc.task)
+			_, err := ParseGetTaskResult(&get)
+			require.Error(t, err, "ParseGetTaskResult")
+
+			cancel := json.RawMessage(tc.task)
+			_, err = ParseCancelTaskResult(&cancel)
+			require.Error(t, err, "ParseCancelTaskResult")
+
+			list := json.RawMessage(`{"tasks":[` + tc.task + `]}`)
+			_, err = ParseListTasksResult(&list)
+			require.Error(t, err, "ParseListTasksResult")
+		})
+	}
+}
+
+// TestTaskParserDecodesModernTiming verifies a valid SEP-2663 ttlMs is populated
+// through the parser (the Task struct's legacy tags would otherwise skip it).
+func TestTaskParserDecodesModernTiming(t *testing.T) {
+	raw := json.RawMessage(`{"taskId":"t","status":"working","ttlMs":60000}`)
+	result, err := ParseGetTaskResult(&raw)
+	require.NoError(t, err)
+	require.NotNil(t, result.TTL, "valid ttlMs must be populated")
+	require.Equal(t, int64(60000), *result.TTL)
+	require.Nil(t, result.PollInterval, "absent pollIntervalMs must stay nil")
+}

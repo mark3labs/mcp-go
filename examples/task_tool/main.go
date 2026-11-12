@@ -15,10 +15,10 @@ import (
 // Task-augmented tools execute asynchronously: the server returns a task handle
 // immediately, and the client polls tasks/get until the task reaches a terminal
 // state (completed, failed, or cancelled).
-// The context passed to a task handler is rooted at the server's lifetime, not
-// the per-request context. It is only cancelled when tasks/cancel is called or
-// the server shuts down. Blocking on ctx.Done() is safe and is the recommended
-// way to honour cancellation.
+// The task handler's context is the request context with per-request cancel
+// stripped (context.WithoutCancel); it is cancelled only by tasks/cancel or TTL
+// expiry, not by server shutdown. Blocking on ctx.Done() is the safe way to
+// honour cancellation.
 //
 // Usage:
 //	go run main.go              # stdio transport
@@ -168,7 +168,7 @@ func handleAnalyzeData(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallT
 // handleQuickCheck is a plain ToolHandlerFunc, synchronous, no task involved.
 func handleQuickCheck(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	input := req.GetString("input", "")
-	return mcp.NewToolResultText(fmt.Sprintf("ok: %q (%d chars)", input, len(input))), nil
+	return mcp.NewToolResultText(fmt.Sprintf("ok: %q (%d chars)", input, len([]rune(input)))), nil
 }
 
 func countRunes(s string, lo, hi rune) int {
