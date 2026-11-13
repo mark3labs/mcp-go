@@ -467,3 +467,59 @@ func TestInputSchemaValidation_PreservesLargeIntegerPrecision(t *testing.T) {
 		require.Equal(t, 9007199254740993, handlerReceivedID)
 	}
 }
+
+func TestInputSchemaValidation_RejectsCaseFoldedPropertyKeys(t *testing.T) {
+	type args struct {
+		Path string `json:"path"`
+		Host string `json:"host,omitempty"`
+	}
+	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
+	srv.AddTool(mcp.NewTool("read_file",
+		mcp.WithString("path", mcp.Pattern("^/safe/")),
+		mcp.WithString("host", mcp.Enum("internal.example")),
+	), mcp.NewTypedToolHandler(func(_ context.Context, _ mcp.CallToolRequest, a args) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText(a.Path + " " + a.Host), nil
+	}))
+
+	for _, args := range []string{
+		`{"PATH":"/etc/passwd"}`,
+		`{"path":"/safe/a","Path":"/etc/passwd"}`,
+		`{"path":"/safe/a","hoſt":"evil.example"}`,
+	} {
+		t.Run(args, func(t *testing.T) {
+			msg := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file","arguments":` + args + `}}`
+			requireToolErrorContaining(t, srv.HandleMessage(t.Context(), []byte(msg)), "only by case")
+		})
+	}
+
+	resp := srv.HandleMessage(t.Context(), []byte(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"/safe/a"}}}`))
+	requireToolSuccess(t, resp)
+}
+
+func TestInputSchemaValidation_RejectsCaseFoldedKeysInSubschemas(t *testing.T) {
+	path := `{"type": "object", "properties": {"path": {"type": "string", "pattern": "^/safe/"}}}`
+	for name, tc := range map[string]struct {
+		schema string
+		args   string
+	}{
+		"allOf":                            {`{"type": "object", "allOf": [` + path + `]}`, `{"PATH": "/etc/passwd"}`},
+		"anyOf":                            {`{"type": "object", "anyOf": [` + path + `]}`, `{"PATH": "/etc/passwd"}`},
+		"oneOf":                            {`{"type": "object", "oneOf": [` + path + `]}`, `{"PATH": "/etc/passwd"}`},
+		"items":                            {`{"type": "object", "properties": {"files": {"type": "array", "items": ` + path + `}}}`, `{"files": [{"path": "/safe/a"}, {"PATH": "/etc/passwd"}]}`},
+		"additionalProperties":             {`{"type": "object", "additionalProperties": ` + path + `}`, `{"first": {"PATH": "/etc/passwd"}}`},
+		"patternProperties":                {`{"type": "object", "patternProperties": {"^f": ` + path + `}}`, `{"first": {"PATH": "/etc/passwd"}}`},
+		"properties and patternProperties": {`{"type": "object", "properties": {"first": {"type": "object"}}, "patternProperties": {"^f": ` + path + `}}`, `{"first": {"PATH": "/etc/passwd"}}`},
+		"unevaluatedProperties":            {`{"type": "object", "unevaluatedProperties": ` + path + `}`, `{"first": {"PATH": "/etc/passwd"}}`},
+		"exact match in another branch":    {`{"type": "object", "allOf": [` + path + `, {"properties": {"PATH": {}}}]}`, `{"PATH": "/etc/passwd"}`},
+		"if/then":                          {`{"type": "object", "if": {"required": ["mode"]}, "then": ` + path + `}`, `{"mode": "x", "PATH": "/etc/passwd"}`},
+		"dependentSchemas":                 {`{"type": "object", "dependentSchemas": {"mode": ` + path + `}}`, `{"mode": "x", "PATH": "/etc/passwd"}`},
+		"contains":                         {`{"type": "object", "properties": {"files": {"type": "array", "contains": ` + path + `}}}`, `{"files": [{"path": "/safe/a", "PATH": "/etc/passwd"}]}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
+			srv.AddTool(mcp.Tool{Name: "t", RawInputSchema: json.RawMessage(tc.schema)}, okHandler)
+			msg := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":` + tc.args + `}}`
+			requireToolErrorContaining(t, srv.HandleMessage(t.Context(), []byte(msg)), "only by case")
+		})
+	}
+}
