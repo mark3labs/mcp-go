@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"io"
+	"strings"
 )
 
 // DefaultMaxMessageBytes is the largest message the SSE and Streamable HTTP
@@ -59,23 +60,45 @@ func (b *boundedReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// readSSELine reads one line of an SSE stream, line ending included, as
-// bufio.Reader.ReadString does. A line may carry limit bytes of data besides
-// its field name and line ending; a longer one is ErrMessageTooLarge. Zero or
-// a negative limit leaves lines unbounded.
-func readSSELine(br *bufio.Reader, limit int64) (string, error) {
-	if limit > 0 {
-		limit += int64(len("event: \r\n"))
-	}
-	var line []byte
+type sseLineReader struct {
+	reader *bufio.Reader
+	skipLF bool
+}
+
+func newSSELineReader(reader io.Reader) *sseLineReader {
+	return &sseLineReader{reader: bufio.NewReader(reader)}
+}
+
+// readLine accepts LF, CRLF, and CR line endings, without returning them.
+// A CR completes the line immediately; an optional LF is consumed on the next
+// call, so a server holding the stream open cannot delay event dispatch.
+// A line may carry limit bytes besides the longest field prefix ("event: ");
+// line endings do not count. A longer line is ErrMessageTooLarge. Zero or a
+// negative limit leaves lines unbounded.
+// An unterminated final line is returned with io.EOF, as with ReadString.
+func (r *sseLineReader) readLine(limit int64) (string, error) {
+	var line strings.Builder
 	for {
-		chunk, err := br.ReadSlice('\n')
-		if limit > 0 && int64(len(line)+len(chunk)) > limit {
+		b, err := r.reader.ReadByte()
+		if err != nil {
+			return line.String(), err
+		}
+		if r.skipLF {
+			r.skipLF = false
+			if b == '\n' {
+				continue
+			}
+		}
+		switch b {
+		case '\r':
+			r.skipLF = true
+			return line.String(), nil
+		case '\n':
+			return line.String(), nil
+		}
+		if limit > 0 && int64(line.Len()) >= limit && int64(line.Len())-limit >= int64(len("event: ")) {
 			return "", ErrMessageTooLarge
 		}
-		line = append(line, chunk...)
-		if err != bufio.ErrBufferFull {
-			return string(line), err
-		}
+		line.WriteByte(b)
 	}
 }
