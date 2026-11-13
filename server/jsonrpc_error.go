@@ -18,9 +18,9 @@ type jsonrpcErrorResponseWriter interface {
 
 // writeJSONRPCError encodes a JSON-RPC error response identified by id with
 // the given code and message and writes it to w with HTTP status 400 Bad
-// Request and Content-Type application/json. If JSON encoding fails and
-// onEncodeErr is non-nil, it is invoked with the encode error so callers
-// can decide how to report the failure (e.g. log it, escalate to HTTP 500).
+// Request and Content-Type application/json. If encoding or writing fails and
+// onEncodeErr is non-nil, it is invoked with the error so callers can log or
+// otherwise report it. The HTTP status has already been written at that point.
 func writeJSONRPCError(
 	w jsonrpcErrorResponseWriter,
 	id any,
