@@ -88,7 +88,7 @@ Expose files from your filesystem:
 ```go
 func main() {
     s := server.NewMCPServer("File Server", "1.0.0",
-        server.WithResourceCapabilities(true),
+        server.WithResourceCapabilities(false, false),
     )
 
     // Add a static file resource
@@ -528,7 +528,7 @@ Implement resource discovery for clients:
 ```go
 func main() {
     s := server.NewMCPServer("Resource Server", "1.0.0",
-        server.WithResourceCapabilities(true),
+        server.WithResourceCapabilities(false, false),
     )
 
     // Add multiple resources
@@ -537,7 +537,7 @@ func main() {
         name        string
         description string
         mimeType    string
-        handler     server.ResourceHandler
+        handler     server.ResourceHandlerFunc
     }{
         {"docs://readme", "README", "Project documentation", "text/markdown", handleReadme},
         {"config://app", "App Config", "Application settings", "application/json", handleConfig},
