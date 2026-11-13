@@ -306,6 +306,7 @@ type StreamableHTTPServer struct {
 	sessionResources         *sessionResourcesStore
 	sessionResourceTemplates *sessionResourceTemplatesStore
 	activeSessions           sync.Map     // sessionId --> *streamableHttpSession (for sampling responses)
+	modernListeners          sync.Map     // *streamableHttpSession --> context.CancelFunc
 	requestIDCounter         atomic.Int64 // server -> client request IDs, shared across sessions
 
 	eventStore         EventStore
@@ -600,9 +601,15 @@ func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 }
 
 // CloseSessions terminates all active streamable HTTP listening sessions
-// without stopping the HTTP server. This unblocks long-lived GET handlers so
-// Shutdown can complete while clients are still connected.
+// without stopping the HTTP server. This unblocks long-lived GET and
+// subscriptions/listen handlers so Shutdown can complete while clients are
+// still connected.
 func (s *StreamableHTTPServer) CloseSessions(ctx context.Context) {
+	s.modernListeners.Range(func(_, value any) bool {
+		value.(context.CancelFunc)()
+		return true
+	})
+
 	sessionIDs := make([]string, 0)
 	s.activeSessions.Range(func(key, value any) bool {
 		sessionID, ok := key.(string)
@@ -822,6 +829,16 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	ctx = WithSupportedProtocolVersions(ctx, s.supportedProtocolVersions())
 	if s.contextFunc != nil {
 		ctx = s.contextFunc(ctx, r.asHTTPRequest())
+	}
+	// Stopping subscription work must still allow its completion response
+	// while the underlying HTTP request remains connected.
+	responseCtx := ctx
+	if listening {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		s.modernListeners.Store(session, cancel)
+		defer s.modernListeners.Delete(session)
+		defer cancel()
 	}
 
 	// handle potential notifications
@@ -1109,7 +1126,7 @@ drainLoop:
 	}
 
 	mu.Unlock()
-	if ctx.Err() != nil {
+	if responseCtx.Err() != nil {
 		// The connection is gone, but with an event store the response of an
 		// interrupted SSE request is still recorded so that a resuming client
 		// can be redelivered it.
