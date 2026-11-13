@@ -957,3 +957,68 @@ func TestTaskExpiredBeforeWorkerStarts(t *testing.T) {
 		})
 	}
 }
+
+type cancelHookCtxKey struct{}
+
+func TestTaskWorkerCancelHookGetsDetachedContext(t *testing.T) {
+	tests := []struct {
+		name          string
+		taskTool      bool
+		expireFirst   bool
+		handlerReturn error
+	}{
+		{name: "task tool expired before start", taskTool: true, expireFirst: true},
+		{name: "regular tool expired before start", taskTool: false, expireFirst: true},
+		{name: "task tool handler deadline", taskTool: true, handlerReturn: context.DeadlineExceeded},
+		{name: "regular tool handler deadline", taskTool: false, handlerReturn: context.DeadlineExceeded},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			type hookCall struct {
+				err   error
+				value any
+			}
+			calls := make(chan hookCall, 1)
+			hooks := &TaskHooks{}
+			hooks.AddOnTaskCancelled(func(ctx context.Context, metrics TaskMetrics) {
+				calls <- hookCall{err: ctx.Err(), value: ctx.Value(cancelHookCtxKey{})}
+			})
+			s := NewMCPServer("test", "1.0.0", WithTaskHooks(hooks), WithTaskCapabilities(true, true, true))
+
+			// The tools/call request has returned by the time the worker
+			// cancels the task.
+			requestCtx, endRequest := context.WithCancel(context.WithValue(t.Context(), cancelHookCtxKey{}, "request"))
+			const taskID = "cancel-hook-ctx"
+			entry, err := s.createTask(requestCtx, taskID, "work", nil, nil)
+			require.NoError(t, err)
+			endRequest()
+			if tt.expireFirst {
+				s.scheduleTaskCleanup(taskID, entry, 0)
+			}
+
+			request := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "work"}}
+			if tt.taskTool {
+				s.executeTaskTool(requestCtx, entry, ServerTaskTool{
+					Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+						return nil, tt.handlerReturn
+					},
+				}, request)
+			} else {
+				s.executeRegularToolAsTask(requestCtx, entry, ServerTool{
+					Handler: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+						return nil, tt.handlerReturn
+					},
+				}, request)
+			}
+
+			select {
+			case call := <-calls:
+				assert.NoError(t, call.err, "cancel hook must not get the ended request's cancellation")
+				assert.Equal(t, "request", call.value, "cancel hook must keep the request's values")
+			case <-time.After(time.Second):
+				t.Fatal("cancel hook did not run")
+			}
+		})
+	}
+}
