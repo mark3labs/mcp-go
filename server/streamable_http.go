@@ -902,6 +902,20 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	// longer be holding an undelivered notification.
 	forwarderExited := make(chan struct{})
 
+	// settleLate settles a server request taken off this POST's queue after
+	// its stream finished. With an event store it is still recorded, so a
+	// resuming client sees it; otherwise it was never written, and refusing
+	// it lets the caller send it on the standalone GET stream instead.
+	// Callers must hold mu.
+	settleLate := func(item scopedRequest) {
+		if resumable {
+			deliverResumable(item.request, false)
+			item.delivered <- true
+			return
+		}
+		item.delivered <- false
+	}
+
 	// When the response can stream, server requests issued while this message
 	// is being handled (for example elicitation/create from a tool handler)
 	// are written to this POST's SSE stream, per the Streamable HTTP guidance
@@ -919,11 +933,11 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	// session's shared channel the standalone GET stream's forwarder races
 	// this POST's for them, so a notification could reach the client on the
 	// GET stream after the response it belongs to.
-	var scopedRequests chan mcp.JSONRPCRequest
+	var scopedRequests chan scopedRequest
 	var scopedNotifications chan mcp.JSONRPCNotification
 	closeDone := func() { close(done) }
 	if canStream && !era.modern {
-		scopedRequests = make(chan mcp.JSONRPCRequest, 8)
+		scopedRequests = make(chan scopedRequest, 8)
 		scopedNotifications = make(chan mcp.JSONRPCNotification, 100)
 		// Registration makes responses to request-scoped server requests
 		// routable when nothing else has registered the session (stateless
@@ -1008,25 +1022,23 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 				forward(nt)
 			case nt := <-scopedNotifications:
 				forward(nt)
-			case req := <-scopedRequests:
+			case item := <-scopedRequests:
 				func() {
 					mu.Lock()
 					defer mu.Unlock()
 					select {
 					case <-done:
-						// The request is already off the channel; with an
-						// event store it must still be recorded so a resuming
-						// client sees it.
-						if resumable {
-							deliverResumable(req, false)
-						}
+						// The request is already off the channel, and the
+						// response path's drain can no longer see it.
+						settleLate(item)
 						return
 					default:
 					}
 					defer w.Flush()
 
 					if resumable {
-						deliverResumable(req, false)
+						deliverResumable(item.request, false)
+						item.delivered <- true
 						return
 					}
 
@@ -1037,9 +1049,11 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 						w.WriteHeader(http.StatusOK)
 						upgradedHeader = true
 					}
-					if err := writeSSEEvent(w, req); err != nil {
+					err := writeSSEEvent(w, item.request)
+					if err != nil {
 						s.logger.Error("Failed to write SSE event", "err", err)
 					}
+					item.delivered <- err == nil
 				}()
 			case <-done:
 				return
@@ -1092,13 +1106,15 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 		closeDone()
 		<-forwarderExited
 		mu.Lock()
-		// Notifications queued for this POST by the handler have no other
-		// consumer once the forwarder has exited.
+		// Notifications and requests queued for this POST by the handler
+		// have no other consumer once the forwarder has exited.
 	scopedDrain:
 		for {
 			select {
 			case nt := <-scopedNotifications:
 				drain(nt)
+			case item := <-scopedRequests:
+				settleLate(item)
 			default:
 				break scopedDrain
 			}
@@ -1132,6 +1148,8 @@ drainLoop:
 		select {
 		case nt := <-scopedNotifications:
 			drain(nt)
+		case item := <-scopedRequests:
+			settleLate(item)
 		case nt := <-session.notificationChannel:
 			drain(nt)
 		default:
@@ -1906,7 +1924,7 @@ type requestScopedSSE struct {
 	// session is the session the POST serves; only messages addressed to it
 	// take the POST's stream.
 	session       ClientSession
-	requests      chan<- mcp.JSONRPCRequest
+	requests      chan<- scopedRequest
 	notifications chan<- mcp.JSONRPCNotification
 	done          chan struct{}
 	register      func()
@@ -1926,12 +1944,27 @@ func (r *requestScopedSSE) close() {
 	defer r.sendMu.Unlock()
 }
 
-// trySend queues the request for the originating POST stream. It reports
-// false when the POST has already finished or ctx expires, so the caller can
-// fall back to the standalone GET stream. While the POST stream is active it
-// waits for buffer space instead of treating backpressure as absence:
-// spilling to the GET stream mid-request would reintroduce the cross-stream
-// routing this type exists to avoid.
+// scopedRequest is a server request queued for a POST stream. The POST
+// settles every one it queued on delivered: true once the request is written
+// to the stream or recorded in the event store, false when the stream ended
+// before either happened.
+type scopedRequest struct {
+	request   mcp.JSONRPCRequest
+	delivered chan bool
+}
+
+// trySend sends the request on the originating POST stream. It reports
+// false when the POST has finished, or finishes before the request is
+// written, so the caller can fall back to the standalone GET stream; a
+// request already written or recorded is never reported false, so it is
+// never sent twice. While the POST stream is active it waits for buffer
+// space instead of treating backpressure as absence: spilling to the GET
+// stream mid-request would reintroduce the cross-stream routing this type
+// exists to avoid.
+//
+// If ctx ends while the request is queued, trySend reports true without
+// waiting: the caller's own wait for the response ends on the same ctx, and
+// reporting false could send the request a second time.
 func (r *requestScopedSSE) trySend(ctx context.Context, request mcp.JSONRPCRequest) bool {
 	select {
 	case <-r.done:
@@ -1939,9 +1972,21 @@ func (r *requestScopedSSE) trySend(ctx context.Context, request mcp.JSONRPCReque
 	default:
 	}
 	r.register()
+	item := scopedRequest{request: request, delivered: make(chan bool, 1)}
+	// sendMu covers only the enqueue: close waits for it, and the POST
+	// settles queued requests after close returns.
 	r.sendMu.Lock()
-	defer r.sendMu.Unlock()
-	return sendWhileOpen(ctx, r.done, r.requests, request)
+	queued := sendWhileOpen(ctx, r.done, r.requests, item)
+	r.sendMu.Unlock()
+	if !queued {
+		return false
+	}
+	select {
+	case delivered := <-item.delivered:
+		return delivered
+	case <-ctx.Done():
+		return true
+	}
 }
 
 // trySendNotification queues the notification for the originating POST
@@ -2139,14 +2184,28 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 	})
 	defer s.samplingRequests.Delete(requestID)
 
-	// Send the sampling request via the channel (non-blocking)
-	select {
-	case s.samplingRequestChan <- samplingRequest:
-		// Request queued successfully
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-		return nil, fmt.Errorf("sampling request queue is full - server overloaded")
+	// Prefer the originating POST's SSE stream, as RequestElicitation does,
+	// so a client without a standalone GET stream still receives the request.
+	// Fall back to the GET stream otherwise.
+	jsonrpcRequest := mcp.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(requestID),
+		Request: mcp.Request{
+			Method: string(mcp.MethodSamplingCreateMessage),
+		},
+		Params: request.CreateMessageParams,
+	}
+	scoped, hasScoped := ctx.Value(requestScopedSSEKey{}).(*requestScopedSSE)
+	if !hasScoped || !scoped.trySend(ctx, jsonrpcRequest) {
+		// Send the sampling request via the channel (non-blocking)
+		select {
+		case s.samplingRequestChan <- samplingRequest:
+			// Request queued successfully
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			return nil, fmt.Errorf("sampling request queue is full - server overloaded")
+		}
 	}
 
 	// Wait for response or context cancellation
@@ -2197,14 +2256,27 @@ func (s *streamableHttpSession) ListRoots(ctx context.Context, request mcp.ListR
 	})
 	defer s.samplingRequests.Delete(requestID)
 
-	// Send the list roots request via the channel (non-blocking)
-	select {
-	case s.rootsRequestChan <- rootsRequest:
-		// Request queued successfully
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-		return nil, fmt.Errorf("list roots request queue is full - server overloaded")
+	// Prefer the originating POST's SSE stream, as RequestElicitation does,
+	// so a client without a standalone GET stream still receives the request.
+	// Fall back to the GET stream otherwise.
+	jsonrpcRequest := mcp.JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      mcp.NewRequestId(requestID),
+		Request: mcp.Request{
+			Method: string(mcp.MethodListRoots),
+		},
+	}
+	scoped, hasScoped := ctx.Value(requestScopedSSEKey{}).(*requestScopedSSE)
+	if !hasScoped || !scoped.trySend(ctx, jsonrpcRequest) {
+		// Send the list roots request via the channel (non-blocking)
+		select {
+		case s.rootsRequestChan <- rootsRequest:
+			// Request queued successfully
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			return nil, fmt.Errorf("list roots request queue is full - server overloaded")
+		}
 	}
 
 	// Wait for response or context cancellation
