@@ -16,6 +16,15 @@ import (
 func (s *MCPServer) HandleMessage(
 	ctx context.Context,
 	message json.RawMessage,
+) mcp.JSONRPCMessage {
+	return s.handleMessage(ctx, message, false)
+}
+
+// handleMessage can reuse a request context reserved by stdio before dispatch.
+func (s *MCPServer) handleMessage(
+	ctx context.Context,
+	message json.RawMessage,
+	registered bool,
 ) (resp mcp.JSONRPCMessage) {
 	// Add server to context
 	ctx = context.WithValue(ctx, serverKey{}, s)
@@ -100,6 +109,21 @@ func (s *MCPServer) HandleMessage(
 		return nil
 	}
 
+	var key inflightRequestKey
+	if !registered {
+		key = inflightKey(ctx, baseMessage.ID)
+		if key.sessionID != "" {
+			// Reject duplicates before hooks can reply with the same ID or
+			// the request can change session state.
+			var finish func()
+			ctx, finish = s.startRequest(ctx, key)
+			if finish == nil {
+				return duplicateRequestIDError()
+			}
+			defer finish()
+		}
+	}
+
 	handleErr := s.hooks.onRequestInitialization(ctx, baseMessage.ID, message)
 	if handleErr != nil {
 		return createErrorResponse(
@@ -149,16 +173,11 @@ func (s *MCPServer) HandleMessage(
 		}
 	}
 
-	// Wrap context with cancel for in-flight request cancellation (MCP spec: notifications/cancelled)
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	// Store cancel func so notifications/cancelled can cancel this request.
-	// Use session-scoped keys to prevent cross-session request ID collisions.
-	if baseMessage.ID != nil {
-		key := inflightKey(ctx, baseMessage.ID)
-		s.inflightCancels.Store(key, cancel)
-		defer s.inflightCancels.Delete(key)
+	if !registered && key.sessionID == "" {
+		// Keep the existing cancellation timing for requests without a session ID.
+		var finish func()
+		ctx, finish = s.startRequest(ctx, key)
+		defer finish()
 	}
 
 	// Extract trace context from _meta before opening the server span so the span

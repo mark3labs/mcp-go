@@ -256,7 +256,7 @@ type MCPServer struct {
 	expiredTasks                 map[string]time.Time // Tracks recently expired task IDs with expiration timestamp
 	maxConcurrentTasks           *int                 // Optional limit on concurrent running tasks
 	activeTasks                  int                  // Current count of running (non-terminal) tasks
-	inflightCancels              sync.Map             // Maps request ID -> context.CancelFunc for in-flight requests
+	inflightCancels              sync.Map             // inflightRequestKey -> context.CancelFunc
 	inputValidator               *inputSchemaValidator
 	outputValidator              *outputSchemaValidator
 	strictInputSchemaDefault     bool
@@ -2646,12 +2646,7 @@ func (s *MCPServer) handleNotification(
 	// Handle cancellation notifications per MCP spec
 	if notification.Method == string(mcp.MethodNotificationCancelled) {
 		if reqID, ok := notification.Params.AdditionalFields["requestId"]; ok {
-			key := inflightKey(ctx, reqID)
-			if cancel, loaded := s.inflightCancels.LoadAndDelete(key); loaded {
-				if cancelFunc, ok := cancel.(context.CancelFunc); ok {
-					cancelFunc()
-				}
-			}
+			s.cancelRequest(ctx, reqID)
 		}
 		return nil
 	}
@@ -2664,16 +2659,6 @@ func (s *MCPServer) handleNotification(
 		handler(ctx, notification)
 	}
 	return nil
-}
-
-// inflightKey returns a session-scoped key for the inflight cancellation map.
-// This prevents cross-session request ID collisions in multi-client scenarios.
-func inflightKey(ctx context.Context, requestID any) string {
-	requestID = mcp.NewRequestId(requestID).String()
-	if session := ClientSessionFromContext(ctx); session != nil {
-		return fmt.Sprintf("%s:%v", session.SessionID(), requestID)
-	}
-	return fmt.Sprintf(":%v", requestID)
 }
 
 func createResponse(id any, result any) mcp.JSONRPCMessage {
