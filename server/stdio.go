@@ -23,6 +23,8 @@ import (
 // for example.
 type StdioContextFunc func(ctx context.Context) context.Context
 
+type stdioSessionKey struct{}
+
 // StdioServer wraps a MCPServer and handles stdio communication.
 // It provides a simple way to create command-line MCP servers that
 // communicate via standard input/output streams using JSON-RPC messages.
@@ -94,7 +96,7 @@ func WithQueueSize(size int) StdioOption {
 	}
 }
 
-// stdioSession is a static client session, since stdio has only one client.
+// stdioSession is the client session for one stdio listener.
 type stdioSession struct {
 	clientInfoStore // provides Get/SetClientInfo and Get/SetClientCapabilities via method promotion
 
@@ -361,13 +363,6 @@ var (
 	_ SessionWithRoots       = (*stdioSession)(nil)
 )
 
-var stdioSessionInstance = stdioSession{
-	notifications:       make(chan mcp.JSONRPCNotification, 100),
-	pendingRequests:     make(map[int64]chan *samplingResponse),
-	pendingElicitations: make(map[int64]chan *elicitationResponse),
-	pendingRoots:        make(map[int64]chan *rootsResponse),
-}
-
 // NewStdioServer creates a new stdio server wrapper around an MCPServer.
 // It initializes the server with a default error logger that discards all output.
 func NewStdioServer(server *MCPServer) *StdioServer {
@@ -399,10 +394,10 @@ func (s *StdioServer) SetContextFunc(fn StdioContextFunc) {
 // handleNotifications continuously processes notifications from the session's notification channel
 // and writes them to the provided output. It runs until the context is cancelled.
 // Any errors encountered while writing notifications are logged but do not stop the handler.
-func (s *StdioServer) handleNotifications(ctx context.Context, stdout io.Writer) {
+func (s *StdioServer) handleNotifications(ctx context.Context, session *stdioSession, stdout io.Writer) {
 	for {
 		select {
-		case notification := <-stdioSessionInstance.notifications:
+		case notification := <-session.notifications:
 			if err := s.writeResponse(notification, stdout); err != nil {
 				s.errLogger.Printf("Error writing notification: %v", err)
 			}
@@ -517,20 +512,29 @@ func (s *StdioServer) Listen(
 	// Initialize the tool call queue
 	s.toolCallQueue = make(chan *toolCallWork, s.queueSize)
 
-	// Set a static client context since stdio only has one client
-	if err := s.server.RegisterSession(ctx, &stdioSessionInstance); err != nil {
+	// Each listener owns its client state, notification queue, and pending requests.
+	session := &stdioSession{
+		notifications:       make(chan mcp.JSONRPCNotification, 100),
+		pendingRequests:     make(map[int64]chan *samplingResponse),
+		pendingElicitations: make(map[int64]chan *elicitationResponse),
+		pendingRoots:        make(map[int64]chan *rootsResponse),
+	}
+	if err := s.server.RegisterSession(ctx, session); err != nil {
 		return fmt.Errorf("register session: %w", err)
 	}
-	defer s.server.UnregisterSession(ctx, stdioSessionInstance.SessionID())
-	ctx = s.server.WithContext(ctx, &stdioSessionInstance)
+	defer s.server.UnregisterSession(ctx, session.SessionID())
+	ctx = s.server.WithContext(ctx, session)
 
 	// Set the writer for sending requests to the client
-	stdioSessionInstance.SetWriter(&lockedWriter{mu: &s.writeMu, w: stdout})
+	session.SetWriter(&lockedWriter{mu: &s.writeMu, w: stdout})
 
 	// Add in any custom context.
 	if s.contextFunc != nil {
 		ctx = s.contextFunc(ctx)
 	}
+	// The public client session may be decorated by contextFunc. Responses
+	// still belong to this listener's transport session and pending requests.
+	ctx = context.WithValue(ctx, stdioSessionKey{}, session)
 
 	// Requests are served on their own goroutines. Cancelling this context when
 	// input processing ends releases any handler still blocked on it, so none
@@ -547,7 +551,7 @@ func (s *StdioServer) Listen(
 	}
 
 	// Start notification handler
-	go s.handleNotifications(ctx, stdout)
+	go s.handleNotifications(ctx, session, stdout)
 
 	// Process input stream
 	err := s.processInputStream(ctx, reader, stdout)
@@ -581,19 +585,13 @@ func (s *StdioServer) processMessage(
 		return s.writeResponse(response, writer)
 	}
 
-	// Check if this is a response to a sampling request
-	if s.handleSamplingResponse(rawMessage) {
-		return nil
-	}
-
-	// Check if this is a response to an elicitation request
-	if s.handleElicitationResponse(rawMessage) {
-		return nil
-	}
-
-	// Check if this is a response to an list roots request
-	if s.handleListRootsResponse(rawMessage) {
-		return nil
+	// Route server-initiated responses only to the client on this stream.
+	if session, ok := ctx.Value(stdioSessionKey{}).(*stdioSession); ok {
+		if session.handleSamplingResponse(rawMessage) ||
+			session.handleElicitationResponse(rawMessage) ||
+			session.handleListRootsResponse(rawMessage) {
+			return nil
+		}
 	}
 
 	// Check if this is a tool call that might need sampling (and thus should be processed concurrently)
@@ -704,12 +702,6 @@ func (s *StdioServer) handleRequest(ctx context.Context, id any, rawMessage json
 	}
 }
 
-// handleSamplingResponse checks if the message is a response to a sampling request
-// and routes it to the appropriate pending request channel.
-func (s *StdioServer) handleSamplingResponse(rawMessage json.RawMessage) bool {
-	return stdioSessionInstance.handleSamplingResponse(rawMessage)
-}
-
 // handleSamplingResponse handles incoming sampling responses for this session
 func (s *stdioSession) handleSamplingResponse(rawMessage json.RawMessage) bool {
 	// Try to parse as a JSON-RPC response
@@ -770,12 +762,6 @@ func (s *stdioSession) handleSamplingResponse(rawMessage json.RawMessage) bool {
 	return true
 }
 
-// handleElicitationResponse checks if the message is a response to an elicitation request
-// and routes it to the appropriate pending request channel.
-func (s *StdioServer) handleElicitationResponse(rawMessage json.RawMessage) bool {
-	return stdioSessionInstance.handleElicitationResponse(rawMessage)
-}
-
 // handleElicitationResponse handles incoming elicitation responses for this session
 func (s *stdioSession) handleElicitationResponse(rawMessage json.RawMessage) bool {
 	// Try to parse as a JSON-RPC response
@@ -829,12 +815,6 @@ func (s *stdioSession) handleElicitationResponse(rawMessage json.RawMessage) boo
 	}
 
 	return true
-}
-
-// handleListRootsResponse checks if the message is a response to an list roots request
-// and routes it to the appropriate pending request channel.
-func (s *StdioServer) handleListRootsResponse(rawMessage json.RawMessage) bool {
-	return stdioSessionInstance.handleListRootsResponse(rawMessage)
 }
 
 // handleListRootsResponse handles incoming list root responses for this session
