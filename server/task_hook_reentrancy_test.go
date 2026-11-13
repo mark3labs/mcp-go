@@ -47,7 +47,7 @@ func TestTaskHooksCanReadTaskState(t *testing.T) {
 					s.executeRegularToolAsTask(t.Context(), entry, ServerTool{Handler: func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) { return nil, context.Canceled }}, mcp.CallToolRequest{})
 				case "cancelled":
 					hooks.AddOnTaskCancelled(observe)
-					err = s.cancelTask(t.Context(), "task")
+					err = s.cancelTask(t.Context(), "task", false)
 				}
 				done <- err
 			}()
@@ -79,7 +79,7 @@ func TestTaskHookMetricsRemainEventSnapshotsDuringConcurrentCompletion(t *testin
 		var wg sync.WaitGroup
 		wg.Add(2)
 		go func() { defer wg.Done(); s.completeTask(entry, nil, nil) }()
-		go func() { defer wg.Done(); _ = s.cancelTask(t.Context(), id) }()
+		go func() { defer wg.Done(); _ = s.cancelTask(t.Context(), id, false) }()
 		wg.Wait()
 		require.Len(t, events, 2)
 		require.Equal(t, mcp.TaskStatusWorking, events[0].Status)

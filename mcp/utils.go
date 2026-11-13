@@ -868,9 +868,17 @@ func ParseCallToolResult(rawMessage *json.RawMessage) (*CallToolResult, error) {
 		Content           json.RawMessage `json:"content"`
 		StructuredContent json.RawMessage `json:"structuredContent"`
 		ResultType        ResultType      `json:"resultType"`
+		TaskId            string          `json:"taskId"`
 	}
 	if err := json.Unmarshal(*rawMessage, &probe); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	// A server-directed task handle (SEP-2663) carries no content; the peer
+	// created an asynchronous task instead of returning a result. Surface it as
+	// a typed error so the caller can recover the task ID and poll tasks/get,
+	// rather than failing with "content is missing".
+	if probe.ResultType == ResultTypeTask {
+		return nil, &UnsupportedTaskResultError{TaskID: probe.TaskId}
 	}
 	// A structured-only result, and a result asking for more input (SEP-2322)
 	// that carries only the input requests and the request state, legitimately
@@ -1327,6 +1335,38 @@ func GetTextFromContent(content any) string {
 	}
 }
 
+// jsonToTask fills TTL and PollInterval from the SEP-2663 wire names (ttlMs,
+// pollIntervalMs), which the Task struct's legacy json tags (ttl, pollInterval)
+// skip. It only fills fields json.Unmarshal left nil, so it never clobbers a
+// precisely-decoded integer. A wrong-type or out-of-range ttlMs/pollIntervalMs
+// is reported as an error rather than silently dropped — a dropped ttlMs would
+// read as "no expiration".
+func jsonToTask(raw []byte, result *GetTaskResult) error {
+	var modern struct {
+		TTLMs          json.RawMessage `json:"ttlMs"`
+		PollIntervalMs json.RawMessage `json:"pollIntervalMs"`
+	}
+	if err := json.Unmarshal(raw, &modern); err != nil {
+		// Envelope-level failures are already surfaced by the caller's primary unmarshal.
+		return nil
+	}
+	if result.TTL == nil && len(modern.TTLMs) > 0 {
+		var v *int64
+		if err := json.Unmarshal(modern.TTLMs, &v); err != nil {
+			return fmt.Errorf("invalid ttlMs: %w", err)
+		}
+		result.TTL = v
+	}
+	if result.PollInterval == nil && len(modern.PollIntervalMs) > 0 {
+		var v *int64
+		if err := json.Unmarshal(modern.PollIntervalMs, &v); err != nil {
+			return fmt.Errorf("invalid pollIntervalMs: %w", err)
+		}
+		result.PollInterval = v
+	}
+	return nil
+}
+
 // ParseCancelTaskResult parses a JSON message and converts it to a CancelTaskResult.
 func ParseCancelTaskResult(rawMessage *json.RawMessage) (*CancelTaskResult, error) {
 	if rawMessage == nil {
@@ -1336,6 +1376,13 @@ func ParseCancelTaskResult(rawMessage *json.RawMessage) (*CancelTaskResult, erro
 	if err := json.Unmarshal(*rawMessage, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
+	// Fix up ttlMs/pollIntervalMs: Task struct tags use legacy names so plain
+	// json.Unmarshal won't decode them from SEP-2663 wire format.
+	getResult := GetTaskResult{Task: result.Task}
+	if err := jsonToTask(*rawMessage, &getResult); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	result.Task = getResult.Task
 	return &result, nil
 }
 
@@ -1347,6 +1394,23 @@ func ParseListTasksResult(rawMessage *json.RawMessage) (*ListTasksResult, error)
 	var result ListTasksResult
 	if err := json.Unmarshal(*rawMessage, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	// Fix up ttlMs/pollIntervalMs for each task: Task struct tags use legacy
+	// names so plain json.Unmarshal skips SEP-2663 wire names.
+	var envelope struct {
+		Tasks []json.RawMessage `json:"tasks"`
+	}
+	if err := json.Unmarshal(*rawMessage, &envelope); err == nil {
+		for i, raw := range envelope.Tasks {
+			if i >= len(result.Tasks) {
+				break
+			}
+			tmp := GetTaskResult{Task: result.Tasks[i]}
+			if err := jsonToTask(raw, &tmp); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal task %d: %w", i, err)
+			}
+			result.Tasks[i] = tmp.Task
+		}
 	}
 	return &result, nil
 }
@@ -1399,6 +1463,34 @@ func ParseGetTaskResult(rawMessage *json.RawMessage) (*GetTaskResult, error) {
 		return nil, fmt.Errorf("response is nil")
 	}
 	var result GetTaskResult
+	if err := json.Unmarshal(*rawMessage, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	// Fix up ttlMs/pollIntervalMs from SEP-2663 wire format.
+	if err := jsonToTask(*rawMessage, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+	// Populate SEP-2663 inline fields (result, error, inputRequests).
+	var sep struct {
+		TaskResult    json.RawMessage      `json:"result"`
+		TaskError     *JSONRPCErrorDetails `json:"error"`
+		InputRequests InputRequests        `json:"inputRequests"`
+	}
+	if err := json.Unmarshal(*rawMessage, &sep); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal SEP-2663 task fields: %w", err)
+	}
+	result.TaskResult = sep.TaskResult
+	result.TaskError = sep.TaskError
+	result.InputRequests = sep.InputRequests
+	return &result, nil
+}
+
+// ParseUpdateTaskResult parses a JSON message and converts it to an UpdateTaskResult.
+func ParseUpdateTaskResult(rawMessage *json.RawMessage) (*UpdateTaskResult, error) {
+	if rawMessage == nil {
+		return nil, fmt.Errorf("response is nil")
+	}
+	var result UpdateTaskResult
 	if err := json.Unmarshal(*rawMessage, &result); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}

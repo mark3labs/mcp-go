@@ -79,7 +79,7 @@ MCP Go handles all the complex protocol details and server management, so you ca
 
 (\*emphasis on *aims*)
 
-🚨 🚧 🏗️ *MCP Go is under active development, as is the MCP specification itself. Core features are working but some advanced capabilities are still in progress.* 
+🚨 🚧 🏗️ *MCP Go is under active development, as is the MCP specification itself. Core features are working but some advanced capabilities are still in progress.*
 
 
 <!-- omit in toc -->
@@ -162,12 +162,12 @@ func main() {
         if err != nil {
             return mcp.NewToolResultError(err.Error()), nil
         }
-        
+
         x, err := request.RequireFloat("x")
         if err != nil {
             return mcp.NewToolResultError(err.Error()), nil
         }
-        
+
         y, err := request.RequireFloat("y")
         if err != nil {
             return mcp.NewToolResultError(err.Error()), nil
@@ -251,7 +251,7 @@ Here's a simple example of a static resource:
 resource := mcp.NewResource(
     "docs://readme",
     "Project README",
-    mcp.WithResourceDescription("The project's README file"), 
+    mcp.WithResourceDescription("The project's README file"),
     mcp.WithMIMEType("text/markdown"),
 )
 
@@ -261,7 +261,7 @@ s.AddResource(resource, func(ctx context.Context, request mcp.ReadResourceReques
     if err != nil {
         return nil, err
     }
-    
+
     return []mcp.ResourceContents{
         mcp.TextResourceContents{
             URI:      "docs://readme",
@@ -288,12 +288,12 @@ s.AddResourceTemplate(template, func(ctx context.Context, request mcp.ReadResour
     // Extract ID from the URI using regex matching
     // The server automatically matches URIs to templates
     userID := extractIDFromURI(request.Params.URI)
-    
+
     profile, err := getUserProfile(userID)  // Your DB/API call here
     if err != nil {
         return nil, err
     }
-    
+
     return []mcp.ResourceContents{
         mcp.TextResourceContents{
             URI:      request.Params.URI,
@@ -337,7 +337,7 @@ processBatchTool := mcp.NewTool("process_batch",
 // Task tool handler returns CreateTaskResult instead of CallToolResult
 s.AddTaskTool(processBatchTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
     items := request.GetStringSlice("items", []string{})
-    
+
     // Long-running work here
     for i, item := range items {
         select {
@@ -349,7 +349,7 @@ s.AddTaskTool(processBatchTool, func(ctx context.Context, request mcp.CallToolRe
             processItem(item)
         }
     }
-    
+
     // Return result - task ID and metadata are managed by the server
     return &mcp.CreateTaskResult{
         Task: mcp.Task{
@@ -393,7 +393,7 @@ s.AddTaskTool(analyzeTool, func(ctx context.Context, request mcp.CallToolRequest
     // This handler runs when called as a task
     data := request.GetString("data", "")
     result := analyzeData(data)
-    
+
     return &mcp.CreateTaskResult{
         Task: mcp.Task{},
     }, nil
@@ -418,6 +418,26 @@ s := server.NewMCPServer(
 ```
 
 When the limit is reached, new task creation requests will fail with an error. Completed, failed, or cancelled tasks don't count toward the limit - only tasks in "working" status. If `WithMaxConcurrentTasks` is not specified or set to 0, there is no limit on concurrent tasks.
+
+##### Transport Considerations for Task Handlers
+
+Task handlers run as background goroutines. Their context is not cancelled when `HandleMessage` returns. It stays alive until `tasks/cancel` cancels it or the task's TTL expires. Server shutdown does not cancel running tasks.
+
+Blocking on `ctx.Done()` is therefore safe and is the recommended way to honour cancellation:
+
+```go
+s.AddTaskTool(myTool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+    for _, item := range items {
+        select {
+        case <-ctx.Done():
+            return nil, ctx.Err()
+        case <-time.After(perItemDelay * time.Millisecond):
+        }
+        processItem(item)
+    }
+    return result, nil
+})
+```
 
 For traditional synchronous tools that execute and return results immediately:
 
@@ -460,7 +480,7 @@ s.AddTool(calculatorTool, func(ctx context.Context, request mcp.CallToolRequest)
         }
         result = x / y
     }
-    
+
     return mcp.FormatNumberResult(result), nil
 })
 ```
@@ -524,7 +544,7 @@ s.AddTool(httpTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp
 
 Tools can be used for any kind of computation or side effect:
 - Database queries
-- File operations  
+- File operations
 - External API calls
 - Calculations
 - System operations
@@ -532,11 +552,33 @@ Tools can be used for any kind of computation or side effect:
 Each tool should:
 - Have a clear description
 - Validate inputs
-- Handle errors gracefully 
+- Handle errors gracefully
 - Return structured responses
 - Use appropriate result types
 
 </details>
+
+
+##### Task Authorization
+
+SEP-2663 defines three task-management methods: `tasks/get`, `tasks/update`, and `tasks/cancel`, and requires servers to authenticate and authorize every one of them. The legacy 2025-11-25 flow also exposes `tasks/list` and `tasks/result`. SEP-2663 removes both, there is no `tasks/list`, and results are inlined into `tasks/get`. The SDK enforces the same default authorization policy across these methods:
+
+| Task session | Request session | Result |
+|---|---|---|
+| set | set, **same** | Allowed |
+| set | set, **different** | Denied (`task not found`, to avoid enumeration) |
+| **empty** | any | Allowed — bearer-token model |
+| any | **empty** | Allowed — bearer-token model |
+
+**Bearer-token default.** When either side has no session (e.g. stdio, in-process, or a task created outside a session), possessing the task ID is the only credential for accessing a task. Under SEP-2663 this is the intended default for session-less transports: there is no `tasks/list`, so task IDs with sufficient entropy cannot be enumerated or guessed by a third party.
+
+The legacy 2025-11-25 `tasks/list`, however, returns tasks from other sessions to a session-less caller, who can then fetch results or cancel those tasks by ID. When task IDs are used as bearer credentials, restrict `tasks/list` to authorized callers at the transport or application boundary.
+
+**Enforcing application-level authorization.** Applications that need finer-grained control (per-user or per-tenant access) can use two existing extension points:
+
+1. **HTTP middleware** on the transport layer. An outer `http.Handler` can validate credentials, attach identity to the request context, and reject unauthorized requests before `HandleMessage` is called. This validates the credential on each request. It does not bind the credential to a session, and a session ID does not identify the caller. To limit a session to one caller, store the authenticated identity for the session and reject requests whose identity differs.
+
+2. **`OnBefore*` hooks** (`AddBeforeGetTask`, `AddBeforeCancelTask`, `AddBeforeUpdateTask`, etc.) are for **observation only** — logging, auditing, or recording the authenticated identity (which transport middleware can place in `ctx`) alongside the task operation. They are fire-and-forget: they cannot return an error, and the handler runs regardless of what the hook does. **Do not use them to enforce authorization.** Enforce task authorization in HTTP middleware (option 1), which can reject the request before `HandleMessage` is called. (See `TestTaskAccessControl_OnBeforeHookExtensionPoint` in `server/task_auth_contract_test.go`, which demonstrates reading the identity — not enforcing it.)
 
 ### Prompts
 
@@ -557,7 +599,7 @@ s.AddPrompt(mcp.NewPrompt("greeting",
     if name == "" {
         name = "friend"
     }
-    
+
     return mcp.NewGetPromptResult(
         "A friendly greeting",
         []mcp.PromptMessage{
@@ -581,7 +623,7 @@ s.AddPrompt(mcp.NewPrompt("code_review",
     if prNumber == "" {
         return nil, fmt.Errorf("pr_number is required")
     }
-    
+
     return mcp.NewGetPromptResult(
         "Code review assistance",
         []mcp.PromptMessage{
@@ -612,7 +654,7 @@ s.AddPrompt(mcp.NewPrompt("query_builder",
     if tableName == "" {
         return nil, fmt.Errorf("table name is required")
     }
-    
+
     return mcp.NewGetPromptResult(
         "SQL query builder assistance",
         []mcp.PromptMessage{
@@ -931,7 +973,7 @@ s := server.NewMCPServer(
         if session == nil {
             return tools // Return all tools if no session
         }
-        
+
         // Example: filter tools based on session ID prefix
         if strings.HasPrefix(session.SessionID(), "admin-") {
             // Admin users get all tools
@@ -961,7 +1003,7 @@ s.AddTool(mcp.NewTool("session_aware"), func(ctx context.Context, req mcp.CallTo
     if session == nil {
         return mcp.NewToolResultError("No active session"), nil
     }
-    
+
     return mcp.NewToolResultText("Hello, session " + session.SessionID()), nil
 })
 
@@ -969,10 +1011,10 @@ s.AddTool(mcp.NewTool("session_aware"), func(ctx context.Context, req mcp.CallTo
 httpHandler := func(w http.ResponseWriter, r *http.Request) {
     // Get session from somewhere (like a cookie or header)
     session := getSessionFromRequest(r)
-    
+
     // Add session to context
     ctx := s.WithContext(r.Context(), session)
-    
+
     // Use this context when handling requests
     // ...
 }
@@ -1041,19 +1083,19 @@ func (p *MyPromptCompletionProvider) CompletePromptArgument(
     if promptName == "code_review" && argument.Name == "style" {
         styles := []string{"formal", "casual", "technical", "creative"}
         var suggestions []string
-        
+
         // Filter based on current input
         for _, style := range styles {
             if strings.HasPrefix(style, argument.Value) {
                 suggestions = append(suggestions, style)
             }
         }
-        
+
         return &mcp.Completion{
             Values: suggestions,
         }, nil
     }
-    
+
     // Return empty suggestions for unhandled cases
     return &mcp.Completion{Values: []string{}}, nil
 }
@@ -1070,16 +1112,16 @@ func (p *MyResourceCompletionProvider) CompleteResourceArgument(
     if uri == "file:///{path}" && argument.Name == "path" {
         // You can access previously completed arguments from context.Arguments
         // context.Arguments is a map[string]string of already-resolved arguments
-        
+
         paths := getMatchingPaths(argument.Value) // Your custom logic
-        
+
         return &mcp.Completion{
             Values:  paths[:min(len(paths), 100)], // Max 100 items
             Total:   len(paths),                    // Total available matches
             HasMore: len(paths) > 100,              // More results available
         }, nil
     }
-    
+
     return &mcp.Completion{Values: []string{}}, nil
 }
 
@@ -1114,7 +1156,7 @@ func (p *MyProvider) CompleteResourceArgument(
         // Provide suggestions based on previous_arg value
         return getSuggestionsFor(argument.Value, previousValue), nil
     }
-    
+
     return &mcp.Completion{Values: []string{}}, nil
 }
 ```
