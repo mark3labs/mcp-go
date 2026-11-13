@@ -12064,16 +12064,36 @@ address, or `[::1]`, with or without a port), the request is rejected with
 The protection is enabled by default and requires no configuration:
 
 * It is detected at runtime from the connection's local address
-  (`http.LocalAddrContextKey`), so it applies whether the server listens on
-  `localhost` or `0.0.0.0`.
-* Requests arriving via non-loopback addresses (external traffic) are
-  never affected.
+  (`http.LocalAddrContextKey`), so it covers loopback connections whether
+  the server listens on `localhost` or `0.0.0.0`.
+* By default, requests arriving via non-loopback addresses are never
+  affected. A server bound to a non-loopback interface (`:8080`,
+  `0.0.0.0`, a LAN IP) is therefore **not** protected for requests arriving
+  on that interface: DNS rebinding can also target a LAN or otherwise
+  routable address that the victim's browser can reach.
+
+**Non-loopback binds:** configure a `Host` header allowlist with
+`server.WithAllowedHosts` (`server.WithSSEAllowedHosts` for SSE). When set,
+every request whose `Host` header is neither a localhost value nor in the
+allowlist is rejected with `403 Forbidden`, regardless of the bind address:
+
+```go
+httpServer := server.NewStreamableHTTPServer(mcpServer,
+    server.WithAllowedHosts("mcp.example.com", "192.168.1.10"),
+)
+```
+
+Matching is case-insensitive. An entry without a port matches that host on
+any port; an entry with a port (`"mcp.example.com:8080"`) matches only that
+port, where a `Host` header without a port also matches entries for port
+`80` or `443`. Without an allowlist, behavior is unchanged.
 
 **Reverse proxies:** if a proxy (nginx, Envoy, ...) on the same host
 forwards requests to the MCP server via localhost while preserving the
-original `Host` header, those requests would be rejected. Prefer
-configuring the proxy to rewrite the `Host` header to localhost;
-alternatively, opt out explicitly:
+original `Host` header, those requests would be rejected. Prefer listing
+the public host name with `server.WithAllowedHosts`, or configuring the
+proxy to rewrite the `Host` header to localhost; alternatively, opt out
+explicitly, which disables all `Host` validation including the allowlist:
 
 ```go
 httpServer := server.NewStreamableHTTPServer(mcpServer,
@@ -12087,8 +12107,8 @@ Use `server.WithSSEDisableLocalhostProtection(true)` for the
 
 The protection applies to `ServeHTTP` (and the SSE handlers) only. The
 framework-agnostic [`Handle`](#embedding-in-non-nethttp-frameworks) entry
-point has no access to the connection's local address, so adapters must
-enforce the check themselves — see [Behavior Notes](#behavior-notes).
+point does not apply it, including any configured allowlist, so adapters
+must enforce the check themselves — see [Behavior Notes](#behavior-notes).
 
 #### Cross-Origin Resource Sharing (CORS)
 
@@ -12482,10 +12502,12 @@ func mcpHandler(ctx *fasthttp.RequestCtx) {
 * **`WithStreamableHTTPCORS` is not applied** when entering through
   `Handle`. Use the framework's native CORS middleware.
 * **DNS rebinding protection is not applied** when entering through
-  `Handle`, because it has no access to the connection's local address.
-  Adapters for localhost-reachable servers should reject requests that
-  arrive on a loopback connection with a non-loopback `Host` header,
-  answering `403 Forbidden`. See
+  `Handle`, because it has no access to the connection's local address;
+  `WithAllowedHosts` is not applied either. Adapters for
+  localhost-reachable servers should reject requests that arrive on a
+  loopback connection with a non-loopback `Host` header, and adapters for
+  servers bound to a non-loopback interface should reject `Host` headers
+  outside their allowlist, answering `403 Forbidden`. See
   [DNS Rebinding Protection](#dns-rebinding-protection) above.
 * **`WithProtectedResourceMetadata` is not applied** when entering through
   `Handle`. Mount the metadata route separately using
@@ -13739,11 +13761,16 @@ The SSE server also ships with automatic
 requests arriving over a loopback connection (`127.0.0.1`, `[::1]`) whose
 `Host` header is not a localhost value are rejected with `403 Forbidden`.
 This is enabled by default and covers `ServeHTTP` as well as the
-`SSEHandler()`/`MessageHandler()` sub-handlers. Use
-`server.WithSSEDisableLocalhostProtection(true)` to opt out, for example
-behind a same-host reverse proxy that preserves the original `Host` header
-(prefer configuring the proxy to rewrite the `Host` header to localhost
-instead).
+`SSEHandler()`/`MessageHandler()` sub-handlers. By default it does not
+cover requests arriving via non-loopback addresses; to protect a server
+bound to a non-loopback interface (`:8080`, `0.0.0.0`, a LAN IP), list the
+host names clients use with `server.WithSSEAllowedHosts("mcp.example.com")`,
+which rejects any other non-localhost `Host` header regardless of the bind
+address. Use `server.WithSSEDisableLocalhostProtection(true)` to opt out
+of all `Host` validation, including the allowlist, for example behind a
+same-host reverse proxy that preserves the original `Host` header (prefer
+listing the public host name with `server.WithSSEAllowedHosts`, or
+configuring the proxy to rewrite the `Host` header to localhost, instead).
 
 **Resulting endpoints:**
 

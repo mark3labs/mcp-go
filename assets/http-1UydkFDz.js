@@ -1,4 +1,4 @@
-import{u as r,j as s}from"./index-DKv4_MOv.js";const a={title:"StreamableHTTP Transport",description:"undefined"};function l(i){const e={a:"a",aside:"aside",code:"code",div:"div",h1:"h1",h2:"h2",h3:"h3",h4:"h4",header:"header",li:"li",ol:"ol",p:"p",pre:"pre",span:"span",strong:"strong",table:"table",tbody:"tbody",td:"td",th:"th",thead:"thead",tr:"tr",ul:"ul",...r(),...i.components};return s.jsxs(s.Fragment,{children:[s.jsx(e.header,{children:s.jsxs(e.h1,{id:"streamablehttp-transport",children:["StreamableHTTP Transport",s.jsx(e.a,{"aria-hidden":"true",tabIndex:"-1",href:"#streamablehttp-transport",children:s.jsx(e.div,{"data-autolink-icon":!0})})]})}),`
+import{u as r,j as s}from"./index-Czk_Tkkw.js";const a={title:"StreamableHTTP Transport",description:"undefined"};function l(i){const e={a:"a",aside:"aside",code:"code",div:"div",h1:"h1",h2:"h2",h3:"h3",h4:"h4",header:"header",li:"li",ol:"ol",p:"p",pre:"pre",span:"span",strong:"strong",table:"table",tbody:"tbody",td:"td",th:"th",thead:"thead",tr:"tr",ul:"ul",...r(),...i.components};return s.jsxs(s.Fragment,{children:[s.jsx(e.header,{children:s.jsxs(e.h1,{id:"streamablehttp-transport",children:["StreamableHTTP Transport",s.jsx(e.a,{"aria-hidden":"true",tabIndex:"-1",href:"#streamablehttp-transport",children:s.jsx(e.div,{"data-autolink-icon":!0})})]})}),`
 `,s.jsx(e.p,{children:"StreamableHTTP transport provides traditional request/response communication for MCP servers, perfect for REST-like interactions, stateless clients, and integration with existing web infrastructure."}),`
 `,s.jsxs(e.h2,{id:"use-cases",children:["Use Cases",s.jsx(e.a,{"aria-hidden":"true",tabIndex:"-1",href:"#use-cases",children:s.jsx(e.div,{"data-autolink-icon":!0})})]}),`
 `,s.jsx(e.p,{children:"StreamableHTTP transport excels in scenarios requiring:"}),`
@@ -695,16 +695,31 @@ address, or `,s.jsx(e.code,{children:"[::1]"}),`, with or without a port), the r
 `,s.jsx(e.p,{children:"The protection is enabled by default and requires no configuration:"}),`
 `,s.jsxs(e.ul,{children:[`
 `,s.jsxs(e.li,{children:[`It is detected at runtime from the connection's local address
-(`,s.jsx(e.code,{children:"http.LocalAddrContextKey"}),`), so it applies whether the server listens on
-`,s.jsx(e.code,{children:"localhost"})," or ",s.jsx(e.code,{children:"0.0.0.0"}),"."]}),`
-`,s.jsx(e.li,{children:`Requests arriving via non-loopback addresses (external traffic) are
-never affected.`}),`
+(`,s.jsx(e.code,{children:"http.LocalAddrContextKey"}),`), so it covers loopback connections whether
+the server listens on `,s.jsx(e.code,{children:"localhost"})," or ",s.jsx(e.code,{children:"0.0.0.0"}),"."]}),`
+`,s.jsxs(e.li,{children:[`By default, requests arriving via non-loopback addresses are never
+affected. A server bound to a non-loopback interface (`,s.jsx(e.code,{children:":8080"}),`,
+`,s.jsx(e.code,{children:"0.0.0.0"}),", a LAN IP) is therefore ",s.jsx(e.strong,{children:"not"}),` protected for requests arriving
+on that interface: DNS rebinding can also target a LAN or otherwise
+routable address that the victim's browser can reach.`]}),`
 `]}),`
+`,s.jsxs(e.p,{children:[s.jsx(e.strong,{children:"Non-loopback binds:"})," configure a ",s.jsx(e.code,{children:"Host"}),` header allowlist with
+`,s.jsx(e.code,{children:"server.WithAllowedHosts"})," (",s.jsx(e.code,{children:"server.WithSSEAllowedHosts"}),` for SSE). When set,
+every request whose `,s.jsx(e.code,{children:"Host"}),` header is neither a localhost value nor in the
+allowlist is rejected with `,s.jsx(e.code,{children:"403 Forbidden"}),", regardless of the bind address:"]}),`
+`,s.jsx(s.Fragment,{children:s.jsx(e.pre,{className:"shiki shiki-themes github-light github-dark-dimmed",style:{backgroundColor:"#fff","--shiki-dark-bg":"#22272e",color:"#24292e","--shiki-dark":"#adbac7"},tabIndex:"0",children:s.jsxs(e.code,{children:[s.jsxs(e.span,{className:"line",children:[s.jsx(e.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"httpServer "}),s.jsx(e.span,{style:{color:"#D73A49","--shiki-dark":"#F47067"},children:":="}),s.jsx(e.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:" server."}),s.jsx(e.span,{style:{color:"#6F42C1","--shiki-dark":"#DCBDFB"},children:"NewStreamableHTTPServer"}),s.jsx(e.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"(mcpServer,"})]}),`
+`,s.jsxs(e.span,{className:"line",children:[s.jsx(e.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"    server."}),s.jsx(e.span,{style:{color:"#6F42C1","--shiki-dark":"#DCBDFB"},children:"WithAllowedHosts"}),s.jsx(e.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"("}),s.jsx(e.span,{style:{color:"#032F62","--shiki-dark":"#96D0FF"},children:'"mcp.example.com"'}),s.jsx(e.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:", "}),s.jsx(e.span,{style:{color:"#032F62","--shiki-dark":"#96D0FF"},children:'"192.168.1.10"'}),s.jsx(e.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"),"})]}),`
+`,s.jsx(e.span,{className:"line",children:s.jsx(e.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:")"})})]})})}),`
+`,s.jsxs(e.p,{children:[`Matching is case-insensitive. An entry without a port matches that host on
+any port; an entry with a port (`,s.jsx(e.code,{children:'"mcp.example.com:8080"'}),`) matches only that
+port, where a `,s.jsx(e.code,{children:"Host"}),` header without a port also matches entries for port
+`,s.jsx(e.code,{children:"80"})," or ",s.jsx(e.code,{children:"443"}),". Without an allowlist, behavior is unchanged."]}),`
 `,s.jsxs(e.p,{children:[s.jsx(e.strong,{children:"Reverse proxies:"}),` if a proxy (nginx, Envoy, ...) on the same host
 forwards requests to the MCP server via localhost while preserving the
-original `,s.jsx(e.code,{children:"Host"}),` header, those requests would be rejected. Prefer
-configuring the proxy to rewrite the `,s.jsx(e.code,{children:"Host"}),` header to localhost;
-alternatively, opt out explicitly:`]}),`
+original `,s.jsx(e.code,{children:"Host"}),` header, those requests would be rejected. Prefer listing
+the public host name with `,s.jsx(e.code,{children:"server.WithAllowedHosts"}),`, or configuring the
+proxy to rewrite the `,s.jsx(e.code,{children:"Host"}),` header to localhost; alternatively, opt out
+explicitly, which disables all `,s.jsx(e.code,{children:"Host"})," validation including the allowlist:"]}),`
 `,s.jsx(s.Fragment,{children:s.jsx(e.pre,{className:"shiki shiki-themes github-light github-dark-dimmed",style:{backgroundColor:"#fff","--shiki-dark-bg":"#22272e",color:"#24292e","--shiki-dark":"#adbac7"},tabIndex:"0",children:s.jsxs(e.code,{children:[s.jsxs(e.span,{className:"line",children:[s.jsx(e.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"httpServer "}),s.jsx(e.span,{style:{color:"#D73A49","--shiki-dark":"#F47067"},children:":="}),s.jsx(e.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:" server."}),s.jsx(e.span,{style:{color:"#6F42C1","--shiki-dark":"#DCBDFB"},children:"NewStreamableHTTPServer"}),s.jsx(e.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"(mcpServer,"})]}),`
 `,s.jsx(e.span,{className:"line",children:s.jsx(e.span,{style:{color:"#6A737D","--shiki-dark":"#768390"},children:"    // Only disable this if you understand the security implications."})}),`
 `,s.jsxs(e.span,{className:"line",children:[s.jsx(e.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"    server."}),s.jsx(e.span,{style:{color:"#6F42C1","--shiki-dark":"#DCBDFB"},children:"WithDisableLocalhostProtection"}),s.jsx(e.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"("}),s.jsx(e.span,{style:{color:"#005CC5","--shiki-dark":"#6CB6FF"},children:"true"}),s.jsx(e.span,{style:{color:"#24292E","--shiki-dark":"#ADBAC7"},children:"),"})]}),`
@@ -713,8 +728,8 @@ alternatively, opt out explicitly:`]}),`
 `,s.jsx(e.a,{href:"/transports/sse#sse-server-options",children:"SSE transport"}),"."]}),`
 `,s.jsxs(e.p,{children:["The protection applies to ",s.jsx(e.code,{children:"ServeHTTP"}),` (and the SSE handlers) only. The
 framework-agnostic `,s.jsx(e.a,{href:"#embedding-in-non-nethttp-frameworks",children:s.jsx(e.code,{children:"Handle"})}),` entry
-point has no access to the connection's local address, so adapters must
-enforce the check themselves — see `,s.jsx(e.a,{href:"#behavior-notes",children:"Behavior Notes"}),"."]}),`
+point does not apply it, including any configured allowlist, so adapters
+must enforce the check themselves — see `,s.jsx(e.a,{href:"#behavior-notes",children:"Behavior Notes"}),"."]}),`
 `,s.jsxs(e.h3,{id:"cross-origin-resource-sharing-cors",children:["Cross-Origin Resource Sharing (CORS)",s.jsx(e.a,{"aria-hidden":"true",tabIndex:"-1",href:"#cross-origin-resource-sharing-cors",children:s.jsx(e.div,{"data-autolink-icon":!0})})]}),`
 `,s.jsxs(e.p,{children:["The MCP endpoints themselves are ",s.jsx(e.strong,{children:"not"}),` CORS-enabled by default — every
 deployment has different origin requirements, and emitting permissive
@@ -1034,10 +1049,12 @@ be delivered without SSE). GET requests are rejected with `,s.jsx(e.code,{childr
 `,s.jsxs(e.li,{children:[s.jsxs(e.strong,{children:[s.jsx(e.code,{children:"WithStreamableHTTPCORS"})," is not applied"]}),` when entering through
 `,s.jsx(e.code,{children:"Handle"}),". Use the framework's native CORS middleware."]}),`
 `,s.jsxs(e.li,{children:[s.jsx(e.strong,{children:"DNS rebinding protection is not applied"}),` when entering through
-`,s.jsx(e.code,{children:"Handle"}),`, because it has no access to the connection's local address.
-Adapters for localhost-reachable servers should reject requests that
-arrive on a loopback connection with a non-loopback `,s.jsx(e.code,{children:"Host"}),` header,
-answering `,s.jsx(e.code,{children:"403 Forbidden"}),`. See
+`,s.jsx(e.code,{children:"Handle"}),`, because it has no access to the connection's local address;
+`,s.jsx(e.code,{children:"WithAllowedHosts"}),` is not applied either. Adapters for
+localhost-reachable servers should reject requests that arrive on a
+loopback connection with a non-loopback `,s.jsx(e.code,{children:"Host"}),` header, and adapters for
+servers bound to a non-loopback interface should reject `,s.jsx(e.code,{children:"Host"}),` headers
+outside their allowlist, answering `,s.jsx(e.code,{children:"403 Forbidden"}),`. See
 `,s.jsx(e.a,{href:"#dns-rebinding-protection",children:"DNS Rebinding Protection"})," above."]}),`
 `,s.jsxs(e.li,{children:[s.jsxs(e.strong,{children:[s.jsx(e.code,{children:"WithProtectedResourceMetadata"})," is not applied"]}),` when entering through
 `,s.jsx(e.code,{children:"Handle"}),`. Mount the metadata route separately using
