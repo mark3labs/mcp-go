@@ -149,17 +149,19 @@ func (s *MCPServer) HandleMessage(
 		}
 	}
 
-	// Wrap context with cancel for in-flight request cancellation (MCP spec: notifications/cancelled)
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	// Store cancel func so notifications/cancelled can cancel this request.
-	// Use session-scoped keys to prevent cross-session request ID collisions.
-	if baseMessage.ID != nil {
-		key := inflightKey(ctx, baseMessage.ID)
-		s.inflightCancels.Store(key, cancel)
-		defer s.inflightCancels.Delete(key)
+	// Stdio reserves the ID before queuing; other transports reserve it here.
+	request, _ := ctx.Value(inflightRequestKey{}).(*inflightRequest)
+	if request == nil || request.server != s || request.key != inflightKey(ctx, baseMessage.ID) {
+		var cancel context.CancelFunc
+		var accepted bool
+		ctx, cancel, accepted = s.trackInflight(ctx, baseMessage.ID)
+		if !accepted {
+			return createErrorResponse(baseMessage.ID, mcp.INVALID_REQUEST, "Request id is already in flight")
+		}
+		defer cancel()
 	}
+	// A nested HandleMessage call must acquire its own reservation.
+	ctx = context.WithValue(ctx, inflightRequestKey{}, nil)
 
 	// Extract trace context from _meta before opening the server span so the span
 	// inherits the correct parent (SEP-414, transport-agnostic propagation).

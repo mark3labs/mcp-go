@@ -256,7 +256,7 @@ type MCPServer struct {
 	expiredTasks                 map[string]time.Time // Tracks recently expired task IDs with expiration timestamp
 	maxConcurrentTasks           *int                 // Optional limit on concurrent running tasks
 	activeTasks                  int                  // Current count of running (non-terminal) tasks
-	inflightCancels              sync.Map             // Maps request ID -> context.CancelFunc for in-flight requests
+	inflightCancels              sync.Map             // Maps session-scoped request IDs to *inflightRequest
 	inputValidator               *inputSchemaValidator
 	outputValidator              *outputSchemaValidator
 	strictInputSchemaDefault     bool
@@ -2647,10 +2647,8 @@ func (s *MCPServer) handleNotification(
 	if notification.Method == string(mcp.MethodNotificationCancelled) {
 		if reqID, ok := notification.Params.AdditionalFields["requestId"]; ok {
 			key := inflightKey(ctx, reqID)
-			if cancel, loaded := s.inflightCancels.LoadAndDelete(key); loaded {
-				if cancelFunc, ok := cancel.(context.CancelFunc); ok {
-					cancelFunc()
-				}
+			if request, loaded := s.inflightCancels.Load(key); loaded {
+				request.(*inflightRequest).cancel()
 			}
 		}
 		return nil
@@ -2664,6 +2662,32 @@ func (s *MCPServer) handleNotification(
 		handler(ctx, notification)
 	}
 	return nil
+}
+
+type inflightRequestKey struct{}
+
+type inflightRequest struct {
+	server *MCPServer
+	key    string
+	cancel context.CancelFunc
+}
+
+// trackInflight reserves the ID until the request finishes, including time spent
+// waiting for a stdio worker. Cancellation does not release the reservation.
+func (s *MCPServer) trackInflight(ctx context.Context, id any) (context.Context, context.CancelFunc, bool) {
+	ctx, cancel := context.WithCancel(ctx)
+	if id == nil {
+		return ctx, cancel, true
+	}
+	request := &inflightRequest{server: s, key: inflightKey(ctx, id), cancel: cancel}
+	if _, loaded := s.inflightCancels.LoadOrStore(request.key, request); loaded {
+		cancel()
+		return ctx, nil, false
+	}
+	return context.WithValue(ctx, inflightRequestKey{}, request), func() {
+		s.inflightCancels.CompareAndDelete(request.key, request)
+		cancel()
+	}, true
 }
 
 // inflightKey returns a session-scoped key for the inflight cancellation map.

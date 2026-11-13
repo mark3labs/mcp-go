@@ -615,7 +615,10 @@ func (s *StdioServer) processMessage(
 		}
 	}
 	if parsed && baseMessage.Method == string(mcp.MethodToolsCall) {
-		reqCtx, cancel := s.trackInflight(ctx, baseMessage.ID.Value())
+		reqCtx, cancel, accepted := s.server.trackInflight(ctx, baseMessage.ID.Value())
+		if !accepted {
+			return s.writeResponse(createErrorResponse(baseMessage.ID.Value(), mcp.INVALID_REQUEST, "Request id is already in flight"), writer)
+		}
 		// Queue tool calls for processing by workers
 		select {
 		case s.toolCallQueue <- &toolCallWork{
@@ -644,7 +647,10 @@ func (s *StdioServer) processMessage(
 	// Serve requests off the read loop: a handler that blocks, such as
 	// subscriptions/listen, must not stall it. writeMu serialises the writes.
 	if parsed && !baseMessage.ID.IsNil() {
-		reqCtx, cancel := s.trackInflight(ctx, baseMessage.ID.Value())
+		reqCtx, cancel, accepted := s.server.trackInflight(ctx, baseMessage.ID.Value())
+		if !accepted {
+			return s.writeResponse(createErrorResponse(baseMessage.ID.Value(), mcp.INVALID_REQUEST, "Request id is already in flight"), writer)
+		}
 		s.requestWg.Go(func() {
 			defer cancel()
 			s.handleRequest(reqCtx, baseMessage.ID.Value(), rawMessage, writer)
@@ -663,19 +669,6 @@ func (s *StdioServer) processMessage(
 	}
 
 	return nil
-}
-
-// trackInflight registers the request for notifications/cancelled before it
-// leaves the read loop, so a cancellation read while it waits for a worker or
-// goroutine still reaches it.
-func (s *StdioServer) trackInflight(ctx context.Context, id any) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(ctx)
-	key := inflightKey(ctx, id)
-	s.server.inflightCancels.Store(key, cancel)
-	return ctx, func() {
-		s.server.inflightCancels.Delete(key)
-		cancel()
-	}
 }
 
 // handleMessage runs HandleMessage, recovering a panicking handler so that
