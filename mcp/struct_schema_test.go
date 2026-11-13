@@ -146,6 +146,27 @@ func TestSchemaFor_NestedStructTags(t *testing.T) {
 	assertModeSchema(t, byName["additionalProperties"])
 }
 
+func TestSchemaFor_UnexportedEmbeddedStruct(t *testing.T) {
+	type embedded struct {
+		Value string `json:"value"`
+	}
+	type request struct {
+		embedded
+		Mode string `json:"mode" jsonschema:"enum=fast,enum=safe"`
+	}
+
+	raw, err := SchemaForRaw[request]()
+	require.NoError(t, err)
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(raw, &schema))
+	properties := schema["properties"].(map[string]any)
+	assert.Contains(t, properties, "value")
+
+	encoded, err := json.Marshal(request{embedded: embedded{Value: "text"}, Mode: "fast"})
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"value":"text"`)
+}
+
 func TestSchemaFor_StructuredInputOutputExampleTags(t *testing.T) {
 	type WeatherRequest struct {
 		Location string `json:"location,required" jsonschema_description:"City or location"` //nolint:staticcheck // required is interpreted by schemaFor, not encoding/json

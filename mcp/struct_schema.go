@@ -330,7 +330,16 @@ type jsonFieldInfo struct {
 
 func fieldJSONInfo(field reflect.StructField) jsonFieldInfo {
 	if !field.IsExported() {
-		return jsonFieldInfo{omit: true}
+		// encoding/json promotes exported fields from an anonymous unexported
+		// struct. Keep that case visible to the schema fallback, which walks
+		// the embedded struct's fields separately.
+		fieldType := field.Type
+		if fieldType.Kind() == reflect.Pointer {
+			fieldType = fieldType.Elem()
+		}
+		if !field.Anonymous || fieldType.Kind() != reflect.Struct {
+			return jsonFieldInfo{omit: true}
+		}
 	}
 
 	info := jsonFieldInfo{name: field.Name}
