@@ -604,9 +604,15 @@ func (s *StdioServer) processMessage(
 		// Register before handing the request off, so even queued calls
 		// can receive cancellation notifications.
 		id := baseMessage.ID.Value()
-		reqCtx, finish := s.server.startRequest(ctx, id)
+		reqCtx, finish := s.server.startRequest(ctx, inflightKey(ctx, id))
 		if finish == nil {
-			return s.writeResponse(duplicateRequestIDError(), writer)
+			// Keep reading cancellation notifications and EOF if stdout blocks.
+			s.requestWg.Go(func() {
+				if err := s.writeResponse(duplicateRequestIDError(), writer); err != nil {
+					s.errLogger.Printf("Error writing duplicate request response: %v", err)
+				}
+			})
+			return nil
 		}
 		if baseMessage.Method == string(mcp.MethodToolsCall) {
 			select {

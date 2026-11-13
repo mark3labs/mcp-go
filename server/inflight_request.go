@@ -12,18 +12,16 @@ type inflightRequestKey struct {
 }
 
 func inflightKey(ctx context.Context, requestID any) inflightRequestKey {
-	key := inflightRequestKey{requestID: mcp.NewRequestId(requestID).String()}
-	if session := ClientSessionFromContext(ctx); session != nil {
-		key.sessionID = session.SessionID()
+	return inflightRequestKey{
+		sessionID: getSessionID(ctx),
+		requestID: mcp.NewRequestId(requestID).String(),
 	}
-	return key
 }
 
 // startRequest reserves the ID for the session. A nil finish means the ID is
 // already in use. The caller that starts a request must call finish when it exits.
-func (s *MCPServer) startRequest(ctx context.Context, id any) (context.Context, func()) {
+func (s *MCPServer) startRequest(ctx context.Context, key inflightRequestKey) (context.Context, func()) {
 	ctx, cancel := context.WithCancel(ctx)
-	key := inflightKey(ctx, id)
 	if key.sessionID != "" {
 		if _, loaded := s.inflightCancels.LoadOrStore(key, cancel); loaded {
 			cancel()

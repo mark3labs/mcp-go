@@ -109,6 +109,21 @@ func (s *MCPServer) handleMessage(
 		return nil
 	}
 
+	var key inflightRequestKey
+	if !registered {
+		key = inflightKey(ctx, baseMessage.ID)
+		if key.sessionID != "" {
+			// Reject duplicates before hooks can reply with the same ID or
+			// the request can change session state.
+			var finish func()
+			ctx, finish = s.startRequest(ctx, key)
+			if finish == nil {
+				return duplicateRequestIDError()
+			}
+			defer finish()
+		}
+	}
+
 	handleErr := s.hooks.onRequestInitialization(ctx, baseMessage.ID, message)
 	if handleErr != nil {
 		return createErrorResponse(
@@ -158,12 +173,10 @@ func (s *MCPServer) handleMessage(
 		}
 	}
 
-	if !registered {
+	if !registered && key.sessionID == "" {
+		// Keep the existing cancellation timing for requests without a session ID.
 		var finish func()
-		ctx, finish = s.startRequest(ctx, baseMessage.ID)
-		if finish == nil {
-			return duplicateRequestIDError()
-		}
+		ctx, finish = s.startRequest(ctx, key)
 		defer finish()
 	}
 

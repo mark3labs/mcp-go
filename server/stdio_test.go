@@ -715,22 +715,26 @@ func TestStdioCancelsQueuedToolCall(t *testing.T) {
 		`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"ping"}`,
 	)
-	select {
-	case msg := <-responses:
-		require.Contains(t, msg, "id")
-		require.Nil(t, msg["id"])
-		rpcErr, ok := msg["error"].(map[string]any)
-		require.True(t, ok, "duplicate should return an error, got %v", msg)
-		require.EqualValues(t, mcp.INVALID_REQUEST, rpcErr["code"])
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for the duplicate request error")
+	var sawDuplicate, sawPing bool
+	for range 2 {
+		select {
+		case msg := <-responses:
+			require.Contains(t, msg, "id")
+			if msg["id"] == nil {
+				rpcErr, ok := msg["error"].(map[string]any)
+				require.True(t, ok, "duplicate should return an error, got %v", msg)
+				require.EqualValues(t, mcp.INVALID_REQUEST, rpcErr["code"])
+				sawDuplicate = true
+			} else {
+				require.Equal(t, float64(3), msg["id"])
+				sawPing = true
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for the duplicate error and ping response")
+		}
 	}
-	select {
-	case msg := <-responses:
-		require.Equal(t, float64(3), msg["id"])
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for the ping response")
-	}
+	require.True(t, sawDuplicate, "duplicate error must be sent")
+	require.True(t, sawPing, "ping response must be sent")
 
 	close(release)
 
@@ -740,6 +744,105 @@ func TestStdioCancelsQueuedToolCall(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("queued tool call never ran")
 	}
+}
+
+func TestStdioDuplicateErrorDoesNotBlockInput(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		eof  bool
+	}{
+		{name: "cancellation notification"},
+		{name: "EOF", eof: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stdinReader, stdinWriter := io.Pipe()
+			defer stdinReader.Close()
+			stdout := &blockingStdioWriter{started: make(chan struct{}), release: make(chan struct{})}
+			started := make(chan context.Context, 2)
+			srv := NewMCPServer("test", "1")
+			srv.AddTool(mcp.NewTool("slow"), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				started <- ctx
+				<-ctx.Done()
+				return nil, ctx.Err()
+			})
+			stdio := NewStdioServer(srv)
+			stdio.SetErrorLogger(log.New(io.Discard, "", 0))
+			done := make(chan error, 1)
+			go func() { done <- stdio.Listen(t.Context(), stdinReader, stdout) }()
+			defer func() {
+				close(stdout.release)
+				_ = stdinWriter.Close()
+				select {
+				case err := <-done:
+					require.NoError(t, err)
+				case <-time.After(5 * time.Second):
+					t.Error("stdio did not stop after stdin and stdout were released")
+				}
+			}()
+
+			send := func(lines ...string) {
+				t.Helper()
+				written := make(chan error, 1)
+				go func() {
+					_, err := io.WriteString(stdinWriter, strings.Join(lines, "\n")+"\n")
+					written <- err
+				}()
+				select {
+				case err := <-written:
+					require.NoError(t, err)
+				case <-time.After(5 * time.Second):
+					t.Fatal("stdio did not read input")
+				}
+			}
+			startTool := func(id int) context.Context {
+				t.Helper()
+				send(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"slow"}}`, id))
+				select {
+				case ctx := <-started:
+					return ctx
+				case <-time.After(5 * time.Second):
+					t.Fatal("tool did not start")
+					return nil
+				}
+			}
+			startTool(1)
+			other := startTool(2)
+			send(`{"jsonrpc":"2.0","id":99,"method":"ping"}`)
+			select {
+			case <-stdout.started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("ping response did not reach stdout")
+			}
+
+			const duplicate = `{"jsonrpc":"2.0","id":1,"method":"ping"}`
+			if test.eof {
+				send(duplicate)
+				require.NoError(t, stdinWriter.Close())
+			} else {
+				send(duplicate, `{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}`)
+			}
+			select {
+			case <-other.Done():
+				require.ErrorIs(t, other.Err(), context.Canceled)
+			case <-time.After(5 * time.Second):
+				t.Fatal("duplicate error blocked cancellation of another request while stdout was blocked")
+			}
+		})
+	}
+}
+
+type blockingStdioWriter struct {
+	once    sync.Once
+	started chan struct{}
+	release chan struct{}
+}
+
+func (w *blockingStdioWriter) Write(p []byte) (int, error) {
+	w.once.Do(func() {
+		close(w.started)
+		<-w.release
+	})
+	return len(p), nil
 }
 
 func TestStdioSessionSamplingResponseArrayContent(t *testing.T) {
