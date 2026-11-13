@@ -652,9 +652,13 @@ func TestStdioCancelsQueuedToolCall(t *testing.T) {
 	queuedErr := make(chan error, 1)
 
 	mcpServer := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
-	mcpServer.AddTool(mcp.NewTool("block"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	mcpServer.AddTool(mcp.NewTool("block"), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		close(blocking)
-		<-release
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 		return mcp.NewToolResultText("done"), nil
 	})
 	mcpServer.AddTool(mcp.NewTool("queued"), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -702,13 +706,25 @@ func TestStdioCancelsQueuedToolCall(t *testing.T) {
 		t.Fatal("blocking tool never started")
 	}
 
-	// Queue a call behind it and cancel it. The read loop handles these lines
-	// in order, so the ping response means the cancellation was processed.
+	// Queue a call behind it, reject a duplicate ID, and cancel the original.
+	// The read loop handles these lines in order, so the final ping response
+	// means the cancellation was processed.
 	send(
 		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"queued"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"ping"}`,
 		`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"ping"}`,
 	)
+	select {
+	case msg := <-responses:
+		require.Contains(t, msg, "id")
+		require.Nil(t, msg["id"])
+		rpcErr, ok := msg["error"].(map[string]any)
+		require.True(t, ok, "duplicate should return an error, got %v", msg)
+		require.EqualValues(t, mcp.INVALID_REQUEST, rpcErr["code"])
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the duplicate request error")
+	}
 	select {
 	case msg := <-responses:
 		require.Equal(t, float64(3), msg["id"])
