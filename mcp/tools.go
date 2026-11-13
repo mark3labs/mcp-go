@@ -252,7 +252,9 @@ func (r CallToolRequest) GetInt(key string, defaultValue int) int {
 			if i, ok := r.rawIntArgument(key); ok {
 				return i
 			}
-			return int(v)
+			if i, ok := checkedSignedInteger(v, strconv.IntSize); ok {
+				return int(i)
+			}
 		case string:
 			if i, err := strconv.Atoi(v); err == nil {
 				return i
@@ -273,7 +275,10 @@ func (r CallToolRequest) RequireInt(key string) (int, error) {
 			if i, ok := r.rawIntArgument(key); ok {
 				return i, nil
 			}
-			return int(v), nil
+			if i, ok := checkedSignedInteger(v, strconv.IntSize); ok {
+				return int(i), nil
+			}
+			return 0, fmt.Errorf("argument %q cannot be converted to int", key)
 		case string:
 			if i, err := strconv.Atoi(v); err == nil {
 				return i, nil
@@ -434,7 +439,9 @@ func (r CallToolRequest) GetIntSlice(key string, defaultValue []int) []int {
 							continue
 						}
 					}
-					result = append(result, int(num))
+					if n, ok := checkedSignedInteger(num, strconv.IntSize); ok {
+						result = append(result, int(n))
+					}
 				case string:
 					if i, err := strconv.Atoi(num); err == nil {
 						result = append(result, i)
@@ -469,7 +476,11 @@ func (r CallToolRequest) RequireIntSlice(key string) ([]int, error) {
 							continue
 						}
 					}
-					result = append(result, int(num))
+					n, ok := checkedSignedInteger(num, strconv.IntSize)
+					if !ok {
+						return nil, fmt.Errorf("item %d in argument %q cannot be converted to int", i, key)
+					}
+					result = append(result, int(n))
 				case string:
 					if n, err := strconv.Atoi(num); err == nil {
 						result = append(result, n)
