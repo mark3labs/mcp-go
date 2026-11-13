@@ -38,6 +38,19 @@ import (
     "github.com/mark3labs/mcp-go/server"
 )
 
+func startAndInitializeExampleClient(ctx context.Context, c *client.Client) error {
+    if err := c.Start(ctx); err != nil {
+        return err
+    }
+    _, err := c.Initialize(ctx, mcp.InitializeRequest{
+        Params: mcp.InitializeParams{
+            ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+            ClientInfo:      mcp.Implementation{Name: "example-client", Version: "1.0.0"},
+        },
+    })
+    return err
+}
+
 func createStdioClient() {
     // Create client that spawns a subprocess
     c, err := client.NewStdioMCPClient(
@@ -51,7 +64,7 @@ func createStdioClient() {
     ctx := context.Background()
 
     // Initialize connection
-    if err := c.Initialize(ctx, initRequest); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         log.Fatal(err)
     }
 
@@ -93,7 +106,7 @@ func createCustomStdioClient() {
     ctx := context.Background()
 
     // Initialize connection
-    if err := c.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         log.Fatal(err)
     }
 
@@ -111,7 +124,7 @@ var (
     ErrBrokenPipe     = errors.New("broken pipe")
 )
 
-func handleStdioErrors(c *client.StdioClient) {
+func handleStdioErrors(c *client.Client, createClient func() (*client.Client, error)) (*client.Client, error) {
     ctx := context.Background()
 
     result, err := c.CallTool(ctx, mcp.CallToolRequest{
@@ -124,33 +137,34 @@ func handleStdioErrors(c *client.StdioClient) {
         switch {
         case errors.Is(err, ErrProcessExited):
             log.Println("Server process exited unexpectedly")
-            // Attempt to restart
-            if restartErr := c.Restart(); restartErr != nil {
-                log.Printf("Failed to restart: %v", restartErr)
-            }
 
         case errors.Is(err, ErrProcessTimeout):
             log.Println("Server process timed out")
-            // Kill and restart process
-            c.Kill()
-            if restartErr := c.Restart(); restartErr != nil {
-                log.Printf("Failed to restart: %v", restartErr)
-            }
 
         case errors.Is(err, ErrBrokenPipe):
             log.Println("Communication pipe broken")
-            // Process likely crashed, restart
-            if restartErr := c.Restart(); restartErr != nil {
-                log.Printf("Failed to restart: %v", restartErr)
-            }
 
         default:
-            log.Printf("Unexpected error: %v", err)
+            return c, fmt.Errorf("tool call failed: %w", err)
         }
-        return
+
+        // A closed client cannot be restarted. Return a fresh initialized client to the caller.
+        if closeErr := c.Close(); closeErr != nil {
+            log.Printf("Failed to close client after transport error: %v", closeErr)
+        }
+        replacement, createErr := createClient()
+        if createErr != nil {
+            return nil, fmt.Errorf("failed to create replacement client: %w", createErr)
+        }
+        if initErr := startAndInitializeExampleClient(ctx, replacement); initErr != nil {
+            replacement.Close()
+            return nil, fmt.Errorf("failed to initialize replacement client: %w", initErr)
+        }
+        return replacement, nil
     }
 
     log.Printf("Tool result: %+v", result)
+    return c, nil
 }
 ```
 
@@ -158,15 +172,21 @@ func handleStdioErrors(c *client.StdioClient) {
 
 ```go
 type ManagedStdioClient struct {
-    client      *client.StdioClient
-    options     client.StdioOptions
+    client      *client.Client
+    options     StdioConfig
     restartChan chan struct{}
     ctx         context.Context
     cancel      context.CancelFunc
     wg          sync.WaitGroup
 }
 
-func NewManagedStdioClient(options client.StdioOptions) (*ManagedStdioClient, error) {
+type StdioConfig struct {
+    Command string
+    Env     []string
+    Args    []string
+}
+
+func NewManagedStdioClient(options StdioConfig) (*ManagedStdioClient, error) {
     ctx, cancel := context.WithCancel(context.Background())
 
     msc := &ManagedStdioClient{
@@ -188,12 +208,12 @@ func NewManagedStdioClient(options client.StdioOptions) (*ManagedStdioClient, er
 }
 
 func (msc *ManagedStdioClient) start() error {
-    client, err := client.NewStdioClientWithOptions(msc.options)
+    client, err := client.NewStdioMCPClientWithOptions(msc.options.Command, msc.options.Env, msc.options.Args)
     if err != nil {
         return err
     }
 
-    if err := client.Initialize(msc.ctx); err != nil {
+    if err := startAndInitializeExampleClient(msc.ctx, client); err != nil {
         client.Close()
         return err
     }
@@ -323,13 +343,16 @@ func connectWithFallback(ctx context.Context, url string) (*client.Client, error
 ```go
 func createStreamableHTTPClient() {
     // Create StreamableHTTP client
-    c := client.NewStreamableHttpClient("http://localhost:8080/mcp")
+    c, err := client.NewStreamableHttpClient("http://localhost:8080/mcp")
+    if err != nil {
+        log.Fatal(err)
+    }
     defer c.Close()
 
     ctx := context.Background()
 
     // Initialize
-    if err := c.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         log.Fatal(err)
     }
 
@@ -351,7 +374,7 @@ func createCustomStreamableHTTPClient() {
     logger := myCustomLogger{}
 
     // Create StreamableHTTP client with options
-    c := client.NewStreamableHttpClient("https://api.example.com/mcp",
+    c, err := client.NewStreamableHttpClient("https://api.example.com/mcp",
         transport.WithLogger(logger),
         transport.WithHTTPTimeout(30*time.Second),
         transport.WithHTTPHeaders(map[string]string{
@@ -369,11 +392,14 @@ func createCustomStreamableHTTPClient() {
             },
         }),
     )
+    if err != nil {
+        log.Fatal(err)
+    }
     defer c.Close()
 
     ctx := context.Background()
 
-    if err := c.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         log.Fatal(err)
     }
 
@@ -448,31 +474,38 @@ func createAuthenticatedStreamableHTTPClient() (*client.Client, error) {
 ```go
 type StreamableHTTPClientPool struct {
     clients chan *client.Client
-    factory func() *client.Client
+    factory func() (*client.Client, error)
     maxSize int
 }
 
-func NewStreamableHTTPClientPool(baseURL string, maxSize int) *StreamableHTTPClientPool {
+func NewStreamableHTTPClientPool(baseURL string, maxSize int) (*StreamableHTTPClientPool, error) {
     pool := &StreamableHTTPClientPool{
         clients: make(chan *client.Client, maxSize),
         maxSize: maxSize,
-        factory: func() *client.Client {
+        factory: func() (*client.Client, error) {
             return client.NewStreamableHttpClient(baseURL)
         },
     }
 
     // Pre-populate pool
     for i := 0; i < maxSize; i++ {
-        pool.clients <- pool.factory()
+        c, err := pool.factory()
+        if err != nil {
+            for len(pool.clients) > 0 {
+                (<-pool.clients).Close()
+            }
+            return nil, err
+        }
+        pool.clients <- c
     }
 
-    return pool
+    return pool, nil
 }
 
-func (pool *StreamableHTTPClientPool) Get() *client.Client {
+func (pool *StreamableHTTPClientPool) Get() (*client.Client, error) {
     select {
     case c := <-pool.clients:
-        return c
+        return c, nil
     default:
         return pool.factory()
     }
@@ -488,7 +521,10 @@ func (pool *StreamableHTTPClientPool) Put(c *client.Client) {
 }
 
 func (pool *StreamableHTTPClientPool) CallTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    c := pool.Get()
+    c, err := pool.Get()
+    if err != nil {
+        return nil, err
+    }
     defer pool.Put(c)
 
     return c.CallTool(ctx, req)
@@ -502,10 +538,13 @@ You can also create a StreamableHTTP client with a preconfigured session, which 
 ```go
 func createStreamableHTTPClientWithSession() {
     // Create StreamableHTTP client with options
-    sessionID := // fetch existing session ID
-    c := client.NewStreamableHttpClient("https://api.example.com/mcp",
+    sessionID := "existing-session-id" // fetch from the application's session store
+    c, err := client.NewStreamableHttpClient("https://api.example.com/mcp",
         transport.WithSession(sessionID),
     )
+    if err != nil {
+        log.Fatal(err)
+    }
     defer c.Close()
 
     ctx := context.Background()
@@ -513,7 +552,10 @@ func createStreamableHTTPClientWithSession() {
     _, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     // If the session is terminated, you must reinitialize the client
     if errors.Is(err, transport.ErrSessionTerminated) {
-        c.Initialize(ctx) // Reinitialize if session is terminated
+        if err := startAndInitializeExampleClient(ctx, c); err != nil {
+            log.Printf("Failed to reinitialize client: %v", err)
+            return
+        }
         // The session ID should change after reinitialization
         sessionID = c.GetSessionId() // Update session ID
     }
@@ -560,7 +602,7 @@ func createSSEClient() {
     ctx := context.Background()
 
     // Initialize
-    if err := c.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         log.Fatal(err)
     }
 
@@ -613,7 +655,7 @@ func createCustomSSEClient() {
     ctx := context.Background()
 
     // Initialize
-    if err := c.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         log.Fatal(err)
     }
 
@@ -670,7 +712,7 @@ func (rsc *ResilientSSEClient) connect() error {
         return err
     }
 
-    if err := client.Initialize(rsc.ctx); err != nil {
+    if err := startAndInitializeExampleClient(rsc.ctx, client); err != nil {
         return err
     }
 
@@ -868,13 +910,16 @@ func createInProcessClient() {
     )
 
     // Create in-process client
-    c := client.NewInProcessClient(s)
+    c, err := client.NewInProcessClient(s)
+    if err != nil {
+        log.Fatal(err)
+    }
     defer c.Close()
 
     ctx := context.Background()
 
     // Initialize (no network overhead)
-    if err := c.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         log.Fatal(err)
     }
 
@@ -900,18 +945,23 @@ func createInProcessClient() {
 ```go
 type TestClient struct {
     server *server.MCPServer
-    client *client.InProcessClient
+    client *client.Client
 }
 
-func NewTestClient() *TestClient {
+func NewTestClient() (*TestClient, error) {
     s := server.NewMCPServer("Test Server", "1.0.0",
         server.WithAllCapabilities(),
     )
 
+    c, err := client.NewInProcessClient(s)
+    if err != nil {
+        return nil, err
+    }
+
     return &TestClient{
         server: s,
-        client: client.NewInProcessClient(s),
-    }
+        client: c,
+    }, nil
 }
 
 func (tc *TestClient) AddTool(name, description string, handler server.ToolHandler) {
@@ -925,7 +975,7 @@ func (tc *TestClient) AddResource(uri, name string, handler server.ResourceHandl
 }
 
 func (tc *TestClient) Initialize(ctx context.Context) error {
-    return tc.client.Initialize(ctx)
+    return startAndInitializeExampleClient(ctx, tc.client)
 }
 
 func (tc *TestClient) CallTool(ctx context.Context, name string, args map[string]interface{}) (*mcp.CallToolResult, error) {
@@ -951,7 +1001,8 @@ func (tc *TestClient) Close() error {
 
 // Usage in tests
 func TestWithInProcessClient(t *testing.T) {
-    tc := NewTestClient()
+    tc, err := NewTestClient()
+    require.NoError(t, err)
     defer tc.Close()
 
     // Add test tool
@@ -961,7 +1012,7 @@ func TestWithInProcessClient(t *testing.T) {
     })
 
     ctx := context.Background()
-    err := tc.Initialize(ctx)
+    err = tc.Initialize(ctx)
     require.NoError(t, err)
 
     // Test tool call
@@ -1055,7 +1106,7 @@ func NewClientFactory() *ClientFactory {
 }
 
 func (cf *ClientFactory) SetStdioConfig(command string, args ...string) {
-    cf.configs["stdio"] = client.StdioOptions{
+    cf.configs["stdio"] = StdioConfig{
         Command: command,
         Args:    args,
     }
@@ -1081,14 +1132,14 @@ func (cf *ClientFactory) SetSSEConfig(baseURL string, headers map[string]string)
     }
 }
 
-func (cf *ClientFactory) CreateClient(transport string) (client.Client, error) {
+func (cf *ClientFactory) CreateClient(transport string) (*client.Client, error) {
     switch transport {
     case "stdio":
-        config, ok := cf.configs["stdio"].(client.StdioOptions)
+        config, ok := cf.configs["stdio"].(StdioConfig)
         if !ok {
             return nil, fmt.Errorf("stdio config not set")
         }
-        return client.NewStdioClientWithOptions(config)
+        return client.NewStdioMCPClientWithOptions(config.Command, config.Env, config.Args)
 
     case "streamablehttp":
         config, ok := cf.configs["streamablehttp"].(struct {
@@ -1104,7 +1155,7 @@ func (cf *ClientFactory) CreateClient(transport string) (client.Client, error) {
             options = append(options, transport.WithHTTPHeaders(config.Headers))
         }
 
-        return client.NewStreamableHttpClient(config.BaseURL, options...), nil
+        return client.NewStreamableHttpClient(config.BaseURL, options...)
 
     case "sse":
         config, ok := cf.configs["sse"].(struct {

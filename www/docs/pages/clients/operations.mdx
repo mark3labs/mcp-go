@@ -25,7 +25,7 @@ import (
     "github.com/mark3labs/mcp-go/mcp"
 )
 
-func listResources(ctx context.Context, c client.Client) error {
+func listResources(ctx context.Context, c *client.Client) error {
     // List all available resources
     resources, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
     if err != nil {
@@ -51,7 +51,7 @@ func listResources(ctx context.Context, c client.Client) error {
 ### Filtered Resource Listing
 
 ```go
-func listResourcesByType(ctx context.Context, c client.Client, mimeType string) ([]mcp.Resource, error) {
+func listResourcesByType(ctx context.Context, c *client.Client, mimeType string) ([]mcp.Resource, error) {
     resources, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
     if err != nil {
         return nil, err
@@ -67,7 +67,7 @@ func listResourcesByType(ctx context.Context, c client.Client, mimeType string) 
     return filtered, nil
 }
 
-func listResourcesByPattern(ctx context.Context, c client.Client, pattern string) ([]mcp.Resource, error) {
+func listResourcesByPattern(ctx context.Context, c *client.Client, pattern string) ([]mcp.Resource, error) {
     resources, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
     if err != nil {
         return nil, err
@@ -89,7 +89,7 @@ func listResourcesByPattern(ctx context.Context, c client.Client, pattern string
 }
 
 // Usage examples
-func demonstrateResourceFiltering(ctx context.Context, c client.Client) {
+func demonstrateResourceFiltering(ctx context.Context, c *client.Client) {
     // Find all JSON resources
     jsonResources, err := listResourcesByType(ctx, c, "application/json")
     if err != nil {
@@ -115,7 +115,7 @@ Once you know what resources are available, you can read their content.
 ### Basic Resource Reading
 
 ```go
-func readResource(ctx context.Context, c client.Client, uri string) (*mcp.ReadResourceResult, error) {
+func readResource(ctx context.Context, c *client.Client, uri string) (*mcp.ReadResourceResult, error) {
     result, err := c.ReadResource(ctx, mcp.ReadResourceRequest{
         Params: mcp.ReadResourceRequestParams{
             URI: uri,
@@ -128,7 +128,7 @@ func readResource(ctx context.Context, c client.Client, uri string) (*mcp.ReadRe
     return result, nil
 }
 
-func demonstrateResourceReading(ctx context.Context, c client.Client) {
+func demonstrateResourceReading(ctx context.Context, c *client.Client) {
     // List resources first
    resources, err := c.ListResources(ctx, mcp.ListResourcesRequest{})
     if err != nil {
@@ -175,7 +175,7 @@ func truncateString(s string, maxLen int) string {
 
 ```go
 // Helper functions for common resource types
-func readJSONResource(ctx context.Context, c client.Client, uri string) (map[string]interface{}, error) {
+func readJSONResource(ctx context.Context, c *client.Client, uri string) (map[string]interface{}, error) {
     result, err := readResource(ctx, c, uri)
     if err != nil {
         return nil, err
@@ -198,7 +198,7 @@ func readJSONResource(ctx context.Context, c client.Client, uri string) (map[str
     return data, nil
 }
 
-func readTextResource(ctx context.Context, c client.Client, uri string) (string, error) {
+func readTextResource(ctx context.Context, c *client.Client, uri string) (string, error) {
     result, err := readResource(ctx, c, uri)
     if err != nil {
         return "", err
@@ -216,7 +216,7 @@ func readTextResource(ctx context.Context, c client.Client, uri string) (string,
     return content.Text, nil
 }
 
-func readBinaryResource(ctx context.Context, c client.Client, uri string) ([]byte, error) {
+func readBinaryResource(ctx context.Context, c *client.Client, uri string) ([]byte, error) {
     result, err := readResource(ctx, c, uri)
     if err != nil {
         return nil, err
@@ -283,7 +283,7 @@ func (rc *ResourceCache) Set(uri string, result *mcp.ReadResourceResult) {
     }
 }
 
-func (rc *ResourceCache) ReadResource(ctx context.Context, c client.Client, uri string) (*mcp.ReadResourceResult, error) {
+func (rc *ResourceCache) ReadResource(ctx context.Context, c *client.Client, uri string) (*mcp.ReadResourceResult, error) {
     // Check cache first
     if cached, found := rc.Get(uri); found {
         return cached, nil
@@ -308,7 +308,7 @@ Tools provide functionality that can be invoked with parameters.
 ### Basic Tool Calling
 
 ```go
-func callTool(ctx context.Context, c client.Client, name string, args map[string]interface{}) (*mcp.CallToolResult, error) {
+func callTool(ctx context.Context, c *client.Client, name string, args map[string]interface{}) (*mcp.CallToolResult, error) {
     result, err := c.CallTool(ctx, mcp.CallToolRequest{
         Params: mcp.CallToolRequestParams{
             Name:      name,
@@ -322,7 +322,7 @@ func callTool(ctx context.Context, c client.Client, name string, args map[string
     return result, nil
 }
 
-func demonstrateToolCalling(ctx context.Context, c client.Client) {
+func demonstrateToolCalling(ctx context.Context, c *client.Client) {
     // List available tools
     tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
@@ -425,7 +425,7 @@ func validateValue(value interface{}, schema map[string]any) error {
     return nil
 }
 
-func callToolWithValidation(ctx context.Context, c client.Client, toolName string, args map[string]interface{}) (*mcp.CallToolResult, error) {
+func callToolWithValidation(ctx context.Context, c *client.Client, toolName string, args map[string]interface{}) (*mcp.CallToolResult, error) {
     // Get tool schema
     tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
@@ -468,7 +468,7 @@ type ToolResult struct {
     Error  error
 }
 
-func callToolsBatch(ctx context.Context, c client.Client, calls []ToolCall) []ToolResult {
+func callToolsBatch(ctx context.Context, c *client.Client, calls []ToolCall) []ToolResult {
     results := make([]ToolResult, len(calls))
     
     // Use goroutines for concurrent calls
@@ -491,7 +491,7 @@ func callToolsBatch(ctx context.Context, c client.Client, calls []ToolCall) []To
     return results
 }
 
-func demonstrateBatchToolCalls(ctx context.Context, c client.Client) {
+func demonstrateBatchToolCalls(ctx context.Context, c *client.Client) {
     calls := []ToolCall{
         {
             Name: "get_weather",
@@ -535,7 +535,7 @@ Prompts provide reusable templates for LLM interactions.
 ### Basic Prompt Usage
 
 ```go
-func getPrompt(ctx context.Context, c client.Client, name string, args map[string]interface{}) (*mcp.GetPromptResult, error) {
+func getPrompt(ctx context.Context, c *client.Client, name string, args map[string]interface{}) (*mcp.GetPromptResult, error) {
     result, err := c.GetPrompt(ctx, mcp.GetPromptRequest{
         Params: mcp.GetPromptRequestParams{
             Name:      name,
@@ -549,7 +549,7 @@ func getPrompt(ctx context.Context, c client.Client, name string, args map[strin
     return result, nil
 }
 
-func demonstratePromptUsage(ctx context.Context, c client.Client) {
+func demonstratePromptUsage(ctx context.Context, c *client.Client) {
     // List available prompts
     prompts, err := c.ListPrompts(ctx, mcp.ListPromptsRequest{})
     if err != nil {
@@ -597,10 +597,10 @@ func demonstratePromptUsage(ctx context.Context, c client.Client) {
 
 ```go
 type PromptProcessor struct {
-    client client.Client
+    client *client.Client
 }
 
-func NewPromptProcessor(c client.Client) *PromptProcessor {
+func NewPromptProcessor(c *client.Client) *PromptProcessor {
     return &PromptProcessor{client: c}
 }
 
@@ -651,7 +651,7 @@ func (pp *PromptProcessor) FormatForLLM(messages []mcp.PromptMessage) []map[stri
 ### Dynamic Prompt Generation
 
 ```go
-func generateCodeReviewPrompt(ctx context.Context, c client.Client, code, language string) ([]mcp.PromptMessage, error) {
+func generateCodeReviewPrompt(ctx context.Context, c *client.Client, code, language string) ([]mcp.PromptMessage, error) {
     processor := NewPromptProcessor(c)
     
     return processor.ProcessPrompt(ctx, "code_review", map[string]interface{}{
@@ -661,7 +661,7 @@ func generateCodeReviewPrompt(ctx context.Context, c client.Client, code, langua
     })
 }
 
-func generateDataAnalysisPrompt(ctx context.Context, c client.Client, datasetURI string, analysisType string) ([]mcp.PromptMessage, error) {
+func generateDataAnalysisPrompt(ctx context.Context, c *client.Client, datasetURI string, analysisType string) ([]mcp.PromptMessage, error) {
     processor := NewPromptProcessor(c)
     
     return processor.ProcessPrompt(ctx, "analyze_data", map[string]interface{}{
@@ -671,7 +671,7 @@ func generateDataAnalysisPrompt(ctx context.Context, c client.Client, datasetURI
     })
 }
 
-func demonstrateDynamicPrompts(ctx context.Context, c client.Client) {
+func demonstrateDynamicPrompts(ctx context.Context, c *client.Client) {
     // Generate code review prompt
     codeReviewMessages, err := generateCodeReviewPrompt(ctx, c, 
         "func main() { fmt.Println(\"Hello\") }", 
@@ -701,7 +701,7 @@ Some transports support subscriptions for receiving real-time notifications.
 ### Basic Subscription Handling
 
 ```go
-func handleSubscriptions(ctx context.Context, c client.Client) {
+func handleSubscriptions(ctx context.Context, c *client.Client) {
     // Check if client supports subscriptions
     subscriber, ok := c.(client.Subscriber)
     if !ok {
@@ -781,7 +781,7 @@ func handleToolUpdateNotification(notification mcp.Notification) {
 
 ```go
 type SubscriptionManager struct {
-    client        client.Client
+    client        *client.Client
     subscriber    client.Subscriber
     notifications chan mcp.Notification
     handlers      map[string][]NotificationHandler
@@ -793,7 +793,7 @@ type SubscriptionManager struct {
 
 type NotificationHandler func(mcp.Notification) error
 
-func NewSubscriptionManager(c client.Client) (*SubscriptionManager, error) {
+func NewSubscriptionManager(c *client.Client) (*SubscriptionManager, error) {
     subscriber, ok := c.(client.Subscriber)
     if !ok {
         return nil, fmt.Errorf("client does not support subscriptions")
@@ -877,7 +877,7 @@ func (sm *SubscriptionManager) processNotification(notification mcp.Notification
 }
 
 // Usage example
-func demonstrateSubscriptionManager(c client.Client) {
+func demonstrateSubscriptionManager(c *client.Client) {
     sm, err := NewSubscriptionManager(c)
     if err != nil {
         log.Printf("Failed to create subscription manager: %v", err)
@@ -978,7 +978,7 @@ so early-exit is cheap.
 :::note
 These methods are defined on the concrete `*client.Client` type, not on the
 `MCPClient` interface. The examples below use `c *client.Client` rather than
-the `c client.Client` you'll see elsewhere in this guide. If you're holding
+the `c *client.Client` you'll see elsewhere in this guide. If you're holding
 an `MCPClient` interface value, use the **two-value type assertion** so a
 mismatched implementation doesn't panic:
 

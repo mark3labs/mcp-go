@@ -322,7 +322,7 @@ import (
 
 func main() {
     // Create STDIO client
-    c, err := client.NewStdioClient(
+    c, err := client.NewStdioMCPClient(
         "go", nil /* inherit env */, "run", "/path/to/server/main.go",
     )
     if err != nil {
@@ -335,7 +335,7 @@ func main() {
 
     // Initialize connection
     _, err = c.Initialize(ctx, mcp.InitializeRequest{
-        Params: mcp.InitializeRequestParams{
+        Params: mcp.InitializeParams{
             ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
             ClientInfo: mcp.Implementation{
                 Name:    "test-client",
@@ -387,7 +387,7 @@ the server. This allows configuration of environment variables, working director
 Referring to the previous example, we can replace the line that creates the client:
 
 ```go
-c, err := client.NewStdioClient(
+c, err := client.NewStdioMCPClient(
     "go", nil, "run", "/path/to/server/main.go",
 )
 ```
