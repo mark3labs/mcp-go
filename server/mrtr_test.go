@@ -91,6 +91,92 @@ func TestMultiRoundTrip_ModernClientReceivesInputRequest(t *testing.T) {
 	assert.Equal(t, "What is your name?", request.Elicitation.Message)
 }
 
+func TestMultiRoundTrip_ResourceResultHandlerReturnsInputRequired(t *testing.T) {
+	srv := NewMCPServer("mrtr-test", "1.0.0", WithResourceCapabilities(false, false))
+	srv.AddResourceWithResult(mcp.NewResource("test://resource", "resource"), func(_ context.Context, _ mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return NewInputRequestBuilder("resource-state").
+			Elicit("who", mcp.ElicitationParams{Message: "Who should this resource be for?", RequestedSchema: map[string]any{"type": "object"}}).
+			ResourceResult(), nil
+	})
+
+	ctx := WithRequestProtocolInfo(t.Context(), &RequestProtocolInfo{
+		Modern:          true,
+		ProtocolVersion: mcp.ProtocolVersion20260728,
+	})
+	result, reqErr := srv.handleReadResource(ctx, 1, mcp.ReadResourceRequest{
+		Params: mcp.ReadResourceParams{URI: "test://resource"},
+	})
+	require.Nil(t, reqErr)
+	require.NotNil(t, result)
+	assert.True(t, result.NeedsInput())
+	assert.Equal(t, "resource-state", result.RequestState)
+	assert.Contains(t, result.InputRequests, "who")
+}
+
+func TestMultiRoundTrip_ResourceTemplateResultHandler(t *testing.T) {
+	srv := NewMCPServer("mrtr-test", "1.0.0", WithResourceCapabilities(false, false))
+	srv.AddResourceTemplateWithResult(mcp.NewResourceTemplate("test://resource/{name}", "resource"), func(_ context.Context, request mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{Contents: []mcp.ResourceContents{
+			mcp.TextResourceContents{URI: request.Params.URI, Text: "template-result"},
+		}}, nil
+	})
+
+	result, reqErr := srv.handleReadResource(t.Context(), 1, mcp.ReadResourceRequest{
+		Params: mcp.ReadResourceParams{URI: "test://resource/alice"},
+	})
+	require.Nil(t, reqErr)
+	require.NotNil(t, result)
+	require.Len(t, result.Contents, 1)
+	assert.Equal(t, "template-result", result.Contents[0].(mcp.TextResourceContents).Text)
+}
+
+func TestResourceResultHandlerRecovery(t *testing.T) {
+	srv := NewMCPServer("mrtr-test", "1.0.0", WithResourceRecovery())
+	srv.AddResourceWithResult(mcp.NewResource("test://resource", "resource"), func(context.Context, mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		panic("test panic")
+	})
+
+	_, reqErr := srv.handleReadResource(t.Context(), 1, mcp.ReadResourceRequest{
+		Params: mcp.ReadResourceParams{URI: "test://resource"},
+	})
+	require.NotNil(t, reqErr)
+	assert.Contains(t, reqErr.Error(), "panic recovered in test://resource resource handler: test panic")
+}
+
+func TestMultiRoundTrip_LegacyResourceHandlerRetriesWithInput(t *testing.T) {
+	srv := NewMCPServer("mrtr-test", "1.0.0", WithResourceCapabilities(false, false), WithElicitation())
+	var calls int
+	srv.AddResourceWithResult(mcp.NewResource("test://resource", "resource"), func(_ context.Context, request mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		calls++
+		if response := ElicitationResponse(request.Params.InputResponses, "who"); response != nil {
+			assert.Equal(t, "resource-state", request.Params.RequestState)
+			return &mcp.ReadResourceResult{Contents: []mcp.ResourceContents{
+				mcp.TextResourceContents{URI: request.Params.URI, Text: "answered"},
+			}}, nil
+		}
+		return NewInputRequestBuilder("resource-state").
+			Elicit("who", mcp.ElicitationParams{Message: "Who?", RequestedSchema: map[string]any{"type": "object"}}).
+			ResourceResult(), nil
+	})
+
+	session := newMRTRSession("legacy-resource")
+	session.response = &mcp.ElicitationResult{ElicitationResponse: mcp.ElicitationResponse{
+		Action:  mcp.ElicitationResponseActionAccept,
+		Content: map[string]any{"name": "Alice"},
+	}}
+	ctx := srv.WithContext(t.Context(), session)
+	ctx = WithRequestProtocolInfo(ctx, &RequestProtocolInfo{})
+	result, reqErr := srv.handleReadResource(ctx, 1, mcp.ReadResourceRequest{
+		Params: mcp.ReadResourceParams{URI: "test://resource"},
+	})
+	require.Nil(t, reqErr)
+	require.NotNil(t, result)
+	assert.Equal(t, 2, calls)
+	assert.Equal(t, 1, session.calls)
+	require.Len(t, result.Contents, 1)
+	assert.Equal(t, "answered", result.Contents[0].(mcp.TextResourceContents).Text)
+}
+
 func TestMultiRoundTrip_ModernClientRetriesWithAnswer(t *testing.T) {
 	srv := newMRTRServer(t)
 	session := newMRTRSession("modern")
