@@ -189,6 +189,9 @@ func (c *SchemaCache) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return fmt.Errorf("decode schema cache: %w", err)
 	}
+	if raw == nil {
+		return fmt.Errorf("decode schema cache: expected JSON object")
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.schemas = make(map[string]json.RawMessage, len(raw))
