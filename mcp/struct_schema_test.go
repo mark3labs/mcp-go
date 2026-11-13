@@ -146,6 +146,50 @@ func TestSchemaFor_NestedStructTags(t *testing.T) {
 	assertModeSchema(t, byName["additionalProperties"])
 }
 
+func TestSchemaForRaw_EmbeddedJSONFieldDominance(t *testing.T) {
+	type First struct {
+		Value string `json:"value"`
+		Foo   string `json:"Foo" jsonschema_description:"tagged field"`
+		Count int    `json:"count"`
+	}
+	type Second struct {
+		Value int `json:"value"`
+		Foo   int `jsonschema_description:"untagged field"`
+	}
+	type request struct {
+		First
+		Second
+		Count string `json:"count"`
+		Mode  string `json:"mode" jsonschema:"enum=fast,enum=safe"`
+	}
+
+	raw, err := SchemaForRaw[request]()
+	require.NoError(t, err)
+
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(raw, &schema))
+	properties := schema["properties"].(map[string]any)
+	assert.NotContains(t, properties, "value")
+
+	foo := properties["Foo"].(map[string]any)
+	assert.Equal(t, "string", foo["type"])
+	assert.Equal(t, "tagged field", foo["description"])
+
+	count := properties["count"].(map[string]any)
+	assert.Equal(t, "string", count["type"])
+
+	encoded, err := json.Marshal(request{
+		First:  First{Value: "first", Foo: "tagged", Count: 1},
+		Second: Second{Value: 2, Foo: 3},
+		Count:  "root",
+		Mode:   "fast",
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), `"value"`)
+	assert.Contains(t, string(encoded), `"Foo":"tagged"`)
+	assert.Contains(t, string(encoded), `"count":"root"`)
+}
+
 func TestSchemaFor_StructuredInputOutputExampleTags(t *testing.T) {
 	type WeatherRequest struct {
 		Location string `json:"location,required" jsonschema_description:"City or location"` //nolint:staticcheck // required is interpreted by schemaFor, not encoding/json
