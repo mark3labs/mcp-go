@@ -148,7 +148,20 @@ func (c *InProcessTransport) forwardNotifications() {
 	}
 }
 
+func (c *InProcessTransport) sessionForSend() (*server.InProcessSession, error) {
+	c.startedMu.Lock()
+	defer c.startedMu.Unlock()
+	if c.closed {
+		return nil, ErrTransportClosed
+	}
+	return c.session, nil
+}
+
 func (c *InProcessTransport) SendRequest(ctx context.Context, request JSONRPCRequest) (*JSONRPCResponse, error) {
+	session, err := c.sessionForSend()
+	if err != nil {
+		return nil, err
+	}
 	requestBytes, err := json.Marshal(request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
@@ -156,8 +169,8 @@ func (c *InProcessTransport) SendRequest(ctx context.Context, request JSONRPCReq
 	requestBytes = append(requestBytes, '\n')
 
 	// Add session to context if available
-	if c.session != nil {
-		ctx = c.server.WithContext(ctx, c.session)
+	if session != nil {
+		ctx = c.server.WithContext(ctx, session)
 	}
 
 	respMessage := c.server.HandleMessage(ctx, requestBytes)
@@ -175,13 +188,17 @@ func (c *InProcessTransport) SendRequest(ctx context.Context, request JSONRPCReq
 }
 
 func (c *InProcessTransport) SendNotification(ctx context.Context, notification mcp.JSONRPCNotification) error {
+	session, err := c.sessionForSend()
+	if err != nil {
+		return err
+	}
 	notificationBytes, err := json.Marshal(notification)
 	if err != nil {
 		return fmt.Errorf("failed to marshal notification: %w", err)
 	}
 	notificationBytes = append(notificationBytes, '\n')
-	if c.session != nil {
-		ctx = c.server.WithContext(ctx, c.session)
+	if session != nil {
+		ctx = c.server.WithContext(ctx, session)
 	}
 	c.server.HandleMessage(ctx, notificationBytes)
 
