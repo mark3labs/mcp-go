@@ -64,7 +64,8 @@ func TestCommandTransport_ImplementsInterface(t *testing.T) {
 func TestCommandTransport_StderrAccessor(t *testing.T) {
 	ctx := t.Context()
 
-	ct := NewCommand("echo", "hello")
+	command, args := testTransportCommand(t)
+	ct := NewCommandWithEnv(command, nil, args...)
 	require.NotNil(t, ct)
 
 	require.NoError(t, ct.spawnCommand(ctx))
@@ -72,8 +73,8 @@ func TestCommandTransport_StderrAccessor(t *testing.T) {
 		_ = ct.cmd.Process.Kill()
 	})
 
-	require.Equal(t, "echo", filepath.Base(ct.cmd.Path))
-	require.Contains(t, ct.cmd.Args, "hello")
+	require.Equal(t, filepath.Base(command), filepath.Base(ct.cmd.Path))
+	require.Contains(t, ct.cmd.Args, args[0])
 	require.NotNil(t, ct.Stderr())
 }
 
@@ -128,7 +129,8 @@ func TestCommandTransport_WithEnv(t *testing.T) {
 	ctx := t.Context()
 	t.Setenv("PARENT_ENV_VAR", "parent")
 
-	ct := NewCommandWithEnv("echo", []string{"CHILD_ENV_VAR=child"}, "hi")
+	command, args := testTransportCommand(t)
+	ct := NewCommandWithEnv(command, []string{"CHILD_ENV_VAR=child"}, args...)
 	require.NoError(t, ct.spawnCommand(ctx))
 	t.Cleanup(func() {
 		_ = ct.cmd.Process.Kill()

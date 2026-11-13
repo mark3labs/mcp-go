@@ -708,10 +708,11 @@ func TestStdio_FinalResponseWithoutTrailingNewline(t *testing.T) {
 func TestStdio_SpawnCommand(t *testing.T) {
 	ctx := t.Context()
 	t.Setenv("TEST_ENVIRON_VAR", "true")
+	command, args := testTransportCommand(t)
 
 	// Explicitly not passing any environment, so we can see if it
 	// is picked up by spawn command merging the os.Environ.
-	stdio := NewStdio("echo", nil, "hello")
+	stdio := NewStdio(command, nil, args...)
 	require.NotNil(t, stdio)
 
 	err := stdio.spawnCommand(ctx)
@@ -721,21 +722,22 @@ func TestStdio_SpawnCommand(t *testing.T) {
 		_ = stdio.cmd.Process.Kill()
 	})
 
-	require.Equal(t, "echo", filepath.Base(stdio.cmd.Path))
-	require.Contains(t, stdio.cmd.Args, "hello")
+	require.Equal(t, filepath.Base(command), filepath.Base(stdio.cmd.Path))
+	require.Contains(t, stdio.cmd.Args, args[0])
 	require.Contains(t, stdio.cmd.Env, "TEST_ENVIRON_VAR=true")
 }
 
 func TestStdio_SpawnCommand_UsesCommandFunc(t *testing.T) {
 	ctx := t.Context()
 	t.Setenv("TEST_ENVIRON_VAR", "true")
+	command, args := testTransportCommand(t)
 
 	stdio := NewStdioWithOptions(
-		"echo",
+		command,
 		nil,
 		[]string{"test"},
-		WithCommandFunc(func(ctx context.Context, cmd string, args []string, env []string) (*exec.Cmd, error) {
-			c := exec.CommandContext(ctx, cmd, "hola")
+		WithCommandFunc(func(ctx context.Context, cmd string, env []string, args []string) (*exec.Cmd, error) {
+			c := exec.CommandContext(ctx, cmd, "-test.run=^TestTransportCommandHelperProcess$")
 			c.Env = env
 			return c, nil
 		}),
@@ -747,8 +749,8 @@ func TestStdio_SpawnCommand_UsesCommandFunc(t *testing.T) {
 		_ = stdio.cmd.Process.Kill()
 	})
 
-	require.Equal(t, "echo", filepath.Base(stdio.cmd.Path))
-	require.Contains(t, stdio.cmd.Args, "hola")
+	require.Equal(t, filepath.Base(command), filepath.Base(stdio.cmd.Path))
+	require.Contains(t, stdio.cmd.Args, args[0])
 	require.NotContains(t, stdio.cmd.Env, "TEST_ENVIRON_VAR=true")
 	require.NotNil(t, stdio.stdin)
 	require.NotNil(t, stdio.stdout)
