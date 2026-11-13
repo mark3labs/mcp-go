@@ -1927,6 +1927,11 @@ func (s *MCPServer) filteredPrompts(ctx context.Context) []mcp.Prompt {
 		}
 	}
 	s.promptFiltersMu.RUnlock()
+	// Filters may reorder their inputs, but list pagination uses binary search
+	// over prompts sorted by name.
+	sort.Slice(prompts, func(i, j int) bool {
+		return prompts[i].Name < prompts[j].Name
+	})
 
 	return prompts
 }
@@ -2135,6 +2140,11 @@ func (s *MCPServer) filteredTools(ctx context.Context) []mcp.Tool {
 		}
 	}
 	s.toolFiltersMu.RUnlock()
+	// Filters may reorder their inputs, but list pagination uses binary search
+	// over tools sorted by name.
+	sort.Slice(tools, func(i, j int) bool {
+		return tools[i].Name < tools[j].Name
+	})
 
 	return tools
 }
