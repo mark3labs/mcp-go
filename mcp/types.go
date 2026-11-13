@@ -361,7 +361,8 @@ type Result struct {
 // RequestId is a uniquely identifying ID for a request in JSON-RPC.
 // It can be any JSON-serializable value, typically a number or string.
 type RequestId struct {
-	value any
+	value     any
+	rawNumber string
 }
 
 // NewRequestId creates a new RequestId with the given value
@@ -384,6 +385,9 @@ func (r RequestId) String() string {
 	case int64:
 		return "int64:" + strconv.FormatInt(v, 10)
 	case float64:
+		if r.rawNumber != "" {
+			return requestNumberKey(json.Number(r.rawNumber))
+		}
 		if encoded, err := json.Marshal(v); err == nil {
 			number := json.Number(encoded)
 			if _, integer := integerRequestNumber(number); integer {
@@ -412,12 +416,16 @@ func (r RequestId) IsNil() bool {
 }
 
 func (r RequestId) MarshalJSON() ([]byte, error) {
+	if r.rawNumber != "" {
+		return []byte(r.rawNumber), nil
+	}
 	return json.Marshal(r.value)
 }
 
 func (r *RequestId) UnmarshalJSON(data []byte) error {
 	if string(data) == "null" {
 		r.value = nil
+		r.rawNumber = ""
 		return nil
 	}
 
@@ -425,6 +433,7 @@ func (r *RequestId) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err == nil {
 		r.value = s
+		r.rawNumber = ""
 		return nil
 	}
 
@@ -432,18 +441,23 @@ func (r *RequestId) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &number); err == nil {
 		if value, integer := integerRequestNumber(number); integer {
 			r.value = value
+			r.rawNumber = ""
 			return nil
 		}
-	}
 
-	// JSON numbers are unmarshaled as float64 in Go
-	var f float64
-	if err := json.Unmarshal(data, &f); err == nil {
-		if f == float64(int64(f)) {
-			r.value = int64(f)
-		} else {
+		// Keep a float64 Value for fractional numbers when it is representable,
+		// but retain the original number for identity and response encoding.
+		var f float64
+		if err := json.Unmarshal(data, &f); err == nil {
 			r.value = f
+			r.rawNumber = number.String()
+			return nil
 		}
+
+		// JSON numbers can exceed float64's range. Preserve their exact value
+		// instead of rejecting a valid JSON-RPC request ID.
+		r.value = number
+		r.rawNumber = ""
 		return nil
 	}
 
