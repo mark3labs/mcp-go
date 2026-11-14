@@ -88,21 +88,26 @@ func (r *sseLineReader) readLine(limit int64) (string, error) {
 		}
 		n := bytes.IndexAny(chunk, "\r\n")
 		complete := n >= 0
+		endingBytes := 0
 		if complete {
 			n++
+			endingBytes = 1
 			if chunk[n-1] == '\r' {
 				r.skipLF = true
 				if n < len(chunk) && chunk[n] == '\n' {
 					n++
 					r.skipLF = false
+					endingBytes = 2
 				}
 			}
 		} else {
 			n = len(chunk)
 		}
 		lineBytes := int64(len(line) + n)
-		if r.skipLF {
-			// Reserve the optional LF even when it arrives in the next read.
+		// Charge every line ending as two bytes, so a line at the data bound is
+		// accepted with CR, LF or CRLF. A CR at the end of the buffer reserves
+		// the LF it may still be followed by, without waiting for it.
+		if complete && endingBytes < 2 {
 			lineBytes++
 		}
 		if limit > 0 && lineBytes > limit {
