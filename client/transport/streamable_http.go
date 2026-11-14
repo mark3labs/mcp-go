@@ -1235,7 +1235,7 @@ func (c *StreamableHTTP) readSSEWithCursor(ctx context.Context, reader io.ReadCl
 		reader.Close()
 	}()
 
-	br := bufio.NewReader(reader)
+	br := sseLineReader{br: bufio.NewReader(reader)}
 	var event, data, id string
 	var hasID bool
 	commitID := func() {
@@ -1246,7 +1246,7 @@ func (c *StreamableHTTP) readSSEWithCursor(ctx context.Context, reader io.ReadCl
 	}
 
 	for {
-		line, err := readSSELine(br, c.maxMessageBytes)
+		line, err := br.readLine(c.maxMessageBytes)
 		if err != nil {
 			// Context was cancelled — reader was closed by the goroutine above.
 			if ctx.Err() != nil {

@@ -2,6 +2,7 @@ package transport
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"io"
 )
@@ -59,23 +60,63 @@ func (b *boundedReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// readSSELine reads one line of an SSE stream, line ending included, as
-// bufio.Reader.ReadString does. A line may carry limit bytes of data besides
+type sseLineReader struct {
+	br     *bufio.Reader
+	skipLF bool
+}
+
+// readLine reads one line of an SSE stream, including its CR, LF, or CRLF
+// ending. A line may carry limit bytes of data besides
 // its field name and line ending; a longer one is ErrMessageTooLarge. Zero or
 // a negative limit leaves lines unbounded.
-func readSSELine(br *bufio.Reader, limit int64) (string, error) {
+func (r *sseLineReader) readLine(limit int64) (string, error) {
 	if limit > 0 {
 		limit += int64(len("event: \r\n"))
 	}
 	var line []byte
 	for {
-		chunk, err := br.ReadSlice('\n')
-		if limit > 0 && int64(len(line)+len(chunk)) > limit {
+		if _, err := r.br.Peek(1); err != nil {
+			return string(line), err
+		}
+		chunk, _ := r.br.Peek(r.br.Buffered())
+		if r.skipLF {
+			r.skipLF = false
+			if chunk[0] == '\n' {
+				_, _ = r.br.Discard(1)
+				continue
+			}
+		}
+		n := bytes.IndexAny(chunk, "\r\n")
+		complete := n >= 0
+		endingBytes := 0
+		if complete {
+			n++
+			endingBytes = 1
+			if chunk[n-1] == '\r' {
+				r.skipLF = true
+				if n < len(chunk) && chunk[n] == '\n' {
+					n++
+					r.skipLF = false
+					endingBytes = 2
+				}
+			}
+		} else {
+			n = len(chunk)
+		}
+		lineBytes := int64(len(line) + n)
+		// Charge every line ending as two bytes, so a line at the data bound is
+		// accepted with CR, LF or CRLF. A CR at the end of the buffer reserves
+		// the LF it may still be followed by, without waiting for it.
+		if complete && endingBytes < 2 {
+			lineBytes++
+		}
+		if limit > 0 && lineBytes > limit {
 			return "", ErrMessageTooLarge
 		}
-		line = append(line, chunk...)
-		if err != bufio.ErrBufferFull {
-			return string(line), err
+		line = append(line, chunk[:n]...)
+		_, _ = r.br.Discard(n)
+		if complete {
+			return string(line), nil
 		}
 	}
 }
