@@ -48,7 +48,7 @@ type taskEntry struct {
 	completed  bool               // Whether the task has been completed (guards done channel closure)
 	// inputResponses holds responses delivered via tasks/update (SEP-2663).
 	inputResponses mcp.InputResponses
-	// inputReady is signalled each time tasks/update delivers new inputResponses.
+	// inputReady is signalled when all outstanding input requests are answered.
 	inputReady chan struct{}
 	// inputRequests holds the pending input requests the task is waiting on
 	// when it is in the input_required state.
@@ -2799,7 +2799,7 @@ func (s *MCPServer) executeRegularToolAsTask(
 }
 
 // awaitTaskInput parks a task in input_required, publishing requests for the
-// client to answer via tasks/update, and blocks until the answer arrives or the
+// client to answer via tasks/update, and blocks until all answers arrive or the
 // task is cancelled/expired (taskCtx done).
 func (s *MCPServer) awaitTaskInput(
 	taskCtx context.Context,
@@ -2990,7 +2990,7 @@ func (s *MCPServer) handleUpdateTask(
 		}
 	}
 
-	// Deliver responses to the task's pending input channel.
+	// Accumulate answers while retaining outstanding inputs.
 	s.tasksMu.Lock()
 	if status := entry.task.Status; status != mcp.TaskStatusInputRequired {
 		s.tasksMu.Unlock()
@@ -3003,9 +3003,20 @@ func (s *MCPServer) handleUpdateTask(
 	if entry.inputResponses == nil {
 		entry.inputResponses = make(mcp.InputResponses)
 	}
-	maps.Copy(entry.inputResponses, request.Params.InputResponses)
-	// Signal the task handler that responses are available.
-	if entry.inputReady != nil {
+	// Poll results may still reference the old map, publish a new snapshot.
+	pending := maps.Clone(entry.inputRequests)
+	for key, response := range request.Params.InputResponses {
+		if _, outstanding := pending[key]; outstanding {
+			entry.inputResponses[key] = response
+			delete(pending, key)
+		}
+	}
+	if len(pending) != len(entry.inputRequests) {
+		entry.inputRequests = pending
+		entry.task.LastUpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	// Resume only after every outstanding request has been answered.
+	if len(pending) == 0 && entry.inputReady != nil {
 		select {
 		case entry.inputReady <- struct{}{}:
 		default:

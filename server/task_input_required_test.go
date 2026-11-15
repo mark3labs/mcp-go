@@ -92,6 +92,114 @@ func TestTaskInputRequired_RegularToolRoundTrip(t *testing.T) {
 	require.Equal(t, "deployed", text.Text)
 }
 
+// TestTaskInputRequired_PartialResponses waits for both inputs in either order.
+func TestTaskInputRequired_PartialResponses(t *testing.T) {
+	tests := []struct {
+		name     string
+		firstKey string
+		lastKey  string
+	}{
+		{name: "first then second", firstKey: "first", lastKey: "second"},
+		{name: "second then first", firstKey: "second", lastKey: "first"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+			var calls atomic.Int32
+			resumed := make(chan mcp.MultiRoundTripParams, 1)
+			srv.AddTool(
+				mcp.NewTool("two_inputs", mcp.WithTaskSupport(mcp.TaskSupportOptional)),
+				func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					if calls.Add(1) > 1 {
+						resumed <- req.Params.MultiRoundTripParams
+						return mcp.NewToolResultText("done"), nil
+					}
+					return NewInputRequestBuilder("two-inputs").
+						Elicit("first", mcp.ElicitationParams{Mode: mcp.ElicitationModeForm, Message: "First?"}).
+						Elicit("second", mcp.ElicitationParams{Mode: mcp.ElicitationModeForm, Message: "Second?"}).
+						ToolResult(), nil
+				})
+
+			ctx := buildModernContext(t.Context(), srv)
+			created, reqErr := srv.handleToolCall(ctx, 1, mcp.CallToolRequest{
+				Params: mcp.CallToolParams{Name: "two_inputs"},
+			})
+			require.Nil(t, reqErr)
+			task, ok := created.(*mcp.CreateTaskResult)
+			require.True(t, ok)
+			taskID := task.Task.TaskId
+			t.Cleanup(func() {
+				_, _ = srv.handleCancelTask(ctx, 2, mcp.CancelTaskRequest{
+					Params: mcp.CancelTaskParams{TaskId: taskID},
+				})
+			})
+			require.Eventually(t, func() bool {
+				got, e := srv.handleGetTask(ctx, 3, mcp.GetTaskRequest{Params: mcp.GetTaskParams{TaskId: taskID}})
+				return e == nil && got.Status == mcp.TaskStatusInputRequired && len(got.InputRequests) == 2
+			}, 5*time.Second, 10*time.Millisecond)
+
+			initial, e := srv.handleGetTask(ctx, 3, mcp.GetTaskRequest{Params: mcp.GetTaskParams{TaskId: taskID}})
+			require.Nil(t, e)
+			responses := make(mcp.InputResponses)
+			for _, key := range []string{"first", "second"} {
+				responses[key] = mcp.NewElicitationInputResponse(mcp.ElicitationResult{
+					ElicitationResponse: mcp.ElicitationResponse{
+						Action:  mcp.ElicitationResponseActionAccept,
+						Content: map[string]any{"value": key},
+					},
+				})
+			}
+			update, e := srv.handleUpdateTask(ctx, 4, mcp.UpdateTaskRequest{
+				Params: mcp.UpdateTaskParams{TaskId: taskID, InputResponses: mcp.InputResponses{
+					tt.firstKey: responses[tt.firstKey],
+				}},
+			})
+			require.Nil(t, e)
+			require.Equal(t, mcp.ResultTypeComplete, update.GetResultType())
+			// Duplicate and unknown answers must not replace accepted input or resume.
+			_, e = srv.handleUpdateTask(ctx, 4, mcp.UpdateTaskRequest{
+				Params: mcp.UpdateTaskParams{TaskId: taskID, InputResponses: mcp.InputResponses{
+					tt.firstKey: responses[tt.lastKey],
+					"unknown":   responses[tt.lastKey],
+				}},
+			})
+			require.Nil(t, e)
+			select {
+			case <-resumed:
+				t.Fatal("handler resumed before both inputs were answered")
+			case <-time.After(100 * time.Millisecond):
+			}
+			require.Equal(t, int32(1), calls.Load())
+			got, e := srv.handleGetTask(ctx, 5, mcp.GetTaskRequest{Params: mcp.GetTaskParams{TaskId: taskID}})
+			require.Nil(t, e)
+			require.Equal(t, mcp.TaskStatusInputRequired, got.Status)
+			require.Len(t, got.InputRequests, 1)
+			require.Contains(t, got.InputRequests, tt.lastKey)
+			require.Equal(t, initial.InputRequests[tt.lastKey], got.InputRequests[tt.lastKey])
+			require.Len(t, initial.InputRequests, 2, "earlier poll results must remain intact")
+
+			_, e = srv.handleUpdateTask(ctx, 6, mcp.UpdateTaskRequest{
+				Params: mcp.UpdateTaskParams{TaskId: taskID, InputResponses: mcp.InputResponses{
+					tt.lastKey: responses[tt.lastKey],
+				}},
+			})
+			require.Nil(t, e)
+			select {
+			case retry := <-resumed:
+				require.Equal(t, responses, retry.InputResponses)
+				require.Equal(t, "two-inputs", retry.RequestState)
+			case <-time.After(5 * time.Second):
+				t.Fatal("handler did not resume after both inputs were answered")
+			}
+			require.Eventually(t, func() bool {
+				got, e := srv.handleGetTask(ctx, 7, mcp.GetTaskRequest{Params: mcp.GetTaskParams{TaskId: taskID}})
+				return e == nil && got.Status == mcp.TaskStatusCompleted
+			}, 5*time.Second, 10*time.Millisecond)
+			require.Equal(t, int32(2), calls.Load())
+		})
+	}
+}
+
 // TestTaskInputRequired_CancelWhileParked verifies that cancelling a task that
 // is parked in input_required transitions it to cancelled and lets the executor
 // goroutine exit cleanly.

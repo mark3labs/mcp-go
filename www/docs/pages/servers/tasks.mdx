@@ -1,5 +1,9 @@
 # Task-Augmented Tools
 
+The modern `io.modelcontextprotocol/tasks` extension targets the [2026-07-28 Tasks specification](https://tasks.extensions.modelcontextprotocol.io/specification/2026-07-28/tasks), pinned to source revision [`cc9aaac1047a9440b07486e38f37060bbebeef4c`](https://github.com/modelcontextprotocol/ext-tasks/blob/cc9aaac1047a9440b07486e38f37060bbebeef4c/specification/2026-07-28/tasks.md) and its [schema](https://github.com/modelcontextprotocol/ext-tasks/blob/cc9aaac1047a9440b07486e38f37060bbebeef4c/schema/2026-07-28/schema.json). This pinned revision is the conformance reference; [SEP-2663](https://modelcontextprotocol.io/seps/2663-tasks-extension) provides design history.
+
+This guide describes the supported [legacy 2025-11-25 task flow](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks). Its `tasks/list`, `tasks/result`, and `notifications/tasks/status` methods belong to that legacy flow.
+
 Task-augmented tools allow long-running operations to execute asynchronously. Instead of blocking until completion, the server creates a task and the client can poll for status updates. This is ideal for operations like batch processing, data analysis, or any work that may take more than a few seconds.
 
 ## Overview

@@ -316,6 +316,10 @@ Tools let LLMs take actions through your server. Unlike resources, tools are exp
 
 #### Task-Augmented Tools
 
+The conformance target for `io.modelcontextprotocol/tasks` is the [Tasks extension specification, version **2026-07-28**](https://tasks.extensions.modelcontextprotocol.io/specification/2026-07-28/tasks), pinned to source revision [`cc9aaac1047a9440b07486e38f37060bbebeef4c`](https://github.com/modelcontextprotocol/ext-tasks/blob/cc9aaac1047a9440b07486e38f37060bbebeef4c/specification/2026-07-28/tasks.md) and its [schema](https://github.com/modelcontextprotocol/ext-tasks/blob/cc9aaac1047a9440b07486e38f37060bbebeef4c/schema/2026-07-28/schema.json). Use this pinned revision for conformance decisions; [SEP-2663](https://modelcontextprotocol.io/seps/2663-tasks-extension) provides design history.
+
+The SDK also supports the [legacy 2025-11-25 Tasks specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks). The examples below use that legacy flow, including the `task` request parameter and `tasks/result`.
+
 Task-augmented tools execute asynchronously and return results via polling. This is useful for long-running operations that would otherwise block or time out. Task tools support three modes:
 
 - **TaskSupportForbidden** (default): The tool cannot be invoked as a task
@@ -561,7 +565,7 @@ Each tool should:
 
 ##### Task Authorization
 
-SEP-2663 defines three task-management methods: `tasks/get`, `tasks/update`, and `tasks/cancel`, and requires servers to authenticate and authorize every one of them. The legacy 2025-11-25 flow also exposes `tasks/list` and `tasks/result`. SEP-2663 removes both, there is no `tasks/list`, and results are inlined into `tasks/get`. The SDK enforces the same default authorization policy across these methods:
+The pinned Tasks extension specification defines three task-management methods: `tasks/get`, `tasks/update`, and `tasks/cancel`, and requires servers to authenticate and authorize every one of them. The legacy 2025-11-25 flow also exposes `tasks/list` and `tasks/result`. The modern extension removes both, there is no `tasks/list`, and results are inlined into `tasks/get`. The SDK enforces the same default authorization policy across these methods:
 
 | Task session | Request session | Result |
 |---|---|---|
@@ -570,7 +574,7 @@ SEP-2663 defines three task-management methods: `tasks/get`, `tasks/update`, and
 | **empty** | any | Allowed — bearer-token model |
 | any | **empty** | Allowed — bearer-token model |
 
-**Bearer-token default.** When either side has no session (e.g. stdio, in-process, or a task created outside a session), possessing the task ID is the only credential for accessing a task. Under SEP-2663 this is the intended default for session-less transports: there is no `tasks/list`, so task IDs with sufficient entropy cannot be enumerated or guessed by a third party.
+**Bearer-token default.** When either side has no session (e.g. stdio, in-process, or a task created outside a session), possessing the task ID is the only credential for accessing a task. Under the modern Tasks extension this is the intended default for session-less transports: there is no `tasks/list`, so task IDs with sufficient entropy cannot be enumerated or guessed by a third party.
 
 The legacy 2025-11-25 `tasks/list`, however, returns tasks from other sessions to a session-less caller, who can then fetch results or cancel those tasks by ID. When task IDs are used as bearer credentials, restrict `tasks/list` to authorized callers at the transport or application boundary.
 
