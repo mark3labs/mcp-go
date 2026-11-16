@@ -33,8 +33,8 @@ type quotedSchemaFields struct {
 	Named     quotedSchemaInt       `json:"named,string"`
 	Pointer   *int                  `json:"pointer,string,omitempty"`
 	Plain     int                   `json:"plain"`
-	Slice     []int                 `json:"slice,string"`
-	DoublePtr **int                 `json:"doublePtr,string"`
+	Slice     []int                 `json:"slice,string"`     //nolint:staticcheck // Verify that encoding/json ignores string for unsupported types.
+	DoublePtr **int                 `json:"doublePtr,string"` //nolint:staticcheck // Verify that encoding/json ignores string for unsupported types.
 	Custom    quotedSchemaMarshaler `json:"custom,string"`
 }
 
