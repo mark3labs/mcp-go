@@ -1822,9 +1822,12 @@ func (s *MCPServer) handleReadResource(
 					continue
 				}
 				if matchesTemplate(request.Params.URI, serverTemplate.Template.URITemplate) {
+					matchedVars := serverTemplate.Template.URITemplate.Match(request.Params.URI)
+					if matchedVars == nil {
+						continue
+					}
 					matchedHandler = serverTemplate.Handler
 					matched = true
-					matchedVars := serverTemplate.Template.URITemplate.Match(request.Params.URI)
 					// Convert matched variables to a map
 					request.Params.Arguments = make(map[string]any, len(matchedVars))
 					for name, value := range matchedVars {
@@ -1844,9 +1847,12 @@ func (s *MCPServer) handleReadResource(
 				continue
 			}
 			if matchesTemplate(request.Params.URI, template.URITemplate) {
+				matchedVars := template.URITemplate.Match(request.Params.URI)
+				if matchedVars == nil {
+					continue
+				}
 				matchedHandler = entry.handler
 				matched = true
-				matchedVars := template.URITemplate.Match(request.Params.URI)
 				// Convert matched variables to a map
 				request.Params.Arguments = make(map[string]any, len(matchedVars))
 				for name, value := range matchedVars {
