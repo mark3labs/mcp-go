@@ -331,6 +331,7 @@ type StreamableHTTPServer struct {
 	sessionResources         *sessionResourcesStore
 	sessionResourceTemplates *sessionResourceTemplatesStore
 	activeSessions           sync.Map     // sessionId --> *streamableHttpSession (for sampling responses)
+	pendingRequests          sync.Map     // pendingRequestKey --> pendingClientRequest, for every session
 	modernListeners          sync.Map     // *streamableHttpSession --> context.CancelFunc
 	requestIDCounter         atomic.Int64 // server -> client request IDs, shared across sessions
 
@@ -842,7 +843,7 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 
 	// Create ephemeral session if no persistent session exists
 	if session == nil {
-		session = newStreamableHttpSession(sessionID, s.sessionTools, s.sessionResources, s.sessionResourceTemplates, s.sessionLogLevels, &s.requestIDCounter)
+		session = s.newSession(sessionID)
 	}
 
 	// Broadcasts only reach sessions the server knows of, and a modern
@@ -941,9 +942,7 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	//
 	// Protocol version 2026-07-28 removed both mechanisms this block depends
 	// on: server-initiated requests (SEP-2322) and stream resumability
-	// (SEP-2575). A modern request also has no session ID, so registering it
-	// would key every concurrent request on "" and let a response reach the
-	// wrong one.
+	// (SEP-2575).
 	//
 	// Notifications sent from a handler of this message (progress, logging)
 	// take the same route: they relate to the originating request, and on the
@@ -956,29 +955,15 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	if canStream && !era.modern {
 		scopedRequests = make(chan scopedRequest, 8)
 		scopedNotifications = make(chan mcp.JSONRPCNotification, 100)
-		// Registration makes responses to request-scoped server requests
-		// routable when nothing else has registered the session (stateless
-		// mode without a standalone GET stream). It only happens once a
-		// request is actually sent on this stream, and only the POST that
-		// stored the registration removes it, so registrations made by the
-		// GET handler or by stateful initialization are never touched.
-		var ownsRegistration atomic.Bool
-		register := sync.OnceFunc(func() {
-			if _, loaded := s.activeSessions.LoadOrStore(sessionID, session); !loaded {
-				ownsRegistration.Store(true)
-			}
-		})
-		defer func() {
-			if ownsRegistration.Load() {
-				s.activeSessions.CompareAndDelete(sessionID, session)
-			}
-		}()
+		// This POST registers nothing to make the responses routable: a
+		// request is pending in the server's table from the moment it is
+		// issued until it finishes, whichever POST's stream carried it and
+		// whichever POST finishes first.
 		scoped := &requestScopedSSE{
 			session:       session,
 			requests:      scopedRequests,
 			notifications: scopedNotifications,
 			done:          done,
-			register:      register,
 		}
 		closeDone = scoped.close
 		ctx = context.WithValue(ctx, requestScopedSSEKey{}, scoped)
@@ -1292,7 +1277,7 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 	// Get or create session atomically to prevent TOCTOU races
 	// where concurrent GETs could both create and register duplicate sessions
 	var session *streamableHttpSession
-	newSession := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionResources, s.sessionResourceTemplates, s.sessionLogLevels, &s.requestIDCounter)
+	newSession := s.newSession(sessionID)
 	actual, loaded := s.activeSessions.LoadOrStore(sessionID, newSession)
 	session = actual.(*streamableHttpSession)
 
@@ -1582,22 +1567,17 @@ func (s *StreamableHTTPServer) handleSamplingResponse(w HTTPResponseWriter, r *H
 // deliverSamplingResponse delivers a sampling response to the appropriate session.
 // On failure it writes the HTTP error status directly to w.
 func (s *StreamableHTTPServer) deliverSamplingResponse(w HTTPResponseWriter, sessionID string, response samplingResponseItem) error {
-	// Look up the active session
-	sessionInterface, ok := s.activeSessions.Load(sessionID)
-	if !ok {
-		writeHTTPError(w, "No active session found for the given session ID", http.StatusNotFound)
-		return fmt.Errorf("no active session found for session %s", sessionID)
-	}
-
-	session, ok := sessionInterface.(*streamableHttpSession)
-	if !ok {
-		writeHTTPError(w, "Invalid session type for the given session ID", http.StatusInternalServerError)
-		return fmt.Errorf("invalid session type for session %s", sessionID)
-	}
-
-	// Look up the dedicated pending request for this specific request ID.
-	pendingInterface, exists := session.samplingRequests.Load(response.requestID)
+	// Look up the pending request by session ID and request ID. The table
+	// belongs to the server, not to a session object, so the response is
+	// routable for as long as the request is pending: concurrent POSTs on one
+	// session ID each serve it with a session object of their own unless the
+	// session is registered, and any of them may finish first.
+	pendingInterface, exists := s.pendingRequests.Load(pendingRequestKey{sessionID: sessionID, requestID: response.requestID})
 	if !exists {
+		if _, active := s.activeSessions.Load(sessionID); !active {
+			writeHTTPError(w, "No active session found for the given session ID", http.StatusNotFound)
+			return fmt.Errorf("no active session found for session %s", sessionID)
+		}
 		writeHTTPError(w, "No pending sampling request found for the given request ID", http.StatusBadRequest)
 		return fmt.Errorf("no pending request found for session %s, request %d", sessionID, response.requestID)
 	}
@@ -1915,6 +1895,14 @@ type pendingClientRequest struct {
 	response chan samplingResponseItem
 }
 
+// pendingRequestKey identifies a pending server-initiated request. Request
+// IDs are unique across a server; the session ID confines a response to the
+// session the request was sent to.
+type pendingRequestKey struct {
+	sessionID string
+	requestID int64
+}
+
 // Elicitation support types for HTTP transport
 type elicitationRequestItem struct {
 	requestID int64
@@ -1944,7 +1932,6 @@ type requestScopedSSE struct {
 	requests      chan<- scopedRequest
 	notifications chan<- mcp.JSONRPCNotification
 	done          chan struct{}
-	register      func()
 
 	// sendMu orders sends against close: once close returns, every send that
 	// reported success is queued, and every later send sees done closed, so
@@ -1988,7 +1975,6 @@ func (r *requestScopedSSE) trySend(ctx context.Context, request mcp.JSONRPCReque
 		return false
 	default:
 	}
-	r.register()
 	item := scopedRequest{request: request, delivered: make(chan bool, 1)}
 	// sendMu covers only the enqueue: close waits for it, and the POST
 	// settles queued requests after close returns.
@@ -2053,7 +2039,11 @@ type streamableHttpSession struct {
 	elicitationRequestChan chan elicitationRequestItem // server -> client elicitation requests
 	rootsRequestChan       chan rootsRequestItem       // server -> client list roots requests
 
-	samplingRequests sync.Map      // requestID -> pending sampling request context
+	// samplingRequests holds the server requests awaiting a client response.
+	// Every session a StreamableHTTPServer creates shares the server's table,
+	// so a response is routed by session ID and request ID whichever session
+	// object issued the request, and however long that object is registered.
+	samplingRequests *sync.Map     // pendingRequestKey -> pendingClientRequest
 	requestIDCounter *atomic.Int64 // shared per server so IDs stay unique across sessions with the same session ID
 
 	// Whether the session serves a subscriptions/listen stream, and the
@@ -2075,9 +2065,18 @@ func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, re
 		samplingRequestChan:    make(chan samplingRequestItem, 10),
 		elicitationRequestChan: make(chan elicitationRequestItem, 10),
 		rootsRequestChan:       make(chan rootsRequestItem, 10),
+		samplingRequests:       new(sync.Map),
 		requestIDCounter:       requestIDCounter,
 	}
 	return s
+}
+
+// newSession creates a session for sessionID that shares the server's stores,
+// request ID counter and table of pending server requests.
+func (s *StreamableHTTPServer) newSession(sessionID string) *streamableHttpSession {
+	session := newStreamableHttpSession(sessionID, s.sessionTools, s.sessionResources, s.sessionResourceTemplates, s.sessionLogLevels, &s.requestIDCounter)
+	session.samplingRequests = &s.pendingRequests
+	return session
 }
 
 // closeDone safely closes the session's done channel exactly once,
@@ -2195,11 +2194,12 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 	}
 
 	// Store the pending request
-	s.samplingRequests.Store(requestID, pendingClientRequest{
+	pendingKey := pendingRequestKey{sessionID: s.sessionID, requestID: requestID}
+	s.samplingRequests.Store(pendingKey, pendingClientRequest{
 		method:   mcp.MethodSamplingCreateMessage,
 		response: responseChan,
 	})
-	defer s.samplingRequests.Delete(requestID)
+	defer s.samplingRequests.Delete(pendingKey)
 
 	// Prefer the originating POST's SSE stream, as RequestElicitation does,
 	// so a client without a standalone GET stream still receives the request.
@@ -2267,11 +2267,12 @@ func (s *streamableHttpSession) ListRoots(ctx context.Context, request mcp.ListR
 	}
 
 	// Store the pending request
-	s.samplingRequests.Store(requestID, pendingClientRequest{
+	pendingKey := pendingRequestKey{sessionID: s.sessionID, requestID: requestID}
+	s.samplingRequests.Store(pendingKey, pendingClientRequest{
 		method:   mcp.MethodListRoots,
 		response: responseChan,
 	})
-	defer s.samplingRequests.Delete(requestID)
+	defer s.samplingRequests.Delete(pendingKey)
 
 	// Prefer the originating POST's SSE stream, as RequestElicitation does,
 	// so a client without a standalone GET stream still receives the request.
@@ -2328,11 +2329,12 @@ func (s *streamableHttpSession) RequestElicitation(ctx context.Context, request 
 	}
 
 	// Store the pending request
-	s.samplingRequests.Store(requestID, pendingClientRequest{
+	pendingKey := pendingRequestKey{sessionID: s.sessionID, requestID: requestID}
+	s.samplingRequests.Store(pendingKey, pendingClientRequest{
 		method:   mcp.MethodElicitationCreate,
 		response: responseChan,
 	})
-	defer s.samplingRequests.Delete(requestID)
+	defer s.samplingRequests.Delete(pendingKey)
 
 	// Prefer the originating POST's SSE stream when this call comes from an
 	// active POST handler with a streaming response, so a client that only

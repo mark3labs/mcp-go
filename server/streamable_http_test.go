@@ -3102,7 +3102,7 @@ func TestStreamableHTTP_ServerRequestIDsDoNotCollide(t *testing.T) {
 func TestStreamableHTTP_TrySendWaitsForBufferSpace(t *testing.T) {
 	requests := make(chan scopedRequest, 1)
 	done := make(chan struct{})
-	scoped := &requestScopedSSE{requests: requests, done: done, register: func() {}}
+	scoped := &requestScopedSSE{requests: requests, done: done}
 
 	send := func(ctx context.Context) <-chan bool {
 		result := make(chan bool, 1)
