@@ -195,6 +195,12 @@ meta := mcp.WithRelatedTask("task-id-123")
 
 The metadata contains the `io.modelcontextprotocol/related-task` key with the task ID, enabling clients to correlate responses with their originating tasks.
 
+## Task Authorization
+
+Applications are responsible for authenticating each task request and enforcing their user or tenant ownership policy before SDK dispatch. The SDK's session checks and bearer task IDs do not establish an application user identity. Record the authenticated creator for each task and check ownership on `tasks/get`, `tasks/update`, `tasks/cancel`, and any enabled legacy `tasks/result` endpoint. Restrict legacy `tasks/list` separately so it cannot disclose task IDs to unauthorized callers.
+
+The executable [task authorization example](https://github.com/mark3labs/mcp-go/tree/main/examples/task_authorization) demonstrates HTTP middleware enforcing these checks, with tests for owner access and rejection of another authenticated user. Its creation hook records ownership, middleware rejects unauthorized requests before the SDK runs. `OnBefore*` hooks only observe requests and cannot reject them. The example uses static demo credentials and an in-memory owner index, use application authentication and retain ownership records for the task's retention period.
+
 ## Task Hooks
 
 Task hooks provide observability into the task lifecycle. Use `server.TaskHooks` to register callbacks for creation, completion, failure, cancellation, and any status change:

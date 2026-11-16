@@ -160,8 +160,7 @@ func TestTaskAccessControl_HTTPMiddleware(t *testing.T) {
 }
 
 // TestTaskAccessControl_OnBeforeHookExtensionPoint demonstrates how an
-// OnBefore* hook reads application identity from ctx to enforce per-user
-// or per-tenant task authorization.
+// OnBefore* hook reads application identity from ctx for observation.
 func TestTaskAccessControl_OnBeforeHookExtensionPoint(t *testing.T) {
 	hooks := &Hooks{}
 
@@ -188,12 +187,12 @@ func TestTaskAccessControl_OnBeforeHookExtensionPoint(t *testing.T) {
 	))
 
 	assert.Equal(t, "alice", observedUser,
-		"hook should receive the identity attached by middleware — application can enforce authz here")
+		"hook should receive the identity attached by middleware for observation")
 }
 
 // TestTaskAccessControl_HTTPMiddlewareIdentityFlowsToHook demonstrates the
 // complete end-to-end flow: HTTP middleware attaches identity to ctx →
-// HandleMessage carries it through → OnBefore* hook reads it for per-request authz.
+// HandleMessage carries it through → OnBefore* hook reads it for observation.
 func TestTaskAccessControl_HTTPMiddlewareIdentityFlowsToHook(t *testing.T) {
 	hooks := &Hooks{}
 
