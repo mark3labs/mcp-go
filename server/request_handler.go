@@ -16,26 +16,58 @@ import (
 func (s *MCPServer) HandleMessage(
 	ctx context.Context,
 	message json.RawMessage,
+) mcp.JSONRPCMessage {
+	return s.handleMessage(ctx, message, false)
+}
+
+// handleMessage can reuse a request context reserved by stdio before dispatch.
+func (s *MCPServer) handleMessage(
+	ctx context.Context,
+	message json.RawMessage,
+	registered bool,
 ) (resp mcp.JSONRPCMessage) {
 	// Add server to context
 	ctx = context.WithValue(ctx, serverKey{}, s)
 	var err *requestError
 
+	type envelope struct {
+		JSONRPC string          `json:"jsonrpc"`
+		Method  mcp.MCPMethod   `json:"method"`
+		RawID   json.RawMessage `json:"id,omitempty"`
+		Result  json.RawMessage `json:"result,omitempty"`
+	}
 	var baseMessage struct {
-		JSONRPC string        `json:"jsonrpc"`
-		Method  mcp.MCPMethod `json:"method"`
-		ID      any           `json:"id,omitempty"`
-		Result  any           `json:"result,omitempty"`
+		envelope
+		Params struct {
+			Meta *mcp.Meta `json:"_meta"`
+		} `json:"params"`
+		ID any `json:"-"`
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(message))
-	decoder.UseNumber()
-	if err := decoder.Decode(&baseMessage); err != nil || !json.Valid(message) {
-		return createErrorResponse(
-			nil,
-			mcp.PARSE_ERROR,
-			"Failed to parse message",
-		)
+	hasMeta := true
+	if err := json.Unmarshal(message, &baseMessage); err != nil {
+		hasMeta = false
+		baseMessage.envelope = envelope{}
+		baseMessage.Params.Meta = nil
+		if err := json.Unmarshal(message, &baseMessage.envelope); err != nil {
+			return createErrorResponse(
+				nil,
+				mcp.PARSE_ERROR,
+				"Failed to parse message",
+			)
+		}
+	}
+
+	if len(baseMessage.RawID) > 0 {
+		decoder := json.NewDecoder(bytes.NewReader(baseMessage.RawID))
+		decoder.UseNumber()
+		if err := decoder.Decode(&baseMessage.ID); err != nil {
+			return createErrorResponse(
+				nil,
+				mcp.PARSE_ERROR,
+				"Failed to parse message",
+			)
+		}
 	}
 
 	if number, ok := baseMessage.ID.(json.Number); ok {
@@ -71,10 +103,25 @@ func (s *MCPServer) HandleMessage(
 		return nil // Return nil for notifications
 	}
 
-	if baseMessage.Result != nil {
+	if len(baseMessage.Result) > 0 && !bytes.Equal(baseMessage.Result, []byte("null")) {
 		// this is a response to a request sent by the server (e.g. from a ping
 		// sent due to WithKeepAlive option)
 		return nil
+	}
+
+	var key inflightRequestKey
+	if !registered {
+		key = inflightKey(ctx, baseMessage.ID)
+		if key.sessionID != "" {
+			// Reject duplicates before hooks can reply with the same ID or
+			// the request can change session state.
+			var finish func()
+			ctx, finish = s.startRequest(ctx, key)
+			if finish == nil {
+				return duplicateRequestIDError()
+			}
+			defer finish()
+		}
 	}
 
 	handleErr := s.hooks.onRequestInitialization(ctx, baseMessage.ID, message)
@@ -98,7 +145,11 @@ func (s *MCPServer) HandleMessage(
 	// 2026-07-28 removed the initialize handshake: a modern request carries
 	// its protocol version, client identity, and client capabilities in _meta
 	// (SEP-2575). Anything else is served through the legacy path.
-	protocolInfo, protocolErr := extractRequestProtocolInfo(message)
+	protocolInfo := &RequestProtocolInfo{}
+	var protocolErr error
+	if hasMeta {
+		protocolInfo, protocolErr = protocolInfoFromMeta(baseMessage.Params.Meta)
+	}
 	if protocolErr != nil {
 		return errorResponseForProtocolError(baseMessage.ID, protocolErr)
 	}
@@ -122,29 +173,17 @@ func (s *MCPServer) HandleMessage(
 		}
 	}
 
-	// Wrap context with cancel for in-flight request cancellation (MCP spec: notifications/cancelled)
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	// Store cancel func so notifications/cancelled can cancel this request.
-	// Use session-scoped keys to prevent cross-session request ID collisions.
-	if baseMessage.ID != nil {
-		key := inflightKey(ctx, baseMessage.ID)
-		s.inflightCancels.Store(key, cancel)
-		defer s.inflightCancels.Delete(key)
+	if !registered && key.sessionID == "" {
+		// Keep the existing cancellation timing for requests without a session ID.
+		var finish func()
+		ctx, finish = s.startRequest(ctx, key)
+		defer finish()
 	}
 
 	// Extract trace context from _meta before opening the server span so the span
 	// inherits the correct parent (SEP-414, transport-agnostic propagation).
-	{
-		var metaWrapper struct {
-			Params struct {
-				Meta *mcp.Meta `json:"_meta"`
-			} `json:"params"`
-		}
-		if json.Unmarshal(message, &metaWrapper) == nil {
-			ctx = s.extractMeta(ctx, metaWrapper.Params.Meta)
-		}
+	if hasMeta {
+		ctx = s.extractMeta(ctx, baseMessage.Params.Meta)
 	}
 
 	ctx, endSpan := s.startMessageSpan(ctx, headers, string(baseMessage.Method))

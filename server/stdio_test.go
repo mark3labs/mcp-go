@@ -643,6 +643,208 @@ func TestStdioJoinsRequestHandlersOnEOF(t *testing.T) {
 	}
 }
 
+func TestStdioCancelsQueuedToolCall(t *testing.T) {
+	// A tools/call waiting in the queue for a worker must still be
+	// cancellable: notifications/cancelled can arrive before any worker
+	// starts it.
+	blocking := make(chan struct{})
+	release := make(chan struct{})
+	queuedErr := make(chan error, 1)
+
+	mcpServer := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
+	mcpServer.AddTool(mcp.NewTool("block"), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		close(blocking)
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return mcp.NewToolResultText("done"), nil
+	})
+	mcpServer.AddTool(mcp.NewTool("queued"), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		queuedErr <- ctx.Err()
+		return mcp.NewToolResultText("done"), nil
+	})
+
+	stdinReader, stdinWriter := io.Pipe()
+	stdoutReader, stdoutWriter := io.Pipe()
+	t.Cleanup(func() {
+		_ = stdinWriter.Close()
+		_ = stdinReader.Close()
+		_ = stdoutWriter.Close()
+		_ = stdoutReader.Close()
+	})
+
+	stdioServer := NewStdioServer(mcpServer)
+	stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+	WithWorkerPoolSize(1)(stdioServer)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() { _ = stdioServer.Listen(ctx, stdinReader, stdoutWriter) }()
+
+	responses := make(chan map[string]any, 4)
+	go func() {
+		scanner := bufio.NewScanner(stdoutReader)
+		for scanner.Scan() {
+			var msg map[string]any
+			if json.Unmarshal(scanner.Bytes(), &msg) == nil {
+				responses <- msg
+			}
+		}
+	}()
+
+	send := func(lines ...string) {
+		go func() { _, _ = stdinWriter.Write([]byte(strings.Join(lines, "\n") + "\n")) }()
+	}
+
+	// Occupy the only worker.
+	send(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"block"}}`)
+	select {
+	case <-blocking:
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocking tool never started")
+	}
+
+	// Queue a call behind it, reject a duplicate ID, and cancel the original.
+	// The read loop handles these lines in order, so the final ping response
+	// means the cancellation was processed.
+	send(
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"queued"}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"ping"}`,
+		`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"ping"}`,
+	)
+	var sawDuplicate, sawPing bool
+	for range 2 {
+		select {
+		case msg := <-responses:
+			require.Contains(t, msg, "id")
+			if msg["id"] == nil {
+				rpcErr, ok := msg["error"].(map[string]any)
+				require.True(t, ok, "duplicate should return an error, got %v", msg)
+				require.EqualValues(t, mcp.INVALID_REQUEST, rpcErr["code"])
+				sawDuplicate = true
+			} else {
+				require.Equal(t, float64(3), msg["id"])
+				sawPing = true
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for the duplicate error and ping response")
+		}
+	}
+	require.True(t, sawDuplicate, "duplicate error must be sent")
+	require.True(t, sawPing, "ping response must be sent")
+
+	close(release)
+
+	select {
+	case err := <-queuedErr:
+		require.ErrorIs(t, err, context.Canceled, "queued tool call should see the cancellation")
+	case <-time.After(5 * time.Second):
+		t.Fatal("queued tool call never ran")
+	}
+}
+
+func TestStdioDuplicateErrorDoesNotBlockInput(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		eof  bool
+	}{
+		{name: "cancellation notification"},
+		{name: "EOF", eof: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stdinReader, stdinWriter := io.Pipe()
+			defer stdinReader.Close()
+			stdout := &blockingStdioWriter{started: make(chan struct{}), release: make(chan struct{})}
+			started := make(chan context.Context, 2)
+			srv := NewMCPServer("test", "1")
+			srv.AddTool(mcp.NewTool("slow"), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				started <- ctx
+				<-ctx.Done()
+				return nil, ctx.Err()
+			})
+			stdio := NewStdioServer(srv)
+			stdio.SetErrorLogger(log.New(io.Discard, "", 0))
+			done := make(chan error, 1)
+			go func() { done <- stdio.Listen(t.Context(), stdinReader, stdout) }()
+			defer func() {
+				close(stdout.release)
+				_ = stdinWriter.Close()
+				select {
+				case err := <-done:
+					require.NoError(t, err)
+				case <-time.After(5 * time.Second):
+					t.Error("stdio did not stop after stdin and stdout were released")
+				}
+			}()
+
+			send := func(lines ...string) {
+				t.Helper()
+				written := make(chan error, 1)
+				go func() {
+					_, err := io.WriteString(stdinWriter, strings.Join(lines, "\n")+"\n")
+					written <- err
+				}()
+				select {
+				case err := <-written:
+					require.NoError(t, err)
+				case <-time.After(5 * time.Second):
+					t.Fatal("stdio did not read input")
+				}
+			}
+			startTool := func(id int) context.Context {
+				t.Helper()
+				send(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"slow"}}`, id))
+				select {
+				case ctx := <-started:
+					return ctx
+				case <-time.After(5 * time.Second):
+					t.Fatal("tool did not start")
+					return nil
+				}
+			}
+			startTool(1)
+			other := startTool(2)
+			send(`{"jsonrpc":"2.0","id":99,"method":"ping"}`)
+			select {
+			case <-stdout.started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("ping response did not reach stdout")
+			}
+
+			const duplicate = `{"jsonrpc":"2.0","id":1,"method":"ping"}`
+			if test.eof {
+				send(duplicate)
+				require.NoError(t, stdinWriter.Close())
+			} else {
+				send(duplicate, `{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}}`)
+			}
+			select {
+			case <-other.Done():
+				require.ErrorIs(t, other.Err(), context.Canceled)
+			case <-time.After(5 * time.Second):
+				t.Fatal("duplicate error blocked cancellation of another request while stdout was blocked")
+			}
+		})
+	}
+}
+
+type blockingStdioWriter struct {
+	once    sync.Once
+	started chan struct{}
+	release chan struct{}
+}
+
+func (w *blockingStdioWriter) Write(p []byte) (int, error) {
+	w.once.Do(func() {
+		close(w.started)
+		<-w.release
+	})
+	return len(p), nil
+}
+
 func TestStdioSessionSamplingResponseArrayContent(t *testing.T) {
 	session := &stdioSession{pendingRequests: make(map[int64]chan *samplingResponse)}
 	responseChan := make(chan *samplingResponse, 1)
@@ -777,4 +979,38 @@ func TestStdioProcessesFinalMessageWithoutTrailingNewline(t *testing.T) {
 	require.NoError(t, json.Unmarshal(bytes.TrimSpace(out.Bytes()), &response), "output: %q", out.String())
 	require.Equal(t, 1, response.ID)
 	require.JSONEq(t, `{}`, string(response.Result))
+}
+
+func TestStdioAnswersQueuedToolCallsOnEOF(t *testing.T) {
+	// Tool calls accepted into the queue before stdin closes must still be
+	// answered. Listen cancels the request context at EOF, which must not let
+	// a worker exit while calls are still waiting in the queue.
+	mcpServer := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
+	mcpServer.AddTool(mcp.NewTool("ping"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("pong"), nil
+	})
+
+	stdioServer := NewStdioServer(mcpServer)
+	stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+	WithWorkerPoolSize(1)(stdioServer)
+
+	const calls = 20
+	var in strings.Builder
+	for id := 1; id <= calls; id++ {
+		fmt.Fprintf(&in, `{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"ping"}}`+"\n", id)
+	}
+
+	var out bytes.Buffer
+	require.NoError(t, stdioServer.Listen(t.Context(), strings.NewReader(in.String()), &out))
+
+	seen := make(map[int]bool)
+	scanner := bufio.NewScanner(&out)
+	for scanner.Scan() {
+		var response struct {
+			ID int `json:"id"`
+		}
+		require.NoError(t, json.Unmarshal(scanner.Bytes(), &response), "output line: %q", scanner.Text())
+		seen[response.ID] = true
+	}
+	require.Len(t, seen, calls, "every queued tool call should get a response")
 }

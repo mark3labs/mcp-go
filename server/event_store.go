@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"sync"
 )
@@ -109,6 +110,9 @@ func (s *InMemoryEventStore) StoreEvent(_ context.Context, sessionID, streamID s
 // the stream that produced it, in insertion order, and returns that stream's
 // ID. It returns an error wrapping ErrUnknownEventID if lastEventID was never
 // issued for the given session or the session's events have been purged.
+//
+// send receives its own copy of each message, so it may modify or keep the
+// slice without affecting later replays.
 func (s *InMemoryEventStore) ReplayEventsAfter(_ context.Context, sessionID, lastEventID string, send func(eventID string, message json.RawMessage) error) (string, error) {
 	s.mu.RLock()
 	log := s.sessions[sessionID]
@@ -127,7 +131,7 @@ func (s *InMemoryEventStore) ReplayEventsAfter(_ context.Context, sessionID, las
 	s.mu.RUnlock()
 
 	for _, ev := range tail {
-		if err := send(ev.id, ev.message); err != nil {
+		if err := send(ev.id, slices.Clone(ev.message)); err != nil {
 			return "", err
 		}
 	}

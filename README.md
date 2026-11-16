@@ -26,6 +26,7 @@ package main
 import (
     "context"
     "fmt"
+    "os"
 
     "github.com/mark3labs/mcp-go/mcp"
     "github.com/mark3labs/mcp-go/server"
@@ -53,7 +54,7 @@ func main() {
 
     // Start the stdio server
     if err := server.ServeStdio(s); err != nil {
-        fmt.Printf("Server error: %v\n", err)
+        fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
     }
 }
 
@@ -121,6 +122,7 @@ package main
 import (
     "context"
     "fmt"
+    "os"
 
     "github.com/mark3labs/mcp-go/mcp"
     "github.com/mark3labs/mcp-go/server"
@@ -191,7 +193,7 @@ func main() {
 
     // Start the server
     if err := server.ServeStdio(s); err != nil {
-        fmt.Printf("Server error: %v\n", err)
+        fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
     }
 }
 ```
@@ -725,24 +727,39 @@ simple responses with the appropriate `Access-Control-Allow-Origin`,
 `Access-Control-Allow-Credentials`, `Access-Control-Expose-Headers` and
 `Vary` headers. Sensible defaults are used when the corresponding option is
 omitted (`GET, POST, DELETE, OPTIONS` for methods; `Content-Type,
-Mcp-Session-Id, Last-Event-ID, Authorization` for request headers;
+Mcp-Session-Id, Mcp-Protocol-Version, Mcp-Method, Mcp-Name, Last-Event-ID,
+Authorization` for request headers;
 `Mcp-Session-Id` for exposed headers). Combining `WithCORSAllowedOrigins("*")`
 with `WithCORSAllowCredentials()` echoes the request `Origin` to remain
 spec-compliant.
 
-### DNS rebinding protection for localhost servers
+### DNS rebinding protection
 
 Both HTTP transports automatically protect local servers against
 [DNS rebinding attacks](https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#local-mcp-server-compromise):
 requests arriving over a loopback connection (`127.0.0.1`, `[::1]`) whose
 `Host` header is not a localhost value are rejected with `403 Forbidden`.
 The check is derived from the connection's local address at runtime, so it
-applies whether the server listens on `localhost` or `0.0.0.0`, and never
-affects requests arriving via non-loopback addresses.
+covers loopback connections whether the server listens on `localhost` or
+`0.0.0.0`, but by default it never affects requests arriving via
+non-loopback addresses.
+
+A server bound to a non-loopback interface (`:8080`, `0.0.0.0`, a LAN IP)
+is therefore not protected for requests arriving on that interface. To
+protect it, configure a `Host` header allowlist; any other non-localhost
+`Host` is then rejected regardless of the bind address:
+
+```go
+httpServer := server.NewStreamableHTTPServer(mcpServer,
+    // Or server.WithSSEAllowedHosts(...) on NewSSEServer.
+    server.WithAllowedHosts("mcp.example.com"),
+)
+```
 
 If a reverse proxy on the same host forwards requests via localhost while
-preserving the original `Host` header, configure the proxy to rewrite the
-`Host` header to localhost, or opt out explicitly:
+preserving the original `Host` header, list the public host name with
+`WithAllowedHosts`, configure the proxy to rewrite the `Host` header to
+localhost, or opt out of all `Host` validation explicitly:
 
 ```go
 httpServer := server.NewStreamableHTTPServer(mcpServer,

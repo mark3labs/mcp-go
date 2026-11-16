@@ -46,6 +46,7 @@ type toolCallWork struct {
 	id      any // JSON-RPC id, so a recovered panic stays correlatable
 	message json.RawMessage
 	writer  io.Writer
+	finish  func()
 }
 
 // StdioOption defines a function type for configuring StdioServer
@@ -449,35 +450,18 @@ func (s *StdioServer) processInputStream(ctx context.Context, reader *bufio.Read
 	}
 }
 
-// toolCallWorker processes tool calls from the queue
-func (s *StdioServer) toolCallWorker(ctx context.Context) {
+// toolCallWorker processes tool calls from the queue until Listen closes it.
+//
+// It does not stop on context cancellation: Listen cancels the request
+// context when input ends and only then closes the queue, so a worker that
+// returned on ctx.Done() could leave accepted calls unanswered. Calls still
+// queued at that point run with the cancelled context and get a response.
+func (s *StdioServer) toolCallWorker() {
 	defer s.workerWg.Done()
 
-	for {
-		select {
-		case work, ok := <-s.toolCallQueue:
-			if !ok {
-				// Channel closed, exit worker
-				return
-			}
-			// Process the tool call with panic recovery so a single
-			// panicking handler does not kill the worker permanently.
-			response := func() (resp mcp.JSONRPCMessage) {
-				defer func() {
-					if r := recover(); r != nil {
-						s.errLogger.Printf("panic recovered in stdio tool call worker: %v", r)
-						resp = createErrorResponse(work.id, mcp.INTERNAL_ERROR, fmt.Sprintf("internal panic: %v", r))
-					}
-				}()
-				return s.server.HandleMessage(work.ctx, work.message)
-			}()
-			if response != nil {
-				if err := s.writeResponse(response, work.writer); err != nil {
-					s.errLogger.Printf("Error writing tool response: %v", err)
-				}
-			}
-		case <-ctx.Done():
-			return
+	for work := range s.toolCallQueue {
+		if err := s.handleRequest(work.ctx, work.id, work.message, work.writer, work.finish); err != nil {
+			s.errLogger.Printf("Error writing tool response: %v", err)
 		}
 	}
 }
@@ -545,7 +529,7 @@ func (s *StdioServer) Listen(
 	// Start worker pool for tool calls
 	for i := 0; i < s.workerPoolSize; i++ {
 		s.workerWg.Add(1)
-		go s.toolCallWorker(ctx)
+		go s.toolCallWorker()
 	}
 
 	// Start notification handler
@@ -616,40 +600,52 @@ func (s *StdioServer) processMessage(
 			}
 		}
 	}
-	if parsed && baseMessage.Method == string(mcp.MethodToolsCall) {
-		// Queue tool calls for processing by workers
-		select {
-		case s.toolCallQueue <- &toolCallWork{
-			ctx:     ctx,
-			id:      baseMessage.ID.Value(),
-			message: rawMessage,
-			writer:  writer,
-		}:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			// Queue is full, process synchronously as fallback
-			s.errLogger.Printf("Tool call queue full, processing synchronously")
-			response := s.handleMessage(ctx, baseMessage.ID.Value(), rawMessage)
-			if response != nil {
-				return s.writeResponse(response, writer)
-			}
+	if parsed && !baseMessage.ID.IsNil() {
+		// Register before handing the request off, so even queued calls
+		// can receive cancellation notifications.
+		id := baseMessage.ID.Value()
+		reqCtx, finish := s.server.startRequest(ctx, inflightKey(ctx, id))
+		if finish == nil {
+			// Keep reading cancellation notifications and EOF if stdout blocks.
+			s.requestWg.Go(func() {
+				if err := s.writeResponse(duplicateRequestIDError(), writer); err != nil {
+					s.errLogger.Printf("Error writing duplicate request response: %v", err)
+				}
+			})
 			return nil
 		}
-	}
+		if baseMessage.Method == string(mcp.MethodToolsCall) {
+			select {
+			case s.toolCallQueue <- &toolCallWork{
+				ctx:     reqCtx,
+				id:      id,
+				message: rawMessage,
+				writer:  writer,
+				finish:  finish,
+			}:
+				return nil
+			case <-ctx.Done():
+				finish()
+				return ctx.Err()
+			default:
+				// Queue is full, process synchronously as fallback.
+				s.errLogger.Printf("Tool call queue full, processing synchronously")
+				return s.handleRequest(reqCtx, id, rawMessage, writer, finish)
+			}
+		}
 
-	// Serve requests off the read loop: a handler that blocks, such as
-	// subscriptions/listen, must not stall it. writeMu serialises the writes.
-	if parsed && !baseMessage.ID.IsNil() {
+		// A blocking handler such as subscriptions/listen must not stall
+		// the read loop.
 		s.requestWg.Go(func() {
-			s.handleRequest(ctx, baseMessage.ID.Value(), rawMessage, writer)
+			if err := s.handleRequest(reqCtx, id, rawMessage, writer, finish); err != nil {
+				s.errLogger.Printf("Error writing request response: %v", err)
+			}
 		})
 		return nil
 	}
 
 	// Notifications carry no response and must not queue behind a request.
-	response := s.handleMessage(ctx, baseMessage.ID.Value(), rawMessage)
+	response := s.handleMessage(ctx, baseMessage.ID.Value(), rawMessage, nil)
 
 	// Only write response if there is one (not for notifications)
 	if response != nil {
@@ -661,10 +657,13 @@ func (s *StdioServer) processMessage(
 	return nil
 }
 
-// handleMessage runs HandleMessage, recovering a panicking handler so that
+// handleMessage dispatches a message, recovering a panicking handler so that
 // it can't end the process. A request gets an INTERNAL_ERROR response
 // carrying its id; a notification (nil id) gets no response at all.
-func (s *StdioServer) handleMessage(ctx context.Context, id any, rawMessage json.RawMessage) (response mcp.JSONRPCMessage) {
+func (s *StdioServer) handleMessage(ctx context.Context, id any, rawMessage json.RawMessage, finish func()) (response mcp.JSONRPCMessage) {
+	if finish != nil {
+		defer finish()
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			s.errLogger.Printf("panic recovered in stdio message handler: %v", r)
@@ -673,18 +672,17 @@ func (s *StdioServer) handleMessage(ctx context.Context, id any, rawMessage json
 			}
 		}
 	}()
-	return s.server.HandleMessage(ctx, rawMessage)
+	return s.server.handleMessage(ctx, rawMessage, finish != nil)
 }
 
 // handleRequest serves one JSON-RPC request and writes its response. id is the
 // request's JSON-RPC id, so a recovered panic stays correlatable by the client.
-func (s *StdioServer) handleRequest(ctx context.Context, id any, rawMessage json.RawMessage, writer io.Writer) {
-	response := s.handleMessage(ctx, id, rawMessage)
-	if response != nil {
-		if err := s.writeResponse(response, writer); err != nil {
-			s.errLogger.Printf("Error writing response: %v", err)
-		}
+func (s *StdioServer) handleRequest(ctx context.Context, id any, rawMessage json.RawMessage, writer io.Writer, finish func()) error {
+	response := s.handleMessage(ctx, id, rawMessage, finish)
+	if response == nil {
+		return nil
 	}
+	return s.writeResponse(response, writer)
 }
 
 // handleSamplingResponse checks if the message is a response to a sampling request

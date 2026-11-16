@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -86,7 +87,7 @@ func main() {
 	s.AddTool(manualTool, mcp.NewTypedToolHandler(manualWeatherHandler))
 
 	if err := server.ServeStdio(s); err != nil {
-		fmt.Printf("Server error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
 	}
 }
 

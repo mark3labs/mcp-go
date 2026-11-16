@@ -106,6 +106,7 @@ func TestMemoryTokenStore(t *testing.T) {
 	}
 }
 
+// TestValidateRedirectURI verifies case-insensitive localhost matching and the exact loopback allowlist.
 func TestValidateRedirectURI(t *testing.T) {
 	// Test cases
 	testCases := []struct {
@@ -124,6 +125,21 @@ func TestValidateRedirectURI(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name:        "Valid mixed-case localhost URI",
+			redirectURI: "http://LocalHost:8085/callback",
+			expectError: false,
+		},
+		{
+			name:        "Valid uppercase localhost URI without port",
+			redirectURI: "http://LOCALHOST/cb",
+			expectError: false,
+		},
+		{
+			name:        "Valid mixed-case localhost URI with case-sensitive path and query",
+			redirectURI: "http://LoCaLhOsT:8085/CallBack?State=AbC",
+			expectError: false,
+		},
+		{
 			name:        "Valid localhost URI with 127.0.0.1",
 			redirectURI: "http://127.0.0.1:8085/callback",
 			expectError: false,
@@ -136,6 +152,16 @@ func TestValidateRedirectURI(t *testing.T) {
 		{
 			name:        "Invalid HTTP URI with 'local' in domain",
 			redirectURI: "http://localdomain.com/callback",
+			expectError: true,
+		},
+		{
+			name:        "Invalid HTTP URI with localhost subdomain",
+			redirectURI: "http://LOCALHOST.example.com:8085/callback",
+			expectError: true,
+		},
+		{
+			name:        "Invalid HTTP URI with localhost suffix",
+			redirectURI: "http://evilLOCALHOST:8085/callback",
 			expectError: true,
 		},
 		{
@@ -152,6 +178,11 @@ func TestValidateRedirectURI(t *testing.T) {
 			name:        "IPv6 localhost",
 			redirectURI: "http://[::1]:8080/callback",
 			expectError: false, // IPv6 localhost is valid
+		},
+		{
+			name:        "IPv6 localhost without port",
+			redirectURI: "http://[::1]/callback",
+			expectError: false,
 		},
 	}
 

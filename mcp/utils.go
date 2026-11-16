@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -864,15 +865,18 @@ func ParseCallToolResult(rawMessage *json.RawMessage) (*CallToolResult, error) {
 	}
 
 	var probe struct {
-		Content    json.RawMessage `json:"content"`
-		ResultType ResultType      `json:"resultType"`
+		Content           json.RawMessage `json:"content"`
+		StructuredContent json.RawMessage `json:"structuredContent"`
+		ResultType        ResultType      `json:"resultType"`
 	}
 	if err := json.Unmarshal(*rawMessage, &probe); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
-	// A result asking for more input (SEP-2322) carries only the input
-	// requests and the request state, so it legitimately has no content.
-	if probe.Content == nil && probe.ResultType != ResultTypeInputRequired {
+	// A structured-only result, and a result asking for more input (SEP-2322)
+	// that carries only the input requests and the request state, legitimately
+	// have no content. A null structuredContent counts as missing.
+	hasStructured := len(probe.StructuredContent) > 0 && !bytes.Equal(bytes.TrimSpace(probe.StructuredContent), []byte("null"))
+	if probe.Content == nil && !hasStructured && probe.ResultType != ResultTypeInputRequired {
 		return nil, fmt.Errorf("content is missing")
 	}
 

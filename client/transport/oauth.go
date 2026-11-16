@@ -17,9 +17,10 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// maxMetadataBodyBytes caps the size of an OAuth metadata document we are
-// willing to read.
-const maxMetadataBodyBytes = 1 << 20 // 1 MiB
+// maxOAuthBodyBytes caps the size of an OAuth response we are willing to
+// read: a metadata document, a token or a client registration. A larger one
+// fails with ErrMessageTooLarge.
+const maxOAuthBodyBytes = 1 << 20 // 1 MiB
 
 // ErrNoToken is returned when no token is available in the token store
 var ErrNoToken = errors.New("no token available")
@@ -60,7 +61,9 @@ type OAuthConfig struct {
 	// per RFC9728. If set, this URL will be used to discover the authorization server.
 	// This is typically extracted from the WWW-Authenticate header's resource_metadata parameter.
 	ProtectedResourceMetadataURL string
-	// PKCEEnabled enables PKCE for the OAuth flow (recommended for public clients)
+	// PKCEEnabled enables PKCE for the OAuth flow (recommended for public clients).
+	// When set, GetAuthorizationURL and the authorization response methods
+	// return ErrPKCERequired for an empty code challenge or code verifier.
 	PKCEEnabled bool
 	// SkipIssuerMetadataValidation turns off the check that authorization
 	// server metadata found through protected resource metadata declares the
@@ -69,7 +72,10 @@ type OAuthConfig struct {
 	// a mismatched issuer.
 	SkipIssuerMetadataValidation bool
 	// HTTPClient is an optional HTTP client to use for requests.
-	// If nil, a default HTTP client with a 30 second timeout will be used.
+	// If nil, a default HTTP client with a 30 second timeout is used. It
+	// follows token, refresh and registration requests only to the same
+	// scheme, host and port, and never redirects metadata discovery from
+	// https to http.
 	HTTPClient *http.Client
 }
 
@@ -147,6 +153,56 @@ func (t *Token) expiryDelta() time.Duration {
 		return lifetime / 2
 	}
 	return tokenExpiryDelta
+}
+
+// tokenResponse is a token endpoint response as it arrives on the wire
+// (RFC 6749 §5.1). It is kept apart from Token, whose expires_at is the
+// stored form: some servers add a non-standard expires_at of their own, as
+// Unix seconds, which must not fail the exchange.
+type tokenResponse struct {
+	AccessToken  string          `json:"access_token"`
+	TokenType    string          `json:"token_type"`
+	RefreshToken string          `json:"refresh_token,omitempty"`
+	ExpiresIn    int64           `json:"expires_in,omitempty"`
+	Scope        string          `json:"scope,omitempty"`
+	ExpiresAt    json.RawMessage `json:"expires_at,omitempty"`
+}
+
+// decodeTokenResponse decodes a token endpoint response and sets the
+// token's expiry. expires_in decides it; failing that, a server's own
+// expires_at, as Unix seconds or an RFC 3339 string, is used when it can be
+// read and ignored when it can't.
+func decodeTokenResponse(body []byte) (*Token, error) {
+	var resp tokenResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("failed to decode token response: %w", err)
+	}
+	token := &Token{
+		AccessToken:  resp.AccessToken,
+		TokenType:    resp.TokenType,
+		RefreshToken: resp.RefreshToken,
+		ExpiresIn:    resp.ExpiresIn,
+		Scope:        resp.Scope,
+	}
+	if resp.ExpiresIn > 0 {
+		token.ExpiresAt = time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second)
+	} else {
+		token.ExpiresAt = parseExpiresAt(resp.ExpiresAt)
+	}
+	return token, nil
+}
+
+// parseExpiresAt reads a server's expires_at, or returns the zero time.
+func parseExpiresAt(raw json.RawMessage) time.Time {
+	var seconds int64
+	if err := json.Unmarshal(raw, &seconds); err == nil && seconds > 0 {
+		return time.Unix(seconds, 0)
+	}
+	var at time.Time
+	if err := json.Unmarshal(raw, &at); err == nil {
+		return at
+	}
+	return time.Time{}
 }
 
 // MemoryTokenStore is a simple in-memory token store
@@ -320,7 +376,7 @@ func NewOAuthHandler(config OAuthConfig) *OAuthHandler {
 		config.TokenStore = NewMemoryTokenStore()
 	}
 	if config.HTTPClient == nil {
-		config.HTTPClient = &http.Client{Timeout: 30 * time.Second}
+		config.HTTPClient = &http.Client{Timeout: 30 * time.Second, CheckRedirect: oauthRedirectPolicy}
 	}
 
 	return &OAuthHandler{
@@ -490,12 +546,12 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken, issuer st
 	// Accept any 2xx status; some authorization servers (e.g. Supabase) return
 	// 201 Created for successful token responses.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body := readErrorBody(resp.Body)
 		return nil, extractOAuthError(body, resp.StatusCode, "refresh token request failed")
 	}
 
 	// Read the response body for parsing
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(newBoundedReader(resp.Body, maxOAuthBodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read token response body: %w", err)
 	}
@@ -507,14 +563,9 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken, issuer st
 		return nil, fmt.Errorf("refresh token request failed: %w", oauthErr)
 	}
 
-	var tokenResp Token
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return nil, fmt.Errorf("failed to decode token response: %w", err)
-	}
-
-	// Set expiration time
-	if tokenResp.ExpiresIn > 0 {
-		tokenResp.ExpiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	tokenResp, err := decodeTokenResponse(body)
+	if err != nil {
+		return nil, err
 	}
 
 	// If no new refresh token is provided, keep the old one
@@ -523,11 +574,11 @@ func (h *OAuthHandler) refreshToken(ctx context.Context, refreshToken, issuer st
 	}
 
 	// Save the token
-	if err := h.saveBoundToken(ctx, metadata, credentials, &tokenResp); err != nil {
+	if err := h.saveBoundToken(ctx, metadata, credentials, tokenResp); err != nil {
 		return nil, fmt.Errorf("failed to save token: %w", err)
 	}
 
-	return &tokenResp, nil
+	return tokenResp, nil
 }
 
 // RefreshToken refreshes a token with matching stored provenance. An unknown raw
@@ -958,7 +1009,7 @@ func (h *OAuthHandler) fetchServerMetadata(ctx context.Context) (metadataDiscove
 
 	// Parse the protected resource metadata
 	var protectedResource OAuthProtectedResource
-	if err := json.NewDecoder(resp.Body).Decode(&protectedResource); err != nil {
+	if err := json.NewDecoder(newBoundedReader(resp.Body, maxOAuthBodyBytes)).Decode(&protectedResource); err != nil {
 		return metadataDiscoveryResult{}, fmt.Errorf("failed to decode protected resource response: %w", err)
 	}
 
@@ -1194,7 +1245,7 @@ func (h *OAuthHandler) fetchMetadataFromURL(ctx context.Context, metadataURL str
 	}
 
 	var metadata AuthServerMetadata
-	dec := json.NewDecoder(io.LimitReader(resp.Body, maxMetadataBodyBytes))
+	dec := json.NewDecoder(newBoundedReader(resp.Body, maxOAuthBodyBytes))
 	if err := dec.Decode(&metadata); err != nil {
 		return nil, fmt.Errorf("failed to decode metadata response: %w", err)
 	}
@@ -1398,7 +1449,7 @@ func (h *OAuthHandler) performRegistration(ctx context.Context, metadata *AuthSe
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body := readErrorBody(resp.Body)
 		return extractOAuthError(body, resp.StatusCode, "registration request failed")
 	}
 
@@ -1408,7 +1459,7 @@ func (h *OAuthHandler) performRegistration(ctx context.Context, metadata *AuthSe
 		TokenEndpointAuthMethod string `json:"token_endpoint_auth_method,omitempty"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&regResponse); err != nil {
+	if err := json.NewDecoder(newBoundedReader(resp.Body, maxOAuthBodyBytes)).Decode(&regResponse); err != nil {
 		return fmt.Errorf("failed to decode registration response: %w", err)
 	}
 
@@ -1438,6 +1489,10 @@ var ErrInvalidState = errors.New("invalid state parameter, possible CSRF attack"
 // response doesn't identify the authorization server the client is using
 // (RFC 9207).
 var ErrIssuerMismatch = errors.New("authorization response issuer mismatch, possible mix-up attack")
+
+// ErrPKCERequired is returned when PKCE is enabled but the code challenge or
+// code verifier passed in is empty.
+var ErrPKCERequired = errors.New("PKCE is enabled but the code challenge or verifier is empty")
 
 // ProcessAuthorizationResponse processes the authorization response and exchanges the code for a token.
 // It doesn't check the response's iss parameter; ProcessAuthorizationCallback does.
@@ -1574,7 +1629,10 @@ func (h *OAuthHandler) processAuthorizationResponse(ctx context.Context, code, s
 	data.Set("code", code)
 	data.Set("redirect_uri", transaction.redirectURI)
 
-	if transaction.pkceEnabled && codeVerifier != "" {
+	if transaction.pkceEnabled {
+		if codeVerifier == "" {
+			return ErrPKCERequired
+		}
 		data.Set("code_verifier", codeVerifier)
 	}
 
@@ -1598,12 +1656,12 @@ func (h *OAuthHandler) processAuthorizationResponse(ctx context.Context, code, s
 	// Accept any 2xx status; some authorization servers (e.g. Supabase) return
 	// 201 Created for successful token responses.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body := readErrorBody(resp.Body)
 		return extractOAuthError(body, resp.StatusCode, "token request failed")
 	}
 
 	// Read the response body for parsing
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(newBoundedReader(resp.Body, maxOAuthBodyBytes))
 	if err != nil {
 		return fmt.Errorf("failed to read token response body: %w", err)
 	}
@@ -1615,18 +1673,13 @@ func (h *OAuthHandler) processAuthorizationResponse(ctx context.Context, code, s
 		return fmt.Errorf("token request failed: %w", oauthErr)
 	}
 
-	var tokenResp Token
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return fmt.Errorf("failed to decode token response: %w", err)
-	}
-
-	// Set expiration time
-	if tokenResp.ExpiresIn > 0 {
-		tokenResp.ExpiresAt = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	tokenResp, err := decodeTokenResponse(body)
+	if err != nil {
+		return err
 	}
 
 	// Save the token
-	if err := h.saveBoundToken(ctx, metadata, credentials, &tokenResp); err != nil {
+	if err := h.saveBoundToken(ctx, metadata, credentials, tokenResp); err != nil {
 		return fmt.Errorf("failed to save token: %w", err)
 	}
 
@@ -1723,6 +1776,10 @@ func newTokenRequest(ctx context.Context, tokenEndpoint string, data url.Values,
 // an immutable transaction for callback validation and code exchange. A later
 // issuer or credential change invalidates the flow rather than redirecting its code.
 func (h *OAuthHandler) GetAuthorizationURL(ctx context.Context, state, codeChallenge string) (string, error) {
+	if h.config.PKCEEnabled && codeChallenge == "" {
+		return "", ErrPKCERequired
+	}
+
 	metadata, err := h.getServerMetadata(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to get server metadata: %w", err)
@@ -1770,7 +1827,7 @@ func (h *OAuthHandler) GetAuthorizationURL(ctx context.Context, state, codeChall
 		params.Set("scope", strings.Join(h.config.Scopes, " "))
 	}
 
-	if transaction.pkceEnabled && codeChallenge != "" {
+	if transaction.pkceEnabled {
 		params.Set("code_challenge", codeChallenge)
 		params.Set("code_challenge_method", "S256")
 	}

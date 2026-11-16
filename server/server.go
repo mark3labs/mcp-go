@@ -256,7 +256,7 @@ type MCPServer struct {
 	expiredTasks                 map[string]time.Time // Tracks recently expired task IDs with expiration timestamp
 	maxConcurrentTasks           *int                 // Optional limit on concurrent running tasks
 	activeTasks                  int                  // Current count of running (non-terminal) tasks
-	inflightCancels              sync.Map             // Maps request ID -> context.CancelFunc for in-flight requests
+	inflightCancels              sync.Map             // inflightRequestKey -> context.CancelFunc
 	inputValidator               *inputSchemaValidator
 	outputValidator              *outputSchemaValidator
 	strictInputSchemaDefault     bool
@@ -2291,7 +2291,7 @@ func (s *MCPServer) handleToolCall(
 	// validation failure is returned as a SEP-1303 tool execution error so the
 	// model receives feedback in its context window and can self-correct.
 	if s.inputValidator != nil {
-		if _, err := s.inputValidator.validate(tool.Tool, request.Params.Arguments); err != nil {
+		if _, err := s.inputValidator.validate(tool.Tool, request.GetRawArguments()); err != nil {
 			return validationToolResult(err), nil
 		}
 	}
@@ -2646,12 +2646,7 @@ func (s *MCPServer) handleNotification(
 	// Handle cancellation notifications per MCP spec
 	if notification.Method == string(mcp.MethodNotificationCancelled) {
 		if reqID, ok := notification.Params.AdditionalFields["requestId"]; ok {
-			key := inflightKey(ctx, reqID)
-			if cancel, loaded := s.inflightCancels.LoadAndDelete(key); loaded {
-				if cancelFunc, ok := cancel.(context.CancelFunc); ok {
-					cancelFunc()
-				}
-			}
+			s.cancelRequest(ctx, reqID)
 		}
 		return nil
 	}
@@ -2664,16 +2659,6 @@ func (s *MCPServer) handleNotification(
 		handler(ctx, notification)
 	}
 	return nil
-}
-
-// inflightKey returns a session-scoped key for the inflight cancellation map.
-// This prevents cross-session request ID collisions in multi-client scenarios.
-func inflightKey(ctx context.Context, requestID any) string {
-	requestID = mcp.NewRequestId(requestID).String()
-	if session := ClientSessionFromContext(ctx); session != nil {
-		return fmt.Sprintf("%s:%v", session.SessionID(), requestID)
-	}
-	return fmt.Sprintf(":%v", requestID)
 }
 
 func createResponse(id any, result any) mcp.JSONRPCMessage {
@@ -2800,9 +2785,13 @@ func (s *MCPServer) handleTaskResult(
 
 	// Return error if task failed
 	if resultErr != nil {
+		code := mcp.INTERNAL_ERROR
+		if errors.Is(resultErr, context.Canceled) {
+			code = mcp.REQUEST_INTERRUPTED
+		}
 		return nil, &requestError{
 			id:   id,
-			code: mcp.INTERNAL_ERROR,
+			code: code,
 			err:  resultErr,
 		}
 	}
@@ -3185,6 +3174,7 @@ func (s *MCPServer) cancelTaskEntry(ctx context.Context, entry *taskEntry, messa
 	entry.task.Status = mcp.TaskStatusCancelled
 	entry.task.StatusMessage = message
 	entry.task.LastUpdatedAt = cancelledAt.UTC().Format(time.RFC3339)
+	entry.resultErr = context.Canceled
 	entry.completed = true
 	close(entry.done)
 	s.activeTasks--

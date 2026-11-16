@@ -196,3 +196,216 @@ func TestStreamableHTTP_LocalhostProtection_NonLoopbackUnaffected(t *testing.T) 
 	httpServer.ServeHTTP(rr, req)
 	assert.Equal(t, http.StatusOK, rr.Code)
 }
+
+// TestHostAllowed verifies Host header allowlist matching: case
+// insensitivity, port handling (including default ports) and IP literal
+// normalization.
+func TestHostAllowed(t *testing.T) {
+	tests := []struct {
+		name         string
+		reqHost      string
+		allowedHosts []string
+		want         bool
+	}{
+		{name: "no allowlist", reqHost: "mcp.example.com", want: false},
+		{name: "bare entry matches bare host", reqHost: "mcp.example.com", allowedHosts: []string{"mcp.example.com"}, want: true},
+		{name: "bare entry matches any port", reqHost: "mcp.example.com:9090", allowedHosts: []string{"mcp.example.com"}, want: true},
+		{name: "case insensitive", reqHost: "MCP.Example.COM:9090", allowedHosts: []string{" mcp.EXAMPLE.com "}, want: true},
+		{name: "port entry matches same port", reqHost: "mcp.example.com:9090", allowedHosts: []string{"mcp.example.com:9090"}, want: true},
+		{name: "port entry rejects other port", reqHost: "mcp.example.com:9091", allowedHosts: []string{"mcp.example.com:9090"}, want: false},
+		{name: "port entry rejects bare host", reqHost: "mcp.example.com", allowedHosts: []string{"mcp.example.com:9090"}, want: false},
+		{name: "default https port matches bare host", reqHost: "mcp.example.com", allowedHosts: []string{"mcp.example.com:443"}, want: true},
+		{name: "default http port matches bare host", reqHost: "mcp.example.com", allowedHosts: []string{"mcp.example.com:80"}, want: true},
+		{name: "default port entry rejects other explicit port", reqHost: "mcp.example.com:8443", allowedHosts: []string{"mcp.example.com:443"}, want: false},
+		{name: "other host rejected", reqHost: "evil.com", allowedHosts: []string{"mcp.example.com"}, want: false},
+		{name: "suffix match rejected", reqHost: "mcp.example.com.evil.com", allowedHosts: []string{"mcp.example.com"}, want: false},
+		{name: "matches any entry", reqHost: "b.example.com", allowedHosts: []string{"a.example.com", "b.example.com"}, want: true},
+		{name: "empty entries ignored", reqHost: "evil.com", allowedHosts: []string{"", "  "}, want: false},
+		{name: "empty host rejected", reqHost: "", allowedHosts: []string{"mcp.example.com", ""}, want: false},
+		{name: "ip entry", reqHost: "192.168.1.10:8080", allowedHosts: []string{"192.168.1.10"}, want: true},
+		{name: "bracketed ipv6 host and entry", reqHost: "[fe80::1]", allowedHosts: []string{"[fe80::1]"}, want: true},
+		{name: "bracketed ipv6 host, unbracketed entry", reqHost: "[fe80::1]", allowedHosts: []string{"fe80::1"}, want: true},
+		{name: "ipv6 host with port, bracketed entry", reqHost: "[fe80::1]:8080", allowedHosts: []string{"[fe80::1]"}, want: true},
+		{name: "ipv6 host with port, unbracketed entry", reqHost: "[fe80::1]:8080", allowedHosts: []string{"fe80::1"}, want: true},
+		{name: "expanded ipv6 host matches compressed entry", reqHost: "[2001:0db8:0:0:0:0:0:1]:8080", allowedHosts: []string{"2001:db8::1"}, want: true},
+		{name: "compressed ipv6 host matches expanded entry", reqHost: "[2001:db8::1]", allowedHosts: []string{"[2001:0DB8::0001]"}, want: true},
+		{name: "ipv6 port entry rejects other port", reqHost: "[fe80::1]:8081", allowedHosts: []string{"[fe80::1]:8080"}, want: false},
+		{name: "different ipv6 rejected", reqHost: "[fe80::2]", allowedHosts: []string{"fe80::1"}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, hostAllowed(tt.reqHost, tt.allowedHosts), "hostAllowed(%q, %q)", tt.reqHost, tt.allowedHosts)
+		})
+	}
+}
+
+// withLocalAddr returns r with http.LocalAddrContextKey set to ip, simulating
+// a request that net/http delivered on that interface.
+func withLocalAddr(r *http.Request, ip string) *http.Request {
+	localAddr := &net.TCPAddr{IP: net.ParseIP(ip), Port: 8080}
+	return r.WithContext(context.WithValue(r.Context(), http.LocalAddrContextKey, localAddr))
+}
+
+// TestRejectDNSRebinding verifies rejectDNSRebinding for loopback,
+// non-loopback and missing local addresses, with and without an allowlist.
+func TestRejectDNSRebinding(t *testing.T) {
+	tests := []struct {
+		name          string
+		localIP       string
+		hostHeader    string
+		allowedHosts  []string
+		wantForbidden bool
+	}{
+		{name: "no allowlist, loopback conn, loopback host", localIP: "127.0.0.1", hostHeader: "localhost:8080"},
+		{name: "no allowlist, loopback conn, foreign host", localIP: "127.0.0.1", hostHeader: "evil.com", wantForbidden: true},
+		{name: "no allowlist, non-loopback conn, foreign host", localIP: "192.168.1.10", hostHeader: "evil.com"},
+		{name: "no allowlist, no local addr, foreign host", hostHeader: "evil.com"},
+		{name: "allowlist, non-loopback conn, foreign host", localIP: "192.168.1.10", hostHeader: "evil.com", allowedHosts: []string{"mcp.example.com"}, wantForbidden: true},
+		{name: "allowlist, non-loopback conn, allowed host", localIP: "192.168.1.10", hostHeader: "mcp.example.com:8080", allowedHosts: []string{"mcp.example.com"}},
+		{name: "allowlist, non-loopback conn, loopback host", localIP: "192.168.1.10", hostHeader: "127.0.0.1:8080", allowedHosts: []string{"mcp.example.com"}},
+		{name: "allowlist, loopback conn, allowed host", localIP: "127.0.0.1", hostHeader: "mcp.example.com", allowedHosts: []string{"mcp.example.com"}},
+		{name: "allowlist, loopback conn, foreign host", localIP: "::1", hostHeader: "evil.com", allowedHosts: []string{"mcp.example.com"}, wantForbidden: true},
+		{name: "allowlist, no local addr, foreign host", hostHeader: "evil.com", allowedHosts: []string{"mcp.example.com"}, wantForbidden: true},
+		{name: "allowlist, no local addr, allowed host", hostHeader: "mcp.example.com", allowedHosts: []string{"mcp.example.com"}},
+		{name: "empty-entry allowlist, non-loopback conn, foreign host", localIP: "192.168.1.10", hostHeader: "evil.com", allowedHosts: []string{""}, wantForbidden: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+			req.Host = tt.hostHeader
+			if tt.localIP != "" {
+				req = withLocalAddr(req, tt.localIP)
+			}
+
+			rr := httptest.NewRecorder()
+			got := rejectDNSRebinding(rr, req, tt.allowedHosts)
+
+			assert.Equal(t, tt.wantForbidden, got)
+			if tt.wantForbidden {
+				assert.Equal(t, http.StatusForbidden, rr.Code)
+				assert.Contains(t, rr.Body.String(), "invalid Host header")
+			} else {
+				assert.Zero(t, rr.Body.Len(), "nothing should be written for accepted requests")
+			}
+		})
+	}
+}
+
+// allowedHostsTests is the shared table for the transport-level allowlist
+// tests below. Every request arrives on a non-loopback interface.
+var allowedHostsTests = []struct {
+	name              string
+	hostHeader        string
+	allowedHosts      []string
+	disableProtection bool
+	wantForbidden     bool
+}{
+	{
+		name:       "no allowlist accepts foreign host",
+		hostHeader: "evil.com",
+	},
+	{
+		name:          "allowlist rejects foreign host",
+		hostHeader:    "evil.com",
+		allowedHosts:  []string{"mcp.example.com"},
+		wantForbidden: true,
+	},
+	{
+		name:         "allowlist accepts allowed host",
+		hostHeader:   "mcp.example.com:8080",
+		allowedHosts: []string{"mcp.example.com"},
+	},
+	{
+		name:         "allowlist accepts loopback host",
+		hostHeader:   "localhost:8080",
+		allowedHosts: []string{"mcp.example.com"},
+	},
+	{
+		name:              "disabled protection ignores allowlist",
+		hostHeader:        "evil.com",
+		allowedHosts:      []string{"mcp.example.com"},
+		disableProtection: true,
+	},
+}
+
+// TestStreamableHTTP_AllowedHosts verifies that WithAllowedHosts enforces the
+// Host header allowlist on requests arriving via non-loopback addresses.
+func TestStreamableHTTP_AllowedHosts(t *testing.T) {
+	for _, tt := range allowedHostsTests {
+		t.Run(tt.name, func(t *testing.T) {
+			mcpServer := NewMCPServer("test", "1.0.0")
+			httpServer := NewStreamableHTTPServer(mcpServer,
+				WithStateLess(true),
+				WithAllowedHosts(tt.allowedHosts...),
+				WithDisableLocalhostProtection(tt.disableProtection),
+			)
+
+			body, err := json.Marshal(initRequest)
+			require.NoError(t, err)
+			req, err := http.NewRequest(http.MethodPost, "http://192.168.1.10:8080/mcp", bytes.NewReader(body))
+			require.NoError(t, err)
+			req.Host = tt.hostHeader
+			req.Header.Set("Content-Type", "application/json")
+			req = withLocalAddr(req, "192.168.1.10")
+
+			rr := httptest.NewRecorder()
+			httpServer.ServeHTTP(rr, req)
+
+			if tt.wantForbidden {
+				assert.Equal(t, http.StatusForbidden, rr.Code)
+				assert.Contains(t, rr.Body.String(), "invalid Host header")
+			} else {
+				assert.Equal(t, http.StatusOK, rr.Code)
+			}
+		})
+	}
+}
+
+// TestSSE_AllowedHosts verifies that WithSSEAllowedHosts enforces the Host
+// header allowlist on requests arriving via non-loopback addresses, for
+// ServeHTTP as well as the SSEHandler and MessageHandler sub-handlers.
+func TestSSE_AllowedHosts(t *testing.T) {
+	for _, tt := range allowedHostsTests {
+		t.Run(tt.name, func(t *testing.T) {
+			mcpServer := NewMCPServer("test", "1.0.0")
+			sseServer := NewSSEServer(mcpServer,
+				WithSSEAllowedHosts(tt.allowedHosts...),
+				WithSSEDisableLocalhostProtection(tt.disableProtection),
+			)
+
+			// Every request is a POST: the message endpoint answers 400 Bad
+			// Request for the missing sessionId, and the SSE endpoint answers
+			// 405 Method Not Allowed without opening an event stream. Either
+			// distinguishes normal handling from the 403 protection response.
+			handlers := []struct {
+				name        string
+				handler     http.Handler
+				path        string
+				wantAllowed int
+			}{
+				{name: "ServeHTTP", handler: sseServer, path: "/message", wantAllowed: http.StatusBadRequest},
+				{name: "SSEHandler", handler: sseServer.SSEHandler(), path: "/sse", wantAllowed: http.StatusMethodNotAllowed},
+				{name: "MessageHandler", handler: sseServer.MessageHandler(), path: "/message", wantAllowed: http.StatusBadRequest},
+			}
+			for _, h := range handlers {
+				t.Run(h.name, func(t *testing.T) {
+					req, err := http.NewRequest(http.MethodPost, "http://192.168.1.10:8080"+h.path, bytes.NewReader(nil))
+					require.NoError(t, err)
+					req.Host = tt.hostHeader
+					req = withLocalAddr(req, "192.168.1.10")
+
+					rr := httptest.NewRecorder()
+					h.handler.ServeHTTP(rr, req)
+
+					if tt.wantForbidden {
+						assert.Equal(t, http.StatusForbidden, rr.Code)
+					} else {
+						assert.Equal(t, h.wantAllowed, rr.Code)
+					}
+				})
+			}
+		})
+	}
+}

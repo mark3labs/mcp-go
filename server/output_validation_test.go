@@ -450,3 +450,63 @@ func TestOutputSchemaValidation_TaskAugmented_HappyPath(t *testing.T) {
 	assert.False(t, taskResult.IsError)
 	require.NotNil(t, taskResult.StructuredContent)
 }
+
+func TestOutputSchemaValidation_RawStructuredContent(t *testing.T) {
+	t.Run("raw structured content without StructuredContent is validated", func(t *testing.T) {
+		srv := NewMCPServer("test", "1.0.0", WithOutputSchemaValidation())
+		srv.AddTool(fakeWeatherTool(), func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{
+				Content:              []mcp.Content{mcp.NewTextContent("raw invalid")},
+				RawStructuredContent: json.RawMessage(`{"temperature":"not-a-number","unit":"C"}`),
+			}, nil
+		})
+
+		resp := callTool(t, srv, "get_weather", map[string]any{"city": "London"})
+		requireToolErrorContaining(t, resp, "temperature")
+	})
+
+	t.Run("raw structured content preserves large integer precision", func(t *testing.T) {
+		srv := NewMCPServer("test", "1.0.0", WithOutputSchemaValidation())
+		tool := mcp.Tool{
+			Name:        "get_even_id",
+			Description: "Return an even 64-bit ID",
+			InputSchema: mcp.ToolInputSchema{Type: "object"},
+			RawOutputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"id": {"type": "integer", "multipleOf": 2}
+				},
+				"required": ["id"],
+				"additionalProperties": false
+			}`),
+		}
+		srv.AddTool(tool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			var res mcp.CallToolResult
+			err := json.Unmarshal([]byte(`{"content":[{"type":"text","text":"odd"}],"structuredContent":{"id":9007199254740993}}`), &res)
+			if err != nil {
+				return nil, err
+			}
+			return &res, nil
+		})
+
+		resp := callTool(t, srv, "get_even_id", map[string]any{})
+		requireToolErrorContaining(t, resp, "id")
+	})
+
+	t.Run("null raw structured content falls back to non-nil StructuredContent", func(t *testing.T) {
+		srv := NewMCPServer("test", "1.0.0", WithOutputSchemaValidation())
+		srv.AddTool(fakeWeatherTool(), func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{
+				Content:              []mcp.Content{mcp.NewTextContent("sunny")},
+				StructuredContent:    weatherOutput{Temperature: 22.0, Unit: "C"},
+				RawStructuredContent: json.RawMessage(` null `),
+			}, nil
+		})
+
+		resp := callTool(t, srv, "get_weather", map[string]any{"city": "London"})
+		requireToolSuccess(t, resp)
+		encoded, err := json.Marshal(resp)
+		require.NoError(t, err)
+		require.Contains(t, string(encoded), `"temperature":22`)
+	})
+}

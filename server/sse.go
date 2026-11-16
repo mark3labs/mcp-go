@@ -1,8 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -198,6 +200,15 @@ type SSEServer struct {
 	// connections. See WithSSEDisableLocalhostProtection.
 	disableLocalhostProtection bool
 
+	// allowedHosts is an opt-in Host header allowlist enforced for every
+	// request regardless of the connection's local address. See
+	// WithSSEAllowedHosts.
+	allowedHosts []string
+
+	// maxRequestBodyBytes bounds a message POST body; zero or less is no
+	// bound. See WithSSEMaxRequestBodyBytes.
+	maxRequestBodyBytes int64
+
 	mu sync.RWMutex
 }
 
@@ -368,20 +379,52 @@ func WithSSECORS(opts ...CORSOption) SSEOption {
 // [::1]) whose Host header is not a localhost value are rejected with 403
 // Forbidden. This protects local MCP servers against DNS rebinding attacks,
 // where a malicious website rebinds its own domain to 127.0.0.1 to make a
-// victim's browser issue requests against a local server. The protection
-// applies regardless of whether the server listens on localhost specifically
-// or on 0.0.0.0, and never affects requests arriving via non-loopback
-// addresses.
+// victim's browser issue requests against a local server. By default this
+// protection only covers connections delivered over a loopback address; a
+// server bound to a non-loopback interface (e.g. 0.0.0.0) is not protected
+// for requests arriving on that interface unless WithSSEAllowedHosts is
+// configured.
 //
-// Disable it only if you understand the security implications, for example
-// when a reverse proxy on the same host forwards requests via localhost
-// while preserving the original Host header. In that case, prefer
-// configuring the proxy to rewrite the Host header to localhost instead.
+// Disabling the protection turns off all Host header validation, including
+// the allowlist configured with WithSSEAllowedHosts. Disable it only if you
+// understand the security implications. When a reverse proxy on the same
+// host forwards requests via localhost while preserving the original Host
+// header, prefer listing the public host name with WithSSEAllowedHosts, or
+// configuring the proxy to rewrite the Host header to localhost, instead.
 //
 // See https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#local-mcp-server-compromise
 func WithSSEDisableLocalhostProtection(disable bool) SSEOption {
 	return func(s *SSEServer) {
 		s.disableLocalhostProtection = disable
+	}
+}
+
+// WithSSEAllowedHosts configures an allowlist of Host header values for DNS
+// rebinding protection. When at least one host is configured, every request
+// handled by ServeHTTP, SSEHandler or MessageHandler whose Host header is
+// neither a loopback value nor in the allowlist is rejected with 403
+// Forbidden, regardless of the address the server is bound to. This is how to
+// protect a server bound to a non-loopback interface (e.g. ":8080" or
+// 0.0.0.0): list the host names clients legitimately use to reach it.
+//
+// Entries are matched as described in WithAllowedHosts. Calling
+// WithSSEAllowedHosts with no hosts clears the allowlist, restoring the
+// default loopback-only protection. WithSSEDisableLocalhostProtection(true)
+// disables the allowlist as well.
+func WithSSEAllowedHosts(hosts ...string) SSEOption {
+	return func(s *SSEServer) {
+		s.allowedHosts = append([]string(nil), hosts...)
+	}
+}
+
+// WithSSEMaxRequestBodyBytes bounds the body of a POST to the message
+// endpoint: the server reads at most n bytes of it, and answers a larger one
+// 413 Request Entity Too Large with a JSON-RPC error, so a client cannot make
+// the server hold an arbitrary amount of memory. The default is
+// DefaultMaxRequestBodyBytes; zero or less removes the bound.
+func WithSSEMaxRequestBodyBytes(n int64) SSEOption {
+	return func(s *SSEServer) {
+		s.maxRequestBodyBytes = n
 	}
 }
 
@@ -411,6 +454,7 @@ func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
 		useFullURLForMessageEndpoint: true,
 		keepAlive:                    false,
 		keepAliveInterval:            10 * time.Second,
+		maxRequestBodyBytes:          DefaultMaxRequestBodyBytes,
 		sessionIDGenFunc: func(ctx context.Context, r *http.Request) (string, error) {
 			return uuid.New().String(), nil
 		},
@@ -656,9 +700,18 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		ctx = s.contextFunc(ctx, r)
 	}
 
+	body, err := readRequestBody(r, s.maxRequestBodyBytes)
+	if errors.Is(err, errBodyTooLarge) {
+		writeJSONRPCErrorStatus(w, http.StatusRequestEntityTooLarge, nil, mcp.INVALID_REQUEST,
+			fmt.Sprintf("request body exceeds %d bytes", s.maxRequestBodyBytes), func(err error) {
+				log.Printf("Failed to encode response: %v", err)
+			})
+		return
+	}
+
 	// Parse message as raw JSON
 	var rawMessage json.RawMessage
-	if err := json.NewDecoder(r.Body).Decode(&rawMessage); err != nil {
+	if err != nil || json.NewDecoder(bytes.NewReader(body)).Decode(&rawMessage) != nil {
 		s.writeJSONRPCError(w, nil, mcp.PARSE_ERROR, "Parse error")
 		return
 	}
@@ -887,7 +940,7 @@ func (s *SSEServer) MessageHandler() http.Handler {
 // portion is a no-op when CORS is disabled.
 func (s *SSEServer) withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.disableLocalhostProtection && rejectDNSRebinding(w, r) {
+		if !s.disableLocalhostProtection && rejectDNSRebinding(w, r, s.allowedHosts) {
 			return
 		}
 		if s.corsConfig.enabled() {
@@ -908,10 +961,11 @@ func (s *SSEServer) withCORS(next http.Handler) http.Handler {
 // message handlers.
 //
 // Requests arriving over a loopback connection with a non-localhost Host
-// header are rejected with 403 Forbidden to protect against DNS rebinding
-// attacks, unless WithSSEDisableLocalhostProtection is set.
+// header, or carrying a Host header outside the allowlist configured with
+// WithSSEAllowedHosts, are rejected with 403 Forbidden to protect against DNS
+// rebinding attacks, unless WithSSEDisableLocalhostProtection is set.
 func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !s.disableLocalhostProtection && rejectDNSRebinding(w, r) {
+	if !s.disableLocalhostProtection && rejectDNSRebinding(w, r, s.allowedHosts) {
 		return
 	}
 	if s.corsConfig.enabled() {
@@ -929,7 +983,7 @@ func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := r.URL.Path
-	if s.protectedResourceMetadataHandler != nil && path == s.protectedResourceMetadataPath {
+	if s.protectedResourceMetadataHandler != nil && matchProtectedResourceMetadataPath(r.URL.EscapedPath(), s.protectedResourceMetadataPath) {
 		s.protectedResourceMetadataHandler.ServeHTTP(w, r)
 		return
 	}

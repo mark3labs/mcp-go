@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -86,9 +85,9 @@ type SessionWithProtocolVersion interface {
 	ProtocolVersion() string
 }
 
-// extractRequestProtocolInfo performs a lightweight partial unmarshal of the
-// _meta field of a JSON-RPC request and reports what protocol era it belongs
-// to.
+// protocolInfoFromMeta reports what protocol era a JSON-RPC request belongs
+// to from its params._meta, which HandleMessage decodes once with the rest of
+// the envelope.
 //
 // A request belongs to the modern era only when it declares a protocol version
 // of 2026-07-28 or later. Anything else - including a request with no _meta at
@@ -97,19 +96,7 @@ type SessionWithProtocolVersion interface {
 // The returned error is non-nil only when a modern request is malformed: the
 // required client capabilities are missing, or a well-known key holds a value
 // of the wrong shape.
-func extractRequestProtocolInfo(message json.RawMessage) (*RequestProtocolInfo, error) {
-	var wrapper struct {
-		Params struct {
-			Meta *mcp.Meta `json:"_meta"`
-		} `json:"params"`
-	}
-	if err := json.Unmarshal(message, &wrapper); err != nil {
-		// A malformed body is reported by the per-method unmarshal, which
-		// produces a better error message.
-		return &RequestProtocolInfo{}, nil
-	}
-
-	meta := wrapper.Params.Meta
+func protocolInfoFromMeta(meta *mcp.Meta) (*RequestProtocolInfo, error) {
 	version := meta.ProtocolVersion()
 	if !mcp.IsModernProtocol(version) {
 		// Either no version at all, or an older one: legacy era.

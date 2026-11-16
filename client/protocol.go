@@ -72,12 +72,25 @@ func (c *Client) effectiveCapabilities() mcp.ClientCapabilities {
 	return capabilities
 }
 
+// requestCapabilitiesKey carries per-request client capabilities on a context.
+type requestCapabilitiesKey struct{}
+
+// WithRequestClientCapabilities returns a context whose requests declare
+// capabilities in _meta in place of the client's own, for a client acting on
+// behalf of a caller that can answer less, or more, than the client's
+// handlers. It applies to protocol version 2026-07-28 and later; earlier
+// versions declare capabilities once, at initialize.
+func WithRequestClientCapabilities(ctx context.Context, capabilities mcp.ClientCapabilities) context.Context {
+	return context.WithValue(ctx, requestCapabilitiesKey{}, capabilities)
+}
+
 // applyRequestMeta merges the per-request protocol metadata that protocol
 // version 2026-07-28 requires into a request's params.
 //
 // It is a no-op for legacy connections, whose protocol version, identity, and
-// capabilities were fixed by the initialize handshake.
-func (c *Client) applyRequestMeta(params any) any {
+// capabilities were fixed by the initialize handshake. Capabilities set with
+// [WithRequestClientCapabilities] on ctx replace the client's own.
+func (c *Client) applyRequestMeta(ctx context.Context, params any) any {
 	if !c.isModern() {
 		return params
 	}
@@ -99,7 +112,11 @@ func (c *Client) applyRequestMeta(params any) any {
 		_ = json.Unmarshal(raw, &meta)
 	}
 	meta[mcp.MetaKeyProtocolVersion] = c.protocolVersion
-	meta[mcp.MetaKeyClientCapabilities] = c.effectiveCapabilities()
+	capabilities := c.effectiveCapabilities()
+	if override, ok := ctx.Value(requestCapabilitiesKey{}).(mcp.ClientCapabilities); ok {
+		capabilities = override
+	}
+	meta[mcp.MetaKeyClientCapabilities] = capabilities
 	if c.clientInfo.Name != "" {
 		meta[mcp.MetaKeyClientInfo] = c.clientInfo
 	}
@@ -267,7 +284,7 @@ func (c *Client) Discover(ctx context.Context, request mcp.DiscoverRequest) (*mc
 	response, err := c.sendRequest(
 		ctx,
 		string(mcp.MethodServerDiscover),
-		c.applyRequestMeta(request.Params),
+		c.applyRequestMeta(ctx, request.Params),
 		outboundHeader(request.Header, request.Method),
 	)
 	if err != nil {

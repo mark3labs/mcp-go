@@ -5,12 +5,17 @@ on:
     branches: [ main ]  # or your default branch
   workflow_dispatch:  # Allows manual triggering
 
+# Serialize writes to gh-pages without interrupting an active deployment.
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: false
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
