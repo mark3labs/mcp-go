@@ -188,6 +188,11 @@ func decodeTokenResponse(body []byte) (*Token, error) {
 		token.ExpiresAt = time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second)
 	} else {
 		token.ExpiresAt = parseExpiresAt(resp.ExpiresAt)
+		// Record the lifetime the token was issued with, rounded up to a
+		// second, which expiryDelta caps the refresh margin with.
+		if lifetime := time.Until(token.ExpiresAt); !token.ExpiresAt.IsZero() && lifetime > 0 {
+			token.ExpiresIn = int64((lifetime + time.Second - 1) / time.Second)
+		}
 	}
 	return token, nil
 }
