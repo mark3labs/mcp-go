@@ -331,7 +331,7 @@ func quotedFieldSchema(t reflect.Type, schema *jsonschema.Schema) *jsonschema.Sc
 		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
 		reflect.Float32, reflect.Float64, reflect.String:
-		quoted := &jsonschema.Schema{Type: "string", Description: schema.Description}
+		quoted := &jsonschema.Schema{Type: "string", Description: schema.Description, Enum: schema.Enum}
 		if fieldType.Kind() == reflect.Pointer {
 			quoted.Type = ""
 			quoted.Types = []string{"null", "string"}

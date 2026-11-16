@@ -205,3 +205,30 @@ func TestSchemaFor_QuotedFieldDominance(t *testing.T) {
 		})
 	}
 }
+
+func TestSchemaFor_QuotedFieldEnums(t *testing.T) {
+	type normal struct {
+		Count int `json:"count,string" jsonschema:"Allowed count,enum=1,enum=2"`
+	}
+	type fallback struct {
+		Count int `json:"count,string" jsonschema:"enum=1,enum=2"`
+	}
+	tests := []struct {
+		name string
+		raw  func() (json.RawMessage, error)
+	}{
+		{name: "normal", raw: SchemaForRaw[normal]},
+		{name: "enum fallback", raw: SchemaForRaw[fallback]},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw, err := test.raw()
+			require.NoError(t, err)
+			var schema map[string]any
+			require.NoError(t, json.Unmarshal(raw, &schema))
+			count := schema["properties"].(map[string]any)["count"].(map[string]any)
+			assert.Equal(t, "string", count["type"])
+			assert.Equal(t, []any{"1", "2"}, count["enum"])
+		})
+	}
+}
