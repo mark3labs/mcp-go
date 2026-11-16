@@ -32,7 +32,7 @@ func schemaFor[T any]() (*jsonschema.Schema, error) {
 		}
 	}
 
-	applyStructFieldTags(reflect.TypeFor[T](), schema)
+	applyStructFieldTagsToType(reflect.TypeFor[T](), schema)
 	return schema, nil
 }
 
@@ -240,10 +240,6 @@ func applyStructFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 			if !ok {
 				continue
 			}
-			if info.settings["string"] {
-				prop = quotedFieldSchema(fieldType, prop)
-				schema.Properties[info.name] = prop
-			}
 
 			description, enums := fieldSchemaAnnotations(field)
 			if description != "" {
@@ -257,6 +253,67 @@ func applyStructFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 	}
 
 	walk(t)
+	applyQuotedFieldTags(t, schema)
+}
+
+func applyQuotedFieldTags(t reflect.Type, schema *jsonschema.Schema) {
+	type candidate struct {
+		field     reflect.StructField
+		info      jsonFieldInfo
+		depth     int
+		ambiguous bool
+	}
+	fields := make(map[string]candidate)
+	active := make(map[reflect.Type]bool)
+	var walk func(reflect.Type, int)
+	walk = func(t reflect.Type, depth int) {
+		if active[t] {
+			return
+		}
+		active[t] = true
+		defer delete(active, t)
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			info := fieldJSONTagInfo(field)
+			if info.omit {
+				continue
+			}
+			fieldType := field.Type
+			if fieldType.Kind() == reflect.Pointer {
+				fieldType = fieldType.Elem()
+			}
+			if field.Anonymous && !info.explicitName && fieldType.Kind() == reflect.Struct {
+				walk(fieldType, depth+1)
+				continue
+			}
+			if !field.IsExported() {
+				continue
+			}
+			previous, exists := fields[info.name]
+			if exists {
+				if previous.depth < depth {
+					continue
+				}
+				if previous.depth == depth {
+					if previous.info.explicitName && !info.explicitName {
+						continue
+					}
+					if previous.info.explicitName == info.explicitName {
+						previous.ambiguous = true
+						fields[info.name] = previous
+						continue
+					}
+				}
+			}
+			fields[info.name] = candidate{field: field, info: info, depth: depth}
+		}
+	}
+	walk(t, 0)
+	for name, field := range fields {
+		if prop := schema.Properties[name]; prop != nil && !field.ambiguous && field.info.settings["string"] {
+			schema.Properties[name] = quotedFieldSchema(field.field.Type, prop)
+		}
+	}
 }
 
 func quotedFieldSchema(t reflect.Type, schema *jsonschema.Schema) *jsonschema.Schema {
@@ -363,7 +420,10 @@ func fieldJSONInfo(field reflect.StructField) jsonFieldInfo {
 	if !field.IsExported() {
 		return jsonFieldInfo{omit: true}
 	}
+	return fieldJSONTagInfo(field)
+}
 
+func fieldJSONTagInfo(field reflect.StructField) jsonFieldInfo {
 	info := jsonFieldInfo{name: field.Name}
 	tag, ok := field.Tag.Lookup("json")
 	if !ok {
