@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -239,6 +240,10 @@ func applyStructFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 			if !ok {
 				continue
 			}
+			if info.settings["string"] {
+				prop = quotedFieldSchema(fieldType, prop)
+				schema.Properties[info.name] = prop
+			}
 
 			description, enums := fieldSchemaAnnotations(field)
 			if description != "" {
@@ -252,6 +257,32 @@ func applyStructFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 	}
 
 	walk(t)
+}
+
+func quotedFieldSchema(t reflect.Type, schema *jsonschema.Schema) *jsonschema.Schema {
+	fieldType := t
+	if t.Name() == "" && t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	for _, iface := range []reflect.Type{reflect.TypeFor[json.Marshaler](), reflect.TypeFor[encoding.TextMarshaler]()} {
+		if t.Implements(iface) || reflect.PointerTo(t).Implements(iface) {
+			return schema
+		}
+	}
+	switch t.Kind() {
+	case reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64, reflect.String:
+		quoted := &jsonschema.Schema{Type: "string", Description: schema.Description}
+		if fieldType.Kind() == reflect.Pointer {
+			quoted.Type = ""
+			quoted.Types = []string{"null", "string"}
+		}
+		return quoted
+	default:
+		return schema
+	}
 }
 
 func applyStructFieldTagsToType(t reflect.Type, schema *jsonschema.Schema) {

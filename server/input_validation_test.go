@@ -12,6 +12,44 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+func TestSchemaValidation_QuotedField(t *testing.T) {
+	type request struct {
+		Count int    `json:"count,string"`
+		Mode  string `json:"mode" jsonschema:"enum=fast,enum=safe"`
+	}
+	tests := []struct {
+		name    string
+		count   any
+		success bool
+	}{
+		{name: "quoted number", count: "42", success: true},
+		{name: "unquoted number", count: 42, success: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+			srv.AddTool(mcp.NewTool("quoted", mcp.WithInputSchema[request](), mcp.WithOutputSchema[request]()),
+				func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					called = true
+					var args request
+					if err := req.BindArguments(&args); err != nil {
+						return nil, err
+					}
+					assert.Equal(t, 42, args.Count)
+					return mcp.NewToolResultStructuredOnly(args), nil
+				})
+			response := callTool(t, srv, "quoted", map[string]any{"count": test.count, "mode": "fast"})
+			if test.success {
+				requireToolSuccess(t, response)
+			} else {
+				requireToolErrorContaining(t, response, "count")
+			}
+			assert.Equal(t, test.success, called)
+		})
+	}
+}
+
 // fakeListTool returns a tool that mirrors the kubernetes_list shape used in
 // the bug report: a `continue` pagination token (the standard k8s name) plus
 // strict additionalProperties: false so unknown args like `cursor` are
