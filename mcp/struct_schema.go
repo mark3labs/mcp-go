@@ -32,7 +32,8 @@ func schemaFor[T any]() (*jsonschema.Schema, error) {
 		}
 	}
 
-	applyStructFieldTagsToType(reflect.TypeFor[T](), schema)
+	applyStructFieldTagsToType(reflect.TypeFor[T](), schema, applyStructFieldTags)
+	applyStructFieldTagsToType(reflect.TypeFor[T](), schema, applyQuotedFieldTags)
 	return schema, nil
 }
 
@@ -216,6 +217,50 @@ func applyStructFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 		return
 	}
 
+	var walk func(reflect.Type)
+	walk = func(structType reflect.Type) {
+		for i := 0; i < structType.NumField(); i++ {
+			field := structType.Field(i)
+			fieldType := field.Type
+			info := fieldJSONInfo(field)
+			if info.omit {
+				continue
+			}
+			if field.Anonymous && !info.explicitName {
+				anonType := fieldType
+				if anonType.Kind() == reflect.Pointer {
+					anonType = anonType.Elem()
+				}
+				if anonType.Kind() == reflect.Struct {
+					walk(anonType)
+					continue
+				}
+			}
+
+			prop, ok := schema.Properties[info.name]
+			if !ok {
+				continue
+			}
+
+			description, enums := fieldSchemaAnnotations(field)
+			if description != "" {
+				prop.Description = description
+			}
+			if len(enums) > 0 {
+				prop.Enum = enums
+			}
+			applyStructFieldTagsToType(fieldType, prop, applyStructFieldTags)
+		}
+	}
+
+	walk(t)
+}
+
+func applyQuotedFieldTags(t reflect.Type, schema *jsonschema.Schema) {
+	if schema == nil || schema.Properties == nil {
+		return
+	}
+
 	type candidate struct {
 		field     reflect.StructField
 		info      jsonFieldInfo
@@ -273,14 +318,7 @@ func applyStructFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 		if prop == nil || field.ambiguous {
 			continue
 		}
-		description, enums := fieldSchemaAnnotations(field.field)
-		if description != "" {
-			prop.Description = description
-		}
-		if len(enums) > 0 {
-			prop.Enum = enums
-		}
-		applyStructFieldTagsToType(field.field.Type, prop)
+		applyStructFieldTagsToType(field.field.Type, prop, applyQuotedFieldTags)
 		if field.info.settings["string"] {
 			schema.Properties[name] = quotedFieldSchema(field.field.Type, prop)
 		}
@@ -313,21 +351,21 @@ func quotedFieldSchema(t reflect.Type, schema *jsonschema.Schema) *jsonschema.Sc
 	}
 }
 
-func applyStructFieldTagsToType(t reflect.Type, schema *jsonschema.Schema) {
+func applyStructFieldTagsToType(t reflect.Type, schema *jsonschema.Schema, applyTags func(reflect.Type, *jsonschema.Schema)) {
 	if schema == nil {
 		return
 	}
 
 	switch t.Kind() {
 	case reflect.Pointer:
-		applyStructFieldTagsToType(t.Elem(), schema)
+		applyStructFieldTagsToType(t.Elem(), schema, applyTags)
 	case reflect.Struct:
-		applyStructFieldTags(t, schema)
+		applyTags(t, schema)
 	case reflect.Array, reflect.Slice:
-		applyStructFieldTagsToType(t.Elem(), schema.Items)
+		applyStructFieldTagsToType(t.Elem(), schema.Items, applyTags)
 	case reflect.Map:
 		if t.Key().Kind() == reflect.String {
-			applyStructFieldTagsToType(t.Elem(), schema.AdditionalProperties)
+			applyStructFieldTagsToType(t.Elem(), schema.AdditionalProperties, applyTags)
 		}
 	}
 }
