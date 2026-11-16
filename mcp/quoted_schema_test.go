@@ -107,3 +107,101 @@ func TestToolSchema_QuotedFields(t *testing.T) {
 		assert.JSONEq(t, test.want, string(raw))
 	}
 }
+
+func TestSchemaFor_QuotedFieldShadowing(t *testing.T) {
+	type Embedded struct {
+		Count int `json:"count,string"`
+	}
+	type request struct {
+		Embedded
+		Count int `json:"count"`
+	}
+	raw, err := SchemaForRaw[request]()
+	require.NoError(t, err)
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(raw, &schema))
+	count := schema["properties"].(map[string]any)["count"].(map[string]any)
+	assert.Equal(t, "integer", count["type"])
+	raw, err = json.Marshal(request{Count: 7})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"count":7}`, string(raw))
+}
+
+func TestSchemaFor_QuotedRootContainers(t *testing.T) {
+	type request struct {
+		Count int `json:"count,string"`
+	}
+	tests := []struct {
+		name string
+		raw  func() (json.RawMessage, error)
+		path []string
+	}{
+		{name: "slice", raw: SchemaForRaw[[]request], path: []string{"items"}},
+		{name: "array", raw: SchemaForRaw[[2]request], path: []string{"items"}},
+		{name: "map", raw: SchemaForRaw[map[string]request], path: []string{"additionalProperties"}},
+		{name: "double pointer", raw: SchemaForRaw[**request]},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw, err := test.raw()
+			require.NoError(t, err)
+			var schema map[string]any
+			require.NoError(t, json.Unmarshal(raw, &schema))
+			for _, key := range test.path {
+				schema = schema[key].(map[string]any)
+			}
+			count := schema["properties"].(map[string]any)["count"].(map[string]any)
+			assert.Equal(t, "string", count["type"])
+		})
+	}
+}
+
+func TestSchemaFor_QuotedFieldDominance(t *testing.T) {
+	type Quoted struct {
+		Inner int `json:"Count,string"`
+	}
+	type Plain struct {
+		Count int
+	}
+	type shallowPlain struct {
+		Count int
+		Quoted
+	}
+	type shallowQuoted struct {
+		Count int `json:"Count,string"`
+		Plain
+	}
+	type taggedFirst struct {
+		Quoted
+		Plain
+	}
+	type taggedLast struct {
+		Plain
+		Quoted
+	}
+	tests := []struct {
+		name  string
+		raw   func() (json.RawMessage, error)
+		value any
+		kind  string
+		json  string
+	}{
+		{name: "shallow unquoted before embedded", raw: SchemaForRaw[shallowPlain], value: shallowPlain{Count: 7}, kind: "integer", json: `{"Count":7}`},
+		{name: "shallow quoted before embedded", raw: SchemaForRaw[shallowQuoted], value: shallowQuoted{Count: 7}, kind: "string", json: `{"Count":"7"}`},
+		{name: "tagged at same depth first", raw: SchemaForRaw[taggedFirst], value: taggedFirst{Quoted: Quoted{Inner: 7}}, kind: "string", json: `{"Count":"7"}`},
+		{name: "tagged at same depth last", raw: SchemaForRaw[taggedLast], value: taggedLast{Quoted: Quoted{Inner: 7}}, kind: "string", json: `{"Count":"7"}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw, err := test.raw()
+			require.NoError(t, err)
+			var schema map[string]any
+			require.NoError(t, json.Unmarshal(raw, &schema))
+			count := schema["properties"].(map[string]any)["Count"].(map[string]any)
+			assert.Equal(t, test.kind, count["type"])
+			payload, err := json.Marshal(test.value)
+			require.NoError(t, err)
+			assert.JSONEq(t, test.json, string(payload))
+		})
+	}
+}
