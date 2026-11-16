@@ -216,47 +216,6 @@ func applyStructFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 		return
 	}
 
-	var walk func(reflect.Type)
-	walk = func(structType reflect.Type) {
-		for i := 0; i < structType.NumField(); i++ {
-			field := structType.Field(i)
-			fieldType := field.Type
-			info := fieldJSONInfo(field)
-			if info.omit {
-				continue
-			}
-			if field.Anonymous && !info.explicitName {
-				anonType := fieldType
-				if anonType.Kind() == reflect.Pointer {
-					anonType = anonType.Elem()
-				}
-				if anonType.Kind() == reflect.Struct {
-					walk(anonType)
-					continue
-				}
-			}
-
-			prop, ok := schema.Properties[info.name]
-			if !ok {
-				continue
-			}
-
-			description, enums := fieldSchemaAnnotations(field)
-			if description != "" {
-				prop.Description = description
-			}
-			if len(enums) > 0 {
-				prop.Enum = enums
-			}
-			applyStructFieldTagsToType(fieldType, prop)
-		}
-	}
-
-	walk(t)
-	applyQuotedFieldTags(t, schema)
-}
-
-func applyQuotedFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 	type candidate struct {
 		field     reflect.StructField
 		info      jsonFieldInfo
@@ -310,7 +269,19 @@ func applyQuotedFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 	}
 	walk(t, 0)
 	for name, field := range fields {
-		if prop := schema.Properties[name]; prop != nil && !field.ambiguous && field.info.settings["string"] {
+		prop := schema.Properties[name]
+		if prop == nil || field.ambiguous {
+			continue
+		}
+		description, enums := fieldSchemaAnnotations(field.field)
+		if description != "" {
+			prop.Description = description
+		}
+		if len(enums) > 0 {
+			prop.Enum = enums
+		}
+		applyStructFieldTagsToType(field.field.Type, prop)
+		if field.info.settings["string"] {
 			schema.Properties[name] = quotedFieldSchema(field.field.Type, prop)
 		}
 	}

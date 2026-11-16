@@ -12,6 +12,78 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+func TestSchemaValidation_QuotedPromotedNestedFields(t *testing.T) {
+	type quoted struct {
+		Count int `json:"count,string"`
+	}
+	type plain struct {
+		Count int `json:"count"`
+	}
+	type EmbeddedQuoted struct {
+		Nested quoted `json:"nested"`
+	}
+	type EmbeddedPlain struct {
+		Nested plain `json:"nested"`
+	}
+	type outerPlain struct {
+		EmbeddedQuoted
+		Nested plain `json:"nested"`
+	}
+	type outerQuoted struct {
+		Nested quoted `json:"nested"`
+		EmbeddedPlain
+	}
+	type private struct {
+		Nested quoted `json:"nested"`
+	}
+	type privateRequest struct {
+		private
+	}
+	plainTool := mcp.NewTool("quoted", mcp.WithInputSchema[outerPlain](), mcp.WithOutputSchema[outerPlain]())
+	quotedTool := mcp.NewTool("quoted", mcp.WithInputSchema[outerQuoted](), mcp.WithOutputSchema[outerQuoted]())
+	privateTool := mcp.NewTool("quoted", mcp.WithInputSchema[privateRequest](), mcp.WithOutputSchema[privateRequest]())
+	tests := []struct {
+		name    string
+		tool    mcp.Tool
+		target  any
+		count   any
+		success bool
+	}{
+		{name: "shadowed quoted field accepts number", tool: plainTool, target: &outerPlain{}, count: 42, success: true},
+		{name: "shadowed quoted field rejects string", tool: plainTool, target: &outerPlain{}, count: "42"},
+		{name: "shadowed plain field accepts string", tool: quotedTool, target: &outerQuoted{}, count: "42", success: true},
+		{name: "shadowed plain field rejects number", tool: quotedTool, target: &outerQuoted{}, count: 42},
+		{name: "private embedding accepts string", tool: privateTool, target: &privateRequest{}, count: "42", success: true},
+		{name: "private embedding rejects number", tool: privateTool, target: &privateRequest{}, count: 42},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+			srv.AddTool(test.tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				called = true
+				if err := req.BindArguments(test.target); err != nil {
+					return nil, err
+				}
+				return mcp.NewToolResultStructuredOnly(test.target), nil
+			})
+			args := map[string]any{"nested": map[string]any{"count": test.count}}
+			response := callTool(t, srv, "quoted", args)
+			if test.success {
+				requireToolSuccess(t, response)
+				got, err := json.Marshal(test.target)
+				require.NoError(t, err)
+				want, err := json.Marshal(args)
+				require.NoError(t, err)
+				assert.JSONEq(t, string(want), string(got))
+			} else {
+				requireToolErrorContaining(t, response, "count")
+			}
+			assert.Equal(t, test.success, called)
+		})
+	}
+}
+
 func TestSchemaValidation_QuotedField(t *testing.T) {
 	type request struct {
 		Count int    `json:"count,string"`
