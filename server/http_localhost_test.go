@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -403,6 +404,104 @@ func TestSSE_AllowedHosts(t *testing.T) {
 						assert.Equal(t, http.StatusForbidden, rr.Code)
 					} else {
 						assert.Equal(t, h.wantAllowed, rr.Code)
+					}
+				})
+			}
+		})
+	}
+}
+
+// openSSESession opens an SSE stream on the loopback server at addr and
+// returns the session ID announced in its endpoint event. The stream stays
+// open, keeping the session registered, until the test ends.
+func openSSESession(t *testing.T, client *http.Client, addr string) string {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+addr+"/sse", nil)
+	require.NoError(t, err)
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	event, err := readSSEEvent(resp)
+	require.NoError(t, err)
+	_, endpoint, ok := strings.Cut(event, "data: ")
+	require.True(t, ok, "expected an endpoint event, got %q", event)
+	_, sessionID, ok := strings.Cut(strings.TrimSpace(endpoint), "sessionId=")
+	require.True(t, ok, "expected a sessionId in endpoint %q", endpoint)
+	return sessionID
+}
+
+// TestSSE_ForeignHostRejectedForStreamsAndSessions verifies that a foreign
+// Host is rejected for SSE stream requests and for messages that carry a
+// valid session, through ServeHTTP and the SSEHandler and MessageHandler
+// sub-handlers, under both the default loopback protection and an allowlist
+// on a non-loopback connection.
+func TestSSE_ForeignHostRejectedForStreamsAndSessions(t *testing.T) {
+	tests := []struct {
+		name        string
+		opts        []SSEOption
+		localIP     string
+		allowedHost string
+	}{
+		{
+			name:        "loopback connection",
+			localIP:     "127.0.0.1",
+			allowedHost: "localhost:8080",
+		},
+		{
+			name:        "allowlist on non-loopback connection",
+			opts:        []SSEOption{WithSSEAllowedHosts("mcp.example.com")},
+			localIP:     "192.168.1.10",
+			allowedHost: "mcp.example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sseServer := NewSSEServer(NewMCPServer("test", "1.0.0"), tt.opts...)
+			addr, client := startLoopbackServer(t, sseServer)
+			messagePath := "/message?sessionId=" + openSSESession(t, client, addr)
+			ping := `{"jsonrpc":"2.0","id":1,"method":"ping"}`
+
+			// serve sends a request with the given Host straight to handler,
+			// as if it arrived on tt.localIP. The timeout bounds the stream a
+			// regression would open instead of answering 403.
+			serve := func(t *testing.T, handler http.Handler, method, path, host, body string) int {
+				t.Helper()
+				ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+				defer cancel()
+				target := "http://" + net.JoinHostPort(tt.localIP, "8080") + path
+				req, err := http.NewRequestWithContext(ctx, method, target, strings.NewReader(body))
+				require.NoError(t, err)
+				req.Host = host
+				rr := httptest.NewRecorder()
+				handler.ServeHTTP(rr, withLocalAddr(req, tt.localIP))
+				return rr.Code
+			}
+
+			// wantAllowed is the status for an allowed Host. It is zero for
+			// stream requests, which would keep streaming once accepted;
+			// openSSESession already shows a stream opening.
+			requests := []struct {
+				name        string
+				handler     http.Handler
+				method      string
+				path        string
+				body        string
+				wantAllowed int
+			}{
+				{name: "GET stream via ServeHTTP", handler: sseServer, method: http.MethodGet, path: "/sse"},
+				{name: "GET stream via SSEHandler", handler: sseServer.SSEHandler(), method: http.MethodGet, path: "/sse"},
+				{name: "POST with session via ServeHTTP", handler: sseServer, method: http.MethodPost, path: messagePath, body: ping, wantAllowed: http.StatusAccepted},
+				{name: "POST with session via MessageHandler", handler: sseServer.MessageHandler(), method: http.MethodPost, path: messagePath, body: ping, wantAllowed: http.StatusAccepted},
+			}
+			for _, tc := range requests {
+				t.Run(tc.name, func(t *testing.T) {
+					assert.Equal(t, http.StatusForbidden, serve(t, tc.handler, tc.method, tc.path, "evil.com", tc.body))
+					if tc.wantAllowed != 0 {
+						assert.Equal(t, tc.wantAllowed, serve(t, tc.handler, tc.method, tc.path, tt.allowedHost, tc.body),
+							"the same request with an allowed Host must succeed, so the 403 comes from the Host check")
 					}
 				})
 			}
