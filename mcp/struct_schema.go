@@ -19,17 +19,19 @@ import (
 //   - jsonschema: plain text description, or comma-separated options such as enum=value
 func schemaFor[T any]() (*jsonschema.Schema, error) {
 	opts := &jsonschema.ForOptions{IgnoreInvalidTypes: true}
+	state := schemaFallbackState{active: make(map[reflect.Type]bool)}
 
 	schema, err := jsonschema.For[T](opts)
 	if err != nil {
 		if !isJSONSchemaTagOptionError(err) || !supportsSchemaTagFallback(reflect.TypeFor[T]()) {
 			return nil, err
 		}
-
-		schema, err = schemaForTagFallback(reflect.TypeFor[T](), opts)
-		if err != nil {
-			return nil, err
-		}
+		schema, err = state.schemaForFieldType(reflect.TypeFor[T](), opts)
+	} else {
+		schema, err = state.reconcileNativeSchema(reflect.TypeFor[T](), schema, opts)
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	applyStructFieldTagsToType(reflect.TypeFor[T](), schema, applyStructFieldTags)
@@ -86,11 +88,6 @@ func supportsSchemaTagFallbackType(t reflect.Type, seen map[reflect.Type]bool) b
 
 var errRecursiveSchemaFallback = errors.New("recursive type cannot use schema tag fallback")
 
-func schemaForTagFallback(t reflect.Type, opts *jsonschema.ForOptions) (*jsonschema.Schema, error) {
-	state := schemaFallbackState{active: make(map[reflect.Type]bool)}
-	return state.schemaForFieldType(t, opts)
-}
-
 type schemaFallbackState struct {
 	active map[reflect.Type]bool
 }
@@ -105,6 +102,18 @@ func (s *schemaFallbackState) schemaForStructFields(
 	if t.Kind() != reflect.Struct {
 		return jsonschema.ForType(t, opts)
 	}
+	fields, err := selectedJSONFields(t)
+	if err != nil {
+		return nil, err
+	}
+	return s.schemaForSelectedFields(t, fields, opts)
+}
+
+func (s *schemaFallbackState) schemaForSelectedFields(
+	t reflect.Type,
+	fields []jsonSchemaField,
+	opts *jsonschema.ForOptions,
+) (*jsonschema.Schema, error) {
 	if s.active[t] {
 		return nil, fmt.Errorf("%w: %s", errRecursiveSchemaFallback, t)
 	}
@@ -117,10 +126,6 @@ func (s *schemaFallbackState) schemaForStructFields(
 		AdditionalProperties: &jsonschema.Schema{Not: &jsonschema.Schema{}},
 	}
 
-	fields, err := selectedJSONFields(t)
-	if err != nil {
-		return nil, err
-	}
 	for _, field := range fields {
 		fieldSchema, err := s.schemaForFieldType(field.field.Type, opts)
 		if err != nil {
@@ -151,7 +156,10 @@ func (s *schemaFallbackState) schemaForFieldType(
 	opts *jsonschema.ForOptions,
 ) (*jsonschema.Schema, error) {
 	schema, err := jsonschema.ForType(t, opts)
-	if err == nil || !isJSONSchemaTagOptionError(err) || !supportsSchemaTagFallback(t) {
+	if err == nil {
+		return s.reconcileNativeSchema(t, schema, opts)
+	}
+	if !isJSONSchemaTagOptionError(err) || !supportsSchemaTagFallback(t) {
 		return schema, err
 	}
 
@@ -194,6 +202,79 @@ func (s *schemaFallbackState) schemaForFieldType(
 	}
 }
 
+// reconcileNativeSchema preserves native leaf schemas and rebuilds struct
+// properties only when Go-name visibility disagrees with JSON field selection.
+func (s *schemaFallbackState) reconcileNativeSchema(
+	t reflect.Type,
+	schema *jsonschema.Schema,
+	opts *jsonschema.ForOptions,
+) (*jsonschema.Schema, error) {
+	if schema == nil || hasCustomJSONEncoding(t) {
+		return schema, nil
+	}
+	var err error
+	switch t.Kind() {
+	case reflect.Pointer:
+		return s.reconcileNativeSchema(t.Elem(), schema, opts)
+	case reflect.Struct:
+		if schema.Properties == nil {
+			return schema, nil
+		}
+		// Native inference already accepted this type; recursive embeddings
+		// add no new visible fields and need not use tag-fallback restrictions.
+		fields, _ := selectedJSONFields(t)
+		if !nativeJSONFieldsMatch(t, fields) {
+			rebuilt, buildErr := s.schemaForSelectedFields(t, fields, opts)
+			if buildErr != nil {
+				return nil, buildErr
+			}
+			rebuilt.Type, rebuilt.Types = schema.Type, schema.Types
+			rebuilt.Description = schema.Description
+			return rebuilt, nil
+		}
+		for _, field := range fields {
+			prop, propErr := s.reconcileNativeSchema(field.field.Type, schema.Properties[field.info.name], opts)
+			if propErr != nil {
+				return nil, propErr
+			}
+			if prop != nil {
+				schema.Properties[field.info.name] = prop
+			}
+		}
+	case reflect.Array, reflect.Slice:
+		schema.Items, err = s.reconcileNativeSchema(t.Elem(), schema.Items, opts)
+	case reflect.Map:
+		if t.Key().Kind() == reflect.String {
+			schema.AdditionalProperties, err = s.reconcileNativeSchema(t.Elem(), schema.AdditionalProperties, opts)
+		}
+	}
+	return schema, err
+}
+
+func nativeJSONFieldsMatch(t reflect.Type, fields []jsonSchemaField) bool {
+	native := make(map[string]reflect.StructField)
+	for _, field := range reflect.VisibleFields(t) {
+		info := fieldJSONInfo(field)
+		if field.Anonymous || info.omit {
+			continue
+		}
+		if _, duplicate := native[info.name]; duplicate {
+			return false
+		}
+		native[info.name] = field
+	}
+	if len(native) != len(fields) {
+		return false
+	}
+	for _, field := range fields {
+		got, ok := native[field.info.name]
+		if !ok || got.Name != field.field.Name || got.Type != field.field.Type || got.Tag != field.field.Tag {
+			return false
+		}
+	}
+	return true
+}
+
 func applyStructFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 	if schema == nil || schema.Properties == nil {
 		return
@@ -205,8 +286,14 @@ func applyStructFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 		return
 	}
 
+	active := make(map[reflect.Type]bool)
 	var walk func(reflect.Type)
 	walk = func(structType reflect.Type) {
+		if active[structType] {
+			return
+		}
+		active[structType] = true
+		defer delete(active, structType)
 		for i := 0; i < structType.NumField(); i++ {
 			field := structType.Field(i)
 			fieldType := field.Type
@@ -320,8 +407,7 @@ func applyQuotedFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 	if schema == nil || schema.Properties == nil {
 		return
 	}
-	// The regular generator can represent recursive types; the selector still
-	// returns the visible fields when an embedding cycle is skipped.
+	// Native inference can accept recursive embeddings; selection still returns their visible fields.
 	fields, _ := selectedJSONFields(t)
 	for _, field := range fields {
 		prop := schema.Properties[field.info.name]
@@ -335,15 +421,22 @@ func applyQuotedFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 	}
 }
 
+func hasCustomJSONEncoding(t reflect.Type) bool {
+	for _, iface := range []reflect.Type{reflect.TypeFor[json.Marshaler](), reflect.TypeFor[encoding.TextMarshaler]()} {
+		if t.Implements(iface) || reflect.PointerTo(t).Implements(iface) {
+			return true
+		}
+	}
+	return false
+}
+
 func quotedFieldSchema(t reflect.Type, schema *jsonschema.Schema) *jsonschema.Schema {
 	fieldType := t
 	if t.Name() == "" && t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
-	for _, iface := range []reflect.Type{reflect.TypeFor[json.Marshaler](), reflect.TypeFor[encoding.TextMarshaler]()} {
-		if t.Implements(iface) || reflect.PointerTo(t).Implements(iface) {
-			return schema
-		}
+	if hasCustomJSONEncoding(t) {
+		return schema
 	}
 	switch t.Kind() {
 	case reflect.Bool,

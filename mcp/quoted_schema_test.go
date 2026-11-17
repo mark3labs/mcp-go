@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/assert"
@@ -200,6 +201,7 @@ func TestSchemaFor_QuotedFieldDominance(t *testing.T) {
 			require.NoError(t, json.Unmarshal(raw, &schema))
 			count := schema["properties"].(map[string]any)["Count"].(map[string]any)
 			assert.Equal(t, test.kind, count["type"])
+			assert.Equal(t, []any{"Count"}, schema["required"])
 			payload, err := json.Marshal(test.value)
 			require.NoError(t, err)
 			assert.JSONEq(t, test.json, string(payload))
@@ -449,4 +451,172 @@ func TestSchemaFor_QuotedStringEnums(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSchemaFor_QuotedRecursiveEmbedding(t *testing.T) {
+	type Recursive struct {
+		*Recursive
+		Count int `json:"count,string"`
+	}
+	type Node struct {
+		Count int `json:"count,string"`
+	}
+	type ShadowNode struct {
+		Other int `json:"other"`
+	}
+	type RecursiveShadow struct {
+		*RecursiveShadow
+		Hidden ShadowNode `json:"node,omitempty"`
+	}
+	type Request struct {
+		Node Node `json:"node"`
+		RecursiveShadow
+	}
+	for _, test := range []struct {
+		name   string
+		native func() (*jsonschema.Schema, error)
+		raw    func() (json.RawMessage, error)
+		value  any
+		path   []string
+		want   string
+	}{
+		{name: "normal", native: func() (*jsonschema.Schema, error) { return jsonschema.For[Recursive](nil) }, raw: SchemaForRaw[Recursive], value: Recursive{Count: 5}, want: `{"count":"5"}`},
+		{name: "shadowed", native: func() (*jsonschema.Schema, error) { return jsonschema.For[Request](nil) }, raw: SchemaForRaw[Request], value: Request{Node: Node{Count: 5}}, path: []string{"node"}, want: `{"node":{"count":"5"}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := test.native()
+			require.NoError(t, err, "native inference supports this recursive embedding")
+			raw, err := test.raw()
+			require.NoError(t, err)
+			var schema map[string]any
+			require.NoError(t, json.Unmarshal(raw, &schema))
+			for _, name := range test.path {
+				schema = schema["properties"].(map[string]any)[name].(map[string]any)
+			}
+			assert.Equal(t, "string", schema["properties"].(map[string]any)["count"].(map[string]any)["type"])
+			encoded, err := json.Marshal(test.value)
+			require.NoError(t, err)
+			assert.JSONEq(t, test.want, string(encoded))
+		})
+	}
+}
+
+type quotedNativeNode struct {
+	Count int `json:"count"`
+}
+type quotedNativeOther struct {
+	Other int `json:"other"`
+}
+type quotedNativeShadow struct {
+	Hidden quotedNativeOther `json:"node,omitempty"`
+}
+type quotedNativeMarshaler struct {
+	Node quotedNativeNode `json:"node"`
+	quotedNativeShadow
+}
+
+func (v quotedNativeMarshaler) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Node quotedNativeOther `json:"node"`
+	}{Node: v.Hidden})
+}
+
+func TestSchemaFor_QuotedNativeFieldSelection(t *testing.T) {
+	type Node struct {
+		Count int `json:"count,string"`
+	}
+	type Other struct {
+		Other int `json:"other"`
+	}
+	type Shadow struct {
+		Hidden Other `json:"node,omitempty"`
+	}
+	type Fields struct {
+		Node Node `json:"node"`
+		Shadow
+		When  time.Time       `json:"when"`
+		Raw   json.RawMessage `json:"raw"`
+		Small int8            `json:"small" jsonschema_description:"Small count"`
+	}
+	for _, test := range []struct {
+		name string
+		raw  func() (json.RawMessage, error)
+		path []string
+		kind any
+	}{
+		{name: "slice", raw: SchemaForRaw[[]Fields], path: []string{"items"}, kind: []any{"null", "array"}},
+		{name: "array", raw: SchemaForRaw[[2]Fields], path: []string{"items"}, kind: "array"},
+		{name: "map", raw: SchemaForRaw[map[string]Fields], path: []string{"additionalProperties"}, kind: "object"},
+		{name: "double pointer", raw: SchemaForRaw[**Fields], kind: []any{"null", "object"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, err := test.raw()
+			require.NoError(t, err)
+			var schema map[string]any
+			require.NoError(t, json.Unmarshal(raw, &schema))
+			assert.Equal(t, test.kind, schema["type"])
+			if test.name == "array" {
+				assert.Equal(t, float64(2), schema["minItems"])
+				assert.Equal(t, float64(2), schema["maxItems"])
+			}
+			for _, key := range test.path {
+				schema = schema[key].(map[string]any)
+			}
+			props := schema["properties"].(map[string]any)
+			node := props["node"].(map[string]any)
+			nodeProps := node["properties"].(map[string]any)
+			require.Contains(t, nodeProps, "count")
+			assert.NotContains(t, nodeProps, "other")
+			assert.Equal(t, "string", nodeProps["count"].(map[string]any)["type"])
+			assert.ElementsMatch(t, []any{"node", "when", "raw", "small"}, schema["required"])
+			small := props["small"].(map[string]any)
+			assert.Equal(t, float64(-128), small["minimum"])
+			assert.Equal(t, float64(127), small["maximum"])
+			assert.Equal(t, "Small count", small["description"])
+			nativeTime, err := jsonschema.For[time.Time](nil)
+			require.NoError(t, err)
+			wantTime, err := json.Marshal(nativeTime)
+			require.NoError(t, err)
+			gotTime, err := json.Marshal(props["when"])
+			require.NoError(t, err)
+			assert.JSONEq(t, string(wantTime), string(gotTime))
+			nativeRaw, err := jsonschema.For[json.RawMessage](nil)
+			require.NoError(t, err)
+			wantRaw, err := json.Marshal(nativeRaw)
+			require.NoError(t, err)
+			gotRaw, err := json.Marshal(props["raw"])
+			require.NoError(t, err)
+			assert.JSONEq(t, string(wantRaw), string(gotRaw))
+		})
+	}
+	type Embedded struct {
+		Value int `json:"embedded,string"`
+	}
+	type distinctNames struct {
+		Value string `json:"outer"`
+		Embedded
+	}
+	raw, err := SchemaForRaw[distinctNames]()
+	require.NoError(t, err)
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(raw, &schema))
+	props := schema["properties"].(map[string]any)
+	require.Contains(t, props, "outer")
+	require.Contains(t, props, "embedded")
+	assert.Equal(t, "string", props["embedded"].(map[string]any)["type"])
+	assert.ElementsMatch(t, []any{"outer", "embedded"}, schema["required"])
+	encoded, err := json.Marshal(distinctNames{Value: "x", Embedded: Embedded{Value: 5}})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"outer":"x","embedded":"5"}`, string(encoded))
+
+	custom, err := SchemaForRaw[quotedNativeMarshaler]()
+	require.NoError(t, err)
+	native, err := jsonschema.For[quotedNativeMarshaler](nil)
+	require.NoError(t, err)
+	wantCustom, err := json.Marshal(native)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(wantCustom), string(custom))
+	encoded, err = json.Marshal(quotedNativeMarshaler{quotedNativeShadow: quotedNativeShadow{Hidden: quotedNativeOther{Other: 5}}})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"node":{"other":5}}`, string(encoded))
 }

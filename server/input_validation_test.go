@@ -723,3 +723,65 @@ func TestInputSchemaValidation_PreservesLargeIntegerPrecision(t *testing.T) {
 		require.Equal(t, 9007199254740993, handlerReceivedID)
 	}
 }
+
+func TestSchemaValidation_QuotedJSONNameShadowing(t *testing.T) {
+	type Node struct {
+		Count int `json:"count,string"`
+	}
+	type Plain struct {
+		Other int `json:"other"`
+	}
+	type ShadowPlain struct {
+		Hidden Plain `json:"node,omitempty"`
+	}
+	type ShadowQuoted struct {
+		Hidden Node `json:"node,omitempty"`
+	}
+	type quotedRequest struct {
+		Node Node `json:"node"`
+		ShadowPlain
+	}
+	type plainRequest struct {
+		Node Plain `json:"node"`
+		ShadowQuoted
+	}
+	for _, test := range []struct {
+		name    string
+		tool    mcp.Tool
+		target  any
+		field   string
+		value   any
+		success bool
+	}{
+		{name: "quoted accepts string", tool: mcp.NewTool("quoted", mcp.WithInputSchema[quotedRequest](), mcp.WithOutputSchema[quotedRequest]()), target: &quotedRequest{}, field: "count", value: "5", success: true},
+		{name: "quoted rejects number", tool: mcp.NewTool("quoted", mcp.WithInputSchema[quotedRequest](), mcp.WithOutputSchema[quotedRequest]()), target: &quotedRequest{}, field: "count", value: 5},
+		{name: "plain accepts number", tool: mcp.NewTool("quoted", mcp.WithInputSchema[plainRequest](), mcp.WithOutputSchema[plainRequest]()), target: &plainRequest{}, field: "other", value: 5, success: true},
+		{name: "plain rejects string", tool: mcp.NewTool("quoted", mcp.WithInputSchema[plainRequest](), mcp.WithOutputSchema[plainRequest]()), target: &plainRequest{}, field: "other", value: "5"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.NotEmpty(t, test.tool.RawInputSchema)
+			called := false
+			srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+			srv.AddTool(test.tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				called = true
+				if err := req.BindArguments(test.target); err != nil {
+					return nil, err
+				}
+				return mcp.NewToolResultStructuredOnly(test.target), nil
+			})
+			args := map[string]any{"node": map[string]any{test.field: test.value}}
+			response := callTool(t, srv, "quoted", args)
+			if test.success {
+				requireToolSuccess(t, response)
+				got, err := json.Marshal(test.target)
+				require.NoError(t, err)
+				want, err := json.Marshal(args)
+				require.NoError(t, err)
+				assert.JSONEq(t, string(want), string(got))
+			} else {
+				requireToolErrorContaining(t, response, test.field)
+			}
+			assert.Equal(t, test.success, called)
+		})
+	}
+}
