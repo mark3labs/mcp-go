@@ -1012,3 +1012,171 @@ func TestSchemaValidation_QuotedSelectedEnums(t *testing.T) {
 		}
 	}
 }
+
+type quotedAddressableJSONStruct struct {
+	Count int `json:"count,string"`
+}
+
+func (value *quotedAddressableJSONStruct) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Count int `json:"count"`
+	}{Count: value.Count})
+}
+
+func TestSchemaValidation_QuotedCustomStructAddressability(t *testing.T) {
+	type input struct {
+		Count int `json:"count"`
+	}
+	type scalarFields struct {
+		Count quotedAddressableJSONScalar `json:"count,string"`
+	}
+	type scalarSlice struct {
+		Items []scalarFields `json:"items"`
+	}
+	type customSliceOutput struct {
+		Items quotedCustomJSONSlice `json:"items"`
+	}
+	type mixed struct {
+		Map     map[string]quotedAddressableJSONStruct `json:"map"`
+		Slice   []quotedAddressableJSONStruct          `json:"slice"`
+		Pointer *quotedAddressableJSONStruct           `json:"pointer"`
+	}
+	type nested struct {
+		Value quotedAddressableJSONStruct `json:"value"`
+	}
+	type sliced struct {
+		Items []quotedAddressableJSONStruct `json:"items"`
+	}
+	type arrayed struct {
+		Items [1]quotedAddressableJSONStruct `json:"items"`
+	}
+	type embedded struct {
+		Value quotedAddressableJSONStruct `json:"value"`
+	}
+	type promoted struct{ *embedded }
+	type promotedFallback struct {
+		*embedded
+		Trigger string `json:"trigger,omitempty" jsonschema:"enum=run"`
+	}
+	for _, test := range []struct {
+		name   string
+		tool   mcp.Tool
+		output any
+		want   string
+	}{
+		{name: "value root", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[quotedAddressableJSONStruct]()), output: quotedAddressableJSONStruct{Count: 17}, want: `{"count":"17"}`},
+		{name: "pointer root", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[*quotedAddressableJSONStruct]()), output: &quotedAddressableJSONStruct{Count: 17}, want: `{"count":17}`},
+		{name: "map value", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[map[string]quotedAddressableJSONStruct]()), output: map[string]quotedAddressableJSONStruct{"entry": {Count: 17}}, want: `{"entry":{"count":"17"}}`},
+		{name: "slice element", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[sliced]()), output: sliced{Items: []quotedAddressableJSONStruct{{Count: 17}}}, want: `{"items":[{"count":17}]}`},
+		{name: "nested value", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[nested]()), output: nested{Value: quotedAddressableJSONStruct{Count: 17}}, want: `{"value":{"count":"17"}}`},
+		{name: "nested pointer", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[*nested]()), output: &nested{Value: quotedAddressableJSONStruct{Count: 17}}, want: `{"value":{"count":17}}`},
+		{name: "array value", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[arrayed]()), output: arrayed{Items: [1]quotedAddressableJSONStruct{{Count: 17}}}, want: `{"items":[{"count":"17"}]}`},
+		{name: "array pointer", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[*arrayed]()), output: &arrayed{Items: [1]quotedAddressableJSONStruct{{Count: 17}}}, want: `{"items":[{"count":17}]}`},
+		{name: "promoted pointer", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[promoted]()), output: promoted{embedded: &embedded{Value: quotedAddressableJSONStruct{Count: 17}}}, want: `{"value":{"count":17}}`},
+		{name: "promoted pointer fallback", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[promotedFallback]()), output: promotedFallback{embedded: &embedded{Value: quotedAddressableJSONStruct{Count: 17}}}, want: `{"value":{"count":17}}`},
+		{name: "scalar value", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[scalarFields]()), output: scalarFields{Count: 17}, want: `{"count":"17"}`},
+		{name: "scalar pointer", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[*scalarFields]()), output: &scalarFields{Count: 17}, want: `{"count":17}`},
+		{name: "scalar map", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[map[string]scalarFields]()), output: map[string]scalarFields{"entry": {Count: 17}}, want: `{"entry":{"count":"17"}}`},
+		{name: "scalar slice", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[scalarSlice]()), output: scalarSlice{Items: []scalarFields{{Count: 17}}}, want: `{"items":[{"count":17}]}`},
+		{name: "mixed contexts", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[mixed]()), output: mixed{Map: map[string]quotedAddressableJSONStruct{"entry": {Count: 17}}, Slice: []quotedAddressableJSONStruct{{Count: 17}}, Pointer: &quotedAddressableJSONStruct{Count: 17}}, want: `{"map":{"entry":{"count":"17"}},"slice":[{"count":17}],"pointer":{"count":17}}`},
+		{name: "custom map encoding", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[quotedCustomJSONMap]()), output: quotedCustomJSONMap{"entry": {Count: 17}}, want: `{"entry":{"count":17}}`},
+		{name: "custom slice encoding", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[customSliceOutput]()), output: customSliceOutput{Items: quotedCustomJSONSlice{{Count: 17}}}, want: `{"items":[{"count":17}]}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			encoded, err := json.Marshal(test.output)
+			require.NoError(t, err)
+			assert.JSONEq(t, test.want, string(encoded))
+			srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+			srv.AddTool(test.tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				var target input
+				if err := req.BindArguments(&target); err != nil {
+					return nil, err
+				}
+				assert.Equal(t, 17, target.Count)
+				return mcp.NewToolResultStructuredOnly(test.output), nil
+			})
+			requireToolSuccess(t, callTool(t, srv, "quoted", map[string]any{"count": 17}))
+		})
+	}
+}
+
+type quotedAddressableNode struct {
+	Count int `json:"count,string"`
+}
+type quotedAddressableOther struct {
+	Other int `json:"other"`
+}
+type quotedAddressableShadow struct {
+	Hidden quotedAddressableOther `json:"node,omitempty"`
+} //nolint:modernize // Preserve native optional-field metadata in the shadow fixture.
+type quotedAddressableSelection struct {
+	Node quotedAddressableNode `json:"node"`
+	quotedAddressableShadow
+}
+
+func (value *quotedAddressableSelection) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Node quotedAddressableOther `json:"node"`
+	}{Node: value.Hidden})
+}
+
+func TestSchemaValidation_QuotedCustomNativeSelection(t *testing.T) {
+	type input struct {
+		Count int `json:"count"`
+	}
+	value := quotedAddressableSelection{Node: quotedAddressableNode{Count: 17}, quotedAddressableShadow: quotedAddressableShadow{Hidden: quotedAddressableOther{Other: 17}}}
+	for _, test := range []struct {
+		name   string
+		tool   mcp.Tool
+		output any
+		want   string
+	}{
+		{name: "value uses selected fields", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[quotedAddressableSelection]()), output: value, want: `{"node":{"count":"17"}}`},
+		{name: "pointer uses custom encoding", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[*quotedAddressableSelection]()), output: &value, want: `{"node":{"other":17}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			encoded, err := json.Marshal(test.output)
+			require.NoError(t, err)
+			assert.JSONEq(t, test.want, string(encoded))
+			srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+			srv.AddTool(test.tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				var target input
+				if err := req.BindArguments(&target); err != nil {
+					return nil, err
+				}
+				assert.Equal(t, 17, target.Count)
+				return mcp.NewToolResultStructuredOnly(test.output), nil
+			})
+			requireToolSuccess(t, callTool(t, srv, "quoted", map[string]any{"count": 17}))
+		})
+	}
+}
+
+type quotedAddressableJSONScalar int
+
+func (value *quotedAddressableJSONScalar) MarshalJSON() ([]byte, error) {
+	return json.Marshal(int(*value))
+}
+
+type quotedCustomPlainNode struct {
+	Count int `json:"count"`
+}
+type quotedCustomJSONMap map[string]quotedAddressableNode
+
+func (value quotedCustomJSONMap) MarshalJSON() ([]byte, error) {
+	output := make(map[string]quotedCustomPlainNode, len(value))
+	for key, item := range value {
+		output[key] = quotedCustomPlainNode{Count: item.Count}
+	}
+	return json.Marshal(output)
+}
+
+type quotedCustomJSONSlice []quotedAddressableNode
+
+func (value quotedCustomJSONSlice) MarshalJSON() ([]byte, error) {
+	output := make([]quotedCustomPlainNode, len(value))
+	for i, item := range value {
+		output[i] = quotedCustomPlainNode{Count: item.Count}
+	}
+	return json.Marshal(output)
+}
