@@ -106,12 +106,13 @@ func (s *schemaFallbackState) schemaForStructFields(
 	if err != nil {
 		return nil, err
 	}
-	return s.schemaForSelectedFields(t, fields, opts)
+	return s.schemaForSelectedFields(t, fields, nil, opts)
 }
 
 func (s *schemaFallbackState) schemaForSelectedFields(
 	t reflect.Type,
 	fields []jsonSchemaField,
+	nativeProperties map[string]*jsonschema.Schema,
 	opts *jsonschema.ForOptions,
 ) (*jsonschema.Schema, error) {
 	if s.active[t] {
@@ -127,7 +128,13 @@ func (s *schemaFallbackState) schemaForSelectedFields(
 	}
 
 	for _, field := range fields {
-		fieldSchema, err := s.schemaForFieldType(field.field.Type, opts)
+		var fieldSchema *jsonschema.Schema
+		var err error
+		if native := nativeProperties[field.info.name]; native != nil {
+			fieldSchema, err = s.reconcileNativeSchema(field.field.Type, native, opts)
+		} else {
+			fieldSchema, err = s.schemaForFieldType(field.field.Type, opts)
+		}
 		if err != nil {
 			if errors.Is(err, errRecursiveSchemaFallback) {
 				return nil, err
@@ -223,8 +230,16 @@ func (s *schemaFallbackState) reconcileNativeSchema(
 		// Native inference already accepted this type; recursive embeddings
 		// add no new visible fields and need not use tag-fallback restrictions.
 		fields, _ := selectedJSONFields(t)
-		if !nativeJSONFieldsMatch(t, fields) {
-			rebuilt, buildErr := s.schemaForSelectedFields(t, fields, opts)
+		native, matches := nativeJSONFieldSelection(t, fields)
+		if !matches {
+			preserved := make(map[string]*jsonschema.Schema, len(fields))
+			for _, field := range fields {
+				source, ok := native[field.info.name]
+				if ok && sameJSONField(source, field.field) {
+					preserved[field.info.name] = schema.Properties[field.info.name]
+				}
+			}
+			rebuilt, buildErr := s.schemaForSelectedFields(t, fields, preserved, opts)
 			if buildErr != nil {
 				return nil, buildErr
 			}
@@ -251,28 +266,33 @@ func (s *schemaFallbackState) reconcileNativeSchema(
 	return schema, err
 }
 
-func nativeJSONFieldsMatch(t reflect.Type, fields []jsonSchemaField) bool {
-	native := make(map[string]reflect.StructField)
+func nativeJSONFieldSelection(t reflect.Type, fields []jsonSchemaField) (map[string]reflect.StructField, bool) {
+	native := make(map[string]reflect.StructField, len(fields))
+	matches := true
 	for _, field := range reflect.VisibleFields(t) {
 		info := fieldJSONInfo(field)
 		if field.Anonymous || info.omit {
 			continue
 		}
 		if _, duplicate := native[info.name]; duplicate {
-			return false
+			matches = false
 		}
 		native[info.name] = field
 	}
 	if len(native) != len(fields) {
-		return false
+		matches = false
 	}
 	for _, field := range fields {
 		got, ok := native[field.info.name]
-		if !ok || got.Name != field.field.Name || got.Type != field.field.Type || got.Tag != field.field.Tag {
-			return false
+		if !ok || !sameJSONField(got, field.field) {
+			matches = false
 		}
 	}
-	return true
+	return native, matches
+}
+
+func sameJSONField(a, b reflect.StructField) bool {
+	return a.Name == b.Name && a.Type == b.Type && a.Tag == b.Tag
 }
 
 func applyStructFieldTags(t reflect.Type, schema *jsonschema.Schema) {

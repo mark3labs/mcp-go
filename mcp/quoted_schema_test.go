@@ -531,13 +531,20 @@ func TestSchemaFor_QuotedNativeFieldSelection(t *testing.T) {
 	type Shadow struct {
 		Hidden Other `json:"node,omitempty"`
 	}
+	type private struct {
+		Label string `json:"label,string" jsonschema:"Private label"`
+	}
 	type Fields struct {
 		Node Node `json:"node"`
 		Shadow
+		private
 		When  time.Time       `json:"when"`
 		Raw   json.RawMessage `json:"raw"`
 		Small int8            `json:"small" jsonschema_description:"Small count"`
 	}
+	nativeFields, nativeErr := jsonschema.For[Fields](nil)
+	require.NoError(t, nativeErr)
+	require.Equal(t, "Private label", nativeFields.Properties["label"].Description)
 	for _, test := range []struct {
 		name string
 		raw  func() (json.RawMessage, error)
@@ -563,12 +570,13 @@ func TestSchemaFor_QuotedNativeFieldSelection(t *testing.T) {
 				schema = schema[key].(map[string]any)
 			}
 			props := schema["properties"].(map[string]any)
+			assert.Equal(t, "Private label", props["label"].(map[string]any)["description"])
 			node := props["node"].(map[string]any)
 			nodeProps := node["properties"].(map[string]any)
 			require.Contains(t, nodeProps, "count")
 			assert.NotContains(t, nodeProps, "other")
 			assert.Equal(t, "string", nodeProps["count"].(map[string]any)["type"])
-			assert.ElementsMatch(t, []any{"node", "when", "raw", "small"}, schema["required"])
+			assert.ElementsMatch(t, []any{"node", "when", "raw", "small", "label"}, schema["required"])
 			small := props["small"].(map[string]any)
 			assert.Equal(t, float64(-128), small["minimum"])
 			assert.Equal(t, float64(127), small["maximum"])
