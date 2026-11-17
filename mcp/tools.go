@@ -241,6 +241,29 @@ func parseRawInt(rawVal json.RawMessage) (int, bool) {
 	return i, true
 }
 
+// float64ToInt converts a float64 to int without overflowing. It reports
+// false for NaN, infinities, and values outside the int range, in which case
+// callers must fall back instead of performing an overflowing conversion.
+//
+// The upper bound uses a strict comparison against float64(math.MaxInt)+1
+// because float64(math.MaxInt) rounds up to the next power of two, which is
+// one past the largest representable int.
+func float64ToInt(v float64) (int, bool) {
+	if math.IsNaN(v) || math.IsInf(v, 0) || v < float64(math.MinInt) || v >= float64(math.MaxInt)+1 {
+		return 0, false
+	}
+	return int(v), true
+}
+
+// rawIsIntegerLiteral reports whether raw is a JSON integer literal (no
+// fractional or exponent part). An integer literal that parseRawInt rejects
+// is outside the int range, so callers must not fall back to a lossy float64
+// conversion that would round it back into range.
+func rawIsIntegerLiteral(raw json.RawMessage) bool {
+	s := strings.TrimSpace(string(raw))
+	return len(s) > 0 && !strings.ContainsAny(s, ".eE")
+}
+
 // GetInt returns an int argument by key, or the default value if not found
 func (r CallToolRequest) GetInt(key string, defaultValue int) int {
 	args := r.GetArguments()
@@ -252,7 +275,12 @@ func (r CallToolRequest) GetInt(key string, defaultValue int) int {
 			if i, ok := r.rawIntArgument(key); ok {
 				return i
 			}
-			return int(v)
+			if raw := r.rawArgument(key); raw != nil && rawIsIntegerLiteral(raw) {
+				return defaultValue
+			}
+			if i, ok := float64ToInt(v); ok {
+				return i
+			}
 		case string:
 			if i, err := strconv.Atoi(v); err == nil {
 				return i
@@ -273,7 +301,13 @@ func (r CallToolRequest) RequireInt(key string) (int, error) {
 			if i, ok := r.rawIntArgument(key); ok {
 				return i, nil
 			}
-			return int(v), nil
+			if raw := r.rawArgument(key); raw != nil && rawIsIntegerLiteral(raw) {
+				return 0, fmt.Errorf("argument %q is out of int range", key)
+			}
+			if i, ok := float64ToInt(v); ok {
+				return i, nil
+			}
+			return 0, fmt.Errorf("argument %q is out of int range", key)
 		case string:
 			if i, err := strconv.Atoi(v); err == nil {
 				return i, nil
