@@ -442,7 +442,7 @@ func selectedJSONFields(t reflect.Type) ([]jsonSchemaField, error) {
 }
 
 func applyQuotedFieldTags(t reflect.Type, schema *jsonschema.Schema) {
-	if schema == nil || schema.Properties == nil {
+	if schema == nil || schema.Properties == nil || hasCustomJSONEncoding(t) {
 		return
 	}
 	// Native inference can accept recursive embeddings; selection still returns their visible fields.
@@ -454,7 +454,7 @@ func applyQuotedFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 		}
 		applyStructFieldTagsToType(field.field.Type, prop, applyQuotedFieldTags)
 		if field.info.settings["string"] {
-			schema.Properties[field.info.name] = quotedFieldSchema(field.field.Type, prop)
+			schema.Properties[field.info.name] = quotedFieldSchema(field.field, prop)
 		}
 	}
 }
@@ -468,8 +468,9 @@ func hasCustomJSONEncoding(t reflect.Type) bool {
 	return false
 }
 
-func quotedFieldSchema(t reflect.Type, schema *jsonschema.Schema) *jsonschema.Schema {
-	fieldType := t
+func quotedFieldSchema(field reflect.StructField, schema *jsonschema.Schema) *jsonschema.Schema {
+	fieldType := field.Type
+	t := fieldType
 	if t.Name() == "" && t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
@@ -481,10 +482,12 @@ func quotedFieldSchema(t reflect.Type, schema *jsonschema.Schema) *jsonschema.Sc
 		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
 		reflect.Float32, reflect.Float64, reflect.String:
-		quoted := &jsonschema.Schema{Type: "string", Description: schema.Description, Enum: schema.Enum}
-		if t.Kind() == reflect.String && t != reflect.TypeFor[json.Number]() && len(schema.Enum) > 0 {
-			quoted.Enum = make([]any, len(schema.Enum))
-			for i, value := range schema.Enum {
+		// Quoted constraints belong to the selected JSON field.
+		description, enums := fieldSchemaAnnotations(field)
+		quoted := &jsonschema.Schema{Type: "string", Description: description, Enum: enums}
+		if t.Kind() == reflect.String && t != reflect.TypeFor[json.Number]() && len(enums) > 0 {
+			quoted.Enum = make([]any, len(enums))
+			for i, value := range enums {
 				quoted.Enum[i] = value
 				if text, ok := value.(string); ok {
 					encoded, _ := json.Marshal(text) // Marshaling a string cannot fail.
@@ -495,6 +498,9 @@ func quotedFieldSchema(t reflect.Type, schema *jsonschema.Schema) *jsonschema.Sc
 		if fieldType.Kind() == reflect.Pointer {
 			quoted.Type = ""
 			quoted.Types = []string{"null", "string"}
+			if len(quoted.Enum) > 0 {
+				quoted.Enum = append(quoted.Enum[:len(quoted.Enum):len(quoted.Enum)], nil)
+			}
 		}
 		return quoted
 	default:

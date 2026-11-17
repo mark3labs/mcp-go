@@ -835,3 +835,180 @@ func TestSchemaValidation_QuotedIgnoredShadow(t *testing.T) {
 		})
 	}
 }
+
+func TestSchemaValidation_QuotedNullableEnums(t *testing.T) {
+	type normal struct {
+		Mode *string `json:"mode,string" jsonschema:"Run mode,enum=fast,enum=safe"`
+	}
+	type fallback struct {
+		Mode *string `json:"mode,string" jsonschema:"enum=fast,enum=safe"`
+	}
+	for _, schema := range []struct {
+		name   string
+		tool   mcp.Tool
+		target any
+	}{
+		{name: "normal", tool: mcp.NewTool("quoted", mcp.WithInputSchema[normal](), mcp.WithOutputSchema[normal]()), target: &normal{}},
+		{name: "fallback", tool: mcp.NewTool("quoted", mcp.WithInputSchema[fallback](), mcp.WithOutputSchema[fallback]()), target: &fallback{}},
+	} {
+		for _, test := range []struct {
+			name    string
+			mode    any
+			success bool
+		}{
+			{name: "nil enum", mode: nil, success: true},
+			{name: "encoded enum", mode: `"fast"`, success: true},
+			{name: "outside enum", mode: `"slow"`},
+			{name: "missing encoding level", mode: "fast"},
+		} {
+			t.Run(schema.name+"/"+test.name, func(t *testing.T) {
+				called := false
+				srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+				srv.AddTool(schema.tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					called = true
+					if err := req.BindArguments(schema.target); err != nil {
+						return nil, err
+					}
+					return mcp.NewToolResultStructuredOnly(schema.target), nil
+				})
+				args := map[string]any{"mode": test.mode}
+				response := callTool(t, srv, "quoted", args)
+				if test.success {
+					requireToolSuccess(t, response)
+					encoded, err := json.Marshal(schema.target)
+					require.NoError(t, err)
+					want, err := json.Marshal(args)
+					require.NoError(t, err)
+					assert.JSONEq(t, string(want), string(encoded))
+				} else {
+					requireToolErrorContaining(t, response, "mode")
+				}
+				assert.Equal(t, test.success, called)
+			})
+		}
+	}
+}
+
+type quotedCustomJSONStruct struct {
+	Count int `json:"count,string"`
+}
+
+func (value quotedCustomJSONStruct) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Count int `json:"count"`
+	}{Count: value.Count})
+}
+
+func TestSchemaValidation_QuotedCustomStructEncoding(t *testing.T) {
+	type input struct {
+		Count int `json:"count"`
+	}
+	type nested struct {
+		Value quotedCustomJSONStruct `json:"value"`
+	}
+	type sliced struct {
+		Values []quotedCustomJSONStruct `json:"values"`
+	}
+	for _, test := range []struct {
+		name   string
+		tool   mcp.Tool
+		output func(int) any
+	}{
+		{name: "root", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[quotedCustomJSONStruct]()), output: func(count int) any { return quotedCustomJSONStruct{Count: count} }},
+		{name: "nested", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[nested]()), output: func(count int) any { return nested{Value: quotedCustomJSONStruct{Count: count}} }},
+		{name: "slice", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[sliced]()), output: func(count int) any { return sliced{Values: []quotedCustomJSONStruct{{Count: count}}} }},
+		{name: "map", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[map[string]quotedCustomJSONStruct]()), output: func(count int) any { return map[string]quotedCustomJSONStruct{"entry": {Count: count}} }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+			srv.AddTool(test.tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				called = true
+				var target input
+				if err := req.BindArguments(&target); err != nil {
+					return nil, err
+				}
+				assert.Equal(t, 17, target.Count)
+				return mcp.NewToolResultStructuredOnly(test.output(target.Count)), nil
+			})
+			result := callTool(t, srv, "quoted", map[string]any{"count": 17})
+			requireToolSuccess(t, result)
+			assert.True(t, called)
+		})
+	}
+}
+
+func TestSchemaValidation_QuotedSelectedEnums(t *testing.T) {
+	type private struct {
+		Mode string `json:"mode,string" jsonschema:"Allowed modes,enum=fast,enum=safe"`
+	}
+	type privateNormal struct{ private }
+	type privateFallback struct {
+		private
+		Trigger string `json:"trigger,omitempty" jsonschema:"enum=run"`
+	}
+	type Old struct {
+		Other string `json:"mode,string" jsonschema:"Old modes,enum=old"`
+	}
+	type shadowNormal struct {
+		Mode string `json:"mode,string" jsonschema:"Allowed modes,enum=fast,enum=safe"`
+		Old
+	}
+	type shadowFallback struct {
+		Mode string `json:"mode,string" jsonschema:"Allowed modes,enum=fast,enum=safe"`
+		Old
+		Trigger string `json:"trigger,omitempty" jsonschema:"enum=run"`
+	}
+	for _, schema := range []struct {
+		name   string
+		tool   mcp.Tool
+		target any
+		raw    func() (json.RawMessage, error)
+	}{
+		{name: "private normal", tool: mcp.NewTool("quoted", mcp.WithInputSchema[privateNormal](), mcp.WithOutputSchema[privateNormal]()), target: &privateNormal{}, raw: func() (json.RawMessage, error) { return mcp.SchemaForRaw[privateNormal]() }},
+		{name: "private fallback", tool: mcp.NewTool("quoted", mcp.WithInputSchema[privateFallback](), mcp.WithOutputSchema[privateFallback]()), target: &privateFallback{}, raw: func() (json.RawMessage, error) { return mcp.SchemaForRaw[privateFallback]() }},
+		{name: "shadow normal", tool: mcp.NewTool("quoted", mcp.WithInputSchema[shadowNormal](), mcp.WithOutputSchema[shadowNormal]()), target: &shadowNormal{}, raw: func() (json.RawMessage, error) { return mcp.SchemaForRaw[shadowNormal]() }},
+		{name: "shadow fallback", tool: mcp.NewTool("quoted", mcp.WithInputSchema[shadowFallback](), mcp.WithOutputSchema[shadowFallback]()), target: &shadowFallback{}, raw: func() (json.RawMessage, error) { return mcp.SchemaForRaw[shadowFallback]() }},
+	} {
+		raw, err := schema.raw()
+		require.NoError(t, err)
+		var parsed map[string]any
+		require.NoError(t, json.Unmarshal(raw, &parsed))
+		mode := parsed["properties"].(map[string]any)["mode"].(map[string]any)
+		assert.Equal(t, "Allowed modes", mode["description"], schema.name)
+		assert.Equal(t, []any{`"fast"`, `"safe"`}, mode["enum"], schema.name)
+		for _, test := range []struct {
+			name, mode string
+			success    bool
+		}{
+			{name: "selected enum", mode: `"fast"`, success: true},
+			{name: "shadowed enum", mode: `"old"`},
+			{name: "outside enum", mode: `"slow"`},
+		} {
+			t.Run(schema.name+"/"+test.name, func(t *testing.T) {
+				called := false
+				srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+				srv.AddTool(schema.tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					called = true
+					if err := req.BindArguments(schema.target); err != nil {
+						return nil, err
+					}
+					return mcp.NewToolResultStructuredOnly(schema.target), nil
+				})
+				args := map[string]any{"mode": test.mode}
+				result := callTool(t, srv, "quoted", args)
+				if test.success {
+					requireToolSuccess(t, result)
+					encoded, err := json.Marshal(schema.target)
+					require.NoError(t, err)
+					want, err := json.Marshal(args)
+					require.NoError(t, err)
+					assert.JSONEq(t, string(want), string(encoded))
+				} else {
+					requireToolErrorContaining(t, result, "mode")
+				}
+				assert.Equal(t, test.success, called)
+			})
+		}
+	}
+}

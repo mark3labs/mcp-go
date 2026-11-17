@@ -380,15 +380,18 @@ func (v quotedEnumMarshaler) MarshalJSON() ([]byte, error) { return json.Marshal
 
 func TestSchemaFor_QuotedStringEnums(t *testing.T) {
 	type Fields struct {
-		JSONNumber  json.Number         `json:"jsonNumber,string" jsonschema:"Allowed number,enum=1,enum=2"`
-		NamedNumber quotedEnumNumber    `json:"namedNumber,string" jsonschema:"Allowed named,enum=1,enum=2"`
-		Mode        string              `json:"mode,string" jsonschema:"Allowed modes,enum=fast,enum=a\\b,enum=a\"b,enum=a\nb,enum=<>&,enum=雪"`
-		Named       quotedEnumString    `json:"named,string" jsonschema:"Allowed named,enum=fast,enum=safe"`
-		Pointer     *quotedEnumString   `json:"pointer,string" jsonschema:"Allowed pointer,enum=fast,enum=safe"`
-		Number      int                 `json:"number,string" jsonschema:"Allowed number,enum=1,enum=2"`
-		Bool        bool                `json:"bool,string" jsonschema:"Allowed boolean,enum=true,enum=false"`
-		Plain       string              `json:"plain" jsonschema:"Allowed plain,enum=fast,enum=safe"`
-		Custom      quotedEnumMarshaler `json:"custom,string" jsonschema:"Allowed custom,enum=fast,enum=safe"`
+		JSONNumber    json.Number         `json:"jsonNumber,string" jsonschema:"Allowed number,enum=1,enum=2"`
+		NamedNumber   quotedEnumNumber    `json:"namedNumber,string" jsonschema:"Allowed named,enum=1,enum=2"`
+		Mode          string              `json:"mode,string" jsonschema:"Allowed modes,enum=fast,enum=a\\b,enum=a\"b,enum=a\nb,enum=<>&,enum=雪"`
+		Named         quotedEnumString    `json:"named,string" jsonschema:"Allowed named,enum=fast,enum=safe"`
+		Pointer       *quotedEnumString   `json:"pointer,string" jsonschema:"Allowed pointer,enum=fast,enum=safe"`
+		IntPointer    *int                `json:"intPointer,string" jsonschema:"Allowed integers,enum=1,enum=2"`
+		BoolPointer   *bool               `json:"boolPointer,string" jsonschema:"Allowed booleans,enum=true,enum=false"`
+		NumberPointer *json.Number        `json:"numberPointer,string" jsonschema:"Allowed numbers,enum=1,enum=2"`
+		Number        int                 `json:"number,string" jsonschema:"Allowed number,enum=1,enum=2"`
+		Bool          bool                `json:"bool,string" jsonschema:"Allowed boolean,enum=true,enum=false"`
+		Plain         string              `json:"plain" jsonschema:"Allowed plain,enum=fast,enum=safe"`
+		Custom        quotedEnumMarshaler `json:"custom,string" jsonschema:"Allowed custom,enum=fast,enum=safe"`
 	}
 	type fallback struct {
 		Fields
@@ -431,9 +434,11 @@ func TestSchemaFor_QuotedStringEnums(t *testing.T) {
 				require.NoError(t, json.Unmarshal(encoded, &document))
 				assert.Contains(t, properties[name].(map[string]any)["enum"], document["value"])
 			}
-			for _, name := range []string{"named", "pointer"} {
-				assert.Equal(t, []any{`"fast"`, `"safe"`}, properties[name].(map[string]any)["enum"])
-			}
+			assert.Equal(t, []any{`"fast"`, `"safe"`}, properties["named"].(map[string]any)["enum"])
+			assert.Equal(t, []any{`"fast"`, `"safe"`, nil}, properties["pointer"].(map[string]any)["enum"])
+			assert.Equal(t, []any{"1", "2", nil}, properties["intPointer"].(map[string]any)["enum"])
+			assert.Equal(t, []any{"true", "false", nil}, properties["boolPointer"].(map[string]any)["enum"])
+			assert.Equal(t, []any{"1", "2", nil}, properties["numberPointer"].(map[string]any)["enum"])
 			assert.Equal(t, []any{"null", "string"}, properties["pointer"].(map[string]any)["type"])
 			assert.Equal(t, []any{"1", "2"}, properties["number"].(map[string]any)["enum"])
 			assert.Equal(t, []any{"true", "false"}, properties["bool"].(map[string]any)["enum"])
@@ -627,4 +632,74 @@ func TestSchemaFor_QuotedNativeFieldSelection(t *testing.T) {
 	encoded, err = json.Marshal(quotedNativeMarshaler{quotedNativeShadow: quotedNativeShadow{Hidden: quotedNativeOther{Other: 5}}})
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"node":{"other":5}}`, string(encoded))
+}
+
+func TestSchemaFor_QuotedSelectedAnnotations(t *testing.T) {
+	type Shadow struct {
+		Old string `json:"mode,string" jsonschema:"Old mode,enum=old"`
+	}
+	type fields struct {
+		Mode string `json:"mode,string"`
+		Shadow
+		Plain string `json:"plain" jsonschema:"Plain mode,enum=plain"`
+	}
+	raw, err := SchemaForRaw[fields]()
+	require.NoError(t, err)
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(raw, &schema))
+	properties := schema["properties"].(map[string]any)
+	mode := properties["mode"].(map[string]any)
+	assert.Equal(t, "string", mode["type"])
+	assert.NotContains(t, mode, "enum")
+	assert.NotContains(t, mode, "description")
+	plain := properties["plain"].(map[string]any)
+	assert.Equal(t, []any{"plain"}, plain["enum"])
+	assert.Equal(t, "Plain mode", plain["description"])
+}
+
+type quotedPointerJSONStruct struct {
+	Count int `json:"count,string"`
+}
+
+func (value *quotedPointerJSONStruct) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Count int `json:"count"`
+	}{Count: value.Count})
+}
+
+type quotedTextStruct struct {
+	Count int `json:"count,string"`
+}
+
+func (quotedTextStruct) MarshalText() ([]byte, error) { return []byte("opaque"), nil }
+
+func TestSchemaFor_QuotedCustomStructEncoding(t *testing.T) {
+	type nestedJSON struct {
+		Value *quotedPointerJSONStruct `json:"value"`
+	}
+	type nestedText struct {
+		Value quotedTextStruct `json:"value"`
+	}
+	for _, test := range []struct {
+		name   string
+		raw    func() (json.RawMessage, error)
+		native func(*jsonschema.ForOptions) (*jsonschema.Schema, error)
+	}{
+		{name: "pointer JSON root", raw: SchemaForRaw[*quotedPointerJSONStruct], native: jsonschema.For[*quotedPointerJSONStruct]},
+		{name: "pointer JSON nested", raw: SchemaForRaw[nestedJSON], native: jsonschema.For[nestedJSON]},
+		{name: "pointer JSON slice", raw: SchemaForRaw[[]*quotedPointerJSONStruct], native: jsonschema.For[[]*quotedPointerJSONStruct]},
+		{name: "text root", raw: SchemaForRaw[quotedTextStruct], native: jsonschema.For[quotedTextStruct]},
+		{name: "text nested", raw: SchemaForRaw[nestedText], native: jsonschema.For[nestedText]},
+		{name: "text map", raw: SchemaForRaw[map[string]quotedTextStruct], native: jsonschema.For[map[string]quotedTextStruct]},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, err := test.raw()
+			require.NoError(t, err)
+			native, err := test.native(&jsonschema.ForOptions{IgnoreInvalidTypes: true})
+			require.NoError(t, err)
+			want, err := json.Marshal(native)
+			require.NoError(t, err)
+			assert.JSONEq(t, string(want), string(raw))
+		})
+	}
 }
