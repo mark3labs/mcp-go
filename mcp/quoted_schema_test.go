@@ -312,7 +312,7 @@ func TestSchemaFor_QuotedFallbackFieldSelection(t *testing.T) {
 	}
 	type ambiguous struct {
 		Quoted
-		OtherQuoted
+		OtherQuoted //nolint:govet // Verify that encoding/json omits fields with ambiguous JSON tags.
 		Mode string `json:"mode" jsonschema:"enum=fast,enum=safe"`
 	}
 	type private struct {
