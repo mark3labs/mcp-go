@@ -795,7 +795,7 @@ func TestSchemaValidation_QuotedIgnoredShadow(t *testing.T) {
 		Selected []func() `json:"value,omitempty"`
 	}
 	for _, value := range []request{{Embedded: Embedded{Other: 7}}, {Embedded: Embedded{Other: 7}, Selected: []func(){}}} {
-		encoded, err := json.Marshal(value)
+		encoded, err := json.Marshal(value) //nolint:staticcheck // Both nil and empty unsupported slices are omitted before encoding their elements.
 		require.NoError(t, err)
 		assert.JSONEq(t, `{}`, string(encoded))
 	}

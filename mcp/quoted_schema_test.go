@@ -466,7 +466,7 @@ func TestSchemaFor_QuotedRecursiveEmbedding(t *testing.T) {
 	}
 	type RecursiveShadow struct {
 		*RecursiveShadow
-		Hidden ShadowNode `json:"node,omitempty"`
+		Hidden ShadowNode `json:"node,omitempty"` //nolint:modernize // Preserve omitempty to exercise native optional-field metadata before shadow selection.
 	}
 	type Request struct {
 		Node Node `json:"node"`
@@ -508,7 +508,7 @@ type quotedNativeOther struct {
 	Other int `json:"other"`
 }
 type quotedNativeShadow struct {
-	Hidden quotedNativeOther `json:"node,omitempty"`
+	Hidden quotedNativeOther `json:"node,omitempty"` //nolint:modernize // Preserve omitempty to exercise native optional-field metadata before shadow selection.
 }
 type quotedNativeMarshaler struct {
 	Node quotedNativeNode `json:"node"`
@@ -529,7 +529,7 @@ func TestSchemaFor_QuotedNativeFieldSelection(t *testing.T) {
 		Other int `json:"other"`
 	}
 	type Shadow struct {
-		Hidden Other `json:"node,omitempty"`
+		Hidden Other `json:"node,omitempty"` //nolint:modernize // Preserve omitempty to exercise native optional-field metadata before shadow selection.
 	}
 	type private struct {
 		Label string `json:"label,string" jsonschema:"Private label"`
