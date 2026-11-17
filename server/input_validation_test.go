@@ -1107,8 +1107,8 @@ type quotedAddressableOther struct {
 	Other int `json:"other"`
 }
 type quotedAddressableShadow struct {
-	Hidden quotedAddressableOther `json:"node,omitempty"`
-} //nolint:modernize // Preserve native optional-field metadata in the shadow fixture.
+	Hidden quotedAddressableOther `json:"node,omitempty"` //nolint:modernize // Preserve native optional-field metadata in the shadow fixture.
+}
 type quotedAddressableSelection struct {
 	Node quotedAddressableNode `json:"node"`
 	quotedAddressableShadow
@@ -1166,7 +1166,7 @@ type quotedCustomJSONMap map[string]quotedAddressableNode
 func (value quotedCustomJSONMap) MarshalJSON() ([]byte, error) {
 	output := make(map[string]quotedCustomPlainNode, len(value))
 	for key, item := range value {
-		output[key] = quotedCustomPlainNode{Count: item.Count}
+		output[key] = quotedCustomPlainNode(item)
 	}
 	return json.Marshal(output)
 }
@@ -1176,7 +1176,7 @@ type quotedCustomJSONSlice []quotedAddressableNode
 func (value quotedCustomJSONSlice) MarshalJSON() ([]byte, error) {
 	output := make([]quotedCustomPlainNode, len(value))
 	for i, item := range value {
-		output[i] = quotedCustomPlainNode{Count: item.Count}
+		output[i] = quotedCustomPlainNode(item)
 	}
 	return json.Marshal(output)
 }
