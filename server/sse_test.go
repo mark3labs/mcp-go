@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -18,6 +19,71 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSSERejectsDuplicateRequestIDBeforeInitializationHook(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+
+	hooks := &Hooks{}
+	hooks.AddOnRequestInitialization(func(ctx context.Context, _ any, message any) error {
+		var request struct {
+			Method string `json:"method"`
+		}
+		if err := json.Unmarshal(message.(json.RawMessage), &request); err != nil {
+			return err
+		}
+		if request.Method != string(mcp.MethodPing) {
+			return errors.New("request rejected by hook")
+		}
+		close(started)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-release:
+			return nil
+		}
+	})
+	ts := NewTestServer(NewMCPServer("test", "1", WithHooks(hooks)))
+	defer ts.Close()
+	get, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/sse", nil)
+	require.NoError(t, err)
+	stream, err := ts.Client().Do(get)
+	require.NoError(t, err)
+	defer stream.Body.Close()
+	reader := bufio.NewReader(stream.Body)
+	endpoint := readSSEEndpoint(t, reader)
+	post := func(body string) {
+		t.Helper()
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := ts.Client().Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusAccepted, resp.StatusCode)
+	}
+
+	post(`{"jsonrpc":"2.0","id":7,"method":"ping"}`)
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("original request did not reach the hook")
+	}
+	post(`{"jsonrpc":"2.0","id":7,"method":"tools/list"}`)
+	var duplicate mcp.JSONRPCError
+	readSSEData(t, reader, &duplicate)
+	require.Equal(t, mcp.INVALID_REQUEST, duplicate.Error.Code)
+	require.True(t, duplicate.ID.IsNil(), "duplicate error must not be delivered to the original call")
+
+	post(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":7}}`)
+	var original mcp.JSONRPCError
+	readSSEData(t, reader, &original)
+	require.Equal(t, mcp.NewRequestId(int64(7)), original.ID)
+	require.Equal(t, context.Canceled.Error(), original.Error.Message)
+}
 
 func TestSSEServer(t *testing.T) {
 	t.Run("Can instantiate", func(t *testing.T) {

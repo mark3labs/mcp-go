@@ -13,6 +13,262 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+func TestSchemaValidation_QuotedPromotedNestedFields(t *testing.T) {
+	type quoted struct {
+		Count int `json:"count,string"`
+	}
+	type plain struct {
+		Count int `json:"count"`
+	}
+	type EmbeddedQuoted struct {
+		Nested quoted `json:"nested"`
+	}
+	type EmbeddedPlain struct {
+		Nested plain `json:"nested"`
+	}
+	type outerPlain struct {
+		EmbeddedQuoted
+		Nested plain `json:"nested"`
+	}
+	type outerQuoted struct {
+		Nested quoted `json:"nested"`
+		EmbeddedPlain
+	}
+	type private struct {
+		Nested quoted `json:"nested"`
+	}
+	type privateRequest struct {
+		private
+	}
+	plainTool := mcp.NewTool("quoted", mcp.WithInputSchema[outerPlain](), mcp.WithOutputSchema[outerPlain]())
+	quotedTool := mcp.NewTool("quoted", mcp.WithInputSchema[outerQuoted](), mcp.WithOutputSchema[outerQuoted]())
+	privateTool := mcp.NewTool("quoted", mcp.WithInputSchema[privateRequest](), mcp.WithOutputSchema[privateRequest]())
+	tests := []struct {
+		name    string
+		tool    mcp.Tool
+		target  any
+		count   any
+		success bool
+	}{
+		{name: "shadowed quoted field accepts number", tool: plainTool, target: &outerPlain{}, count: 42, success: true},
+		{name: "shadowed quoted field rejects string", tool: plainTool, target: &outerPlain{}, count: "42"},
+		{name: "shadowed plain field accepts string", tool: quotedTool, target: &outerQuoted{}, count: "42", success: true},
+		{name: "shadowed plain field rejects number", tool: quotedTool, target: &outerQuoted{}, count: 42},
+		{name: "private embedding accepts string", tool: privateTool, target: &privateRequest{}, count: "42", success: true},
+		{name: "private embedding rejects number", tool: privateTool, target: &privateRequest{}, count: 42},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+			srv.AddTool(test.tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				called = true
+				if err := req.BindArguments(test.target); err != nil {
+					return nil, err
+				}
+				return mcp.NewToolResultStructuredOnly(test.target), nil
+			})
+			args := map[string]any{"nested": map[string]any{"count": test.count}}
+			response := callTool(t, srv, "quoted", args)
+			if test.success {
+				requireToolSuccess(t, response)
+				got, err := json.Marshal(test.target)
+				require.NoError(t, err)
+				want, err := json.Marshal(args)
+				require.NoError(t, err)
+				assert.JSONEq(t, string(want), string(got))
+			} else {
+				requireToolErrorContaining(t, response, "count")
+			}
+			assert.Equal(t, test.success, called)
+		})
+	}
+}
+
+func TestSchemaValidation_QuotedPrivateEmbeddingFallback(t *testing.T) {
+	type private struct {
+		Count int `json:"count,string"`
+	}
+	type request struct {
+		private
+		Mode string `json:"mode" jsonschema:"enum=fast,enum=safe"`
+	}
+	raw, err := mcp.SchemaForRaw[request]()
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `"count"`)
+	tool := mcp.NewTool("quoted", mcp.WithInputSchema[request](), mcp.WithOutputSchema[request]())
+	for _, test := range []struct {
+		name    string
+		count   any
+		success bool
+	}{
+		{name: "quoted number", count: "7", success: true},
+		{name: "unquoted number", count: 7},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+			srv.AddTool(tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				called = true
+				var args request
+				if err := req.BindArguments(&args); err != nil {
+					return nil, err
+				}
+				require.Equal(t, 7, args.Count)
+				return mcp.NewToolResultStructuredOnly(args), nil
+			})
+			response := callTool(t, srv, "quoted", map[string]any{"count": test.count, "mode": "fast"})
+			if test.success {
+				requireToolSuccess(t, response)
+			} else {
+				requireToolErrorContaining(t, response, "count")
+			}
+			assert.Equal(t, test.success, called)
+		})
+	}
+}
+
+func TestSchemaValidation_QuotedShadowingFallback(t *testing.T) {
+	type Node struct {
+		Count int `json:"count,string"`
+	}
+	type ShadowNode struct {
+		Other int `json:"other"`
+	}
+	type Shadow struct {
+		Node ShadowNode `json:"node"`
+	}
+	type request struct {
+		Node Node   `json:"node"`
+		Mode string `json:"mode" jsonschema:"enum=fast,enum=safe"`
+		Shadow
+	}
+	raw, err := mcp.SchemaForRaw[request]()
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), `"other"`)
+	tool := mcp.NewTool("quoted", mcp.WithInputSchema[request](), mcp.WithOutputSchema[request]())
+	for _, test := range []struct {
+		name    string
+		count   any
+		success bool
+	}{
+		{name: "quoted number", count: "5", success: true},
+		{name: "unquoted number", count: 5},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+			srv.AddTool(tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				called = true
+				var args request
+				if err := req.BindArguments(&args); err != nil {
+					return nil, err
+				}
+				require.Equal(t, 5, args.Node.Count)
+				return mcp.NewToolResultStructuredOnly(args), nil
+			})
+			args := map[string]any{"node": map[string]any{"count": test.count}, "mode": "fast"}
+			response := callTool(t, srv, "quoted", args)
+			if test.success {
+				requireToolSuccess(t, response)
+			} else {
+				requireToolErrorContaining(t, response, "count")
+			}
+			assert.Equal(t, test.success, called)
+		})
+	}
+}
+
+func TestSchemaValidation_QuotedStringEnums(t *testing.T) {
+	type normal struct {
+		Mode string `json:"mode,string" jsonschema:"Run mode,enum=fast,enum=safe"`
+	}
+	type fallback struct {
+		Mode string `json:"mode,string" jsonschema:"enum=fast,enum=safe"`
+	}
+	for _, schema := range []struct {
+		name   string
+		tool   mcp.Tool
+		target any
+	}{
+		{name: "normal", tool: mcp.NewTool("quoted", mcp.WithInputSchema[normal](), mcp.WithOutputSchema[normal]()), target: &normal{}},
+		{name: "fallback", tool: mcp.NewTool("quoted", mcp.WithInputSchema[fallback](), mcp.WithOutputSchema[fallback]()), target: &fallback{}},
+	} {
+		for _, test := range []struct {
+			name    string
+			mode    string
+			success bool
+		}{
+			{name: "encoded enum", mode: `"fast"`, success: true},
+			{name: "outside enum", mode: `"slow"`},
+			{name: "missing encoding level", mode: "fast"},
+		} {
+			t.Run(schema.name+"/"+test.name, func(t *testing.T) {
+				called := false
+				srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+				srv.AddTool(schema.tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					called = true
+					if err := req.BindArguments(schema.target); err != nil {
+						return nil, err
+					}
+					return mcp.NewToolResultStructuredOnly(schema.target), nil
+				})
+				args := map[string]any{"mode": test.mode}
+				response := callTool(t, srv, "quoted", args)
+				if test.success {
+					requireToolSuccess(t, response)
+					encoded, err := json.Marshal(schema.target)
+					require.NoError(t, err)
+					want, err := json.Marshal(args)
+					require.NoError(t, err)
+					assert.JSONEq(t, string(want), string(encoded))
+				} else {
+					requireToolErrorContaining(t, response, "mode")
+				}
+				assert.Equal(t, test.success, called)
+			})
+		}
+	}
+}
+
+func TestSchemaValidation_QuotedField(t *testing.T) {
+	type request struct {
+		Count int    `json:"count,string"`
+		Mode  string `json:"mode" jsonschema:"enum=fast,enum=safe"`
+	}
+	tests := []struct {
+		name    string
+		count   any
+		success bool
+	}{
+		{name: "quoted number", count: "42", success: true},
+		{name: "unquoted number", count: 42, success: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+			srv.AddTool(mcp.NewTool("quoted", mcp.WithInputSchema[request](), mcp.WithOutputSchema[request]()),
+				func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					called = true
+					var args request
+					if err := req.BindArguments(&args); err != nil {
+						return nil, err
+					}
+					assert.Equal(t, 42, args.Count)
+					return mcp.NewToolResultStructuredOnly(args), nil
+				})
+			response := callTool(t, srv, "quoted", map[string]any{"count": test.count, "mode": "fast"})
+			if test.success {
+				requireToolSuccess(t, response)
+			} else {
+				requireToolErrorContaining(t, response, "count")
+			}
+			assert.Equal(t, test.success, called)
+		})
+	}
+}
+
 // fakeListTool returns a tool that mirrors the kubernetes_list shape used in
 // the bug report: a `continue` pagination token (the standard k8s name) plus
 // strict additionalProperties: false so unknown args like `cursor` are
@@ -536,4 +792,461 @@ func TestInputSchemaValidation_FoldedKeyCheckVisitsEachValueOnce(t *testing.T) {
 	resp := srv.HandleMessage(t.Context(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":`+args+`}}`))
 	requireToolSuccess(t, resp)
 	require.Less(t, time.Since(start), time.Second)
+}
+
+func TestSchemaValidation_QuotedJSONNameShadowing(t *testing.T) {
+	type Node struct {
+		Count int `json:"count,string"`
+	}
+	type Plain struct {
+		Other int `json:"other"`
+	}
+	type ShadowPlain struct {
+		Hidden Plain `json:"node,omitempty"` //nolint:modernize // Preserve omitempty to exercise native optional-field metadata before shadow selection.
+	}
+	type ShadowQuoted struct {
+		Hidden Node `json:"node,omitempty"` //nolint:modernize // Preserve omitempty to exercise native optional-field metadata before shadow selection.
+	}
+	type quotedRequest struct {
+		Node Node `json:"node"`
+		ShadowPlain
+	}
+	type plainRequest struct {
+		Node Plain `json:"node"`
+		ShadowQuoted
+	}
+	for _, test := range []struct {
+		name    string
+		tool    mcp.Tool
+		target  any
+		field   string
+		value   any
+		success bool
+	}{
+		{name: "quoted accepts string", tool: mcp.NewTool("quoted", mcp.WithInputSchema[quotedRequest](), mcp.WithOutputSchema[quotedRequest]()), target: &quotedRequest{}, field: "count", value: "5", success: true},
+		{name: "quoted rejects number", tool: mcp.NewTool("quoted", mcp.WithInputSchema[quotedRequest](), mcp.WithOutputSchema[quotedRequest]()), target: &quotedRequest{}, field: "count", value: 5},
+		{name: "plain accepts number", tool: mcp.NewTool("quoted", mcp.WithInputSchema[plainRequest](), mcp.WithOutputSchema[plainRequest]()), target: &plainRequest{}, field: "other", value: 5, success: true},
+		{name: "plain rejects string", tool: mcp.NewTool("quoted", mcp.WithInputSchema[plainRequest](), mcp.WithOutputSchema[plainRequest]()), target: &plainRequest{}, field: "other", value: "5"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.NotEmpty(t, test.tool.RawInputSchema)
+			called := false
+			srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+			srv.AddTool(test.tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				called = true
+				if err := req.BindArguments(test.target); err != nil {
+					return nil, err
+				}
+				return mcp.NewToolResultStructuredOnly(test.target), nil
+			})
+			args := map[string]any{"node": map[string]any{test.field: test.value}}
+			response := callTool(t, srv, "quoted", args)
+			if test.success {
+				requireToolSuccess(t, response)
+				got, err := json.Marshal(test.target)
+				require.NoError(t, err)
+				want, err := json.Marshal(args)
+				require.NoError(t, err)
+				assert.JSONEq(t, string(want), string(got))
+			} else {
+				requireToolErrorContaining(t, response, test.field)
+			}
+			assert.Equal(t, test.success, called)
+		})
+	}
+}
+
+func TestSchemaValidation_QuotedIgnoredShadow(t *testing.T) {
+	type Embedded struct {
+		Other int `json:"value,string"`
+	}
+	type request struct {
+		Embedded
+		Selected []func() `json:"value,omitempty"`
+	}
+	for _, value := range []request{{Embedded: Embedded{Other: 7}}, {Embedded: Embedded{Other: 7}, Selected: []func(){}}} {
+		encoded, err := json.Marshal(value) //nolint:staticcheck // Both nil and empty unsupported slices are omitted before encoding their elements.
+		require.NoError(t, err)
+		assert.JSONEq(t, `{}`, string(encoded))
+	}
+	raw, err := mcp.SchemaForRaw[request]()
+	require.NoError(t, err)
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(raw, &schema))
+	properties, _ := schema["properties"].(map[string]any)
+	assert.NotContains(t, properties, "value", "the selected unsupported field must be ignored")
+	tool := mcp.NewTool("quoted", mcp.WithInputSchema[request](), mcp.WithOutputSchema[request]())
+	for _, test := range []struct {
+		name    string
+		args    map[string]any
+		success bool
+	}{
+		{name: "omitted unsupported field", args: map[string]any{}, success: true},
+		{name: "shadowed integer rejected", args: map[string]any{"value": 5}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+			srv.AddTool(tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				called = true
+				var target request
+				if err := req.BindArguments(&target); err != nil {
+					return nil, err
+				}
+				return mcp.NewToolResultStructuredOnly(target), nil
+			})
+			response := callTool(t, srv, "quoted", test.args)
+			if test.success {
+				requireToolSuccess(t, response)
+			} else {
+				requireToolErrorContaining(t, response, "value")
+			}
+			assert.Equal(t, test.success, called)
+		})
+	}
+}
+
+func TestSchemaValidation_QuotedNullableEnums(t *testing.T) {
+	type normal struct {
+		Mode *string `json:"mode,string" jsonschema:"Run mode,enum=fast,enum=safe"`
+	}
+	type fallback struct {
+		Mode *string `json:"mode,string" jsonschema:"enum=fast,enum=safe"`
+	}
+	for _, schema := range []struct {
+		name   string
+		tool   mcp.Tool
+		target any
+	}{
+		{name: "normal", tool: mcp.NewTool("quoted", mcp.WithInputSchema[normal](), mcp.WithOutputSchema[normal]()), target: &normal{}},
+		{name: "fallback", tool: mcp.NewTool("quoted", mcp.WithInputSchema[fallback](), mcp.WithOutputSchema[fallback]()), target: &fallback{}},
+	} {
+		for _, test := range []struct {
+			name    string
+			mode    any
+			success bool
+		}{
+			{name: "nil enum", mode: nil, success: true},
+			{name: "encoded enum", mode: `"fast"`, success: true},
+			{name: "outside enum", mode: `"slow"`},
+			{name: "missing encoding level", mode: "fast"},
+		} {
+			t.Run(schema.name+"/"+test.name, func(t *testing.T) {
+				called := false
+				srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+				srv.AddTool(schema.tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					called = true
+					if err := req.BindArguments(schema.target); err != nil {
+						return nil, err
+					}
+					return mcp.NewToolResultStructuredOnly(schema.target), nil
+				})
+				args := map[string]any{"mode": test.mode}
+				response := callTool(t, srv, "quoted", args)
+				if test.success {
+					requireToolSuccess(t, response)
+					encoded, err := json.Marshal(schema.target)
+					require.NoError(t, err)
+					want, err := json.Marshal(args)
+					require.NoError(t, err)
+					assert.JSONEq(t, string(want), string(encoded))
+				} else {
+					requireToolErrorContaining(t, response, "mode")
+				}
+				assert.Equal(t, test.success, called)
+			})
+		}
+	}
+}
+
+type quotedCustomJSONStruct struct {
+	Count int `json:"count,string"`
+}
+
+func (value quotedCustomJSONStruct) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Count int `json:"count"`
+	}{Count: value.Count})
+}
+
+func TestSchemaValidation_QuotedCustomStructEncoding(t *testing.T) {
+	type input struct {
+		Count int `json:"count"`
+	}
+	type nested struct {
+		Value quotedCustomJSONStruct `json:"value"`
+	}
+	type sliced struct {
+		Values []quotedCustomJSONStruct `json:"values"`
+	}
+	for _, test := range []struct {
+		name   string
+		tool   mcp.Tool
+		output func(int) any
+	}{
+		{name: "root", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[quotedCustomJSONStruct]()), output: func(count int) any { return quotedCustomJSONStruct{Count: count} }},
+		{name: "nested", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[nested]()), output: func(count int) any { return nested{Value: quotedCustomJSONStruct{Count: count}} }},
+		{name: "slice", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[sliced]()), output: func(count int) any { return sliced{Values: []quotedCustomJSONStruct{{Count: count}}} }},
+		{name: "map", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[map[string]quotedCustomJSONStruct]()), output: func(count int) any { return map[string]quotedCustomJSONStruct{"entry": {Count: count}} }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+			srv.AddTool(test.tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				called = true
+				var target input
+				if err := req.BindArguments(&target); err != nil {
+					return nil, err
+				}
+				assert.Equal(t, 17, target.Count)
+				return mcp.NewToolResultStructuredOnly(test.output(target.Count)), nil
+			})
+			result := callTool(t, srv, "quoted", map[string]any{"count": 17})
+			requireToolSuccess(t, result)
+			assert.True(t, called)
+		})
+	}
+}
+
+func TestSchemaValidation_QuotedSelectedEnums(t *testing.T) {
+	type private struct {
+		Mode string `json:"mode,string" jsonschema:"Allowed modes,enum=fast,enum=safe"`
+	}
+	type privateNormal struct{ private }
+	type privateFallback struct {
+		private
+		Trigger string `json:"trigger,omitempty" jsonschema:"enum=run"`
+	}
+	type Old struct {
+		Other string `json:"mode,string" jsonschema:"Old modes,enum=old"`
+	}
+	type shadowNormal struct {
+		Mode string `json:"mode,string" jsonschema:"Allowed modes,enum=fast,enum=safe"`
+		Old
+	}
+	type shadowFallback struct {
+		Mode string `json:"mode,string" jsonschema:"Allowed modes,enum=fast,enum=safe"`
+		Old
+		Trigger string `json:"trigger,omitempty" jsonschema:"enum=run"`
+	}
+	for _, schema := range []struct {
+		name   string
+		tool   mcp.Tool
+		target any
+		raw    func() (json.RawMessage, error)
+	}{
+		{name: "private normal", tool: mcp.NewTool("quoted", mcp.WithInputSchema[privateNormal](), mcp.WithOutputSchema[privateNormal]()), target: &privateNormal{}, raw: func() (json.RawMessage, error) { return mcp.SchemaForRaw[privateNormal]() }},
+		{name: "private fallback", tool: mcp.NewTool("quoted", mcp.WithInputSchema[privateFallback](), mcp.WithOutputSchema[privateFallback]()), target: &privateFallback{}, raw: func() (json.RawMessage, error) { return mcp.SchemaForRaw[privateFallback]() }},
+		{name: "shadow normal", tool: mcp.NewTool("quoted", mcp.WithInputSchema[shadowNormal](), mcp.WithOutputSchema[shadowNormal]()), target: &shadowNormal{}, raw: func() (json.RawMessage, error) { return mcp.SchemaForRaw[shadowNormal]() }},
+		{name: "shadow fallback", tool: mcp.NewTool("quoted", mcp.WithInputSchema[shadowFallback](), mcp.WithOutputSchema[shadowFallback]()), target: &shadowFallback{}, raw: func() (json.RawMessage, error) { return mcp.SchemaForRaw[shadowFallback]() }},
+	} {
+		raw, err := schema.raw()
+		require.NoError(t, err)
+		var parsed map[string]any
+		require.NoError(t, json.Unmarshal(raw, &parsed))
+		mode := parsed["properties"].(map[string]any)["mode"].(map[string]any)
+		assert.Equal(t, "Allowed modes", mode["description"], schema.name)
+		assert.Equal(t, []any{`"fast"`, `"safe"`}, mode["enum"], schema.name)
+		for _, test := range []struct {
+			name, mode string
+			success    bool
+		}{
+			{name: "selected enum", mode: `"fast"`, success: true},
+			{name: "shadowed enum", mode: `"old"`},
+			{name: "outside enum", mode: `"slow"`},
+		} {
+			t.Run(schema.name+"/"+test.name, func(t *testing.T) {
+				called := false
+				srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+				srv.AddTool(schema.tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					called = true
+					if err := req.BindArguments(schema.target); err != nil {
+						return nil, err
+					}
+					return mcp.NewToolResultStructuredOnly(schema.target), nil
+				})
+				args := map[string]any{"mode": test.mode}
+				result := callTool(t, srv, "quoted", args)
+				if test.success {
+					requireToolSuccess(t, result)
+					encoded, err := json.Marshal(schema.target)
+					require.NoError(t, err)
+					want, err := json.Marshal(args)
+					require.NoError(t, err)
+					assert.JSONEq(t, string(want), string(encoded))
+				} else {
+					requireToolErrorContaining(t, result, "mode")
+				}
+				assert.Equal(t, test.success, called)
+			})
+		}
+	}
+}
+
+type quotedAddressableJSONStruct struct {
+	Count int `json:"count,string"`
+}
+
+func (value *quotedAddressableJSONStruct) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Count int `json:"count"`
+	}{Count: value.Count})
+}
+
+func TestSchemaValidation_QuotedCustomStructAddressability(t *testing.T) {
+	type input struct {
+		Count int `json:"count"`
+	}
+	type scalarFields struct {
+		Count quotedAddressableJSONScalar `json:"count,string"`
+	}
+	type scalarSlice struct {
+		Items []scalarFields `json:"items"`
+	}
+	type customSliceOutput struct {
+		Items quotedCustomJSONSlice `json:"items"`
+	}
+	type mixed struct {
+		Map     map[string]quotedAddressableJSONStruct `json:"map"`
+		Slice   []quotedAddressableJSONStruct          `json:"slice"`
+		Pointer *quotedAddressableJSONStruct           `json:"pointer"`
+	}
+	type nested struct {
+		Value quotedAddressableJSONStruct `json:"value"`
+	}
+	type sliced struct {
+		Items []quotedAddressableJSONStruct `json:"items"`
+	}
+	type arrayed struct {
+		Items [1]quotedAddressableJSONStruct `json:"items"`
+	}
+	type embedded struct {
+		Value quotedAddressableJSONStruct `json:"value"`
+	}
+	type promoted struct{ *embedded }
+	type promotedFallback struct {
+		*embedded
+		Trigger string `json:"trigger,omitempty" jsonschema:"enum=run"`
+	}
+	for _, test := range []struct {
+		name   string
+		tool   mcp.Tool
+		output any
+		want   string
+	}{
+		{name: "value root", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[quotedAddressableJSONStruct]()), output: quotedAddressableJSONStruct{Count: 17}, want: `{"count":"17"}`},
+		{name: "pointer root", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[*quotedAddressableJSONStruct]()), output: &quotedAddressableJSONStruct{Count: 17}, want: `{"count":17}`},
+		{name: "map value", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[map[string]quotedAddressableJSONStruct]()), output: map[string]quotedAddressableJSONStruct{"entry": {Count: 17}}, want: `{"entry":{"count":"17"}}`},
+		{name: "slice element", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[sliced]()), output: sliced{Items: []quotedAddressableJSONStruct{{Count: 17}}}, want: `{"items":[{"count":17}]}`},
+		{name: "nested value", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[nested]()), output: nested{Value: quotedAddressableJSONStruct{Count: 17}}, want: `{"value":{"count":"17"}}`},
+		{name: "nested pointer", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[*nested]()), output: &nested{Value: quotedAddressableJSONStruct{Count: 17}}, want: `{"value":{"count":17}}`},
+		{name: "array value", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[arrayed]()), output: arrayed{Items: [1]quotedAddressableJSONStruct{{Count: 17}}}, want: `{"items":[{"count":"17"}]}`},
+		{name: "array pointer", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[*arrayed]()), output: &arrayed{Items: [1]quotedAddressableJSONStruct{{Count: 17}}}, want: `{"items":[{"count":17}]}`},
+		{name: "promoted pointer", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[promoted]()), output: promoted{embedded: &embedded{Value: quotedAddressableJSONStruct{Count: 17}}}, want: `{"value":{"count":17}}`},
+		{name: "promoted pointer fallback", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[promotedFallback]()), output: promotedFallback{embedded: &embedded{Value: quotedAddressableJSONStruct{Count: 17}}}, want: `{"value":{"count":17}}`},
+		{name: "scalar value", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[scalarFields]()), output: scalarFields{Count: 17}, want: `{"count":"17"}`},
+		{name: "scalar pointer", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[*scalarFields]()), output: &scalarFields{Count: 17}, want: `{"count":17}`},
+		{name: "scalar map", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[map[string]scalarFields]()), output: map[string]scalarFields{"entry": {Count: 17}}, want: `{"entry":{"count":"17"}}`},
+		{name: "scalar slice", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[scalarSlice]()), output: scalarSlice{Items: []scalarFields{{Count: 17}}}, want: `{"items":[{"count":17}]}`},
+		{name: "mixed contexts", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[mixed]()), output: mixed{Map: map[string]quotedAddressableJSONStruct{"entry": {Count: 17}}, Slice: []quotedAddressableJSONStruct{{Count: 17}}, Pointer: &quotedAddressableJSONStruct{Count: 17}}, want: `{"map":{"entry":{"count":"17"}},"slice":[{"count":17}],"pointer":{"count":17}}`},
+		{name: "custom map encoding", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[quotedCustomJSONMap]()), output: quotedCustomJSONMap{"entry": {Count: 17}}, want: `{"entry":{"count":17}}`},
+		{name: "custom slice encoding", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[customSliceOutput]()), output: customSliceOutput{Items: quotedCustomJSONSlice{{Count: 17}}}, want: `{"items":[{"count":17}]}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			encoded, err := json.Marshal(test.output)
+			require.NoError(t, err)
+			assert.JSONEq(t, test.want, string(encoded))
+			srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+			srv.AddTool(test.tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				var target input
+				if err := req.BindArguments(&target); err != nil {
+					return nil, err
+				}
+				assert.Equal(t, 17, target.Count)
+				return mcp.NewToolResultStructuredOnly(test.output), nil
+			})
+			requireToolSuccess(t, callTool(t, srv, "quoted", map[string]any{"count": 17}))
+		})
+	}
+}
+
+type quotedAddressableNode struct {
+	Count int `json:"count,string"`
+}
+type quotedAddressableOther struct {
+	Other int `json:"other"`
+}
+type quotedAddressableShadow struct {
+	Hidden quotedAddressableOther `json:"node,omitempty"` //nolint:modernize // Preserve native optional-field metadata in the shadow fixture.
+}
+type quotedAddressableSelection struct {
+	Node quotedAddressableNode `json:"node"`
+	quotedAddressableShadow
+}
+
+func (value *quotedAddressableSelection) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Node quotedAddressableOther `json:"node"`
+	}{Node: value.Hidden})
+}
+
+func TestSchemaValidation_QuotedCustomNativeSelection(t *testing.T) {
+	type input struct {
+		Count int `json:"count"`
+	}
+	value := quotedAddressableSelection{Node: quotedAddressableNode{Count: 17}, quotedAddressableShadow: quotedAddressableShadow{Hidden: quotedAddressableOther{Other: 17}}}
+	for _, test := range []struct {
+		name   string
+		tool   mcp.Tool
+		output any
+		want   string
+	}{
+		{name: "value uses selected fields", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[quotedAddressableSelection]()), output: value, want: `{"node":{"count":"17"}}`},
+		{name: "pointer uses custom encoding", tool: mcp.NewTool("quoted", mcp.WithInputSchema[input](), mcp.WithOutputSchema[*quotedAddressableSelection]()), output: &value, want: `{"node":{"other":17}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			encoded, err := json.Marshal(test.output)
+			require.NoError(t, err)
+			assert.JSONEq(t, test.want, string(encoded))
+			srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+			srv.AddTool(test.tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				var target input
+				if err := req.BindArguments(&target); err != nil {
+					return nil, err
+				}
+				assert.Equal(t, 17, target.Count)
+				return mcp.NewToolResultStructuredOnly(test.output), nil
+			})
+			requireToolSuccess(t, callTool(t, srv, "quoted", map[string]any{"count": 17}))
+		})
+	}
+}
+
+type quotedAddressableJSONScalar int
+
+func (value *quotedAddressableJSONScalar) MarshalJSON() ([]byte, error) {
+	return json.Marshal(int(*value))
+}
+
+type quotedCustomPlainNode struct {
+	Count int `json:"count"`
+}
+type quotedCustomJSONMap map[string]quotedAddressableNode
+
+func (value quotedCustomJSONMap) MarshalJSON() ([]byte, error) {
+	output := make(map[string]quotedCustomPlainNode, len(value))
+	for key, item := range value {
+		output[key] = quotedCustomPlainNode(item)
+	}
+	return json.Marshal(output)
+}
+
+type quotedCustomJSONSlice []quotedAddressableNode
+
+func (value quotedCustomJSONSlice) MarshalJSON() ([]byte, error) {
+	output := make([]quotedCustomPlainNode, len(value))
+	for i, item := range value {
+		output[i] = quotedCustomPlainNode(item)
+	}
+	return json.Marshal(output)
 }

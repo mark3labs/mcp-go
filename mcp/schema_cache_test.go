@@ -118,6 +118,20 @@ func TestSchemaCache_MarshalDeterministic(t *testing.T) {
 	assert.Equal(t, string(data), string(again))
 }
 
+func TestSchemaCache_MarshalRawSchemas(t *testing.T) {
+	var cache SchemaCache
+	data, err := cache.MarshalJSON()
+	require.NoError(t, err)
+	assert.Equal(t, `{}`, string(data))
+
+	cache.WarmRaw("A", json.RawMessage(`false`))
+	cache.WarmRaw("B", json.RawMessage(`true`))
+	cache.WarmRaw("N", json.RawMessage(`{"const":9007199254740993}`))
+	data, err = cache.MarshalJSON()
+	require.NoError(t, err)
+	assert.Equal(t, `{"A":false,"B":true,"N":{"const":9007199254740993}}`, string(data))
+}
+
 func TestSchemaCache_RoundTripJSON(t *testing.T) {
 	c := NewSchemaCache()
 	c.Warm("Input", map[string]any{
@@ -183,6 +197,42 @@ func TestSchemaCache_SaveLoad(t *testing.T) {
 		want, _ := c.GetRaw(key)
 		got, _ := loaded.GetRaw(key)
 		assert.JSONEq(t, string(want), string(got))
+	}
+}
+
+func TestSchemaCache_SaveInvalidJSONPreservesFile(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "truncated object", raw: `{"type":`},
+		{name: "multiple values", raw: `{"type":"object"} {"type":"string"}`},
+		{name: "whitespace", raw: " \t\n"},
+		{name: "extra cache entry", raw: `true,"Injected":{"type":"string"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "schemas.json")
+			cache := NewSchemaCache()
+			cache.WarmRaw("Existing", json.RawMessage(`{"type":"object"}`))
+			require.NoError(t, cache.Save(path))
+			original, err := os.ReadFile(path)
+			require.NoError(t, err)
+
+			cache.WarmRaw("Broken", json.RawMessage(tt.raw))
+			assert.Error(t, cache.Save(path))
+
+			current, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, original, current)
+			loaded, err := LoadSchemaCache(path)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"Existing"}, loaded.Keys())
+			files, err := os.ReadDir(dir)
+			require.NoError(t, err)
+			assert.Len(t, files, 1)
+		})
 	}
 }
 

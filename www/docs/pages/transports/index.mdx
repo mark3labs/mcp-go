@@ -70,7 +70,7 @@ func main() {
         httpServer := server.NewStreamableHTTPServer(s)
         httpServer.Start(":" + port)
     default:
-        fmt.Println("Starting STDIO server")
+        fmt.Fprintln(os.Stderr, "Starting STDIO server")
         server.ServeStdio(s)
     }
 }

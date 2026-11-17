@@ -103,6 +103,10 @@ func WithHeaderFunc(headerFunc HTTPHeaderFunc) ClientOption {
 }
 
 // WithHTTPClient sets a custom HTTP client for the SSE transport.
+//
+// The default client follows a redirect only to the same scheme, host and
+// port, so configured headers and OAuth tokens are not sent elsewhere. A
+// custom client's CheckRedirect policy is used as it is.
 func WithHTTPClient(httpClient *http.Client) ClientOption {
 	return func(sc *SSE) {
 		sc.httpClient = httpClient
@@ -157,7 +161,7 @@ func NewSSE(baseURL string, options ...ClientOption) (*SSE, error) {
 
 	smc := &SSE{
 		baseURL:         parsedURL,
-		httpClient:      &http.Client{},
+		httpClient:      newDefaultHTTPClient(),
 		responses:       make(map[string]chan *JSONRPCResponse),
 		headers:         make(map[string]string),
 		logger:          slog.Default(),
@@ -479,7 +483,9 @@ func (c *SSE) handleSSEEvent(event, data string, endpointChan chan struct{}, end
 			c.logger.Error("Error parsing endpoint URL", "err", err)
 			return
 		}
-		if endpoint.Host != c.baseURL.Host {
+		// Scheme and port must match too: an https connection must not
+		// post headers and bodies to an http endpoint on the same host.
+		if !sameOrigin(endpoint, c.baseURL) {
 			c.logger.Error("Endpoint origin does not match connection origin")
 			return
 		}
@@ -510,10 +516,11 @@ func (c *SSE) handleSSEEvent(event, data string, endpointChan chan struct{}, end
 				return
 			}
 			c.notifyMu.RLock()
-			if c.onNotification != nil {
-				c.onNotification(notification)
-			}
+			handler := c.onNotification
 			c.notifyMu.RUnlock()
+			if handler != nil {
+				handler(notification)
+			}
 			return
 		}
 
@@ -541,6 +548,7 @@ func (c *SSE) handleSSEEvent(event, data string, endpointChan chan struct{}, end
 }
 
 // SetNotificationHandler sets the handler for incoming JSON-RPC notifications.
+// A handler may replace or remove itself; the change applies to subsequent notifications.
 func (c *SSE) SetNotificationHandler(handler func(notification mcp.JSONRPCNotification)) {
 	c.notifyMu.Lock()
 	defer c.notifyMu.Unlock()
@@ -556,15 +564,19 @@ func (c *SSE) SetConnectionLostHandler(handler func(error)) {
 
 // SendRequest sends a JSON-RPC request to the server and waits for a response.
 // Returns the raw JSON response message or an error if the request fails.
+// After Close has run, SendRequest returns ErrTransportClosed, including when
+// Close ran before Start.
 func (c *SSE) SendRequest(
 	ctx context.Context,
 	request JSONRPCRequest,
 ) (*JSONRPCResponse, error) {
+	// Reject sends after Close before the not-started check so a closed
+	// transport reports ErrTransportClosed instead of "transport not started yet".
+	if c.closed.Load() {
+		return nil, ErrTransportClosed
+	}
 	if !c.started.Load() {
 		return nil, fmt.Errorf("transport not started yet")
-	}
-	if c.closed.Load() {
-		return nil, fmt.Errorf("transport has been closed")
 	}
 
 	c.mu.RLock()
@@ -777,6 +789,9 @@ func (c *SSE) SetProtocolVersion(version string) {
 
 // SendNotification sends a JSON-RPC notification to the server without expecting a response.
 func (c *SSE) SendNotification(ctx context.Context, notification mcp.JSONRPCNotification) error {
+	if c.closed.Load() {
+		return ErrTransportClosed
+	}
 	c.mu.RLock()
 	endpoint := c.endpoint
 	c.mu.RUnlock()

@@ -157,20 +157,45 @@ func WithMaxRequestBodyBytes(n int64) StreamableHTTPOption {
 // [::1]) whose Host header is not a localhost value are rejected with 403
 // Forbidden. This protects local MCP servers against DNS rebinding attacks,
 // where a malicious website rebinds its own domain to 127.0.0.1 to make a
-// victim's browser issue requests against a local server. The protection
-// applies regardless of whether the server listens on localhost specifically
-// or on 0.0.0.0, and never affects requests arriving via non-loopback
-// addresses.
+// victim's browser issue requests against a local server. By default this
+// protection only covers connections delivered over a loopback address; a
+// server bound to a non-loopback interface (e.g. 0.0.0.0) is not protected
+// for requests arriving on that interface unless WithAllowedHosts is
+// configured.
 //
-// Disable it only if you understand the security implications, for example
-// when a reverse proxy on the same host forwards requests via localhost
-// while preserving the original Host header. In that case, prefer
-// configuring the proxy to rewrite the Host header to localhost instead.
+// Disabling the protection turns off all Host header validation, including
+// the allowlist configured with WithAllowedHosts. Disable it only if you
+// understand the security implications. When a reverse proxy on the same
+// host forwards requests via localhost while preserving the original Host
+// header, prefer listing the public host name with WithAllowedHosts, or
+// configuring the proxy to rewrite the Host header to localhost, instead.
 //
 // See https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#local-mcp-server-compromise
 func WithDisableLocalhostProtection(disable bool) StreamableHTTPOption {
 	return func(s *StreamableHTTPServer) {
 		s.disableLocalhostProtection = disable
+	}
+}
+
+// WithAllowedHosts configures an allowlist of Host header values for DNS
+// rebinding protection. When at least one host is configured, every request
+// handled by ServeHTTP whose Host header is neither a loopback value nor in
+// the allowlist is rejected with 403 Forbidden, regardless of the address the
+// server is bound to. This is how to protect a server bound to a non-loopback
+// interface (e.g. ":8080" or 0.0.0.0): list the host names clients
+// legitimately use to reach it.
+//
+// Matching is case-insensitive. An entry without a port ("mcp.example.com")
+// matches that host on any port; an entry with a port
+// ("mcp.example.com:8080") matches only that port, where a Host header
+// without a port also matches entries for port 80 or 443. IP literals are
+// compared by address, and IPv6 literals may be given with or without
+// brackets. Calling WithAllowedHosts with no hosts clears the allowlist,
+// restoring the default loopback-only protection.
+// WithDisableLocalhostProtection(true) disables the allowlist as well.
+func WithAllowedHosts(hosts ...string) StreamableHTTPOption {
+	return func(s *StreamableHTTPServer) {
+		s.allowedHosts = append([]string(nil), hosts...)
 	}
 }
 
@@ -306,6 +331,7 @@ type StreamableHTTPServer struct {
 	sessionResources         *sessionResourcesStore
 	sessionResourceTemplates *sessionResourceTemplatesStore
 	activeSessions           sync.Map     // sessionId --> *streamableHttpSession (for sampling responses)
+	modernListeners          sync.Map     // *streamableHttpSession --> context.CancelFunc
 	requestIDCounter         atomic.Int64 // server -> client request IDs, shared across sessions
 
 	eventStore         EventStore
@@ -329,6 +355,11 @@ type StreamableHTTPServer struct {
 	// rebinding protection applied to requests arriving over loopback
 	// connections. See WithDisableLocalhostProtection.
 	disableLocalhostProtection bool
+
+	// allowedHosts is an opt-in Host header allowlist enforced for every
+	// request regardless of the connection's local address. See
+	// WithAllowedHosts.
+	allowedHosts []string
 
 	// maxRequestBodyBytes bounds a POST body read by ServeHTTP; zero or less
 	// is no bound. See WithMaxRequestBodyBytes.
@@ -405,13 +436,14 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 // decorated with the configured Access-Control-* headers before dispatch.
 //
 // Requests arriving over a loopback connection with a non-localhost Host
-// header are rejected with 403 Forbidden to protect against DNS rebinding
-// attacks, unless WithDisableLocalhostProtection is set.
+// header, or carrying a Host header outside the allowlist configured with
+// WithAllowedHosts, are rejected with 403 Forbidden to protect against DNS
+// rebinding attacks, unless WithDisableLocalhostProtection is set.
 //
 // ServeHTTP is the conventional net/http entry point; for non-net/http HTTP
 // frameworks (fasthttp, fiber, etc.), see Handle.
 func (s *StreamableHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !s.disableLocalhostProtection && rejectDNSRebinding(w, r) {
+	if !s.disableLocalhostProtection && rejectDNSRebinding(w, r, s.allowedHosts) {
 		return
 	}
 	if s.corsConfig.enabled() {
@@ -600,9 +632,15 @@ func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 }
 
 // CloseSessions terminates all active streamable HTTP listening sessions
-// without stopping the HTTP server. This unblocks long-lived GET handlers so
-// Shutdown can complete while clients are still connected.
+// without stopping the HTTP server. This unblocks long-lived GET and
+// subscriptions/listen handlers so Shutdown can complete while clients are
+// still connected.
 func (s *StreamableHTTPServer) CloseSessions(ctx context.Context) {
+	s.modernListeners.Range(func(_, value any) bool {
+		value.(context.CancelFunc)()
+		return true
+	})
+
 	sessionIDs := make([]string, 0)
 	s.activeSessions.Range(func(key, value any) bool {
 		sessionID, ok := key.(string)
@@ -822,6 +860,16 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	ctx = WithSupportedProtocolVersions(ctx, s.supportedProtocolVersions())
 	if s.contextFunc != nil {
 		ctx = s.contextFunc(ctx, r.asHTTPRequest())
+	}
+	// Stopping subscription work must still allow its completion response
+	// while the underlying HTTP request remains connected.
+	responseCtx := ctx
+	if listening {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		s.modernListeners.Store(session, cancel)
+		defer s.modernListeners.Delete(session)
+		defer cancel()
 	}
 
 	// handle potential notifications
@@ -1109,7 +1157,7 @@ drainLoop:
 	}
 
 	mu.Unlock()
-	if ctx.Err() != nil {
+	if responseCtx.Err() != nil {
 		// The connection is gone, but with an event store the response of an
 		// interrupted SSE request is still recorded so that a resuming client
 		// can be redelivered it.
