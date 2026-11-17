@@ -732,10 +732,10 @@ func TestSchemaValidation_QuotedJSONNameShadowing(t *testing.T) {
 		Other int `json:"other"`
 	}
 	type ShadowPlain struct {
-		Hidden Plain `json:"node,omitempty"`
+		Hidden Plain `json:"node,omitempty"` //nolint:modernize // Preserve omitempty to exercise native optional-field metadata before shadow selection.
 	}
 	type ShadowQuoted struct {
-		Hidden Node `json:"node,omitempty"`
+		Hidden Node `json:"node,omitempty"` //nolint:modernize // Preserve omitempty to exercise native optional-field metadata before shadow selection.
 	}
 	type quotedRequest struct {
 		Node Node `json:"node"`
