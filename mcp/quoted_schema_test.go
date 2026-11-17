@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -377,20 +378,25 @@ func (v quotedEnumMarshaler) MarshalJSON() ([]byte, error) { return json.Marshal
 
 func TestSchemaFor_QuotedStringEnums(t *testing.T) {
 	type Fields struct {
-		JSONNumber  json.Number         `json:"jsonNumber,string" jsonschema:"Number,enum=1,enum=2"`
-		NamedNumber quotedEnumNumber    `json:"namedNumber,string" jsonschema:"Named,enum=1,enum=2"`
-		Mode        string              `json:"mode,string" jsonschema:"Modes,enum=fast,enum=a\\b,enum=a\"b,enum=a\nb,enum=<>&,enum=雪"`
-		Named       quotedEnumString    `json:"named,string" jsonschema:"Named,enum=fast,enum=safe"`
-		Pointer     *quotedEnumString   `json:"pointer,string" jsonschema:"Pointer,enum=fast,enum=safe"`
-		Number      int                 `json:"number,string" jsonschema:"Number,enum=1,enum=2"`
-		Bool        bool                `json:"bool,string" jsonschema:"Boolean,enum=true,enum=false"`
-		Plain       string              `json:"plain" jsonschema:"Plain,enum=fast,enum=safe"`
-		Custom      quotedEnumMarshaler `json:"custom,string" jsonschema:"Custom,enum=fast,enum=safe"`
+		JSONNumber  json.Number         `json:"jsonNumber,string" jsonschema:"Allowed number,enum=1,enum=2"`
+		NamedNumber quotedEnumNumber    `json:"namedNumber,string" jsonschema:"Allowed named,enum=1,enum=2"`
+		Mode        string              `json:"mode,string" jsonschema:"Allowed modes,enum=fast,enum=a\\b,enum=a\"b,enum=a\nb,enum=<>&,enum=雪"`
+		Named       quotedEnumString    `json:"named,string" jsonschema:"Allowed named,enum=fast,enum=safe"`
+		Pointer     *quotedEnumString   `json:"pointer,string" jsonschema:"Allowed pointer,enum=fast,enum=safe"`
+		Number      int                 `json:"number,string" jsonschema:"Allowed number,enum=1,enum=2"`
+		Bool        bool                `json:"bool,string" jsonschema:"Allowed boolean,enum=true,enum=false"`
+		Plain       string              `json:"plain" jsonschema:"Allowed plain,enum=fast,enum=safe"`
+		Custom      quotedEnumMarshaler `json:"custom,string" jsonschema:"Allowed custom,enum=fast,enum=safe"`
 	}
 	type fallback struct {
 		Fields
 		Trigger string `json:"trigger" jsonschema:"enum=fast,enum=safe"`
 	}
+	_, err := jsonschema.For[Fields](&jsonschema.ForOptions{IgnoreInvalidTypes: true})
+	require.NoError(t, err, "normal fixture must not require fallback")
+	_, err = jsonschema.For[fallback](&jsonschema.ForOptions{IgnoreInvalidTypes: true})
+	require.ErrorContains(t, err, "tag must not begin with 'WORD='")
+
 	for _, test := range []struct {
 		name string
 		raw  func() (json.RawMessage, error)
