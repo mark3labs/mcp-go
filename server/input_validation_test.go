@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -514,6 +515,7 @@ func TestInputSchemaValidation_RejectsCaseFoldedKeysInSubschemas(t *testing.T) {
 		"if/then":                          {`{"type": "object", "if": {"required": ["mode"]}, "then": ` + path + `}`, `{"mode": "x", "PATH": "/etc/passwd"}`},
 		"dependentSchemas":                 {`{"type": "object", "dependentSchemas": {"mode": ` + path + `}}`, `{"mode": "x", "PATH": "/etc/passwd"}`},
 		"contains":                         {`{"type": "object", "properties": {"files": {"type": "array", "contains": ` + path + `}}}`, `{"files": [{"path": "/safe/a", "PATH": "/etc/passwd"}]}`},
+		"not":                              {`{"type": "object", "not": {"required": ["path"], "properties": {"path": {"const": "/etc/passwd"}}}}`, `{"PATH": "/etc/passwd"}`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
@@ -522,4 +524,16 @@ func TestInputSchemaValidation_RejectsCaseFoldedKeysInSubschemas(t *testing.T) {
 			requireToolErrorContaining(t, srv.HandleMessage(t.Context(), []byte(msg)), "only by case")
 		})
 	}
+}
+
+func TestInputSchemaValidation_FoldedKeyCheckVisitsEachValueOnce(t *testing.T) {
+	schema := `{"$ref": "#/$defs/n", "$defs": {"n": {"type": "object", "additionalProperties": {"$ref": "#/$defs/n"}, "unevaluatedProperties": {"$ref": "#/$defs/n"}}}}`
+	args := strings.Repeat(`{"a":`, 25) + `{}` + strings.Repeat(`}`, 25)
+	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
+	srv.AddTool(mcp.Tool{Name: "t", RawInputSchema: json.RawMessage(schema)}, okHandler)
+
+	start := time.Now()
+	resp := srv.HandleMessage(t.Context(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":`+args+`}}`))
+	requireToolSuccess(t, resp)
+	require.Less(t, time.Since(start), time.Second)
 }

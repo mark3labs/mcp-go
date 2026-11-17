@@ -167,7 +167,7 @@ func (v *inputSchemaValidator) validate(tool mcp.Tool, rawArgs any) (bool, error
 	}
 	// encoding/json binds struct fields case-insensitively, so a key the
 	// schema treats as an extra property can still land in a declared field.
-	if path := foldedPropertyKey(compiled, value, ""); path != "" {
+	if path := foldedPropertyKey([]*jsonschema.Schema{compiled}, value, ""); path != "" {
 		return true, fmt.Errorf("input schema validation failed: %s: key differs from a declared property only by case", path)
 	}
 	return true, nil
@@ -176,9 +176,14 @@ func (v *inputSchemaValidator) validate(tool mcp.Tool, rawArgs any) (bool, error
 // foldedPropertyKey returns the JSON pointer of the first argument key that is
 // not a declared property but case-folds to one. Every subschema that may
 // apply to a value is followed without evaluating whether it is active; a key
-// that differs from a declared one only by case is never needed.
-func foldedPropertyKey(schema *jsonschema.Schema, value any, path string) string {
-	schemas := applicableSchemas(schema, nil, map[*jsonschema.Schema]bool{})
+// that differs from a declared one only by case is never needed. The schemas
+// for a child value are collected into one set so each value is walked once.
+func foldedPropertyKey(roots []*jsonschema.Schema, value any, path string) string {
+	seen := map[*jsonschema.Schema]bool{}
+	var schemas []*jsonschema.Schema
+	for _, root := range roots {
+		schemas = applicableSchemas(root, schemas, seen)
+	}
 	switch v := value.(type) {
 	case map[string]any:
 		for key, val := range v {
@@ -210,21 +215,18 @@ func foldedPropertyKey(schema *jsonschema.Schema, value any, path string) string
 				}
 				subs = append(subs, s.UnevaluatedProperties)
 			}
-			for _, sub := range subs {
-				if bad := foldedPropertyKey(sub, val, p); bad != "" {
-					return bad
-				}
+			if bad := foldedPropertyKey(subs, val, p); bad != "" {
+				return bad
 			}
 		}
 	case []any:
 		for i, val := range v {
-			p := fmt.Sprintf("%s/%d", path, i)
+			var subs []*jsonschema.Schema
 			for _, s := range schemas {
-				for _, sub := range []*jsonschema.Schema{itemSchema(s, i), s.Contains, s.UnevaluatedItems} {
-					if bad := foldedPropertyKey(sub, val, p); bad != "" {
-						return bad
-					}
-				}
+				subs = append(subs, itemSchema(s, i), s.Contains, s.UnevaluatedItems)
+			}
+			if bad := foldedPropertyKey(subs, val, fmt.Sprintf("%s/%d", path, i)); bad != "" {
+				return bad
 			}
 		}
 	}
@@ -232,14 +234,14 @@ func foldedPropertyKey(schema *jsonschema.Schema, value any, path string) string
 }
 
 // applicableSchemas flattens schema with the subschemas that apply to the same
-// value: references, combinators, conditionals and dependent schemas.
+// value: references, combinators, negation, conditionals and dependent schemas.
 func applicableSchemas(schema *jsonschema.Schema, out []*jsonschema.Schema, seen map[*jsonschema.Schema]bool) []*jsonschema.Schema {
 	if schema == nil || seen[schema] {
 		return out
 	}
 	seen[schema] = true
 	out = append(out, schema)
-	next := []*jsonschema.Schema{schema.Ref, schema.RecursiveRef, schema.If, schema.Then, schema.Else}
+	next := []*jsonschema.Schema{schema.Ref, schema.RecursiveRef, schema.If, schema.Then, schema.Else, schema.Not}
 	if schema.DynamicRef != nil {
 		next = append(next, schema.DynamicRef.Ref)
 	}
