@@ -230,7 +230,10 @@ func (s *schemaFallbackState) reconcileNativeSchema(
 		// Native inference already accepted this type; recursive embeddings
 		// add no new visible fields and need not use tag-fallback restrictions.
 		fields, _ := selectedJSONFields(t)
-		native, matches := nativeJSONFieldSelection(t, fields)
+		native, matches, selectionErr := nativeJSONFieldSelection(t, fields, schema.Properties, opts)
+		if selectionErr != nil {
+			return nil, selectionErr
+		}
 		if !matches {
 			preserved := make(map[string]*jsonschema.Schema, len(fields))
 			for _, field := range fields {
@@ -266,7 +269,12 @@ func (s *schemaFallbackState) reconcileNativeSchema(
 	return schema, err
 }
 
-func nativeJSONFieldSelection(t reflect.Type, fields []jsonSchemaField) (map[string]reflect.StructField, bool) {
+func nativeJSONFieldSelection(
+	t reflect.Type,
+	fields []jsonSchemaField,
+	properties map[string]*jsonschema.Schema,
+	opts *jsonschema.ForOptions,
+) (map[string]reflect.StructField, bool, error) {
 	native := make(map[string]reflect.StructField, len(fields))
 	matches := true
 	for _, field := range reflect.VisibleFields(t) {
@@ -276,6 +284,16 @@ func nativeJSONFieldSelection(t reflect.Type, fields []jsonSchemaField) (map[str
 		}
 		if _, duplicate := native[info.name]; duplicate {
 			matches = false
+			if opts.IgnoreInvalidTypes && properties[info.name] != nil {
+				// Ignored fields do not overwrite earlier native properties.
+				candidate, err := jsonschema.ForType(field.Type, opts)
+				if err != nil {
+					return nil, false, err
+				}
+				if candidate == nil {
+					continue
+				}
+			}
 		}
 		native[info.name] = field
 	}
@@ -288,7 +306,7 @@ func nativeJSONFieldSelection(t reflect.Type, fields []jsonSchemaField) (map[str
 			matches = false
 		}
 	}
-	return native, matches
+	return native, matches, nil
 }
 
 func sameJSONField(a, b reflect.StructField) bool {
