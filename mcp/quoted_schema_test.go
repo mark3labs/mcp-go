@@ -312,8 +312,8 @@ func TestSchemaFor_QuotedFallbackFieldSelection(t *testing.T) {
 	}
 	type ambiguous struct {
 		Quoted
-		OtherQuoted //nolint:govet // Verify that encoding/json omits fields with ambiguous JSON tags.
-		Mode string `json:"mode" jsonschema:"enum=fast,enum=safe"`
+		OtherQuoted        //nolint:govet // Verify that encoding/json omits fields with ambiguous JSON tags.
+		Mode        string `json:"mode" jsonschema:"enum=fast,enum=safe"`
 	}
 	type private struct {
 		Count  int `json:"Count,string"`
@@ -363,6 +363,64 @@ func TestSchemaFor_QuotedFallbackFieldSelection(t *testing.T) {
 			encoded, err := json.Marshal(test.value)
 			require.NoError(t, err)
 			assert.JSONEq(t, test.wantJSON, string(encoded))
+		})
+	}
+}
+
+type quotedEnumString string
+
+type quotedEnumMarshaler string
+
+func (v quotedEnumMarshaler) MarshalJSON() ([]byte, error) { return json.Marshal(string(v)) }
+
+func TestSchemaFor_QuotedStringEnums(t *testing.T) {
+	type Fields struct {
+		Mode    string              `json:"mode,string" jsonschema:"Modes,enum=fast,enum=a\\b,enum=a\"b,enum=a\nb,enum=<>&,enum=雪"`
+		Named   quotedEnumString    `json:"named,string" jsonschema:"Named,enum=fast,enum=safe"`
+		Pointer *quotedEnumString   `json:"pointer,string" jsonschema:"Pointer,enum=fast,enum=safe"`
+		Number  int                 `json:"number,string" jsonschema:"Number,enum=1,enum=2"`
+		Bool    bool                `json:"bool,string" jsonschema:"Boolean,enum=true,enum=false"`
+		Plain   string              `json:"plain" jsonschema:"Plain,enum=fast,enum=safe"`
+		Custom  quotedEnumMarshaler `json:"custom,string" jsonschema:"Custom,enum=fast,enum=safe"`
+	}
+	type fallback struct {
+		Fields
+		Trigger string `json:"trigger" jsonschema:"enum=fast,enum=safe"`
+	}
+	for _, test := range []struct {
+		name string
+		raw  func() (json.RawMessage, error)
+	}{
+		{name: "normal", raw: SchemaForRaw[Fields]},
+		{name: "fallback", raw: SchemaForRaw[fallback]},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, err := test.raw()
+			require.NoError(t, err)
+			var schema map[string]any
+			require.NoError(t, json.Unmarshal(raw, &schema))
+			properties := schema["properties"].(map[string]any)
+			mode := properties["mode"].(map[string]any)
+			want := []any{"\"fast\"", "\"a\\\\b\"", "\"a\\\"b\"", "\"a\\nb\"", "\"\\u003c\\u003e\\u0026\"", "\"雪\""}
+			assert.Equal(t, want, mode["enum"])
+			for _, name := range []string{"named", "pointer"} {
+				assert.Equal(t, []any{`"fast"`, `"safe"`}, properties[name].(map[string]any)["enum"])
+			}
+			assert.Equal(t, []any{"null", "string"}, properties["pointer"].(map[string]any)["type"])
+			assert.Equal(t, []any{"1", "2"}, properties["number"].(map[string]any)["enum"])
+			assert.Equal(t, []any{"true", "false"}, properties["bool"].(map[string]any)["enum"])
+			for _, name := range []string{"plain", "custom"} {
+				assert.Equal(t, []any{"fast", "safe"}, properties[name].(map[string]any)["enum"])
+			}
+			for _, value := range []string{"fast", "a\\b", "a\"b", "a\nb", "<>&", "雪"} {
+				encoded, err := json.Marshal(struct {
+					Mode string `json:"mode,string"`
+				}{Mode: value})
+				require.NoError(t, err)
+				var document map[string]any
+				require.NoError(t, json.Unmarshal(encoded, &document))
+				assert.Contains(t, mode["enum"], document["mode"])
+			}
 		})
 	}
 }

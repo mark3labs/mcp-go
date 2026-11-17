@@ -351,6 +351,16 @@ func quotedFieldSchema(t reflect.Type, schema *jsonschema.Schema) *jsonschema.Sc
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
 		reflect.Float32, reflect.Float64, reflect.String:
 		quoted := &jsonschema.Schema{Type: "string", Description: schema.Description, Enum: schema.Enum}
+		if t.Kind() == reflect.String && len(schema.Enum) > 0 {
+			quoted.Enum = make([]any, len(schema.Enum))
+			for i, value := range schema.Enum {
+				quoted.Enum[i] = value
+				if text, ok := value.(string); ok {
+					encoded, _ := json.Marshal(text) // Marshaling a string cannot fail.
+					quoted.Enum[i] = string(encoded)
+				}
+			}
+		}
 		if fieldType.Kind() == reflect.Pointer {
 			quoted.Type = ""
 			quoted.Types = []string{"null", "string"}

@@ -178,6 +178,58 @@ func TestSchemaValidation_QuotedShadowingFallback(t *testing.T) {
 	}
 }
 
+func TestSchemaValidation_QuotedStringEnums(t *testing.T) {
+	type normal struct {
+		Mode string `json:"mode,string" jsonschema:"Run mode,enum=fast,enum=safe"`
+	}
+	type fallback struct {
+		Mode string `json:"mode,string" jsonschema:"enum=fast,enum=safe"`
+	}
+	for _, schema := range []struct {
+		name   string
+		tool   mcp.Tool
+		target any
+	}{
+		{name: "normal", tool: mcp.NewTool("quoted", mcp.WithInputSchema[normal](), mcp.WithOutputSchema[normal]()), target: &normal{}},
+		{name: "fallback", tool: mcp.NewTool("quoted", mcp.WithInputSchema[fallback](), mcp.WithOutputSchema[fallback]()), target: &fallback{}},
+	} {
+		for _, test := range []struct {
+			name    string
+			mode    string
+			success bool
+		}{
+			{name: "encoded enum", mode: `"fast"`, success: true},
+			{name: "outside enum", mode: `"slow"`},
+			{name: "missing encoding level", mode: "fast"},
+		} {
+			t.Run(schema.name+"/"+test.name, func(t *testing.T) {
+				called := false
+				srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+				srv.AddTool(schema.tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					called = true
+					if err := req.BindArguments(schema.target); err != nil {
+						return nil, err
+					}
+					return mcp.NewToolResultStructuredOnly(schema.target), nil
+				})
+				args := map[string]any{"mode": test.mode}
+				response := callTool(t, srv, "quoted", args)
+				if test.success {
+					requireToolSuccess(t, response)
+					encoded, err := json.Marshal(schema.target)
+					require.NoError(t, err)
+					want, err := json.Marshal(args)
+					require.NoError(t, err)
+					assert.JSONEq(t, string(want), string(encoded))
+				} else {
+					requireToolErrorContaining(t, response, "mode")
+				}
+				assert.Equal(t, test.success, called)
+			})
+		}
+	}
+}
+
 func TestSchemaValidation_QuotedField(t *testing.T) {
 	type request struct {
 		Count int    `json:"count,string"`
