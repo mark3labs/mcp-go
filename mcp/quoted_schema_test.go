@@ -232,3 +232,137 @@ func TestSchemaFor_QuotedFieldEnums(t *testing.T) {
 		})
 	}
 }
+
+func TestSchemaFor_QuotedFallbackContainers(t *testing.T) {
+	type fields struct {
+		Count int    `json:"count,string"`
+		Mode  string `json:"mode" jsonschema:"enum=fast,enum=safe"`
+	}
+	type nested struct {
+		Pointer *fields           `json:"pointer"`
+		Slice   []fields          `json:"slice"`
+		Map     map[string]fields `json:"map"`
+	}
+	for _, test := range []struct {
+		name string
+		raw  func() (json.RawMessage, error)
+		path []string
+		kind any
+	}{
+		{name: "slice", raw: SchemaForRaw[[]fields], path: []string{"items"}, kind: []any{"null", "array"}},
+		{name: "array", raw: SchemaForRaw[[2]fields], path: []string{"items"}, kind: "array"},
+		{name: "map", raw: SchemaForRaw[map[string]fields], path: []string{"additionalProperties"}, kind: []any{"null", "object"}},
+		{name: "double pointer", raw: SchemaForRaw[**fields], kind: []any{"null", "object"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, err := test.raw()
+			require.NoError(t, err)
+			var schema map[string]any
+			require.NoError(t, json.Unmarshal(raw, &schema))
+			assert.Equal(t, test.kind, schema["type"])
+			if test.name == "array" {
+				assert.Equal(t, float64(2), schema["minItems"])
+				assert.Equal(t, float64(2), schema["maxItems"])
+			}
+			for _, key := range test.path {
+				schema = schema[key].(map[string]any)
+			}
+			count := schema["properties"].(map[string]any)["count"].(map[string]any)
+			assert.Equal(t, "string", count["type"])
+		})
+	}
+	raw, err := SchemaForRaw[nested]()
+	require.NoError(t, err)
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(raw, &schema))
+	properties := schema["properties"].(map[string]any)
+	for name, kind := range map[string]string{"pointer": "object", "slice": "array", "map": "object"} {
+		property := properties[name].(map[string]any)
+		assert.Equal(t, []any{"null", kind}, property["type"], name)
+	}
+}
+
+func TestSchemaFor_QuotedFallbackFieldSelection(t *testing.T) {
+	type Quoted struct {
+		Count int `json:"Count,string"`
+	}
+	type Plain struct{ Count int }
+	type OtherQuoted struct {
+		Other int `json:"Count,string"`
+	}
+	type shallowPlain struct {
+		Count int
+		Quoted
+		Mode string `json:"mode" jsonschema:"enum=fast,enum=safe"`
+	}
+	type shallowQuoted struct {
+		Count int `json:"Count,string"`
+		Plain
+		Mode string `json:"mode" jsonschema:"enum=fast,enum=safe"`
+	}
+	type taggedFirst struct {
+		Quoted
+		Plain
+		Mode string `json:"mode" jsonschema:"enum=fast,enum=safe"`
+	}
+	type taggedLast struct {
+		Plain
+		Quoted
+		Mode string `json:"mode" jsonschema:"enum=fast,enum=safe"`
+	}
+	type ambiguous struct {
+		Quoted
+		OtherQuoted
+		Mode string `json:"mode" jsonschema:"enum=fast,enum=safe"`
+	}
+	type private struct {
+		Count  int `json:"Count,string"`
+		hidden int
+	}
+	type namedPrivate struct {
+		private `json:"nested"`
+		Mode    string `json:"mode" jsonschema:"enum=fast,enum=safe"`
+	}
+	for _, test := range []struct {
+		name     string
+		raw      func() (json.RawMessage, error)
+		value    any
+		wantJSON string
+		kind     string
+		nested   bool
+	}{
+		{name: "shallow plain", raw: SchemaForRaw[shallowPlain], value: shallowPlain{Count: 7, Mode: "fast"}, wantJSON: `{"Count":7,"mode":"fast"}`, kind: "integer"},
+		{name: "shallow quoted", raw: SchemaForRaw[shallowQuoted], value: shallowQuoted{Count: 7, Mode: "fast"}, wantJSON: `{"Count":"7","mode":"fast"}`, kind: "string"},
+		{name: "tagged first", raw: SchemaForRaw[taggedFirst], value: taggedFirst{Quoted: Quoted{Count: 7}, Mode: "fast"}, wantJSON: `{"Count":"7","mode":"fast"}`, kind: "string"},
+		{name: "tagged last", raw: SchemaForRaw[taggedLast], value: taggedLast{Quoted: Quoted{Count: 7}, Mode: "fast"}, wantJSON: `{"Count":"7","mode":"fast"}`, kind: "string"},
+		{name: "ambiguous", raw: SchemaForRaw[ambiguous], value: ambiguous{Mode: "fast"}, wantJSON: `{"mode":"fast"}`},
+		{name: "named private", raw: SchemaForRaw[namedPrivate], value: namedPrivate{private: private{Count: 7, hidden: 9}, Mode: "fast"}, wantJSON: `{"nested":{"Count":"7"},"mode":"fast"}`, kind: "string", nested: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, err := test.raw()
+			require.NoError(t, err)
+			var schema map[string]any
+			require.NoError(t, json.Unmarshal(raw, &schema))
+			if test.nested {
+				schema = schema["properties"].(map[string]any)["nested"].(map[string]any)
+			}
+			properties := schema["properties"].(map[string]any)
+			assert.NotContains(t, properties, "hidden")
+			if test.kind == "" {
+				assert.NotContains(t, properties, "Count")
+				assert.ElementsMatch(t, []any{"mode"}, schema["required"])
+			} else {
+				require.Contains(t, properties, "Count")
+				assert.Equal(t, test.kind, properties["Count"].(map[string]any)["type"])
+				wantRequired := []any{"Count", "mode"}
+				if test.nested {
+					wantRequired = []any{"Count"}
+				}
+				assert.ElementsMatch(t, wantRequired, schema["required"])
+			}
+			encoded, err := json.Marshal(test.value)
+			require.NoError(t, err)
+			assert.JSONEq(t, test.wantJSON, string(encoded))
+		})
+	}
+}

@@ -84,6 +84,100 @@ func TestSchemaValidation_QuotedPromotedNestedFields(t *testing.T) {
 	}
 }
 
+func TestSchemaValidation_QuotedPrivateEmbeddingFallback(t *testing.T) {
+	type private struct {
+		Count int `json:"count,string"`
+	}
+	type request struct {
+		private
+		Mode string `json:"mode" jsonschema:"enum=fast,enum=safe"`
+	}
+	raw, err := mcp.SchemaForRaw[request]()
+	require.NoError(t, err)
+	require.Contains(t, string(raw), `"count"`)
+	tool := mcp.NewTool("quoted", mcp.WithInputSchema[request](), mcp.WithOutputSchema[request]())
+	for _, test := range []struct {
+		name    string
+		count   any
+		success bool
+	}{
+		{name: "quoted number", count: "7", success: true},
+		{name: "unquoted number", count: 7},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+			srv.AddTool(tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				called = true
+				var args request
+				if err := req.BindArguments(&args); err != nil {
+					return nil, err
+				}
+				require.Equal(t, 7, args.Count)
+				return mcp.NewToolResultStructuredOnly(args), nil
+			})
+			response := callTool(t, srv, "quoted", map[string]any{"count": test.count, "mode": "fast"})
+			if test.success {
+				requireToolSuccess(t, response)
+			} else {
+				requireToolErrorContaining(t, response, "count")
+			}
+			assert.Equal(t, test.success, called)
+		})
+	}
+}
+
+func TestSchemaValidation_QuotedShadowingFallback(t *testing.T) {
+	type Node struct {
+		Count int `json:"count,string"`
+	}
+	type ShadowNode struct {
+		Other int `json:"other"`
+	}
+	type Shadow struct {
+		Node ShadowNode `json:"node"`
+	}
+	type request struct {
+		Node Node   `json:"node"`
+		Mode string `json:"mode" jsonschema:"enum=fast,enum=safe"`
+		Shadow
+	}
+	raw, err := mcp.SchemaForRaw[request]()
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), `"other"`)
+	tool := mcp.NewTool("quoted", mcp.WithInputSchema[request](), mcp.WithOutputSchema[request]())
+	for _, test := range []struct {
+		name    string
+		count   any
+		success bool
+	}{
+		{name: "quoted number", count: "5", success: true},
+		{name: "unquoted number", count: 5},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			srv := NewMCPServer("quoted", "1.0", WithInputSchemaValidation(), WithOutputSchemaValidation())
+			srv.AddTool(tool, func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				called = true
+				var args request
+				if err := req.BindArguments(&args); err != nil {
+					return nil, err
+				}
+				require.Equal(t, 5, args.Node.Count)
+				return mcp.NewToolResultStructuredOnly(args), nil
+			})
+			args := map[string]any{"node": map[string]any{"count": test.count}, "mode": "fast"}
+			response := callTool(t, srv, "quoted", args)
+			if test.success {
+				requireToolSuccess(t, response)
+			} else {
+				requireToolErrorContaining(t, response, "count")
+			}
+			assert.Equal(t, test.success, called)
+		})
+	}
+}
+
 func TestSchemaValidation_QuotedField(t *testing.T) {
 	type request struct {
 		Count int    `json:"count,string"`

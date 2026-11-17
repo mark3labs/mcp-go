@@ -26,7 +26,7 @@ func schemaFor[T any]() (*jsonschema.Schema, error) {
 			return nil, err
 		}
 
-		schema, err = schemaForStructFields(reflect.TypeFor[T](), opts)
+		schema, err = schemaForTagFallback(reflect.TypeFor[T](), opts)
 		if err != nil {
 			return nil, err
 		}
@@ -58,7 +58,14 @@ func supportsSchemaTagFallbackType(t reflect.Type, seen map[reflect.Type]bool) b
 		seen[t] = true
 		for i := 0; i < t.NumField(); i++ {
 			field := t.Field(i)
-			if fieldJSONInfo(field).omit {
+			fieldType := field.Type
+			if fieldType.Kind() == reflect.Pointer {
+				fieldType = fieldType.Elem()
+			}
+			if !field.IsExported() && (!field.Anonymous || fieldType.Kind() != reflect.Struct) {
+				continue
+			}
+			if fieldJSONTagInfo(field).omit {
 				continue
 			}
 			if tag, ok := field.Tag.Lookup("jsonschema"); ok {
@@ -79,9 +86,9 @@ func supportsSchemaTagFallbackType(t reflect.Type, seen map[reflect.Type]bool) b
 
 var errRecursiveSchemaFallback = errors.New("recursive type cannot use schema tag fallback")
 
-func schemaForStructFields(t reflect.Type, opts *jsonschema.ForOptions) (*jsonschema.Schema, error) {
+func schemaForTagFallback(t reflect.Type, opts *jsonschema.ForOptions) (*jsonschema.Schema, error) {
 	state := schemaFallbackState{active: make(map[reflect.Type]bool)}
-	return state.schemaForStructFields(t, opts)
+	return state.schemaForFieldType(t, opts)
 }
 
 type schemaFallbackState struct {
@@ -110,60 +117,32 @@ func (s *schemaFallbackState) schemaForStructFields(
 		AdditionalProperties: &jsonschema.Schema{Not: &jsonschema.Schema{}},
 	}
 
-	var walk func(reflect.Type) error
-	walk = func(structType reflect.Type) error {
-		for i := 0; i < structType.NumField(); i++ {
-			field := structType.Field(i)
-			fieldType := field.Type
-			info := fieldJSONInfo(field)
-			if info.omit {
-				continue
-			}
-			if field.Anonymous && !info.explicitName {
-				anonType := fieldType
-				if anonType.Kind() == reflect.Pointer {
-					anonType = anonType.Elem()
-				}
-				if anonType.Kind() == reflect.Struct {
-					if s.active[anonType] {
-						return fmt.Errorf("%w: %s", errRecursiveSchemaFallback, anonType)
-					}
-					s.active[anonType] = true
-					if err := walk(anonType); err != nil {
-						return err
-					}
-					delete(s.active, anonType)
-					continue
-				}
-			}
-
-			fieldSchema, err := s.schemaForFieldType(fieldType, opts)
-			if err != nil {
-				if errors.Is(err, errRecursiveSchemaFallback) {
-					return err
-				}
-				if opts.IgnoreInvalidTypes {
-					continue
-				}
-				return err
-			}
-			if fieldSchema == nil {
-				continue
-			}
-
-			schema.Properties[info.name] = fieldSchema
-			schema.PropertyOrder = append(schema.PropertyOrder, info.name)
-
-			if !info.settings["omitempty"] && !info.settings["omitzero"] {
-				schema.Required = append(schema.Required, info.name)
-			}
-		}
-		return nil
-	}
-
-	if err := walk(t); err != nil {
+	fields, err := selectedJSONFields(t)
+	if err != nil {
 		return nil, err
 	}
+	for _, field := range fields {
+		fieldSchema, err := s.schemaForFieldType(field.field.Type, opts)
+		if err != nil {
+			if errors.Is(err, errRecursiveSchemaFallback) {
+				return nil, err
+			}
+			if opts.IgnoreInvalidTypes {
+				continue
+			}
+			return nil, err
+		}
+		if fieldSchema == nil {
+			continue
+		}
+
+		schema.Properties[field.info.name] = fieldSchema
+		schema.PropertyOrder = append(schema.PropertyOrder, field.info.name)
+		if !field.info.settings["omitempty"] && !field.info.settings["omitzero"] {
+			schema.Required = append(schema.Required, field.info.name)
+		}
+	}
+
 	return schema, nil
 }
 
@@ -178,7 +157,12 @@ func (s *schemaFallbackState) schemaForFieldType(
 
 	switch t.Kind() {
 	case reflect.Pointer:
-		return s.schemaForFieldType(t.Elem(), opts)
+		schema, err := s.schemaForFieldType(t.Elem(), opts)
+		if err == nil && schema.Type != "" {
+			schema.Types = []string{"null", schema.Type}
+			schema.Type = ""
+		}
+		return schema, err
 	case reflect.Struct:
 		return s.schemaForStructFields(t, opts)
 	case reflect.Array, reflect.Slice:
@@ -187,6 +171,10 @@ func (s *schemaFallbackState) schemaForFieldType(
 			return nil, itemErr
 		}
 		schema := &jsonschema.Schema{Type: "array", Items: items}
+		if t.Kind() == reflect.Slice {
+			schema.Type = ""
+			schema.Types = []string{"null", "array"}
+		}
 		if t.Kind() == reflect.Array {
 			schema.MinItems = jsonschema.Ptr(t.Len())
 			schema.MaxItems = jsonschema.Ptr(t.Len())
@@ -200,7 +188,7 @@ func (s *schemaFallbackState) schemaForFieldType(
 		if valueErr != nil {
 			return nil, valueErr
 		}
-		return &jsonschema.Schema{Type: "object", AdditionalProperties: values}, nil
+		return &jsonschema.Schema{Types: []string{"null", "object"}, AdditionalProperties: values}, nil
 	default:
 		return nil, err
 	}
@@ -256,22 +244,24 @@ func applyStructFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 	walk(t)
 }
 
-func applyQuotedFieldTags(t reflect.Type, schema *jsonschema.Schema) {
-	if schema == nil || schema.Properties == nil {
-		return
-	}
+type jsonSchemaField struct {
+	field     reflect.StructField
+	info      jsonFieldInfo
+	depth     int
+	ambiguous bool
+}
 
-	type candidate struct {
-		field     reflect.StructField
-		info      jsonFieldInfo
-		depth     int
-		ambiguous bool
-	}
-	fields := make(map[string]candidate)
+// selectedJSONFields resolves JSON field visibility before either constructing
+// fallback properties or applying the string option to their schemas.
+func selectedJSONFields(t reflect.Type) ([]jsonSchemaField, error) {
+	fields := make(map[string]jsonSchemaField)
+	var names []string
+	var cycleErr error
 	active := make(map[reflect.Type]bool)
 	var walk func(reflect.Type, int)
 	walk = func(t reflect.Type, depth int) {
 		if active[t] {
+			cycleErr = fmt.Errorf("%w: %s", errRecursiveSchemaFallback, t)
 			return
 		}
 		active[t] = true
@@ -290,10 +280,13 @@ func applyQuotedFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 				walk(fieldType, depth+1)
 				continue
 			}
-			if !field.IsExported() {
+			if !field.IsExported() && (!field.Anonymous || fieldType.Kind() != reflect.Struct) {
 				continue
 			}
 			previous, exists := fields[info.name]
+			if !exists {
+				names = append(names, info.name)
+			}
 			if exists {
 				if previous.depth < depth {
 					continue
@@ -309,18 +302,35 @@ func applyQuotedFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 					}
 				}
 			}
-			fields[info.name] = candidate{field: field, info: info, depth: depth}
+			fields[info.name] = jsonSchemaField{field: field, info: info, depth: depth}
 		}
 	}
 	walk(t, 0)
-	for name, field := range fields {
-		prop := schema.Properties[name]
-		if prop == nil || field.ambiguous {
+
+	var selected []jsonSchemaField
+	for _, name := range names {
+		if field := fields[name]; !field.ambiguous {
+			selected = append(selected, field)
+		}
+	}
+	return selected, cycleErr
+}
+
+func applyQuotedFieldTags(t reflect.Type, schema *jsonschema.Schema) {
+	if schema == nil || schema.Properties == nil {
+		return
+	}
+	// The regular generator can represent recursive types; the selector still
+	// returns the visible fields when an embedding cycle is skipped.
+	fields, _ := selectedJSONFields(t)
+	for _, field := range fields {
+		prop := schema.Properties[field.info.name]
+		if prop == nil {
 			continue
 		}
 		applyStructFieldTagsToType(field.field.Type, prop, applyQuotedFieldTags)
 		if field.info.settings["string"] {
-			schema.Properties[name] = quotedFieldSchema(field.field.Type, prop)
+			schema.Properties[field.info.name] = quotedFieldSchema(field.field.Type, prop)
 		}
 	}
 }

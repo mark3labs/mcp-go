@@ -57,6 +57,16 @@ func TestSchemaFor_UnsupportedJSONSchemaOptionReturnsError(t *testing.T) {
 
 	_, err := SchemaForRaw[request]()
 	require.ErrorContains(t, err, "tag must not begin with 'WORD='")
+
+	type private struct {
+		Count int `json:"count,string" jsonschema:"description=Count"`
+	}
+	type promoted struct {
+		private
+		Mode string `json:"mode" jsonschema:"enum=fast,enum=safe"`
+	}
+	_, err = SchemaForRaw[promoted]()
+	require.ErrorContains(t, err, "tag must not begin with 'WORD='")
 }
 
 func TestSchemaFor_NamedAnonymousStructTags(t *testing.T) {
