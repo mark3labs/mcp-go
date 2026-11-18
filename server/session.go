@@ -613,6 +613,12 @@ func (s *MCPServer) AddSessionResource(sessionID string, resource mcp.Resource, 
 	return s.AddSessionResources(sessionID, ServerResource{Resource: resource, Handler: handler})
 }
 
+// AddSessionResourceWithResult adds a complete-result resource handler for a
+// specific session.
+func (s *MCPServer) AddSessionResourceWithResult(sessionID string, resource mcp.Resource, handler ResourceResultHandlerFunc) error {
+	return s.AddSessionResources(sessionID, ServerResource{Resource: resource, ResultHandler: handler})
+}
+
 // AddSessionResources adds resources for a specific session
 func (s *MCPServer) AddSessionResources(sessionID string, resources ...ServerResource) error {
 	sessionValue, ok := s.sessions.Load(sessionID)
@@ -772,6 +778,12 @@ func (s *MCPServer) AddSessionResourceTemplate(sessionID string, template mcp.Re
 		Template: template,
 		Handler:  handler,
 	})
+}
+
+// AddSessionResourceTemplateWithResult adds a complete-result resource
+// template handler for a specific session.
+func (s *MCPServer) AddSessionResourceTemplateWithResult(sessionID string, template mcp.ResourceTemplate, handler ResourceTemplateResultHandlerFunc) error {
+	return s.AddSessionResourceTemplates(sessionID, ServerResourceTemplate{Template: template, ResultHandler: handler})
 }
 
 // AddSessionResourceTemplates adds resource templates for a specific session
