@@ -128,6 +128,33 @@ func (t *Token) IsExpired() bool {
 	return time.Now().After(t.ExpiresAt)
 }
 
+// tokenExpiryDelta is how long before its expiry a token is refreshed, so that
+// it does not expire on its way to the server, or on a server whose clock is
+// slightly ahead. golang.org/x/oauth2 uses the same margin.
+const tokenExpiryDelta = 10 * time.Second
+
+// needsRefresh reports whether the token should not be used as it is: it has
+// expired, or it can be refreshed and expires within its expiryDelta. A token
+// that cannot be refreshed is used until it expires, since the alternative is
+// a new authorization.
+func (t *Token) needsRefresh() bool {
+	if t.IsExpired() {
+		return true
+	}
+	return t.RefreshToken != "" && !t.ExpiresAt.IsZero() &&
+		!time.Now().Add(t.expiryDelta()).Before(t.ExpiresAt)
+}
+
+// expiryDelta is tokenExpiryDelta, capped at half the token's lifetime, so
+// that a token issued for tokenExpiryDelta or less is not refreshed again as
+// soon as it is issued.
+func (t *Token) expiryDelta() time.Duration {
+	if lifetime := time.Duration(t.ExpiresIn) * time.Second; lifetime > 0 && lifetime/2 < tokenExpiryDelta {
+		return lifetime / 2
+	}
+	return tokenExpiryDelta
+}
+
 // tokenResponse is a token endpoint response as it arrives on the wire
 // (RFC 6749 §5.1). It is kept apart from Token, whose expires_at is the
 // stored form: some servers add a non-standard expires_at of their own, as
@@ -161,6 +188,11 @@ func decodeTokenResponse(body []byte) (*Token, error) {
 		token.ExpiresAt = time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second)
 	} else {
 		token.ExpiresAt = parseExpiresAt(resp.ExpiresAt)
+		// Record the lifetime the token was issued with, rounded up to a
+		// second, which expiryDelta caps the refresh margin with.
+		if lifetime := time.Until(token.ExpiresAt); !token.ExpiresAt.IsZero() && lifetime > 0 {
+			token.ExpiresIn = int64((lifetime + time.Second - 1) / time.Second)
+		}
 	}
 	return token, nil
 }
@@ -387,7 +419,7 @@ func (h *OAuthHandler) getValidToken(ctx context.Context) (*Token, error) {
 	if err != nil && !errors.Is(err, ErrNoToken) {
 		return nil, err
 	}
-	if err == nil && !token.IsExpired() && token.AccessToken != "" {
+	if err == nil && !token.needsRefresh() && token.AccessToken != "" {
 		if err := h.checkKnownTokenIssuer(token); err != nil {
 			return nil, err
 		}
@@ -412,6 +444,16 @@ func (h *OAuthHandler) getValidToken(ctx context.Context) (*Token, error) {
 		// If refresh fails, continue to authorization flow
 		if errors.Is(refresh.err, ErrAuthorizationServerChanged) || errors.Is(refresh.err, ErrOAuthAuthorizationRequired) {
 			return nil, refresh.err
+		}
+		// A token refreshed shortly before it expires is still valid. Use it
+		// if the refresh failed without the server refusing it, for example
+		// on a network error or a 5xx, rather than ask for an authorization.
+		var oauthErr OAuthError
+		if !token.IsExpired() && token.AccessToken != "" && !errors.As(refresh.err, &oauthErr) {
+			if err := h.checkKnownTokenIssuer(token); err != nil {
+				return nil, err
+			}
+			return token, nil
 		}
 		return nil, ErrOAuthAuthorizationRequired
 	}
@@ -455,7 +497,7 @@ func (h *OAuthHandler) refreshStoredToken(ctx context.Context) (*Token, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !token.IsExpired() && token.AccessToken != "" {
+	if !token.needsRefresh() && token.AccessToken != "" {
 		if err := h.checkKnownTokenIssuer(token); err != nil {
 			return nil, err
 		}

@@ -3,6 +3,7 @@ package transport
 import (
 	"io"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -81,4 +82,20 @@ func TestOAuthHandler_RefreshUsesExpiresAtWithoutExpiresIn(t *testing.T) {
 			assert.True(t, tt.want.Equal(saved.ExpiresAt), "ExpiresAt = %v, want %v", saved.ExpiresAt, tt.want)
 		})
 	}
+}
+
+// A short-lived token given only an expires_at is not refreshed again on the
+// next request: its lifetime caps the refresh margin as expires_in would.
+func TestOAuthHandler_ShortLivedExpiresAtIsNotRefreshedAgain(t *testing.T) {
+	expiresAt := strconv.FormatInt(time.Now().Add(5*time.Second).Unix(), 10)
+	server := newRefreshServer(t, answer(
+		`{"access_token":"new-access","token_type":"Bearer","refresh_token":"next","expires_at":`+expiresAt+`}`))
+	handler, _ := newRefreshTestHandler(t, server)
+
+	for range 2 {
+		header, err := handler.GetAuthorizationHeader(t.Context())
+		require.NoError(t, err)
+		assert.Equal(t, "Bearer new-access", header)
+	}
+	assert.Equal(t, int32(1), server.refreshes.Load(), "refresh requests")
 }
