@@ -59,6 +59,20 @@ func (b *boundedReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// newSSEReader strips exactly one leading UTF-8 BOM, as required by the SSE
+// decoding algorithm. Any subsequent BOM is part of the stream's content.
+func newSSEReader(reader io.Reader) (*bufio.Reader, error) {
+	br := bufio.NewReader(reader)
+	prefix, err := br.Peek(3)
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+	if string(prefix) == "\xef\xbb\xbf" {
+		_, _ = br.Discard(3)
+	}
+	return br, nil
+}
+
 // readSSELine reads one line of an SSE stream, line ending included, as
 // bufio.Reader.ReadString does. A line may carry limit bytes of data besides
 // its field name and line ending; a longer one is ErrMessageTooLarge. Zero or
