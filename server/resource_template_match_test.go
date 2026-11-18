@@ -119,3 +119,20 @@ func TestResourceTemplateDispatchPrecedence(t *testing.T) {
 		})
 	}
 }
+
+func TestHasURITemplate(t *testing.T) {
+	tests := []struct {
+		name     string
+		template *mcp.URITemplate
+		want     bool
+	}{
+		{"absent", nil, false},
+		{"zero value", &mcp.URITemplate{}, false},
+		{"parsed", mcp.NewResourceTemplate("file:///{name}", "file").URITemplate, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, hasURITemplate(tt.template))
+		})
+	}
+}
