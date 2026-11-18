@@ -77,6 +77,9 @@ var (
 
 // asType attempts to cast the given interface to the given type
 func asType[T any](content any) (*T, bool) {
+	if ptr, ok := content.(*T); ok {
+		return ptr, ptr != nil
+	}
 	tc, ok := content.(T)
 	if !ok {
 		return nil, false
@@ -1311,6 +1314,11 @@ func ToInt64Ptr(i int64) *int64 {
 func GetTextFromContent(content any) string {
 	switch c := content.(type) {
 	case TextContent:
+		return c.Text
+	case *TextContent:
+		if c == nil {
+			return fmt.Sprint(c)
+		}
 		return c.Text
 	case map[string]any:
 		// Handle JSON unmarshaled content
