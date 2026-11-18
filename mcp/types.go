@@ -172,7 +172,10 @@ type URITemplate struct {
 	*uritemplate.Template
 }
 
-func (t *URITemplate) MarshalJSON() ([]byte, error) {
+func (t URITemplate) MarshalJSON() ([]byte, error) {
+	if t.Template == nil {
+		return []byte("null"), nil
+	}
 	return json.Marshal(t.Raw())
 }
 
