@@ -2475,6 +2475,14 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 	}, nil
 }
 
+// newDetachedTaskContext returns the context a task runs under. It keeps the
+// values of ctx but not its cancellation: ctx belongs to the tools/call request,
+// which ends as soon as the CreateTaskResult is returned. The task is cancelled
+// only through the returned cancel func, which tasks/cancel and TTL expiry call.
+func newDetachedTaskContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithCancel(context.WithoutCancel(ctx))
+}
+
 // executeTaskTool executes a task tool handler asynchronously.
 // It creates a cancellable context, stores the cancel function for potential cancellation,
 // and executes the handler in the background, storing the result when complete.
@@ -2491,7 +2499,7 @@ func (s *MCPServer) executeTaskTool(
 	}()
 
 	// Create cancellable context for this task execution
-	taskCtx, cancel := context.WithCancel(ctx)
+	taskCtx, cancel := newDetachedTaskContext(ctx)
 	defer cancel()
 
 	// Register cancellation atomically with TTL cleanup, which may have
@@ -2503,6 +2511,8 @@ func (s *MCPServer) executeTaskTool(
 	s.tasksMu.Unlock()
 	if ended {
 		cancel()
+		_ = s.cancelTaskEntry(context.WithoutCancel(ctx), entry, context.Canceled.Error())
+		return
 	}
 
 	// Execute the task tool handler
@@ -2513,7 +2523,7 @@ func (s *MCPServer) executeTaskTool(
 		// The cancelTask method will handle setting the proper status.
 		// However, if cancelTask hasn't been called yet, we should still mark it.
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			_ = s.cancelTaskEntry(ctx, entry, err.Error())
+			_ = s.cancelTaskEntry(context.WithoutCancel(ctx), entry, err.Error())
 			return
 		}
 
@@ -2581,7 +2591,7 @@ func (s *MCPServer) executeRegularToolAsTask(
 	request mcp.CallToolRequest,
 ) {
 	// Create cancellable context for this task execution
-	taskCtx, cancel := context.WithCancel(ctx)
+	taskCtx, cancel := newDetachedTaskContext(ctx)
 	defer cancel()
 
 	// Register cancellation atomically with TTL cleanup, which may have
@@ -2593,6 +2603,8 @@ func (s *MCPServer) executeRegularToolAsTask(
 	s.tasksMu.Unlock()
 	if ended {
 		cancel()
+		_ = s.cancelTaskEntry(context.WithoutCancel(ctx), entry, context.Canceled.Error())
+		return
 	}
 
 	// Execute the regular tool handler with middleware applied
@@ -2612,7 +2624,7 @@ func (s *MCPServer) executeRegularToolAsTask(
 		// The cancelTask method will handle setting the proper status.
 		// However, if cancelTask hasn't been called yet, we should still mark it.
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			_ = s.cancelTaskEntry(ctx, entry, err.Error())
+			_ = s.cancelTaskEntry(context.WithoutCancel(ctx), entry, err.Error())
 			return
 		}
 
