@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -192,9 +191,10 @@ func (v *inputSchemaValidator) validate(tool mcp.Tool, rawArgs any) (bool, error
 // one only by case is never needed. The schemas for a child value are collected
 // into one set so each value is walked once.
 type foldWalker struct {
-	root    *jsonschema.Schema
-	anchors []*jsonschema.Schema
-	indexed bool
+	root      *jsonschema.Schema
+	dynamic   map[string][]*jsonschema.Schema
+	recursive []*jsonschema.Schema
+	indexed   bool
 }
 
 // walk returns the path of the offending key, or nil.
@@ -207,7 +207,6 @@ func (w *foldWalker) walk(roots []*jsonschema.Schema, value any, path []string) 
 	if len(schemas) == 0 {
 		return nil
 	}
-	path = slices.Clip(path)
 	switch v := value.(type) {
 	case map[string]any:
 		for key, val := range v {
@@ -268,10 +267,15 @@ func (w *foldWalker) applicable(schema *jsonschema.Schema, out []*jsonschema.Sch
 	if schema.DynamicRef != nil {
 		next = append(next, schema.DynamicRef.Ref)
 	}
-	if (schema.RecursiveRef != nil && schema.RecursiveRef.RecursiveAnchor) || (schema.DynamicRef != nil && schema.DynamicRef.Anchor != "") {
-		// The target is picked from the dynamic scope at evaluation time;
-		// take every schema that could be picked.
-		next = append(next, w.dynamicTargets()...)
+	// The target is picked from the dynamic scope at evaluation time; take
+	// every schema with the same anchor.
+	if schema.RecursiveRef != nil && schema.RecursiveRef.RecursiveAnchor {
+		w.index()
+		next = append(next, w.recursive...)
+	}
+	if schema.DynamicRef != nil && schema.DynamicRef.Anchor != "" {
+		w.index()
+		next = append(next, w.dynamic[schema.DynamicRef.Anchor]...)
 	}
 	next = append(next, schema.AllOf...)
 	next = append(next, schema.AnyOf...)
@@ -290,13 +294,14 @@ func (w *foldWalker) applicable(schema *jsonschema.Schema, out []*jsonschema.Sch
 	return out
 }
 
-// dynamicTargets returns every schema reachable from the root that declares
+// index records every schema reachable from the root that declares
 // $dynamicAnchor or $recursiveAnchor.
-func (w *foldWalker) dynamicTargets() []*jsonschema.Schema {
+func (w *foldWalker) index() {
 	if w.indexed {
-		return w.anchors
+		return
 	}
 	w.indexed = true
+	w.dynamic = map[string][]*jsonschema.Schema{}
 	seen := map[*jsonschema.Schema]bool{}
 	stack := []*jsonschema.Schema{w.root}
 	for len(stack) > 0 {
@@ -306,8 +311,11 @@ func (w *foldWalker) dynamicTargets() []*jsonschema.Schema {
 			continue
 		}
 		seen[s] = true
-		if s.DynamicAnchor != "" || s.RecursiveAnchor {
-			w.anchors = append(w.anchors, s)
+		if s.DynamicAnchor != "" {
+			w.dynamic[s.DynamicAnchor] = append(w.dynamic[s.DynamicAnchor], s)
+		}
+		if s.RecursiveAnchor {
+			w.recursive = append(w.recursive, s)
 		}
 		stack = append(stack, s.Ref, s.RecursiveRef, s.Not, s.If, s.Then, s.Else, s.PropertyNames,
 			s.UnevaluatedProperties, s.Contains, s.Items2020, s.UnevaluatedItems, s.ContentSchema)
@@ -341,7 +349,6 @@ func (w *foldWalker) dynamicTargets() []*jsonschema.Schema {
 			}
 		}
 	}
-	return w.anchors
 }
 
 // duplicateMember returns the path of the first object member whose name
@@ -355,7 +362,6 @@ func scanMembers(dec *json.Decoder, path []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	path = slices.Clip(path)
 	switch tok {
 	case json.Delim('{'):
 		names := map[string]bool{}

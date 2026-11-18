@@ -783,6 +783,14 @@ func TestInputSchemaValidation_RejectsCaseFoldedKeysInSubschemas(t *testing.T) {
 	}
 }
 
+func TestInputSchemaValidation_DynamicRefIgnoresOtherAnchors(t *testing.T) {
+	schema := `{"type": "object", "properties": {"child": {"$dynamicRef": "#node"}, "other": {"$dynamicAnchor": "meta", "properties": {"label": {}}}}, "$defs": {"n": {"$dynamicAnchor": "node", "properties": {"LABEL": {}}}}}`
+	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
+	srv.AddTool(mcp.Tool{Name: "t", RawInputSchema: json.RawMessage(schema)}, okHandler)
+	resp := srv.HandleMessage(t.Context(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":{"child":{"LABEL":"x"}}}}`))
+	requireToolSuccess(t, resp)
+}
+
 func TestInputSchemaValidation_RejectsDuplicateKeys(t *testing.T) {
 	schema := `{"type": "object", "properties": {"child": {"type": "object", "properties": {"path": {"type": "string", "pattern": "^/safe/"}}}}}`
 	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
