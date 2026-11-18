@@ -63,7 +63,14 @@ func (b *boundedReader) Read(p []byte) (int, error) {
 // decoding algorithm. Any subsequent BOM is part of the stream's content.
 func newSSEReader(reader io.Reader) (*bufio.Reader, error) {
 	br := bufio.NewReader(reader)
-	prefix, err := br.Peek(3)
+	prefix, err := br.Peek(1)
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+	if len(prefix) == 0 || prefix[0] != 0xef {
+		return br, nil
+	}
+	prefix, err = br.Peek(3)
 	if err != nil && err != io.EOF {
 		return nil, err
 	}

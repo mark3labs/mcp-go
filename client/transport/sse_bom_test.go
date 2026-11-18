@@ -96,8 +96,38 @@ func TestSSEReaderInitialError(t *testing.T) {
 	for _, prefix := range []string{"", "da", "\xef\xbb"} {
 		t.Run(fmt.Sprintf("prefix %q", prefix), func(t *testing.T) {
 			reader, err := newSSEReader(io.MultiReader(strings.NewReader(prefix), iotest.ErrReader(readErr)))
+			if err == nil {
+				_, err = readSSELine(reader, 16)
+			}
 			require.ErrorIs(t, err, readErr)
-			assert.Nil(t, reader)
 		})
+	}
+}
+
+func TestSSEReaderOpenCommentLine(t *testing.T) {
+	source, producer := io.Pipe()
+	t.Cleanup(func() { _ = source.Close() })
+	t.Cleanup(func() { _ = producer.Close() })
+	done := make(chan struct{})
+	var line string
+	var readErr error
+	go func() {
+		defer close(done)
+		reader, err := newSSEReader(source)
+		if err != nil {
+			readErr = err
+			return
+		}
+		line, readErr = readSSELine(reader, 16)
+	}()
+
+	_, err := io.WriteString(producer, ":\n")
+	require.NoError(t, err)
+	select {
+	case <-done:
+		require.NoError(t, readErr)
+		assert.Equal(t, ":\n", line)
+	case <-time.After(time.Second):
+		t.Fatal("a complete comment line must be read while the stream remains open")
 	}
 }
