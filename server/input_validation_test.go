@@ -801,7 +801,7 @@ func TestInputSchemaValidation_RejectsDuplicateKeys(t *testing.T) {
 	} {
 		t.Run(args, func(t *testing.T) {
 			msg := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":` + args + `}}`
-			requireToolErrorContaining(t, srv.HandleMessage(t.Context(), []byte(msg)), "duplicate key")
+			requireToolErrorContaining(t, srv.HandleMessage(t.Context(), []byte(msg)), "/child: duplicate key")
 		})
 	}
 }
