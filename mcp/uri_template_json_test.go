@@ -21,3 +21,23 @@ func TestURITemplateJSON(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{"file":"file:///{name}"}`, string(encoded))
 }
+
+func TestURITemplateJSONRoundTrip(t *testing.T) {
+	tests := []struct {
+		name string
+		wire string
+	}{
+		{"null clears an existing template", "null"},
+		{"empty string", `""`},
+		{"template string", `"file:///{name}"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			template := NewResourceTemplate("old:///{id}", "old").URITemplate
+			require.NoError(t, json.Unmarshal([]byte(tt.wire), template))
+			encoded, err := json.Marshal(*template)
+			require.NoError(t, err)
+			require.JSONEq(t, tt.wire, string(encoded))
+		})
+	}
+}
