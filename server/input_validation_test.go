@@ -772,12 +772,28 @@ func TestInputSchemaValidation_RejectsCaseFoldedKeysInSubschemas(t *testing.T) {
 		"dependentSchemas":                 {`{"type": "object", "dependentSchemas": {"mode": ` + path + `}}`, `{"mode": "x", "PATH": "/etc/passwd"}`},
 		"contains":                         {`{"type": "object", "properties": {"files": {"type": "array", "contains": ` + path + `}}}`, `{"files": [{"path": "/safe/a", "PATH": "/etc/passwd"}]}`},
 		"not":                              {`{"type": "object", "not": {"required": ["path"], "properties": {"path": {"const": "/etc/passwd"}}}}`, `{"PATH": "/etc/passwd"}`},
+		"$dynamicRef":                      {`{"$id": "https://example.test/ext", "$dynamicAnchor": "node", "$ref": "base", "properties": {"path": {"pattern": "^/safe/"}}, "$defs": {"base": {"$id": "base", "$dynamicAnchor": "node", "properties": {"child": {"$dynamicRef": "#node"}}}}}`, `{"child": {"PATH": "/etc/passwd"}}`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
 			srv.AddTool(mcp.Tool{Name: "t", RawInputSchema: json.RawMessage(tc.schema)}, okHandler)
 			msg := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":` + tc.args + `}}`
 			requireToolErrorContaining(t, srv.HandleMessage(t.Context(), []byte(msg)), "only by case")
+		})
+	}
+}
+
+func TestInputSchemaValidation_RejectsDuplicateKeys(t *testing.T) {
+	schema := `{"type": "object", "properties": {"child": {"type": "object", "properties": {"path": {"type": "string", "pattern": "^/safe/"}}}}}`
+	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
+	srv.AddTool(mcp.Tool{Name: "t", RawInputSchema: json.RawMessage(schema)}, okHandler)
+	for _, args := range []string{
+		`{"child": {"path": "/etc/passwd"}, "child": {}}`,
+		`{"child": {"PATH": "/etc/passwd"}, "child": {}}`,
+	} {
+		t.Run(args, func(t *testing.T) {
+			msg := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":` + args + `}}`
+			requireToolErrorContaining(t, srv.HandleMessage(t.Context(), []byte(msg)), "duplicate key")
 		})
 	}
 }

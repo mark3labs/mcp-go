@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -157,6 +159,16 @@ func (v *inputSchemaValidator) validate(tool mcp.Tool, rawArgs any) (bool, error
 		return false, nil
 	}
 
+	// The validator keeps the last of repeated members, but encoding/json
+	// binds all of them in turn, so an earlier one would skip validation.
+	if raw, ok := rawArgs.(json.RawMessage); ok {
+		if path, err := duplicateMember(raw); err != nil {
+			return true, fmt.Errorf("invalid arguments: %w", err)
+		} else if path != nil {
+			return true, fmt.Errorf("input schema validation failed: %s: duplicate key", jsonPointer(path))
+		}
+	}
+
 	value, err := normalizeArgumentsForValidation(rawArgs)
 	if err != nil {
 		return true, fmt.Errorf("invalid arguments: %w", err)
@@ -167,27 +179,38 @@ func (v *inputSchemaValidator) validate(tool mcp.Tool, rawArgs any) (bool, error
 	}
 	// encoding/json binds struct fields case-insensitively, so a key the
 	// schema treats as an extra property can still land in a declared field.
-	if path := foldedPropertyKey([]*jsonschema.Schema{compiled}, value, ""); path != "" {
-		return true, fmt.Errorf("input schema validation failed: %s: key differs from a declared property only by case", path)
+	w := foldWalker{root: compiled}
+	if path := w.walk([]*jsonschema.Schema{compiled}, value, nil); path != nil {
+		return true, fmt.Errorf("input schema validation failed: %s: key differs from a declared property only by case", jsonPointer(path))
 	}
 	return true, nil
 }
 
-// foldedPropertyKey returns the JSON pointer of the first argument key that is
-// not a declared property but case-folds to one. Every subschema that may
-// apply to a value is followed without evaluating whether it is active; a key
-// that differs from a declared one only by case is never needed. The schemas
-// for a child value are collected into one set so each value is walked once.
-func foldedPropertyKey(roots []*jsonschema.Schema, value any, path string) string {
+// foldWalker finds the first argument key that is not a declared property but
+// case-folds to one. Every subschema that may apply to a value is followed
+// without evaluating whether it is active; a key that differs from a declared
+// one only by case is never needed. The schemas for a child value are collected
+// into one set so each value is walked once.
+type foldWalker struct {
+	root    *jsonschema.Schema
+	anchors []*jsonschema.Schema
+	indexed bool
+}
+
+// walk returns the path of the offending key, or nil.
+func (w *foldWalker) walk(roots []*jsonschema.Schema, value any, path []string) []string {
 	seen := map[*jsonschema.Schema]bool{}
 	var schemas []*jsonschema.Schema
 	for _, root := range roots {
-		schemas = applicableSchemas(root, schemas, seen)
+		schemas = w.applicable(root, schemas, seen)
 	}
+	if len(schemas) == 0 {
+		return nil
+	}
+	path = slices.Clip(path)
 	switch v := value.(type) {
 	case map[string]any:
 		for key, val := range v {
-			p := path + "/" + escapeJSONPointer(key)
 			var subs []*jsonschema.Schema
 			for _, s := range schemas {
 				sub, declared := s.Properties[key]
@@ -196,7 +219,7 @@ func foldedPropertyKey(roots []*jsonschema.Schema, value any, path string) strin
 				} else {
 					for name := range s.Properties {
 						if strings.EqualFold(name, key) {
-							return p
+							return append(path, key)
 						}
 					}
 				}
@@ -215,7 +238,7 @@ func foldedPropertyKey(roots []*jsonschema.Schema, value any, path string) strin
 				}
 				subs = append(subs, s.UnevaluatedProperties)
 			}
-			if bad := foldedPropertyKey(subs, val, p); bad != "" {
+			if bad := w.walk(subs, val, append(path, key)); bad != nil {
 				return bad
 			}
 		}
@@ -225,17 +248,17 @@ func foldedPropertyKey(roots []*jsonschema.Schema, value any, path string) strin
 			for _, s := range schemas {
 				subs = append(subs, itemSchema(s, i), s.Contains, s.UnevaluatedItems)
 			}
-			if bad := foldedPropertyKey(subs, val, fmt.Sprintf("%s/%d", path, i)); bad != "" {
+			if bad := w.walk(subs, val, append(path, strconv.Itoa(i))); bad != nil {
 				return bad
 			}
 		}
 	}
-	return ""
+	return nil
 }
 
-// applicableSchemas flattens schema with the subschemas that apply to the same
-// value: references, combinators, negation, conditionals and dependent schemas.
-func applicableSchemas(schema *jsonschema.Schema, out []*jsonschema.Schema, seen map[*jsonschema.Schema]bool) []*jsonschema.Schema {
+// applicable flattens schema with the subschemas that apply to the same value:
+// references, combinators, negation, conditionals and dependent schemas.
+func (w *foldWalker) applicable(schema *jsonschema.Schema, out []*jsonschema.Schema, seen map[*jsonschema.Schema]bool) []*jsonschema.Schema {
 	if schema == nil || seen[schema] {
 		return out
 	}
@@ -244,6 +267,11 @@ func applicableSchemas(schema *jsonschema.Schema, out []*jsonschema.Schema, seen
 	next := []*jsonschema.Schema{schema.Ref, schema.RecursiveRef, schema.If, schema.Then, schema.Else, schema.Not}
 	if schema.DynamicRef != nil {
 		next = append(next, schema.DynamicRef.Ref)
+	}
+	if (schema.RecursiveRef != nil && schema.RecursiveRef.RecursiveAnchor) || (schema.DynamicRef != nil && schema.DynamicRef.Anchor != "") {
+		// The target is picked from the dynamic scope at evaluation time;
+		// take every schema that could be picked.
+		next = append(next, w.dynamicTargets()...)
 	}
 	next = append(next, schema.AllOf...)
 	next = append(next, schema.AnyOf...)
@@ -257,9 +285,105 @@ func applicableSchemas(schema *jsonschema.Schema, out []*jsonschema.Schema, seen
 		}
 	}
 	for _, sub := range next {
-		out = applicableSchemas(sub, out, seen)
+		out = w.applicable(sub, out, seen)
 	}
 	return out
+}
+
+// dynamicTargets returns every schema reachable from the root that declares
+// $dynamicAnchor or $recursiveAnchor.
+func (w *foldWalker) dynamicTargets() []*jsonschema.Schema {
+	if w.indexed {
+		return w.anchors
+	}
+	w.indexed = true
+	seen := map[*jsonschema.Schema]bool{}
+	stack := []*jsonschema.Schema{w.root}
+	for len(stack) > 0 {
+		s := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if s == nil || seen[s] {
+			continue
+		}
+		seen[s] = true
+		if s.DynamicAnchor != "" || s.RecursiveAnchor {
+			w.anchors = append(w.anchors, s)
+		}
+		stack = append(stack, s.Ref, s.RecursiveRef, s.Not, s.If, s.Then, s.Else, s.PropertyNames,
+			s.UnevaluatedProperties, s.Contains, s.Items2020, s.UnevaluatedItems, s.ContentSchema)
+		if s.DynamicRef != nil {
+			stack = append(stack, s.DynamicRef.Ref)
+		}
+		stack = append(stack, s.AllOf...)
+		stack = append(stack, s.AnyOf...)
+		stack = append(stack, s.OneOf...)
+		stack = append(stack, s.PrefixItems...)
+		for _, sub := range s.Properties {
+			stack = append(stack, sub)
+		}
+		for _, sub := range s.PatternProperties {
+			stack = append(stack, sub)
+		}
+		for _, sub := range s.DependentSchemas {
+			stack = append(stack, sub)
+		}
+		for _, dep := range s.Dependencies {
+			if sub, ok := dep.(*jsonschema.Schema); ok {
+				stack = append(stack, sub)
+			}
+		}
+		for _, v := range []any{s.AdditionalProperties, s.Items, s.AdditionalItems} {
+			switch v := v.(type) {
+			case *jsonschema.Schema:
+				stack = append(stack, v)
+			case []*jsonschema.Schema:
+				stack = append(stack, v...)
+			}
+		}
+	}
+	return w.anchors
+}
+
+// duplicateMember returns the path of the first object member whose name
+// repeats an earlier one in the same object, or nil.
+func duplicateMember(raw json.RawMessage) ([]string, error) {
+	return scanMembers(json.NewDecoder(bytes.NewReader(raw)), nil)
+}
+
+func scanMembers(dec *json.Decoder, path []string) ([]string, error) {
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	path = slices.Clip(path)
+	switch tok {
+	case json.Delim('{'):
+		names := map[string]bool{}
+		for dec.More() {
+			tok, err := dec.Token()
+			if err != nil {
+				return nil, err
+			}
+			name, _ := tok.(string)
+			if names[name] {
+				return append(path, name), nil
+			}
+			names[name] = true
+			if dup, err := scanMembers(dec, append(path, name)); dup != nil || err != nil {
+				return dup, err
+			}
+		}
+	case json.Delim('['):
+		for i := 0; dec.More(); i++ {
+			if dup, err := scanMembers(dec, append(path, strconv.Itoa(i))); dup != nil || err != nil {
+				return dup, err
+			}
+		}
+	default:
+		return nil, nil
+	}
+	_, err = dec.Token()
+	return nil, err
 }
 
 // itemSchema returns the schema that applies to array element i, or nil.
