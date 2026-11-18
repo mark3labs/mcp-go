@@ -66,6 +66,9 @@ func TestExtractHeaderName(t *testing.T) {
 		{"tools/call uses the tool name", MethodToolsCall, `{"name":"search"}`, "search", true},
 		{"prompts/get uses the prompt name", MethodPromptsGet, `{"name":"summarize"}`, "summarize", true},
 		{"resources/read uses the uri", MethodResourcesRead, `{"uri":"file:///a"}`, "file:///a", true},
+		{"tasks/get uses the taskId", MethodTasksGet, `{"taskId":"task-1"}`, "task-1", true},
+		{"tasks/update uses the taskId", MethodTasksUpdate, `{"taskId":"task-2"}`, "task-2", true},
+		{"tasks/cancel uses the taskId", MethodTasksCancel, `{"taskId":"task-3"}`, "task-3", true},
 		{"other methods carry no name", MethodToolsList, `{}`, "", false},
 	}
 
@@ -74,6 +77,9 @@ func TestExtractHeaderName(t *testing.T) {
 			got, ok := ExtractHeaderName(tt.method, json.RawMessage(tt.params))
 			assert.Equal(t, tt.ok, ok)
 			assert.Equal(t, tt.want, got)
+			// Methods that carry a name must also require the Mcp-Name header.
+			assert.Equal(t, tt.ok, MethodRequiresNameHeader(tt.method),
+				"MethodRequiresNameHeader must agree with ExtractHeaderName for %s", tt.method)
 		})
 	}
 }

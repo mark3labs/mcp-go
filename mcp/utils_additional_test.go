@@ -1110,3 +1110,20 @@ func TestToolResultContent_IsContent(t *testing.T) {
 	var c Content = ToolResultContent{Type: ContentTypeToolResult, ToolUseID: "tu_1"}
 	assert.NotNil(t, c)
 }
+
+// TestParseCallToolResult_TaskHandle verifies that a server-directed task
+// handle (resultType:"task", SEP-2663) is surfaced as a typed
+// *UnsupportedTaskResultError carrying the task ID, rather than failing with
+// "content is missing". The caller can then poll tasks/get with that ID.
+func TestParseCallToolResult_TaskHandle(t *testing.T) {
+	// Wire shape of a modern CreateTaskResult: resultType "task", taskId at the
+	// top level, and no content.
+	raw := json.RawMessage(`{"resultType":"task","taskId":"task-abc","status":"working","createdAt":"2026-01-01T00:00:00Z","lastUpdatedAt":"2026-01-01T00:00:00Z"}`)
+
+	_, err := ParseCallToolResult(&raw)
+	require.Error(t, err)
+
+	var taskErr *UnsupportedTaskResultError
+	require.True(t, errors.As(err, &taskErr), "expected *UnsupportedTaskResultError, got %T: %v", err, err)
+	assert.Equal(t, "task-abc", taskErr.TaskID)
+}

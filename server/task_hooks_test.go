@@ -162,7 +162,7 @@ func TestTaskHooks_TaskCancelled(t *testing.T) {
 	server.tasksMu.Unlock()
 
 	// Cancel the task
-	err = server.cancelTask(cancelCtx, "test-task-4")
+	err = server.cancelTask(cancelCtx, "test-task-4", false)
 	require.NoError(t, err)
 
 	// Wait for hook to execute with timeout

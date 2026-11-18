@@ -61,7 +61,7 @@ func TestTaskHooksCreatedHookPrecedesCancellation(t *testing.T) {
 	taskID := <-entered
 	// The cancellation returns while the created hook still runs: its hook
 	// waits for that one.
-	require.NoError(t, server.cancelTask(t.Context(), taskID))
+	require.NoError(t, server.cancelTask(t.Context(), taskID, false))
 	close(release)
 	select {
 	case <-cancelled:
@@ -92,7 +92,7 @@ func TestTaskHooksCreatedHookMayCancelItsOwnTask(t *testing.T) {
 	hooks := &TaskHooks{}
 	cancelErr := make(chan error, 1)
 	hooks.AddOnTaskCreated(func(ctx context.Context, m TaskMetrics) {
-		cancelErr <- server.cancelTask(ctx, m.TaskID)
+		cancelErr <- server.cancelTask(ctx, m.TaskID, false)
 		record("created")
 	})
 	cancelled := make(chan struct{})
@@ -126,7 +126,7 @@ func TestTaskHooksPanickingCreatedHookDoesNotLoseCancellation(t *testing.T) {
 	var server *MCPServer
 	hooks := &TaskHooks{}
 	hooks.AddOnTaskCreated(func(ctx context.Context, m TaskMetrics) {
-		require.NoError(t, server.cancelTask(ctx, m.TaskID))
+		require.NoError(t, server.cancelTask(ctx, m.TaskID, false))
 		panic("hook bug")
 	})
 	cancelled := make(chan struct{})
@@ -164,7 +164,7 @@ func TestTaskHooksWaitingHookOutlivesItsRequest(t *testing.T) {
 	// The cancel request ends, as a served request does, before the created
 	// hook lets its hook run.
 	cancelCtx, endRequest := context.WithCancel(context.WithValue(t.Context(), keyType{}, "request value"))
-	require.NoError(t, server.cancelTask(cancelCtx, taskID))
+	require.NoError(t, server.cancelTask(cancelCtx, taskID, false))
 	endRequest()
 	close(release)
 	select {

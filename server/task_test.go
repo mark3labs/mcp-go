@@ -265,6 +265,7 @@ func TestMCPServer_HandleCancelTask(t *testing.T) {
 	resp, ok := response.(mcp.JSONRPCResponse)
 	require.True(t, ok, "Expected JSONRPCResponse, got %T", response)
 
+	// Legacy (non-modern) request returns CancelTaskResult with the task state.
 	result, ok := resp.Result.(mcp.CancelTaskResult)
 	require.True(t, ok, "Expected CancelTaskResult, got %T", resp.Result)
 
@@ -288,7 +289,8 @@ func TestMCPServer_HandleCancelTerminalTask(t *testing.T) {
 	require.NoError(t, err)
 	server.completeTask(entry, "result", nil)
 
-	// Try to cancel completed task
+	// On the legacy 2025-11-25 protocol, cancelling a terminal task MUST be
+	// rejected with INVALID_PARAMS.
 	response := server.HandleMessage(ctx, []byte(`{
 		"jsonrpc": "2.0",
 		"id": 1,
@@ -301,6 +303,7 @@ func TestMCPServer_HandleCancelTerminalTask(t *testing.T) {
 	errResp, ok := response.(mcp.JSONRPCError)
 	require.True(t, ok, "Expected JSONRPCError, got %T", response)
 	assert.Equal(t, mcp.INVALID_PARAMS, errResp.Error.Code)
+	assert.Contains(t, errResp.Error.Message, "terminal status")
 }
 
 func TestMCPServer_TaskWithoutCapabilities(t *testing.T) {
@@ -409,7 +412,7 @@ func TestMCPServer_TaskExpiredVsNotFoundErrors(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "task has expired")
 
-		err = server.cancelTask(ctx, "task-expired")
+		err = server.cancelTask(ctx, "task-expired", false)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "task has expired")
 	})
@@ -426,7 +429,7 @@ func TestMCPServer_TaskExpiredVsNotFoundErrors(t *testing.T) {
 		assert.Contains(t, err.Error(), "task not found")
 		assert.NotContains(t, err.Error(), "expired")
 
-		err = server.cancelTask(ctx, "never-existed")
+		err = server.cancelTask(ctx, "never-existed", false)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "task not found")
 		assert.NotContains(t, err.Error(), "expired")
@@ -856,7 +859,7 @@ func TestMCPServer_TaskLastUpdatedAt(t *testing.T) {
 		time.Sleep(1100 * time.Millisecond)
 
 		// Cancel the task
-		cancelErr := server.cancelTask(ctx, "task-cancel")
+		cancelErr := server.cancelTask(ctx, "task-cancel", false)
 		require.NoError(t, cancelErr)
 
 		assert.Equal(t, mcp.TaskStatusCancelled, entry.task.Status)
@@ -963,8 +966,8 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 			assert.Equal(t, mcp.TaskStatusCompleted, params["status"])
 			assert.NotEmpty(t, params["createdAt"])
 			assert.NotEmpty(t, params["lastUpdatedAt"])
-			assert.Equal(t, int64(60000), params["ttl"])
-			assert.Equal(t, int64(5000), params["pollInterval"])
+			assert.Equal(t, int64(60000), params["ttlMs"])
+			assert.Equal(t, int64(5000), params["pollIntervalMs"])
 
 		case <-time.After(1 * time.Second):
 			t.Fatal("Expected task status notification but none received")
@@ -1013,7 +1016,7 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 		}
 
 		// Cancel the task
-		cancelErr := server.cancelTask(ctx, "task-notify-cancel")
+		cancelErr := server.cancelTask(ctx, "task-notify-cancel", false)
 		require.NoError(t, cancelErr)
 
 		// Check for notification
@@ -1054,8 +1057,8 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 			params := notification.Params.AdditionalFields
 			require.NotNil(t, params)
 
-			assert.Equal(t, int64(30000), params["ttl"])
-			assert.Equal(t, int64(2000), params["pollInterval"])
+			assert.Equal(t, int64(30000), params["ttlMs"])
+			assert.Equal(t, int64(2000), params["pollIntervalMs"])
 
 		case <-time.After(1 * time.Second):
 			t.Fatal("Expected task status notification but none received")
@@ -1154,12 +1157,12 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 		// Complete the task once
 		server.completeTask(entry, "result", nil)
 
-		// Wait for and consume first notification
+		// Wait for and consume the status notification.
 		select {
 		case <-notifyChan:
-			// First notification received as expected
+			// notification received as expected
 		case <-time.After(1 * time.Second):
-			t.Fatal("Expected first notification")
+			t.Fatal("Expected notification")
 		}
 
 		// Try to complete again (should be ignored due to guard)

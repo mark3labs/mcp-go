@@ -67,7 +67,8 @@ func RequiresStandardHeaders(protocolVersion string) bool {
 // the given method.
 func MethodRequiresNameHeader(method MCPMethod) bool {
 	switch method {
-	case MethodToolsCall, MethodResourcesRead, MethodPromptsGet:
+	case MethodToolsCall, MethodResourcesRead, MethodPromptsGet,
+		MethodTasksGet, MethodTasksUpdate, MethodTasksCancel:
 		return true
 	default:
 		return false
@@ -76,8 +77,8 @@ func MethodRequiresNameHeader(method MCPMethod) bool {
 
 // ExtractHeaderName returns the value that belongs in the Mcp-Name header for
 // the given method and raw params: params.name for tools/call and prompts/get,
-// params.uri for resources/read. It reports false when the method does not
-// carry a name.
+// params.uri for resources/read, params.taskId for tasks/get, tasks/update, and
+// tasks/cancel. It reports false when the method does not carry a name.
 func ExtractHeaderName(method MCPMethod, params json.RawMessage) (string, bool) {
 	switch method {
 	case MethodToolsCall:
@@ -100,6 +101,13 @@ func ExtractHeaderName(method MCPMethod, params json.RawMessage) (string, bool) 
 		}
 		if json.Unmarshal(params, &p) == nil {
 			return p.URI, true
+		}
+	case MethodTasksGet, MethodTasksUpdate, MethodTasksCancel:
+		var p struct {
+			TaskID string `json:"taskId"`
+		}
+		if json.Unmarshal(params, &p) == nil {
+			return p.TaskID, true
 		}
 	}
 	return "", false
