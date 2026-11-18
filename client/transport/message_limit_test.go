@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -55,11 +56,19 @@ func TestReadSSELine(t *testing.T) {
 		name    string
 		line    string
 		limit   int64
+		split   bool
 		wantErr error
 	}{
 		{name: "under the bound", line: "data: " + strings.Repeat("x", 10) + "\n", limit: 16},
 		{name: "data at the bound", line: "data: " + strings.Repeat("x", 16) + "\r\n", limit: 16},
 		{name: "event field at the bound", line: "event: " + strings.Repeat("x", 16) + "\r\n", limit: 16},
+		{name: "split CRLF at the bound", line: "event: " + strings.Repeat("x", 16) + "\r\n", limit: 16, split: true},
+		{name: "CRLF one byte over the bound", line: "event: " + strings.Repeat("x", 17) + "\r\n", limit: 16, wantErr: ErrMessageTooLarge},
+		{name: "split CRLF one byte over the bound", line: "event: " + strings.Repeat("x", 17) + "\r\n", limit: 16, split: true, wantErr: ErrMessageTooLarge},
+		{name: "CR at the data bound", line: "event: " + strings.Repeat(" ", 9) + "message\r", limit: 16},
+		{name: "LF at the data bound", line: "event: " + strings.Repeat(" ", 9) + "message\n", limit: 16},
+		{name: "CR one byte over the data bound", line: "event: " + strings.Repeat(" ", 10) + "message\r", limit: 16, wantErr: ErrMessageTooLarge},
+		{name: "LF one byte over the data bound", line: "event: " + strings.Repeat(" ", 10) + "message\n", limit: 16, wantErr: ErrMessageTooLarge},
 		{name: "over the bound", line: "data: " + strings.Repeat("x", 32) + "\n", limit: 16, wantErr: ErrMessageTooLarge},
 		{name: "longer than the read buffer", line: "data: " + strings.Repeat("x", 3*4096) + "\n", limit: 4 * 4096},
 		{name: "over the bound past the read buffer", line: "data: " + strings.Repeat("x", 3*4096) + "\n", limit: 4096, wantErr: ErrMessageTooLarge},
@@ -67,17 +76,54 @@ func TestReadSSELine(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			br := bufio.NewReaderSize(strings.NewReader(tt.line+"data: next\n"), 4096)
-			got, err := readSSELine(br, tt.limit)
+			var source io.Reader = strings.NewReader(tt.line + "data: next\n")
+			if tt.split {
+				source = iotest.OneByteReader(source)
+			}
+			br := sseLineReader{br: bufio.NewReaderSize(source, 4096)}
+			got, err := br.readLine(tt.limit)
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, tt.line, got)
-			next, err := readSSELine(br, tt.limit)
+			want := tt.line
+			if tt.split {
+				want = strings.TrimSuffix(want, "\n")
+			}
+			assert.Equal(t, want, got)
+			next, err := br.readLine(tt.limit)
 			require.NoError(t, err)
 			assert.Equal(t, "data: next\n", next)
+		})
+	}
+}
+
+func TestReadSSELine_SplitCRLF(t *testing.T) {
+	br := sseLineReader{br: bufio.NewReader(iotest.OneByteReader(strings.NewReader("data: first\r\ndata: second\r\n\r\n")))}
+	for _, want := range []string{"data: first", "data: second", ""} {
+		line, err := br.readLine(16)
+		require.NoError(t, err)
+		assert.Equal(t, want, strings.TrimRight(line, "\r\n"))
+	}
+	_, err := br.readLine(16)
+	require.ErrorIs(t, err, io.EOF)
+}
+
+func TestReadSSELine_PartialReadError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "EOF", err: io.EOF},
+		{name: "read error", err: errors.New("read failed")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			br := sseLineReader{br: bufio.NewReader(io.MultiReader(strings.NewReader("data: unfinished"), iotest.ErrReader(tt.err)))}
+			line, err := br.readLine(16)
+			assert.Equal(t, "data: unfinished", line)
+			require.ErrorIs(t, err, tt.err)
 		})
 	}
 }
