@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -711,7 +712,8 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 
 	// Parse message as raw JSON
 	var rawMessage json.RawMessage
-	if err != nil || json.NewDecoder(bytes.NewReader(body)).Decode(&rawMessage) != nil {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if err != nil || decoder.Decode(&rawMessage) != nil || decoder.Decode(new(json.RawMessage)) != io.EOF {
 		s.writeJSONRPCError(w, nil, mcp.PARSE_ERROR, "Parse error")
 		return
 	}
