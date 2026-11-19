@@ -26,8 +26,8 @@ func TestCallToolRequest_IntOutOfRange(t *testing.T) {
 		wantRequireOK bool
 		wantRequire   int
 	}{
-		{"max int64", `9223372036854775807`, int(math.MaxInt64), true, int(math.MaxInt64)},
-		{"min int64", `-9223372036854775808`, int(math.MinInt64), true, int(math.MinInt64)},
+		{"max int64", `9223372036854775807`, math.MaxInt, true, math.MaxInt},
+		{"min int64", `-9223372036854775808`, math.MinInt, true, math.MinInt},
 		{"above max int64", `9223372036854775808`, defaultVal, false, 0},
 		{"below min int64", `-9223372036854775809`, defaultVal, false, 0},
 		{"large positive overflow", `1e20`, defaultVal, false, 0},
