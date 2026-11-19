@@ -62,6 +62,24 @@ func TestHandleIncomingRequestRejectsNilHandlerResult(t *testing.T) {
 	}
 }
 
+// A request for a method the client does not implement is answered with
+// JSON-RPC's "method not found" code, not as an internal error.
+func TestHandleIncomingRequestUnknownMethodIsMethodNotFound(t *testing.T) {
+	client := &Client{}
+
+	response, err := client.handleIncomingRequest(t.Context(), transport.JSONRPCRequest{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		ID:      mcp.NewRequestId(1),
+		Method:  "tasks/get",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, response)
+	require.NotNil(t, response.Error)
+	assert.Equal(t, mcp.METHOD_NOT_FOUND, response.Error.Code)
+	assert.Contains(t, response.Error.Message, "tasks/get")
+	assert.Equal(t, mcp.NewRequestId(1), response.ID)
+}
+
 type noRootsHandler struct{}
 
 func (noRootsHandler) ListRoots(context.Context, mcp.ListRootsRequest) (*mcp.ListRootsResult, error) {
