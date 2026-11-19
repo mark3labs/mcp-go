@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"encoding/json"
+	"math"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -90,6 +92,69 @@ func TestCallToolRequest_TypeConversionEdgeCases(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "not a bool")
 	})
+}
+
+func TestCallToolRequest_IntegerOutOfRange(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{"exponent above int range", `1e19`},
+		{"exponent below int range", `-1e19`},
+		{"integer above int range", `9223372036854775808`},
+		{"integer below int range", `-9223372036854775809`},
+		{"exponent just below int range", `-9.223372036854775809e18`},
+		{"decimal just below int range", `-9223372036854775809.5`},
+		{"huge exponent", `1e300`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var req CallToolRequest
+			require.NoError(t, json.Unmarshal([]byte(`{"params":{"name":"lookup","arguments":{"n":`+tt.value+`,"ids":[1,`+tt.value+`,3]}}}`), &req))
+
+			assert.Equal(t, 7, req.GetInt("n", 7))
+			_, err := req.RequireInt("n")
+			require.EqualError(t, err, `argument "n" cannot be converted to int`)
+
+			assert.Equal(t, []int{1, 3}, req.GetIntSlice("ids", nil))
+			_, err = req.RequireIntSlice("ids")
+			require.EqualError(t, err, `item 1 in argument "ids" cannot be converted to int`)
+		})
+	}
+}
+
+func TestCallToolRequest_IntegerAtRangeEdge(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("range edge values require a 64-bit int")
+	}
+	tests := []struct {
+		name  string
+		value string
+		want  int
+	}{
+		{"small integer", `42`, 42},
+		{"fraction", `3.9`, 3},
+		{"min int", `-9223372036854775808`, math.MinInt},
+		{"min int exponent", `-9.223372036854775808e18`, math.MinInt},
+		{"min int fraction", `-9223372036854775808.5`, math.MinInt},
+		{"max int", `9223372036854775807`, math.MaxInt},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var req CallToolRequest
+			require.NoError(t, json.Unmarshal([]byte(`{"params":{"name":"lookup","arguments":{"n":`+tt.value+`,"ids":[1,`+tt.value+`]}}}`), &req))
+
+			assert.Equal(t, tt.want, req.GetInt("n", 7))
+			got, err := req.RequireInt("n")
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+
+			assert.Equal(t, []int{1, tt.want}, req.GetIntSlice("ids", nil))
+			gotSlice, err := req.RequireIntSlice("ids")
+			require.NoError(t, err)
+			assert.Equal(t, []int{1, tt.want}, gotSlice)
+		})
+	}
 }
 
 func TestCallToolRequest_SliceWithMixedTypes(t *testing.T) {
