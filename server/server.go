@@ -896,12 +896,19 @@ func (s *MCPServer) RemoveResource(uri string) {
 	}
 }
 
+func hasURITemplate(t *mcp.URITemplate) bool {
+	return t != nil && t.Template != nil
+}
+
 // AddResourceTemplates registers multiple resource templates at once
 func (s *MCPServer) AddResourceTemplates(resourceTemplates ...ServerResourceTemplate) {
 	s.implicitlyRegisterResourceCapabilities()
 
 	s.resourcesMu.Lock()
 	for _, entry := range resourceTemplates {
+		if !hasURITemplate(entry.Template.URITemplate) {
+			continue
+		}
 		s.resourceTemplates[entry.Template.URITemplate.Raw()] = resourceTemplateEntry{
 			template: entry.Template,
 			handler:  entry.Handler,
@@ -922,6 +929,9 @@ func (s *MCPServer) SetResourceTemplates(templates ...ServerResourceTemplate) {
 	s.resourcesMu.Lock()
 	s.resourceTemplates = make(map[string]resourceTemplateEntry, len(templates))
 	for _, item := range templates {
+		if !hasURITemplate(item.Template.URITemplate) {
+			continue
+		}
 		s.resourceTemplates[item.Template.URITemplate.Raw()] = resourceTemplateEntry{template: item.Template, handler: item.Handler}
 	}
 	s.resourcesMu.Unlock()
@@ -1609,7 +1619,7 @@ func pageTieBreak[T mcp.Named](element *T) string {
 	case *mcp.Resource:
 		return e.URI
 	case *mcp.ResourceTemplate:
-		if e.URITemplate != nil {
+		if hasURITemplate(e.URITemplate) {
 			return e.URITemplate.Raw()
 		}
 	}
@@ -1704,7 +1714,9 @@ func (s *MCPServer) handleListResourceTemplates(
 	s.resourcesMu.RLock()
 	templateMap := make(map[string]mcp.ResourceTemplate, len(s.resourceTemplates))
 	for uri, entry := range s.resourceTemplates {
-		templateMap[uri] = entry.template
+		if hasURITemplate(entry.template.URITemplate) {
+			templateMap[uri] = entry.template
+		}
 	}
 	s.resourcesMu.RUnlock()
 
@@ -1716,7 +1728,9 @@ func (s *MCPServer) handleListResourceTemplates(
 				// Merge session-specific templates with global templates
 				// Session templates override global ones
 				for uriTemplate, serverTemplate := range sessionTemplates {
-					templateMap[uriTemplate] = serverTemplate.Template
+					if hasURITemplate(serverTemplate.Template.URITemplate) {
+						templateMap[uriTemplate] = serverTemplate.Template
+					}
 				}
 			}
 		}
@@ -1818,7 +1832,7 @@ func (s *MCPServer) handleReadResource(
 		if sessionWithTemplates, ok := session.(SessionWithResourceTemplates); ok {
 			sessionTemplates := sessionWithTemplates.GetSessionResourceTemplates()
 			for _, serverTemplate := range sessionTemplates {
-				if serverTemplate.Template.URITemplate == nil {
+				if !hasURITemplate(serverTemplate.Template.URITemplate) {
 					continue
 				}
 				if matchesTemplate(request.Params.URI, serverTemplate.Template.URITemplate) {
@@ -1843,7 +1857,7 @@ func (s *MCPServer) handleReadResource(
 	if !matched {
 		for _, entry := range s.resourceTemplates {
 			template := entry.template
-			if template.URITemplate == nil {
+			if !hasURITemplate(template.URITemplate) {
 				continue
 			}
 			if matchesTemplate(request.Params.URI, template.URITemplate) {

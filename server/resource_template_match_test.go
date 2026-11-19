@@ -119,3 +119,53 @@ func TestResourceTemplateDispatchPrecedence(t *testing.T) {
 		})
 	}
 }
+
+func TestHasURITemplate(t *testing.T) {
+	tests := []struct {
+		name     string
+		template *mcp.URITemplate
+		want     bool
+	}{
+		{"absent", nil, false},
+		{"zero value", &mcp.URITemplate{}, false},
+		{"parsed", mcp.NewResourceTemplate("file:///{name}", "file").URITemplate, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, hasURITemplate(tt.template))
+		})
+	}
+}
+
+func TestListSkipsUnusableSessionTemplate(t *testing.T) {
+	s := NewMCPServer("test", "1.0", WithResourceCapabilities(false, false))
+	const pattern = "test://items/{id}"
+	global := mcp.NewResourceTemplate(pattern, "global")
+	s.AddResourceTemplate(global, nil)
+	session := &sessionTestClientWithResourceTemplates{
+		sessionID: "template-session",
+		sessionResourceTemplates: map[string]ServerResourceTemplate{
+			pattern: {Template: mcp.ResourceTemplate{Name: "invalid", URITemplate: &mcp.URITemplate{}}},
+		},
+	}
+	session.Initialize()
+	ctx := s.WithContext(t.Context(), session)
+	result, err := s.handleListResourceTemplates(ctx, 1, mcp.ListResourceTemplatesRequest{})
+	require.Nil(t, err)
+	assert.Equal(t, []mcp.ResourceTemplate{global}, result.ResourceTemplates)
+}
+
+func TestReadAfterRegisteredTemplateCleared(t *testing.T) {
+	s := NewMCPServer("test", "1.0", WithResourceCapabilities(false, false))
+	template := mcp.NewResourceTemplate("test://items/{id}", "items")
+	s.AddResourceTemplate(template, nil)
+	require.NoError(t, json.Unmarshal([]byte("null"), template.URITemplate))
+
+	response := s.HandleMessage(t.Context(), []byte(`{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"test://items/1"}}`))
+	require.IsType(t, mcp.JSONRPCError{}, response)
+	assert.Equal(t, mcp.RESOURCE_NOT_FOUND, response.(mcp.JSONRPCError).Error.Code)
+
+	listed, err := s.handleListResourceTemplates(t.Context(), 1, mcp.ListResourceTemplatesRequest{})
+	require.Nil(t, err)
+	assert.Empty(t, listed.ResourceTemplates)
+}
