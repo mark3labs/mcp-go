@@ -1714,7 +1714,9 @@ func (s *MCPServer) handleListResourceTemplates(
 	s.resourcesMu.RLock()
 	templateMap := make(map[string]mcp.ResourceTemplate, len(s.resourceTemplates))
 	for uri, entry := range s.resourceTemplates {
-		templateMap[uri] = entry.template
+		if hasURITemplate(entry.template.URITemplate) {
+			templateMap[uri] = entry.template
+		}
 	}
 	s.resourcesMu.RUnlock()
 
@@ -1726,7 +1728,9 @@ func (s *MCPServer) handleListResourceTemplates(
 				// Merge session-specific templates with global templates
 				// Session templates override global ones
 				for uriTemplate, serverTemplate := range sessionTemplates {
-					templateMap[uriTemplate] = serverTemplate.Template
+					if hasURITemplate(serverTemplate.Template.URITemplate) {
+						templateMap[uriTemplate] = serverTemplate.Template
+					}
 				}
 			}
 		}
@@ -1853,7 +1857,7 @@ func (s *MCPServer) handleReadResource(
 	if !matched {
 		for _, entry := range s.resourceTemplates {
 			template := entry.template
-			if template.URITemplate == nil {
+			if !hasURITemplate(template.URITemplate) {
 				continue
 			}
 			if matchesTemplate(request.Params.URI, template.URITemplate) {
