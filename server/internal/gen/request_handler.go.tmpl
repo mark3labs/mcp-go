@@ -116,7 +116,9 @@ func (s *MCPServer) handleMessage(
 	isResponse := func(member json.RawMessage) bool {
 		return len(member) > 0 && !bytes.Equal(member, []byte("null"))
 	}
-	if isResponse(baseMessage.Result) || isResponse(baseMessage.Error) {
+	// A message with a method is a request, even if it carries an extra
+	// "error" member.
+	if isResponse(baseMessage.Result) || (baseMessage.Method == "" && isResponse(baseMessage.Error)) {
 		// this is a response to a request sent by the server (e.g. from a ping
 		// sent due to WithKeepAlive option)
 		return nil

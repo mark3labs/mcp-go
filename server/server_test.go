@@ -1561,6 +1561,13 @@ func TestMCPServer_HandleMessage_DoesNotAnswerErrorResponse(t *testing.T) {
 	))
 
 	assert.Nil(t, response, "a JSON-RPC response must not be answered")
+
+	// A request stays a request when it carries an extra "error" member.
+	response = server.HandleMessage(t.Context(), []byte(
+		`{"jsonrpc":"2.0","id":8,"method":"ping","error":true}`,
+	))
+	_, ok := response.(mcp.JSONRPCResponse)
+	assert.True(t, ok, "expected a ping result, got %T", response)
 }
 
 func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
