@@ -256,6 +256,21 @@ them reach the client as a silent protocol violation. Tools without an
 output schema, results without `StructuredContent`, and error results are
 all passed through unchanged.
 
+### Limiting the schema validation caches
+
+For servers that frequently register new tool schemas, set
+`server.WithSchemaValidationCacheLimit(256)` when constructing the server.
+The limit applies separately to each enabled input and output validation
+cache. It counts entries, not bytes, and includes failed compilations.
+Validation is enabled separately with `WithInputSchemaValidation()` or
+`WithOutputSchemaValidation()`.
+
+By default, the caches have no entry limit. A positive limit evicts the
+oldest inserted entry when the cache is full. An evicted schema is compiled
+again the next time it is used. Keep referenced schema files available and
+unchanged: recompilation resolves references again and, as with other
+compilation failures, skips validation if a reference cannot be resolved.
+
 ### Array Output Schema
 
 Tools can return arrays of structured data:

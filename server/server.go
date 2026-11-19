@@ -259,6 +259,7 @@ type MCPServer struct {
 	inflightCancels              sync.Map             // inflightRequestKey -> context.CancelFunc
 	inputValidator               *inputSchemaValidator
 	outputValidator              *outputSchemaValidator
+	schemaValidationCacheLimit   int
 	strictInputSchemaDefault     bool
 	tracer                       tracing.Tracer
 	propagator                   tracing.Propagator
@@ -535,6 +536,7 @@ func WithInputSchemaValidation() ServerOption {
 	return func(s *MCPServer) {
 		if s.inputValidator == nil {
 			s.inputValidator = newInputSchemaValidator()
+			s.inputValidator.maxEntries = s.schemaValidationCacheLimit
 		}
 	}
 }
@@ -586,6 +588,26 @@ func WithOutputSchemaValidation() ServerOption {
 	return func(s *MCPServer) {
 		if s.outputValidator == nil {
 			s.outputValidator = newOutputSchemaValidator()
+			s.outputValidator.maxEntries = s.schemaValidationCacheLimit
+		}
+	}
+}
+
+// WithSchemaValidationCacheLimit limits the number of cached schema compilations
+// in each enabled validator (input and output). A non-positive limit (the
+// default) leaves the caches unbounded. This option does not enable validation.
+// Entries are evicted in insertion order, including failed compilations.
+// An evicted schema is compiled again on its next use. Keep any referenced
+// external schema files available and unchanged while validation is enabled.
+func WithSchemaValidationCacheLimit(maxEntries int) ServerOption {
+	return func(s *MCPServer) {
+		limit := max(0, maxEntries)
+		s.schemaValidationCacheLimit = limit
+		if s.inputValidator != nil {
+			s.inputValidator.setLimit(limit)
+		}
+		if s.outputValidator != nil {
+			s.outputValidator.setLimit(limit)
 		}
 	}
 }

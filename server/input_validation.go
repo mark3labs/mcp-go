@@ -3,6 +3,7 @@ package server
 
 import (
 	"bytes"
+	"container/list"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -20,21 +21,26 @@ import (
 
 // compiledSchemaCache compiles and caches JSON Schema validators keyed by
 // tool name. Compilation is performed lazily on first use and the resulting
-// schema is cached for the lifetime of the cache.
+// schema is cached until invalidated or evicted by the optional entry limit.
 //
 // The cache is two-level: tool name -> schema digest -> compiled entry. Two
 // sessions can expose the same tool name with different schemas (via
 // SessionWithTools) and a global tool can be re-registered with a different
-// schema; each distinct schema is compiled once. Name-level invalidation
-// drops every entry registered for that name in a single map delete, which
-// keeps DeleteTools / SetTools cleanup cheap.
+// schema. Name-level invalidation drops every entry registered for that name.
 //
 // The same cache type backs both input and output schema validation; each
 // validator owns its own cache instance so input and output schemas with
 // the same digest do not collide.
 type compiledSchemaCache struct {
-	mu     sync.RWMutex
-	cached map[string]map[string]*cachedToolSchema
+	mu         sync.RWMutex
+	cached     map[string]map[string]*cachedToolSchema
+	maxEntries int // guarded by mu; configured by server options
+	order      list.List
+}
+
+type schemaCacheKey struct {
+	toolName string
+	digest   string
 }
 
 // cachedToolSchema records the result of compiling a single (toolName,
@@ -43,6 +49,7 @@ type compiledSchemaCache struct {
 type cachedToolSchema struct {
 	compiled   *jsonschema.Schema
 	compileErr error
+	order      *list.Element
 }
 
 // newCompiledSchemaCache returns a fresh empty schema cache.
@@ -61,7 +68,23 @@ func (c *compiledSchemaCache) invalidate(names ...string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, name := range names {
+		if c.maxEntries > 0 {
+			for _, entry := range c.cached[name] {
+				c.order.Remove(entry.order)
+			}
+		}
 		delete(c.cached, name)
+	}
+}
+
+// setLimit resets the cache when its limit changes. A custom server option
+// may have already populated the cache before the limit was configured.
+func (c *compiledSchemaCache) setLimit(maxEntries int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.maxEntries != maxEntries {
+		c.maxEntries = maxEntries
+		c.clearLocked()
 	}
 }
 
@@ -72,7 +95,12 @@ func (c *compiledSchemaCache) invalidateAll() {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.clearLocked()
+}
+
+func (c *compiledSchemaCache) clearLocked() {
 	c.cached = make(map[string]map[string]*cachedToolSchema)
+	c.order.Init()
 }
 
 // lookupOrCompile returns the compiled schema for the given (toolName,
@@ -94,20 +122,29 @@ func (c *compiledSchemaCache) lookupOrCompile(toolName string, schemaJSON []byte
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// Re-check under the write lock in case another goroutine compiled it.
-	perName, ok := c.cached[toolName]
-	if !ok {
-		perName = make(map[string]*cachedToolSchema)
-		c.cached[toolName] = perName
-	}
-	if entry, ok := perName[digest]; ok {
+	if entry, ok := c.cached[toolName][digest]; ok {
 		return entry.compiled, entry.compileErr
 	}
 
 	compiled, compileErr := compileSchema(toolName, schemaJSON)
-	perName[digest] = &cachedToolSchema{
-		compiled:   compiled,
-		compileErr: compileErr,
+	entry := &cachedToolSchema{compiled: compiled, compileErr: compileErr}
+	if c.maxEntries > 0 {
+		if c.order.Len() == c.maxEntries {
+			oldest := c.order.Remove(c.order.Front()).(schemaCacheKey)
+			perName := c.cached[oldest.toolName]
+			delete(perName, oldest.digest)
+			if len(perName) == 0 && oldest.toolName != toolName {
+				delete(c.cached, oldest.toolName)
+			}
+		}
+		entry.order = c.order.PushBack(schemaCacheKey{toolName: toolName, digest: digest})
 	}
+	perName := c.cached[toolName]
+	if perName == nil {
+		perName = make(map[string]*cachedToolSchema)
+		c.cached[toolName] = perName
+	}
+	perName[digest] = entry
 	return compiled, compileErr
 }
 
