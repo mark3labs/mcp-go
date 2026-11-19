@@ -70,6 +70,13 @@ func (s *MCPServer) handleMessage(
 		}
 	}
 
+	switch baseMessage.ID.(type) {
+	case nil, string, json.Number:
+	default:
+		// A JSON-RPC id is a string or a number, never a bool, object or array.
+		return createErrorResponse(nil, mcp.INVALID_REQUEST, "Invalid request id")
+	}
+
 	if number, ok := baseMessage.ID.(json.Number); ok {
 		var id mcp.RequestId
 		if err := json.Unmarshal([]byte(number), &id); err != nil {
