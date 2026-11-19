@@ -1551,6 +1551,32 @@ func TestMCPServer_HandleInvalidMessages(t *testing.T) {
 	}
 }
 
+func TestMCPServer_HandleMessage_RejectsNonScalarRequestID(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0")
+
+	tests := []struct {
+		name string
+		id   string
+	}{
+		{name: "boolean", id: `true`},
+		{name: "object", id: `{"a":1}`},
+		{name: "array", id: `[1]`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := server.HandleMessage(t.Context(), []byte(
+				`{"jsonrpc":"2.0","id":`+tt.id+`,"method":"ping"}`,
+			))
+
+			errorResponse, ok := response.(mcp.JSONRPCError)
+			require.True(t, ok, "expected a JSON-RPC error, got %T", response)
+			assert.Equal(t, mcp.INVALID_REQUEST, errorResponse.Error.Code)
+			assert.True(t, errorResponse.ID.IsNil(), "an undetectable id is reported as null")
+		})
+	}
+}
+
 func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 	var errs []error
 	type beforeResult struct {
