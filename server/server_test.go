@@ -1551,6 +1551,18 @@ func TestMCPServer_HandleInvalidMessages(t *testing.T) {
 	}
 }
 
+func TestMCPServer_HandleMessage_DoesNotAnswerErrorResponse(t *testing.T) {
+	server := NewMCPServer("test-server", "1.0.0")
+
+	// A client that cannot serve a server-initiated request (for example a
+	// keep-alive ping) answers it with a JSON-RPC error response.
+	response := server.HandleMessage(t.Context(), []byte(
+		`{"jsonrpc":"2.0","id":7,"error":{"code":-32601,"message":"Method not found"}}`,
+	))
+
+	assert.Nil(t, response, "a JSON-RPC response must not be answered")
+}
+
 func TestMCPServer_HandleUndefinedHandlers(t *testing.T) {
 	var errs []error
 	type beforeResult struct {
