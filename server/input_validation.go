@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -204,7 +205,9 @@ func compileSchema(toolName string, schemaJSON []byte) (*jsonschema.Schema, erro
 	if err != nil {
 		return nil, fmt.Errorf("decode tool %q input schema: %w", toolName, err)
 	}
-	resourceURL := fmt.Sprintf("mem:///mcp-go/tools/%s/input-schema.json", toolName)
+	// The name is escaped so that characters such as '#' and '%' cannot change
+	// how the URL is parsed.
+	resourceURL := fmt.Sprintf("mem:///mcp-go/tools/%s/input-schema.json", url.PathEscape(toolName))
 	c := jsonschema.NewCompiler()
 	if err := c.AddResource(resourceURL, doc); err != nil {
 		return nil, fmt.Errorf("register tool %q input schema: %w", toolName, err)

@@ -495,6 +495,24 @@ func TestInputSchemaValidation(t *testing.T) {
 	}
 }
 
+// TestInputSchemaValidation_ToolNameWithURLCharacters checks that a tool whose
+// name contains characters with a meaning in a URL is still validated. The
+// schema is compiled under a virtual URL built from the name.
+func TestInputSchemaValidation_ToolNameWithURLCharacters(t *testing.T) {
+	for _, name := range []string{"search#v2", "100%", "a?b", "a/b"} {
+		t.Run(name, func(t *testing.T) {
+			srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
+			srv.AddTool(mcp.NewTool(name, mcp.WithString("resourceType", mcp.Required())), okHandler)
+
+			resp := callTool(t, srv, name, map[string]any{})
+			requireToolErrorContaining(t, resp, "resourceType")
+
+			resp = callTool(t, srv, name, map[string]any{"resourceType": "pods"})
+			requireToolSuccess(t, resp)
+		})
+	}
+}
+
 // TestInputSchemaValidation_RecompilesOnSchemaChange documents that
 // re-registering a tool with a different schema honours the new schema on
 // the next call. The cache keys by name+digest, so a fresh schema produces a
