@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -696,16 +697,16 @@ func TestMCPServer_TaskListPagination(t *testing.T) {
 		assert.Equal(t, "task-delta", result.Tasks[0].TaskId)
 		assert.Equal(t, "task-gamma", result.Tasks[1].TaskId)
 
-		// Should have nextCursor even though this is the last page (client will fetch empty third page)
-		assert.NotEmpty(t, result.NextCursor)
+		assert.Empty(t, result.NextCursor, "an exactly full last page must not advertise another page")
 
-		// Fetch third page to confirm it's empty
+		// Cursors previously returned for the last item still yield an empty page.
+		terminalCursor := base64.StdEncoding.EncodeToString([]byte("task-gamma"))
 		requestJSON3 := `{
 			"jsonrpc": "2.0",
 			"id": 3,
 			"method": "tasks/list",
 			"params": {
-				"cursor": "` + string(result.NextCursor) + `"
+				"cursor": "` + terminalCursor + `"
 			}
 		}`
 
