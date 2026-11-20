@@ -99,7 +99,7 @@ func TestResourceTemplateDispatchDeterministic(t *testing.T) {
 	s.AddResourceTemplate(mcp.NewResourceTemplate("test://logs/{name}", "logs"), handler("logs"))
 	s.AddResourceTemplate(mcp.NewResourceTemplate("test://{+path}", "files"), handler("files"))
 
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		request, err := json.Marshal(map[string]any{
 			"jsonrpc": "2.0", "id": 1, "method": "resources/read",
 			"params": map[string]string{"uri": "test://logs/today.txt"},
