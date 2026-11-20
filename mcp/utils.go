@@ -77,6 +77,9 @@ var (
 
 // asType attempts to cast the given interface to the given type
 func asType[T any](content any) (*T, bool) {
+	if ptr, ok := content.(*T); ok {
+		return ptr, ptr != nil
+	}
 	tc, ok := content.(T)
 	if !ok {
 		return nil, false
@@ -712,7 +715,11 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		}
 		isError, _ := contentMap["isError"].(bool)
 		var contentItems []Content
-		if rawContent, ok := contentMap["content"].([]any); ok {
+		if value := contentMap["content"]; value != nil {
+			rawContent, ok := value.([]any)
+			if !ok {
+				return nil, fmt.Errorf("tool_result content: expected array, got %T", value)
+			}
 			for i, item := range rawContent {
 				itemMap, ok := item.(map[string]any)
 				if !ok {
@@ -1311,6 +1318,11 @@ func ToInt64Ptr(i int64) *int64 {
 func GetTextFromContent(content any) string {
 	switch c := content.(type) {
 	case TextContent:
+		return c.Text
+	case *TextContent:
+		if c == nil {
+			return fmt.Sprint(c)
+		}
 		return c.Text
 	case map[string]any:
 		// Handle JSON unmarshaled content

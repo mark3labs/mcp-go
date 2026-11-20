@@ -506,6 +506,206 @@ func TestInProcessMCPClient_Notifications(t *testing.T) {
 	}
 }
 
+func TestInProcessMCPClient_SubscriptionFilter(t *testing.T) {
+	tests := []struct {
+		name     string
+		version  string
+		listen   bool
+		wantList []string
+	}{
+		{
+			name:     "modern tools subscription",
+			version:  mcp.ProtocolVersion20260728,
+			listen:   true,
+			wantList: []string{mcp.MethodNotificationToolsListChanged},
+		},
+		{
+			name:    "legacy without subscription",
+			version: mcp.ProtocolVersion20251125,
+			wantList: []string{
+				mcp.MethodNotificationPromptsListChanged,
+				mcp.MethodNotificationResourcesListChanged,
+				"custom/broadcast",
+				mcp.MethodNotificationToolsListChanged,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			srv := server.NewMCPServer("subscription-test", "1.0.0",
+				server.WithToolCapabilities(true),
+				server.WithPromptCapabilities(true),
+				server.WithResourceCapabilities(true, true),
+			)
+			client, err := NewInProcessClient(srv)
+			require.NoError(t, err)
+			defer client.Close()
+
+			received := make(chan mcp.JSONRPCNotification, 8)
+			client.OnNotification(func(notification mcp.JSONRPCNotification) {
+				received <- notification
+			})
+			require.NoError(t, client.Start(ctx))
+			request := mcp.InitializeRequest{}
+			request.Params.ProtocolVersion = tt.version
+			request.Params.ClientInfo = mcp.Implementation{Name: "subscription-client", Version: "1.0.0"}
+			_, err = client.Initialize(ctx, request)
+			require.NoError(t, err)
+			require.Equal(t, tt.version, client.ProtocolVersion())
+
+			next := func() mcp.JSONRPCNotification {
+				t.Helper()
+				select {
+				case notification := <-received:
+					return notification
+				case <-ctx.Done():
+					t.Fatal("timed out waiting for notification")
+					return mcp.JSONRPCNotification{}
+				}
+			}
+			var subscriptionID any
+			if tt.listen {
+				listenCtx, stop := context.WithCancel(ctx)
+				done := make(chan error, 1)
+				go func() {
+					done <- client.Listen(listenCtx, mcp.SubscriptionFilter{ToolsListChanged: true})
+				}()
+				defer func() {
+					stop()
+					select {
+					case err := <-done:
+						require.NoError(t, err)
+					case <-ctx.Done():
+						t.Error("subscription did not close")
+					}
+				}()
+				ack := next()
+				require.Equal(t, mcp.MethodNotificationSubscriptionsAcknowledged, ack.Method)
+				subscriptionID = ack.Params.Meta[mcp.MetaKeySubscriptionID]
+				require.NotNil(t, subscriptionID)
+			}
+
+			srv.AddPrompt(mcp.NewPrompt("new-prompt"),
+				func(context.Context, mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+					return mcp.NewGetPromptResult("", nil), nil
+				})
+			srv.AddResource(mcp.NewResource("file:///new-resource", "new-resource"),
+				func(context.Context, mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+					return []mcp.ResourceContents{mcp.TextResourceContents{URI: "file:///new-resource", Text: "content"}}, nil
+				})
+			srv.SendNotificationToAllClients("custom/broadcast", nil)
+			srv.AddTool(mcp.NewTool("new-tool"),
+				func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					return mcp.NewToolResultText("result"), nil
+				})
+
+			var methods []string
+			for {
+				notification := next()
+				require.Equal(t, subscriptionID, notification.Params.Meta[mcp.MetaKeySubscriptionID])
+				methods = append(methods, notification.Method)
+				// All broadcasts share the session's FIFO queue. This last,
+				// opted-in notification is the barrier for the preceding ones.
+				if notification.Method == mcp.MethodNotificationToolsListChanged {
+					break
+				}
+			}
+			require.Equal(t, tt.wantList, methods)
+		})
+	}
+}
+
+func TestInProcessMCPClient_ReplacedSubscriptionKeepsItsFilter(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	srv := server.NewMCPServer("subscription-replacement", "1.0.0",
+		server.WithToolCapabilities(true),
+		server.WithPromptCapabilities(true),
+	)
+	client, err := NewInProcessClient(srv)
+	require.NoError(t, err)
+	defer client.Close()
+
+	received := make(chan mcp.JSONRPCNotification, 8)
+	client.OnNotification(func(notification mcp.JSONRPCNotification) {
+		received <- notification
+	})
+	require.NoError(t, client.Start(ctx))
+	request := mcp.InitializeRequest{}
+	request.Params.ProtocolVersion = mcp.ProtocolVersion20260728
+	request.Params.ClientInfo = mcp.Implementation{Name: "replacement-client", Version: "1.0.0"}
+	_, err = client.Initialize(ctx, request)
+	require.NoError(t, err)
+
+	next := func() mcp.JSONRPCNotification {
+		t.Helper()
+		select {
+		case notification := <-received:
+			return notification
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for notification")
+			return mcp.JSONRPCNotification{}
+		}
+	}
+	filter := mcp.SubscriptionFilter{ToolsListChanged: true}
+	oldCtx, cancelOld := context.WithCancel(ctx)
+	oldDone := make(chan error, 1)
+	go func() {
+		oldDone <- client.Listen(oldCtx, filter)
+		close(oldDone)
+	}()
+	defer func() {
+		cancelOld()
+		select {
+		case <-oldDone:
+		case <-ctx.Done():
+			t.Error("old subscription did not close")
+		}
+	}()
+	oldAck := next()
+	require.Equal(t, mcp.MethodNotificationSubscriptionsAcknowledged, oldAck.Method)
+
+	// Send the replacement through the real client request path so the two RPCs
+	// overlap until we cancel the old one after the replacement is acknowledged.
+	newCtx, cancelNew := context.WithCancel(ctx)
+	newDone := make(chan error, 1)
+	go func() {
+		_, err := client.sendRequest(newCtx, string(mcp.MethodSubscriptionsListen),
+			mcp.SubscriptionsListenParams{Notifications: filter}, nil)
+		newDone <- err
+		close(newDone)
+	}()
+	defer func() {
+		cancelNew()
+		select {
+		case <-newDone:
+		case <-ctx.Done():
+			t.Error("replacement subscription did not close")
+		}
+	}()
+	newAck := next()
+	require.Equal(t, mcp.MethodNotificationSubscriptionsAcknowledged, newAck.Method)
+	require.NotEqual(t, oldAck.Params.Meta[mcp.MetaKeySubscriptionID], newAck.Params.Meta[mcp.MetaKeySubscriptionID])
+	cancelOld()
+	select {
+	case err := <-oldDone:
+		require.NoError(t, err)
+	case <-ctx.Done():
+		t.Fatal("old subscription did not close")
+	}
+
+	// The opted-in tools notification is the FIFO barrier: an old cleanup
+	// that clears the replacement filter lets the preceding prompt leak through.
+	srv.SendNotificationToAllClients(mcp.MethodNotificationPromptsListChanged, nil)
+	srv.SendNotificationToAllClients(mcp.MethodNotificationToolsListChanged, nil)
+	notification := next()
+	require.Equal(t, mcp.MethodNotificationToolsListChanged, notification.Method,
+		"the old subscription must not clear the replacement's filter")
+	require.Equal(t, newAck.Params.Meta[mcp.MetaKeySubscriptionID], notification.Params.Meta[mcp.MetaKeySubscriptionID])
+}
+
 // TestInProcessMCPClient_CloseStopsNotificationForwarding verifies that
 // Close() stops the notification-forwarding goroutine (no leak) and is
 // safe to call more than once.

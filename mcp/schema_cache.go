@@ -147,6 +147,7 @@ func (c *SchemaCache) Keys() []string {
 // MarshalJSON serialises the cache as a JSON object whose keys are type
 // names and whose values are the cached JSON schemas. Keys are emitted in
 // sorted order so that the encoded form is deterministic and diff-friendly.
+// Invalid JSON in a cached schema causes an error.
 func (c *SchemaCache) MarshalJSON() ([]byte, error) {
 	if c == nil {
 		return []byte("{}"), nil
@@ -154,28 +155,10 @@ func (c *SchemaCache) MarshalJSON() ([]byte, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	keys := make([]string, 0, len(c.schemas))
-	for k := range c.schemas {
-		keys = append(keys, k)
+	if len(c.schemas) == 0 {
+		return []byte("{}"), nil
 	}
-	sort.Strings(keys)
-
-	buf := make([]byte, 0, 64+len(c.schemas)*64)
-	buf = append(buf, '{')
-	for i, k := range keys {
-		if i > 0 {
-			buf = append(buf, ',')
-		}
-		keyBytes, err := json.Marshal(k)
-		if err != nil {
-			return nil, fmt.Errorf("marshal schema cache key: %w", err)
-		}
-		buf = append(buf, keyBytes...)
-		buf = append(buf, ':')
-		buf = append(buf, c.schemas[k]...)
-	}
-	buf = append(buf, '}')
-	return buf, nil
+	return json.Marshal(c.schemas)
 }
 
 // UnmarshalJSON loads a previously serialised cache, replacing any existing
