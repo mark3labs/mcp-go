@@ -696,7 +696,7 @@ func (r *CallToolResult) UnmarshalJSON(data []byte) error {
 	r.RawStructuredContent = nil
 	r.StructuredContent = nil
 	if len(raw.StructuredContent) > 0 {
-		r.RawStructuredContent = append(json.RawMessage(nil), raw.StructuredContent...)
+		r.RawStructuredContent = raw.StructuredContent
 		if err := json.Unmarshal(raw.StructuredContent, &r.StructuredContent); err != nil {
 			return err
 		}
