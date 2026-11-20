@@ -3038,7 +3038,7 @@ func (s *MCPServer) fireTaskHook(ctx context.Context, entry *taskEntry, fire fun
 	fire(ctx)
 }
 
-// getTask retrieves a task by ID, checking session isolation if applicable.
+// getTask retrieves a task by ID within the current session.
 // Returns a copy of the task and the done channel for waiting on completion.
 func (s *MCPServer) getTask(ctx context.Context, taskID string) (mcp.Task, chan struct{}, error) {
 	s.tasksMu.RLock()
@@ -3054,8 +3054,7 @@ func (s *MCPServer) getTask(ctx context.Context, taskID string) (mcp.Task, chan 
 	}
 
 	// Verify session isolation
-	sessionID := getSessionID(ctx)
-	if entry.sessionID != "" && sessionID != "" && entry.sessionID != sessionID {
+	if entry.sessionID != getSessionID(ctx) {
 		s.tasksMu.RUnlock()
 		return mcp.Task{}, nil, fmt.Errorf("task not found")
 	}
@@ -3084,8 +3083,7 @@ func (s *MCPServer) getTaskEntry(ctx context.Context, taskID string) (*taskEntry
 	s.tasksMu.RUnlock()
 
 	// Verify session isolation
-	sessionID := getSessionID(ctx)
-	if entry.sessionID != "" && sessionID != "" && entry.sessionID != sessionID {
+	if entry.sessionID != getSessionID(ctx) {
 		return nil, fmt.Errorf("task not found")
 	}
 
@@ -3101,8 +3099,7 @@ func (s *MCPServer) listTasks(ctx context.Context) []mcp.Task {
 
 	var tasks []mcp.Task
 	for _, entry := range s.tasks {
-		// Filter by session if applicable
-		if sessionID == "" || entry.sessionID == "" || entry.sessionID == sessionID {
+		if entry.sessionID == sessionID {
 			tasks = append(tasks, entry.task)
 		}
 	}
@@ -3156,7 +3153,7 @@ func (s *MCPServer) completeTask(entry *taskEntry, result any, err error) {
 	s.tasksMu.Unlock()
 
 	// Send task status notification
-	s.sendTaskStatusNotification(task)
+	s.sendTaskStatusNotification(entry.sessionID, task)
 
 	// Fire task hooks, after the created hook if it is still running
 	if s.taskHooks != nil {
@@ -3211,7 +3208,7 @@ func (s *MCPServer) cancelTaskEntry(ctx context.Context, entry *taskEntry, messa
 	if cancel != nil {
 		cancel()
 	}
-	s.sendTaskStatusNotification(task)
+	s.sendTaskStatusNotification(entry.sessionID, task)
 	if s.taskHooks != nil {
 		// After the created hook, if it is still running.
 		s.fireTaskHook(ctx, entry, func(ctx context.Context) { s.taskHooks.taskCancelled(ctx, metrics) })
@@ -3251,8 +3248,12 @@ func (s *MCPServer) scheduleTaskCleanup(taskID string, expected *taskEntry, ttlM
 	})
 }
 
-// sendTaskStatusNotification sends a notification when a task's status changes.
-func (s *MCPServer) sendTaskStatusNotification(task mcp.Task) {
+// sendTaskStatusNotification sends task status only to its originating session.
+func (s *MCPServer) sendTaskStatusNotification(sessionID string, task mcp.Task) {
+	if sessionID == "" {
+		return
+	}
+
 	// Convert task to map[string]any for notification params
 	taskMap := map[string]any{
 		"taskId":        task.TaskId,
@@ -3271,7 +3272,7 @@ func (s *MCPServer) sendTaskStatusNotification(task mcp.Task) {
 		taskMap["pollInterval"] = *task.PollInterval
 	}
 
-	s.SendNotificationToAllClients(mcp.MethodNotificationTasksStatus, taskMap)
+	_ = s.SendNotificationToSpecificClient(sessionID, mcp.MethodNotificationTasksStatus, taskMap)
 }
 
 // getSessionID extracts the session ID from the context.
