@@ -549,7 +549,7 @@ func createStreamableHTTPClientWithSession() {
 
     ctx := context.Background()
     // Use client...
-    _, err := c.ListTools(ctx, mcp.ListToolsRequest{})
+    _, err = c.ListTools(ctx, mcp.ListToolsRequest{})
     // If the session is terminated, you must reinitialize the client
     if errors.Is(err, transport.ErrSessionTerminated) {
         if err := startAndInitializeExampleClient(ctx, c); err != nil {

@@ -700,212 +700,130 @@ Some transports support subscriptions for receiving real-time notifications.
 
 ### Basic Subscription Handling
 
+`client.Client` delivers notifications through handlers registered with
+`OnNotification`; the callback receives the decoded `mcp.JSONRPCNotification`.
+Resource updates additionally require subscribing to the URIs you care about:
+
 ```go
 func handleSubscriptions(ctx context.Context, c *client.Client) {
-    // Check if client supports subscriptions
-    subscriber, ok := c.(client.Subscriber)
-    if !ok {
-        log.Println("Client does not support subscriptions")
-        return
-    }
+    // Register a handler before subscribing so no notification is missed.
+    c.OnNotification(func(notification mcp.JSONRPCNotification) {
+        handleNotification(notification.Method, notification.Params)
+    })
 
-    // Subscribe to notifications
-    notifications, err := subscriber.Subscribe(ctx)
-    if err != nil {
+    // Ask the server to send notifications/resources/updated for this URI.
+    if err := c.Subscribe(ctx, mcp.SubscribeRequest{
+        Params: mcp.SubscribeParams{URI: "file:///data/report.json"},
+    }); err != nil {
         log.Printf("Failed to subscribe: %v", err)
         return
     }
 
-    // Handle notifications
-    for {
-        select {
-        case notification := <-notifications:
-            handleNotification(notification)
-        case <-ctx.Done():
-            log.Println("Subscription cancelled")
-            return
-        }
-    }
+    // Unregister the URI when it is no longer needed.
+    defer func() {
+        _ = c.Unsubscribe(ctx, mcp.UnsubscribeRequest{
+            Params: mcp.UnsubscribeParams{URI: "file:///data/report.json"},
+        })
+    }()
+
+    // Handlers run until the connection closes or the context is cancelled.
+    <-ctx.Done()
 }
 
-func handleNotification(notification mcp.Notification) {
-    switch notification.Method {
+func handleNotification(method string, params mcp.NotificationParams) {
+    switch method {
     case "notifications/progress":
-        handleProgressNotification(notification)
+        handleProgressNotification(params)
     case "notifications/message":
-        handleMessageNotification(notification)
+        handleMessageNotification(params)
     case "notifications/resources/updated":
-        handleResourceUpdateNotification(notification)
-    case "notifications/tools/updated":
-        handleToolUpdateNotification(notification)
+        log.Println("Resource updated, refreshing cache...")
+    case "notifications/tools/list_changed":
+        log.Println("Tools changed, refreshing tool list...")
     default:
-        log.Printf("Unknown notification: %s", notification.Method)
+        log.Printf("Unknown notification: %s", method)
     }
 }
 
-func handleProgressNotification(notification mcp.Notification) {
-    var progress mcp.ProgressNotification
-    if err := json.Unmarshal(notification.Params, &progress); err != nil {
-        log.Printf("Failed to parse progress notification: %v", err)
-        return
+func handleProgressNotification(params mcp.NotificationParams) {
+    // NotificationParams keeps the raw JSON fields on the wire; decode the
+    // ones you need from AdditionalFields.
+    if token, ok := params.AdditionalFields["progressToken"]; ok {
+        log.Printf("Progress token: %v", token)
     }
-
-    fmt.Printf("Progress: %d/%d - %s\n", 
-        progress.Progress, 
-        progress.Total, 
-        progress.Message)
-}
-
-func handleMessageNotification(notification mcp.Notification) {
-    var message mcp.MessageNotification
-    if err := json.Unmarshal(notification.Params, &message); err != nil {
-        log.Printf("Failed to parse message notification: %v", err)
-        return
+    if progress, ok := params.AdditionalFields["progress"]; ok {
+        log.Printf("Progress: %v", progress)
     }
-
-    fmt.Printf("Server message: %s\n", message.Text)
 }
 
-func handleResourceUpdateNotification(notification mcp.Notification) {
-    log.Println("Resources updated, refreshing cache...")
-    // Invalidate resource cache or refresh resource list
-}
-
-func handleToolUpdateNotification(notification mcp.Notification) {
-    log.Println("Tools updated, refreshing tool list...")
-    // Refresh tool list
+func handleMessageNotification(params mcp.NotificationParams) {
+    if data, ok := params.AdditionalFields["data"]; ok {
+        log.Printf("Server message: %v", data)
+    }
 }
 ```
 
-### Advanced Subscription Management
+For protocol 2026-07-28 and later, `Listen` opts a connection into the
+notification kinds it wants instead of relying on per-URI subscribes:
+
+```go
+if err := c.Listen(ctx, mcp.SubscriptionFilter{
+    ToolsListChanged:      true,
+    ResourceSubscriptions: []string{"file:///data/report.json"},
+}); err != nil {
+    log.Printf("Failed to listen: %v", err)
+}
+```
+
+### Notification Dispatch
+
+To route notifications by method with several handlers, keep the map yourself
+and register a single `OnNotification` callback:
 
 ```go
 type SubscriptionManager struct {
-    client        *client.Client
-    subscriber    client.Subscriber
-    notifications chan mcp.Notification
-    handlers      map[string][]NotificationHandler
-    ctx           context.Context
-    cancel        context.CancelFunc
-    wg            sync.WaitGroup
-    mutex         sync.RWMutex
+    handlers map[string][]func(mcp.NotificationParams) error
+    mutex    sync.RWMutex
 }
 
-type NotificationHandler func(mcp.Notification) error
-
-func NewSubscriptionManager(c *client.Client) (*SubscriptionManager, error) {
-    subscriber, ok := c.(client.Subscriber)
-    if !ok {
-        return nil, fmt.Errorf("client does not support subscriptions")
-    }
-
-    ctx, cancel := context.WithCancel(context.Background())
-
+func NewSubscriptionManager(c *client.Client) *SubscriptionManager {
     sm := &SubscriptionManager{
-        client:     c,
-        subscriber: subscriber,
-        handlers:   make(map[string][]NotificationHandler),
-        ctx:        ctx,
-        cancel:     cancel,
+        handlers: make(map[string][]func(mcp.NotificationParams) error),
     }
-
-    return sm, nil
+    c.OnNotification(func(notification mcp.JSONRPCNotification) {
+        sm.dispatch(notification.Method, notification.Params)
+    })
+    return sm
 }
 
-func (sm *SubscriptionManager) Start() error {
-    notifications, err := sm.subscriber.Subscribe(sm.ctx)
-    if err != nil {
-        return fmt.Errorf("failed to subscribe: %w", err)
-    }
-
-    sm.notifications = notifications
-
-    sm.wg.Add(1)
-    go sm.handleNotifications()
-
-    return nil
-}
-
-func (sm *SubscriptionManager) Stop() {
-    sm.cancel()
-    sm.wg.Wait()
-}
-
-func (sm *SubscriptionManager) AddHandler(method string, handler NotificationHandler) {
+func (sm *SubscriptionManager) AddHandler(method string, handler func(mcp.NotificationParams) error) {
     sm.mutex.Lock()
     defer sm.mutex.Unlock()
-
     sm.handlers[method] = append(sm.handlers[method], handler)
 }
 
-func (sm *SubscriptionManager) RemoveHandler(method string, handler NotificationHandler) {
-    sm.mutex.Lock()
-    defer sm.mutex.Unlock()
-
-    handlers := sm.handlers[method]
-    for i, h := range handlers {
-        if reflect.ValueOf(h).Pointer() == reflect.ValueOf(handler).Pointer() {
-            sm.handlers[method] = append(handlers[:i], handlers[i+1:]...)
-            break
-        }
-    }
-}
-
-func (sm *SubscriptionManager) handleNotifications() {
-    defer sm.wg.Done()
-
-    for {
-        select {
-        case notification := <-sm.notifications:
-            sm.processNotification(notification)
-        case <-sm.ctx.Done():
-            return
-        }
-    }
-}
-
-func (sm *SubscriptionManager) processNotification(notification mcp.Notification) {
+func (sm *SubscriptionManager) dispatch(method string, params mcp.NotificationParams) {
     sm.mutex.RLock()
-    handlers := sm.handlers[notification.Method]
+    handlers := sm.handlers[method]
     sm.mutex.RUnlock()
 
     for _, handler := range handlers {
-        if err := handler(notification); err != nil {
-            log.Printf("Handler error for %s: %v", notification.Method, err)
+        if err := handler(params); err != nil {
+            log.Printf("Handler error for %s: %v", method, err)
         }
     }
 }
 
-// Usage example
+// Usage
 func demonstrateSubscriptionManager(c *client.Client) {
-    sm, err := NewSubscriptionManager(c)
-    if err != nil {
-        log.Printf("Failed to create subscription manager: %v", err)
-        return
-    }
+    sm := NewSubscriptionManager(c)
 
-    // Add handlers
-    sm.AddHandler("notifications/progress", func(n mcp.Notification) error {
-        log.Printf("Progress notification: %+v", n)
+    sm.AddHandler("notifications/progress", func(params mcp.NotificationParams) error {
+        log.Printf("Progress: %v", params.AdditionalFields["progress"])
         return nil
     })
 
-    sm.AddHandler("notifications/message", func(n mcp.Notification) error {
-        log.Printf("Message notification: %+v", n)
-        return nil
-    })
-
-    // Start handling
-    if err := sm.Start(); err != nil {
-        log.Printf("Failed to start subscription manager: %v", err)
-        return
-    }
-
-    // Let it run for a while
-    time.Sleep(30 * time.Second)
-
-    // Stop
-    sm.Stop()
+    // Keep the connection alive for as long as notifications are needed.
 }
 ```
 
