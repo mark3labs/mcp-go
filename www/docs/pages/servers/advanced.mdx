@@ -516,112 +516,121 @@ hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, messa
 
 ### Comprehensive Hooks
 
+`server.Hooks` is a plain struct of function slices — one field per lifecycle
+event. You do not implement an interface; you append callbacks to the fields you
+care about. `server.WithHooks` takes `*server.Hooks`.
+
 ```go
-type TelemetryHooks struct {
-    metrics MetricsCollector
-    logger  *log.Logger
-}
+// Build the hook set. Hooks has Add* methods for each event, so callbacks
+// compose rather than replace.
+func buildHooks(logger *log.Logger, metrics MetricsCollector) *server.Hooks {
+    hooks := &server.Hooks{}
 
-func NewTelemetryHooks(metrics MetricsCollector, logger *log.Logger) *TelemetryHooks {
-    return &TelemetryHooks{
-        metrics: metrics,
-        logger:  logger,
-    }
-}
-
-func (h *TelemetryHooks) OnServerStart() {
-    h.logger.Println("MCP Server starting")
-    h.metrics.Increment("server.starts")
-}
-
-func (h *TelemetryHooks) OnServerStop() {
-    h.logger.Println("MCP Server stopping")
-    h.metrics.Increment("server.stops")
-}
-
-func (h *TelemetryHooks) OnSessionStart(sessionID string) {
-    h.logger.Printf("Session started: %s", sessionID)
-    h.metrics.Increment("sessions.started")
-    h.metrics.Gauge("sessions.active", h.getActiveSessionCount())
-}
-
-func (h *TelemetryHooks) OnSessionEnd(sessionID string) {
-    h.logger.Printf("Session ended: %s", sessionID)
-    h.metrics.Increment("sessions.ended")
-    h.metrics.Gauge("sessions.active", h.getActiveSessionCount())
-}
-
-func (h *TelemetryHooks) OnToolCall(sessionID, toolName string, duration time.Duration, err error) {
-    h.metrics.Increment("tools.calls", map[string]string{
-        "tool":    toolName,
-        "session": sessionID,
+    // Session lifecycle: func(ctx context.Context, session server.ClientSession).
+    hooks.AddOnRegisterSession(func(ctx context.Context, session server.ClientSession) {
+        logger.Printf("session started: %s", session.SessionID())
+        metrics.Increment("sessions.started")
     })
-    h.metrics.Histogram("tools.duration", duration.Seconds(), map[string]string{
-        "tool": toolName,
+
+    hooks.AddOnUnregisterSession(func(ctx context.Context, session server.ClientSession) {
+        logger.Printf("session ended: %s", session.SessionID())
+        metrics.Increment("sessions.ended")
     })
-    
-    if err != nil {
-        h.metrics.Increment("tools.errors", map[string]string{
-            "tool": toolName,
+
+    // Tool calls. These are observe-only — see "Custom Business Logic Hooks"
+    // below for why a hook cannot reject a call.
+    hooks.AddBeforeCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest) {
+        logger.Printf("tool call: %s", message.Params.Name)
+    })
+
+    hooks.AddAfterCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest, result any) {
+        metrics.Increment("tools.calls", map[string]string{
+            "tool": message.Params.Name,
         })
-    }
-}
-
-func (h *TelemetryHooks) OnResourceRead(sessionID, uri string, duration time.Duration, err error) {
-    h.metrics.Increment("resources.reads", map[string]string{
-        "session": sessionID,
     })
-    h.metrics.Histogram("resources.duration", duration.Seconds())
-    
-    if err != nil {
-        h.metrics.Increment("resources.errors")
-    }
+
+    return hooks
 }
 ```
+
+Register them on the server:
+
+```go
+hooks := buildHooks(logger, metrics)
+s := server.NewMCPServer("My Server", "1.0.0",
+    server.WithHooks(hooks),
+)
+```
+
+Because `Hooks` is a value you own, you can build it once at startup and append
+to the same `*Hooks` when configuration changes. `WithHooks` stores the pointer,
+so later appends are visible to requests already being served.
 
 ### Custom Business Logic Hooks
 
+Business rules that only *observe* belong in the same `Hooks` struct. But note
+what hooks can and cannot do: every `On*` field is `func(ctx, id, request)` with
+**no return value**, so a hook cannot reject a call. It runs for its side effect
+and the request proceeds.
+
 ```go
-type BusinessHooks struct {
-    auditLogger AuditLogger
-    notifier    Notifier
-}
+func addAuditHooks(hooks *server.Hooks, audit AuditLogger) {
+    // Record every tool call. Observe-only: returning early here does not stop
+    // the handler.
+    hooks.AddBeforeCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest) {
+        session := server.ClientSessionFromContext(ctx)
+        if session == nil {
+            return
+        }
+        audit.LogToolCall(session.SessionID(), message.Params.Name)
+    })
 
-func (h *BusinessHooks) OnToolCall(sessionID, toolName string, duration time.Duration, err error) {
-    // Audit sensitive operations
-    if isSensitiveTool(toolName) {
-        h.auditLogger.LogToolCall(sessionID, toolName, err)
-    }
-    
-    // Alert on errors
-    if err != nil {
-        h.notifier.SendAlert(fmt.Sprintf("Tool %s failed for session %s: %v", 
-            toolName, sessionID, err))
-    }
-    
-    // Monitor performance
-    if duration > 30*time.Second {
-        h.notifier.SendAlert(fmt.Sprintf("Slow tool execution: %s took %v", 
-            toolName, duration))
-    }
-}
-
-func (h *BusinessHooks) OnSessionStart(sessionID string) {
-    // Initialize user-specific resources
-    h.initializeUserResources(sessionID)
-    
-    // Send welcome notification
-    h.notifier.SendWelcome(sessionID)
-}
-
-func (h *BusinessHooks) OnSessionEnd(sessionID string) {
-    // Cleanup user resources
-    h.cleanupUserResources(sessionID)
-    
-    // Log session summary
-    h.auditLogger.LogSessionEnd(sessionID)
+    // Record the outcome once the handler has run.
+    hooks.AddAfterCallTool(func(ctx context.Context, id any, message *mcp.CallToolRequest, result any) {
+        session := server.ClientSessionFromContext(ctx)
+        if session == nil {
+            return
+        }
+        audit.LogToolResult(session.SessionID(), message.Params.Name, result)
+    })
 }
 ```
+
+To actually **deny** a call, use a tool handler middleware instead — it wraps the
+handler and can return an error, which becomes the tool result:
+
+```go
+func permissionMiddleware(audit AuditLogger) server.ToolHandlerMiddleware {
+    return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
+        return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+            name := request.Params.Name
+            if isSensitiveTool(name) {
+                session := server.ClientSessionFromContext(ctx)
+                if session == nil {
+                    return nil, fmt.Errorf("no session for sensitive tool %s", name)
+                }
+                if err := audit.CheckAllowed(session.SessionID(), name); err != nil {
+                    return nil, err
+                }
+            }
+            return next(ctx, request)
+        }
+    }
+}
+```
+
+Register it with the server:
+
+```go
+s := server.NewMCPServer("My Server", "1.0.0",
+    server.WithHooks(hooks),
+    server.WithToolHandlerMiddleware(permissionMiddleware(audit)),
+)
+```
+
+So the division is: `Hooks` for observation and metrics, middleware for
+enforcement. Both run around the same call, hooks outside the middleware chain.
+
 
 ## Tool Filtering
 
@@ -854,17 +863,18 @@ func main() {
     rateLimitMW := NewRateLimitMiddleware(10.0, 20) // 10 req/sec, burst 20
     authMW := NewAuthMiddleware(NewJWTValidator())
     
-    // Create hooks
-    telemetryHooks := NewTelemetryHooks(metrics, logger)
-    businessHooks := NewBusinessHooks(NewAuditLogger(), NewSlackNotifier())
-    
+    // Create hooks. server.WithHooks takes *server.Hooks, so build that struct
+    // rather than a custom type.
+    hooks := buildHooks(logger, metrics)
+    addAuditHooks(hooks, NewAuditLogger())
+
     // Create server with all features
     s := server.NewMCPServer("Production Server", "1.0.0",
         server.WithToolCapabilities(true),
         server.WithResourceCapabilities(false, true),
         server.WithPromptCapabilities(true),
         server.WithRecovery(),
-        server.WithHooks(telemetryHooks),
+        server.WithHooks(hooks),
         server.WithToolHandlerMiddleware(loggingMW.ToolMiddleware),
         server.WithToolFilter(NewPermissionFilter(sessionManager)),
     )
