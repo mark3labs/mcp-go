@@ -205,6 +205,10 @@ func (s *MCPServer) handleMessage(
 	// 2026-07-28: resultType, serverInfo, and caching hints.
 	defer func() { resp = s.decorateResponse(ctx, protocolInfo, baseMessage.Method, resp) }()
 
+	s.capabilitiesMu.RLock()
+	capabilities := s.capabilities
+	s.capabilitiesMu.RUnlock()
+
 	switch baseMessage.Method {
 	case mcp.MethodInitialize:
 		var request mcp.InitializeRequest
@@ -319,7 +323,7 @@ func (s *MCPServer) handleMessage(
 				code: mcp.METHOD_NOT_FOUND,
 				err:  fmt.Errorf("%q %w", baseMessage.Method, ErrRemovedInProtocolVersion),
 			}
-		} else if s.capabilities.logging == nil {
+		} else if capabilities.logging == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
@@ -345,7 +349,7 @@ func (s *MCPServer) handleMessage(
 	case mcp.MethodResourcesList:
 		var request mcp.ListResourcesRequest
 		var result *mcp.ListResourcesResult
-		if s.capabilities.resources == nil {
+		if capabilities.resources == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
@@ -371,7 +375,7 @@ func (s *MCPServer) handleMessage(
 	case mcp.MethodResourcesTemplatesList:
 		var request mcp.ListResourceTemplatesRequest
 		var result *mcp.ListResourceTemplatesResult
-		if s.capabilities.resources == nil {
+		if capabilities.resources == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
@@ -397,7 +401,7 @@ func (s *MCPServer) handleMessage(
 	case mcp.MethodResourcesRead:
 		var request mcp.ReadResourceRequest
 		var result *mcp.ReadResourceResult
-		if s.capabilities.resources == nil {
+		if capabilities.resources == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
@@ -429,7 +433,7 @@ func (s *MCPServer) handleMessage(
 				code: mcp.METHOD_NOT_FOUND,
 				err:  fmt.Errorf("%q %w", baseMessage.Method, ErrRemovedInProtocolVersion),
 			}
-		} else if s.capabilities.resources == nil {
+		} else if capabilities.resources == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
@@ -461,7 +465,7 @@ func (s *MCPServer) handleMessage(
 				code: mcp.METHOD_NOT_FOUND,
 				err:  fmt.Errorf("%q %w", baseMessage.Method, ErrRemovedInProtocolVersion),
 			}
-		} else if s.capabilities.resources == nil {
+		} else if capabilities.resources == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
@@ -487,7 +491,7 @@ func (s *MCPServer) handleMessage(
 	case mcp.MethodPromptsList:
 		var request mcp.ListPromptsRequest
 		var result *mcp.ListPromptsResult
-		if s.capabilities.prompts == nil {
+		if capabilities.prompts == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
@@ -513,7 +517,7 @@ func (s *MCPServer) handleMessage(
 	case mcp.MethodPromptsGet:
 		var request mcp.GetPromptRequest
 		var result *mcp.GetPromptResult
-		if s.capabilities.prompts == nil {
+		if capabilities.prompts == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
@@ -539,7 +543,7 @@ func (s *MCPServer) handleMessage(
 	case mcp.MethodToolsList:
 		var request mcp.ListToolsRequest
 		var result *mcp.ListToolsResult
-		if s.capabilities.tools == nil {
+		if capabilities.tools == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
@@ -565,7 +569,7 @@ func (s *MCPServer) handleMessage(
 	case mcp.MethodToolsCall:
 		var request mcp.CallToolRequest
 		var result any
-		if s.capabilities.tools == nil {
+		if capabilities.tools == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
@@ -591,7 +595,7 @@ func (s *MCPServer) handleMessage(
 	case mcp.MethodTasksGet:
 		var request mcp.GetTaskRequest
 		var result *mcp.GetTaskResult
-		if s.capabilities.tasks == nil {
+		if capabilities.tasks == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
@@ -623,7 +627,7 @@ func (s *MCPServer) handleMessage(
 				code: mcp.METHOD_NOT_FOUND,
 				err:  fmt.Errorf("%q %w", baseMessage.Method, ErrRemovedInProtocolVersion),
 			}
-		} else if s.capabilities.tasks == nil {
+		} else if capabilities.tasks == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
@@ -655,7 +659,7 @@ func (s *MCPServer) handleMessage(
 				code: mcp.METHOD_NOT_FOUND,
 				err:  fmt.Errorf("%q %w", baseMessage.Method, ErrRemovedInProtocolVersion),
 			}
-		} else if s.capabilities.tasks == nil {
+		} else if capabilities.tasks == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
@@ -681,7 +685,7 @@ func (s *MCPServer) handleMessage(
 	case mcp.MethodTasksCancel:
 		var request mcp.CancelTaskRequest
 		var result *mcp.CancelTaskResult
-		if s.capabilities.tasks == nil {
+		if capabilities.tasks == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
@@ -707,7 +711,7 @@ func (s *MCPServer) handleMessage(
 	case mcp.MethodCompletionComplete:
 		var request mcp.CompleteRequest
 		var result *mcp.CompleteResult
-		if s.capabilities.completions == nil {
+		if capabilities.completions == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
