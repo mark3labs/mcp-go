@@ -67,6 +67,21 @@ func (s *MCPServer) handleSubscriptionsListen(
 		}
 	}
 
+	// The Tasks specification requires this check even when task notifications
+	// are unsupported and clients must poll tasks/get.
+	if len(request.Params.Notifications.TaskIDs) > 0 {
+		info := RequestProtocolInfoFromContext(ctx)
+		if info == nil || info.ClientCapabilities == nil ||
+			!info.ClientCapabilities.HasExtension(mcp.ExtensionTasks) {
+			return nil, &requestError{
+				id:   id,
+				code: mcp.MISSING_REQUIRED_CLIENT_CAPABILITY,
+				err:  fmt.Errorf("task status notifications require the %s extension", mcp.ExtensionTasks),
+				data: missingExtensionData(mcp.ExtensionTasks),
+			}
+		}
+	}
+
 	session := ClientSessionFromContext(ctx)
 	if session == nil {
 		return nil, &requestError{

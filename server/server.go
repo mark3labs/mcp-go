@@ -53,6 +53,9 @@ type taskEntry struct {
 	// inputRequests holds the pending input requests the task is waiting on
 	// when it is in the input_required state.
 	inputRequests mcp.InputRequests
+	// deliveredInputKeys records keys published during this task's lifetime.
+	// Keys must not be reused in a later input round.
+	deliveredInputKeys map[string]struct{}
 	// createdHookDone, under tasksMu, says the created hook has returned;
 	// until then the hook of a completion or cancellation waits in
 	// pendingHooks, which createTask runs after the created hook. A task's
@@ -2770,8 +2773,7 @@ func (s *MCPServer) executeRegularToolAsTask(
 			}
 			responses, ok := s.awaitTaskInput(taskCtx, entry, result.InputRequests)
 			if !ok {
-				// Task was cancelled or expired while awaiting input, the
-				// cancellation path owns the terminal status.
+				// Preserve an existing terminal state, otherwise record cancellation.
 				_ = s.cancelTaskEntry(ctx, entry, "Task cancelled while awaiting input", false)
 				return
 			}
@@ -2801,6 +2803,7 @@ func (s *MCPServer) executeRegularToolAsTask(
 // awaitTaskInput parks a task in input_required, publishing requests for the
 // client to answer via tasks/update, and blocks until all answers arrive or the
 // task is cancelled/expired (taskCtx done).
+// Reusing a key from an earlier input round fails the task before publication.
 func (s *MCPServer) awaitTaskInput(
 	taskCtx context.Context,
 	entry *taskEntry,
@@ -2810,6 +2813,21 @@ func (s *MCPServer) awaitTaskInput(
 	if entry.completed {
 		s.tasksMu.Unlock()
 		return nil, false
+	}
+	for key := range requests {
+		if _, delivered := entry.deliveredInputKeys[key]; delivered {
+			s.tasksMu.Unlock()
+			s.completeTask(entry, nil, fmt.Errorf(
+				"tool %q re-issued input request key %q; inputRequests keys must be unique over a task's lifetime",
+				entry.toolName, key))
+			return nil, false
+		}
+	}
+	if entry.deliveredInputKeys == nil {
+		entry.deliveredInputKeys = make(map[string]struct{}, len(requests))
+	}
+	for key := range requests {
+		entry.deliveredInputKeys[key] = struct{}{}
 	}
 	entry.task.Status = mcp.TaskStatusInputRequired
 	entry.task.LastUpdatedAt = time.Now().UTC().Format(time.RFC3339)
@@ -2994,11 +3012,10 @@ func (s *MCPServer) handleUpdateTask(
 	s.tasksMu.Lock()
 	if status := entry.task.Status; status != mcp.TaskStatusInputRequired {
 		s.tasksMu.Unlock()
-		return nil, &requestError{
-			id:   id,
-			code: mcp.INVALID_PARAMS,
-			err:  fmt.Errorf("task %q is not awaiting input (status: %s)", request.Params.TaskId, status),
-		}
+		// No inputs are outstanding, acknowledge retries without applying them again.
+		result := &mcp.UpdateTaskResult{}
+		result.SetResultType(mcp.ResultTypeComplete)
+		return result, nil
 	}
 	if entry.inputResponses == nil {
 		entry.inputResponses = make(mcp.InputResponses)

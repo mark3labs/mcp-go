@@ -52,9 +52,14 @@ type SubscriptionFilter struct {
 	// ResourceSubscriptions opts in to notifications/resources/updated for the
 	// listed resource URIs. It replaces the resources/subscribe RPC.
 	ResourceSubscriptions []string `json:"resourceSubscriptions,omitempty"`
+	// TaskIDs requests notifications/tasks for the listed task IDs and requires
+	// the Tasks extension capability. Unsupported task subscriptions are omitted
+	// from the acknowledged filter.
+	TaskIDs []string `json:"taskIds,omitempty"`
 }
 
-// IsEmpty reports whether the filter opts in to nothing.
+// IsEmpty reports whether the filter requests no supported notifications.
+// TaskIDs does not participate because task notifications are unsupported.
 func (f SubscriptionFilter) IsEmpty() bool {
 	return !f.ToolsListChanged &&
 		!f.PromptsListChanged &&
