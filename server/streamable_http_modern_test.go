@@ -85,6 +85,66 @@ func decodeJSONRPC(t *testing.T, resp *http.Response) map[string]any {
 	return message
 }
 
+func TestModernProtocol_TaskSessionIsolation(t *testing.T) {
+	s := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+	s.AddTool(mcp.NewTool("work", mcp.WithTaskSupport(mcp.TaskSupportOptional)), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return mcp.NewToolResultText("private-result"), nil
+	})
+	httpServer := httptest.NewServer(NewStreamableHTTPServer(s, WithStateful(true)))
+	defer httpServer.Close()
+	sessionID := initializeSession(t, httpServer.URL)
+
+	postLegacy := func(method mcp.MCPMethod, params map[string]any) map[string]any {
+		body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+		require.NoError(t, err)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, httpServer.URL, bytes.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		req.Header.Set(HeaderKeySessionID, sessionID)
+		req.Header.Set(mcp.HeaderProtocolVersion, mcp.ProtocolVersion20251125)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		if resp.Header.Get("Content-Type") != "text/event-stream" {
+			return decodeJSONRPC(t, resp)
+		}
+		reader := bufio.NewReader(resp.Body)
+		for {
+			var message map[string]any
+			readSSEData(t, reader, &message)
+			if message["id"] == float64(1) {
+				return message
+			}
+		}
+	}
+
+	legacyCreated := postLegacy(mcp.MethodToolsCall, map[string]any{"name": "work", "arguments": map[string]any{}, "task": map[string]any{}})
+	legacyTaskID := legacyCreated["result"].(map[string]any)["task"].(map[string]any)["taskId"].(string)
+	modernCreated := decodeJSONRPC(t, postModern(t, httpServer.URL, mcp.MethodToolsCall, map[string]any{"name": "work", "arguments": map[string]any{}, "task": map[string]any{}}))
+	modernTaskID := modernCreated["result"].(map[string]any)["task"].(map[string]any)["taskId"].(string)
+
+	modernLookup := decodeJSONRPC(t, postModern(t, httpServer.URL, mcp.MethodTasksGet, map[string]any{"taskId": legacyTaskID}))
+	require.Contains(t, modernLookup, "error")
+	assert.Equal(t, float64(mcp.INVALID_PARAMS), modernLookup["error"].(map[string]any)["code"])
+
+	legacyList := postLegacy(mcp.MethodTasksList, map[string]any{})
+	tasks := legacyList["result"].(map[string]any)["tasks"].([]any)
+	require.Len(t, tasks, 1)
+	assert.Equal(t, legacyTaskID, tasks[0].(map[string]any)["taskId"])
+
+	for _, method := range []mcp.MCPMethod{mcp.MethodTasksGet, mcp.MethodTasksResult} {
+		lookup := postLegacy(method, map[string]any{"taskId": modernTaskID})
+		require.Contains(t, lookup, "error")
+		assert.Equal(t, float64(mcp.INVALID_PARAMS), lookup["error"].(map[string]any)["code"])
+	}
+
+	legacyLookup := postLegacy(mcp.MethodTasksGet, map[string]any{"taskId": legacyTaskID})
+	assert.Equal(t, legacyTaskID, legacyLookup["result"].(map[string]any)["taskId"])
+	modernOwnLookup := decodeJSONRPC(t, postModern(t, httpServer.URL, mcp.MethodTasksGet, map[string]any{"taskId": modernTaskID}))
+	assert.Equal(t, modernTaskID, modernOwnLookup["result"].(map[string]any)["taskId"])
+}
+
 func newModernTestServer(t *testing.T, opts ...ServerOption) *httptest.Server {
 	t.Helper()
 
