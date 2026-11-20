@@ -282,3 +282,119 @@ func TestWithRequestClientCapabilities(t *testing.T) {
 		})
 	}
 }
+
+type legacyOnlyDiscoverRejectTransport struct {
+	supportedVersions []string
+	initCalled        bool
+	initVersion       string
+}
+
+func (m *legacyOnlyDiscoverRejectTransport) Start(ctx context.Context) error { return nil }
+func (m *legacyOnlyDiscoverRejectTransport) Close() error                    { return nil }
+func (m *legacyOnlyDiscoverRejectTransport) SendNotification(ctx context.Context, notification mcp.JSONRPCNotification) error {
+	return nil
+}
+func (m *legacyOnlyDiscoverRejectTransport) SetNotificationHandler(handler func(notification mcp.JSONRPCNotification)) {
+}
+func (m *legacyOnlyDiscoverRejectTransport) GetSessionId() string { return "" }
+func (m *legacyOnlyDiscoverRejectTransport) SendRequest(ctx context.Context, request transport.JSONRPCRequest) (*transport.JSONRPCResponse, error) {
+	switch request.Method {
+	case "server/discover":
+		return &transport.JSONRPCResponse{
+			JSONRPC: mcp.JSONRPC_VERSION,
+			ID:      request.ID,
+			Error: &mcp.JSONRPCErrorDetails{
+				Code:    mcp.UNSUPPORTED_PROTOCOL_VERSION,
+				Message: "Unsupported protocol version",
+				Data: map[string]any{
+					"supported": m.supportedVersions,
+				},
+			},
+		}, nil
+	case "initialize":
+		m.initCalled = true
+		b, _ := json.Marshal(request.Params)
+		var p struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		_ = json.Unmarshal(b, &p)
+		m.initVersion = p.ProtocolVersion
+		res := json.RawMessage(fmt.Sprintf(`{
+			"protocolVersion": "%s",
+			"capabilities": {},
+			"serverInfo": {"name": "legacy-only", "version": "1.0"}
+		}`, p.ProtocolVersion))
+		return &transport.JSONRPCResponse{
+			JSONRPC: mcp.JSONRPC_VERSION,
+			ID:      request.ID,
+			Result:  res,
+		}, nil
+	default:
+		return nil, fmt.Errorf("unexpected method: %s", request.Method)
+	}
+}
+
+func TestInitialize_LegacyFallbackOnUnsupportedProtocolVersion(t *testing.T) {
+	t.Run("falls back to legacy initialize when server advertises only legacy versions", func(t *testing.T) {
+		tr := &legacyOnlyDiscoverRejectTransport{
+			supportedVersions: []string{"2025-11-25", "2025-06-18", "2025-03-26"},
+		}
+		c := NewClient(tr)
+		res, err := c.Initialize(t.Context(), mcp.InitializeRequest{
+			Params: mcp.InitializeParams{
+				ClientInfo: mcp.Implementation{Name: "test-client", Version: "1.0"},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Initialize() unexpected error: %v", err)
+		}
+		if !tr.initCalled {
+			t.Fatal("expected legacy initialize handshake to be called")
+		}
+		if tr.initVersion != "2025-11-25" || res.ProtocolVersion != "2025-11-25" {
+			t.Errorf("got initVersion=%q, result.ProtocolVersion=%q; want 2025-11-25", tr.initVersion, res.ProtocolVersion)
+		}
+	})
+
+	t.Run("uses mutually supported older legacy version during fallback", func(t *testing.T) {
+		tr := &legacyOnlyDiscoverRejectTransport{
+			supportedVersions: []string{"2025-03-26"},
+		}
+		c := NewClient(tr)
+		res, err := c.Initialize(t.Context(), mcp.InitializeRequest{
+			Params: mcp.InitializeParams{
+				ClientInfo: mcp.Implementation{Name: "test-client", Version: "1.0"},
+			},
+		})
+		if err != nil {
+			t.Fatalf("Initialize() unexpected error: %v", err)
+		}
+		if !tr.initCalled {
+			t.Fatal("expected legacy initialize handshake to be called")
+		}
+		if tr.initVersion != "2025-03-26" || res.ProtocolVersion != "2025-03-26" {
+			t.Errorf("got initVersion=%q, result.ProtocolVersion=%q; want 2025-03-26", tr.initVersion, res.ProtocolVersion)
+		}
+	})
+
+	t.Run("returns error without legacy fallback when no version is mutually supported", func(t *testing.T) {
+		tr := &legacyOnlyDiscoverRejectTransport{
+			supportedVersions: []string{"2099-01-01"},
+		}
+		c := NewClient(tr)
+		_, err := c.Initialize(t.Context(), mcp.InitializeRequest{
+			Params: mcp.InitializeParams{
+				ClientInfo: mcp.Implementation{Name: "test-client", Version: "1.0"},
+			},
+		})
+		if err == nil {
+			t.Fatal("expected error when no protocol version is mutually supported")
+		}
+		if !mcp.IsUnsupportedProtocolVersion(err) {
+			t.Errorf("expected UnsupportedProtocolVersionError, got %T: %v", err, err)
+		}
+		if tr.initCalled {
+			t.Error("legacy initialize should not be called when no version is mutually supported")
+		}
+	})
+}
