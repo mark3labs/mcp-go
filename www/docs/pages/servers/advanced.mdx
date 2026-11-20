@@ -307,8 +307,12 @@ func main() {
 
 func createSessionAwareTool(sm *SessionManager) server.ToolHandlerFunc {
     return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-        sessionID := server.GetSessionID(ctx)
-        session, exists := sm.GetSession(sessionID)
+        clientSession := server.ClientSessionFromContext(ctx)
+        if clientSession == nil {
+            return nil, fmt.Errorf("no active session")
+        }
+
+        session, exists := sm.GetSession(clientSession.SessionID())
         if !exists {
             return nil, fmt.Errorf("invalid session")
         }
@@ -354,7 +358,10 @@ func NewLoggingMiddleware(logger *log.Logger) *LoggingMiddleware {
 func (m *LoggingMiddleware) ToolMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
     return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
         start := time.Now()
-        sessionID := server.GetSessionID(ctx)
+        sessionID := ""
+        if session := server.ClientSessionFromContext(ctx); session != nil {
+            sessionID = session.SessionID()
+        }
         
         m.logger.Printf("Tool call started: tool=%s", req.Params.Name)
         
@@ -376,7 +383,10 @@ func (m *LoggingMiddleware) ToolMiddleware(next server.ToolHandlerFunc) server.T
 func (m *LoggingMiddleware) ResourceMiddleware(next server.ResourceHandlerFunc) server.ResourceHandlerFunc {
     return func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
         start := time.Now()
-        sessionID := server.GetSessionID(ctx)
+        sessionID := ""
+        if session := server.ClientSessionFromContext(ctx); session != nil {
+            sessionID = session.SessionID()
+        }
         
         m.logger.Printf("Resource read started: session=%s uri=%s", sessionID, req.Params.URI)
         
@@ -431,7 +441,12 @@ func (m *RateLimitMiddleware) getLimiter(sessionID string) *rate.Limiter {
 
 func (m *RateLimitMiddleware) ToolMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
     return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-        sessionID := server.GetSessionID(ctx)
+        session := server.ClientSessionFromContext(ctx)
+        if session == nil {
+            return nil, fmt.Errorf("no active session")
+        }
+
+        sessionID := session.SessionID()
         limiter := m.getLimiter(sessionID)
         
         if !limiter.Allow() {
@@ -624,8 +639,12 @@ func NewPermissionFilter(sm *SessionManager) *PermissionFilter {
 }
 
 func (f *PermissionFilter) FilterTools(ctx context.Context, tools []mcp.Tool) []mcp.Tool {
-    sessionID := server.GetSessionID(ctx)
-    session, exists := f.sessionManager.GetSession(sessionID)
+    clientSession := server.ClientSessionFromContext(ctx)
+    if clientSession == nil {
+        return []mcp.Tool{} // No tools without a session
+    }
+
+    session, exists := f.sessionManager.GetSession(clientSession.SessionID())
     if !exists {
         return []mcp.Tool{} // No tools for invalid sessions
     }
@@ -777,11 +796,14 @@ func (n *CustomNotifier) SendAlert(sessionID, message string, severity string) {
     if ch, exists := n.sessions[sessionID]; exists {
         select {
         case ch <- mcp.Notification{
-            Type: "alert",
-            Data: map[string]interface{}{
-                "message":  message,
-                "severity": severity,
-                "timestamp": time.Now().Unix(),
+            Method: "notifications/message",
+            Params: mcp.NotificationParams{
+                AdditionalFields: map[string]any{
+                    "type":      "alert",
+                    "message":   message,
+                    "severity":  severity,
+                    "timestamp": time.Now().Unix(),
+                },
             },
         }:
         default:
@@ -795,10 +817,13 @@ func (n *CustomNotifier) BroadcastSystemMessage(message string) {
     defer n.mutex.RUnlock()
     
     notification := mcp.Notification{
-        Type: "system_message",
-        Data: map[string]interface{}{
-            "message":   message,
-            "timestamp": time.Now().Unix(),
+        Method: "notifications/message",
+        Params: mcp.NotificationParams{
+            AdditionalFields: map[string]any{
+                "type":      "system_message",
+                "message":   message,
+                "timestamp": time.Now().Unix(),
+            },
         },
     }
     

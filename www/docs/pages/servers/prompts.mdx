@@ -134,7 +134,13 @@ func handleCodeReview(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPr
             {
                 Role: "user",
                 Content: mcp.NewTextContent(fmt.Sprintf(
-                    "Please review the following %s code:\n\n%s\n\nInstructions: %s\n\nPlease provide:\n1. Overall assessment\n2. Specific issues found\n3. Suggested improvements\n4. Best practice recommendations\n\nCode:\n
+                    "Please review the following %s code:\n\n%s\n\nInstructions: %s\n\nPlease provide:\n1. Overall assessment\n2. Specific issues found\n3. Suggested improvements\n4. Best practice recommendations",
+                    language, code, instructions,
+                )),
+            },
+        },
+    }, nil
+}
 ```
 
 ### Data Analysis Prompt

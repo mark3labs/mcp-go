@@ -105,19 +105,17 @@ func main() {
     server.ServeStdio(s)
 }
 
-func handleReadmeFile(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+func handleReadmeFile(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
     content, err := os.ReadFile("README.md")
     if err != nil {
         return nil, fmt.Errorf("failed to read README: %w", err)
     }
 
-    return &mcp.ReadResourceResult{
-        Contents: []mcp.ResourceContent{
-            {
-                URI:      req.Params.URI,
-                MIMEType: "text/markdown",
-                Text:     string(content),
-            },
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "text/markdown",
+            Text:     string(content),
         },
     }, nil
 }
@@ -139,7 +137,7 @@ s.AddResource(
     handleAppConfig,
 )
 
-func handleAppConfig(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+func handleAppConfig(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
     config := map[string]interface{}{
         "database_url": os.Getenv("DATABASE_URL"),
         "debug_mode":   os.Getenv("DEBUG") == "true",
@@ -156,13 +154,11 @@ func handleAppConfig(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.Rea
         return nil, err
     }
     
-    return &mcp.ReadResourceResult{
-        Contents: []mcp.ResourceContent{
-            mcp.TextResourceContent{
-                URI:      req.Params.URI,
-                MIMEType: "application/json",
-                Text:     string(configJSON),
-            },
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "application/json",
+            Text:     string(configJSON),
         },
     }, nil
 }
@@ -188,7 +184,7 @@ s.AddResource(
     handleUserProfile,
 )
 
-func handleUserProfile(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+func handleUserProfile(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
     // Extract user_id from URI
     userID := extractUserID(req.Params.URI) // "users://123" -> "123"
     
@@ -248,7 +244,7 @@ s.AddResource(
     handleDatabaseRecord,
 )
 
-func handleDatabaseRecord(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+func handleDatabaseRecord(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
     table, id := parseDBURI(req.Params.URI) // "db://users/123" -> "users", "123"
     
     // Validate table name for security
@@ -276,13 +272,11 @@ func handleDatabaseRecord(ctx context.Context, req mcp.ReadResourceRequest) (*mc
         return nil, err
     }
     
-    return &mcp.ReadResourceResult{
-        Contents: []mcp.ResourceContent{
-            mcp.TextResourceContent{
-                URI:      req.Params.URI,
-                MIMEType: "application/json",
-                Text:     string(jsonData),
-            },
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "application/json",
+            Text:     string(jsonData),
         },
     }, nil
 }
@@ -305,7 +299,7 @@ s.AddResource(
     handleWeatherData,
 )
 
-func handleWeatherData(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+func handleWeatherData(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
     location := extractLocation(req.Params.URI)
     
     // Call external weather API
@@ -323,13 +317,11 @@ func handleWeatherData(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.R
         return nil, fmt.Errorf("failed to read response: %w", err)
     }
 
-    return &mcp.ReadResourceResult{
-        Contents: []mcp.ResourceContent{
-            {
-                URI:      req.Params.URI,
-                MIMEType: "application/json",
-                Text:     string(body),
-            },
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "application/json",
+            Text:     string(body),
         },
     }, nil
 }
@@ -342,16 +334,14 @@ Resources can serve different types of content with appropriate MIME types.
 ### Text Content
 
 ```go
-func handleTextResource(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+func handleTextResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
     content := "This is plain text content"
     
-    return &mcp.ReadResourceResult{
-        Contents: []mcp.ResourceContent{
-            {
-                URI:      req.Params.URI,
-                MIMEType: "text/plain",
-                Text:     content,
-            },
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "text/plain",
+            Text:     content,
         },
     }, nil
 }
@@ -385,7 +375,7 @@ func handleJSONResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp
 ### Binary Content
 
 ```go
-func handleImageResource(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+func handleImageResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
     imageData, err := os.ReadFile("logo.png")
     if err != nil {
         return nil, err
@@ -394,13 +384,11 @@ func handleImageResource(ctx context.Context, req mcp.ReadResourceRequest) (*mcp
     // Encode binary data as base64
     encoded := base64.StdEncoding.EncodeToString(imageData)
     
-    return &mcp.ReadResourceResult{
-        Contents: []mcp.ResourceContent{
-            {
-                URI:      req.Params.URI,
-                MIMEType: "image/png",
-                Blob:     encoded,
-            },
+    return []mcp.ResourceContents{
+        mcp.BlobResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "image/png",
+            Blob:     encoded,
         },
     }, nil
 }
@@ -411,7 +399,7 @@ func handleImageResource(ctx context.Context, req mcp.ReadResourceRequest) (*mcp
 A single resource can return multiple content representations:
 
 ```go
-func handleMultiFormatResource(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+func handleMultiFormatResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
     data := map[string]interface{}{
         "name": "John Doe",
         "age":  30,
@@ -425,18 +413,16 @@ func handleMultiFormatResource(ctx context.Context, req mcp.ReadResourceRequest)
     textData := fmt.Sprintf("Name: %s\nAge: %d\nCity: %s", 
         data["name"], data["age"], data["city"])
     
-    return &mcp.ReadResourceResult{
-        Contents: []mcp.ResourceContent{
-            {
-                URI:      req.Params.URI,
-                MIMEType: "application/json",
-                Text:     string(jsonData),
-            },
-            {
-                URI:      req.Params.URI,
-                MIMEType: "text/plain", 
-                Text:     textData,
-            },
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "application/json",
+            Text:     string(jsonData),
+        },
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "text/plain", 
+            Text:     textData,
         },
     }, nil
 }
@@ -449,7 +435,7 @@ Proper error handling ensures robust resource access:
 ### Common Error Patterns
 
 ```go
-func handleResourceWithErrors(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+func handleResourceWithErrors(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
     // Validate URI format
     if !isValidURI(req.Params.URI) {
         return nil, fmt.Errorf("invalid URI format: %s", req.Params.URI)
@@ -474,13 +460,11 @@ func handleResourceWithErrors(ctx context.Context, req mcp.ReadResourceRequest) 
         return nil, err
     }
     
-    return &mcp.ReadResourceResult{
-        Contents: []mcp.ResourceContents{
-            mcp.TextResourceContents{
-                URI:      req.Params.URI,
-                MIMEType: "application/json",
-                Text:     string(jsonData),
-            },
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "application/json",
+            Text:     string(jsonData),
         },
     }, nil
 }
@@ -489,7 +473,7 @@ func handleResourceWithErrors(ctx context.Context, req mcp.ReadResourceRequest) 
 ### Timeout Handling
 
 ```go
-func handleResourceWithTimeout(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+func handleResourceWithTimeout(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
     // Create timeout context
     ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
     defer cancel()
@@ -508,13 +492,11 @@ func handleResourceWithTimeout(ctx context.Context, req mcp.ReadResourceRequest)
         return nil, err
     }
     
-    return &mcp.ReadResourceResult{
-        Contents: []mcp.ResourceContent{
-            mcp.TextResourceContent{
-                URI:      req.Params.URI,
-                MIMEType: "application/json",
-                Text:     string(jsonData),
-            },
+    return []mcp.ResourceContents{
+        mcp.TextResourceContents{
+            URI:      req.Params.URI,
+            MIMEType: "application/json",
+            Text:     string(jsonData),
         },
     }, nil
 }
@@ -564,17 +546,18 @@ Implement caching for expensive resources:
 
 ```go
 type CachedResourceHandler struct {
+    next  server.ResourceHandlerFunc
     cache map[string]cacheEntry
     mutex sync.RWMutex
     ttl   time.Duration
 }
 
 type cacheEntry struct {
-    data      *mcp.ReadResourceResult
+    data      []mcp.ResourceContents
     timestamp time.Time
 }
 
-func (h *CachedResourceHandler) HandleResource(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+func (h *CachedResourceHandler) HandleResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
     h.mutex.RLock()
     if entry, exists := h.cache[req.Params.URI]; exists {
         if time.Since(entry.timestamp) < h.ttl {
@@ -584,8 +567,8 @@ func (h *CachedResourceHandler) HandleResource(ctx context.Context, req mcp.Read
     }
     h.mutex.RUnlock()
 
-    // Fetch fresh data
-    data, err := h.fetchFreshData(ctx, req)
+    // Fetch fresh data from the wrapped handler
+    data, err := h.next(ctx, req)
     if err != nil {
         return nil, err
     }

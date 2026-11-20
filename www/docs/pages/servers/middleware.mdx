@@ -114,7 +114,7 @@ func authMiddleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
 
 ### Rate-Limiting Middleware
 
-Limit the number of tool calls per session. This example uses [`golang.org/x/time/rate`](https://pkg.go.dev/golang.org/x/time/rate) and `server.GetSessionID()` to identify the caller:
+Limit the number of tool calls per session. This example uses [`golang.org/x/time/rate`](https://pkg.go.dev/golang.org/x/time/rate) and `server.ClientSessionFromContext(ctx).SessionID()` to identify the caller:
 
 ```go
 type rateLimiter struct {
@@ -129,7 +129,12 @@ func newRateLimiter(rps float64, burst int) *rateLimiter {
 
 func (r *rateLimiter) middleware(next server.ToolHandlerFunc) server.ToolHandlerFunc {
     return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-        sessionID := server.GetSessionID(ctx)
+        session := server.ClientSessionFromContext(ctx)
+        if session == nil {
+            return nil, fmt.Errorf("no active session")
+        }
+
+        sessionID := session.SessionID()
         limiter, _ := r.limiters.LoadOrStore(sessionID, rate.NewLimiter(r.rate, r.burst))
         if !limiter.(*rate.Limiter).Allow() {
             return nil, fmt.Errorf("rate limit exceeded")
