@@ -81,6 +81,40 @@ func TestResourceTemplateMatching(t *testing.T) {
 	}
 }
 
+// TestResourceTemplateDispatchDeterministic verifies that when two global
+// templates both match a URI, the handler that answers is always the one
+// registered first, not an arbitrary winner that varies between calls.
+// Regression test for https://github.com/mark3labs/mcp-go/issues/1269:
+// handleReadResource used to range directly over the resourceTemplates map,
+// so the match followed Go's randomized map iteration order.
+func TestResourceTemplateDispatchDeterministic(t *testing.T) {
+	s := NewMCPServer("test", "1.0", WithResourceCapabilities(false, false))
+	handler := func(name string) ResourceTemplateHandlerFunc {
+		return func(_ context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+			return []mcp.ResourceContents{mcp.TextResourceContents{URI: request.Params.URI, Text: name}}, nil
+		}
+	}
+	// Register the more specific template first and the catch-all second;
+	// registration order, not map order, must decide the winner.
+	s.AddResourceTemplate(mcp.NewResourceTemplate("test://logs/{name}", "logs"), handler("logs"))
+	s.AddResourceTemplate(mcp.NewResourceTemplate("test://{+path}", "files"), handler("files"))
+
+	for i := range 200 {
+		request, err := json.Marshal(map[string]any{
+			"jsonrpc": "2.0", "id": 1, "method": "resources/read",
+			"params": map[string]string{"uri": "test://logs/today.txt"},
+		})
+		require.NoError(t, err)
+		response := s.HandleMessage(t.Context(), request)
+		result, ok := response.(mcp.JSONRPCResponse)
+		require.True(t, ok, "expected a resource result, got %T", response)
+		readResult, ok := result.Result.(mcp.ReadResourceResult)
+		require.True(t, ok)
+		text := readResult.Contents[0].(mcp.TextResourceContents).Text
+		require.Equal(t, "logs", text, "the first-registered matching template must always win (iteration %d)", i)
+	}
+}
+
 func TestResourceTemplateDispatchPrecedence(t *testing.T) {
 	s := NewMCPServer("test", "1.0", WithResourceCapabilities(false, false))
 	handler := func(name string) ResourceTemplateHandlerFunc {

@@ -28,10 +28,16 @@ type resourceEntry struct {
 	handler  ResourceHandlerFunc
 }
 
-// resourceTemplateEntry holds both a template and its handler
+// resourceTemplateEntry holds both a template and its handler, plus the
+// order it was registered in. handleReadResource uses order to pick a
+// deterministic winner when a URI matches more than one global template:
+// Go map iteration order is randomized per-process, so ranging over
+// resourceTemplates directly (as before) picked an arbitrary match that
+// could differ between otherwise-identical calls.
 type resourceTemplateEntry struct {
 	template mcp.ResourceTemplate
 	handler  ResourceTemplateHandlerFunc
+	order    int
 }
 
 // taskEntry holds task state and associated data
@@ -217,12 +223,15 @@ type MCPServer struct {
 	// Test-only checkpoint configured before the server is used concurrently.
 	beforeCapabilityRegistration func()
 
-	name                       string
-	version                    string
-	implementation             mcp.Implementation
-	instructions               string
-	resources                  map[string]resourceEntry
-	resourceTemplates          map[string]resourceTemplateEntry
+	name              string
+	version           string
+	implementation    mcp.Implementation
+	instructions      string
+	resources         map[string]resourceEntry
+	resourceTemplates map[string]resourceTemplateEntry
+	// nextResourceTemplateOrder assigns each resourceTemplateEntry its order
+	// (see resourceTemplateEntry.order) as it is registered, under resourcesMu.
+	nextResourceTemplateOrder  int
 	prompts                    map[string]mcp.Prompt
 	promptHandlers             map[string]PromptHandlerFunc
 	tools                      map[string]ServerTool
@@ -905,7 +914,9 @@ func (s *MCPServer) AddResourceTemplates(resourceTemplates ...ServerResourceTemp
 		s.resourceTemplates[entry.Template.URITemplate.Raw()] = resourceTemplateEntry{
 			template: entry.Template,
 			handler:  entry.Handler,
+			order:    s.nextResourceTemplateOrder,
 		}
+		s.nextResourceTemplateOrder++
 	}
 	s.resourcesMu.Unlock()
 
@@ -921,8 +932,14 @@ func (s *MCPServer) SetResourceTemplates(templates ...ServerResourceTemplate) {
 	s.implicitlyRegisterResourceCapabilities()
 	s.resourcesMu.Lock()
 	s.resourceTemplates = make(map[string]resourceTemplateEntry, len(templates))
+	s.nextResourceTemplateOrder = 0
 	for _, item := range templates {
-		s.resourceTemplates[item.Template.URITemplate.Raw()] = resourceTemplateEntry{template: item.Template, handler: item.Handler}
+		s.resourceTemplates[item.Template.URITemplate.Raw()] = resourceTemplateEntry{
+			template: item.Template,
+			handler:  item.Handler,
+			order:    s.nextResourceTemplateOrder,
+		}
+		s.nextResourceTemplateOrder++
 	}
 	s.resourcesMu.Unlock()
 	if s.capabilities.resources.listChanged {
@@ -1839,9 +1856,20 @@ func (s *MCPServer) handleReadResource(
 		}
 	}
 
-	// If not found in session templates, check global templates
+	// If not found in session templates, check global templates. Multiple
+	// registered templates can match the same URI (e.g. a specific template
+	// and a catch-all); candidates are matched in registration order so the
+	// winner is deterministic instead of following Go's randomized map
+	// iteration order.
 	if !matched {
+		candidates := make([]resourceTemplateEntry, 0, len(s.resourceTemplates))
 		for _, entry := range s.resourceTemplates {
+			candidates = append(candidates, entry)
+		}
+		sort.Slice(candidates, func(i, j int) bool {
+			return candidates[i].order < candidates[j].order
+		})
+		for _, entry := range candidates {
 			template := entry.template
 			if template.URITemplate == nil {
 				continue
