@@ -28,6 +28,19 @@ import (
     "github.com/mark3labs/mcp-go/mcp"
 )
 
+func startAndInitializeExampleClient(ctx context.Context, c *client.Client) error {
+    if err := c.Start(ctx); err != nil {
+        return err
+    }
+    _, err := c.Initialize(ctx, mcp.InitializeRequest{
+        Params: mcp.InitializeParams{
+            ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+            ClientInfo:      mcp.Implementation{Name: "example-client", Version: "1.0.0"},
+        },
+    })
+    return err
+}
+
 func main() {
     // Create STDIO client
     c, err := client.NewStdioMCPClient(
@@ -41,7 +54,7 @@ func main() {
     ctx := context.Background()
 
     // Initialize the connection
-    if err := c.Initialize(ctx, initRequest); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         log.Fatal(err)
     }
 
@@ -51,7 +64,7 @@ func main() {
     }
 }
 
-func demonstrateClientOperations(ctx context.Context, c client.Client) error {
+func demonstrateClientOperations(ctx context.Context, c *client.Client) error {
     // List available tools
     tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
     if err != nil {
@@ -127,7 +140,10 @@ func demonstrateClientOperations(ctx context.Context, c client.Client) error {
 
 ```go
 // Create STDIO client
-client, err := client.NewStdioMCPClient("server-command", "arg1", "arg2")
+client, err := client.NewStdioMCPClient("server-command", []string{}, "arg1", "arg2")
+if err != nil {
+    panic(err)
+}
 ```
 
 ### StreamableHTTP Client
@@ -139,7 +155,10 @@ client, err := client.NewStdioMCPClient("server-command", "arg1", "arg2")
 
 ```go
 // Create StreamableHTTP client
-client := client.NewStreamableHttpClient("http://localhost:8080/mcp")
+client, err := client.NewStreamableHttpClient("http://localhost:8080/mcp")
+if err != nil {
+    panic(err)
+}
 ```
 
 ### SSE Client
@@ -151,7 +170,10 @@ client := client.NewStreamableHttpClient("http://localhost:8080/mcp")
 
 ```go
 // Create SSE client
-client := client.NewSSEMCPClient("http://localhost:8080/mcp/sse")
+client, err := client.NewSSEMCPClient("http://localhost:8080/mcp/sse")
+if err != nil {
+    panic(err)
+}
 ```
 
 ### In-Process Client
@@ -163,7 +185,10 @@ client := client.NewSSEMCPClient("http://localhost:8080/mcp/sse")
 
 ```go
 // Create in-process client
-client := client.NewInProcessClient(server)
+client, err := client.NewInProcessClient(server)
+if err != nil {
+    panic(err)
+}
 ```
 
 ## Common Client Patterns
@@ -184,22 +209,22 @@ import (
 )
 
 type MCPClientManager struct {
-    client client.Client
+    client *client.Client
     ctx    context.Context
     cancel context.CancelFunc
 }
 
 func NewMCPClientManager(clientType, address string) (*MCPClientManager, error) {
-    var c client.Client
+    var c *client.Client
     var err error
 
     switch clientType {
     case "stdio":
-        c, err = client.NewStdioMCPClient("server-command")
+        c, err = client.NewStdioMCPClient(address, []string{})
     case "http":
-        c = client.NewStreamableHttpClient(address)
+        c, err = client.NewStreamableHttpClient(address)
     case "sse":
-        c = client.NewSSEMCPClient(address)
+        c, err = client.NewSSEMCPClient(address)
     default:
         return nil, fmt.Errorf("unknown client type: %s", clientType)
     }
@@ -217,7 +242,7 @@ func NewMCPClientManager(clientType, address string) (*MCPClientManager, error) 
     }
 
     // Initialize connection
-    if err := c.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         cancel()
         return nil, fmt.Errorf("failed to initialize client: %w", err)
     }
@@ -234,7 +259,7 @@ func (m *MCPClientManager) Close() error {
 ### Error Handling
 
 ```go
-func handleClientErrors(ctx context.Context, c client.Client) {
+func handleClientErrors(ctx context.Context, c *client.Client) {
     // Tool call with error handling
     result, err := c.CallTool(ctx, mcp.CallToolRequest{
         Params: mcp.CallToolRequestParams{
@@ -268,7 +293,7 @@ func handleClientErrors(ctx context.Context, c client.Client) {
 ### Retry Logic
 
 ```go
-func callToolWithRetry(ctx context.Context, c client.Client, req mcp.CallToolRequest, maxRetries int) (*mcp.CallToolResult, error) {
+func callToolWithRetry(ctx context.Context, c *client.Client, req mcp.CallToolRequest, maxRetries int) (*mcp.CallToolResult, error) {
     var lastErr error
 
     for attempt := 0; attempt <= maxRetries; attempt++ {
@@ -308,15 +333,18 @@ func callToolWithRetry(ctx context.Context, c client.Client, req mcp.CallToolReq
 
 ```go
 type LLMApplication struct {
-    mcpClient client.Client
+    mcpClient *client.Client
     llmClient LLMClient
 }
 
 func NewLLMApplication(mcpAddress string) (*LLMApplication, error) {
-    mcpClient := client.NewStreamableHttpClient(mcpAddress)
+    mcpClient, err := client.NewStreamableHttpClient(mcpAddress)
+    if err != nil {
+        return nil, fmt.Errorf("failed to create StreamableHTTP client: %w", err)
+    }
     
     ctx := context.Background()
-    if err := mcpClient.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, mcpClient); err != nil {
         return nil, err
     }
 
@@ -366,13 +394,13 @@ func (app *LLMApplication) ProcessUserQuery(ctx context.Context, query string) (
 
 ```go
 type MultiServerClient struct {
-    clients map[string]client.Client
+    clients map[string]*client.Client
     mutex   sync.RWMutex
 }
 
 func NewMultiServerClient() *MultiServerClient {
     return &MultiServerClient{
-        clients: make(map[string]client.Client),
+        clients: make(map[string]*client.Client),
     }
 }
 
@@ -380,20 +408,23 @@ func (msc *MultiServerClient) AddServer(name, address string, clientType string)
     msc.mutex.Lock()
     defer msc.mutex.Unlock()
 
-    var c client.Client
+    var c *client.Client
     var err error
 
     switch clientType {
     case "http":
-        c = client.NewStreamableHttpClient(address)
+        c, err = client.NewStreamableHttpClient(address)
     case "sse":
-        c = client.NewSSEMCPClient(address)
+        c, err = client.NewSSEMCPClient(address)
     default:
         return fmt.Errorf("unsupported client type: %s", clientType)
     }
+    if err != nil {
+        return fmt.Errorf("failed to create client for %s: %w", name, err)
+    }
 
     ctx := context.Background()
-    if err := c.Initialize(ctx); err != nil {
+    if err := startAndInitializeExampleClient(ctx, c); err != nil {
         return fmt.Errorf("failed to initialize client for %s: %w", name, err)
     }
 
