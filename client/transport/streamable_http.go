@@ -357,10 +357,27 @@ func (c *StreamableHTTP) deleteSession(sessionID string) {
 			req.Header.Set(HeaderKeyProtocolVersion, version)
 		}
 	}
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
+	}
 
 	// Set custom Host header if provided
 	if c.host != "" {
 		req.Host = c.host
+	}
+
+	if c.oauthHandler != nil {
+		authHeader, err := c.oauthHandler.GetAuthorizationHeader(ctx)
+		if err != nil {
+			c.logger.Error("failed to get authorization header for close request", "err", err)
+		} else {
+			req.Header.Set("Authorization", authHeader)
+		}
+	}
+	if c.headerFunc != nil {
+		for k, v := range c.headerFunc(ctx) {
+			req.Header.Set(k, v)
+		}
 	}
 	res, err := c.httpClient.Do(req)
 	if err != nil {
