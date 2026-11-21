@@ -1,10 +1,13 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
@@ -192,11 +195,11 @@ func TestStreamableHTTPServer_CancelsAbandonedRequestOnPOSTStream(t *testing.T) 
 
 // A server request that went to the standalone GET stream is withdrawn
 // through the session's notification channel, which feeds that stream.
-func TestStreamableHttpSession_CancelsAbandonedRequestOnGETStream(t *testing.T) {
+func TestStreamableHttpSession_CancelsDeliveredRequestOnGETStream(t *testing.T) {
 	tests := []struct {
-		name   string
-		call   func(context.Context, *streamableHttpSession) error
-		queued func(*streamableHttpSession) int64
+		name    string
+		call    func(context.Context, *streamableHttpSession) error
+		deliver func(*streamableHttpSession) int64
 	}{
 		{
 			name: "sampling",
@@ -204,7 +207,12 @@ func TestStreamableHttpSession_CancelsAbandonedRequestOnGETStream(t *testing.T) 
 				_, err := s.RequestSampling(ctx, mcp.CreateMessageRequest{})
 				return err
 			},
-			queued: func(s *streamableHttpSession) int64 { return (<-s.samplingRequestChan).requestID },
+			deliver: func(s *streamableHttpSession) int64 {
+				item := <-s.samplingRequestChan
+				require.True(t, item.take())
+				require.Nil(t, item.wrote())
+				return item.requestID
+			},
 		},
 		{
 			name: "elicitation",
@@ -212,7 +220,12 @@ func TestStreamableHttpSession_CancelsAbandonedRequestOnGETStream(t *testing.T) 
 				_, err := s.RequestElicitation(ctx, mcp.ElicitationRequest{})
 				return err
 			},
-			queued: func(s *streamableHttpSession) int64 { return (<-s.elicitationRequestChan).requestID },
+			deliver: func(s *streamableHttpSession) int64 {
+				item := <-s.elicitationRequestChan
+				require.True(t, item.take())
+				require.Nil(t, item.wrote())
+				return item.requestID
+			},
 		},
 		{
 			name: "roots",
@@ -220,7 +233,12 @@ func TestStreamableHttpSession_CancelsAbandonedRequestOnGETStream(t *testing.T) 
 				_, err := s.ListRoots(ctx, mcp.ListRootsRequest{})
 				return err
 			},
-			queued: func(s *streamableHttpSession) int64 { return (<-s.rootsRequestChan).requestID },
+			deliver: func(s *streamableHttpSession) int64 {
+				item := <-s.rootsRequestChan
+				require.True(t, item.take())
+				require.Nil(t, item.wrote())
+				return item.requestID
+			},
 		},
 	}
 	for _, tt := range tests {
@@ -229,7 +247,7 @@ func TestStreamableHttpSession_CancelsAbandonedRequestOnGETStream(t *testing.T) 
 			ctx, cancel := context.WithCancel(t.Context())
 			errc := make(chan error, 1)
 			go func() { errc <- tt.call(ctx, session) }()
-			id := tt.queued(session)
+			id := tt.deliver(session)
 			cancel()
 			require.ErrorIs(t, <-errc, context.Canceled)
 			require.Len(t, session.notificationChannel, 1)
@@ -253,19 +271,29 @@ func TestRequestScopedSSE_AbandonsQueuedRequestWhenContextEnds(t *testing.T) {
 		done:          make(chan struct{}),
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	result := make(chan bool, 1)
-	go func() { result <- scoped.trySend(ctx, mcp.JSONRPCRequest{}) }()
+	type outcome struct {
+		sent   bool
+		issued bool
+	}
+	result := make(chan outcome, 1)
+	go func() {
+		sent, issued := scoped.trySend(ctx, mcp.JSONRPCRequest{})
+		result <- outcome{sent, issued}
+	}()
 	// The item is queued but no one is writing it yet.
 	item := <-requests
 	cancel()
-	require.True(t, <-result)
-	require.True(t, item.abandoned.Load(), "an unwritten queued request must be marked abandoned")
+	got := <-result
+	require.True(t, got.sent)
+	require.False(t, got.issued, "an unwritten queued request was not issued")
+	item.mu.Lock()
+	require.True(t, item.abandoned, "an unwritten queued request must be marked abandoned")
+	item.mu.Unlock()
 }
 
-// A request still queued on a session request channel when its context ends
-// is marked abandoned before the cancellation is published, so the GET
-// stream's consumer, which may pick the cancellation first, skips the
-// request instead of delivering it after its cancellation.
+// A request cancelled while still queued on a session request channel was
+// never issued: the consumer skips it and no cancellation is sent, since it
+// would reference an ID the client never received.
 func TestStreamableHttpSession_AbandonsQueuedRequestBeforeCancelling(t *testing.T) {
 	session := newStreamableHttpSession("s1", nil, nil, nil, nil, new(atomic.Int64))
 	ctx, cancel := context.WithCancel(t.Context())
@@ -280,8 +308,8 @@ func TestStreamableHttpSession_AbandonsQueuedRequestBeforeCancelling(t *testing.
 	require.ErrorIs(t, <-errc, context.Canceled)
 	item := <-session.samplingRequestChan
 	require.False(t, item.take(), "a consumer must skip the cancelled request")
-	require.Len(t, session.notificationChannel, 1)
-	requireCancels(t, <-session.notificationChannel, item.requestID)
+	require.Empty(t, session.notificationChannel,
+		"no cancellation may reference a request the client never received")
 }
 
 // When a stream consumer has already claimed a queued request, the caller
@@ -305,7 +333,98 @@ func TestStreamableHttpSession_ClaimedRequestRidesItsCancellation(t *testing.T) 
 	require.ErrorIs(t, <-errc, context.Canceled)
 	require.Empty(t, session.notificationChannel,
 		"the caller must not publish a cancellation another stream could deliver first")
-	ride := item.ride()
+	// The stream writes the request, and hands it over at the write: the
+	// cancellation recorded before the write rides right behind it.
+	ride := item.wrote()
 	require.NotNil(t, ride, "the claiming stream must deliver the cancellation behind the request")
 	requireCancels(t, *ride, item.requestID)
+}
+
+// A cancellation decided after the stream wrote the request — the common
+// case, a client that received the request and never answered — is
+// delivered by the caller through the session's notification channel.
+func TestStreamableHttpSession_CancellationAfterDeliveryIsPublished(t *testing.T) {
+	session := newStreamableHttpSession("s1", nil, nil, nil, nil, new(atomic.Int64))
+	ctx, cancel := context.WithCancel(t.Context())
+	errc := make(chan error, 1)
+	go func() {
+		_, err := session.RequestSampling(ctx, mcp.CreateMessageRequest{})
+		errc <- err
+	}()
+	require.Eventually(t, func() bool { return len(session.samplingRequestChan) == 1 },
+		5*time.Second, time.Millisecond, "request should be queued")
+	item := <-session.samplingRequestChan
+	require.True(t, item.take(), "an uncancelled request must be claimable")
+	require.Nil(t, item.wrote(), "no cancellation is pending at the write")
+	cancel()
+	require.ErrorIs(t, <-errc, context.Canceled)
+	require.Len(t, session.notificationChannel, 1)
+	requireCancels(t, <-session.notificationChannel, item.requestID)
+}
+
+// A request the client received and never answered is withdrawn when the
+// server gives up on it: the standalone GET stream that delivered the
+// request also delivers notifications/cancelled for it, with the matching
+// request ID. This is the transport-level view of the delivery handoff, and
+// the case a client like an open elicitation dialog needs to close it.
+func TestStreamableHTTPServer_CancelsDeliveredRequestOnGETStream(t *testing.T) {
+	cancels := make(chan context.CancelFunc, 1)
+	mcpServer := NewMCPServer("test-server", "1.0.0", WithRoots())
+	mcpServer.AddTool(mcp.NewTool("askroots"), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		// A detached context with the request-scoped stream cleared, so the
+		// roots request takes the GET stream instead of this POST's own
+		// stream, as a background task would.
+		detached := context.WithValue(context.WithoutCancel(ctx), requestScopedSSEKey{}, nil)
+		rootsCtx, cancel := context.WithCancel(detached)
+		cancels <- cancel
+		go func() { _, _ = mcpServer.RequestRoots(rootsCtx, mcp.ListRootsRequest{}) }()
+		return mcp.NewToolResultText("asking"), nil
+	})
+	testServer := httptest.NewServer(NewStreamableHTTPServer(mcpServer))
+	defer testServer.Close()
+	sessionID := initializeSession(t, testServer.URL)
+
+	getReq, _ := http.NewRequest(http.MethodGet, testServer.URL, nil)
+	getReq.Header.Set("Accept", "text/event-stream")
+	getReq.Header.Set(HeaderKeySessionID, sessionID)
+	getResp, err := scopedRequestClient.Do(getReq)
+	require.NoError(t, err)
+	defer getResp.Body.Close()
+	require.Equal(t, "text/event-stream", getResp.Header.Get("Content-Type"))
+	reader := bufio.NewReader(getResp.Body)
+
+	body, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+		"params": map[string]any{"name": "askroots"},
+	})
+	postReq, _ := http.NewRequest(http.MethodPost, testServer.URL, bytes.NewReader(body))
+	postReq.Header.Set("Content-Type", "application/json")
+	postReq.Header.Set("Accept", "application/json")
+	postReq.Header.Set(HeaderKeySessionID, sessionID)
+	postResp, err := http.DefaultClient.Do(postReq)
+	require.NoError(t, err)
+	result, _ := io.ReadAll(postResp.Body)
+	postResp.Body.Close()
+	assert.Contains(t, string(result), "asking", "the tool call should have completed without the roots answer")
+
+	request, err := nextSSEMessage(reader)
+	require.NoError(t, err)
+	require.Equal(t, string(mcp.MethodListRoots), request.Method)
+
+	// The client has the request open and does not answer. The server
+	// gives up on it, and the GET stream carries the withdrawal.
+	(<-cancels)()
+
+	var cancelled struct {
+		Method string `json:"method"`
+		Params struct {
+			RequestID json.RawMessage `json:"requestId"`
+			Reason    string          `json:"reason"`
+		} `json:"params"`
+	}
+	readSSEData(t, reader, &cancelled)
+	require.Equal(t, string(mcp.MethodNotificationCancelled), cancelled.Method)
+	assert.JSONEq(t, string(request.ID), string(cancelled.Params.RequestID))
+	assert.Equal(t, context.Canceled.Error(), cancelled.Params.Reason)
+
 }

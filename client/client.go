@@ -23,6 +23,12 @@ type Client struct {
 	initialized        atomic.Bool
 	notifications      []func(mcp.JSONRPCNotification)
 	notifyMu           sync.RWMutex
+
+	// incomingRequests tracks the server-initiated requests being handled,
+	// keyed by their request ID, so a notifications/cancelled from the
+	// server can end the handler's context early.
+	incomingMu       sync.Mutex
+	incomingRequests map[string]context.CancelFunc
 	requestID          atomic.Int64
 	clientCapabilities mcp.ClientCapabilities
 	serverCapabilities mcp.ServerCapabilities
@@ -209,6 +215,7 @@ func (c *Client) Start(ctx context.Context) error {
 	}
 
 	c.transport.SetNotificationHandler(func(notification mcp.JSONRPCNotification) {
+		c.cancelIncomingRequest(notification)
 		c.notifyMu.RLock()
 		handlers := slices.Clone(c.notifications)
 		c.notifyMu.RUnlock()
@@ -834,6 +841,25 @@ func (c *Client) RootListChanges(
 // handleIncomingRequest processes incoming requests from the server.
 // This is the main entry point for server-to-client requests like sampling and elicitation.
 func (c *Client) handleIncomingRequest(ctx context.Context, request transport.JSONRPCRequest) (*transport.JSONRPCResponse, error) {
+	// The server may withdraw this request with notifications/cancelled.
+	// Ending this context when it does lets a long-running handler, an
+	// elicitation dialog for example, return early instead of outliving a
+	// request whose response nobody waits for.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	key := request.ID.String()
+	c.incomingMu.Lock()
+	if c.incomingRequests == nil {
+		c.incomingRequests = make(map[string]context.CancelFunc)
+	}
+	c.incomingRequests[key] = cancel
+	c.incomingMu.Unlock()
+	defer func() {
+		c.incomingMu.Lock()
+		delete(c.incomingRequests, key)
+		c.incomingMu.Unlock()
+	}()
+
 	switch request.Method {
 	case string(mcp.MethodSamplingCreateMessage):
 		return c.handleSamplingRequestTransport(ctx, request)
@@ -845,6 +871,33 @@ func (c *Client) handleIncomingRequest(ctx context.Context, request transport.JS
 		return c.handleListRootsRequestTransport(ctx, request)
 	default:
 		return nil, fmt.Errorf("unsupported request method: %s", request.Method)
+	}
+}
+
+// cancelIncomingRequest ends the context of the in-flight server request
+// that a notifications/cancelled withdraws, so the handler running it can
+// return early.
+func (c *Client) cancelIncomingRequest(notification mcp.JSONRPCNotification) {
+	if notification.Method != string(mcp.MethodNotificationCancelled) {
+		return
+	}
+	var params mcp.CancelledNotificationParams
+	raw, err := json.Marshal(notification.Params)
+	if err != nil {
+		return
+	}
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return
+	}
+	key := params.RequestId.String()
+	c.incomingMu.Lock()
+	cancel, ok := c.incomingRequests[key]
+	if ok {
+		delete(c.incomingRequests, key)
+	}
+	c.incomingMu.Unlock()
+	if ok {
+		cancel()
 	}
 }
 

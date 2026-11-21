@@ -319,11 +319,11 @@ func (s *StreamableHTTPServer) startListeningPump(session *streamableHttpSession
 					},
 					Params: samplingReq.request.CreateMessageParams,
 				}, false)
-				if cancel := samplingReq.ride(); cancel != nil {
-					// The request's wait ended while this stream claimed it:
-					// deliver the cancellation right behind the request, on
-					// the same stream, so the client never processes the
-					// request without its cancellation following.
+				if cancel := samplingReq.wrote(); cancel != nil {
+					// The request's wait ended before its write finished:
+					// deliver the cancellation right behind it, on this
+					// stream, so the client never processes the request
+					// without its cancellation following.
 					st.deliver(ctx, *cancel, false)
 				}
 			case elicitationReq := <-session.elicitationRequestChan:
@@ -338,11 +338,11 @@ func (s *StreamableHTTPServer) startListeningPump(session *streamableHttpSession
 					},
 					Params: elicitationReq.request.Params,
 				}, false)
-				if cancel := elicitationReq.ride(); cancel != nil {
-					// The request's wait ended while this stream claimed it:
-					// deliver the cancellation right behind the request, on
-					// the same stream, so the client never processes the
-					// request without its cancellation following.
+				if cancel := elicitationReq.wrote(); cancel != nil {
+					// The request's wait ended before its write finished:
+					// deliver the cancellation right behind it, on this
+					// stream, so the client never processes the request
+					// without its cancellation following.
 					st.deliver(ctx, *cancel, false)
 				}
 			case rootsReq := <-session.rootsRequestChan:
@@ -356,11 +356,11 @@ func (s *StreamableHTTPServer) startListeningPump(session *streamableHttpSession
 						Method: string(mcp.MethodListRoots),
 					},
 				}, false)
-				if cancel := rootsReq.ride(); cancel != nil {
-					// The request's wait ended while this stream claimed it:
-					// deliver the cancellation right behind the request, on
-					// the same stream, so the client never processes the
-					// request without its cancellation following.
+				if cancel := rootsReq.wrote(); cancel != nil {
+					// The request's wait ended before its write finished:
+					// deliver the cancellation right behind it, on this
+					// stream, so the client never processes the request
+					// without its cancellation following.
 					st.deliver(ctx, *cancel, false)
 				}
 			case <-stop:

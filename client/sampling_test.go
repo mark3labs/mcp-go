@@ -163,9 +163,10 @@ func TestWithSamplingHandler(t *testing.T) {
 
 // mockTransport implements transport.Interface for testing
 type mockTransport struct {
-	requestChan  chan transport.JSONRPCRequest
-	responseChan chan *transport.JSONRPCResponse
-	started      bool
+	requestChan         chan transport.JSONRPCRequest
+	responseChan        chan *transport.JSONRPCResponse
+	started             bool
+	notificationHandler func(notification mcp.JSONRPCNotification)
 }
 
 func newMockTransport() *mockTransport {
@@ -195,6 +196,7 @@ func (m *mockTransport) SendNotification(ctx context.Context, notification mcp.J
 }
 
 func (m *mockTransport) SetNotificationHandler(handler func(notification mcp.JSONRPCNotification)) {
+	m.notificationHandler = handler
 }
 
 func (m *mockTransport) Close() error {

@@ -3106,7 +3106,10 @@ func TestStreamableHTTP_TrySendWaitsForBufferSpace(t *testing.T) {
 
 	send := func(ctx context.Context) <-chan bool {
 		result := make(chan bool, 1)
-		go func() { result <- scoped.trySend(ctx, mcp.JSONRPCRequest{}) }()
+		go func() {
+			sent, _ := scoped.trySend(ctx, mcp.JSONRPCRequest{})
+			result <- sent
+		}()
 		return result
 	}
 	pending := func(result <-chan bool, why string) {
@@ -3158,12 +3161,14 @@ func TestStreamableHTTP_TrySendWaitsForBufferSpace(t *testing.T) {
 	requests <- item
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
-	require.False(t, scoped.trySend(cancelled, mcp.JSONRPCRequest{}))
+	sent, _ := scoped.trySend(cancelled, mcp.JSONRPCRequest{})
+	require.False(t, sent)
 	<-requests
 
 	// A finished POST stream reports false immediately.
 	close(done)
-	require.False(t, scoped.trySend(t.Context(), mcp.JSONRPCRequest{}))
+	sent, _ = scoped.trySend(t.Context(), mcp.JSONRPCRequest{})
+	require.False(t, sent)
 }
 
 func TestStreamableHTTP_SamplingResponseErrors(t *testing.T) {
