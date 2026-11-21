@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -259,6 +260,18 @@ type headerSchemaProperty struct {
 	Type       json.RawMessage                 `json:"type"`
 	XMCPHeader json.RawMessage                 `json:"x-mcp-header,omitempty"`
 	Properties map[string]headerSchemaProperty `json:"properties,omitempty"`
+}
+
+// UnmarshalJSON accepts boolean schemas, which cannot carry annotations,
+// without discarding header annotations on other properties.
+func (p *headerSchemaProperty) UnmarshalJSON(data []byte) error {
+	switch string(bytes.TrimSpace(data)) {
+	case "true", "false":
+		*p = headerSchemaProperty{}
+		return nil
+	}
+	type objectSchema headerSchemaProperty
+	return json.Unmarshal(data, (*objectSchema)(p))
 }
 
 // typeNames returns the type names declared by the property, accepting both
