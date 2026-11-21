@@ -69,12 +69,21 @@ func TestTool_SchemaJSONWithoutOutputSchema(t *testing.T) {
 
 func TestTool_SchemaJSONConflicts(t *testing.T) {
 	raw := json.RawMessage(`{"type":"object"}`)
-
-	_, err := Tool{Name: "a", InputSchema: ToolInputSchema{Type: "object"}, RawInputSchema: raw}.InputSchemaJSON()
-	require.ErrorIs(t, err, errToolSchemaConflict)
-
-	_, err = Tool{Name: "a", OutputSchema: ToolOutputSchema{Type: "object"}, RawOutputSchema: raw}.OutputSchemaJSON()
-	require.ErrorIs(t, err, errToolSchemaConflict)
+	tests := []struct {
+		name   string
+		schema func() (json.RawMessage, error)
+	}{
+		{name: "input with Type", schema: Tool{Name: "a", InputSchema: ToolInputSchema{Type: "object"}, RawInputSchema: raw}.InputSchemaJSON},
+		{name: "input with Types", schema: Tool{Name: "a", InputSchema: ToolInputSchema{Types: []string{"object", "null"}}, RawInputSchema: raw}.InputSchemaJSON},
+		{name: "output with Type", schema: Tool{Name: "a", OutputSchema: ToolOutputSchema{Type: "object"}, RawOutputSchema: raw}.OutputSchemaJSON},
+		{name: "output with Types", schema: Tool{Name: "a", OutputSchema: ToolOutputSchema{Types: []string{"object", "null"}}, RawOutputSchema: raw}.OutputSchemaJSON},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.schema()
+			require.ErrorIs(t, err, errToolSchemaConflict)
+		})
+	}
 }
 
 func TestTool_SchemaJSONReturnsACopy(t *testing.T) {
