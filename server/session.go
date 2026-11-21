@@ -395,6 +395,9 @@ func (s *MCPServer) sendNotificationCore(
 	if scoped, ok := ctx.Value(requestScopedSSEKey{}).(*requestScopedSSE); ok && scoped.session == session && scoped.trySendNotification(ctx, notification) {
 		return nil
 	}
+	if r, ok := ctx.Value(inProcessRequestKey{}).(*inProcessRequest); ok && r.session == session && r.tryDeliver(notification) {
+		return nil
+	}
 	select {
 	case session.NotificationChannel() <- notification:
 		return nil
