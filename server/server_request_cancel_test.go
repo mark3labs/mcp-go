@@ -279,7 +279,33 @@ func TestStreamableHttpSession_AbandonsQueuedRequestBeforeCancelling(t *testing.
 	cancel()
 	require.ErrorIs(t, <-errc, context.Canceled)
 	item := <-session.samplingRequestChan
-	require.True(t, item.abandoned.Load(), "a queued request must be marked abandoned before its cancellation")
+	require.False(t, item.take(), "a consumer must skip the cancelled request")
 	require.Len(t, session.notificationChannel, 1)
 	requireCancels(t, <-session.notificationChannel, item.requestID)
+}
+
+// When a stream consumer has already claimed a queued request, the caller
+// must not publish the cancellation: another stream's consumer could take
+// it from the shared notification channel and deliver it before the
+// claiming stream writes the request. The claiming stream delivers the
+// cancellation itself, right behind the request.
+func TestStreamableHttpSession_ClaimedRequestRidesItsCancellation(t *testing.T) {
+	session := newStreamableHttpSession("s1", nil, nil, nil, nil, new(atomic.Int64))
+	ctx, cancel := context.WithCancel(t.Context())
+	errc := make(chan error, 1)
+	go func() {
+		_, err := session.RequestSampling(ctx, mcp.CreateMessageRequest{})
+		errc <- err
+	}()
+	require.Eventually(t, func() bool { return len(session.samplingRequestChan) == 1 },
+		5*time.Second, time.Millisecond, "request should be queued")
+	item := <-session.samplingRequestChan
+	require.True(t, item.take(), "an uncancelled request must be claimable")
+	cancel()
+	require.ErrorIs(t, <-errc, context.Canceled)
+	require.Empty(t, session.notificationChannel,
+		"the caller must not publish a cancellation another stream could deliver first")
+	ride := item.ride()
+	require.NotNil(t, ride, "the claiming stream must deliver the cancellation behind the request")
+	requireCancels(t, *ride, item.requestID)
 }

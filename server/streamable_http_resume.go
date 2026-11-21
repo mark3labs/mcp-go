@@ -308,7 +308,7 @@ func (s *StreamableHTTPServer) startListeningPump(session *streamableHttpSession
 			case nt := <-session.notificationChannel:
 				st.deliver(ctx, nt, false)
 			case samplingReq := <-session.samplingRequestChan:
-				if samplingReq.abandoned.Load() {
+				if !samplingReq.take() {
 					continue
 				}
 				st.deliver(ctx, mcp.JSONRPCRequest{
@@ -319,8 +319,15 @@ func (s *StreamableHTTPServer) startListeningPump(session *streamableHttpSession
 					},
 					Params: samplingReq.request.CreateMessageParams,
 				}, false)
+				if cancel := samplingReq.ride(); cancel != nil {
+					// The request's wait ended while this stream claimed it:
+					// deliver the cancellation right behind the request, on
+					// the same stream, so the client never processes the
+					// request without its cancellation following.
+					st.deliver(ctx, *cancel, false)
+				}
 			case elicitationReq := <-session.elicitationRequestChan:
-				if elicitationReq.abandoned.Load() {
+				if !elicitationReq.take() {
 					continue
 				}
 				st.deliver(ctx, mcp.JSONRPCRequest{
@@ -331,8 +338,15 @@ func (s *StreamableHTTPServer) startListeningPump(session *streamableHttpSession
 					},
 					Params: elicitationReq.request.Params,
 				}, false)
+				if cancel := elicitationReq.ride(); cancel != nil {
+					// The request's wait ended while this stream claimed it:
+					// deliver the cancellation right behind the request, on
+					// the same stream, so the client never processes the
+					// request without its cancellation following.
+					st.deliver(ctx, *cancel, false)
+				}
 			case rootsReq := <-session.rootsRequestChan:
-				if rootsReq.abandoned.Load() {
+				if !rootsReq.take() {
 					continue
 				}
 				st.deliver(ctx, mcp.JSONRPCRequest{
@@ -342,6 +356,13 @@ func (s *StreamableHTTPServer) startListeningPump(session *streamableHttpSession
 						Method: string(mcp.MethodListRoots),
 					},
 				}, false)
+				if cancel := rootsReq.ride(); cancel != nil {
+					// The request's wait ended while this stream claimed it:
+					// deliver the cancellation right behind the request, on
+					// the same stream, so the client never processes the
+					// request without its cancellation following.
+					st.deliver(ctx, *cancel, false)
+				}
 			case <-stop:
 				return
 			}

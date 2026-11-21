@@ -1026,6 +1026,15 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 				forward(nt)
 			case item := <-scopedRequests:
 				func() {
+					if item.abandoned.Load() {
+						// The request was abandoned before being written:
+						// its cancellation is already on its way to the
+						// client, so neither writing it nor recording it for
+						// replay may deliver a request the server has
+						// withdrawn. Checked before the done branch, which
+						// would otherwise record it with settleLate.
+						return
+					}
 					mu.Lock()
 					defer mu.Unlock()
 					select {
@@ -1035,13 +1044,6 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 						settleLate(item)
 						return
 					default:
-					}
-					if item.abandoned.Load() {
-						// The request was abandoned before being written:
-						// its cancellation is already on its way to the
-						// client, and writing it now would deliver a request
-						// the server has withdrawn.
-						return
 					}
 					defer w.Flush()
 
@@ -1348,7 +1350,7 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 					return
 				}
 			case samplingReq := <-session.samplingRequestChan:
-				if samplingReq.abandoned.Load() {
+				if !samplingReq.take() {
 					continue
 				}
 				// Send sampling request to client via SSE
@@ -1365,8 +1367,19 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 				case <-done:
 					return
 				}
+				if cancel := samplingReq.ride(); cancel != nil {
+					// The request's wait ended while this stream claimed it:
+					// deliver the cancellation right behind the request, so
+					// the client never processes the request without its
+					// cancellation following on this stream.
+					select {
+					case writeChan <- cancel:
+					case <-done:
+						return
+					}
+				}
 			case elicitationReq := <-session.elicitationRequestChan:
-				if elicitationReq.abandoned.Load() {
+				if !elicitationReq.take() {
 					continue
 				}
 				// Send elicitation request to client via SSE
@@ -1383,8 +1396,19 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 				case <-done:
 					return
 				}
+				if cancel := elicitationReq.ride(); cancel != nil {
+					// The request's wait ended while this stream claimed it:
+					// deliver the cancellation right behind the request, so
+					// the client never processes the request without its
+					// cancellation following on this stream.
+					select {
+					case writeChan <- cancel:
+					case <-done:
+						return
+					}
+				}
 			case rootsReq := <-session.rootsRequestChan:
-				if rootsReq.abandoned.Load() {
+				if !rootsReq.take() {
 					continue
 				}
 				// Send list roots request to client via SSE
@@ -1399,6 +1423,17 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 				case writeChan <- jsonrpcRequest:
 				case <-done:
 					return
+				}
+				if cancel := rootsReq.ride(); cancel != nil {
+					// The request's wait ended while this stream claimed it:
+					// deliver the cancellation right behind the request, so
+					// the client never processes the request without its
+					// cancellation following on this stream.
+					select {
+					case writeChan <- cancel:
+					case <-done:
+						return
+					}
 				}
 			case <-done:
 				return
@@ -1888,15 +1923,59 @@ func (s *sessionToolsStore) delete(sessionID string) {
 }
 
 // Sampling support types for HTTP transport
+// queuedRequestState coordinates a server request queued on a session
+// request channel with the cancellation of it. A request must never reach
+// the client after its cancellation, and the two can be consumed by
+// different streams' forwarders, so this state decides who delivers what.
+type queuedRequestState struct {
+	mu        sync.Mutex
+	cancelled *mcp.JSONRPCNotification
+	taken     bool
+}
+
+// markCancelled records the request's cancellation. It reports whether the
+// caller still has to deliver it: when no stream claimed the request yet,
+// the caller publishes it, and the stream that eventually takes the request
+// skips it. A stream that already claimed the request delivers the
+// cancellation itself, right behind the request on its own stream, so the
+// caller's copy cannot reach the client first through another stream's
+// consumer.
+func (q *queuedRequestState) markCancelled(cancel *mcp.JSONRPCNotification) (deliver bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.cancelled == nil {
+		q.cancelled = cancel
+	}
+	return !q.taken
+}
+
+// take claims the request for writing. It reports false when the request
+// was cancelled while queued, in which case the consumer must not write it.
+func (q *queuedRequestState) take() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.cancelled != nil {
+		return false
+	}
+	q.taken = true
+	return true
+}
+
+// ride returns the cancellation a stream that claimed and wrote the
+// request must deliver on the same stream, right behind it, or nil when the
+// request's wait has not ended.
+func (q *queuedRequestState) ride() *mcp.JSONRPCNotification {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.cancelled
+}
+
 type samplingRequestItem struct {
 	requestID int64
 	request   mcp.CreateMessageRequest
 	response  chan samplingResponseItem
-	// abandoned is set when the request's context ended while it was still
-	// queued on a request channel: the caller is about to publish
-	// notifications/cancelled, and the channel's consumer must not write
-	// the request after that.
-	abandoned atomic.Bool
+	// Coordinates this request with its cancellation.
+	queuedRequestState
 }
 
 type samplingResponseItem struct {
@@ -1938,8 +2017,9 @@ type elicitationRequestItem struct {
 	requestID int64
 	request   mcp.ElicitationRequest
 	response  chan samplingResponseItem
-	// See samplingRequestItem.abandoned.
-	abandoned atomic.Bool
+	// Coordinates this request with its cancellation; see
+	// queuedRequestState.
+	queuedRequestState
 }
 
 // Roots support types for HTTP transport
@@ -1947,8 +2027,9 @@ type rootsRequestItem struct {
 	requestID int64
 	request   mcp.ListRootsRequest
 	response  chan samplingResponseItem
-	// See samplingRequestItem.abandoned.
-	abandoned atomic.Bool
+	// Coordinates this request with its cancellation; see
+	// queuedRequestState.
+	queuedRequestState
 }
 
 // streamableHttpSession is a session for streamable-http transport
@@ -2312,14 +2393,24 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 		return &result, nil
 	case <-ctx.Done():
 		if len(responseChan) == 0 {
-			// A request still queued for the GET stream must not be written
-			// after the cancellation below. One that went to a POST stream
-			// was already marked by trySend, or was written before the
-			// cancellation and is genuinely being withdrawn.
 			if scoped == nil {
-				samplingRequest.abandoned.Store(true)
+				// A request still queued for a GET stream must not be
+				// written after the cancellation below. When no stream
+				// claimed it yet, the caller publishes and the stream that
+				// takes the request skips it; a stream that already claimed
+				// it delivers the cancellation itself, right behind the
+				// request on its own stream, so this one cannot reach the
+				// client first through another stream's consumer.
+				cancellation := newCancelledNotification(requestID, ctx.Err())
+				if samplingRequest.markCancelled(&cancellation) {
+					s.cancelRequest(scoped, cancellation)
+				}
+			} else {
+				// One that went to a POST stream was marked by trySend, or
+				// was written before the cancellation and is genuinely
+				// being withdrawn.
+				s.cancelRequest(scoped, newCancelledNotification(requestID, ctx.Err()))
 			}
-			s.cancelRequest(ctx, scoped, requestID)
 		}
 		return nil, ctx.Err()
 	}
@@ -2386,14 +2477,24 @@ func (s *streamableHttpSession) ListRoots(ctx context.Context, request mcp.ListR
 		return &result, nil
 	case <-ctx.Done():
 		if len(responseChan) == 0 {
-			// A request still queued for the GET stream must not be written
-			// after the cancellation below. One that went to a POST stream
-			// was already marked by trySend, or was written before the
-			// cancellation and is genuinely being withdrawn.
 			if scoped == nil {
-				rootsRequest.abandoned.Store(true)
+				// A request still queued for a GET stream must not be
+				// written after the cancellation below. When no stream
+				// claimed it yet, the caller publishes and the stream that
+				// takes the request skips it; a stream that already claimed
+				// it delivers the cancellation itself, right behind the
+				// request on its own stream, so this one cannot reach the
+				// client first through another stream's consumer.
+				cancellation := newCancelledNotification(requestID, ctx.Err())
+				if rootsRequest.markCancelled(&cancellation) {
+					s.cancelRequest(scoped, cancellation)
+				}
+			} else {
+				// One that went to a POST stream was marked by trySend, or
+				// was written before the cancellation and is genuinely
+				// being withdrawn.
+				s.cancelRequest(scoped, newCancelledNotification(requestID, ctx.Err()))
 			}
-			s.cancelRequest(ctx, scoped, requestID)
 		}
 		return nil, ctx.Err()
 	}
@@ -2461,27 +2562,36 @@ func (s *streamableHttpSession) RequestElicitation(ctx context.Context, request 
 		return &result, nil
 	case <-ctx.Done():
 		if len(responseChan) == 0 {
-			// A request still queued for the GET stream must not be written
-			// after the cancellation below. One that went to a POST stream
-			// was already marked by trySend, or was written before the
-			// cancellation and is genuinely being withdrawn.
 			if scoped == nil {
-				elicitationRequest.abandoned.Store(true)
+				// A request still queued for a GET stream must not be
+				// written after the cancellation below. When no stream
+				// claimed it yet, the caller publishes and the stream that
+				// takes the request skips it; a stream that already claimed
+				// it delivers the cancellation itself, right behind the
+				// request on its own stream, so this one cannot reach the
+				// client first through another stream's consumer.
+				cancellation := newCancelledNotification(requestID, ctx.Err())
+				if elicitationRequest.markCancelled(&cancellation) {
+					s.cancelRequest(scoped, cancellation)
+				}
+			} else {
+				// One that went to a POST stream was marked by trySend, or
+				// was written before the cancellation and is genuinely
+				// being withdrawn.
+				s.cancelRequest(scoped, newCancelledNotification(requestID, ctx.Err()))
 			}
-			s.cancelRequest(ctx, scoped, requestID)
 		}
 		return nil, ctx.Err()
 	}
 }
 
-// cancelRequest tells the client, with a notifications/cancelled, that the
-// request requestID was abandoned because ctx ended before a response
-// arrived. It goes out the way the request did: on the originating POST's
-// stream when scoped is set, otherwise through the session's notification
-// channel to the standalone GET stream. Best effort: it never waits, and the
-// notification is dropped when neither path has room.
-func (s *streamableHttpSession) cancelRequest(ctx context.Context, scoped *requestScopedSSE, requestID int64) {
-	notification := newCancelledNotification(requestID, ctx.Err())
+// cancelRequest delivers the request's cancellation notification. It goes
+// out the way the request did: on the originating POST's stream when
+// scoped is set, otherwise through the session's notification channel to
+// the standalone GET stream. Best effort: it never waits, and the
+// notification is dropped when neither path has room. The caller has
+// already made sure the request itself will not be written after it.
+func (s *streamableHttpSession) cancelRequest(scoped *requestScopedSSE, notification mcp.JSONRPCNotification) {
 	if scoped != nil && scoped.offerNotification(notification) {
 		return
 	}
