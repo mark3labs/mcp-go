@@ -70,6 +70,15 @@ func (s *MCPServer) handleMessage(
 		}
 	}
 
+	// A JSON-RPC 2.0 request id is a string or a number. A boolean, object or
+	// array id cannot be echoed in a response (the error response must carry a
+	// null id), so reject it before the method runs or the id is reused.
+	switch baseMessage.ID.(type) {
+	case nil, string, json.Number:
+	default:
+		return createErrorResponse(nil, mcp.INVALID_REQUEST, "Invalid request id")
+	}
+
 	if number, ok := baseMessage.ID.(json.Number); ok {
 		var id mcp.RequestId
 		if err := json.Unmarshal([]byte(number), &id); err != nil {

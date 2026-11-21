@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -10,12 +11,32 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+func TestHandleMessageRejectsInvalidIDBeforeDispatch(t *testing.T) {
+	server := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
+	called := false
+	server.AddTool(mcp.NewTool("work"), func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		called = true
+		return mcp.NewToolResultText("ran"), nil
+	})
+
+	resp := server.HandleMessage(t.Context(), json.RawMessage(
+		`{"jsonrpc":"2.0","id":true,"method":"tools/call","params":{"name":"work","arguments":{}}}`,
+	))
+
+	require.False(t, called, "a request with an invalid id must not reach its handler")
+	errResp, ok := resp.(mcp.JSONRPCError)
+	require.True(t, ok, "want JSONRPCError, got %T", resp)
+	assert.Equal(t, mcp.INVALID_REQUEST, errResp.Error.Code)
+	assert.True(t, errResp.ID.IsNil(), "an error about the id itself must answer with a null id")
+}
+
 func TestHandleMessage_ParsesEnvelope(t *testing.T) {
 	tests := []struct {
 		name      string
 		message   string
 		wantNil   bool
 		wantError int
+		wantNilID bool
 		wantID    any
 	}{
 		{name: "trailing garbage", message: `{"jsonrpc":"2.0","id":1,"method":"ping"} x`, wantError: mcp.PARSE_ERROR},
@@ -29,6 +50,9 @@ func TestHandleMessage_ParsesEnvelope(t *testing.T) {
 		{name: "params array is an invalid request", message: `{"jsonrpc":"2.0","id":4,"method":"ping","params":[1]}`, wantError: mcp.INVALID_REQUEST},
 		{name: "malformed _meta is an invalid request", message: `{"jsonrpc":"2.0","id":5,"method":"ping","params":{"_meta":"x"}}`, wantError: mcp.INVALID_REQUEST},
 		{name: "null params", message: `{"jsonrpc":"2.0","id":6,"method":"ping","params":null}`, wantID: float64(6)},
+		{name: "boolean id is an invalid request", message: `{"jsonrpc":"2.0","id":true,"method":"ping"}`, wantError: mcp.INVALID_REQUEST, wantNilID: true},
+		{name: "object id is an invalid request", message: `{"jsonrpc":"2.0","id":{"a":1},"method":"ping"}`, wantError: mcp.INVALID_REQUEST, wantNilID: true},
+		{name: "array id is an invalid request", message: `{"jsonrpc":"2.0","id":[1],"method":"ping"}`, wantError: mcp.INVALID_REQUEST, wantNilID: true},
 	}
 
 	for _, tt := range tests {
@@ -46,6 +70,9 @@ func TestHandleMessage_ParsesEnvelope(t *testing.T) {
 				errResp, ok := resp.(mcp.JSONRPCError)
 				require.True(t, ok, "want JSONRPCError, got %T", resp)
 				assert.Equal(t, tt.wantError, errResp.Error.Code)
+				if tt.wantNilID {
+					assert.True(t, errResp.ID.IsNil(), "an error about the id itself must answer with a null id")
+				}
 				return
 			}
 
