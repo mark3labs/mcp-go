@@ -11,13 +11,15 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-func TestStreamableHTTPSession_ServerRequestWaitsForQueueRoom(t *testing.T) {
-	tests := []struct {
-		name   string
-		send   func(ctx context.Context, s *streamableHttpSession) error
-		queue  func(s *streamableHttpSession) (length, capacity int)
-		answer func(ctx context.Context, s *streamableHttpSession)
-	}{
+type serverRequestQueueCase struct {
+	name   string
+	send   func(ctx context.Context, s *streamableHttpSession) error
+	queue  func(s *streamableHttpSession) (length, capacity int)
+	answer func(ctx context.Context, s *streamableHttpSession)
+}
+
+func serverRequestQueueCases() []serverRequestQueueCase {
+	return []serverRequestQueueCase{
 		{
 			name: "sampling",
 			send: func(ctx context.Context, s *streamableHttpSession) error {
@@ -79,7 +81,31 @@ func TestStreamableHTTPSession_ServerRequestWaitsForQueueRoom(t *testing.T) {
 			},
 		},
 	}
-	for _, tt := range tests {
+}
+
+func fillServerRequestQueue(t *testing.T, ctx context.Context, tt serverRequestQueueCase, session *streamableHttpSession, errs chan<- error) {
+	t.Helper()
+	_, capacity := tt.queue(session)
+	for range capacity {
+		go func() { errs <- tt.send(ctx, session) }()
+	}
+	require.Eventually(t, func() bool {
+		length, _ := tt.queue(session)
+		return length == capacity
+	}, 5*time.Second, time.Millisecond)
+}
+
+func requireStillWaiting(t *testing.T, errs <-chan error) {
+	t.Helper()
+	select {
+	case err := <-errs:
+		t.Fatalf("request into the full queue returned before the queue had room: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestStreamableHTTPSession_ServerRequestWaitsForQueueRoom(t *testing.T) {
+	for _, tt := range serverRequestQueueCases() {
 		t.Run(tt.name, func(t *testing.T) {
 			session := NewStreamableHTTPServer(NewMCPServer("test-server", "1.0.0")).newSession("session-1")
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -88,19 +114,39 @@ func TestStreamableHTTPSession_ServerRequestWaitsForQueueRoom(t *testing.T) {
 			_, capacity := tt.queue(session)
 			total := capacity + 1
 			errs := make(chan error, total)
-			for range capacity {
-				go func() { errs <- tt.send(ctx, session) }()
-			}
-			require.Eventually(t, func() bool {
-				length, _ := tt.queue(session)
-				return length == capacity
-			}, 5*time.Second, time.Millisecond)
+			fillServerRequestQueue(t, ctx, tt, session, errs)
 
 			go func() { errs <- tt.send(ctx, session) }()
+			requireStillWaiting(t, errs)
 			go tt.answer(ctx, session)
 
 			for range total {
 				require.NoError(t, <-errs)
+			}
+		})
+	}
+}
+
+func TestStreamableHTTPSession_ServerRequestStopsWaitingWhenSessionCloses(t *testing.T) {
+	for _, tt := range serverRequestQueueCases() {
+		t.Run(tt.name, func(t *testing.T) {
+			session := NewStreamableHTTPServer(NewMCPServer("test-server", "1.0.0")).newSession("session-1")
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+
+			_, capacity := tt.queue(session)
+			fillServerRequestQueue(t, ctx, tt, session, make(chan error, capacity))
+
+			extra := make(chan error, 1)
+			go func() { extra <- tt.send(ctx, session) }()
+			requireStillWaiting(t, extra)
+			session.closeDone()
+
+			select {
+			case err := <-extra:
+				require.ErrorIs(t, err, errSessionClosed)
+			case <-time.After(time.Second):
+				t.Fatal("request waiting for queue room did not return when the session closed")
 			}
 		})
 	}
