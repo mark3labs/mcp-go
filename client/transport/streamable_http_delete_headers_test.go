@@ -36,51 +36,90 @@ func receiveDelete(t *testing.T, deletes <-chan http.Header) http.Header {
 	}
 }
 
-func TestStreamableHTTP_CloseSendsCustomHeadersOnDelete(t *testing.T) {
-	srv, deletes := deleteHeaderServer(t)
-
-	trans, err := NewStreamableHTTP(srv.URL,
-		WithSession("session-1"),
-		WithHTTPHeaders(map[string]string{"Authorization": "Bearer static"}),
-		WithHTTPHeaderFunc(func(context.Context) map[string]string {
-			return map[string]string{"X-Tenant": "acme"}
-		}),
-	)
-	require.NoError(t, err)
-	trans.SetProtocolVersion(mcp.LATEST_LEGACY_PROTOCOL_VERSION)
-
-	require.NoError(t, trans.Close())
-
-	h := receiveDelete(t, deletes)
-	assert.Equal(t, "session-1", h.Get(HeaderKeySessionID))
-	assert.Equal(t, "Bearer static", h.Get("Authorization"))
-	assert.Equal(t, "acme", h.Get("X-Tenant"))
+func deleteTestOAuth(t *testing.T, withToken bool) StreamableHTTPCOption {
+	t.Helper()
+	tokenStore := NewMemoryTokenStore()
+	if withToken {
+		require.NoError(t, tokenStore.SaveToken(t.Context(), &Token{
+			AccessToken: "oauth-token",
+			TokenType:   "Bearer",
+			ExpiresAt:   time.Now().Add(time.Hour),
+		}))
+	}
+	return WithHTTPOAuth(OAuthConfig{
+		ClientID:    "test-client",
+		RedirectURI: "http://localhost:8085/callback",
+		TokenStore:  tokenStore,
+		PKCEEnabled: true,
+	})
 }
 
-func TestStreamableHTTP_CloseSendsOAuthHeaderOnDelete(t *testing.T) {
-	srv, deletes := deleteHeaderServer(t)
+func TestStreamableHTTP_CloseSendsHeadersOnDelete(t *testing.T) {
+	staticAuth := WithHTTPHeaders(map[string]string{"Authorization": "Bearer static"})
+	tenantFunc := WithHTTPHeaderFunc(func(context.Context) map[string]string {
+		return map[string]string{"X-Tenant": "acme"}
+	})
+	authFunc := WithHTTPHeaderFunc(func(context.Context) map[string]string {
+		return map[string]string{"Authorization": "Bearer dynamic"}
+	})
 
-	tokenStore := NewMemoryTokenStore()
-	require.NoError(t, tokenStore.SaveToken(t.Context(), &Token{
-		AccessToken: "oauth-token",
-		TokenType:   "Bearer",
-		ExpiresAt:   time.Now().Add(time.Hour),
-	}))
+	tests := []struct {
+		name       string
+		opts       func(t *testing.T) []StreamableHTTPCOption
+		wantAuth   string
+		wantTenant string
+	}{
+		{
+			name: "static headers and header func",
+			opts: func(*testing.T) []StreamableHTTPCOption {
+				return []StreamableHTTPCOption{staticAuth, tenantFunc}
+			},
+			wantAuth:   "Bearer static",
+			wantTenant: "acme",
+		},
+		{
+			name: "oauth token",
+			opts: func(t *testing.T) []StreamableHTTPCOption {
+				return []StreamableHTTPCOption{deleteTestOAuth(t, true)}
+			},
+			wantAuth: "Bearer oauth-token",
+		},
+		{
+			name: "oauth token replaces static header",
+			opts: func(t *testing.T) []StreamableHTTPCOption {
+				return []StreamableHTTPCOption{staticAuth, deleteTestOAuth(t, true)}
+			},
+			wantAuth: "Bearer oauth-token",
+		},
+		{
+			name: "header func replaces oauth token",
+			opts: func(t *testing.T) []StreamableHTTPCOption {
+				return []StreamableHTTPCOption{deleteTestOAuth(t, true), authFunc}
+			},
+			wantAuth: "Bearer dynamic",
+		},
+		{
+			name: "oauth lookup fails and the delete is still sent",
+			opts: func(t *testing.T) []StreamableHTTPCOption {
+				return []StreamableHTTPCOption{deleteTestOAuth(t, false)}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, deletes := deleteHeaderServer(t)
 
-	trans, err := NewStreamableHTTP(srv.URL,
-		WithSession("session-1"),
-		WithHTTPOAuth(OAuthConfig{
-			ClientID:    "test-client",
-			RedirectURI: "http://localhost:8085/callback",
-			TokenStore:  tokenStore,
-			PKCEEnabled: true,
-		}),
-	)
-	require.NoError(t, err)
-	trans.SetProtocolVersion(mcp.LATEST_LEGACY_PROTOCOL_VERSION)
+			opts := append([]StreamableHTTPCOption{WithSession("session-1")}, tt.opts(t)...)
+			trans, err := NewStreamableHTTP(srv.URL, opts...)
+			require.NoError(t, err)
+			trans.SetProtocolVersion(mcp.LATEST_LEGACY_PROTOCOL_VERSION)
 
-	require.NoError(t, trans.Close())
+			require.NoError(t, trans.Close())
 
-	h := receiveDelete(t, deletes)
-	assert.Equal(t, "Bearer oauth-token", h.Get("Authorization"))
+			h := receiveDelete(t, deletes)
+			assert.Equal(t, "session-1", h.Get(HeaderKeySessionID))
+			assert.Equal(t, tt.wantAuth, h.Get("Authorization"))
+			assert.Equal(t, tt.wantTenant, h.Get("X-Tenant"))
+		})
+	}
 }
