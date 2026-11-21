@@ -67,6 +67,48 @@ func TestInProcessClient_RequestNotificationsArriveBeforeResult(t *testing.T) {
 	}
 }
 
+func TestInProcessClient_NotificationArrivesWhileToolRuns(t *testing.T) {
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseTool := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseTool)
+
+	s := server.NewMCPServer("test", "1")
+	s.AddTool(mcp.NewTool("work"), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		err := server.ServerFromContext(ctx).SendNotificationToClient(ctx, string(mcp.MethodNotificationProgress), map[string]any{"progressToken": "p", "progress": 1})
+		if err != nil {
+			return nil, err
+		}
+		<-release
+		return mcp.NewToolResultText("done"), nil
+	})
+	c := startInProcessOrderClient(t, s)
+
+	got := make(chan struct{}, 1)
+	c.OnNotification(func(mcp.JSONRPCNotification) { got <- struct{}{} })
+
+	called := make(chan error, 1)
+	go func() {
+		req := mcp.CallToolRequest{}
+		req.Params.Name = "work"
+		_, err := c.CallTool(t.Context(), req)
+		called <- err
+	}()
+
+	select {
+	case <-got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("progress did not reach the client while the tool was running")
+	}
+	releaseTool()
+	select {
+	case err := <-called:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("CallTool did not return")
+	}
+}
+
 func TestInProcessClient_NotificationHandlerCanCallServer(t *testing.T) {
 	s := server.NewMCPServer("test", "1")
 	s.AddTool(mcp.NewTool("work"), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {

@@ -201,6 +201,10 @@ func (c *InProcessTransport) SendNotification(ctx context.Context, notification 
 	return nil
 }
 
+// SetNotificationHandler sets the handler for server notifications. A
+// notification sent while the server handles a client message is passed to
+// the handler on that message's goroutine, so the handler can run on several
+// goroutines at once and must guard any state it shares.
 func (c *InProcessTransport) SetNotificationHandler(handler func(notification mcp.JSONRPCNotification)) {
 	c.notifyMu.Lock()
 	defer c.notifyMu.Unlock()
