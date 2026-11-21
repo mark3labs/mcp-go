@@ -2079,6 +2079,8 @@ func (s *StreamableHTTPServer) newSession(sessionID string) *streamableHttpSessi
 	return session
 }
 
+var errSessionClosed = errors.New("session closed")
+
 // closeDone safely closes the session's done channel exactly once,
 // allowing long-lived GET handlers to exit during server shutdown.
 func (s *streamableHttpSession) closeDone() {
@@ -2214,14 +2216,14 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 	}
 	scoped, hasScoped := ctx.Value(requestScopedSSEKey{}).(*requestScopedSSE)
 	if !hasScoped || !scoped.trySend(ctx, jsonrpcRequest) {
-		// Send the sampling request via the channel (non-blocking)
+		// The caller waits for the response until ctx ends anyway, so a
+		// full queue is waited out rather than reported as overload.
 		select {
 		case s.samplingRequestChan <- samplingRequest:
-			// Request queued successfully
+		case <-s.done:
+			return nil, fmt.Errorf("sampling request not sent: %w", errSessionClosed)
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		default:
-			return nil, fmt.Errorf("sampling request queue is full - server overloaded")
 		}
 	}
 
@@ -2286,14 +2288,13 @@ func (s *streamableHttpSession) ListRoots(ctx context.Context, request mcp.ListR
 	}
 	scoped, hasScoped := ctx.Value(requestScopedSSEKey{}).(*requestScopedSSE)
 	if !hasScoped || !scoped.trySend(ctx, jsonrpcRequest) {
-		// Send the list roots request via the channel (non-blocking)
+		// See RequestSampling: wait for room instead of failing.
 		select {
 		case s.rootsRequestChan <- rootsRequest:
-			// Request queued successfully
+		case <-s.done:
+			return nil, fmt.Errorf("list roots request not sent: %w", errSessionClosed)
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		default:
-			return nil, fmt.Errorf("list roots request queue is full - server overloaded")
 		}
 	}
 
@@ -2350,14 +2351,13 @@ func (s *streamableHttpSession) RequestElicitation(ctx context.Context, request 
 	}
 	scoped, hasScoped := ctx.Value(requestScopedSSEKey{}).(*requestScopedSSE)
 	if !hasScoped || !scoped.trySend(ctx, jsonrpcRequest) {
-		// Send the elicitation request via the channel (non-blocking)
+		// See RequestSampling: wait for room instead of failing.
 		select {
 		case s.elicitationRequestChan <- elicitationRequest:
-			// Request queued successfully
+		case <-s.done:
+			return nil, fmt.Errorf("elicitation request not sent: %w", errSessionClosed)
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		default:
-			return nil, fmt.Errorf("elicitation request queue is full - server overloaded")
 		}
 	}
 

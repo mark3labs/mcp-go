@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -178,7 +179,8 @@ func TestStreamableHTTPServer_SamplingInterface(t *testing.T) {
 	}
 }
 
-// TestStreamableHTTPServer_SamplingQueueFull tests queue overflow scenarios
+// TestStreamableHTTPServer_SamplingQueueFull checks that a request waits for
+// room in a full queue until its context ends, instead of failing at once.
 func TestStreamableHTTPServer_SamplingQueueFull(t *testing.T) {
 	sessionID := "test-session"
 	session := newStreamableHttpSession(sessionID, nil, nil, nil, nil, new(atomic.Int64))
@@ -192,8 +194,8 @@ func TestStreamableHTTPServer_SamplingQueueFull(t *testing.T) {
 		}
 	}
 
-	// Try to add another request (should fail)
-	ctx := t.Context()
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
 	request := mcp.CreateMessageRequest{
 		CreateMessageParams: mcp.CreateMessageParams{
 			Messages: []mcp.SamplingMessage{
@@ -209,12 +211,8 @@ func TestStreamableHTTPServer_SamplingQueueFull(t *testing.T) {
 	}
 
 	_, err := session.RequestSampling(ctx, request)
-	if err == nil {
-		t.Error("Expected queue full error, but got nil")
-	}
-
-	if !strings.Contains(err.Error(), "queue is full") {
-		t.Errorf("Expected queue full error, got: %v", err)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Expected the context deadline while waiting for room, got: %v", err)
 	}
 }
 
