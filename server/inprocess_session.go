@@ -84,6 +84,41 @@ func (s *InProcessSession) ClientNotifications() <-chan mcp.JSONRPCNotification 
 	return s.notifications
 }
 
+type inProcessRequestKey struct{}
+
+type inProcessRequest struct {
+	session ClientSession
+	deliver func(mcp.JSONRPCNotification)
+	mu      sync.Mutex
+	ended   bool
+}
+
+// RequestContext returns a context for handling one client message on s and
+// a function that ends it. Until end is called, notifications sent to s with
+// the returned context are passed to deliver on the sending goroutine instead
+// of being queued, so the client receives them before the response they
+// relate to. After end they are queued on the notification channel.
+func (s *InProcessSession) RequestContext(ctx context.Context, deliver func(mcp.JSONRPCNotification)) (context.Context, func()) {
+	r := &inProcessRequest{session: s, deliver: deliver}
+	return context.WithValue(ctx, inProcessRequestKey{}, r), r.end
+}
+
+func (r *inProcessRequest) end() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ended = true
+}
+
+func (r *inProcessRequest) tryDeliver(notification mcp.JSONRPCNotification) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.ended {
+		return false
+	}
+	r.deliver(notification)
+	return true
+}
+
 func (s *InProcessSession) Initialize() {
 	s.loggingLevel.Store(mcp.LoggingLevelError)
 	s.initialized.Store(true)

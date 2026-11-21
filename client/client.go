@@ -233,6 +233,8 @@ func (c *Client) Close() error {
 // OnNotification registers a handler function to be called when notifications are received.
 // Multiple handlers can be registered and will be called in the order they were added.
 // Handlers registered during dispatch receive subsequent notifications.
+// Notifications from concurrent requests can reach the handlers on several
+// goroutines at once, so handlers must guard any state they share.
 func (c *Client) OnNotification(
 	handler func(notification mcp.JSONRPCNotification),
 ) {
