@@ -454,6 +454,24 @@ func callToolWithValidation(ctx context.Context, c client.Client, toolName strin
 }
 ```
 
+### Passing Tool Schemas On
+
+To hand a server's tools to another API, such as an LLM's tool definitions, use `InputSchemaJSON` and `OutputSchemaJSON`. They return each schema as JSON in its wire form, whether the tool carries a structured or a raw schema. `OutputSchemaJSON` returns nil when the tool declares no output schema.
+
+```go
+for _, tool := range result.Tools {
+    params, err := tool.InputSchemaJSON()
+    if err != nil {
+        return err
+    }
+    definitions = append(definitions, FunctionDefinition{
+        Name:        tool.Name,
+        Description: tool.Description,
+        Parameters:  params,
+    })
+}
+```
+
 ### Batch Tool Operations
 
 ```go
