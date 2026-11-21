@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -239,4 +240,46 @@ func TestStreamableHttpSession_CancelsAbandonedRequestOnGETStream(t *testing.T) 
 			})
 		})
 	}
+}
+
+// A request queued on the POST stream whose context ends before it is
+// written is marked abandoned, so the stream skips it instead of writing it
+// after the cancellation the caller is about to publish.
+func TestRequestScopedSSE_AbandonsQueuedRequestWhenContextEnds(t *testing.T) {
+	requests := make(chan *scopedRequest, 8)
+	scoped := &requestScopedSSE{
+		requests:      requests,
+		notifications: make(chan mcp.JSONRPCNotification, 100),
+		done:          make(chan struct{}),
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan bool, 1)
+	go func() { result <- scoped.trySend(ctx, mcp.JSONRPCRequest{}) }()
+	// The item is queued but no one is writing it yet.
+	item := <-requests
+	cancel()
+	require.True(t, <-result)
+	require.True(t, item.abandoned.Load(), "an unwritten queued request must be marked abandoned")
+}
+
+// A request still queued on a session request channel when its context ends
+// is marked abandoned before the cancellation is published, so the GET
+// stream's consumer, which may pick the cancellation first, skips the
+// request instead of delivering it after its cancellation.
+func TestStreamableHttpSession_AbandonsQueuedRequestBeforeCancelling(t *testing.T) {
+	session := newStreamableHttpSession("s1", nil, nil, nil, nil, new(atomic.Int64))
+	ctx, cancel := context.WithCancel(t.Context())
+	errc := make(chan error, 1)
+	go func() {
+		_, err := session.RequestSampling(ctx, mcp.CreateMessageRequest{})
+		errc <- err
+	}()
+	require.Eventually(t, func() bool { return len(session.samplingRequestChan) == 1 },
+		5*time.Second, time.Millisecond, "request should be queued")
+	cancel()
+	require.ErrorIs(t, <-errc, context.Canceled)
+	item := <-session.samplingRequestChan
+	require.True(t, item.abandoned.Load(), "a queued request must be marked abandoned before its cancellation")
+	require.Len(t, session.notificationChannel, 1)
+	requireCancels(t, <-session.notificationChannel, item.requestID)
 }

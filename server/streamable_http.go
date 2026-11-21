@@ -925,7 +925,7 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	// resuming client sees it; otherwise it was never written, and refusing
 	// it lets the caller send it on the standalone GET stream instead.
 	// Callers must hold mu.
-	settleLate := func(item scopedRequest) {
+	settleLate := func(item *scopedRequest) {
 		if resumable {
 			deliverResumable(item.request, false)
 			item.delivered <- true
@@ -949,11 +949,11 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	// session's shared channel the standalone GET stream's forwarder races
 	// this POST's for them, so a notification could reach the client on the
 	// GET stream after the response it belongs to.
-	var scopedRequests chan scopedRequest
+	var scopedRequests chan *scopedRequest
 	var scopedNotifications chan mcp.JSONRPCNotification
 	closeDone := func() { close(done) }
 	if canStream && !era.modern {
-		scopedRequests = make(chan scopedRequest, 8)
+		scopedRequests = make(chan *scopedRequest, 8)
 		scopedNotifications = make(chan mcp.JSONRPCNotification, 100)
 		// This POST registers nothing to make the responses routable: a
 		// request is pending in the server's table from the moment it is
@@ -1036,6 +1036,13 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 						return
 					default:
 					}
+					if item.abandoned.Load() {
+						// The request was abandoned before being written:
+						// its cancellation is already on its way to the
+						// client, and writing it now would deliver a request
+						// the server has withdrawn.
+						return
+					}
 					defer w.Flush()
 
 					if resumable {
@@ -1116,7 +1123,12 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 			case nt := <-scopedNotifications:
 				drain(nt)
 			case item := <-scopedRequests:
-				settleLate(item)
+				// An abandoned request must not be recorded for replay
+				// either: its cancellation is already going out to the
+				// client.
+				if !item.abandoned.Load() {
+					settleLate(item)
+				}
 			default:
 				break scopedDrain
 			}
@@ -1151,7 +1163,11 @@ drainLoop:
 		case nt := <-scopedNotifications:
 			drain(nt)
 		case item := <-scopedRequests:
-			settleLate(item)
+			// An abandoned request must not be recorded for replay either:
+			// its cancellation is already going out to the client.
+			if !item.abandoned.Load() {
+				settleLate(item)
+			}
 		case nt := <-session.notificationChannel:
 			drain(nt)
 		default:
@@ -1332,6 +1348,9 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 					return
 				}
 			case samplingReq := <-session.samplingRequestChan:
+				if samplingReq.abandoned.Load() {
+					continue
+				}
 				// Send sampling request to client via SSE
 				jsonrpcRequest := mcp.JSONRPCRequest{
 					JSONRPC: "2.0",
@@ -1347,6 +1366,9 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 					return
 				}
 			case elicitationReq := <-session.elicitationRequestChan:
+				if elicitationReq.abandoned.Load() {
+					continue
+				}
 				// Send elicitation request to client via SSE
 				jsonrpcRequest := mcp.JSONRPCRequest{
 					JSONRPC: "2.0",
@@ -1362,6 +1384,9 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 					return
 				}
 			case rootsReq := <-session.rootsRequestChan:
+				if rootsReq.abandoned.Load() {
+					continue
+				}
 				// Send list roots request to client via SSE
 				jsonrpcRequest := mcp.JSONRPCRequest{
 					JSONRPC: "2.0",
@@ -1867,6 +1892,11 @@ type samplingRequestItem struct {
 	requestID int64
 	request   mcp.CreateMessageRequest
 	response  chan samplingResponseItem
+	// abandoned is set when the request's context ended while it was still
+	// queued on a request channel: the caller is about to publish
+	// notifications/cancelled, and the channel's consumer must not write
+	// the request after that.
+	abandoned atomic.Bool
 }
 
 type samplingResponseItem struct {
@@ -1908,6 +1938,8 @@ type elicitationRequestItem struct {
 	requestID int64
 	request   mcp.ElicitationRequest
 	response  chan samplingResponseItem
+	// See samplingRequestItem.abandoned.
+	abandoned atomic.Bool
 }
 
 // Roots support types for HTTP transport
@@ -1915,6 +1947,8 @@ type rootsRequestItem struct {
 	requestID int64
 	request   mcp.ListRootsRequest
 	response  chan samplingResponseItem
+	// See samplingRequestItem.abandoned.
+	abandoned atomic.Bool
 }
 
 // streamableHttpSession is a session for streamable-http transport
@@ -1929,7 +1963,7 @@ type requestScopedSSE struct {
 	// session is the session the POST serves; only messages addressed to it
 	// take the POST's stream.
 	session       ClientSession
-	requests      chan<- scopedRequest
+	requests      chan<- *scopedRequest
 	notifications chan<- mcp.JSONRPCNotification
 	done          chan struct{}
 
@@ -1955,6 +1989,10 @@ func (r *requestScopedSSE) close() {
 type scopedRequest struct {
 	request   mcp.JSONRPCRequest
 	delivered chan bool
+	// abandoned is set once the request's context ended before it was
+	// written: the caller is about to publish notifications/cancelled, and
+	// the stream must not write the request after that.
+	abandoned atomic.Bool
 }
 
 // trySend sends the request on the originating POST stream. It reports
@@ -1968,14 +2006,17 @@ type scopedRequest struct {
 //
 // If ctx ends while the request is queued, trySend reports true without
 // waiting: the caller's own wait for the response ends on the same ctx, and
-// reporting false could send the request a second time.
+// reporting false could send the request a second time. The item is marked
+// abandoned, so the POST stream skips it if it was not written yet: the
+// caller is about to publish notifications/cancelled, which must not be
+// followed by the request itself.
 func (r *requestScopedSSE) trySend(ctx context.Context, request mcp.JSONRPCRequest) bool {
 	select {
 	case <-r.done:
 		return false
 	default:
 	}
-	item := scopedRequest{request: request, delivered: make(chan bool, 1)}
+	item := &scopedRequest{request: request, delivered: make(chan bool, 1)}
 	// sendMu covers only the enqueue: close waits for it, and the POST
 	// settles queued requests after close returns.
 	r.sendMu.Lock()
@@ -1988,6 +2029,7 @@ func (r *requestScopedSSE) trySend(ctx context.Context, request mcp.JSONRPCReque
 	case delivered := <-item.delivered:
 		return delivered
 	case <-ctx.Done():
+		item.abandoned.Store(true)
 		return true
 	}
 }
@@ -2057,9 +2099,9 @@ type streamableHttpSession struct {
 	logLevels           *sessionLogLevelsStore
 
 	// Sampling support for bidirectional communication
-	samplingRequestChan    chan samplingRequestItem    // server -> client sampling requests
-	elicitationRequestChan chan elicitationRequestItem // server -> client elicitation requests
-	rootsRequestChan       chan rootsRequestItem       // server -> client list roots requests
+	samplingRequestChan    chan *samplingRequestItem    // server -> client sampling requests
+	elicitationRequestChan chan *elicitationRequestItem // server -> client elicitation requests
+	rootsRequestChan       chan *rootsRequestItem       // server -> client list roots requests
 
 	// samplingRequests holds the server requests awaiting a client response.
 	// Every session a StreamableHTTPServer creates shares the server's table,
@@ -2084,9 +2126,9 @@ func newStreamableHttpSession(sessionID string, toolStore *sessionToolsStore, re
 		resources:              resourcesStore,
 		resourceTemplates:      templatesStore,
 		logLevels:              levels,
-		samplingRequestChan:    make(chan samplingRequestItem, 10),
-		elicitationRequestChan: make(chan elicitationRequestItem, 10),
-		rootsRequestChan:       make(chan rootsRequestItem, 10),
+		samplingRequestChan:    make(chan *samplingRequestItem, 10),
+		elicitationRequestChan: make(chan *elicitationRequestItem, 10),
+		rootsRequestChan:       make(chan *rootsRequestItem, 10),
 		samplingRequests:       new(sync.Map),
 		requestIDCounter:       requestIDCounter,
 	}
@@ -2209,7 +2251,7 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 	responseChan := make(chan samplingResponseItem, 1)
 
 	// Create the sampling request item
-	samplingRequest := samplingRequestItem{
+	samplingRequest := &samplingRequestItem{
 		requestID: requestID,
 		request:   request,
 		response:  responseChan,
@@ -2270,6 +2312,13 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 		return &result, nil
 	case <-ctx.Done():
 		if len(responseChan) == 0 {
+			// A request still queued for the GET stream must not be written
+			// after the cancellation below. One that went to a POST stream
+			// was already marked by trySend, or was written before the
+			// cancellation and is genuinely being withdrawn.
+			if scoped == nil {
+				samplingRequest.abandoned.Store(true)
+			}
 			s.cancelRequest(ctx, scoped, requestID)
 		}
 		return nil, ctx.Err()
@@ -2286,7 +2335,7 @@ func (s *streamableHttpSession) ListRoots(ctx context.Context, request mcp.ListR
 	responseChan := make(chan samplingResponseItem, 1)
 
 	// Create the roots request item
-	rootsRequest := rootsRequestItem{
+	rootsRequest := &rootsRequestItem{
 		requestID: requestID,
 		request:   request,
 		response:  responseChan,
@@ -2337,6 +2386,13 @@ func (s *streamableHttpSession) ListRoots(ctx context.Context, request mcp.ListR
 		return &result, nil
 	case <-ctx.Done():
 		if len(responseChan) == 0 {
+			// A request still queued for the GET stream must not be written
+			// after the cancellation below. One that went to a POST stream
+			// was already marked by trySend, or was written before the
+			// cancellation and is genuinely being withdrawn.
+			if scoped == nil {
+				rootsRequest.abandoned.Store(true)
+			}
 			s.cancelRequest(ctx, scoped, requestID)
 		}
 		return nil, ctx.Err()
@@ -2352,7 +2408,7 @@ func (s *streamableHttpSession) RequestElicitation(ctx context.Context, request 
 	responseChan := make(chan samplingResponseItem, 1)
 
 	// Create the sampling request item
-	elicitationRequest := elicitationRequestItem{
+	elicitationRequest := &elicitationRequestItem{
 		requestID: requestID,
 		request:   request,
 		response:  responseChan,
@@ -2405,6 +2461,13 @@ func (s *streamableHttpSession) RequestElicitation(ctx context.Context, request 
 		return &result, nil
 	case <-ctx.Done():
 		if len(responseChan) == 0 {
+			// A request still queued for the GET stream must not be written
+			// after the cancellation below. One that went to a POST stream
+			// was already marked by trySend, or was written before the
+			// cancellation and is genuinely being withdrawn.
+			if scoped == nil {
+				elicitationRequest.abandoned.Store(true)
+			}
 			s.cancelRequest(ctx, scoped, requestID)
 		}
 		return nil, ctx.Err()

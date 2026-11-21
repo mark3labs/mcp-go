@@ -3100,7 +3100,7 @@ func TestStreamableHTTP_ServerRequestIDsDoNotCollide(t *testing.T) {
 // stream did with the request, and that it gives up when the caller's
 // context ends or the POST stream finishes.
 func TestStreamableHTTP_TrySendWaitsForBufferSpace(t *testing.T) {
-	requests := make(chan scopedRequest, 1)
+	requests := make(chan *scopedRequest, 1)
 	done := make(chan struct{})
 	scoped := &requestScopedSSE{requests: requests, done: done}
 
@@ -3130,7 +3130,7 @@ func TestStreamableHTTP_TrySendWaitsForBufferSpace(t *testing.T) {
 
 	// A full buffer makes the send wait for space, then for the stream to
 	// settle the request.
-	requests <- scopedRequest{delivered: make(chan bool, 1)}
+	requests <- &scopedRequest{delivered: make(chan bool, 1)}
 	result := send(t.Context())
 	pending(result, "buffer full")
 	<-requests
