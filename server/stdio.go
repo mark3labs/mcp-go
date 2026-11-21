@@ -212,6 +212,9 @@ func (s *stdioSession) RequestSampling(ctx context.Context, request mcp.CreateMe
 	// Wait for the response or context cancellation
 	select {
 	case <-ctx.Done():
+		if len(responseChan) == 0 {
+			s.cancelRequest(ctx, id)
+		}
 		return nil, ctx.Err()
 	case response := <-responseChan:
 		if response.err != nil {
@@ -273,6 +276,9 @@ func (s *stdioSession) ListRoots(ctx context.Context, request mcp.ListRootsReque
 	// Wait for the response or context cancellation
 	select {
 	case <-ctx.Done():
+		if len(responseChan) == 0 {
+			s.cancelRequest(ctx, id)
+		}
 		return nil, ctx.Err()
 	case response := <-responseChan:
 		if response.err != nil {
@@ -336,12 +342,26 @@ func (s *stdioSession) RequestElicitation(ctx context.Context, request mcp.Elici
 	// Wait for the response or context cancellation
 	select {
 	case <-ctx.Done():
+		if len(responseChan) == 0 {
+			s.cancelRequest(ctx, id)
+		}
 		return nil, ctx.Err()
 	case response := <-responseChan:
 		if response.err != nil {
 			return nil, response.err
 		}
 		return response.result, nil
+	}
+}
+
+// cancelRequest tells the client, with a notifications/cancelled, that the
+// request id was abandoned because ctx ended before a response arrived. Best
+// effort: the notification is dropped rather than waited on when the queue
+// is full.
+func (s *stdioSession) cancelRequest(ctx context.Context, id int64) {
+	select {
+	case s.notifications <- newCancelledNotification(id, ctx.Err()):
+	default:
 	}
 }
 
