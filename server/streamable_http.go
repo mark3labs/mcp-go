@@ -2001,6 +2001,28 @@ func (r *requestScopedSSE) trySendNotification(ctx context.Context, notification
 	return sendWhileOpen(ctx, r.done, r.notifications, notification)
 }
 
+// offerNotification queues the notification for the originating POST stream
+// only if that needs no waiting, and reports whether it was queued. sendMu is
+// only tried: a send holding it may be waiting on a full channel for this
+// very handler to return.
+func (r *requestScopedSSE) offerNotification(notification mcp.JSONRPCNotification) bool {
+	if !r.sendMu.TryLock() {
+		return false
+	}
+	defer r.sendMu.Unlock()
+	select {
+	case <-r.done:
+		return false
+	default:
+	}
+	select {
+	case r.notifications <- notification:
+		return true
+	default:
+		return false
+	}
+}
+
 // sendWhileOpen sends v on ch unless done is closed or ctx ends first, and
 // reports whether it was sent.
 func sendWhileOpen[T any](ctx context.Context, done <-chan struct{}, ch chan<- T, v T) bool {
@@ -2214,6 +2236,7 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 	}
 	scoped, hasScoped := ctx.Value(requestScopedSSEKey{}).(*requestScopedSSE)
 	if !hasScoped || !scoped.trySend(ctx, jsonrpcRequest) {
+		scoped = nil // the request, and any cancellation of it, takes the GET stream
 		// Send the sampling request via the channel (non-blocking)
 		select {
 		case s.samplingRequestChan <- samplingRequest:
@@ -2246,6 +2269,9 @@ func (s *streamableHttpSession) RequestSampling(ctx context.Context, request mcp
 
 		return &result, nil
 	case <-ctx.Done():
+		if len(responseChan) == 0 {
+			s.cancelRequest(ctx, scoped, requestID)
+		}
 		return nil, ctx.Err()
 	}
 }
@@ -2286,6 +2312,7 @@ func (s *streamableHttpSession) ListRoots(ctx context.Context, request mcp.ListR
 	}
 	scoped, hasScoped := ctx.Value(requestScopedSSEKey{}).(*requestScopedSSE)
 	if !hasScoped || !scoped.trySend(ctx, jsonrpcRequest) {
+		scoped = nil // the request, and any cancellation of it, takes the GET stream
 		// Send the list roots request via the channel (non-blocking)
 		select {
 		case s.rootsRequestChan <- rootsRequest:
@@ -2309,6 +2336,9 @@ func (s *streamableHttpSession) ListRoots(ctx context.Context, request mcp.ListR
 		}
 		return &result, nil
 	case <-ctx.Done():
+		if len(responseChan) == 0 {
+			s.cancelRequest(ctx, scoped, requestID)
+		}
 		return nil, ctx.Err()
 	}
 }
@@ -2350,6 +2380,7 @@ func (s *streamableHttpSession) RequestElicitation(ctx context.Context, request 
 	}
 	scoped, hasScoped := ctx.Value(requestScopedSSEKey{}).(*requestScopedSSE)
 	if !hasScoped || !scoped.trySend(ctx, jsonrpcRequest) {
+		scoped = nil // the request, and any cancellation of it, takes the GET stream
 		// Send the elicitation request via the channel (non-blocking)
 		select {
 		case s.elicitationRequestChan <- elicitationRequest:
@@ -2373,7 +2404,27 @@ func (s *streamableHttpSession) RequestElicitation(ctx context.Context, request 
 		}
 		return &result, nil
 	case <-ctx.Done():
+		if len(responseChan) == 0 {
+			s.cancelRequest(ctx, scoped, requestID)
+		}
 		return nil, ctx.Err()
+	}
+}
+
+// cancelRequest tells the client, with a notifications/cancelled, that the
+// request requestID was abandoned because ctx ended before a response
+// arrived. It goes out the way the request did: on the originating POST's
+// stream when scoped is set, otherwise through the session's notification
+// channel to the standalone GET stream. Best effort: it never waits, and the
+// notification is dropped when neither path has room.
+func (s *streamableHttpSession) cancelRequest(ctx context.Context, scoped *requestScopedSSE, requestID int64) {
+	notification := newCancelledNotification(requestID, ctx.Err())
+	if scoped != nil && scoped.offerNotification(notification) {
+		return
+	}
+	select {
+	case s.notificationChannel <- notification:
+	default:
 	}
 }
 
