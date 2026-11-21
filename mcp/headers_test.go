@@ -456,6 +456,8 @@ func TestParamHeaderAnnotationsSurviveBooleanSchemas(t *testing.T) {
 		{"false", `false`},
 		{"nested true", `{"type":"object","properties":{"other":true}}`},
 		{"nested false", `{"type":"object","properties":{"other":false}}`},
+		{"boolean and large number", `{"properties":{"blocked":false,"number":{"minimum":1e1000}}}`},
+		{"boolean and null", `{"properties":{"blocked":false,"other":null}}`},
 		{"object control", `{}`},
 	}
 	for _, tt := range tests {
@@ -480,6 +482,28 @@ func TestParamHeaderAnnotationsSurviveBooleanSchemas(t *testing.T) {
 			assert.True(t, IsHeaderMismatch(err))
 		})
 	}
+}
+
+func TestParamHeaderBooleanSchemasPreserveInvalidSchemaFallback(t *testing.T) {
+	for _, invalid := range []string{`1`, `"invalid"`, `[]`, `{"properties":false}`} {
+		t.Run(invalid, func(t *testing.T) {
+			tool := &Tool{Name: "query", RawInputSchema: json.RawMessage(`{"properties":{
+				"blocked":false,"invalid":` + invalid + `,
+				"region":{"type":"string","x-mcp-header":"Region"}
+			}}`)}
+			assert.Empty(t, ExtractParamHeaderBindings(tool))
+			assert.NoError(t, ValidateParamHeaderAnnotations(tool))
+		})
+	}
+}
+
+func TestParamHeaderBooleanSchemasDoNotHideNullAnnotation(t *testing.T) {
+	tool := &Tool{Name: "query", RawInputSchema: json.RawMessage(`{"properties":{
+		"blocked":false,"region":{"type":"string","x-mcp-header":null}
+	}}`)}
+	err := ValidateParamHeaderAnnotations(tool)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "non-empty string")
 }
 
 func TestParamHeaderAnnotationsRejectedOnNullableTypeUnion(t *testing.T) {

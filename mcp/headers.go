@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -262,18 +263,6 @@ type headerSchemaProperty struct {
 	Properties map[string]headerSchemaProperty `json:"properties,omitempty"`
 }
 
-// UnmarshalJSON accepts boolean schemas, which cannot carry annotations,
-// without discarding header annotations on other properties.
-func (p *headerSchemaProperty) UnmarshalJSON(data []byte) error {
-	switch string(bytes.TrimSpace(data)) {
-	case "true", "false":
-		*p = headerSchemaProperty{}
-		return nil
-	}
-	type objectSchema headerSchemaProperty
-	return json.Unmarshal(data, (*objectSchema)(p))
-}
-
 // typeNames returns the type names declared by the property, accepting both
 // the scalar and array forms.
 func (p headerSchemaProperty) typeNames() []string {
@@ -320,11 +309,65 @@ func schemaHeaderProperties(schema any) (map[string]headerSchemaProperty, error)
 	if schema == nil {
 		return nil, nil
 	}
-	var s headerSchemaProperty
-	if err := remarshal(schema, &s); err != nil {
+	data, err := json.Marshal(schema)
+	if err != nil {
 		return nil, fmt.Errorf("reading input schema: %w", err)
 	}
+	var s headerSchemaProperty
+	if err := json.Unmarshal(data, &s); err != nil {
+		var typeErr *json.UnmarshalTypeError
+		if !errors.As(err, &typeErr) || typeErr.Value != "bool" {
+			return nil, fmt.Errorf("reading input schema: %w", err)
+		}
+		var raw struct {
+			Properties map[string]any `json:"properties"`
+		}
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
+		if err := decoder.Decode(&raw); err != nil {
+			return nil, fmt.Errorf("reading input schema: %w", err)
+		}
+		return headerPropertiesFromJSON(raw.Properties)
+	}
 	return s.Properties, nil
+}
+
+// headerPropertiesFromJSON projects boolean-containing schemas without a
+// recursive UnmarshalJSON method that would reparse every nested subtree.
+func headerPropertiesFromJSON(properties map[string]any) (map[string]headerSchemaProperty, error) {
+	result := make(map[string]headerSchemaProperty, len(properties))
+	for name, value := range properties {
+		var prop headerSchemaProperty
+		switch value := value.(type) {
+		case nil, bool:
+		case map[string]any:
+			var err error
+			if field, ok := value["type"]; ok {
+				prop.Type, err = json.Marshal(field)
+				if err != nil {
+					return nil, err
+				}
+			}
+			if field, ok := value["x-mcp-header"]; ok {
+				prop.XMCPHeader, err = json.Marshal(field)
+				if err != nil {
+					return nil, err
+				}
+			}
+			children, ok := value["properties"].(map[string]any)
+			if !ok && value["properties"] != nil {
+				return nil, fmt.Errorf("property %q: properties must be an object", name)
+			}
+			prop.Properties, err = headerPropertiesFromJSON(children)
+			if err != nil {
+				return nil, err
+			}
+		default:
+			return nil, fmt.Errorf("property %q: schema must be an object or boolean", name)
+		}
+		result[name] = prop
+	}
+	return result, nil
 }
 
 // ExtractParamHeaderBindings returns a binding for every property in the
