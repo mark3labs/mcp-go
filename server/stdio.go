@@ -26,6 +26,9 @@ var (
 	// attempted after listener input processing ends, or when a pending
 	// request loses its writer to listener shutdown or writer replacement.
 	ErrStdioServerClosed = errors.New("stdio server closed")
+	// ErrStdioServerOverloaded is returned when the queue-full response
+	// backlog is full and Listen must stop accepting input.
+	ErrStdioServerOverloaded = errors.New("stdio server overloaded")
 )
 
 // StdioContextFunc is a function that takes an existing context and returns
@@ -44,6 +47,7 @@ type StdioServer struct {
 
 	// Thread-safe tool call processing
 	toolCallQueue  chan *toolCallWork
+	rejectionSlots chan struct{}
 	workerWg       sync.WaitGroup
 	requestWg      sync.WaitGroup // Tracks in-flight request handlers
 	workerPoolSize int
@@ -96,7 +100,9 @@ func WithWorkerPoolSize(size int) StdioOption {
 
 // WithQueueSize sets the size of the tool call queue.
 // Tool calls received while the queue is full are rejected with a JSON-RPC
-// internal error.
+// internal error. The size also limits outstanding queue-full responses.
+// When that limit is exhausted, Listen stops processing input and returns
+// ErrStdioServerOverloaded after pending work finishes.
 func WithQueueSize(size int) StdioOption {
 	return func(s *StdioServer) {
 		const maxQueueSize = 10000
@@ -608,6 +614,7 @@ func (s *StdioServer) Listen(
 
 	// Initialize the tool call queue
 	s.toolCallQueue = make(chan *toolCallWork, s.queueSize)
+	s.rejectionSlots = make(chan struct{}, s.queueSize)
 
 	// Set a static client context since stdio only has one client
 	if err := s.server.RegisterSession(ctx, &stdioSessionInstance); err != nil {
@@ -736,8 +743,16 @@ func (s *StdioServer) processMessage(
 				finish()
 				return ctx.Err()
 			default:
+				slots := s.rejectionSlots
+				select {
+				case slots <- struct{}{}:
+				default:
+					finish()
+					return ErrStdioServerOverloaded
+				}
 				s.errLogger.Printf("Tool call queue full, rejecting request")
 				s.requestWg.Go(func() {
+					defer func() { <-slots }()
 					defer finish()
 					response := createErrorResponse(id, mcp.INTERNAL_ERROR, "Tool call queue is full")
 					if err := s.writeResponse(response, writer); err != nil {

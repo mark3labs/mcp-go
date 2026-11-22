@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ type stdioQueueMessageWriter struct {
 	messages chan stdioQueueMessage
 }
 
+// Write records JSON-RPC messages that carry a request ID.
 func (w *stdioQueueMessageWriter) Write(p []byte) (int, error) {
 	var message stdioQueueMessage
 	if err := json.Unmarshal(p, &message); err != nil {
@@ -34,6 +36,28 @@ func (w *stdioQueueMessageWriter) Write(p []byte) (int, error) {
 		w.messages <- message
 	}
 	return len(p), nil
+}
+
+type stdioStalledRejectionWriter struct {
+	output  *stdioQueueMessageWriter
+	started chan struct{}
+	release chan struct{}
+	writes  atomic.Int32
+}
+
+// Write blocks queue-full responses until the test releases the writer.
+func (w *stdioStalledRejectionWriter) Write(p []byte) (int, error) {
+	var message stdioQueueMessage
+	if err := json.Unmarshal(p, &message); err != nil {
+		return 0, err
+	}
+	if message.Error != nil && message.Error.Message == "Tool call queue is full" {
+		if w.writes.Add(1) == 1 {
+			close(w.started)
+		}
+		<-w.release
+	}
+	return w.output.Write(p)
 }
 
 // TestStdioServerFullQueueKeepsInputReadable verifies that queue saturation
@@ -61,9 +85,11 @@ func TestStdioServerFullQueueKeepsInputReadable(t *testing.T) {
 	modes := []struct {
 		name  string
 		reply bool
+		stall bool
 	}{
 		{name: "EOF"},
 		{name: "client response", reply: true},
+		{name: "rejection limit", stall: true},
 	}
 	for _, tt := range tests {
 		for _, mode := range modes {
@@ -87,15 +113,26 @@ func TestStdioServerFullQueueKeepsInputReadable(t *testing.T) {
 				WithQueueSize(1)(stdioServer)
 				reader, input := io.Pipe()
 				output := &stdioQueueMessageWriter{messages: make(chan stdioQueueMessage, 16)}
+				var stdout io.Writer = output
+				unblock := func() {}
+				var stalled *stdioStalledRejectionWriter
+				if mode.stall {
+					stalled = &stdioStalledRejectionWriter{
+						output: output, started: make(chan struct{}), release: make(chan struct{}),
+					}
+					stdout = stalled
+					unblock = sync.OnceFunc(func() { close(stalled.release) })
+				}
 				listenDone := make(chan struct{})
 				var listenErr error
 				go func() {
-					listenErr = stdioServer.Listen(listenCtx, reader, output)
+					listenErr = stdioServer.Listen(listenCtx, reader, stdout)
 					close(listenDone)
 				}()
 				t.Cleanup(func() {
 					cancelRequest()
 					cancelListen()
+					unblock()
 					_ = input.Close()
 					_ = reader.Close()
 					select {
@@ -134,7 +171,26 @@ func TestStdioServerFullQueueKeepsInputReadable(t *testing.T) {
 				require.Equal(t, string(tt.method), request.Method)
 				send(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"queued"}}`)
 				send(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"ask"}}`)
-				overflow := awaitMessage()
+				var overflow stdioQueueMessage
+				var handlerErr error
+				if mode.stall {
+					select {
+					case <-stalled.started:
+					case <-time.After(2 * time.Second):
+						t.Fatal("queue-full response was not started")
+					}
+					send(`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"ask"}}`)
+					select {
+					case handlerErr = <-handlerDone:
+						require.ErrorIs(t, handlerErr, ErrStdioServerClosed)
+					case <-time.After(2 * time.Second):
+						t.Fatal("exhausted rejection limit did not release pending requests")
+					}
+					unblock()
+					overflow = awaitMessage()
+				} else {
+					overflow = awaitMessage()
+				}
 				if mode.reply {
 					response, err := json.Marshal(mcp.JSONRPCResponse{JSONRPC: "2.0", ID: request.ID, Result: json.RawMessage(tt.result)})
 					require.NoError(t, err)
@@ -146,14 +202,23 @@ func TestStdioServerFullQueueKeepsInputReadable(t *testing.T) {
 						require.NotEmpty(t, response.Result)
 					}
 				}
-				require.NoError(t, input.Close())
+				if !mode.stall {
+					require.NoError(t, input.Close())
+				}
 				select {
 				case <-listenDone:
-					require.NoError(t, listenErr)
+					if mode.stall {
+						require.ErrorIs(t, listenErr, ErrStdioServerOverloaded)
+						require.EqualValues(t, 1, stalled.writes.Load())
+					} else {
+						require.NoError(t, listenErr)
+					}
 				case <-time.After(2 * time.Second):
 					t.Fatal("Listen blocked after EOF with a full tool queue")
 				}
-				handlerErr := <-handlerDone
+				if !mode.stall {
+					handlerErr = <-handlerDone
+				}
 				if mode.reply {
 					require.NoError(t, handlerErr)
 				} else {

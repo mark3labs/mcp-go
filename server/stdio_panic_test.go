@@ -156,20 +156,21 @@ func TestStdioServer_QueueFullRejectsToolCalls(t *testing.T) {
 		panic("deliberate panic in stdio handler")
 	})
 
-	// With the only worker busy and a queue of one, at least one panicking
-	// call is rejected before its handler starts.
+	// With one busy worker and two queued slots, the burst rejects at least
+	// one call and fits its rejection responses within the backlog limit.
 	stdioServer := NewStdioServer(server)
 	WithWorkerPoolSize(1)(stdioServer)
-	WithQueueSize(1)(stdioServer)
+	WithQueueSize(2)(stdioServer)
 	responses := stdioResponses(t, stdioServer, strings.Join([]string{
 		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"slow-tool"}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"panic-tool"}}`,
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"panic-tool"}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"panic-tool"}}`,
 	}, "\n")+"\n")
 
-	require.Len(t, responses, 3, "accepted and rejected calls must receive responses")
+	require.Len(t, responses, 4, "accepted and rejected calls must receive responses")
 	rejected := 0
-	for _, id := range []float64{2, 3} {
+	for _, id := range []float64{2, 3, 4} {
 		raw, ok := responses[id]
 		require.True(t, ok, "missing response for request %v", id)
 		var response mcp.JSONRPCError
