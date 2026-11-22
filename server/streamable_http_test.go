@@ -558,7 +558,16 @@ func TestStreamableHTTP_GET_StatelessStreamsAreIndependent(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mcpServer := NewMCPServer("test", "1.0")
+			hooks := &Hooks{}
+			registered := make(chan string, 2)
+			hooks.AddOnRegisterSession(func(_ context.Context, client ClientSession) {
+				session := client.(*streamableHttpSession)
+				session.SetSessionTools(map[string]ServerTool{
+					"ephemeral": {Tool: mcp.Tool{Name: "ephemeral"}},
+				})
+				registered <- session.SessionID()
+			})
+			mcpServer := NewMCPServer("test", "1.0", WithHooks(hooks))
 			handler := NewStreamableHTTPServer(mcpServer, append(tt.opts, WithStateLess(true))...)
 			firstDone := make(chan struct{})
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -614,8 +623,23 @@ func TestStreamableHTTP_GET_StatelessStreamsAreIndependent(t *testing.T) {
 			defer cancel()
 			firstCtx, cancelFirst := context.WithCancel(ctx)
 			defer cancelFirst()
+			getRegisteredID := func() string {
+				t.Helper()
+				select {
+				case id := <-registered:
+					return id
+				case <-ctx.Done():
+					t.Fatal("timed out waiting for GET session registration")
+					return ""
+				}
+			}
 			first := openStream(firstCtx, "first")
+			firstID := getRegisteredID()
 			second := openStream(ctx, "second")
+			secondID := getRegisteredID()
+			require.NotEqual(t, firstID, secondID)
+			require.Len(t, handler.sessionTools.get(firstID), 1)
+			require.Len(t, handler.sessionTools.get(secondID), 1)
 
 			mcpServer.SendNotificationToAllClients("notifications/message", map[string]any{"value": "both connected"})
 			assertNotification(first, "first", "both connected")
@@ -627,6 +651,8 @@ func TestStreamableHTTP_GET_StatelessStreamsAreIndependent(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal("first GET handler did not exit after cancellation")
 			}
+			require.Empty(t, handler.sessionTools.get(firstID), "disconnected stream leaked its session tools")
+			require.Len(t, handler.sessionTools.get(secondID), 1, "active stream lost its session tools")
 			mcpServer.SendNotificationToAllClients("notifications/message", map[string]any{"value": "after disconnect"})
 			assertNotification(second, "second", "after disconnect")
 		})
