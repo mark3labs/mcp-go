@@ -747,6 +747,13 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	select {
+	case <-session.done:
+		s.writeJSONRPCError(w, nil, mcp.INVALID_REQUEST, "session closed")
+		return
+	default:
+	}
+
 	// Parse message as raw JSON
 	var rawMessage json.RawMessage
 	if err != nil || json.NewDecoder(bytes.NewReader(body)).Decode(&rawMessage) != nil {
