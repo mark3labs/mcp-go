@@ -137,17 +137,20 @@ func TestStdioServerShutdownReleasesHandlerRequests(t *testing.T) {
 		{name: "independent context", independent: true},
 	}
 	shutdowns := []struct {
-		name string
-		err  error
+		name   string
+		err    error
+		cancel bool
 	}{
 		{name: "EOF"},
 		{name: "read error", err: errors.New("input failed")},
+		{name: "parent cancellation", err: context.Canceled, cancel: true},
 	}
 	for _, tt := range tests {
 		for _, requestContext := range contexts {
 			for _, shutdown := range shutdowns {
 				t.Run(tt.name+"/"+requestContext.name+"/"+shutdown.name, func(t *testing.T) {
 					independentCtx, cancel := context.WithCancel(t.Context())
+					listenCtx, cancelListen := context.WithCancel(t.Context())
 					handlerDone := make(chan error, 1)
 					mcpServer := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
 					mcpServer.AddTool(mcp.NewTool("ask"), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -166,11 +169,12 @@ func TestStdioServerShutdownReleasesHandlerRequests(t *testing.T) {
 					listenDone := make(chan struct{})
 					var listenErr error
 					go func() {
-						listenErr = stdioServer.Listen(independentCtx, reader, output)
+						listenErr = stdioServer.Listen(listenCtx, reader, output)
 						close(listenDone)
 					}()
 					t.Cleanup(func() {
 						cancel()
+						cancelListen()
 						_ = input.Close()
 						_ = reader.Close()
 						select {
@@ -187,7 +191,11 @@ func TestStdioServerShutdownReleasesHandlerRequests(t *testing.T) {
 					case <-time.After(2 * time.Second):
 						t.Fatal("handler did not send its request")
 					}
-					require.NoError(t, input.CloseWithError(shutdown.err))
+					if shutdown.cancel {
+						cancelListen()
+					} else {
+						require.NoError(t, input.CloseWithError(shutdown.err))
+					}
 					select {
 					case <-listenDone:
 						if shutdown.err == nil {
@@ -198,11 +206,68 @@ func TestStdioServerShutdownReleasesHandlerRequests(t *testing.T) {
 					case <-time.After(2 * time.Second):
 						t.Fatal("Listen blocked waiting for the handler after input ended")
 					}
-					require.ErrorIs(t, <-handlerDone, ErrStdioServerClosed)
+					handlerErr := <-handlerDone
+					if shutdown.cancel && !requestContext.independent {
+						require.True(t, errors.Is(handlerErr, context.Canceled) || errors.Is(handlerErr, ErrStdioServerClosed), "unexpected handler error: %v", handlerErr)
+					} else {
+						require.ErrorIs(t, handlerErr, ErrStdioServerClosed)
+					}
 					require.NoError(t, independentCtx.Err(), "shutdown must not depend on independent context cancellation")
 				})
 			}
 		}
+	}
+}
+
+func TestStdioSessionPendingRequestsReturnContextErrorBeforeClosure(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(context.Context) error
+	}{
+		{name: "sampling", call: func(ctx context.Context) error {
+			_, err := stdioSessionInstance.RequestSampling(ctx, mcp.CreateMessageRequest{})
+			return err
+		}},
+		{name: "elicitation", call: func(ctx context.Context) error {
+			_, err := stdioSessionInstance.RequestElicitation(ctx, mcp.ElicitationRequest{})
+			return err
+		}},
+		{name: "roots", call: func(ctx context.Context) error {
+			_, err := stdioSessionInstance.ListRoots(ctx, mcp.ListRootsRequest{})
+			return err
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := &stdioRequestSignalWriter{written: make(chan struct{})}
+			gen := stdioSessionInstance.SetWriter(output)
+			t.Cleanup(func() { stdioSessionInstance.markStopped(gen) })
+			parentCtx, cancelParent := context.WithCancel(t.Context())
+			t.Cleanup(cancelParent)
+			ctx, cancel := context.WithCancel(parentCtx)
+			defer cancel()
+			requestDone := make(chan error, 1)
+			go func() { requestDone <- tt.call(ctx) }()
+			select {
+			case <-output.written:
+			case <-time.After(2 * time.Second):
+				t.Fatal("request was not sent")
+			}
+			cancelParent()
+			select {
+			case err := <-requestDone:
+				require.ErrorIs(t, err, context.Canceled)
+			case <-time.After(2 * time.Second):
+				t.Fatal("pending request did not return after parent cancellation")
+			}
+			_, done, err := stdioSessionInstance.outboundWriter()
+			require.NoError(t, err)
+			select {
+			case <-done:
+				t.Fatal("caller cancellation closed the writer")
+			default:
+			}
+		})
 	}
 }
 

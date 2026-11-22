@@ -567,6 +567,10 @@ func (s *StdioServer) readNextLine(ctx context.Context, reader *bufio.Reader) (s
 // ErrStdioServerListening. When input processing ends, server-initiated
 // requests on the stdio session fail with ErrStdioServerClosed before Listen
 // waits for handlers to finish. A later Listen installs a new writer.
+// Caller-context cancellation, including cancellation inherited from Listen's
+// context, can release a waiting request with ctx.Err() before listener closure
+// is observed. Once closure is observed, ErrStdioServerClosed takes precedence
+// over context cancellation.
 func (s *StdioServer) Listen(
 	ctx context.Context,
 	stdin io.Reader,
