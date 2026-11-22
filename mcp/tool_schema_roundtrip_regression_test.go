@@ -349,3 +349,47 @@ func compileRoundTripSchema(t *testing.T, data []byte) *jsonschema.Schema {
 	require.NoError(t, err)
 	return compiled
 }
+
+func TestToolSchemaRoundTrip_ModeledKeywordNumbers(t *testing.T) {
+	tests := []struct {
+		name    string
+		valid   string
+		invalid string
+	}{
+		{name: "large integer", valid: `9007199254740993`, invalid: `9007199254740992`},
+		{name: "large exponent", valid: `1e400`, invalid: `1e399`},
+		{name: "precise decimal", valid: `0.123456789012345678901`, invalid: `0.12345678901234568`},
+		{name: "ordinary integer", valid: `7`, invalid: `8`},
+	}
+	locations := []struct {
+		name string
+		wrap func(string) string
+	}{
+		{name: "properties", wrap: func(s string) string { return `"properties":{"value":` + s + `}` }},
+		{name: "defs", wrap: func(s string) string {
+			return `"$defs":{"value":` + s + `},"properties":{"value":{"$ref":"#/$defs/value"}}`
+		}},
+		{name: "additionalProperties", wrap: func(s string) string { return `"additionalProperties":` + s }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, location := range locations {
+				t.Run(location.name, func(t *testing.T) {
+					data := `{"type":"object","required":["value"],` + location.wrap(`{"const":`+tt.valid+`}`) + `}`
+					valid := decodeRoundTripJSON(t, `{"value":`+tt.valid+`}`)
+					invalid := decodeRoundTripJSON(t, `{"value":`+tt.invalid+`}`)
+					original := compileRoundTripSchema(t, []byte(data))
+					require.NoError(t, original.Validate(valid))
+					require.Error(t, original.Validate(invalid))
+					for name, encoded := range roundTripToolSchemas(t, data) {
+						t.Run(name, func(t *testing.T) {
+							compiled := compileRoundTripSchema(t, encoded)
+							assert.NoError(t, compiled.Validate(valid))
+							assert.Error(t, compiled.Validate(invalid))
+						})
+					}
+				})
+			}
+		})
+	}
+}

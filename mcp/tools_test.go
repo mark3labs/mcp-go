@@ -117,8 +117,8 @@ func TestUnmarshalToolWithRawSchema(t *testing.T) {
 	assert.Contains(t, toolUnmarshalled.InputSchema.Properties, "limit")
 	assert.Subset(t, toolUnmarshalled.InputSchema.Properties["limit"], map[string]any{
 		"type":    "integer",
-		"minimum": 1.0,
-		"maximum": 50.0,
+		"minimum": json.Number("1"),
+		"maximum": json.Number("50"),
 	})
 	assert.Subset(t, toolUnmarshalled.InputSchema.Required, []string{"query"})
 }
