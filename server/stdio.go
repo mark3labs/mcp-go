@@ -23,8 +23,8 @@ var (
 	// previous Listen on the same StdioServer is still running.
 	ErrStdioServerListening = errors.New("stdio server is already listening")
 	// ErrStdioServerClosed is returned when a server-initiated request is
-	// attempted after Listen has returned, or when a pending request loses
-	// its writer because Listen returned or another writer replaced it.
+	// attempted after listener input processing ends, or when a pending
+	// request loses its writer to listener shutdown or writer replacement.
 	ErrStdioServerClosed = errors.New("stdio server closed")
 )
 
@@ -118,7 +118,7 @@ type stdioSession struct {
 	requestID           atomic.Int64                        // for generating unique request IDs
 	mu                  sync.RWMutex                        // protects writer, done, closed, and generation
 	done                chan struct{}                       // closed when this writer stops serving requests
-	closed              bool                                // Listen has returned for the active generation
+	closed              bool                                // input processing ended for the active generation
 	generation          uint64                              // bumped by every SetWriter
 	pendingRequests     map[int64]chan *samplingResponse    // for tracking pending sampling requests
 	pendingElicitations map[int64]chan *elicitationResponse // for tracking pending elicitation requests
@@ -227,6 +227,11 @@ func (s *stdioSession) RequestSampling(ctx context.Context, request mcp.CreateMe
 	case <-done:
 		return nil, ErrStdioServerClosed
 	case <-ctx.Done():
+		select {
+		case <-done:
+			return nil, ErrStdioServerClosed
+		default:
+		}
 		return nil, ctx.Err()
 	case response := <-responseChan:
 		if response.err != nil {
@@ -287,6 +292,11 @@ func (s *stdioSession) ListRoots(ctx context.Context, request mcp.ListRootsReque
 	case <-done:
 		return nil, ErrStdioServerClosed
 	case <-ctx.Done():
+		select {
+		case <-done:
+			return nil, ErrStdioServerClosed
+		default:
+		}
 		return nil, ctx.Err()
 	case response := <-responseChan:
 		if response.err != nil {
@@ -349,6 +359,11 @@ func (s *stdioSession) RequestElicitation(ctx context.Context, request mcp.Elici
 	case <-done:
 		return nil, ErrStdioServerClosed
 	case <-ctx.Done():
+		select {
+		case <-done:
+			return nil, ErrStdioServerClosed
+		default:
+		}
 		return nil, ctx.Err()
 	case response := <-responseChan:
 		if response.err != nil {
@@ -376,7 +391,7 @@ func (s *stdioSession) SetWriter(writer io.Writer) uint64 {
 }
 
 // outboundWriter returns the writer and closure signal for a server-initiated request.
-// After Listen returns, it reports ErrStdioServerClosed.
+// After listener input processing ends, it reports ErrStdioServerClosed.
 func (s *stdioSession) outboundWriter() (io.Writer, <-chan struct{}, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -549,9 +564,9 @@ func (s *StdioServer) readNextLine(ctx context.Context, reader *bufio.Reader) (s
 // Returns an error if there are issues with reading input or writing output.
 // A context that is already cancelled returns ctx.Err() before a session is
 // registered. A second call while this one is still running returns
-// ErrStdioServerListening. After Listen returns, server-initiated requests
-// on the stdio session fail with ErrStdioServerClosed until a later Listen
-// installs a new writer.
+// ErrStdioServerListening. When input processing ends, server-initiated
+// requests on the stdio session fail with ErrStdioServerClosed before Listen
+// waits for handlers to finish. A later Listen installs a new writer.
 func (s *StdioServer) Listen(
 	ctx context.Context,
 	stdin io.Reader,
@@ -625,6 +640,7 @@ func (s *StdioServer) Listen(
 	err := s.processInputStream(ctx, reader, stdout)
 
 	// Shutdown workers gracefully
+	stdioSessionInstance.markStopped(writeGen)
 	cancelRequests()
 	close(s.toolCallQueue)
 	s.workerWg.Wait()

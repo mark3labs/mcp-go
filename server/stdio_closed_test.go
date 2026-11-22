@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log"
 	"strings"
@@ -107,6 +108,101 @@ func TestStdioServerPendingRequestsReturnClosed(t *testing.T) {
 				cancel()
 			}
 		})
+	}
+}
+
+func TestStdioServerShutdownReleasesHandlerRequests(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(context.Context) error
+	}{
+		{name: "sampling", call: func(ctx context.Context) error {
+			_, err := stdioSessionInstance.RequestSampling(ctx, mcp.CreateMessageRequest{})
+			return err
+		}},
+		{name: "elicitation", call: func(ctx context.Context) error {
+			_, err := stdioSessionInstance.RequestElicitation(ctx, mcp.ElicitationRequest{})
+			return err
+		}},
+		{name: "roots", call: func(ctx context.Context) error {
+			_, err := stdioSessionInstance.ListRoots(ctx, mcp.ListRootsRequest{})
+			return err
+		}},
+	}
+	contexts := []struct {
+		name        string
+		independent bool
+	}{
+		{name: "handler context"},
+		{name: "independent context", independent: true},
+	}
+	shutdowns := []struct {
+		name string
+		err  error
+	}{
+		{name: "EOF"},
+		{name: "read error", err: errors.New("input failed")},
+	}
+	for _, tt := range tests {
+		for _, requestContext := range contexts {
+			for _, shutdown := range shutdowns {
+				t.Run(tt.name+"/"+requestContext.name+"/"+shutdown.name, func(t *testing.T) {
+					independentCtx, cancel := context.WithCancel(t.Context())
+					handlerDone := make(chan error, 1)
+					mcpServer := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
+					mcpServer.AddTool(mcp.NewTool("ask"), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+						if requestContext.independent {
+							ctx = independentCtx
+						}
+						handlerDone <- tt.call(ctx)
+						return mcp.NewToolResultText("done"), nil
+					})
+					stdioServer := NewStdioServer(mcpServer)
+					stdioServer.SetErrorLogger(log.New(io.Discard, "", 0))
+					WithWorkerPoolSize(1)(stdioServer)
+
+					reader, input := io.Pipe()
+					output := &stdioRequestSignalWriter{written: make(chan struct{})}
+					listenDone := make(chan struct{})
+					var listenErr error
+					go func() {
+						listenErr = stdioServer.Listen(independentCtx, reader, output)
+						close(listenDone)
+					}()
+					t.Cleanup(func() {
+						cancel()
+						_ = input.Close()
+						_ = reader.Close()
+						select {
+						case <-listenDone:
+						case <-time.After(2 * time.Second):
+							t.Error("Listen did not stop during cleanup")
+						}
+					})
+
+					_, err := io.WriteString(input, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ask"}}`+"\n")
+					require.NoError(t, err)
+					select {
+					case <-output.written:
+					case <-time.After(2 * time.Second):
+						t.Fatal("handler did not send its request")
+					}
+					require.NoError(t, input.CloseWithError(shutdown.err))
+					select {
+					case <-listenDone:
+						if shutdown.err == nil {
+							require.NoError(t, listenErr)
+						} else {
+							require.ErrorIs(t, listenErr, shutdown.err)
+						}
+					case <-time.After(2 * time.Second):
+						t.Fatal("Listen blocked waiting for the handler after input ended")
+					}
+					require.ErrorIs(t, <-handlerDone, ErrStdioServerClosed)
+					require.NoError(t, independentCtx.Err(), "shutdown must not depend on independent context cancellation")
+				})
+			}
+		}
 	}
 }
 
