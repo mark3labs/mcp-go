@@ -832,6 +832,8 @@ func TestTaskGetModern_NonEncodableResultReportsError(t *testing.T) {
 	_, e := srv.handleGetTask(ctx, 2, mcp.GetTaskRequest{Params: mcp.GetTaskParams{TaskId: taskID}})
 	require.NotNil(t, e, "non-encodable completed result must produce an error")
 	assert.Equal(t, mcp.INTERNAL_ERROR, e.code)
+}
+
 // addTaskWorkTool registers a tool named "work" that runs as a task, either
 // through AddTaskTool or as a regular tool with optional task support.
 func addTaskWorkTool(s *MCPServer, taskTool bool, handle func(ctx context.Context) (string, error)) {
@@ -988,7 +990,7 @@ func TestTaskCancelledBeforeWorkerStarts(t *testing.T) {
 			const taskID = "cancel-before-start"
 			entry, err := s.createTask(t.Context(), taskID, "work", nil, nil)
 			require.NoError(t, err)
-			require.NoError(t, s.cancelTask(t.Context(), taskID))
+			require.NoError(t, s.cancelTask(t.Context(), taskID, false))
 
 			var called atomic.Bool
 			request := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "work"}}

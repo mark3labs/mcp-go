@@ -2617,7 +2617,7 @@ func (s *MCPServer) executeTaskTool(
 	s.tasksMu.Unlock()
 	if ended {
 		cancel()
-		_ = s.cancelTaskEntry(context.WithoutCancel(ctx), entry, context.Canceled.Error())
+		_ = s.cancelTaskEntry(context.WithoutCancel(ctx), entry, context.Canceled.Error(), false)
 		return
 	}
 
@@ -2719,7 +2719,7 @@ func (s *MCPServer) executeRegularToolAsTask(
 	s.tasksMu.Unlock()
 	if ended {
 		cancel()
-		_ = s.cancelTaskEntry(context.WithoutCancel(ctx), entry, context.Canceled.Error())
+		_ = s.cancelTaskEntry(context.WithoutCancel(ctx), entry, context.Canceled.Error(), false)
 		return
 	}
 
@@ -2742,9 +2742,9 @@ func (s *MCPServer) executeRegularToolAsTask(
 	for attempt := 0; ; attempt++ {
 		result, err := finalHandler(taskCtx, call)
 		if err != nil {
-      // If the error is due to context cancellation, don't mark as failed.
-      // The cancelTask method will handle setting the proper status.
-      // However, if cancelTask hasn't been called yet, we should still mark it.
+			// If the error is due to context cancellation, don't mark as failed.
+			// The cancelTask method will handle setting the proper status.
+			// However, if cancelTask hasn't been called yet, we should still mark it.
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				_ = s.cancelTaskEntry(context.WithoutCancel(ctx), entry, err.Error(), false)
 				return
@@ -2788,7 +2788,7 @@ func (s *MCPServer) executeRegularToolAsTask(
 			responses, ok := s.awaitTaskInput(taskCtx, entry, result.InputRequests)
 			if !ok {
 				// Preserve an existing terminal state, otherwise record cancellation.
-				_ = s.cancelTaskEntry(ctx, entry, "Task cancelled while awaiting input", false)
+				_ = s.cancelTaskEntry(context.WithoutCancel(ctx), entry, "Task cancelled while awaiting input", false)
 				return
 			}
 			call = request
