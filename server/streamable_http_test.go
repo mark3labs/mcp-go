@@ -548,6 +548,91 @@ func TestStreamableHTTP_GET(t *testing.T) {
 	}
 }
 
+func TestStreamableHTTP_GET_StatelessStreamsAreIndependent(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []StreamableHTTPOption
+	}{
+		{name: "without event store"},
+		{name: "with event store", opts: []StreamableHTTPOption{WithEventStore(NewInMemoryEventStore())}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mcpServer := NewMCPServer("test", "1.0")
+			handler := NewStreamableHTTPServer(mcpServer, append(tt.opts, WithStateLess(true))...)
+			firstDone := make(chan struct{})
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("stream") == "first" {
+					defer close(firstDone)
+				}
+				handler.ServeHTTP(w, r)
+			}))
+			defer ts.Close()
+
+			openStream := func(ctx context.Context, name string) <-chan string {
+				t.Helper()
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/mcp?stream="+name, nil)
+				require.NoError(t, err)
+				req.Header.Set("Accept", "text/event-stream")
+				resp, err := ts.Client().Do(req)
+				require.NoError(t, err)
+				t.Cleanup(func() { resp.Body.Close() })
+				require.Equal(t, http.StatusOK, resp.StatusCode)
+				require.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
+				assert.Empty(t, resp.Header.Get(HeaderKeySessionID))
+
+				events := make(chan string, 2)
+				go func() {
+					defer close(events)
+					scanner := bufio.NewScanner(resp.Body)
+					for scanner.Scan() {
+						if data, ok := strings.CutPrefix(scanner.Text(), "data: "); ok {
+							select {
+							case events <- data:
+							case <-ctx.Done():
+								return
+							}
+						}
+					}
+				}()
+				return events
+			}
+			assertNotification := func(events <-chan string, stream, value string) {
+				t.Helper()
+				select {
+				case data, ok := <-events:
+					if assert.Truef(t, ok, "%s stream closed before notification %q", stream, value) {
+						assert.Contains(t, data, `"method":"notifications/message"`)
+						assert.Contains(t, data, `"value":"`+value+`"`)
+					}
+				case <-time.After(time.Second):
+					t.Errorf("%s stream did not receive notification %q", stream, value)
+				}
+			}
+
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			firstCtx, cancelFirst := context.WithCancel(ctx)
+			defer cancelFirst()
+			first := openStream(firstCtx, "first")
+			second := openStream(ctx, "second")
+
+			mcpServer.SendNotificationToAllClients("notifications/message", map[string]any{"value": "both connected"})
+			assertNotification(first, "first", "both connected")
+			assertNotification(second, "second", "both connected")
+
+			cancelFirst()
+			select {
+			case <-firstDone:
+			case <-ctx.Done():
+				t.Fatal("first GET handler did not exit after cancellation")
+			}
+			mcpServer.SendNotificationToAllClients("notifications/message", map[string]any{"value": "after disconnect"})
+			assertNotification(second, "second", "after disconnect")
+		})
+	}
+}
+
 func TestStreamableHTTP_HttpHandler(t *testing.T) {
 	t.Run("Works with custom mux", func(t *testing.T) {
 		mcpServer := NewMCPServer("test", "1.0.0")
