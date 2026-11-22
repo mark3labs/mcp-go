@@ -277,7 +277,7 @@ func TestRequestScopedSSE_AbandonsQueuedRequestWhenContextEnds(t *testing.T) {
 	}
 	result := make(chan outcome, 1)
 	go func() {
-		sent, issued := scoped.trySend(ctx, mcp.JSONRPCRequest{})
+		sent, issued := scoped.trySend(ctx, mcp.JSONRPCRequest{}, 0)
 		result <- outcome{sent, issued}
 	}()
 	// The item is queued but no one is writing it yet.
@@ -288,6 +288,131 @@ func TestRequestScopedSSE_AbandonsQueuedRequestWhenContextEnds(t *testing.T) {
 	require.False(t, got.issued, "an unwritten queued request was not issued")
 	item.mu.Lock()
 	require.True(t, item.abandoned, "an unwritten queued request must be marked abandoned")
+	item.mu.Unlock()
+}
+
+// A request the stream has already written stays issued when the sender's
+// context ends, whether or not the delivery report has been read: the
+// outcome is recorded under the item mutex, so the sender reads it there
+// instead of guessing from whether the lock happened to be free.
+func TestRequestScopedSSE_DeliveredRequestStaysIssuedWhenContextEnds(t *testing.T) {
+	requests := make(chan *scopedRequest, 8)
+	scoped := &requestScopedSSE{
+		requests:      requests,
+		notifications: make(chan mcp.JSONRPCNotification, 100),
+		done:          make(chan struct{}),
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	type outcome struct {
+		sent   bool
+		issued bool
+	}
+	result := make(chan outcome, 1)
+	go func() {
+		sent, issued := scoped.trySend(ctx, mcp.JSONRPCRequest{}, 7)
+		result <- outcome{sent, issued}
+	}()
+	// The stream wrote the request and reported it, exactly as the forwarder
+	// does: outcome recorded under the mutex, report after it.
+	item := <-requests
+	item.mu.Lock()
+	item.settled = true
+	item.written = true
+	item.mu.Unlock()
+	item.delivered <- true
+	cancel()
+	got := <-result
+	require.True(t, got.sent)
+	require.True(t, got.issued, "a request the stream wrote is issued however the context ends")
+	item.mu.Lock()
+	assert.False(t, item.abandoned, "a delivered request must not be marked abandoned")
+	item.mu.Unlock()
+}
+
+// A request whose write is in flight when the sender gives up is issued:
+// the sender leaves the prepared cancellation on the item, and the stream
+// forwards it right behind the request, because the sender returns without
+// sending one.
+func TestRequestScopedSSE_AbandonedDuringWriteIsWithdrawnByTheStream(t *testing.T) {
+	requests := make(chan *scopedRequest, 8)
+	scoped := &requestScopedSSE{
+		requests:      requests,
+		notifications: make(chan mcp.JSONRPCNotification, 100),
+		done:          make(chan struct{}),
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	type outcome struct {
+		sent   bool
+		issued bool
+	}
+	result := make(chan outcome, 1)
+	go func() {
+		sent, issued := scoped.trySend(ctx, mcp.JSONRPCRequest{}, 7)
+		result <- outcome{sent, issued}
+	}()
+	// The stream is writing the request, as the forwarder does between its
+	// abandoned check and its outcome record.
+	item := <-requests
+	item.mu.Lock()
+	item.writing = true
+	item.mu.Unlock()
+	cancel()
+	got := <-result
+	require.True(t, got.sent)
+	require.True(t, got.issued, "a request being written is issued, so the stream withdraws it")
+	item.mu.Lock()
+	require.NotNil(t, item.cancel, "the sender must leave the withdrawal on the item")
+	require.True(t, item.abandoned, "the sender must mark the request given up")
+	item.mu.Unlock()
+	// The write completes and the stream reconciles the late abandonment.
+	item.mu.Lock()
+	item.writing = false
+	item.settled = true
+	item.written = true
+	item.mu.Unlock()
+	item.delivered <- true
+	requireCancels(t, *item.cancel, 7)
+}
+
+// A request a finished non-resumable POST refused — it was never written —
+// is not issued, and no cancellation may reference its unseen ID, even
+// though the refusal report may still be in flight when the sender looks.
+func TestRequestScopedSSE_RefusedRequestIsNotIssuedWhenContextEnds(t *testing.T) {
+	requests := make(chan *scopedRequest, 8)
+	scoped := &requestScopedSSE{
+		requests:      requests,
+		notifications: make(chan mcp.JSONRPCNotification, 100),
+		done:          make(chan struct{}),
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	type outcome struct {
+		sent   bool
+		issued bool
+	}
+	result := make(chan outcome, 1)
+	go func() {
+		sent, issued := scoped.trySend(ctx, mcp.JSONRPCRequest{}, 7)
+		result <- outcome{sent, issued}
+	}()
+	// The drain refused the request, exactly as settleLate does on a
+	// finished non-resumable POST: outcome recorded, its report not yet
+	// readable when the sender's context ends.
+	item := <-requests
+	item.mu.Lock()
+	item.settled = true
+	item.written = false
+	item.mu.Unlock()
+	cancel()
+	got := <-result
+	require.True(t, got.sent)
+	require.False(t, got.issued, "a request the stream refused was never issued")
+	item.mu.Lock()
+	assert.Nil(t, item.cancel, "no cancellation may reference a request the client never saw")
+	item.mu.Unlock()
+	// The refusal report arrives after the sender's decision, into the
+	// buffered channel, and reports the same outcome.
+	item.mu.Lock()
+	assert.True(t, item.settled && !item.written, "the refusal stays recorded")
 	item.mu.Unlock()
 }
 
