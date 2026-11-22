@@ -1299,8 +1299,7 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 			return
 		}
 		if !resumable {
-			defer s.server.UnregisterSession(r.ctx(), sessionKey)
-			defer s.activeSessions.Delete(sessionKey)
+			defer s.cleanupSessionState(r.ctx(), sessionKey)
 		}
 		// A resumable session outlives the connection so that
 		// messages produced while the client is away are recorded for
