@@ -1568,6 +1568,16 @@ func DefaultArray[T any](value []T) PropertyOption {
 // Property Type Helpers
 //
 
+func setInputProperty(input *ToolInputSchema, name string, schema map[string]any) {
+	if required, ok := schema["required"].(bool); ok && required {
+		delete(schema, "required")
+		if !slices.Contains(input.Required, name) {
+			input.Required = append(input.Required, name)
+		}
+	}
+	input.Properties[name] = schema
+}
+
 // WithInteger adds an integer property to the tool schema.
 // It accepts property options to configure the integer property's behavior and constraints.
 func WithInteger(name string, opts ...PropertyOption) ToolOption {
@@ -1580,13 +1590,7 @@ func WithInteger(name string, opts ...PropertyOption) ToolOption {
 			opt(schema)
 		}
 
-		// Remove required from property schema and add to InputSchema.required
-		if required, ok := schema["required"].(bool); ok && required {
-			delete(schema, "required")
-			t.InputSchema.Required = append(t.InputSchema.Required, name)
-		}
-
-		t.InputSchema.Properties[name] = schema
+		setInputProperty(&t.InputSchema, name, schema)
 	}
 }
 
@@ -1602,13 +1606,7 @@ func WithBoolean(name string, opts ...PropertyOption) ToolOption {
 			opt(schema)
 		}
 
-		// Remove required from property schema and add to InputSchema.required
-		if required, ok := schema["required"].(bool); ok && required {
-			delete(schema, "required")
-			t.InputSchema.Required = append(t.InputSchema.Required, name)
-		}
-
-		t.InputSchema.Properties[name] = schema
+		setInputProperty(&t.InputSchema, name, schema)
 	}
 }
 
@@ -1624,13 +1622,7 @@ func WithNumber(name string, opts ...PropertyOption) ToolOption {
 			opt(schema)
 		}
 
-		// Remove required from property schema and add to InputSchema.required
-		if required, ok := schema["required"].(bool); ok && required {
-			delete(schema, "required")
-			t.InputSchema.Required = append(t.InputSchema.Required, name)
-		}
-
-		t.InputSchema.Properties[name] = schema
+		setInputProperty(&t.InputSchema, name, schema)
 	}
 }
 
@@ -1646,13 +1638,7 @@ func WithString(name string, opts ...PropertyOption) ToolOption {
 			opt(schema)
 		}
 
-		// Remove required from property schema and add to InputSchema.required
-		if required, ok := schema["required"].(bool); ok && required {
-			delete(schema, "required")
-			t.InputSchema.Required = append(t.InputSchema.Required, name)
-		}
-
-		t.InputSchema.Properties[name] = schema
+		setInputProperty(&t.InputSchema, name, schema)
 	}
 }
 
@@ -1669,13 +1655,7 @@ func WithObject(name string, opts ...PropertyOption) ToolOption {
 			opt(schema)
 		}
 
-		// Remove required from property schema and add to InputSchema.required
-		if required, ok := schema["required"].(bool); ok && required {
-			delete(schema, "required")
-			t.InputSchema.Required = append(t.InputSchema.Required, name)
-		}
-
-		t.InputSchema.Properties[name] = schema
+		setInputProperty(&t.InputSchema, name, schema)
 	}
 }
 
@@ -1693,13 +1673,7 @@ func WithArray(name string, opts ...PropertyOption) ToolOption {
 			opt(schema)
 		}
 
-		// Remove required from property schema and add to InputSchema.required
-		if required, ok := schema["required"].(bool); ok && required {
-			delete(schema, "required")
-			t.InputSchema.Required = append(t.InputSchema.Required, name)
-		}
-
-		t.InputSchema.Properties[name] = schema
+		setInputProperty(&t.InputSchema, name, schema)
 	}
 }
 
@@ -1714,13 +1688,7 @@ func WithAny(name string, opts ...PropertyOption) ToolOption {
 			opt(schema)
 		}
 
-		// Remove required from property schema and add to InputSchema.required
-		if required, ok := schema["required"].(bool); ok && required {
-			delete(schema, "required")
-			t.InputSchema.Required = append(t.InputSchema.Required, name)
-		}
-
-		t.InputSchema.Properties[name] = schema
+		setInputProperty(&t.InputSchema, name, schema)
 	}
 }
 
@@ -1815,17 +1783,7 @@ func UniqueItems(unique bool) PropertyOption {
 //
 // Limitations: Only supports simple string arrays. Use Items() for complex objects.
 func WithStringItems(opts ...PropertyOption) PropertyOption {
-	return func(schema map[string]any) {
-		itemSchema := map[string]any{
-			"type": "string",
-		}
-
-		for _, opt := range opts {
-			opt(itemSchema)
-		}
-
-		schema["items"] = itemSchema
-	}
+	return primitiveItems("string", opts)
 }
 
 // WithStringEnumItems configures an array's items to be of type string with a specified enum.
@@ -1855,17 +1813,7 @@ func WithStringEnumItems(values []string) PropertyOption {
 //
 // Limitations: Only supports simple number arrays. Use Items() for complex objects.
 func WithNumberItems(opts ...PropertyOption) PropertyOption {
-	return func(schema map[string]any) {
-		itemSchema := map[string]any{
-			"type": "number",
-		}
-
-		for _, opt := range opts {
-			opt(itemSchema)
-		}
-
-		schema["items"] = itemSchema
-	}
+	return primitiveItems("number", opts)
 }
 
 // WithIntegerItems configures an array's items to be of type integer.
@@ -1880,21 +1828,7 @@ func WithNumberItems(opts ...PropertyOption) PropertyOption {
 //
 // Limitations: Only supports simple integer arrays. Use Items() for complex objects.
 func WithIntegerItems(opts ...PropertyOption) PropertyOption {
-	return func(schema map[string]any) {
-		itemSchema := map[string]any{
-			"type": "integer",
-		}
-
-		for _, opt := range opts {
-			opt(itemSchema)
-		}
-
-		if required, ok := itemSchema["required"].(bool); ok && required {
-			delete(itemSchema, "required")
-		}
-
-		schema["items"] = itemSchema
-	}
+	return primitiveItems("integer", opts)
 }
 
 // WithBooleanItems configures an array's items to be of type boolean.
@@ -1909,15 +1843,18 @@ func WithIntegerItems(opts ...PropertyOption) PropertyOption {
 //
 // Limitations: Only supports simple boolean arrays. Use Items() for complex objects.
 func WithBooleanItems(opts ...PropertyOption) PropertyOption {
+	return primitiveItems("boolean", opts)
+}
+
+func primitiveItems(kind string, opts []PropertyOption) PropertyOption {
 	return func(schema map[string]any) {
-		itemSchema := map[string]any{
-			"type": "boolean",
-		}
-
+		items := map[string]any{"type": kind}
 		for _, opt := range opts {
-			opt(itemSchema)
+			opt(items)
 		}
-
-		schema["items"] = itemSchema
+		if required, ok := items["required"].(bool); ok && required {
+			delete(items, "required")
+		}
+		schema["items"] = items
 	}
 }
