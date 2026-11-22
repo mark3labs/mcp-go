@@ -128,26 +128,41 @@ func TestStreamableHTTPSession_ServerRequestWaitsForQueueRoom(t *testing.T) {
 }
 
 func TestStreamableHTTPSession_ServerRequestStopsWaitingWhenSessionCloses(t *testing.T) {
-	for _, tt := range serverRequestQueueCases() {
-		t.Run(tt.name, func(t *testing.T) {
-			session := NewStreamableHTTPServer(NewMCPServer("test-server", "1.0.0")).newSession("session-1")
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
-
-			_, capacity := tt.queue(session)
-			fillServerRequestQueue(t, ctx, tt, session, make(chan error, capacity))
-
-			extra := make(chan error, 1)
-			go func() { extra <- tt.send(ctx, session) }()
-			requireStillWaiting(t, extra)
+	closers := []struct {
+		name  string
+		close func(ctx context.Context, srv *StreamableHTTPServer, session *streamableHttpSession)
+	}{
+		{name: "closed", close: func(_ context.Context, _ *StreamableHTTPServer, session *streamableHttpSession) {
 			session.closeDone()
+		}},
+		{name: "terminated", close: func(ctx context.Context, srv *StreamableHTTPServer, session *streamableHttpSession) {
+			srv.cleanupSessionState(ctx, session.SessionID())
+		}},
+	}
+	for _, tt := range serverRequestQueueCases() {
+		for _, closer := range closers {
+			t.Run(tt.name+"/"+closer.name, func(t *testing.T) {
+				srv := NewStreamableHTTPServer(NewMCPServer("test-server", "1.0.0"))
+				session := srv.newSession("session-1")
+				srv.activeSessions.Store(session.SessionID(), session)
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
 
-			select {
-			case err := <-extra:
-				require.ErrorIs(t, err, errSessionClosed)
-			case <-time.After(time.Second):
-				t.Fatal("request waiting for queue room did not return when the session closed")
-			}
-		})
+				_, capacity := tt.queue(session)
+				fillServerRequestQueue(t, ctx, tt, session, make(chan error, capacity))
+
+				extra := make(chan error, 1)
+				go func() { extra <- tt.send(ctx, session) }()
+				requireStillWaiting(t, extra)
+				closer.close(ctx, srv, session)
+
+				select {
+				case err := <-extra:
+					require.ErrorIs(t, err, errSessionClosed)
+				case <-time.After(time.Second):
+					t.Fatal("request waiting for queue room did not return when the session ended")
+				}
+			})
+		}
 	}
 }

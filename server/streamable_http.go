@@ -1654,7 +1654,11 @@ func (s *StreamableHTTPServer) cleanupSessionState(ctx context.Context, sessionI
 	}
 	// Unregister first to stop notification routing before deleting data.
 	s.server.UnregisterSession(ctx, sessionID)
-	s.activeSessions.Delete(sessionID)
+	if v, ok := s.activeSessions.LoadAndDelete(sessionID); ok {
+		if session, ok := v.(*streamableHttpSession); ok {
+			session.closeDone()
+		}
+	}
 	s.sessionTools.delete(sessionID)
 	s.sessionResources.delete(sessionID)
 	s.sessionResourceTemplates.delete(sessionID)
