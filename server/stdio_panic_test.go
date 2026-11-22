@@ -143,9 +143,9 @@ func TestStdioServer_NotificationHandlerPanicRecovery(t *testing.T) {
 	assert.Contains(t, responses, float64(2), "the server should still answer after the panic")
 }
 
-// When the tool call queue is full, a tools/call runs on the read loop
-// instead. A handler panicking there used to take the server down too.
-func TestStdioServer_SynchronousToolCallPanicRecovery(t *testing.T) {
+// TestStdioServer_QueueFullRejectsToolCalls verifies that overloaded requests
+// receive errors while accepted panicking calls still receive panic errors.
+func TestStdioServer_QueueFullRejectsToolCalls(t *testing.T) {
 	server := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
 	server.AddTool(mcp.NewTool("slow-tool"), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		// Keep the only worker busy until Listen reaches EOF and cancels.
@@ -156,9 +156,8 @@ func TestStdioServer_SynchronousToolCallPanicRecovery(t *testing.T) {
 		panic("deliberate panic in stdio handler")
 	})
 
-	// With the only worker busy and a queue of one, at least one of the two
-	// panicking calls finds the queue full and runs on the read loop, which
-	// answers it before reading on. A call still queued at EOF is dropped.
+	// With the only worker busy and a queue of one, at least one panicking
+	// call is rejected before its handler starts.
 	stdioServer := NewStdioServer(server)
 	WithWorkerPoolSize(1)(stdioServer)
 	WithQueueSize(1)(stdioServer)
@@ -168,17 +167,19 @@ func TestStdioServer_SynchronousToolCallPanicRecovery(t *testing.T) {
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"panic-tool"}}`,
 	}, "\n")+"\n")
 
-	answered := 0
+	require.Len(t, responses, 3, "accepted and rejected calls must receive responses")
+	rejected := 0
 	for _, id := range []float64{2, 3} {
 		raw, ok := responses[id]
-		if !ok {
-			continue
-		}
-		answered++
+		require.True(t, ok, "missing response for request %v", id)
 		var response mcp.JSONRPCError
 		require.NoError(t, json.Unmarshal(raw, &response))
 		assert.Equal(t, mcp.INTERNAL_ERROR, response.Error.Code)
-		assert.Contains(t, response.Error.Message, "internal panic")
+		if response.Error.Message == "Tool call queue is full" {
+			rejected++
+		} else {
+			assert.Contains(t, response.Error.Message, "internal panic")
+		}
 	}
-	assert.NotZero(t, answered, "the call run on the read loop should get an error response")
+	assert.NotZero(t, rejected, "a full queue must reject overflowing requests")
 }

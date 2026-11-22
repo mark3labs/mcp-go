@@ -94,7 +94,9 @@ func WithWorkerPoolSize(size int) StdioOption {
 	}
 }
 
-// WithQueueSize sets the size of the tool call queue
+// WithQueueSize sets the size of the tool call queue.
+// Tool calls received while the queue is full are rejected with a JSON-RPC
+// internal error.
 func WithQueueSize(size int) StdioOption {
 	return func(s *StdioServer) {
 		const maxQueueSize = 10000
@@ -734,9 +736,15 @@ func (s *StdioServer) processMessage(
 				finish()
 				return ctx.Err()
 			default:
-				// Queue is full, process synchronously as fallback.
-				s.errLogger.Printf("Tool call queue full, processing synchronously")
-				return s.handleRequest(reqCtx, id, rawMessage, writer, finish)
+				s.errLogger.Printf("Tool call queue full, rejecting request")
+				s.requestWg.Go(func() {
+					defer finish()
+					response := createErrorResponse(id, mcp.INTERNAL_ERROR, "Tool call queue is full")
+					if err := s.writeResponse(response, writer); err != nil {
+						s.errLogger.Printf("Error writing tool queue full response: %v", err)
+					}
+				})
+				return nil
 			}
 		}
 
