@@ -20,15 +20,20 @@ import (
 type Client struct {
 	transport transport.Interface
 
-	initialized        atomic.Bool
-	notifications      []func(mcp.JSONRPCNotification)
-	notifyMu           sync.RWMutex
+	initialized   atomic.Bool
+	notifications []func(mcp.JSONRPCNotification)
+	notifyMu      sync.RWMutex
 
 	// incomingRequests tracks the server-initiated requests being handled,
 	// keyed by their request ID, so a notifications/cancelled from the
 	// server can end the handler's context early.
 	incomingMu       sync.Mutex
 	incomingRequests map[string]context.CancelFunc
+	// earlyCancels remembers a notifications/cancelled that arrived before
+	// its request was registered: the transports start request handlers in
+	// goroutines, so the notification can beat the registration. Also under
+	// incomingMu.
+	earlyCancels       map[string]bool
 	requestID          atomic.Int64
 	clientCapabilities mcp.ClientCapabilities
 	serverCapabilities mcp.ServerCapabilities
@@ -853,7 +858,16 @@ func (c *Client) handleIncomingRequest(ctx context.Context, request transport.JS
 		c.incomingRequests = make(map[string]context.CancelFunc)
 	}
 	c.incomingRequests[key] = cancel
+	// A cancellation that beat the registration is applied immediately, so
+	// the server's withdrawal holds however the two messages interleaved.
+	cancelledEarly := c.earlyCancels[key]
+	if cancelledEarly {
+		delete(c.earlyCancels, key)
+	}
 	c.incomingMu.Unlock()
+	if cancelledEarly {
+		cancel()
+	}
 	defer func() {
 		c.incomingMu.Lock()
 		delete(c.incomingRequests, key)
@@ -894,6 +908,18 @@ func (c *Client) cancelIncomingRequest(notification mcp.JSONRPCNotification) {
 	cancel, ok := c.incomingRequests[key]
 	if ok {
 		delete(c.incomingRequests, key)
+	} else {
+		// The transports start request handlers in goroutines, so this
+		// notification can arrive before the request is registered.
+		// Remember it: the registration applies it immediately. Bounded, so
+		// a server streaming cancellations for unknown IDs cannot grow it
+		// without limit.
+		if len(c.earlyCancels) < 1024 {
+			if c.earlyCancels == nil {
+				c.earlyCancels = make(map[string]bool)
+			}
+			c.earlyCancels[key] = true
+		}
 	}
 	c.incomingMu.Unlock()
 	if ok {

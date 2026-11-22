@@ -79,3 +79,57 @@ func TestClient_ServerCancelledRequestEndsHandlerContext(t *testing.T) {
 	assert.Empty(t, client.incomingRequests, "the request should be deregistered when the handler returns")
 	client.incomingMu.Unlock()
 }
+
+// The stdio and Streamable HTTP transports start request handlers in
+// goroutines, so a notifications/cancelled can be processed before the
+// request is registered. The cancellation must hold anyway: the client
+// remembers it, and the registration applies it immediately.
+func TestClient_CancellationBeforeRegistrationEndsHandlerContext(t *testing.T) {
+	mt := newMockTransport()
+	client := &Client{
+		transport:       mt,
+		samplingHandler: blockingSamplingHandler{},
+	}
+	require.NoError(t, client.Start(t.Context()))
+
+	request := transport.JSONRPCRequest{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		ID:      mcp.NewRequestId(int64(43)),
+		Method:  string(mcp.MethodSamplingCreateMessage),
+		Params: map[string]any{
+			"messages":   []any{},
+			"maxTokens":  10,
+			"modelHints": []any{},
+		},
+	}
+	handlerDone := make(chan error, 1)
+	go func() {
+		_, err := client.handleIncomingRequest(t.Context(), request)
+		handlerDone <- err
+	}()
+
+	// The server withdraws the request immediately: no wait for the
+	// handler goroutine to register it first.
+	require.NotNil(t, mt.notificationHandler, "Start should have registered the notification handler")
+	mt.notificationHandler(mcp.JSONRPCNotification{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		Notification: mcp.Notification{
+			Method: string(mcp.MethodNotificationCancelled),
+			Params: mcp.NotificationParams{
+				AdditionalFields: map[string]any{"requestId": float64(43), "reason": context.Canceled.Error()},
+			},
+		},
+	})
+
+	select {
+	case err := <-handlerDone:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the handler did not return after the cancellation")
+	}
+
+	client.incomingMu.Lock()
+	assert.Empty(t, client.incomingRequests, "the request should be deregistered when the handler returns")
+	assert.Empty(t, client.earlyCancels, "the early cancellation should be consumed by the registration")
+	client.incomingMu.Unlock()
+}
