@@ -32,8 +32,10 @@ type Client struct {
 	// earlyCancels remembers a notifications/cancelled that arrived before
 	// its request was registered: the transports start request handlers in
 	// goroutines, so the notification can beat the registration. Also under
-	// incomingMu.
+	// incomingMu; earlyCancelOrder lists its keys oldest first, so a full
+	// buffer evicts the oldest entry instead of dropping the newest.
 	earlyCancels       map[string]bool
+	earlyCancelOrder   []string
 	requestID          atomic.Int64
 	clientCapabilities mcp.ClientCapabilities
 	serverCapabilities mcp.ServerCapabilities
@@ -860,10 +862,7 @@ func (c *Client) handleIncomingRequest(ctx context.Context, request transport.JS
 	c.incomingRequests[key] = cancel
 	// A cancellation that beat the registration is applied immediately, so
 	// the server's withdrawal holds however the two messages interleaved.
-	cancelledEarly := c.earlyCancels[key]
-	if cancelledEarly {
-		delete(c.earlyCancels, key)
-	}
+	cancelledEarly := c.takeEarlyCancelLocked(key)
 	c.incomingMu.Unlock()
 	if cancelledEarly {
 		cancel()
@@ -886,6 +885,43 @@ func (c *Client) handleIncomingRequest(ctx context.Context, request transport.JS
 	default:
 		return nil, fmt.Errorf("unsupported request method: %s", request.Method)
 	}
+}
+
+// maxEarlyCancels bounds how many unmatched cancellations the client keeps.
+const maxEarlyCancels = 1024
+
+// rememberEarlyCancelLocked records a cancellation whose request is not
+// registered. A cancellation for a request that already finished never gets
+// consumed, so at the bound the oldest entry is evicted: the newest
+// cancellations are the ones that can still beat a registration, and a server
+// streaming cancellations for unknown IDs cannot grow the buffer without
+// limit. Callers must hold incomingMu.
+func (c *Client) rememberEarlyCancelLocked(key string) {
+	if c.earlyCancels[key] {
+		return
+	}
+	if c.earlyCancels == nil {
+		c.earlyCancels = make(map[string]bool)
+	}
+	if len(c.earlyCancelOrder) >= maxEarlyCancels {
+		delete(c.earlyCancels, c.earlyCancelOrder[0])
+		c.earlyCancelOrder = c.earlyCancelOrder[1:]
+	}
+	c.earlyCancels[key] = true
+	c.earlyCancelOrder = append(c.earlyCancelOrder, key)
+}
+
+// takeEarlyCancelLocked consumes the remembered cancellation for key,
+// reporting whether there was one. Callers must hold incomingMu.
+func (c *Client) takeEarlyCancelLocked(key string) bool {
+	if !c.earlyCancels[key] {
+		return false
+	}
+	delete(c.earlyCancels, key)
+	if i := slices.Index(c.earlyCancelOrder, key); i >= 0 {
+		c.earlyCancelOrder = slices.Delete(c.earlyCancelOrder, i, i+1)
+	}
+	return true
 }
 
 // cancelIncomingRequest ends the context of the in-flight server request
@@ -911,15 +947,8 @@ func (c *Client) cancelIncomingRequest(notification mcp.JSONRPCNotification) {
 	} else {
 		// The transports start request handlers in goroutines, so this
 		// notification can arrive before the request is registered.
-		// Remember it: the registration applies it immediately. Bounded, so
-		// a server streaming cancellations for unknown IDs cannot grow it
-		// without limit.
-		if len(c.earlyCancels) < 1024 {
-			if c.earlyCancels == nil {
-				c.earlyCancels = make(map[string]bool)
-			}
-			c.earlyCancels[key] = true
-		}
+		// Remember it: the registration applies it immediately.
+		c.rememberEarlyCancelLocked(key)
 	}
 	c.incomingMu.Unlock()
 	if ok {
