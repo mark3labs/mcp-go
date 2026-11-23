@@ -447,6 +447,65 @@ func TestParamHeaderAnnotationsSurviveTypeArrays(t *testing.T) {
 	assert.NoError(t, ValidateParamHeaderAnnotations(tool))
 }
 
+func TestParamHeaderAnnotationsSurviveBooleanSchemas(t *testing.T) {
+	tests := []struct {
+		name   string
+		schema string
+	}{
+		{"true", `true`},
+		{"false", `false`},
+		{"nested true", `{"type":"object","properties":{"other":true}}`},
+		{"nested false", `{"type":"object","properties":{"other":false}}`},
+		{"boolean and large number", `{"properties":{"blocked":false,"number":{"minimum":1e1000}}}`},
+		{"boolean and null", `{"properties":{"blocked":false,"other":null}}`},
+		{"object control", `{}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tool := &Tool{
+				Name: "query",
+				RawInputSchema: json.RawMessage(`{"type":"object","properties":{
+					"other":` + tt.schema + `,
+					"region":{"type":"string","x-mcp-header":"Region"}
+				}}`),
+			}
+			params := json.RawMessage(`{"name":"query","arguments":{"region":"us-east-1"}}`)
+			assert.Equal(t, map[string]string{"Mcp-Param-Region": "us-east-1"}, GenerateParamHeaders(tool, params))
+			assert.NoError(t, ValidateParamHeaderAnnotations(tool))
+
+			header := http.Header{}
+			header.Set("Mcp-Param-Region", "us-east-1")
+			assert.NoError(t, ValidateParamHeaders(header.Get, tool, params))
+			header.Set("Mcp-Param-Region", "eu-west-1")
+			err := ValidateParamHeaders(header.Get, tool, params)
+			require.Error(t, err)
+			assert.True(t, IsHeaderMismatch(err))
+		})
+	}
+}
+
+func TestParamHeaderBooleanSchemasPreserveInvalidSchemaFallback(t *testing.T) {
+	for _, invalid := range []string{`1`, `"invalid"`, `[]`, `{"properties":false}`} {
+		t.Run(invalid, func(t *testing.T) {
+			tool := &Tool{Name: "query", RawInputSchema: json.RawMessage(`{"properties":{
+				"blocked":false,"invalid":` + invalid + `,
+				"region":{"type":"string","x-mcp-header":"Region"}
+			}}`)}
+			assert.Empty(t, ExtractParamHeaderBindings(tool))
+			assert.NoError(t, ValidateParamHeaderAnnotations(tool))
+		})
+	}
+}
+
+func TestParamHeaderBooleanSchemasDoNotHideNullAnnotation(t *testing.T) {
+	tool := &Tool{Name: "query", RawInputSchema: json.RawMessage(`{"properties":{
+		"blocked":false,"region":{"type":"string","x-mcp-header":null}
+	}}`)}
+	err := ValidateParamHeaderAnnotations(tool)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "non-empty string")
+}
+
 func TestParamHeaderAnnotationsRejectedOnNullableTypeUnion(t *testing.T) {
 	// A union is only acceptable if every member is a permitted primitive.
 	tool := &Tool{
