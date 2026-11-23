@@ -444,6 +444,31 @@ func (s *MCPServer) SendNotificationToClient(
 	return s.sendNotificationCore(ctx, session, notification)
 }
 
+// SendProgressNotificationToClient sends a progress notification, such as one
+// built with mcp.NewProgressNotification, to the current client. It sends
+// nothing when the progress token is nil, because a request without a
+// progress token did not ask for progress.
+func (s *MCPServer) SendProgressNotificationToClient(
+	ctx context.Context,
+	notification mcp.ProgressNotification,
+) error {
+	p := notification.Params
+	if p.ProgressToken == nil {
+		return nil
+	}
+	params := map[string]any{
+		"progressToken": p.ProgressToken,
+		"progress":      p.Progress,
+	}
+	if p.Total != 0 {
+		params["total"] = p.Total
+	}
+	if p.Message != "" {
+		params["message"] = p.Message
+	}
+	return s.SendNotificationToClient(ctx, string(mcp.MethodNotificationProgress), params)
+}
+
 // SendNotificationToSpecificClient sends a notification to a specific client by session ID
 func (s *MCPServer) SendNotificationToSpecificClient(
 	sessionID string,
