@@ -6371,6 +6371,30 @@ func (f *ContextFilter) shouldIncludeTool(tool mcp.Tool, hour int, env string) b
 
 Send server-to-client messages for real-time updates.
 
+#### Progress Notifications
+
+A client asks for progress by sending a progress token in the request's `_meta`. Report progress for that request with `SendProgressNotificationToClient`. It sends nothing when the token is nil, so the handler doesn't need to check whether the client asked.
+
+```go
+func handleCopy(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    srv := server.ServerFromContext(ctx)
+    var token mcp.ProgressToken
+    if req.Params.Meta != nil {
+        token = req.Params.Meta.ProgressToken
+    }
+
+    total := 100.0
+    for i := 0; i < 100; i++ {
+        // copy one item
+        message := fmt.Sprintf("Copied %d of 100", i+1)
+        if err := srv.SendProgressNotificationToClient(ctx, mcp.NewProgressNotification(token, float64(i+1), &total, &message)); err != nil {
+            return nil, err
+        }
+    }
+    return mcp.NewToolResultText("done"), nil
+}
+```
+
 #### Custom Notifications
 
 ```go
