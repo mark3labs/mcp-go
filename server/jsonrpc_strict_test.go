@@ -84,11 +84,20 @@ func TestValidateProtocolMemberNames(t *testing.T) {
 			name:    "repeated unknown member",
 			message: `{"jsonrpc":"2.0","id":1,"method":"ping","x":1,"x":2}`,
 		},
+		{
+			name:    "custom method with case-variant params",
+			message: `{"jsonrpc":"2.0","id":1,"method":"custom/update","params":{"Name":"x","ID":2}}`,
+		},
+		{
+			name:    "custom notification with arbitrary params",
+			message: `{"jsonrpc":"2.0","method":"custom/event","params":{"Event":"fired","Timestamp":1234}}`,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateProtocolMemberNames(json.RawMessage(tt.message))
+			protocolMethods := protocolDefinedMethods()
+			err := validateProtocolMemberNames(json.RawMessage(tt.message), protocolMethods)
 			if tt.wantErr == "" {
 				require.NoError(t, err)
 				return
@@ -116,6 +125,36 @@ func TestHandleMessageRejectsUndefinedMemberNames(t *testing.T) {
 	require.True(t, ok, "expected JSONRPCError, got %T", response)
 	assert.Equal(t, mcp.INVALID_REQUEST, errorResponse.Error.Code)
 	assert.False(t, called)
+}
+
+// TestHandleCustomMethodWithCustomParams verifies that custom methods can have
+// arbitrary param member names and are not validated against protocol members.
+func TestHandleCustomMethodWithCustomParams(t *testing.T) {
+	server := NewMCPServer("test", "1.0.0")
+
+	// Custom notification with case-variant param names should pass validation
+	// and not trigger an error
+	message := `{"jsonrpc":"2.0","method":"custom/update","params":{"Event":"fired","Timestamp":1234,"MyCustomField":"value"}}`
+	response := server.HandleMessage(context.Background(), json.RawMessage(message))
+
+	// Should not return an error (nil for notifications with no handler)
+	assert.Nil(t, response)
+}
+
+// TestHandleMessageValidationBeforeTypeParsing verifies that invalid envelope
+// member names return INVALID_REQUEST (not PARSE_ERROR), even if a type error
+// would occur during unmarshalling.
+func TestHandleMessageValidationBeforeTypeParsing(t *testing.T) {
+	server := NewMCPServer("test", "1.0.0")
+
+	// Invalid member name in envelope (before type error that would occur in params)
+	message := `{"jsonrpc":"2.0","id":1,"METHOD":"ping"}`
+	response := server.HandleMessage(context.Background(), json.RawMessage(message))
+
+	errorResponse, ok := response.(mcp.JSONRPCError)
+	require.True(t, ok, "expected JSONRPCError, got %T", response)
+	assert.Equal(t, mcp.INVALID_REQUEST, errorResponse.Error.Code)
+	assert.Contains(t, errorResponse.Error.Message, "not the defined name")
 }
 
 // TestParamsMembersCoverDecodedRequests checks that jsonrpcParamsMembers lists

@@ -24,18 +24,25 @@ var (
 // differ from the defined ones only by case or Unicode folding, and repeated
 // members. It scans the bytes without decoding values. Malformed JSON is left
 // to the caller's Unmarshal.
-func validateProtocolMemberNames(message json.RawMessage) error {
-	_, err := checkMembers(message, skipSpace(message, 0), jsonrpcEnvelopeMembers, "")
+//
+// protocolMethods is a list of method names defined by the protocol. For custom
+// methods not in this list, params validation is skipped to allow applications
+// to handle their own parameter schemas.
+func validateProtocolMemberNames(message json.RawMessage, protocolMethods []string) error {
+	_, err := checkMembers(message, skipSpace(message, 0), jsonrpcEnvelopeMembers, "", protocolMethods)
 	return err
 }
 
 // checkMembers checks the member names of the object starting at b[i] and
 // returns the index just past it. A value that is not an object is skipped.
-func checkMembers(b []byte, i int, defined []string, path string) (int, error) {
+// When called for the envelope (path == ""), it checks for a "method" member
+// and only validates "params" if the method is in protocolMethods.
+func checkMembers(b []byte, i int, defined []string, path string, protocolMethods []string) (int, error) {
 	if i >= len(b) || b[i] != '{' {
 		return skipValue(b, i), nil
 	}
 	var seen []string
+	var currentMethod string
 	i = skipSpace(b, i+1)
 	for i < len(b) && b[i] == '"' {
 		end := skipString(b, i)
@@ -61,10 +68,26 @@ func checkMembers(b []byte, i int, defined []string, path string) (int, error) {
 			return len(b), nil
 		}
 		i = skipSpace(b, i+1)
+
+		// At the envelope level (path == ""), track the method value
+		if path == "" && key == "method" {
+			methodEnd := skipString(b, i)
+			if methodEnd > 0 {
+				currentMethod = string(b[i+1 : methodEnd-1])
+			}
+		}
+
+		// Only validate params members if this is a protocol-defined method
 		if path == "" && key == "params" {
+			shouldValidateParams := slices.Contains(protocolMethods, currentMethod)
 			var err error
-			if i, err = checkMembers(b, i, jsonrpcParamsMembers, "params."); err != nil {
-				return 0, err
+			if shouldValidateParams {
+				if i, err = checkMembers(b, i, jsonrpcParamsMembers, "params.", protocolMethods); err != nil {
+					return 0, err
+				}
+			} else {
+				// Skip validation for custom methods; just skip the value
+				i = skipValue(b, i)
 			}
 		} else {
 			i = skipValue(b, i)
@@ -140,4 +163,46 @@ func skipValue(b []byte, i int) int {
 		}
 	}
 	return i
+}
+
+// protocolDefinedMethods returns a list of all method names defined by the
+// MCP protocol. Custom methods not in this list will have their params
+// validated separately by the application.
+func protocolDefinedMethods() []string {
+	return []string{
+		"initialize",
+		"ping",
+		"server/discover",
+		"resources/list",
+		"resources/templates/list",
+		"resources/read",
+		"resources/subscribe",
+		"resources/unsubscribe",
+		"prompts/list",
+		"prompts/get",
+		"tools/list",
+		"tools/call",
+		"logging/setLevel",
+		"elicitation/create",
+		"notifications/elicitation/complete",
+		"roots/list",
+		"tasks/get",
+		"tasks/list",
+		"tasks/result",
+		"tasks/cancel",
+		"notifications/initialized",
+		"notifications/cancelled",
+		"notifications/progress",
+		"notifications/message",
+		"notifications/resources/list_changed",
+		"notifications/resources/updated",
+		"notifications/prompts/list_changed",
+		"notifications/tools/list_changed",
+		"notifications/roots/list_changed",
+		"notifications/tasks/status",
+		"completion/complete",
+		"subscriptions/listen",
+		"notifications/subscriptions/acknowledged",
+		"sampling/createMessage",
+	}
 }

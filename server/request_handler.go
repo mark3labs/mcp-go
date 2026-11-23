@@ -20,6 +20,26 @@ func (s *MCPServer) HandleMessage(
 	ctx = context.WithValue(ctx, serverKey{}, s)
 	var err *requestError
 
+	// Syntax validation pass: check member names before typed unmarshalling.
+	// This ensures invalid JSON-RPC envelope members return INVALID_REQUEST,
+	// not PARSE_ERROR.
+	protocolMethods := protocolDefinedMethods()
+	if err := validateProtocolMemberNames(message, protocolMethods); err != nil {
+		// Extract ID for error response if possible, without full unmarshalling
+		var baseID any
+		var idStruct struct {
+			ID any `json:"id,omitempty"`
+		}
+		if json.Unmarshal(message, &idStruct) == nil {
+			baseID = idStruct.ID
+		}
+		return createErrorResponse(
+			baseID,
+			mcp.INVALID_REQUEST,
+			err.Error(),
+		)
+	}
+
 	var baseMessage struct {
 		JSONRPC string        `json:"jsonrpc"`
 		Method  mcp.MCPMethod `json:"method"`
@@ -32,15 +52,6 @@ func (s *MCPServer) HandleMessage(
 			nil,
 			mcp.PARSE_ERROR,
 			"Failed to parse message",
-		)
-	}
-
-	// encoding/json would also accept "Method" or "paramſ" here.
-	if err := validateProtocolMemberNames(message); err != nil {
-		return createErrorResponse(
-			baseMessage.ID,
-			mcp.INVALID_REQUEST,
-			err.Error(),
 		)
 	}
 
