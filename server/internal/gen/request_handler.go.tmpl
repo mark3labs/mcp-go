@@ -35,6 +35,7 @@ func (s *MCPServer) handleMessage(
 		Method  mcp.MCPMethod   `json:"method"`
 		RawID   json.RawMessage `json:"id,omitempty"`
 		Result  json.RawMessage `json:"result,omitempty"`
+		Error   json.RawMessage `json:"error,omitempty"`
 	}
 	var baseMessage struct {
 		envelope
@@ -70,6 +71,15 @@ func (s *MCPServer) handleMessage(
 		}
 	}
 
+	// A JSON-RPC 2.0 request id is a string or a number. A boolean, object or
+	// array id cannot be echoed in a response (the error response must carry a
+	// null id), so reject it before the method runs or the id is reused.
+	switch baseMessage.ID.(type) {
+	case nil, string, json.Number:
+	default:
+		return createErrorResponse(nil, mcp.INVALID_REQUEST, "Invalid request id")
+	}
+
 	if number, ok := baseMessage.ID.(json.Number); ok {
 		var id mcp.RequestId
 		if err := json.Unmarshal([]byte(number), &id); err != nil {
@@ -79,6 +89,15 @@ func (s *MCPServer) handleMessage(
 		if value, ok := baseMessage.ID.(int64); ok && value >= -9007199254740991 && value <= 9007199254740991 {
 			baseMessage.ID = float64(value)
 		}
+	}
+
+	// encoding/json would also accept "Method" or "paramſ" here.
+	if err := validateProtocolMemberNames(message); err != nil {
+		return createErrorResponse(
+			baseMessage.ID,
+			mcp.INVALID_REQUEST,
+			err.Error(),
+		)
 	}
 
 	// Check for valid JSONRPC version
@@ -103,7 +122,12 @@ func (s *MCPServer) handleMessage(
 		return nil // Return nil for notifications
 	}
 
-	if len(baseMessage.Result) > 0 && !bytes.Equal(baseMessage.Result, []byte("null")) {
+	isResponse := func(member json.RawMessage) bool {
+		return len(member) > 0 && !bytes.Equal(member, []byte("null"))
+	}
+	// A message with a method is a request, even if it carries an extra
+	// "error" member.
+	if isResponse(baseMessage.Result) || (baseMessage.Method == "" && isResponse(baseMessage.Error)) {
 		// this is a response to a request sent by the server (e.g. from a ping
 		// sent due to WithKeepAlive option)
 		return nil

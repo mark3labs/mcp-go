@@ -42,7 +42,7 @@ func WithSupportedProtocolVersions(ctx context.Context, versions []string) conte
 // current transport can serve, defaulting to every version this SDK
 // implements.
 func SupportedProtocolVersionsFromContext(ctx context.Context) []string {
-	if versions, ok := ctx.Value(supportedProtocolVersionsKey{}).([]string); ok && len(versions) > 0 {
+	if versions, ok := ctx.Value(supportedProtocolVersionsKey{}).([]string); ok {
 		return versions
 	}
 	return mcp.ValidProtocolVersions

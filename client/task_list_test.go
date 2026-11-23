@@ -28,24 +28,6 @@ func TestClient_ListTasksFollowsPagination(t *testing.T) {
 		},
 	)
 
-	var wantIDs []string
-	for i := range 4 {
-		response := mcpServer.HandleMessage(t.Context(), []byte(`{
-			"jsonrpc": "2.0",
-			"id": 1,
-			"method": "tools/call",
-			"params": {
-				"name": "noop",
-				"task": {"ttl": 60000}
-			}
-		}`))
-		success, ok := response.(mcp.JSONRPCResponse)
-		require.Truef(t, ok, "task %d: expected JSONRPCResponse, got %T", i, response)
-		created, ok := success.Result.(*mcp.CreateTaskResult)
-		require.Truef(t, ok, "task %d: expected *CreateTaskResult, got %T", i, success.Result)
-		wantIDs = append(wantIDs, created.Task.TaskId)
-	}
-
 	c, err := NewInProcessClient(mcpServer)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
@@ -56,6 +38,20 @@ func TestClient_ListTasksFollowsPagination(t *testing.T) {
 	initReq.Params.ClientInfo = mcp.Implementation{Name: "test-client", Version: "1.0.0"}
 	_, err = c.Initialize(t.Context(), initReq)
 	require.NoError(t, err)
+
+	ttl := int64(60000)
+	var wantIDs []string
+	for i := range 4 {
+		response, err := c.sendRequest(t.Context(), "tools/call", mcp.CallToolParams{
+			Name: "noop",
+			Task: &mcp.TaskParams{TTL: &ttl},
+		}, nil)
+		require.NoErrorf(t, err, "task %d", i)
+		var created mcp.CreateTaskResult
+		require.NoError(t, json.Unmarshal(*response, &created))
+		require.NotEmpty(t, created.Task.TaskId)
+		wantIDs = append(wantIDs, created.Task.TaskId)
+	}
 
 	page, err := c.ListTasksByPage(t.Context(), mcp.ListTasksRequest{})
 	require.NoError(t, err)

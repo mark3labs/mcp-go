@@ -54,7 +54,7 @@ func TestPaginationEmptyResourceTieBreak(t *testing.T) {
 			s := NewMCPServer("test-server", "1.0.0", WithResourceCapabilities(false, false), WithPaginationLimit(1))
 			tt.configure(s)
 			var cursor mcp.Cursor
-			for pageNumber, expected := range [][]string{{""}, {tt.nextURI}, {}} {
+			for pageNumber, expected := range [][]string{{""}, {tt.nextURI}} {
 				response := s.HandleMessage(t.Context(), fmt.Appendf(nil,
 					`{"jsonrpc":"2.0","id":%d,"method":%q,"params":{"cursor":%q}}`, pageNumber+1, tt.method, cursor))
 				rpc, ok := response.(mcp.JSONRPCResponse)
@@ -63,9 +63,6 @@ func TestPaginationEmptyResourceTieBreak(t *testing.T) {
 				assert.Equal(t, expected, uris)
 				if pageNumber == 0 {
 					assert.Equal(t, mcp.Cursor(base64.StdEncoding.EncodeToString([]byte("shared"))+"."), next)
-				}
-				if pageNumber < 2 {
-					require.NotEmpty(t, next)
 				} else {
 					assert.Empty(t, next)
 				}

@@ -27,6 +27,7 @@ func newHeaderToolServer(t *testing.T) *httptest.Server {
 		mcp.NewToolWithRawSchema("query", "runs a query", json.RawMessage(`{
 			"type": "object",
 			"properties": {
+				"blocked": false,
 				"sql":    { "type": "string" },
 				"region": { "type": "string", "x-mcp-header": "Region" }
 			}
@@ -212,7 +213,7 @@ func TestParamHeaders_InvalidAnnotationsAreRejectedAtRegistration(t *testing.T) 
 func badHeaderTool() mcp.Tool {
 	return mcp.NewToolWithRawSchema("bad", "invalid", json.RawMessage(`{
 		"type": "object",
-		"properties": { "items": { "type": "array", "x-mcp-header": "Items" } }
+		"properties": { "blocked": false, "items": { "type": "array", "x-mcp-header": "Items" } }
 	}`))
 }
 
@@ -307,6 +308,7 @@ func headerQueryTool() mcp.Tool {
 	return mcp.NewToolWithRawSchema("query", "runs a query", json.RawMessage(`{
 		"type": "object",
 		"properties": {
+			"blocked": false,
 			"sql":    { "type": "string" },
 			"region": { "type": "string", "x-mcp-header": "Region" }
 		}

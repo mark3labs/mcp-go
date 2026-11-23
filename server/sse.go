@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -208,6 +209,11 @@ type SSEServer struct {
 	// maxRequestBodyBytes bounds a message POST body; zero or less is no
 	// bound. See WithSSEMaxRequestBodyBytes.
 	maxRequestBodyBytes int64
+
+	// closed is set when Shutdown begins on an owned HTTP server. Start and
+	// new HTTP handlers are rejected afterwards. Shutdown is a no-op until an
+	// HTTP server exists, and that case leaves the handler usable.
+	closed atomic.Bool
 
 	mu sync.RWMutex
 }
@@ -470,7 +476,13 @@ func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
 
 // Start begins serving SSE connections on the specified address.
 // It sets up HTTP handlers for SSE and message endpoints.
+// After Shutdown has closed the owned HTTP server, Start returns
+// http.ErrServerClosed and does not listen again.
 func (s *SSEServer) Start(addr string) error {
+	if s.closed.Load() {
+		return http.ErrServerClosed
+	}
+
 	s.mu.Lock()
 	if s.srv == nil {
 		s.srv = &http.Server{
@@ -492,17 +504,22 @@ func (s *SSEServer) Start(addr string) error {
 }
 
 // Shutdown gracefully stops the SSE server, closing all active sessions
-// and shutting down the HTTP server.
+// and shutting down the HTTP server. Once an owned HTTP server has been
+// shut down, Start and new SSE or message requests fail. Shutdown before
+// an HTTP server exists is a no-op so a later Start can still listen.
 func (s *SSEServer) Shutdown(ctx context.Context) error {
 	s.mu.RLock()
 	srv := s.srv
 	s.mu.RUnlock()
 
-	if srv != nil {
-		s.CloseSessions()
-		return srv.Shutdown(ctx)
+	if srv == nil {
+		return nil
 	}
-	return nil
+	// Reject new work before closing sessions so a connection accepted
+	// during shutdown observes the closed server and exits.
+	s.closed.Store(true)
+	s.CloseSessions()
+	return srv.Shutdown(ctx)
 }
 
 // CloseSessions terminates all active SSE sessions without stopping the HTTP
@@ -524,6 +541,10 @@ func (s *SSEServer) CloseSessions() {
 // handleSSE handles incoming SSE connection requests.
 // It sets up appropriate headers and creates a new session for the client.
 func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
+	if s.closed.Load() {
+		http.Error(w, "server closed", http.StatusServiceUnavailable)
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -578,6 +599,14 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.server.UnregisterSession(r.Context(), sessionID)
+
+	// Shutdown may have won between the initial check and registration.
+	// Drop the session instead of blocking in the event loop, which would
+	// keep http.Server.Shutdown from returning.
+	if s.closed.Load() {
+		http.Error(w, "server closed", http.StatusServiceUnavailable)
+		return
+	}
 
 	// Start notification handler for this session
 	go func() {
@@ -677,6 +706,10 @@ func (s *SSEServer) GetMessageEndpointForClient(r *http.Request, sessionID strin
 // handleMessage processes incoming JSON-RPC messages from clients and sends responses
 // back through the SSE connection and 202 code to HTTP response.
 func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
+	if s.closed.Load() {
+		http.Error(w, "server closed", http.StatusServiceUnavailable)
+		return
+	}
 	if r.Method != http.MethodPost {
 		s.writeJSONRPCError(w, nil, mcp.INVALID_REQUEST, "Method not allowed")
 		return
@@ -693,6 +726,12 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session := sessionI.(*sseSession)
+	select {
+	case <-session.done:
+		s.writeJSONRPCError(w, nil, mcp.INVALID_REQUEST, "session closed")
+		return
+	default:
+	}
 
 	// Set the client context before handling the message
 	ctx := s.server.WithContext(r.Context(), session)
@@ -709,9 +748,17 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	select {
+	case <-session.done:
+		s.writeJSONRPCError(w, nil, mcp.INVALID_REQUEST, "session closed")
+		return
+	default:
+	}
+
 	// Parse message as raw JSON
 	var rawMessage json.RawMessage
-	if err != nil || json.NewDecoder(bytes.NewReader(body)).Decode(&rawMessage) != nil {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if err != nil || decoder.Decode(&rawMessage) != nil || decoder.Decode(new(json.RawMessage)) != io.EOF {
 		s.writeJSONRPCError(w, nil, mcp.PARSE_ERROR, "Parse error")
 		return
 	}
