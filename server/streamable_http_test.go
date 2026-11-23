@@ -2983,6 +2983,52 @@ func TestStreamableHTTP_SessionIdleTTLSweeper(t *testing.T) {
 		assert.Empty(t, tools, "sessionTools should be cleaned")
 	})
 
+	t.Run("swept session ends its quiet GET stream", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0")
+		httpServer := NewStreamableHTTPServer(mcpServer,
+			WithSessionIdleTTL(100*time.Millisecond),
+		)
+		defer func() { _ = httpServer.Shutdown(t.Context()) }()
+		ts := httptest.NewServer(httpServer)
+		defer ts.Close()
+
+		resp, err := postJSON(ts.URL, initRequest)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		sessionID := resp.Header.Get(HeaderKeySessionID)
+		require.NotEmpty(t, sessionID)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
+		require.NoError(t, err)
+		req.Header.Set(HeaderKeySessionID, sessionID)
+		getResp, err := ts.Client().Do(req)
+		require.NoError(t, err)
+		defer getResp.Body.Close()
+		require.Equal(t, http.StatusOK, getResp.StatusCode)
+
+		ended := make(chan struct{})
+		go func() {
+			_, _ = io.Copy(io.Discard, getResp.Body)
+			close(ended)
+		}()
+
+		require.Eventually(t, func() bool {
+			_, exists := httpServer.sessionLastActive.Load(sessionID)
+			return !exists
+		}, 3*time.Second, 50*time.Millisecond, "session should be swept after idle TTL")
+
+		// The session no longer receives notifications, so its GET stream
+		// must end to let the client reconnect.
+		select {
+		case <-ended:
+		case <-time.After(2 * time.Second):
+			t.Fatal("GET stream stayed open after its session was swept")
+		}
+	})
+
 	t.Run("active sessions are not swept", func(t *testing.T) {
 		mcpServer := NewMCPServer("test", "1.0")
 		httpServer := NewStreamableHTTPServer(mcpServer,
