@@ -190,8 +190,10 @@ func schemaJSONFor(tool mcp.Tool) ([]byte, bool) {
 	if tool.InputSchema.Type == "" && tool.InputSchema.Types == nil && len(tool.InputSchema.Properties) == 0 && len(tool.InputSchema.Required) == 0 && tool.InputSchema.AdditionalProperties == nil {
 		return nil, false
 	}
-	data, err := json.Marshal(tool.InputSchema)
-	if err != nil {
+	// MarshalJSON already returns compact, HTML-escaped JSON. Check validity
+	// (including nesting depth) without copying the encoded schema again.
+	data, err := tool.InputSchema.MarshalJSON()
+	if err != nil || !json.Valid(data) {
 		return nil, false
 	}
 	return data, true
