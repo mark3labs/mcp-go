@@ -2745,6 +2745,21 @@ func createErrorResponse(
 	}
 }
 
+// marshalResponse encodes a message for the wire. A result that cannot be
+// encoded, such as one holding NaN, becomes an INTERNAL_ERROR for the same
+// request id, so the client is not left waiting for a response.
+func marshalResponse(response mcp.JSONRPCMessage) ([]byte, error) {
+	data, err := json.Marshal(response)
+	if result, ok := response.(mcp.JSONRPCResponse); ok && err != nil {
+		return json.Marshal(createErrorResponse(
+			result.ID.Value(),
+			mcp.INTERNAL_ERROR,
+			fmt.Sprintf("failed to marshal response: %v", err),
+		))
+	}
+	return data, err
+}
+
 //
 // Task Request Handlers
 //
