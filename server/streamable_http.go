@@ -1732,6 +1732,14 @@ func (s *StreamableHTTPServer) sweepExpiredSessions() {
 		if mgr == nil {
 			mgr = s.sessionIdManagerResolver.ResolveSessionIdManager(nil)
 		}
+		// End a GET stream still attached to the session: once the session
+		// is unregistered it gets no notifications, and closing it lets the
+		// client reconnect.
+		if v, ok := s.activeSessions.Load(sessionID); ok {
+			if session, ok := v.(*streamableHttpSession); ok {
+				session.closeDone()
+			}
+		}
 		_, _ = mgr.Terminate(sessionID)
 		s.cleanupSessionState(context.Background(), sessionID)
 		return true
