@@ -278,6 +278,7 @@ func TestStreamableHTTPServer_CancelWhileLateSettlementRecordIsBlocked(t *testin
 		cancel  context.CancelFunc
 		session *streamableHttpSession
 		scoped  *requestScopedSSE
+		queue   chan<- *scopedRequest
 	}
 	askedCh := make(chan asked, 1)
 	callErr := make(chan error, 1)
@@ -301,18 +302,36 @@ func TestStreamableHTTPServer_CancelWhileLateSettlementRecordIsBlocked(t *testin
 		// the POST's stream, but its cancellation is its own, so this handler
 		// can return while it is pending.
 		reqCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		// The request reaches the POST's queue through a relay that signals
+		// once it is there, so the handler returns only after the enqueue.
+		// trySend reads the queue field under sendMu, which covers the swap.
+		queue := scoped.requests
+		relay := make(chan *scopedRequest)
+		queued := make(chan struct{})
+		scoped.sendMu.Lock()
+		scoped.requests = relay
+		scoped.sendMu.Unlock()
+		go func() {
+			select {
+			case item := <-relay:
+				// The queue is empty and buffered, and the forwarder that
+				// would take from it is parked, so this never waits.
+				queue <- item
+				close(queued)
+			case <-reqCtx.Done():
+			}
+		}()
 		go func() {
 			_, err := mcpServer.RequestRoots(reqCtx, mcp.ListRootsRequest{})
 			callErr <- err
 		}()
-		for deadline := time.Now().Add(5 * time.Second); len(scoped.requests) == 0; {
-			if time.Now().After(deadline) {
-				cancel()
-				return nil, errors.New("the request was never queued")
-			}
-			time.Sleep(time.Millisecond)
+		select {
+		case <-queued:
+		case <-time.After(5 * time.Second):
+			cancel()
+			return nil, errors.New("the request was never queued")
 		}
-		askedCh <- asked{cancel: cancel, session: session, scoped: scoped}
+		askedCh <- asked{cancel: cancel, session: session, scoped: scoped, queue: queue}
 		return mcp.NewToolResultText("done"), nil
 	})
 
@@ -356,7 +375,7 @@ func TestStreamableHTTPServer_CancelWhileLateSettlementRecordIsBlocked(t *testin
 	// The POST closed its stream while the forwarder is parked and the
 	// request is still queued, untaken: it can only be settled late now.
 	requireWithin(t, got.scoped.done, "the POST to close its stream")
-	require.Len(t, got.scoped.requests, 1, "the request must still be queued when the stream closes")
+	require.Len(t, got.queue, 1, "the request must still be queued when the stream closes")
 	releaseForwarder()
 	requireWithin(t, record.blocked, "the late settlement to block recording the request")
 
