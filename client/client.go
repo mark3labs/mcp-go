@@ -862,6 +862,12 @@ func methodNotSupported(request transport.JSONRPCRequest) *transport.JSONRPCResp
 	)
 }
 
+// invalidParams answers a request whose params the client cannot use. Like
+// methodNotSupported, it is a response rather than an error.
+func invalidParams(request transport.JSONRPCRequest, err error) *transport.JSONRPCResponse {
+	return transport.NewJSONRPCErrorResponse(request.ID, mcp.INVALID_PARAMS, err.Error(), nil)
+}
+
 // handleSamplingRequestTransport handles sampling requests at the transport level.
 func (c *Client) handleSamplingRequestTransport(ctx context.Context, request transport.JSONRPCRequest) (*transport.JSONRPCResponse, error) {
 	if c.samplingHandler == nil {
@@ -876,7 +882,7 @@ func (c *Client) handleSamplingRequestTransport(ctx context.Context, request tra
 			return nil, fmt.Errorf("failed to marshal params: %w", err)
 		}
 		if err := json.Unmarshal(paramsBytes, &params); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal params: %w", err)
+			return invalidParams(request, fmt.Errorf("failed to unmarshal params: %w", err)), nil
 		}
 	}
 
@@ -885,7 +891,7 @@ func (c *Client) handleSamplingRequestTransport(ctx context.Context, request tra
 	for i := range params.Messages {
 		content, err := mcp.ParseSamplingContent(params.Messages[i].Content)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse content for message %d: %w", i, err)
+			return invalidParams(request, fmt.Errorf("failed to parse content for message %d: %w", i, err)), nil
 		}
 		params.Messages[i].Content = content
 	}
@@ -980,12 +986,12 @@ func (c *Client) handleElicitationRequestTransport(ctx context.Context, request 
 			return nil, fmt.Errorf("failed to marshal params: %w", err)
 		}
 		if err := json.Unmarshal(paramsBytes, &params); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal params: %w", err)
+			return invalidParams(request, fmt.Errorf("failed to unmarshal params: %w", err)), nil
 		}
 	}
 
 	if err := params.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid elicitation params: %w", err)
+		return invalidParams(request, fmt.Errorf("invalid elicitation params: %w", err)), nil
 	}
 
 	// Create the MCP request
