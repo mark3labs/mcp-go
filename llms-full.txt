@@ -9854,9 +9854,17 @@ s := server.NewMCPServer("Task Server", "1.0.0",
 )
 ```
 
+### Task Isolation
+
+Task state, results, cancellation, and task lists are scoped to the session that created the task. Requests without a session cannot access session-owned tasks, and requests with a session cannot access sessionless tasks.
+
+When both the task and the caller have no session, access remains task-ID based. Applications serving multiple authenticated callers must provide their own per-caller authorization for task operations; session isolation is not a substitute for authentication or authorization.
+
 ### Task Status Notifications
 
-The server automatically sends `notifications/tasks/status` to connected clients whenever a task's status changes. This means clients don't have to rely solely on polling — they can also listen for push notifications to react to status transitions in real time.
+The server sends `notifications/tasks/status` only to the task's originating session, when that session is registered and initialized. Other sessions do not receive the task's status or error details.
+
+Sessionless tasks do not broadcast status notifications. Clients can poll for task state and results instead.
 
 ### Complete Example
 
