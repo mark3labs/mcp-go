@@ -1607,13 +1607,10 @@ func listByPagination[T mcp.Named](
 	if elementsToReturn == nil {
 		elementsToReturn = []T{}
 	}
-	// set the next cursor
-	nextCursor := func() mcp.Cursor {
-		if s.paginationLimit != nil && *s.paginationLimit > 0 && len(elementsToReturn) >= *s.paginationLimit {
-			return encodePageCursor(&elementsToReturn[len(elementsToReturn)-1])
-		}
-		return ""
-	}()
+	var nextCursor mcp.Cursor
+	if endPos < len(allElements) {
+		nextCursor = encodePageCursor(&allElements[endPos-1])
+	}
 	return elementsToReturn, nextCursor, nil
 }
 
