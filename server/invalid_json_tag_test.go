@@ -10,6 +10,7 @@ import (
 )
 
 func TestToolValidation_InvalidJSONTagNames(t *testing.T) {
+	//nolint:staticcheck // Exercise binding and validation of deliberately invalid tag names.
 	type request struct {
 		Value string `json:"bad\\name"`
 		Count int    `json:"bad\"count,string"`

@@ -10,6 +10,7 @@ import (
 )
 
 func TestSchemaForRaw_InvalidJSONTagName(t *testing.T) {
+	//nolint:staticcheck // Verify encoding/json's fallback for an invalid tag name.
 	type request struct {
 		Value string `json:"bad\\name" jsonschema_description:"The value"`
 	}
@@ -30,6 +31,7 @@ func TestSchemaForRaw_InvalidJSONTagName(t *testing.T) {
 }
 
 func TestSchemaForRaw_JSONTagNames(t *testing.T) {
+	//nolint:staticcheck // Exercise invalid names and punctuation accepted by encoding/json.
 	type Fields struct {
 		Backslash string `json:"bad\\name" jsonschema_description:"Preserved description"`
 		Quote     int    `json:"bad\"name,string"`
@@ -83,6 +85,7 @@ func TestSchemaForRaw_InvalidJSONTagEmbedding(t *testing.T) {
 	type Embedded struct {
 		Value string `json:"value"`
 	}
+	//nolint:staticcheck // An invalid tag name must not prevent anonymous field promotion.
 	type request struct {
 		Embedded `json:"bad\\name"`
 	}
@@ -95,6 +98,7 @@ func TestSchemaForRaw_InvalidJSONTagEmbedding(t *testing.T) {
 }
 
 func TestSchemaForRaw_InvalidJSONTagDominance(t *testing.T) {
+	//nolint:staticcheck // An invalid tag name must not count as an explicit JSON name.
 	type Invalid struct {
 		Value string `json:"bad\\name"`
 	}
