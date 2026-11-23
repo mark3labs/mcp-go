@@ -106,11 +106,14 @@ func WithHeartbeatInterval(interval time.Duration) StreamableHTTPOption {
 // WithEventStore enables stream resumability, per the "Resumability and
 // Redelivery" section of the MCP Streamable HTTP transport specification.
 //
-// Every JSON-RPC message delivered on an SSE stream is recorded in store
+// Every JSON-RPC message delivered on a resumable SSE stream is recorded in store
 // before it is sent and carries the store-issued event ID in the SSE id
 // field. A client whose connection broke can then reconnect with a GET
 // carrying the standard Last-Event-ID header to be redelivered everything it
 // missed on that stream and keep receiving from it.
+//
+// A standalone GET with neither a supplied nor a generated session ID uses
+// an SSE stream scoped to the lifetime of the connection.
 //
 // With an event store configured, session transport state survives client
 // disconnects so that messages produced while no client is connected can
@@ -1273,33 +1276,39 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 		sessionIdManager := s.resolveSessionIdManager(r)
 		sessionID = sessionIdManager.Generate()
 	}
+	sessionKey := sessionID
+	if sessionKey == "" {
+		// Anonymous streams need separate notification channels and lifetimes.
+		sessionKey = uuid.NewString()
+	}
+	// Resuming a listening stream uses the session ID supplied by the client.
+	resumable := sessionID != "" && s.eventStore != nil
 
 	// Get or create session atomically to prevent TOCTOU races
 	// where concurrent GETs could both create and register duplicate sessions
 	var session *streamableHttpSession
-	newSession := s.newSession(sessionID)
-	actual, loaded := s.activeSessions.LoadOrStore(sessionID, newSession)
+	newSession := s.newSession(sessionKey)
+	actual, loaded := s.activeSessions.LoadOrStore(sessionKey, newSession)
 	session = actual.(*streamableHttpSession)
 
 	if !loaded {
 		// We created a new session, need to register it
 		if err := s.server.RegisterSession(r.ctx(), session); err != nil {
-			s.activeSessions.Delete(sessionID)
+			s.activeSessions.Delete(sessionKey)
 			writeHTTPErrorf(w, http.StatusBadRequest, "Session registration failed: %v", err)
 			return
 		}
-		if s.eventStore == nil {
-			defer s.server.UnregisterSession(r.ctx(), sessionID)
-			defer s.activeSessions.Delete(sessionID)
+		if !resumable {
+			defer s.cleanupSessionState(r.ctx(), sessionKey)
 		}
-		// With an event store, the session outlives the connection so that
+		// A resumable session outlives the connection so that
 		// messages produced while the client is away are recorded for
 		// replay; it is cleaned up on DELETE or by the idle sweeper.
 	}
 
 	s.touchSession(sessionID)
 
-	if s.eventStore != nil {
+	if resumable {
 		s.serveListeningStream(w, r, sessionID, session)
 		return
 	}
