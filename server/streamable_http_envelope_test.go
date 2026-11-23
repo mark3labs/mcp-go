@@ -27,13 +27,13 @@ func TestStreamableHTTP_PostEnvelopeAndEra(t *testing.T) {
 			name:       "params array reaches the method handler",
 			body:       `{"jsonrpc":"2.0","id":2,"method":"ping","params":[1]}`,
 			wantStatus: http.StatusOK,
-			wantBody:   `"code":-32600`,
+			wantBody:   `"code":-32602`,
 		},
 		{
 			name:       "malformed _meta reaches the method handler",
 			body:       `{"jsonrpc":"2.0","id":3,"method":"ping","params":{"_meta":"x"}}`,
 			wantStatus: http.StatusOK,
-			wantBody:   `"code":-32600`,
+			wantBody:   `"code":-32602`,
 		},
 		{
 			name:       "modern version in _meta is detected",

@@ -233,7 +233,7 @@ func (s *MCPServer) handleMessage(
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
-				code: mcp.INVALID_REQUEST,
+				code: mcp.INVALID_PARAMS,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
@@ -259,7 +259,7 @@ func (s *MCPServer) handleMessage(
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
-				code: mcp.INVALID_REQUEST,
+				code: mcp.INVALID_PARAMS,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
@@ -285,7 +285,7 @@ func (s *MCPServer) handleMessage(
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
-				code: mcp.INVALID_REQUEST,
+				code: mcp.INVALID_PARAMS,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
@@ -311,7 +311,7 @@ func (s *MCPServer) handleMessage(
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
-				code: mcp.INVALID_REQUEST,
+				code: mcp.INVALID_PARAMS,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
@@ -343,7 +343,7 @@ func (s *MCPServer) handleMessage(
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
-				code: mcp.INVALID_REQUEST,
+				code: mcp.INVALID_PARAMS,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
@@ -369,7 +369,7 @@ func (s *MCPServer) handleMessage(
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
-				code: mcp.INVALID_REQUEST,
+				code: mcp.INVALID_PARAMS,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
@@ -395,7 +395,7 @@ func (s *MCPServer) handleMessage(
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
-				code: mcp.INVALID_REQUEST,
+				code: mcp.INVALID_PARAMS,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
@@ -421,7 +421,7 @@ func (s *MCPServer) handleMessage(
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
-				code: mcp.INVALID_REQUEST,
+				code: mcp.INVALID_PARAMS,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
@@ -453,7 +453,7 @@ func (s *MCPServer) handleMessage(
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
-				code: mcp.INVALID_REQUEST,
+				code: mcp.INVALID_PARAMS,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
@@ -485,7 +485,7 @@ func (s *MCPServer) handleMessage(
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
-				code: mcp.INVALID_REQUEST,
+				code: mcp.INVALID_PARAMS,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
@@ -511,7 +511,7 @@ func (s *MCPServer) handleMessage(
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
-				code: mcp.INVALID_REQUEST,
+				code: mcp.INVALID_PARAMS,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
@@ -537,7 +537,7 @@ func (s *MCPServer) handleMessage(
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
-				code: mcp.INVALID_REQUEST,
+				code: mcp.INVALID_PARAMS,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
@@ -563,7 +563,7 @@ func (s *MCPServer) handleMessage(
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
-				code: mcp.INVALID_REQUEST,
+				code: mcp.INVALID_PARAMS,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
@@ -589,7 +589,7 @@ func (s *MCPServer) handleMessage(
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
-				code: mcp.INVALID_REQUEST,
+				code: mcp.INVALID_PARAMS,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
@@ -615,7 +615,7 @@ func (s *MCPServer) handleMessage(
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
-				code: mcp.INVALID_REQUEST,
+				code: mcp.INVALID_PARAMS,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
@@ -647,7 +647,7 @@ func (s *MCPServer) handleMessage(
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
-				code: mcp.INVALID_REQUEST,
+				code: mcp.INVALID_PARAMS,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
@@ -679,7 +679,7 @@ func (s *MCPServer) handleMessage(
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
-				code: mcp.INVALID_REQUEST,
+				code: mcp.INVALID_PARAMS,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
@@ -705,7 +705,7 @@ func (s *MCPServer) handleMessage(
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
-				code: mcp.INVALID_REQUEST,
+				code: mcp.INVALID_PARAMS,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {
@@ -731,7 +731,7 @@ func (s *MCPServer) handleMessage(
 		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
 			err = &requestError{
 				id:   baseMessage.ID,
-				code: mcp.INVALID_REQUEST,
+				code: mcp.INVALID_PARAMS,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
 		} else {

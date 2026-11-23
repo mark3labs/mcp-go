@@ -30,6 +30,35 @@ func TestHandleMessageRejectsInvalidIDBeforeDispatch(t *testing.T) {
 	assert.True(t, errResp.ID.IsNil(), "an error about the id itself must answer with a null id")
 }
 
+func TestHandleMessage_MalformedParamsAreInvalidParams(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+	}{
+		{name: "tool name is a number", message: `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":123}}`},
+		{name: "cursor is a number", message: `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"cursor":5}}`},
+		{name: "prompt argument is a number", message: `{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"p","arguments":{"x":5}}}`},
+		{name: "params is a string", message: `{"jsonrpc":"2.0","id":1,"method":"resources/read","params":"x"}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewMCPServer("test", "1.0.0",
+				WithToolCapabilities(true),
+				WithPromptCapabilities(true),
+				WithResourceCapabilities(true, true),
+			)
+
+			resp := s.HandleMessage(t.Context(), json.RawMessage(tt.message))
+
+			errResp, ok := resp.(mcp.JSONRPCError)
+			require.True(t, ok, "want JSONRPCError, got %T", resp)
+			assert.Equal(t, mcp.INVALID_PARAMS, errResp.Error.Code)
+			assert.Equal(t, mcp.NewRequestId(float64(1)), errResp.ID)
+		})
+	}
+}
+
 func TestHandleMessage_ParsesEnvelope(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -47,8 +76,8 @@ func TestHandleMessage_ParsesEnvelope(t *testing.T) {
 		{name: "null result is a request", message: `{"jsonrpc":"2.0","id":3,"result":null,"method":"ping"}`, wantID: float64(3)},
 		{name: "string id", message: `{"jsonrpc":"2.0","id":"abc","method":"ping"}`, wantID: "abc"},
 		{name: "large id keeps precision", message: `{"jsonrpc":"2.0","id":9007199254740993,"method":"ping"}`, wantID: int64(9007199254740993)},
-		{name: "params array is an invalid request", message: `{"jsonrpc":"2.0","id":4,"method":"ping","params":[1]}`, wantError: mcp.INVALID_REQUEST},
-		{name: "malformed _meta is an invalid request", message: `{"jsonrpc":"2.0","id":5,"method":"ping","params":{"_meta":"x"}}`, wantError: mcp.INVALID_REQUEST},
+		{name: "params array is invalid params", message: `{"jsonrpc":"2.0","id":4,"method":"ping","params":[1]}`, wantError: mcp.INVALID_PARAMS},
+		{name: "malformed _meta is invalid params", message: `{"jsonrpc":"2.0","id":5,"method":"ping","params":{"_meta":"x"}}`, wantError: mcp.INVALID_PARAMS},
 		{name: "null params", message: `{"jsonrpc":"2.0","id":6,"method":"ping","params":null}`, wantID: float64(6)},
 		{name: "boolean id is an invalid request", message: `{"jsonrpc":"2.0","id":true,"method":"ping"}`, wantError: mcp.INVALID_REQUEST, wantNilID: true},
 		{name: "object id is an invalid request", message: `{"jsonrpc":"2.0","id":{"a":1},"method":"ping"}`, wantError: mcp.INVALID_REQUEST, wantNilID: true},
