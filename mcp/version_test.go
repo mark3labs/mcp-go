@@ -15,12 +15,21 @@ func TestIsModernProtocol(t *testing.T) {
 		want    bool
 	}{
 		{"the revision that introduced the stateless core", ProtocolVersion20260728, true},
+		{"the day before the stateless core", "2026-07-27", false},
 		{"the last handshake revision", ProtocolVersion20251125, false},
 		{"an older revision", ProtocolVersion20241105, false},
 		{"an unset version", "", false},
-		// Versions are ISO dates, so an unknown future one sorts after
-		// 2026-07-28 and is treated as modern rather than rejected outright.
+		// Valid future ISO-8601 dates sort after 2026-07-28 and are treated as
+		// modern rather than rejected outright.
 		{"an unknown future revision", "2027-01-01", true},
+		{"a future leap day", "2028-02-29", true},
+		// Non-date strings and invalid calendar dates must not sort as modern.
+		{"non-date string", "invalid", false},
+		{"date with suffix", "2026-07-28-beta", false},
+		{"wrong separators", "2026/07/28", false},
+		{"invalid month", "2026-13-01", false},
+		{"non-leap year feb 29", "2027-02-29", false},
+		{"out of range date", "2026-99-99", false},
 	}
 
 	for _, tt := range tests {

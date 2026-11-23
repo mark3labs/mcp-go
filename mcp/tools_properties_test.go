@@ -386,3 +386,18 @@ func TestWithObjectWithAllOptions(t *testing.T) {
 	propertyNames := config["propertyNames"].(map[string]any)
 	assert.Equal(t, "^[a-z]+$", propertyNames["pattern"])
 }
+
+func TestRawSchemaConflictsWithStructuredKeywords(t *testing.T) {
+	raw := json.RawMessage(`{"type":"object"}`)
+	for name, tool := range map[string]Tool{
+		"raw then property": NewTool("test", WithRawInputSchema(raw), WithString("added", Required())),
+		"property then raw": NewTool("test", WithString("added"), WithRawInputSchema(raw)),
+		"required only":     {RawInputSchema: raw, InputSchema: ToolInputSchema{Required: []string{"added"}}},
+		"output keyword":    {RawOutputSchema: raw, OutputSchema: ToolOutputSchema{AdditionalProperties: false}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := json.Marshal(tool)
+			require.ErrorIs(t, err, errToolSchemaConflict)
+		})
+	}
+}

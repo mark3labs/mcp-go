@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -15,6 +16,19 @@ import (
 	"syscall"
 
 	"github.com/mark3labs/mcp-go/mcp"
+)
+
+var (
+	// ErrStdioServerListening is returned when Listen is called while a
+	// previous Listen on the same StdioServer is still running.
+	ErrStdioServerListening = errors.New("stdio server is already listening")
+	// ErrStdioServerClosed is returned when a server-initiated request is
+	// attempted after listener input processing ends, or when a pending
+	// request loses its writer to listener shutdown or writer replacement.
+	ErrStdioServerClosed = errors.New("stdio server closed")
+	// ErrStdioServerOverloaded is returned when the queue-full response
+	// backlog is full and Listen must stop accepting input.
+	ErrStdioServerOverloaded = errors.New("stdio server overloaded")
 )
 
 // StdioContextFunc is a function that takes an existing context and returns
@@ -33,11 +47,14 @@ type StdioServer struct {
 
 	// Thread-safe tool call processing
 	toolCallQueue  chan *toolCallWork
+	rejectionSlots chan struct{}
 	workerWg       sync.WaitGroup
 	requestWg      sync.WaitGroup // Tracks in-flight request handlers
 	workerPoolSize int
 	queueSize      int
 	writeMu        sync.Mutex // Protects concurrent writes
+	listenMu       sync.Mutex
+	listening      bool
 }
 
 // toolCallWork represents a queued tool call request
@@ -81,7 +98,11 @@ func WithWorkerPoolSize(size int) StdioOption {
 	}
 }
 
-// WithQueueSize sets the size of the tool call queue
+// WithQueueSize sets the size of the tool call queue.
+// Tool calls received while the queue is full are rejected with a JSON-RPC
+// internal error. The size also limits outstanding queue-full responses.
+// When that limit is exhausted, Listen stops processing input and returns
+// ErrStdioServerOverloaded after pending work finishes.
 func WithQueueSize(size int) StdioOption {
 	return func(s *StdioServer) {
 		const maxQueueSize = 10000
@@ -103,7 +124,10 @@ type stdioSession struct {
 	loggingLevel        atomic.Value
 	writer              io.Writer                           // for sending requests to client
 	requestID           atomic.Int64                        // for generating unique request IDs
-	mu                  sync.RWMutex                        // protects writer
+	mu                  sync.RWMutex                        // protects writer, done, closed, and generation
+	done                chan struct{}                       // closed when this writer stops serving requests
+	closed              bool                                // input processing ended for the active generation
+	generation          uint64                              // bumped by every SetWriter
 	pendingRequests     map[int64]chan *samplingResponse    // for tracking pending sampling requests
 	pendingElicitations map[int64]chan *elicitationResponse // for tracking pending elicitation requests
 	pendingRoots        map[int64]chan *rootsResponse       // for tracking pending list roots requests
@@ -160,12 +184,9 @@ func (s *stdioSession) GetLogLevel() mcp.LoggingLevel {
 
 // RequestSampling sends a sampling request to the client and waits for the response.
 func (s *stdioSession) RequestSampling(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
-	s.mu.RLock()
-	writer := s.writer
-	s.mu.RUnlock()
-
-	if writer == nil {
-		return nil, fmt.Errorf("no writer available for sending requests")
+	writer, done, err := s.outboundWriter()
+	if err != nil {
+		return nil, err
 	}
 
 	// Generate a unique request ID
@@ -211,7 +232,14 @@ func (s *stdioSession) RequestSampling(ctx context.Context, request mcp.CreateMe
 
 	// Wait for the response or context cancellation
 	select {
+	case <-done:
+		return nil, ErrStdioServerClosed
 	case <-ctx.Done():
+		select {
+		case <-done:
+			return nil, ErrStdioServerClosed
+		default:
+		}
 		if len(responseChan) == 0 {
 			s.cancelRequest(ctx, id)
 		}
@@ -226,12 +254,9 @@ func (s *stdioSession) RequestSampling(ctx context.Context, request mcp.CreateMe
 
 // ListRoots sends an list roots request to the client and waits for the response.
 func (s *stdioSession) ListRoots(ctx context.Context, request mcp.ListRootsRequest) (*mcp.ListRootsResult, error) {
-	s.mu.RLock()
-	writer := s.writer
-	s.mu.RUnlock()
-
-	if writer == nil {
-		return nil, fmt.Errorf("no writer available for sending requests")
+	writer, done, err := s.outboundWriter()
+	if err != nil {
+		return nil, err
 	}
 
 	// Generate a unique request ID
@@ -275,7 +300,14 @@ func (s *stdioSession) ListRoots(ctx context.Context, request mcp.ListRootsReque
 
 	// Wait for the response or context cancellation
 	select {
+	case <-done:
+		return nil, ErrStdioServerClosed
 	case <-ctx.Done():
+		select {
+		case <-done:
+			return nil, ErrStdioServerClosed
+		default:
+		}
 		if len(responseChan) == 0 {
 			s.cancelRequest(ctx, id)
 		}
@@ -290,12 +322,9 @@ func (s *stdioSession) ListRoots(ctx context.Context, request mcp.ListRootsReque
 
 // RequestElicitation sends an elicitation request to the client and waits for the response.
 func (s *stdioSession) RequestElicitation(ctx context.Context, request mcp.ElicitationRequest) (*mcp.ElicitationResult, error) {
-	s.mu.RLock()
-	writer := s.writer
-	s.mu.RUnlock()
-
-	if writer == nil {
-		return nil, fmt.Errorf("no writer available for sending requests")
+	writer, done, err := s.outboundWriter()
+	if err != nil {
+		return nil, err
 	}
 
 	// Generate a unique request ID
@@ -341,7 +370,14 @@ func (s *stdioSession) RequestElicitation(ctx context.Context, request mcp.Elici
 
 	// Wait for the response or context cancellation
 	select {
+	case <-done:
+		return nil, ErrStdioServerClosed
 	case <-ctx.Done():
+		select {
+		case <-done:
+			return nil, ErrStdioServerClosed
+		default:
+		}
 		if len(responseChan) == 0 {
 			s.cancelRequest(ctx, id)
 		}
@@ -365,11 +401,50 @@ func (s *stdioSession) cancelRequest(ctx context.Context, id int64) {
 	}
 }
 
-// SetWriter sets the writer for sending requests to the client.
-func (s *stdioSession) SetWriter(writer io.Writer) {
+// SetWriter sets the writer for sending requests to the client and returns
+// the generation Listen must pass to markStopped. A later SetWriter advances
+// the generation so an older Listen cannot mark the newer writer closed.
+// Replacing a writer releases its pending requests with ErrStdioServerClosed.
+func (s *stdioSession) SetWriter(writer io.Writer) uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.done != nil && !s.closed {
+		close(s.done)
+	}
+	s.generation++
 	s.writer = writer
+	s.done = make(chan struct{})
+	s.closed = false
+	return s.generation
+}
+
+// outboundWriter returns the writer and closure signal for a server-initiated request.
+// After listener input processing ends, it reports ErrStdioServerClosed.
+func (s *stdioSession) outboundWriter() (io.Writer, <-chan struct{}, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return nil, nil, ErrStdioServerClosed
+	}
+	if s.writer == nil {
+		return nil, nil, fmt.Errorf("no writer available for sending requests")
+	}
+	return s.writer, s.done, nil
+}
+
+// markStopped closes server-initiated sends for gen. A newer SetWriter
+// leaves its writer in place.
+func (s *stdioSession) markStopped(gen uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.generation != gen {
+		return
+	}
+	if s.done != nil && !s.closed {
+		close(s.done)
+	}
+	s.closed = true
+	s.writer = nil
 }
 
 var (
@@ -515,13 +590,51 @@ func (s *StdioServer) readNextLine(ctx context.Context, reader *bufio.Reader) (s
 // Listen starts listening for JSON-RPC messages on the provided input and writes responses to the provided output.
 // It runs until the context is cancelled or an error occurs.
 // Returns an error if there are issues with reading input or writing output.
+// A context that is already cancelled returns ctx.Err() before a session is
+// registered. A second call while this one is still running returns
+// ErrStdioServerListening. When input processing ends, server-initiated
+// requests on the stdio session fail with ErrStdioServerClosed before Listen
+// waits for handlers to finish. A later Listen installs a new writer.
+// Caller-context cancellation, including cancellation inherited from Listen's
+// context, can release a waiting request with ctx.Err() before listener closure
+// is observed. Once closure is observed, ErrStdioServerClosed takes precedence
+// over context cancellation.
 func (s *StdioServer) Listen(
 	ctx context.Context,
 	stdin io.Reader,
 	stdout io.Writer,
 ) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.listenMu.Lock()
+	if s.listening {
+		s.listenMu.Unlock()
+		return ErrStdioServerListening
+	}
+	if err := ctx.Err(); err != nil {
+		s.listenMu.Unlock()
+		return err
+	}
+	s.listening = true
+	s.listenMu.Unlock()
+
+	var (
+		writeGen uint64
+		armed    bool
+	)
+	defer func() {
+		if armed {
+			stdioSessionInstance.markStopped(writeGen)
+		}
+		s.listenMu.Lock()
+		s.listening = false
+		s.listenMu.Unlock()
+	}()
+
 	// Initialize the tool call queue
 	s.toolCallQueue = make(chan *toolCallWork, s.queueSize)
+	s.rejectionSlots = make(chan struct{}, s.queueSize)
 
 	// Set a static client context since stdio only has one client
 	if err := s.server.RegisterSession(ctx, &stdioSessionInstance); err != nil {
@@ -531,7 +644,8 @@ func (s *StdioServer) Listen(
 	ctx = s.server.WithContext(ctx, &stdioSessionInstance)
 
 	// Set the writer for sending requests to the client
-	stdioSessionInstance.SetWriter(&lockedWriter{mu: &s.writeMu, w: stdout})
+	writeGen = stdioSessionInstance.SetWriter(&lockedWriter{mu: &s.writeMu, w: stdout})
+	armed = true
 
 	// Add in any custom context.
 	if s.contextFunc != nil {
@@ -559,6 +673,7 @@ func (s *StdioServer) Listen(
 	err := s.processInputStream(ctx, reader, stdout)
 
 	// Shutdown workers gracefully
+	stdioSessionInstance.markStopped(writeGen)
 	cancelRequests()
 	close(s.toolCallQueue)
 	s.workerWg.Wait()
@@ -648,9 +763,23 @@ func (s *StdioServer) processMessage(
 				finish()
 				return ctx.Err()
 			default:
-				// Queue is full, process synchronously as fallback.
-				s.errLogger.Printf("Tool call queue full, processing synchronously")
-				return s.handleRequest(reqCtx, id, rawMessage, writer, finish)
+				slots := s.rejectionSlots
+				select {
+				case slots <- struct{}{}:
+				default:
+					finish()
+					return ErrStdioServerOverloaded
+				}
+				s.errLogger.Printf("Tool call queue full, rejecting request")
+				s.requestWg.Go(func() {
+					defer func() { <-slots }()
+					defer finish()
+					response := createErrorResponse(id, mcp.INTERNAL_ERROR, "Tool call queue is full")
+					if err := s.writeResponse(response, writer); err != nil {
+						s.errLogger.Printf("Error writing tool queue full response: %v", err)
+					}
+				})
+				return nil
 			}
 		}
 

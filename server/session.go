@@ -460,6 +460,31 @@ func (s *MCPServer) SendNotificationToClient(
 	return s.sendNotificationCore(ctx, session, notification)
 }
 
+// SendProgressNotificationToClient sends a progress notification, such as one
+// built with mcp.NewProgressNotification, to the current client. It sends
+// nothing when the progress token is nil, because a request without a
+// progress token did not ask for progress.
+func (s *MCPServer) SendProgressNotificationToClient(
+	ctx context.Context,
+	notification mcp.ProgressNotification,
+) error {
+	p := notification.Params
+	if p.ProgressToken == nil {
+		return nil
+	}
+	params := map[string]any{
+		"progressToken": p.ProgressToken,
+		"progress":      p.Progress,
+	}
+	if p.Total != 0 {
+		params["total"] = p.Total
+	}
+	if p.Message != "" {
+		params["message"] = p.Message
+	}
+	return s.SendNotificationToClient(ctx, string(mcp.MethodNotificationProgress), params)
+}
+
 // SendNotificationToSpecificClient sends a notification to a specific client by session ID
 func (s *MCPServer) SendNotificationToSpecificClient(
 	sessionID string,
@@ -505,6 +530,7 @@ func (s *MCPServer) AddSessionTools(sessionID string, tools ...ServerTool) error
 
 	s.implicitlyRegisterToolCapabilities()
 
+	s.sessionToolsMu.Lock()
 	// Get existing tools (this should return a thread-safe copy)
 	sessionTools := session.GetSessionTools()
 
@@ -518,6 +544,7 @@ func (s *MCPServer) AddSessionTools(sessionID string, tools ...ServerTool) error
 	for _, tool := range tools {
 		s.applyStrictInputSchemaDefault(&tool.Tool)
 		if err := validateToolHeaderAnnotations(&tool.Tool); err != nil {
+			s.sessionToolsMu.Unlock()
 			return err
 		}
 		newSessionTools[tool.Tool.Name] = tool
@@ -525,6 +552,7 @@ func (s *MCPServer) AddSessionTools(sessionID string, tools ...ServerTool) error
 
 	// Set the tools (this should be thread-safe)
 	session.SetSessionTools(newSessionTools)
+	s.sessionToolsMu.Unlock()
 
 	// It only makes sense to send tool notifications to initialized sessions --
 	// if we're not initialized yet the client can't possibly have sent their
@@ -571,9 +599,11 @@ func (s *MCPServer) DeleteSessionTools(sessionID string, names ...string) error 
 		return ErrSessionDoesNotSupportTools
 	}
 
+	s.sessionToolsMu.Lock()
 	// Get existing tools (this should return a thread-safe copy)
 	sessionTools := session.GetSessionTools()
 	if sessionTools == nil {
+		s.sessionToolsMu.Unlock()
 		return nil
 	}
 
@@ -590,6 +620,7 @@ func (s *MCPServer) DeleteSessionTools(sessionID string, names ...string) error 
 
 	// Set the tools (this should be thread-safe)
 	session.SetSessionTools(newSessionTools)
+	s.sessionToolsMu.Unlock()
 
 	// It only makes sense to send tool notifications to initialized sessions --
 	// if we're not initialized yet the client can't possibly have sent their
@@ -820,7 +851,7 @@ func (s *MCPServer) AddSessionResourceTemplates(sessionID string, templates ...S
 
 	// Validate and add new templates
 	for _, t := range templates {
-		if t.Template.URITemplate == nil {
+		if !hasURITemplate(t.Template.URITemplate) {
 			return fmt.Errorf("resource template URITemplate cannot be nil")
 		}
 		raw := t.Template.URITemplate.Raw()

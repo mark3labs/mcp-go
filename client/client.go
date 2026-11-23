@@ -883,7 +883,14 @@ func (c *Client) handleIncomingRequest(ctx context.Context, request transport.JS
 	case string(mcp.MethodListRoots):
 		return c.handleListRootsRequestTransport(ctx, request)
 	default:
-		return nil, fmt.Errorf("unsupported request method: %s", request.Method)
+		// Answered here rather than with an error, which the transports
+		// report as an internal error.
+		return transport.NewJSONRPCErrorResponse(
+			request.ID,
+			mcp.METHOD_NOT_FOUND,
+			fmt.Sprintf("unsupported request method: %s", request.Method),
+			nil,
+		), nil
 	}
 }
 

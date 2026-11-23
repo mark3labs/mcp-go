@@ -696,7 +696,7 @@ func (r *CallToolResult) UnmarshalJSON(data []byte) error {
 	r.RawStructuredContent = nil
 	r.StructuredContent = nil
 	if len(raw.StructuredContent) > 0 {
-		r.RawStructuredContent = append(json.RawMessage(nil), raw.StructuredContent...)
+		r.RawStructuredContent = raw.StructuredContent
 		if err := json.Unmarshal(raw.StructuredContent, &r.StructuredContent); err != nil {
 			return err
 		}
@@ -781,7 +781,7 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 
 	// Determine which input schema to use
 	if t.RawInputSchema != nil {
-		if t.InputSchema.Type != "" || t.InputSchema.Types != nil {
+		if ToolArgumentsSchema(t.InputSchema).hasStructuredKeywords() {
 			return nil, fmt.Errorf("tool %s has both InputSchema and RawInputSchema set: %w", t.Name, errToolSchemaConflict)
 		}
 		m["inputSchema"] = t.RawInputSchema
@@ -792,7 +792,7 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 
 	// Add output schema if present
 	if t.RawOutputSchema != nil {
-		if t.OutputSchema.Type != "" || t.OutputSchema.Types != nil {
+		if ToolArgumentsSchema(t.OutputSchema).hasStructuredKeywords() {
 			return nil, fmt.Errorf("tool %s has both OutputSchema and RawOutputSchema set: %w", t.Name, errToolSchemaConflict)
 		}
 		m["outputSchema"] = t.RawOutputSchema
@@ -846,6 +846,11 @@ type ToolArgumentsSchema struct {
 	// in Properties are skipped, and keys that are not listed follow in
 	// sorted order. A nil PropertyOrder marshals all keys in sorted order.
 	PropertyOrder []string `json:"-"`
+}
+
+func (s ToolArgumentsSchema) hasStructuredKeywords() bool {
+	return s.Type != "" || s.Types != nil || len(s.Properties) > 0 || len(s.Required) > 0 ||
+		len(s.Defs) > 0 || s.AdditionalProperties != nil || len(s.AdditionalFields) > 0
 }
 
 // ToolInputSchema remains a named type for retro-compatibility, so its JSON

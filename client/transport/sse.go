@@ -443,10 +443,12 @@ func (c *SSE) readSSE(reader io.ReadCloser, endpointChan chan struct{}, endpoint
 			continue
 		}
 
-		if after, ok := strings.CutPrefix(line, "event:"); ok {
-			event = strings.TrimSpace(after)
-		} else if after, ok := strings.CutPrefix(line, "data:"); ok {
-			data = appendSSEData(data, after)
+		field, value, _ := strings.Cut(line, ":")
+		switch field {
+		case "event":
+			event = strings.TrimSpace(value)
+		case "data":
+			data = appendSSEData(data, value)
 			if c.maxMessageBytes > 0 && int64(len(data)) > c.maxMessageBytes {
 				end(ErrMessageTooLarge)
 				return

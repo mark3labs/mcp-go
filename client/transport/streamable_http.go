@@ -1286,25 +1286,29 @@ func (c *StreamableHTTP) readSSEWithCursor(ctx context.Context, reader io.ReadCl
 			continue
 		}
 
-		if eventStr, ok := strings.CutPrefix(line, "event:"); ok {
-			event = strings.TrimSpace(eventStr)
-		} else if dataStr, ok := strings.CutPrefix(line, "data:"); ok {
-			data = appendSSEData(data, dataStr)
+		field, value, _ := strings.Cut(line, ":")
+		switch field {
+		case "event":
+			event = strings.TrimSpace(value)
+		case "data":
+			data = appendSSEData(data, value)
 			if c.maxMessageBytes > 0 && int64(len(data)) > c.maxMessageBytes {
 				c.logger.Error("SSE stream error", "err", ErrMessageTooLarge)
 				return ErrMessageTooLarge
 			}
-		} else if idStr, ok := strings.CutPrefix(line, "id:"); ok {
+		case "id":
 			// The SSE spec ignores an id that contains a NUL character.
-			if value := strings.TrimPrefix(idStr, " "); !strings.ContainsRune(value, 0) {
+			if value := strings.TrimPrefix(value, " "); !strings.ContainsRune(value, 0) {
 				id, hasID = value, true
 			}
-		} else if retryStr, ok := strings.CutPrefix(line, "retry:"); ok && cursor != nil {
-			// Only ASCII digits are a valid retry value.
-			value := strings.TrimPrefix(retryStr, " ")
-			if ms, err := strconv.ParseUint(value, 10, 31); err == nil && value != "" && strings.Trim(value, "0123456789") == "" {
-				cursor.retry = time.Duration(ms) * time.Millisecond
-				cursor.hasRetry = true
+		case "retry":
+			if cursor != nil {
+				// Only ASCII digits are a valid retry value.
+				value := strings.TrimPrefix(value, " ")
+				if ms, err := strconv.ParseUint(value, 10, 31); err == nil && value != "" && strings.Trim(value, "0123456789") == "" {
+					cursor.retry = time.Duration(ms) * time.Millisecond
+					cursor.hasRetry = true
+				}
 			}
 		}
 	}
