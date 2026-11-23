@@ -185,7 +185,7 @@ func TestStreamableHTTPServer_SamplingQueueFull(t *testing.T) {
 
 	// Fill the sampling request queue
 	for i := 0; i < cap(session.samplingRequestChan); i++ {
-		session.samplingRequestChan <- samplingRequestItem{
+		session.samplingRequestChan <- &samplingRequestItem{
 			requestID: int64(i),
 			request:   mcp.CreateMessageRequest{},
 			response:  make(chan samplingResponseItem, 1),

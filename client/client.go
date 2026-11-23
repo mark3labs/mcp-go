@@ -20,9 +20,22 @@ import (
 type Client struct {
 	transport transport.Interface
 
-	initialized        atomic.Bool
-	notifications      []func(mcp.JSONRPCNotification)
-	notifyMu           sync.RWMutex
+	initialized   atomic.Bool
+	notifications []func(mcp.JSONRPCNotification)
+	notifyMu      sync.RWMutex
+
+	// incomingRequests tracks the server-initiated requests being handled,
+	// keyed by their request ID, so a notifications/cancelled from the
+	// server can end the handler's context early.
+	incomingMu       sync.Mutex
+	incomingRequests map[string]context.CancelFunc
+	// earlyCancels remembers a notifications/cancelled that arrived before
+	// its request was registered: the transports start request handlers in
+	// goroutines, so the notification can beat the registration. Also under
+	// incomingMu; earlyCancelOrder lists its keys oldest first, so a full
+	// buffer evicts the oldest entry instead of dropping the newest.
+	earlyCancels       map[string]bool
+	earlyCancelOrder   []string
 	requestID          atomic.Int64
 	clientCapabilities mcp.ClientCapabilities
 	serverCapabilities mcp.ServerCapabilities
@@ -209,6 +222,7 @@ func (c *Client) Start(ctx context.Context) error {
 	}
 
 	c.transport.SetNotificationHandler(func(notification mcp.JSONRPCNotification) {
+		c.cancelIncomingRequest(notification)
 		c.notifyMu.RLock()
 		handlers := slices.Clone(c.notifications)
 		c.notifyMu.RUnlock()
@@ -834,6 +848,31 @@ func (c *Client) RootListChanges(
 // handleIncomingRequest processes incoming requests from the server.
 // This is the main entry point for server-to-client requests like sampling and elicitation.
 func (c *Client) handleIncomingRequest(ctx context.Context, request transport.JSONRPCRequest) (*transport.JSONRPCResponse, error) {
+	// The server may withdraw this request with notifications/cancelled.
+	// Ending this context when it does lets a long-running handler, an
+	// elicitation dialog for example, return early instead of outliving a
+	// request whose response nobody waits for.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	key := request.ID.String()
+	c.incomingMu.Lock()
+	if c.incomingRequests == nil {
+		c.incomingRequests = make(map[string]context.CancelFunc)
+	}
+	c.incomingRequests[key] = cancel
+	// A cancellation that beat the registration is applied immediately, so
+	// the server's withdrawal holds however the two messages interleaved.
+	cancelledEarly := c.takeEarlyCancelLocked(key)
+	c.incomingMu.Unlock()
+	if cancelledEarly {
+		cancel()
+	}
+	defer func() {
+		c.incomingMu.Lock()
+		delete(c.incomingRequests, key)
+		c.incomingMu.Unlock()
+	}()
+
 	switch request.Method {
 	case string(mcp.MethodSamplingCreateMessage):
 		return c.handleSamplingRequestTransport(ctx, request)
@@ -852,6 +891,75 @@ func (c *Client) handleIncomingRequest(ctx context.Context, request transport.JS
 			fmt.Sprintf("unsupported request method: %s", request.Method),
 			nil,
 		), nil
+	}
+}
+
+// maxEarlyCancels bounds how many unmatched cancellations the client keeps.
+const maxEarlyCancels = 1024
+
+// rememberEarlyCancelLocked records a cancellation whose request is not
+// registered. A cancellation for a request that already finished never gets
+// consumed, so at the bound the oldest entry is evicted: the newest
+// cancellations are the ones that can still beat a registration, and a server
+// streaming cancellations for unknown IDs cannot grow the buffer without
+// limit. Callers must hold incomingMu.
+func (c *Client) rememberEarlyCancelLocked(key string) {
+	if c.earlyCancels[key] {
+		return
+	}
+	if c.earlyCancels == nil {
+		c.earlyCancels = make(map[string]bool)
+	}
+	if len(c.earlyCancelOrder) >= maxEarlyCancels {
+		delete(c.earlyCancels, c.earlyCancelOrder[0])
+		c.earlyCancelOrder = c.earlyCancelOrder[1:]
+	}
+	c.earlyCancels[key] = true
+	c.earlyCancelOrder = append(c.earlyCancelOrder, key)
+}
+
+// takeEarlyCancelLocked consumes the remembered cancellation for key,
+// reporting whether there was one. Callers must hold incomingMu.
+func (c *Client) takeEarlyCancelLocked(key string) bool {
+	if !c.earlyCancels[key] {
+		return false
+	}
+	delete(c.earlyCancels, key)
+	if i := slices.Index(c.earlyCancelOrder, key); i >= 0 {
+		c.earlyCancelOrder = slices.Delete(c.earlyCancelOrder, i, i+1)
+	}
+	return true
+}
+
+// cancelIncomingRequest ends the context of the in-flight server request
+// that a notifications/cancelled withdraws, so the handler running it can
+// return early.
+func (c *Client) cancelIncomingRequest(notification mcp.JSONRPCNotification) {
+	if notification.Method != string(mcp.MethodNotificationCancelled) {
+		return
+	}
+	var params mcp.CancelledNotificationParams
+	raw, err := json.Marshal(notification.Params)
+	if err != nil {
+		return
+	}
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return
+	}
+	key := params.RequestId.String()
+	c.incomingMu.Lock()
+	cancel, ok := c.incomingRequests[key]
+	if ok {
+		delete(c.incomingRequests, key)
+	} else {
+		// The transports start request handlers in goroutines, so this
+		// notification can arrive before the request is registered.
+		// Remember it: the registration applies it immediately.
+		c.rememberEarlyCancelLocked(key)
+	}
+	c.incomingMu.Unlock()
+	if ok {
+		cancel()
 	}
 }
 

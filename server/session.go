@@ -379,6 +379,22 @@ func (s *MCPServer) SendNotificationToAllClients(
 	s.sendNotificationToAllClients(notification)
 }
 
+// newCancelledNotification builds the notifications/cancelled that withdraws
+// the server request requestID, abandoned because its wait ended with err.
+// Without it the client keeps the request open, an elicitation dialog for
+// example, and the answer it eventually sends has nobody waiting for it.
+func newCancelledNotification(requestID int64, err error) mcp.JSONRPCNotification {
+	return mcp.JSONRPCNotification{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		Notification: mcp.Notification{
+			Method: string(mcp.MethodNotificationCancelled),
+			Params: mcp.NotificationParams{
+				AdditionalFields: map[string]any{"requestId": requestID, "reason": err.Error()},
+			},
+		},
+	}
+}
+
 // SendNotificationToClient sends a notification to the current client
 func (s *MCPServer) sendNotificationCore(
 	ctx context.Context,
