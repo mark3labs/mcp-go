@@ -14,6 +14,104 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// taskInputSelectContext pauses select evaluation until the test has queued an
+// answer and, optionally, expired the task.
+type taskInputSelectContext struct {
+	context.Context
+	ready   chan struct{}
+	release chan struct{}
+}
+
+func (ctx *taskInputSelectContext) Done() <-chan struct{} {
+	close(ctx.ready)
+	<-ctx.release
+	return ctx.Context.Done()
+}
+
+// TestAwaitTaskInput_BufferedAnswerAfterExpiry verifies that accepting the last
+// answer exposes working before the waiter resumes, and that TTL removal prevents
+// resumption even if inputReady wins the select.
+func TestAwaitTaskInput_BufferedAnswerAfterExpiry(t *testing.T) {
+	tests := []struct {
+		name   string
+		expire bool
+	}{
+		{name: "registered task resumes"},
+		{name: "expired task does not resume", expire: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+			ctx := buildModernContext(t.Context(), srv)
+			// Exercise both possible choices when inputReady and Done are ready.
+			for i := range 50 {
+				t.Run(fmt.Sprintf("attempt-%d", i), func(t *testing.T) {
+					taskID := fmt.Sprintf("buffered-answer-%d", i)
+					entry, err := srv.createTask(ctx, taskID, "work", nil, nil)
+					require.NoError(t, err)
+					taskCtx, cancel := context.WithCancel(ctx)
+					srv.tasksMu.Lock()
+					entry.cancelFunc = cancel
+					srv.tasksMu.Unlock()
+					gate := &taskInputSelectContext{
+						Context: taskCtx, ready: make(chan struct{}), release: make(chan struct{}),
+					}
+					var releaseOnce sync.Once
+					release := func() { releaseOnce.Do(func() { close(gate.release) }) }
+					t.Cleanup(func() {
+						cancel()
+						release()
+						_ = srv.cancelTaskEntry(ctx, entry, "test cleanup", false)
+					})
+					returned := make(chan bool, 1)
+					go func() {
+						_, ok := srv.awaitTaskInput(gate, entry, mcp.InputRequests{
+							"confirm": mcp.NewElicitationInputRequest(mcp.ElicitationParams{
+								Mode: mcp.ElicitationModeForm, Message: "Continue?",
+							}),
+						})
+						returned <- ok
+					}()
+					select {
+					case <-gate.ready:
+					case <-time.After(time.Second):
+						t.Fatal("worker did not park")
+					}
+					_, reqErr := srv.handleUpdateTask(ctx, 1, mcp.UpdateTaskRequest{
+						Params: mcp.UpdateTaskParams{TaskId: taskID, InputResponses: answerFor("confirm")},
+					})
+					require.Nil(t, reqErr)
+					poll, reqErr := srv.handleGetTask(ctx, 2, mcp.GetTaskRequest{
+						Params: mcp.GetTaskParams{TaskId: taskID},
+					})
+					require.Nil(t, reqErr)
+					assert.Equal(t, mcp.TaskStatusWorking, poll.Status, "last answer must update status before the waiter resumes")
+					wire, err := json.Marshal(poll)
+					require.NoError(t, err)
+					assert.NotContains(t, string(wire), "inputRequests", "working poll must not expose fulfilled inputs")
+					if tt.expire {
+						srv.scheduleTaskCleanup(taskID, entry, 0)
+						require.ErrorIs(t, taskCtx.Err(), context.Canceled)
+						srv.tasksMu.RLock()
+						registered := srv.tasks[taskID] == entry
+						completed := entry.completed
+						srv.tasksMu.RUnlock()
+						require.False(t, registered)
+						require.False(t, completed, "TTL removal does not mark the entry completed")
+					}
+					release()
+					select {
+					case ok := <-returned:
+						assert.Equal(t, !tt.expire, ok, "only registered tasks may resume")
+					case <-time.After(time.Second):
+						t.Fatal("worker did not exit")
+					}
+				})
+			}
+		})
+	}
+}
+
 // TestTaskInputRequired_RegularToolRoundTrip verifies an optional tool run as a
 // task (modern, extension declared) that returns input_required.
 func TestTaskInputRequired_RegularToolRoundTrip(t *testing.T) {
@@ -92,15 +190,19 @@ func TestTaskInputRequired_RegularToolRoundTrip(t *testing.T) {
 	require.Equal(t, "deployed", text.Text)
 }
 
-// TestTaskInputRequired_PartialResponses waits for both inputs in either order.
+// TestTaskInputRequired_PartialResponses retains partial answers until all inputs
+// arrive or cancellation releases them.
 func TestTaskInputRequired_PartialResponses(t *testing.T) {
 	tests := []struct {
 		name     string
 		firstKey string
 		lastKey  string
+		cancel   bool
 	}{
 		{name: "first then second", firstKey: "first", lastKey: "second"},
 		{name: "second then first", firstKey: "second", lastKey: "first"},
+		{name: "cancel after first answer", firstKey: "first", lastKey: "second", cancel: true},
+		{name: "cancel after second answer", firstKey: "second", lastKey: "first", cancel: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -177,6 +279,37 @@ func TestTaskInputRequired_PartialResponses(t *testing.T) {
 			require.Contains(t, got.InputRequests, tt.lastKey)
 			require.Equal(t, initial.InputRequests[tt.lastKey], got.InputRequests[tt.lastKey])
 			require.Len(t, initial.InputRequests, 2, "earlier poll results must remain intact")
+
+			if tt.cancel {
+				entry, err := srv.getTaskEntry(ctx, taskID)
+				require.NoError(t, err)
+				srv.tasksMu.RLock()
+				accepted := entry.inputResponses[tt.firstKey]
+				srv.tasksMu.RUnlock()
+				require.Equal(t, responses[tt.firstKey], accepted, "live task must retain the accepted answer")
+				_, e = srv.handleCancelTask(ctx, 6, mcp.CancelTaskRequest{
+					Params: mcp.CancelTaskParams{TaskId: taskID},
+				})
+				require.Nil(t, e)
+				_, e = srv.handleUpdateTask(ctx, 7, mcp.UpdateTaskRequest{
+					Params: mcp.UpdateTaskParams{TaskId: taskID, InputResponses: responses},
+				})
+				require.Nil(t, e, "updates after cancellation must not restore input payloads")
+				srv.tasksMu.RLock()
+				inputResponses := entry.inputResponses
+				inputRequests := entry.inputRequests
+				srv.tasksMu.RUnlock()
+				assert.Nil(t, inputResponses, "cancelled task must release accepted answers")
+				assert.Nil(t, inputRequests, "cancelled task must release unanswered requests")
+				terminal, err := srv.handleGetTask(ctx, 8, mcp.GetTaskRequest{Params: mcp.GetTaskParams{TaskId: taskID}})
+				require.Nil(t, err)
+				assert.Equal(t, mcp.TaskStatusCancelled, terminal.Status)
+				assert.Nil(t, terminal.InputRequests)
+				assert.Len(t, got.InputRequests, 1, "cancellation must preserve earlier poll snapshots")
+				assert.Contains(t, got.InputRequests, tt.lastKey)
+				assert.Equal(t, int32(1), calls.Load(), "cancelled task must not resume")
+				return
+			}
 
 			_, e = srv.handleUpdateTask(ctx, 6, mcp.UpdateTaskRequest{
 				Params: mcp.UpdateTaskParams{TaskId: taskID, InputResponses: mcp.InputResponses{

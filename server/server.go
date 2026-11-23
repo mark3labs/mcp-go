@@ -2865,7 +2865,7 @@ func (s *MCPServer) awaitTaskInput(
 	}
 
 	s.tasksMu.Lock()
-	if entry.completed {
+	if entry.completed || s.tasks[entry.task.TaskId] != entry {
 		s.tasksMu.Unlock()
 		return nil, false
 	}
@@ -3033,6 +3033,7 @@ func (s *MCPServer) handleUpdateTask(
 	}
 	// Resume only after every outstanding request has been answered.
 	if len(pending) == 0 && entry.inputReady != nil {
+		entry.task.Status = mcp.TaskStatusWorking
 		select {
 		case entry.inputReady <- struct{}{}:
 		default:
@@ -3557,6 +3558,8 @@ func (s *MCPServer) cancelTaskEntry(ctx context.Context, entry *taskEntry, messa
 	entry.task.StatusMessage = message
 	entry.task.LastUpdatedAt = cancelledAt.UTC().Format(time.RFC3339)
 	entry.resultErr = context.Canceled
+	entry.inputResponses = nil
+	entry.inputRequests = nil
 	entry.completed = true
 	close(entry.done)
 	s.activeTasks--
