@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -191,11 +192,18 @@ func runBlockedRequestCancellation(
 
 	release()
 	requireWithin(t, handled, "the POST to finish after the release")
+	requireRequestThenOneCancellation(t, sseMessages(t, output()))
+}
 
+// requireRequestThenOneCancellation checks that messages carry the roots/list
+// request, then exactly one notifications/cancelled naming it, then the tool's
+// response, ignoring any other notification.
+func requireRequestThenOneCancellation(t *testing.T, messages []json.RawMessage) {
+	t.Helper()
 	var requestID int64
 	var methods []string
 	var cancellations []mcp.JSONRPCNotification
-	for _, raw := range sseMessages(t, output()) {
+	for _, raw := range messages {
 		var probe struct {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
@@ -239,4 +247,149 @@ func TestStreamableHTTPServer_CancelWhileRequestRecordIsBlocked(t *testing.T) {
 	w := newGatedSSEWriter("") // an empty marker matches every write, so gate nothing:
 	w.hit.Do(func() {})        // consume the gate so writes pass straight through
 	runBlockedRequestCancellation(t, httpServer, mcpServer, w, store.blocked, func() { close(store.release) }, w.output)
+}
+
+// A request still queued for a POST's stream when the POST finishes is
+// settled late: with an event store it is recorded for replay. When the
+// caller gives up while that record is blocked, the stream owns the
+// cancellation exactly as for a live write: the caller returns without
+// waiting, publishes nothing where another stream could deliver it first,
+// and the recorded request is followed by exactly one cancellation.
+//
+// The request is forced into late settlement. The POST's forwarder is parked
+// recording a notification while the request is queued, and the tool handler
+// returns, so the POST closes its stream before waiting on the forwarder.
+// Once that stream is closed, a queued request can no longer take the
+// forwarder's write path: whichever of the forwarder or the response path's
+// drain takes it settles it late.
+func TestStreamableHTTPServer_CancelWhileLateSettlementRecordIsBlocked(t *testing.T) {
+	const forwarderMarker = "park-the-forwarder"
+	record := newBlockingEventStore(string(mcp.MethodListRoots))
+	forwarder := &blockingEventStore{
+		EventStore: record,
+		marker:     forwarderMarker,
+		blocked:    make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+	mcpServer := NewMCPServer("test-server", "1.0.0", WithRoots())
+	httpServer := NewStreamableHTTPServer(mcpServer, WithEventStore(forwarder))
+
+	type asked struct {
+		cancel  context.CancelFunc
+		session *streamableHttpSession
+		scoped  *requestScopedSSE
+	}
+	askedCh := make(chan asked, 1)
+	callErr := make(chan error, 1)
+	mcpServer.AddTool(mcp.NewTool("ask"), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		session, _ := ClientSessionFromContext(ctx).(*streamableHttpSession)
+		scoped, _ := ctx.Value(requestScopedSSEKey{}).(*requestScopedSSE)
+		if session == nil || scoped == nil {
+			return nil, errors.New("the tool call has no request-scoped stream")
+		}
+		// The forwarder takes this notification and stays parked recording it.
+		if err := mcpServer.SendNotificationToClient(ctx, "notifications/message",
+			map[string]any{"level": "info", "data": forwarderMarker}); err != nil {
+			return nil, err
+		}
+		select {
+		case <-forwarder.blocked:
+		case <-time.After(5 * time.Second):
+			return nil, errors.New("the forwarder never parked")
+		}
+		// The request keeps the POST's context values, so it is queued for
+		// the POST's stream, but its cancellation is its own, so this handler
+		// can return while it is pending.
+		reqCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		go func() {
+			_, err := mcpServer.RequestRoots(reqCtx, mcp.ListRootsRequest{})
+			callErr <- err
+		}()
+		for deadline := time.Now().Add(5 * time.Second); len(scoped.requests) == 0; {
+			if time.Now().After(deadline) {
+				cancel()
+				return nil, errors.New("the request was never queued")
+			}
+			time.Sleep(time.Millisecond)
+		}
+		askedCh <- asked{cancel: cancel, session: session, scoped: scoped}
+		return mcp.NewToolResultText("done"), nil
+	})
+
+	testServer := httptest.NewServer(httpServer)
+	t.Cleanup(testServer.Close)
+	sessionID := initializeSession(t, testServer.URL)
+
+	// Release every gate even when an assertion fails, so no goroutine is
+	// left blocked behind the test.
+	releaseForwarder := sync.OnceFunc(func() { close(forwarder.release) })
+	releaseRecord := sync.OnceFunc(func() { close(record.release) })
+	t.Cleanup(releaseForwarder)
+	t.Cleanup(releaseRecord)
+
+	w := newGatedSSEWriter("") // an empty marker matches every write, so gate nothing:
+	w.hit.Do(func() {})        // consume the gate so writes pass straight through
+	body, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+		"params": map[string]any{"name": "ask"},
+	})
+	require.NoError(t, err)
+	handled := make(chan struct{})
+	go func() {
+		defer close(handled)
+		httpServer.Handle(w, &HTTPRequest{
+			Method: http.MethodPost,
+			URL:    &url.URL{Path: "/mcp"},
+			Header: http.Header{
+				"Content-Type":     []string{"application/json"},
+				"Accept":           []string{"application/json, text/event-stream"},
+				HeaderKeySessionID: []string{sessionID},
+			},
+			Body:    body,
+			Context: t.Context(),
+		})
+	}()
+
+	got := requireWithin(t, askedCh, "the tool handler to queue the request")
+	t.Cleanup(got.cancel)
+
+	// The POST closed its stream while the forwarder is parked and the
+	// request is still queued, untaken: it can only be settled late now.
+	requireWithin(t, got.scoped.done, "the POST to close its stream")
+	require.Len(t, got.scoped.requests, 1, "the request must still be queued when the stream closes")
+	releaseForwarder()
+	requireWithin(t, record.blocked, "the late settlement to block recording the request")
+
+	got.cancel()
+	require.ErrorIs(t, requireWithin(t, callErr, "the caller to return while the record is blocked"), context.Canceled)
+	assert.Empty(t, got.session.notificationChannel,
+		"the caller must not publish the cancellation where another stream could deliver it before the request")
+
+	releaseRecord()
+	requireWithin(t, handled, "the POST to finish after the release")
+
+	// The POST's own stream, and the record a resuming client replays, both
+	// carry the request followed by exactly one cancellation naming it.
+	output := w.output()
+	requireRequestThenOneCancellation(t, sseMessages(t, output))
+	var firstEventID string
+	for line := range strings.SplitSeq(output, "\n") {
+		if id, ok := strings.CutPrefix(strings.TrimRight(line, "\r"), "id: "); ok {
+			firstEventID = id
+			break
+		}
+	}
+	require.NotEmpty(t, firstEventID, "the POST's stream must carry event IDs")
+	var replayed []json.RawMessage
+	_, err = forwarder.ReplayEventsAfter(t.Context(), sessionID, firstEventID, func(_ string, message json.RawMessage) error {
+		replayed = append(replayed, message)
+		return nil
+	})
+	require.NoError(t, err)
+	requireRequestThenOneCancellation(t, replayed)
+
+	httpServer.pendingRequests.Range(func(key, _ any) bool {
+		t.Errorf("request %v still pending", key)
+		return true
+	})
 }
