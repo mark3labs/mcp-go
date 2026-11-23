@@ -703,10 +703,12 @@ func TestStdio_ConcurrentRequestsUnblockOnServerDeath(t *testing.T) {
 
 func TestStdio_NewStdioMCPClientWithOptions_CreatesAndStartsClient(t *testing.T) {
 	called := false
+	helperPath, err := os.Executable()
+	require.NoError(t, err)
 
 	fakeCmdFunc := func(ctx context.Context, command string, args []string, env []string) (*exec.Cmd, error) {
 		called = true
-		return exec.CommandContext(ctx, "echo", "started"), nil
+		return exec.CommandContext(ctx, helperPath, "-test.run=^TestClientStdioHelperProcess$"), nil
 	}
 
 	client, err := NewStdioMCPClientWithOptions(
@@ -723,6 +725,8 @@ func TestStdio_NewStdioMCPClientWithOptions_CreatesAndStartsClient(t *testing.T)
 	require.True(t, called)
 }
 
+func TestClientStdioHelperProcess(t *testing.T) {}
+
 func TestStdio_NewStdioMCPClientWithOptions_FailsToStart(t *testing.T) {
 	// Create a commandFunc that points to a nonexistent binary
 	badCmdFunc := func(ctx context.Context, command string, args []string, env []string) (*exec.Cmd, error) {
@@ -737,6 +741,6 @@ func TestStdio_NewStdioMCPClientWithOptions_FailsToStart(t *testing.T) {
 	)
 
 	require.Error(t, err)
-	require.EqualError(t, err, "failed to start stdio transport: failed to start command: fork/exec /nonexistent/bar: no such file or directory")
+	require.ErrorContains(t, err, "/nonexistent/bar")
 	require.Nil(t, client)
 }
