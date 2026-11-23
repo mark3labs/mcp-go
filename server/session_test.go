@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"sync"
 	"sync/atomic"
@@ -570,6 +571,77 @@ func TestMCPServer_AddSessionTools(t *testing.T) {
 	// Verify tool was added to session
 	assert.Len(t, session.GetSessionTools(), 1)
 	assert.Contains(t, session.GetSessionTools(), "session-tool")
+}
+
+func TestMCPServer_ConcurrentSessionToolUpdates(t *testing.T) {
+	tests := []struct {
+		name      string
+		add       bool
+		delete    bool
+		wantCount int
+	}{
+		{name: "add", add: true, wantCount: 65},
+		{name: "delete", delete: true, wantCount: 1},
+		{name: "add and delete", add: true, delete: true, wantCount: 65},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(false))
+			for _, session := range []SessionWithTools{
+				NewStreamableHTTPServer(server).newSession("streamable-http"),
+				&sseSession{sessionID: "sse"},
+			} {
+				t.Run(session.SessionID(), func(t *testing.T) {
+					require.NoError(t, server.RegisterSession(t.Context(), session))
+
+					const count = 64
+					initial := map[string]ServerTool{"keep": {Tool: mcp.NewTool("keep")}}
+					if test.delete {
+						for i := range count {
+							name := fmt.Sprintf("old-%d", i)
+							initial[name] = ServerTool{Tool: mcp.NewTool(name)}
+						}
+					}
+					session.SetSessionTools(initial)
+
+					start := make(chan struct{})
+					errors := make(chan error, count*2)
+					var wg sync.WaitGroup
+					for i := range count {
+						wg.Go(func() {
+							<-start
+							if test.add {
+								errors <- server.AddSessionTool(session.SessionID(), mcp.NewTool(fmt.Sprintf("new-%d", i)), nil)
+							}
+							if test.delete {
+								errors <- server.DeleteSessionTools(session.SessionID(), fmt.Sprintf("old-%d", i))
+							}
+						})
+					}
+					close(start)
+					wg.Wait()
+					close(errors)
+					for err := range errors {
+						require.NoError(t, err)
+					}
+
+					tools := session.GetSessionTools()
+					require.Equal(t, test.wantCount, len(tools))
+					require.Contains(t, tools, "keep")
+					if test.add {
+						for i := range count {
+							assert.Contains(t, tools, fmt.Sprintf("new-%d", i))
+						}
+					}
+					if test.delete {
+						for i := range count {
+							assert.NotContains(t, tools, fmt.Sprintf("old-%d", i))
+						}
+					}
+				})
+			}
+		})
+	}
 }
 
 func TestMCPServer_AddSessionTool(t *testing.T) {
