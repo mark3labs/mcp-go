@@ -104,6 +104,14 @@ func (r *InputRequest) UnmarshalJSON(data []byte) error {
 				return fmt.Errorf("input request %s: %w", envelope.Method, err)
 			}
 		}
+		// Handlers get typed content, as for a sampling/createMessage request.
+		for i := range params.Messages {
+			content, err := ParseSamplingContent(params.Messages[i].Content)
+			if err != nil {
+				return fmt.Errorf("input request %s: messages[%d]: %w", envelope.Method, i, err)
+			}
+			params.Messages[i].Content = content
+		}
 		r.Sampling = &params
 	case MethodListRoots:
 		r.Roots = &ListRootsParams{}
@@ -188,6 +196,12 @@ func (r *InputResponse) DecodeFor(method MCPMethod) error {
 		if err := json.Unmarshal(r.raw, &result); err != nil {
 			return fmt.Errorf("input response %s: %w", method, err)
 		}
+		// Handlers get typed content, as for a sampling/createMessage response.
+		content, err := ParseSamplingContent(result.Content)
+		if err != nil {
+			return fmt.Errorf("input response %s: %w", method, err)
+		}
+		result.Content = content
 		r.Sampling = &result
 	case MethodListRoots:
 		var result ListRootsResult

@@ -233,3 +233,31 @@ func TestCallToolParamsPreserveRawArgumentsAlongsideRoundTripFields(t *testing.T
 	assert.Contains(t, string(encoded), "9007199254740993", "raw arguments survive")
 	assert.Contains(t, string(encoded), "step=2")
 }
+
+// Sampling content reaches handlers typed on the sampling/createMessage path;
+// the multi round-trip path must not hand them generic JSON maps instead.
+func TestInputSamplingPayloadsDecodeTypedContent(t *testing.T) {
+	var request InputRequest
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"method": "sampling/createMessage",
+		"params": {"maxTokens": 10, "messages": [
+			{"role": "user", "content": {"type": "text", "text": "hi"}},
+			{"role": "user", "content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]}
+		]}
+	}`), &request))
+	require.Len(t, request.Sampling.Messages, 2)
+	assert.Equal(t, TextContent{Type: "text", Text: "hi"}, request.Sampling.Messages[0].Content)
+	assert.Equal(t,
+		[]Content{TextContent{Type: "text", Text: "a"}, TextContent{Type: "text", Text: "b"}},
+		request.Sampling.Messages[1].Content)
+
+	var response InputResponse
+	require.NoError(t, json.Unmarshal(
+		[]byte(`{"model":"m","role":"assistant","content":{"type":"text","text":"hello"}}`), &response))
+	require.NoError(t, response.DecodeFor(MethodSamplingCreateMessage))
+	assert.Equal(t, TextContent{Type: "text", Text: "hello"}, response.Sampling.Content)
+
+	var invalid InputResponse
+	require.NoError(t, json.Unmarshal([]byte(`{"model":"m","role":"assistant","content":{"type":"bogus"}}`), &invalid))
+	require.Error(t, invalid.DecodeFor(MethodSamplingCreateMessage))
+}
