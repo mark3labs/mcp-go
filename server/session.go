@@ -835,7 +835,7 @@ func (s *MCPServer) AddSessionResourceTemplates(sessionID string, templates ...S
 
 	// Validate and add new templates
 	for _, t := range templates {
-		if t.Template.URITemplate == nil {
+		if !hasURITemplate(t.Template.URITemplate) {
 			return fmt.Errorf("resource template URITemplate cannot be nil")
 		}
 		raw := t.Template.URITemplate.Raw()
