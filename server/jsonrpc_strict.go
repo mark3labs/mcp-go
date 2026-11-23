@@ -29,20 +29,94 @@ var (
 // methods not in this list, params validation is skipped to allow applications
 // to handle their own parameter schemas.
 func validateProtocolMemberNames(message json.RawMessage, protocolMethods []string) error {
-	_, err := checkMembers(message, skipSpace(message, 0), jsonrpcEnvelopeMembers, "", protocolMethods)
+	// First pass: Extract the method value early so we know which params validation to apply.
+	methodValue, err := extractMethodValue(message)
+	if err != nil {
+		return err
+	}
+
+	// Second pass: Validate member names with the method already known.
+	_, err = checkMembers(message, skipSpace(message, 0), jsonrpcEnvelopeMembers, "", protocolMethods, methodValue)
 	return err
+}
+
+// extractMethodValue scans the message to find and extract the method value.
+// It handles JSON escape sequences properly by unescaping the value.
+// Returns empty string if method is not found (which is then treated as custom method).
+func extractMethodValue(b []byte) (string, error) {
+	i := skipSpace(b, 0)
+	if i >= len(b) || b[i] != '{' {
+		return "", nil
+	}
+	i = skipSpace(b, i+1)
+	for i < len(b) && b[i] == '"' {
+		end := skipString(b, i)
+		if end < 0 {
+			return "", nil
+		}
+		key := string(b[i+1 : end-1])
+		if strings.IndexByte(key, '\\') >= 0 {
+			if json.Unmarshal(b[i:end], &key) != nil {
+				return "", nil
+			}
+		}
+		// Check if this is the method field
+		if key == "method" {
+			i = skipSpace(b, end)
+			if i >= len(b) || b[i] != ':' {
+				return "", nil
+			}
+			i = skipSpace(b, i+1)
+			// Extract and unescape the method value
+			if i < len(b) && b[i] == '"' {
+				methodEnd := skipString(b, i)
+				if methodEnd > 0 {
+					methodRaw := string(b[i : methodEnd])
+					methodValue, err := decodeJSONString(methodRaw)
+					if err != nil {
+						// Invalid escape sequence, return as-is for validation to catch
+						return string(b[i+1 : methodEnd-1]), nil
+					}
+					return methodValue, nil
+				}
+			}
+			return "", nil
+		}
+		// Skip this member and move to next
+		i = skipSpace(b, end)
+		if i >= len(b) || b[i] != ':' {
+			return "", nil
+		}
+		i = skipSpace(b, i+1)
+		i = skipValue(b, i)
+		i = skipSpace(b, i)
+		if i < len(b) && b[i] == ',' {
+			i = skipSpace(b, i+1)
+		}
+	}
+	return "", nil
+}
+
+// decodeJSONString takes a JSON-encoded string (including quotes and escape sequences)
+// and returns the decoded string value. For example, `"tools\u002fcall"` becomes `tools/call`.
+func decodeJSONString(jsonEncodedStr string) (string, error) {
+	var decoded string
+	if err := json.Unmarshal([]byte(jsonEncodedStr), &decoded); err != nil {
+		return "", err
+	}
+	return decoded, nil
 }
 
 // checkMembers checks the member names of the object starting at b[i] and
 // returns the index just past it. A value that is not an object is skipped.
-// When called for the envelope (path == ""), it checks for a "method" member
-// and only validates "params" if the method is in protocolMethods.
-func checkMembers(b []byte, i int, defined []string, path string, protocolMethods []string) (int, error) {
+// When called for the envelope (path == ""), it validates "params" if the
+// method is in protocolMethods. The resolvedMethod parameter contains the
+// unescaped method value from the first pass, or empty string if not found.
+func checkMembers(b []byte, i int, defined []string, path string, protocolMethods []string, resolvedMethod string) (int, error) {
 	if i >= len(b) || b[i] != '{' {
 		return skipValue(b, i), nil
 	}
 	var seen []string
-	var currentMethod string
 	i = skipSpace(b, i+1)
 	for i < len(b) && b[i] == '"' {
 		end := skipString(b, i)
@@ -69,20 +143,12 @@ func checkMembers(b []byte, i int, defined []string, path string, protocolMethod
 		}
 		i = skipSpace(b, i+1)
 
-		// At the envelope level (path == ""), track the method value
-		if path == "" && key == "method" {
-			methodEnd := skipString(b, i)
-			if methodEnd > 0 {
-				currentMethod = string(b[i+1 : methodEnd-1])
-			}
-		}
-
 		// Only validate params members if this is a protocol-defined method
 		if path == "" && key == "params" {
-			shouldValidateParams := slices.Contains(protocolMethods, currentMethod)
+			shouldValidateParams := slices.Contains(protocolMethods, resolvedMethod)
 			var err error
 			if shouldValidateParams {
-				if i, err = checkMembers(b, i, jsonrpcParamsMembers, "params.", protocolMethods); err != nil {
+				if i, err = checkMembers(b, i, jsonrpcParamsMembers, "params.", protocolMethods, ""); err != nil {
 					return 0, err
 				}
 			} else {

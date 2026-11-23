@@ -92,6 +92,58 @@ func TestValidateProtocolMemberNames(t *testing.T) {
 			name:    "custom notification with arbitrary params",
 			message: `{"jsonrpc":"2.0","method":"custom/event","params":{"Event":"fired","Timestamp":1234}}`,
 		},
+
+		// ISSUE #1: Escaped Method Names
+		{
+			name:    "escaped method name tools\\u002fcall should validate params",
+			message: `{"jsonrpc":"2.0","id":1,"method":"tools\u002fcall","params":{"name":"t","arguments":{}}}`,
+		},
+		{
+			name:    "escaped method name tools\\u002fcall with invalid params should reject",
+			message: `{"jsonrpc":"2.0","id":1,"method":"tools\u002fcall","params":{"NAME":"t"}}`,
+			wantErr: `is not the defined name "params.name"`,
+		},
+		{
+			name:    "escaped underscore in method name",
+			message: `{"jsonrpc":"2.0","id":1,"method":"tools\u005frefresh","params":{"Name":"x"}}`,
+		},
+		{
+			name:    "double-escaped method name should be treated as custom",
+			message: `{"jsonrpc":"2.0","id":1,"method":"tools\\u002fcall","params":{"NAME":"t"}}`,
+		},
+		{
+			name:    "escaped method name that is unknown method",
+			message: `{"jsonrpc":"2.0","id":1,"method":"custom\u002fmethod","params":{"Name":"x","ID":2}}`,
+		},
+
+		// ISSUE #2: Member Order Bypass
+		{
+			name:    "params before method with invalid params should reject",
+			message: `{"jsonrpc":"2.0","id":1,"params":{"NAME":"t"},"method":"tools/call"}`,
+			wantErr: `is not the defined name "params.name"`,
+		},
+		{
+			name:    "params before method with valid params should accept",
+			message: `{"jsonrpc":"2.0","id":1,"params":{"name":"t","arguments":{}},"method":"tools/call"}`,
+		},
+		{
+			name:    "id, params, method reversed order with invalid params",
+			message: `{"id":1,"params":{"NAME":"x"},"method":"tools/call","jsonrpc":"2.0"}`,
+			wantErr: `is not the defined name "params.name"`,
+		},
+		{
+			name:    "params before method for custom method should not validate",
+			message: `{"jsonrpc":"2.0","id":1,"params":{"NAME":"t","ID":2},"method":"custom/method"}`,
+		},
+		{
+			name:    "params appears multiple times with method",
+			message: `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"t","arguments":{}},"params":{"NAME":"bad"}}`,
+			wantErr: `duplicate member "params"`,
+		},
+
+		// ISSUE #3: Malformed JSON should return PARSE_ERROR via caller, not INVALID_REQUEST
+		// Note: These tests verify that validateProtocolMemberNames doesn't interfere with PARSE_ERROR
+		// The actual PARSE_ERROR vs INVALID_REQUEST distinction is tested at the HandleMessage level
 	}
 
 	for _, tt := range tests {
@@ -107,6 +159,9 @@ func TestValidateProtocolMemberNames(t *testing.T) {
 	}
 }
 
+
+// TestHandleMessageRejectsUndefinedMemberNames verifies that invalid envelope
+// member names return INVALID_REQUEST error code.
 func TestHandleMessageRejectsUndefinedMemberNames(t *testing.T) {
 	var called bool
 	server := NewMCPServer("test", "1.0.0")
@@ -127,34 +182,156 @@ func TestHandleMessageRejectsUndefinedMemberNames(t *testing.T) {
 	assert.False(t, called)
 }
 
-// TestHandleCustomMethodWithCustomParams verifies that custom methods can have
-// arbitrary param member names and are not validated against protocol members.
-func TestHandleCustomMethodWithCustomParams(t *testing.T) {
+// TestHandleMessageRejectsMalformedJSON verifies that malformed JSON returns
+// PARSE_ERROR, not INVALID_REQUEST from member name validation.
+func TestHandleMessageRejectsMalformedJSON(t *testing.T) {
 	server := NewMCPServer("test", "1.0.0")
 
-	// Custom notification with case-variant param names should pass validation
-	// and not trigger an error
-	message := `{"jsonrpc":"2.0","method":"custom/update","params":{"Event":"fired","Timestamp":1234,"MyCustomField":"value"}}`
-	response := server.HandleMessage(context.Background(), json.RawMessage(message))
+	tests := []struct {
+		name    string
+		message string
+	}{
+		{
+			name:    "incomplete JSON object",
+			message: `{"jsonrpc":"2.0","id":1,"method":"ping"`,
+		},
+		{
+			name:    "missing closing brace",
+			message: `{"jsonrpc":"2.0","id":1,"method":"ping"`,
+		},
+		{
+			name:    "trailing comma",
+			message: `{"jsonrpc":"2.0","id":1,"method":"ping",}`,
+		},
+		{
+			name:    "invalid escape sequence in string",
+			message: `{"jsonrpc":"2.0","id":1,"method":"ping\x00"}`,
+		},
+		{
+			name:    "unclosed string",
+			message: `{"jsonrpc":"2.0","id":1,"method":"ping`,
+		},
+		{
+			name:    "invalid JSON value",
+			message: `{"jsonrpc":"2.0","id":1,"method":undefined}`,
+		},
+	}
 
-	// Should not return an error (nil for notifications with no handler)
-	assert.Nil(t, response)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := server.HandleMessage(context.Background(), json.RawMessage(tt.message))
+
+			errorResponse, ok := response.(mcp.JSONRPCError)
+			require.True(t, ok, "expected JSONRPCError, got %T", response)
+			assert.Equal(t, mcp.PARSE_ERROR, errorResponse.Error.Code, "malformed JSON should return PARSE_ERROR, not %s", errorResponse.Error.Code)
+		})
+	}
 }
 
-// TestHandleMessageValidationBeforeTypeParsing verifies that invalid envelope
-// member names return INVALID_REQUEST (not PARSE_ERROR), even if a type error
-// would occur during unmarshalling.
-func TestHandleMessageValidationBeforeTypeParsing(t *testing.T) {
+// TestHandleEscapedMethodNameValidation verifies that escaped method names
+// are properly unescaped before validation (Issue #1).
+func TestHandleEscapedMethodNameValidation(t *testing.T) {
 	server := NewMCPServer("test", "1.0.0")
+	server.AddTool(
+		mcp.NewTool("test_tool"),
+		func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("ok"), nil
+		},
+	)
 
-	// Invalid member name in envelope (before type error that would occur in params)
-	message := `{"jsonrpc":"2.0","id":1,"METHOD":"ping"}`
-	response := server.HandleMessage(context.Background(), json.RawMessage(message))
+	tests := []struct {
+		name        string
+		message     string
+		shouldReject bool
+	}{
+		{
+			name:    "escaped slash in method tools\\u002fcall with valid params",
+			message: `{"jsonrpc":"2.0","id":1,"method":"tools\u002fcall","params":{"name":"test_tool","arguments":{}}}`,
+		},
+		{
+			name:        "escaped slash in method with invalid params member name",
+			message:     `{"jsonrpc":"2.0","id":1,"method":"tools\u002fcall","params":{"NAME":"test_tool"}}`,
+			shouldReject: true,
+		},
+		{
+			name:    "fully escaped method name representing tools/call",
+			message: `{"jsonrpc":"2.0","id":1,"method":"\u0074\u006f\u006f\u006c\u0073\u002f\u0063\u0061\u006c\u006c","params":{"name":"test_tool","arguments":{}}}`,
+		},
+	}
 
-	errorResponse, ok := response.(mcp.JSONRPCError)
-	require.True(t, ok, "expected JSONRPCError, got %T", response)
-	assert.Equal(t, mcp.INVALID_REQUEST, errorResponse.Error.Code)
-	assert.Contains(t, errorResponse.Error.Message, "not the defined name")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := server.HandleMessage(context.Background(), json.RawMessage(tt.message))
+
+			if tt.shouldReject {
+				errorResponse, ok := response.(mcp.JSONRPCError)
+				require.True(t, ok, "expected JSONRPCError, got %T", response)
+				assert.Equal(t, mcp.INVALID_REQUEST, errorResponse.Error.Code)
+			} else {
+				assert.NotNil(t, response)
+			}
+		})
+	}
+}
+
+// TestHandleParamsMemberOrderBypass verifies that params appearing before method
+// in JSON is still properly validated (Issue #2).
+func TestHandleParamsMemberOrderBypass(t *testing.T) {
+	server := NewMCPServer("test", "1.0.0")
+	server.AddTool(
+		mcp.NewTool("test_tool"),
+		func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return mcp.NewToolResultText("ok"), nil
+		},
+	)
+
+	tests := []struct {
+		name        string
+		message     string
+		shouldReject bool
+	}{
+		{
+			name:    "params before method with valid params",
+			message: `{"jsonrpc":"2.0","params":{"name":"test_tool","arguments":{}},"id":1,"method":"tools/call"}`,
+		},
+		{
+			name:        "params before method with invalid params member name",
+			message:     `{"jsonrpc":"2.0","params":{"NAME":"test_tool"},"id":1,"method":"tools/call"}`,
+			shouldReject: true,
+		},
+		{
+			name:    "params before id before method",
+			message: `{"jsonrpc":"2.0","params":{"name":"test_tool","arguments":{}},"id":1,"method":"tools/call"}`,
+		},
+		{
+			name:    "fully reversed member order",
+			message: `{"id":1,"params":{"name":"test_tool","arguments":{}},"method":"tools/call","jsonrpc":"2.0"}`,
+		},
+		{
+			name:        "fully reversed with invalid params",
+			message:     `{"id":1,"params":{"NAME":"test_tool"},"method":"tools/call","jsonrpc":"2.0"}`,
+			shouldReject: true,
+		},
+		{
+			name:    "params before method for custom method - does not validate params",
+			message: `{"jsonrpc":"2.0","id":1,"params":{"NAME":"anything","ID":2},"method":"custom/method"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := server.HandleMessage(context.Background(), json.RawMessage(tt.message))
+
+			if tt.shouldReject {
+				errorResponse, ok := response.(mcp.JSONRPCError)
+				require.True(t, ok, "expected JSONRPCError, got %T", response)
+				assert.Equal(t, mcp.INVALID_REQUEST, errorResponse.Error.Code)
+			} else {
+				// Should not be an error
+				assert.NotNil(t, response)
+			}
+		})
+	}
 }
 
 // TestParamsMembersCoverDecodedRequests checks that jsonrpcParamsMembers lists

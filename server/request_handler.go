@@ -22,7 +22,15 @@ func (s *MCPServer) HandleMessage(
 
 	// Syntax validation pass: check member names before typed unmarshalling.
 	// This ensures invalid JSON-RPC envelope members return INVALID_REQUEST,
-	// not PARSE_ERROR.
+	// not PARSE_ERROR. But first, verify the JSON is well-formed.
+	if !json.Valid(message) {
+		return createErrorResponse(
+			nil,
+			mcp.PARSE_ERROR,
+			"Failed to parse message",
+		)
+	}
+
 	protocolMethods := protocolDefinedMethods()
 	if err := validateProtocolMemberNames(message, protocolMethods); err != nil {
 		// Extract ID for error response if possible, without full unmarshalling
