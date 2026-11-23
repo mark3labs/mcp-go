@@ -34,11 +34,6 @@ func TestClient_HandleSamplingRequest(t *testing.T) {
 		expectedError string
 	}{
 		{
-			name:          "no handler configured",
-			handler:       nil,
-			expectedError: "no sampling handler configured",
-		},
-		{
 			name: "successful sampling",
 			handler: &mockSamplingHandler{
 				result: &mcp.CreateMessageResult{

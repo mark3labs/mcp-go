@@ -80,6 +80,34 @@ func TestHandleIncomingRequestUnknownMethodIsMethodNotFound(t *testing.T) {
 	assert.Equal(t, mcp.NewRequestId(1), response.ID)
 }
 
+// A client that was given no handler for sampling, elicitation or roots does
+// not support the method, which is "method not found", not an internal error.
+func TestHandleIncomingRequestWithoutHandlerIsMethodNotFound(t *testing.T) {
+	methods := []mcp.MCPMethod{
+		mcp.MethodSamplingCreateMessage,
+		mcp.MethodElicitationCreate,
+		mcp.MethodListRoots,
+	}
+
+	for _, method := range methods {
+		t.Run(string(method), func(t *testing.T) {
+			client := &Client{}
+
+			response, err := client.handleIncomingRequest(t.Context(), transport.JSONRPCRequest{
+				JSONRPC: mcp.JSONRPC_VERSION,
+				ID:      mcp.NewRequestId(1),
+				Method:  string(method),
+			})
+			require.NoError(t, err)
+			require.NotNil(t, response)
+			require.NotNil(t, response.Error)
+			assert.Equal(t, mcp.METHOD_NOT_FOUND, response.Error.Code)
+			assert.Contains(t, response.Error.Message, string(method))
+			assert.Equal(t, mcp.NewRequestId(1), response.ID)
+		})
+	}
+}
+
 type noRootsHandler struct{}
 
 func (noRootsHandler) ListRoots(context.Context, mcp.ListRootsRequest) (*mcp.ListRootsResult, error) {
