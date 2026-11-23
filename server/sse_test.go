@@ -1822,3 +1822,36 @@ func addHeaderVerificationTool(mcpServer *MCPServer) {
 		},
 	)
 }
+
+func TestSSEServer_EndpointEscapesCustomSessionID(t *testing.T) {
+	const sessionID = "q+Zk/3xX9b2c+0Lw8Y1tPA=="
+	mcpServer := NewMCPServer("test", "1.0.0")
+	sseServer := NewSSEServer(mcpServer,
+		WithBaseURL("http://localhost:0"),
+		WithSessionIDGenerator(func(context.Context, *http.Request) (string, error) {
+			return sessionID, nil
+		}),
+	)
+
+	ts := httptest.NewServer(sseServer)
+	defer ts.Close()
+	sseServer.baseURL = ts.URL
+
+	sseResp, err := http.Get(ts.URL + "/sse")
+	require.NoError(t, err)
+	defer sseResp.Body.Close()
+
+	endpointEvent, err := readSSEEvent(sseResp)
+	require.NoError(t, err)
+	require.Contains(t, endpointEvent, "event: endpoint")
+	messageURL := strings.TrimSpace(
+		strings.Split(strings.Split(endpointEvent, "data: ")[1], "\n")[0],
+	)
+
+	requestBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"test-client","version":"1.0.0"}}}`)
+	resp, err := http.Post(messageURL, "application/json", bytes.NewReader(requestBody))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode, "endpoint %q: %s", messageURL, body)
+}
