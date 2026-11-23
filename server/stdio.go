@@ -1008,7 +1008,7 @@ func (s *StdioServer) writeResponse(
 	response mcp.JSONRPCMessage,
 	writer io.Writer,
 ) error {
-	responseBytes, err := json.Marshal(response)
+	responseBytes, err := marshalResponse(response)
 	if err != nil {
 		return err
 	}

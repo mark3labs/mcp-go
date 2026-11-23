@@ -1390,8 +1390,9 @@ func TestSSEServer(t *testing.T) {
 			t.Fatalf("Failed to read SSE response: %v", err)
 		}
 
-		if !strings.Contains(endpointEvent, "\"id\": null") {
-			t.Errorf("Expected id to be null")
+		// The client matches the error to its pending call by id.
+		if !strings.Contains(endpointEvent, `"id":1`) || !strings.Contains(endpointEvent, `"code":-32603`) {
+			t.Errorf("Expected an internal error for request 1, got: %s", endpointEvent)
 		}
 	})
 

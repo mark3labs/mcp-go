@@ -806,7 +806,7 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		// Only send response if there is one (not for notifications)
 		if response != nil {
 			var message string
-			if eventData, err := json.Marshal(response); err != nil {
+			if eventData, err := marshalResponse(response); err != nil {
 				// If there is an error marshalling the response, send a generic error response
 				log.Printf("failed to marshal response: %v", err)
 				message = "event: message\ndata: {\"error\": \"internal error\",\"jsonrpc\": \"2.0\", \"id\": null}\n\n"
