@@ -598,10 +598,9 @@ func ValidateParamHeadersWithBindings(lookupHeader func(string) (string, bool), 
 	if len(bindings) == 0 {
 		return nil
 	}
-	args, ok := rawCallArguments(params)
-	if !ok {
-		return nil
-	}
+	// Omitted or null arguments leave every bound parameter absent, so a
+	// header with a value is still a mismatch.
+	args, _ := rawCallArguments(params)
 
 	for _, binding := range bindings {
 		name := binding.HeaderName()

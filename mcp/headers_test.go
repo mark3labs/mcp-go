@@ -277,6 +277,18 @@ func TestValidateParamHeaders(t *testing.T) {
 		require.Error(t, err)
 		assert.True(t, IsHeaderMismatch(err))
 	})
+
+	t.Run("a header is rejected when arguments is omitted or null", func(t *testing.T) {
+		for _, params := range []string{`{"name":"query"}`, `{"name":"query","arguments":null}`} {
+			header := http.Header{}
+			header.Set(HeaderParamPrefix+"Region", "us-east-1")
+			err := ValidateParamHeaders(header.Get, tool, json.RawMessage(params))
+			require.Error(t, err, params)
+			assert.True(t, IsHeaderMismatch(err), params)
+
+			require.NoError(t, ValidateParamHeaders(http.Header{}.Get, tool, json.RawMessage(params)), params)
+		}
+	})
 }
 
 // An empty string argument is mirrored as a header with an empty value. A
