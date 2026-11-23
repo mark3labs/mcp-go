@@ -390,6 +390,8 @@ func outboundHeader(header http.Header, requestMethod string) http.Header {
 // succeeds the connection is stateless and every subsequent request carries
 // its own protocol metadata; the returned InitializeResult is rendered from
 // the discovery response so that callers observe the same value in both eras.
+// Explicit request headers apply to each discovery attempt and to the legacy
+// initialize request.
 //
 // When the probe fails without identifying a modern server, the server is
 // taken to be legacy, and the classic initialize handshake is performed instead.
@@ -412,7 +414,7 @@ func (c *Client) Initialize(
 	// earlier revision or configured the transport in a way that rules it out.
 	if !c.legacyOnly && !c.transportRequiresLegacyProtocol() &&
 		(preferred == "" || mcp.IsModernProtocol(preferred)) {
-		discovered, modern, err := c.negotiateModern(ctx, preferred)
+		discovered, modern, err := c.negotiateModern(ctx, preferred, outboundHeader(request.Header, request.Method))
 		if err == nil {
 			c.serverCapabilities = discovered.Capabilities
 			c.applyNegotiatedVersion(c.protocolVersion)
