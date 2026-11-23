@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"unicode"
 
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -287,9 +288,14 @@ func nativeJSONFieldSelection(
 		if field.Anonymous || info.omit {
 			continue
 		}
-		if _, duplicate := native[info.name]; duplicate {
+		// Native inference uses even tag names that encoding/json ignores.
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if name == "" {
+			name = field.Name
+		}
+		if _, duplicate := native[name]; duplicate {
 			matches = false
-			if opts.IgnoreInvalidTypes && properties[info.name] != nil {
+			if opts.IgnoreInvalidTypes && properties[name] != nil {
 				// Ignored fields do not overwrite earlier native properties.
 				candidate, err := jsonschema.ForType(field.Type, opts)
 				if err != nil {
@@ -300,7 +306,7 @@ func nativeJSONFieldSelection(
 				}
 			}
 		}
-		native[info.name] = field
+		native[name] = field
 	}
 	if len(native) != len(fields) {
 		matches = false
@@ -625,7 +631,7 @@ func fieldJSONTagInfo(field reflect.StructField) jsonFieldInfo {
 	if name == "-" && !found {
 		return jsonFieldInfo{omit: true}
 	}
-	if name != "" {
+	if validJSONTagName(name) {
 		info.name = name
 		info.explicitName = true
 	}
@@ -636,6 +642,20 @@ func fieldJSONTagInfo(field reflect.StructField) jsonFieldInfo {
 		}
 	}
 	return info
+}
+
+func validJSONTagName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, c := range name {
+		switch {
+		case strings.ContainsRune("!#$%&()*+-./:;<=>?@[]^_{|}~ ", c):
+		case !unicode.IsLetter(c) && !unicode.IsDigit(c):
+			return false
+		}
+	}
+	return true
 }
 
 func schemaForRawMessage[T any]() ([]byte, error) {
