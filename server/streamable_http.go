@@ -1794,17 +1794,23 @@ func newSessionResourcesStore() *sessionResourcesStore {
 func (s *sessionResourcesStore) get(sessionID string) map[string]ServerResource {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	cloned := make(map[string]ServerResource, len(s.resources[sessionID]))
-	maps.Copy(cloned, s.resources[sessionID])
-	return cloned
+	return cloneSessionEntries(s.resources[sessionID])
 }
 
 func (s *sessionResourcesStore) set(sessionID string, resources map[string]ServerResource) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cloned := make(map[string]ServerResource, len(resources))
-	maps.Copy(cloned, resources)
-	s.resources[sessionID] = cloned
+	s.resources[sessionID] = cloneSessionEntries(resources)
+}
+
+func (s *sessionResourcesStore) update(sessionID string, add map[string]ServerResource, remove []string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	updated, changed := applySessionEntries(s.resources[sessionID], add, remove)
+	if changed {
+		s.resources[sessionID] = updated
+	}
+	return changed
 }
 
 func (s *sessionResourcesStore) delete(sessionID string) {
@@ -1827,17 +1833,23 @@ func newSessionResourceTemplatesStore() *sessionResourceTemplatesStore {
 func (s *sessionResourceTemplatesStore) get(sessionID string) map[string]ServerResourceTemplate {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	cloned := make(map[string]ServerResourceTemplate, len(s.templates[sessionID]))
-	maps.Copy(cloned, s.templates[sessionID])
-	return cloned
+	return cloneSessionEntries(s.templates[sessionID])
 }
 
 func (s *sessionResourceTemplatesStore) set(sessionID string, templates map[string]ServerResourceTemplate) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cloned := make(map[string]ServerResourceTemplate, len(templates))
-	maps.Copy(cloned, templates)
-	s.templates[sessionID] = cloned
+	s.templates[sessionID] = cloneSessionEntries(templates)
+}
+
+func (s *sessionResourceTemplatesStore) update(sessionID string, add map[string]ServerResourceTemplate, remove []string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	updated, changed := applySessionEntries(s.templates[sessionID], add, remove)
+	if changed {
+		s.templates[sessionID] = updated
+	}
+	return changed
 }
 
 func (s *sessionResourceTemplatesStore) delete(sessionID string) {
@@ -2148,12 +2160,20 @@ func (s *streamableHttpSession) SetSessionResources(resources map[string]ServerR
 	s.resources.set(s.sessionID, resources)
 }
 
+func (s *streamableHttpSession) updateSessionResources(add map[string]ServerResource, remove []string) bool {
+	return s.resources.update(s.sessionID, add, remove)
+}
+
 func (s *streamableHttpSession) GetSessionResourceTemplates() map[string]ServerResourceTemplate {
 	return s.resourceTemplates.get(s.sessionID)
 }
 
 func (s *streamableHttpSession) SetSessionResourceTemplates(templates map[string]ServerResourceTemplate) {
 	s.resourceTemplates.set(s.sessionID, templates)
+}
+
+func (s *streamableHttpSession) updateSessionResourceTemplates(add map[string]ServerResourceTemplate, remove []string) bool {
+	return s.resourceTemplates.update(s.sessionID, add, remove)
 }
 
 var (

@@ -33,9 +33,10 @@ type sseSession struct {
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         atomic.Bool
 	loggingLevel        atomic.Value
-	tools               sync.Map // stores session-specific tools
-	resources           sync.Map // stores session-specific resources
-	resourceTemplates   sync.Map // stores session-specific resource templates
+	tools               sync.Map     // stores session-specific tools
+	resourceMu          sync.RWMutex // Protects resources and resourceTemplates.
+	resources           map[string]ServerResource
+	resourceTemplates   map[string]ServerResourceTemplate
 }
 
 // closeDone safely closes the session's done channel exactly once,
@@ -94,45 +95,43 @@ func (s *sseSession) GetLogLevel() mcp.LoggingLevel {
 }
 
 func (s *sseSession) GetSessionResources() map[string]ServerResource {
-	resources := make(map[string]ServerResource)
-	s.resources.Range(func(key, value any) bool {
-		if resource, ok := value.(ServerResource); ok {
-			resources[key.(string)] = resource
-		}
-		return true
-	})
-	return resources
+	s.resourceMu.RLock()
+	defer s.resourceMu.RUnlock()
+	return cloneSessionEntries(s.resources)
 }
 
-func (s *sseSession) SetSessionResources(resources map[string]ServerResource) {
-	// Clear existing resources
-	s.resources.Clear()
+func (s *sseSession) SetSessionResources(entries map[string]ServerResource) {
+	s.resourceMu.Lock()
+	defer s.resourceMu.Unlock()
+	s.resources = cloneSessionEntries(entries)
+}
 
-	// Set new resources
-	for name, resource := range resources {
-		s.resources.Store(name, resource)
-	}
+func (s *sseSession) updateSessionResources(add map[string]ServerResource, remove []string) bool {
+	s.resourceMu.Lock()
+	defer s.resourceMu.Unlock()
+	updated, changed := applySessionEntries(s.resources, add, remove)
+	s.resources = updated
+	return changed
 }
 
 func (s *sseSession) GetSessionResourceTemplates() map[string]ServerResourceTemplate {
-	templates := make(map[string]ServerResourceTemplate)
-	s.resourceTemplates.Range(func(key, value any) bool {
-		if template, ok := value.(ServerResourceTemplate); ok {
-			templates[key.(string)] = template
-		}
-		return true
-	})
-	return templates
+	s.resourceMu.RLock()
+	defer s.resourceMu.RUnlock()
+	return cloneSessionEntries(s.resourceTemplates)
 }
 
-func (s *sseSession) SetSessionResourceTemplates(templates map[string]ServerResourceTemplate) {
-	// Clear existing templates
-	s.resourceTemplates.Clear()
+func (s *sseSession) SetSessionResourceTemplates(entries map[string]ServerResourceTemplate) {
+	s.resourceMu.Lock()
+	defer s.resourceMu.Unlock()
+	s.resourceTemplates = cloneSessionEntries(entries)
+}
 
-	// Set new templates
-	for uriTemplate, template := range templates {
-		s.resourceTemplates.Store(uriTemplate, template)
-	}
+func (s *sseSession) updateSessionResourceTemplates(add map[string]ServerResourceTemplate, remove []string) bool {
+	s.resourceMu.Lock()
+	defer s.resourceMu.Unlock()
+	updated, changed := applySessionEntries(s.resourceTemplates, add, remove)
+	s.resourceTemplates = updated
+	return changed
 }
 
 func (s *sseSession) GetSessionTools() map[string]ServerTool {
