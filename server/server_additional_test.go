@@ -312,11 +312,11 @@ func TestMCPServer_PaginationEdgeCases(t *testing.T) {
 		result, ok := resp.Result.(mcp.ListPromptsResult)
 		require.True(t, ok)
 
-		// Should return all items with cursor pointing to last item
 		assert.Len(t, result.Prompts, limit)
-		assert.NotEmpty(t, result.NextCursor, "Cursor should be set when exactly at limit")
+		assert.Empty(t, result.NextCursor, "an exactly full last page must not advertise another page")
 
-		// Request next page - should be empty
+		// Replay a terminal cursor issued by an older server.
+		terminalCursor := base64.StdEncoding.EncodeToString([]byte("prompt-4"))
 		response = server.HandleMessage(t.Context(), fmt.Appendf(nil, `{
 			"jsonrpc": "2.0",
 			"id": 2,
@@ -324,7 +324,7 @@ func TestMCPServer_PaginationEdgeCases(t *testing.T) {
 			"params": {
 				"cursor": "%s"
 			}
-		}`, result.NextCursor))
+		}`, terminalCursor))
 
 		resp, ok = response.(mcp.JSONRPCResponse)
 		require.True(t, ok)

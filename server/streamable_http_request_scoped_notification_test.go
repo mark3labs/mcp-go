@@ -106,7 +106,6 @@ func TestRequestScopedSSE_NotificationForAnotherSession(t *testing.T) {
 		session:       served,
 		notifications: notifications,
 		done:          make(chan struct{}),
-		register:      func() {},
 	})
 
 	require.NoError(t, NewMCPServer("test", "1.0").SendElicitationComplete(ctx, other, "elicitation-1"))
@@ -125,7 +124,7 @@ func TestRequestScopedSSE_NoSendLandsAfterClose(t *testing.T) {
 	)
 	for range iterations {
 		notifications := make(chan mcp.JSONRPCNotification, senders)
-		scoped := &requestScopedSSE{notifications: notifications, done: make(chan struct{}), register: func() {}}
+		scoped := &requestScopedSSE{notifications: notifications, done: make(chan struct{})}
 
 		var (
 			wg   sync.WaitGroup
@@ -153,7 +152,7 @@ func TestRequestScopedSSE_NoSendLandsAfterClose(t *testing.T) {
 func TestRequestScopedSSE_CloseDoesNotWaitOnABlockedSend(t *testing.T) {
 	notifications := make(chan mcp.JSONRPCNotification, 1)
 	notifications <- mcp.JSONRPCNotification{}
-	scoped := &requestScopedSSE{notifications: notifications, done: make(chan struct{}), register: func() {}}
+	scoped := &requestScopedSSE{notifications: notifications, done: make(chan struct{})}
 
 	sent := make(chan bool, 1)
 	go func() {

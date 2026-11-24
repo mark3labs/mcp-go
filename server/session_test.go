@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"sync"
 	"sync/atomic"
@@ -570,6 +571,268 @@ func TestMCPServer_AddSessionTools(t *testing.T) {
 	// Verify tool was added to session
 	assert.Len(t, session.GetSessionTools(), 1)
 	assert.Contains(t, session.GetSessionTools(), "session-tool")
+}
+
+func TestMCPServer_ConcurrentSessionToolUpdates(t *testing.T) {
+	tests := []struct {
+		name      string
+		add       bool
+		delete    bool
+		wantCount int
+	}{
+		{name: "add", add: true, wantCount: 65},
+		{name: "delete", delete: true, wantCount: 1},
+		{name: "add and delete", add: true, delete: true, wantCount: 65},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := NewMCPServer("test-server", "1.0.0", WithToolCapabilities(false))
+			for _, session := range []SessionWithTools{
+				NewStreamableHTTPServer(server).newSession("streamable-http"),
+				&sseSession{sessionID: "sse"},
+			} {
+				t.Run(session.SessionID(), func(t *testing.T) {
+					require.NoError(t, server.RegisterSession(t.Context(), session))
+
+					const count = 64
+					initial := map[string]ServerTool{"keep": {Tool: mcp.NewTool("keep")}}
+					if test.delete {
+						for i := range count {
+							name := fmt.Sprintf("old-%d", i)
+							initial[name] = ServerTool{Tool: mcp.NewTool(name)}
+						}
+					}
+					session.SetSessionTools(initial)
+
+					start := make(chan struct{})
+					errors := make(chan error, count*2)
+					var wg sync.WaitGroup
+					for i := range count {
+						wg.Go(func() {
+							<-start
+							if test.add {
+								errors <- server.AddSessionTool(session.SessionID(), mcp.NewTool(fmt.Sprintf("new-%d", i)), nil)
+							}
+							if test.delete {
+								errors <- server.DeleteSessionTools(session.SessionID(), fmt.Sprintf("old-%d", i))
+							}
+						})
+					}
+					close(start)
+					wg.Wait()
+					close(errors)
+					for err := range errors {
+						require.NoError(t, err)
+					}
+
+					tools := session.GetSessionTools()
+					require.Equal(t, test.wantCount, len(tools))
+					require.Contains(t, tools, "keep")
+					if test.add {
+						for i := range count {
+							assert.Contains(t, tools, fmt.Sprintf("new-%d", i))
+						}
+					}
+					if test.delete {
+						for i := range count {
+							assert.NotContains(t, tools, fmt.Sprintf("old-%d", i))
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+type resourceSetterSession struct {
+	SessionWithResources
+	addIndex func()
+}
+
+func (s *resourceSetterSession) SetSessionResources(resources map[string]ServerResource) {
+	s.SessionWithResources.SetSessionResources(resources)
+	if _, indexed := resources["test://index"]; !indexed {
+		s.addIndex()
+	}
+}
+
+func TestMCPServer_SessionResourceReentry(t *testing.T) {
+	s := NewMCPServer("test-server", "1", WithResourceCapabilities(false, false))
+	const id = "test"
+	add := func(uri string) error {
+		return s.AddSessionResource(id, mcp.NewResource(uri, "item"), nil)
+	}
+	session := &resourceSetterSession{
+		SessionWithResources: &sseSession{sessionID: id},
+		addIndex:             func() { assert.NoError(t, add("test://index")) },
+	}
+	require.NoError(t, s.RegisterSession(t.Context(), session))
+
+	done := make(chan error, 1)
+	go func() { done <- add("test://item") }()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("reentrant resource registration blocked")
+	}
+	resources := session.GetSessionResources()
+	require.Contains(t, resources, "test://item")
+	require.Contains(t, resources, "test://index")
+}
+
+func TestMCPServer_ConcurrentSessionResourceUpdates(t *testing.T) {
+	s := NewMCPServer("test-server", "1", WithResourceCapabilities(false, false))
+	for _, session := range []builtinResourceSession{
+		NewStreamableHTTPServer(s).newSession("streamable-http"),
+		&sseSession{sessionID: "sse"},
+	} {
+		t.Run(session.SessionID(), func(t *testing.T) {
+			id := session.SessionID()
+			require.NoError(t, s.RegisterSession(t.Context(), session))
+
+			const count = 64
+			for i := range count {
+				uri := fmt.Sprintf("test://old/%d", i)
+				require.NoError(t, s.AddSessionResource(id, mcp.NewResource(uri, "old"), nil))
+				require.NoError(t, s.AddSessionResourceTemplate(id, mcp.NewResourceTemplate(uri+"/{name}", "old"), nil))
+			}
+
+			start := make(chan struct{})
+			var wg sync.WaitGroup
+			for i := range count {
+				wg.Go(func() {
+					oldURI := fmt.Sprintf("test://old/%d", i)
+					newURI := fmt.Sprintf("test://new/%d", i)
+					<-start
+					assert.NoError(t, s.AddSessionResource(id, mcp.NewResource(newURI, "new"), nil))
+					assert.NoError(t, s.DeleteSessionResources(id, oldURI))
+					assert.NoError(t, s.AddSessionResourceTemplate(id, mcp.NewResourceTemplate(newURI+"/{name}", "new"), nil))
+					assert.NoError(t, s.DeleteSessionResourceTemplates(id, oldURI+"/{name}"))
+				})
+			}
+			close(start)
+			wg.Wait()
+
+			resources := session.GetSessionResources()
+			templates := session.GetSessionResourceTemplates()
+			assert.Equal(t, count, len(resources))
+			assert.Equal(t, count, len(templates))
+			for i := range count {
+				uri := fmt.Sprintf("test://new/%d", i)
+				_, hasResource := resources[uri]
+				_, hasTemplate := templates[uri+"/{name}"]
+				assert.Truef(t, hasResource, "missing resource %s", uri)
+				assert.Truef(t, hasTemplate, "missing template %s/{name}", uri)
+			}
+
+			const uri = "test://new/0"
+			const template = uri + "/{name}"
+			assert.False(t, session.updateSessionResources(nil, []string{"test://missing"}))
+			assert.False(t, session.updateSessionResourceTemplates(nil, []string{"test://missing/{name}"}))
+			assert.True(t, session.updateSessionResources(map[string]ServerResource{
+				uri: {Resource: mcp.NewResource(uri, "replacement")},
+			}, []string{uri}))
+			assert.True(t, session.updateSessionResourceTemplates(map[string]ServerResourceTemplate{
+				template: {Template: mcp.NewResourceTemplate(template, "replacement")},
+			}, []string{template}))
+			assert.Equal(t, "replacement", session.GetSessionResources()[uri].Resource.Name)
+			assert.Equal(t, "replacement", session.GetSessionResourceTemplates()[template].Template.Name)
+		})
+	}
+}
+
+func TestApplySessionEntriesAfterDeletion(t *testing.T) {
+	tests := []struct {
+		name    string
+		remove  []string
+		want    map[string]int
+		rebuilt bool
+	}{
+		{"empty", []string{"a", "b", "c", "d"}, map[string]int{}, true},
+		{"large shrink", []string{"a", "b", "c"}, map[string]int{"d": 4}, true},
+		{"small shrink", []string{"a"}, map[string]int{"b": 2, "c": 3, "d": 4}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := map[string]int{"a": 1, "b": 2, "c": 3, "d": 4}
+			updated, changed := applySessionEntries(original, nil, tt.remove)
+			require.True(t, changed)
+			require.Equal(t, tt.want, updated)
+			updated["next"] = 5
+			_, shared := original["next"]
+			assert.Equal(t, tt.rebuilt, !shared)
+		})
+	}
+}
+
+func TestSessionResourceBatchSnapshots(t *testing.T) {
+	for _, session := range []builtinResourceSession{
+		NewStreamableHTTPServer(NewMCPServer("test-server", "1")).newSession("streamable-http"),
+		&sseSession{sessionID: "sse"},
+	} {
+		t.Run(session.SessionID()+"/resources", func(t *testing.T) {
+			checkBatchSnapshots(t, session.GetSessionResources, session.SetSessionResources, session.updateSessionResources,
+				func(uri string) ServerResource { return ServerResource{Resource: mcp.NewResource(uri, "item")} })
+		})
+		t.Run(session.SessionID()+"/templates", func(t *testing.T) {
+			checkBatchSnapshots(t, session.GetSessionResourceTemplates, session.SetSessionResourceTemplates, session.updateSessionResourceTemplates,
+				func(uri string) ServerResourceTemplate {
+					return ServerResourceTemplate{Template: mcp.NewResourceTemplate(uri, "item")}
+				})
+		})
+	}
+}
+
+func checkBatchSnapshots[T any](t *testing.T, get func() map[string]T, set func(map[string]T), update func(map[string]T, []string) bool, entry func(string) T) {
+	t.Helper()
+	first, second := make(map[string]T), make(map[string]T)
+	var remove []string
+	for i := range 32 {
+		oldURI, newURI := fmt.Sprintf("test://old/%d", i), fmt.Sprintf("test://new/%d", i)
+		first[oldURI], second[newURI] = entry(oldURI), entry(newURI)
+		remove = append(remove, oldURI)
+	}
+	input := maps.Clone(first)
+	set(input)
+	require.Equal(t, first, get())
+	update(second, remove)
+	require.Equal(t, second, get())
+	require.Equal(t, first, input)
+
+	ready, stop, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		close(ready)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				set(maps.Clone(first))
+				update(second, remove)
+			}
+		}
+	}()
+	<-ready
+	defer func() {
+		close(stop)
+		<-done
+	}()
+
+	for range 128 {
+		snapshot := get()
+		want := first
+		if _, ok := snapshot[remove[0]]; !ok {
+			want = second
+		}
+		require.Len(t, snapshot, len(want))
+		for uri := range want {
+			if _, ok := snapshot[uri]; !ok {
+				t.Fatalf("partial batch: snapshot is missing %q", uri)
+			}
+		}
+	}
 }
 
 func TestMCPServer_AddSessionTool(t *testing.T) {
