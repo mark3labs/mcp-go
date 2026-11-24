@@ -264,6 +264,11 @@ func (c *Client) sendRequest(
 		return nil, fmt.Errorf("client not initialized")
 	}
 
+	var toolName string
+	if toolParams, ok := params.(mcp.CallToolParams); ok {
+		toolName = toolParams.Name
+	}
+
 	// Protocol version 2026-07-28 carries the protocol version, client
 	// identity, and client capabilities in the _meta of every request, and
 	// mirrors the method and name into HTTP headers (SEP-2575, SEP-2243).
@@ -273,7 +278,7 @@ func (c *Client) sendRequest(
 
 	id := c.requestID.Add(1)
 
-	ctx, header, span := c.startSendSpan(ctx, method, header)
+	ctx, header, span := c.startSendSpan(ctx, method, header, toolName)
 
 	request := transport.JSONRPCRequest{
 		JSONRPC: mcp.JSONRPC_VERSION,

@@ -11,8 +11,9 @@ import (
 // attrMethodName is the OpenTelemetry MCP semantic convention name; the
 // deprecated attrMethod is set alongside it.
 const (
-	attrMethodName = "mcp.method.name"
-	attrMethod     = "mcp.method"
+	attrMethodName    = "mcp.method.name"
+	attrMethod        = "mcp.method"
+	attrGenAIToolName = "gen_ai.tool.name"
 )
 
 // WithTracer installs a tracer on the client. The tracer starts a client-kind
@@ -64,6 +65,7 @@ func (c *Client) startSendSpan(
 	ctx context.Context,
 	method string,
 	header http.Header,
+	toolName string,
 ) (context.Context, http.Header, tracing.Span) {
 	tracer := c.tracer
 	if tracer == nil {
@@ -74,10 +76,14 @@ func (c *Client) startSendSpan(
 		propagator = tracing.NoopPropagator()
 	}
 
-	ctx, span := tracer.Start(ctx, "mcp."+method, tracing.SpanKindClient,
+	attributes := []tracing.Attribute{
 		tracing.String(attrMethodName, method),
 		tracing.String(attrMethod, method),
-	)
+	}
+	if method == string(mcp.MethodToolsCall) {
+		attributes = append(attributes, tracing.String(attrGenAIToolName, toolName))
+	}
+	ctx, span := tracer.Start(ctx, "mcp."+method, tracing.SpanKindClient, attributes...)
 
 	if header == nil {
 		header = make(http.Header)

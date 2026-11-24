@@ -39,12 +39,12 @@ See <https://opentelemetry.io/docs/languages/go/exporters/>.
 
 ## Span attributes
 
-| Attribute              | Where             | Description                         |
-| ---------------------- | ----------------- | ----------------------------------- |
-| `mcp.method.name`      | every span        | JSON-RPC method name                |
-| `gen_ai.tool.name`     | `tools/call` only | tool being invoked                  |
-| `mcp.session.id`       | server spans      | client session ID, when available   |
-| `mcp.protocol.version` | server spans      | `Mcp-Protocol-Version` header value |
+| Attribute              | Where                                  | Description                         |
+| ---------------------- | -------------------------------------- | ----------------------------------- |
+| `mcp.method.name`       | `mcp.<method>` request spans            | JSON-RPC method name                |
+| `gen_ai.tool.name`      | `tools/call` requests and tool handlers | tool being invoked                  |
+| `mcp.session.id`        | server request spans                   | client session ID, when available   |
+| `mcp.protocol.version`  | server request spans                   | `Mcp-Protocol-Version` header value |
 
 ## Custom propagator
 

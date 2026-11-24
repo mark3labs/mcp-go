@@ -16,6 +16,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	otelmcp "github.com/mark3labs/mcp-go/otel"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/mark3labs/mcp-go/tracing"
 )
 
 const (
@@ -104,10 +105,105 @@ func TestServerTracing_ToolsCallEmitsParentAndChildSpans(t *testing.T) {
 	require.NotNil(t, child, "missing tool.echo span")
 	assert.Equal(t, trace.SpanKindInternal, child.SpanKind())
 	assert.Equal(t, parent.SpanContext().SpanID(), child.Parent().SpanID())
+	for _, key := range []string{attrMethodName, attrMethod} {
+		_, ok := attrValue(child, key)
+		assert.False(t, ok, key)
+	}
 	for _, key := range []string{attrGenAIToolName, attrToolName} {
 		if v, ok := attrValue(child, key); assert.True(t, ok, key) {
 			assert.Equal(t, "echo", v)
 		}
+	}
+}
+
+func TestServerTracing_RejectedToolCallsHaveToolName(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*server.MCPServer)
+		errorCode int
+	}{
+		{
+			name:      "unknown tool",
+			configure: func(*server.MCPServer) {},
+			errorCode: mcp.INVALID_PARAMS,
+		},
+		{
+			name: "filtered tool",
+			configure: func(mcpServer *server.MCPServer) {
+				server.WithToolFilter(func(context.Context, []mcp.Tool) []mcp.Tool { return nil })(mcpServer)
+				mcpServer.AddTool(mcp.NewTool("rejected"), nil)
+			},
+			errorCode: mcp.INVALID_PARAMS,
+		},
+		{
+			name: "required task without task params",
+			configure: func(mcpServer *server.MCPServer) {
+				mcpServer.AddTaskTool(mcp.NewTool("rejected", mcp.WithTaskSupport(mcp.TaskSupportRequired)), nil)
+			},
+			errorCode: mcp.METHOD_NOT_FOUND,
+		},
+		{
+			name: "task-only tool called synchronously",
+			configure: func(mcpServer *server.MCPServer) {
+				mcpServer.AddTaskTool(mcp.NewTool("rejected", mcp.WithTaskSupport(mcp.TaskSupportOptional)), nil)
+			},
+			errorCode: mcp.METHOD_NOT_FOUND,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tracer, recorder := newTestTracer(t)
+			mcpServer := server.NewMCPServer("trace-srv", "1.0", otelmcp.WithServerTracing(tracer), server.WithToolCapabilities(false))
+			test.configure(mcpServer)
+			dispatchInitialized(t, mcpServer)
+			since := spansSince(recorder)
+			response := mcpServer.HandleMessage(t.Context(), []byte(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"rejected","arguments":{}}}`))
+			errorResponse, ok := response.(mcp.JSONRPCError)
+			require.True(t, ok, "expected JSON-RPC error, got %T", response)
+			assert.Equal(t, test.errorCode, errorResponse.Error.Code)
+
+			spans := since()
+			require.Len(t, spans, 1)
+			span := spans[0]
+			assert.Equal(t, "mcp.tools/call", span.Name())
+			assert.Equal(t, trace.SpanKindServer, span.SpanKind())
+			assert.Equal(t, codes.Error, span.Status().Code)
+			for key, expected := range map[string]string{
+				attrMethodName: "tools/call", attrMethod: "tools/call",
+				attrGenAIToolName: "rejected", attrToolName: "rejected",
+			} {
+				value, ok := attrValue(span, key)
+				require.True(t, ok, key)
+				assert.Equal(t, expected, value, key)
+			}
+		})
+	}
+}
+
+func TestServerTracing_NoopDoesNotAnnotateParent(t *testing.T) {
+	tests := []struct {
+		name    string
+		options []server.ServerOption
+	}{
+		{name: "default"},
+		{name: "nil tracer", options: []server.ServerOption{server.WithTracer(nil)}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tracer, recorder := newTestTracer(t)
+			ctx, parent := otelmcp.NewTracer(tracer).Start(t.Context(), "parent", tracing.SpanKindInternal)
+			mcpServer := server.NewMCPServer("trace-srv", "1.0", test.options...)
+			response := mcpServer.HandleMessage(ctx, []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"missing"}}`))
+			require.IsType(t, mcp.JSONRPCError{}, response)
+			parent.End()
+			spans := recorder.Ended()
+			require.Len(t, spans, 1)
+			for _, key := range []string{attrGenAIToolName, attrToolName} {
+				_, ok := attrValue(spans[0], key)
+				assert.False(t, ok, key)
+			}
+		})
 	}
 }
 

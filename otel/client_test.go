@@ -71,6 +71,73 @@ func TestClientTracing_EmitsClientSpan(t *testing.T) {
 			assert.Equal(t, "tools/call", v)
 		}
 	}
+	toolName, ok := attrValue(spans[0], attrGenAIToolName)
+	require.True(t, ok)
+	assert.Equal(t, "echo", toolName)
+	_, ok = attrValue(spans[0], attrToolName)
+	assert.False(t, ok, "server tracing is disabled")
+}
+
+func TestClientTracing_ToolNameOnFailedCalls(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		protocol := "modern"
+		if legacy {
+			protocol = "legacy"
+		}
+		t.Run(protocol, func(t *testing.T) {
+			tracer, recorder := newTestTracer(t)
+			options := []client.ClientOption{otelmcp.WithClientTracing(tracer)}
+			if legacy {
+				options = append(options, client.WithLegacyProtocolOnly())
+			}
+			mcpServer := server.NewMCPServer("trace-srv", "1.0", server.WithToolCapabilities(false))
+			mcpClient := client.NewClient(transport.NewInProcessTransport(mcpServer), options...)
+			require.NoError(t, mcpClient.Start(t.Context()))
+			t.Cleanup(func() { _ = mcpClient.Close() })
+			initialize := mcp.InitializeRequest{}
+			initialize.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+			initialize.Params.ClientInfo = mcp.Implementation{Name: "test", Version: "1"}
+			_, err := mcpClient.Initialize(t.Context(), initialize)
+			require.NoError(t, err)
+
+			_, err = mcpClient.ListTools(t.Context(), mcp.ListToolsRequest{})
+			require.NoError(t, err)
+			for _, span := range recorder.Ended() {
+				_, ok := attrValue(span, attrGenAIToolName)
+				assert.False(t, ok, span.Name())
+			}
+
+			for _, cancelled := range []bool{false, true} {
+				name := "unknown tool"
+				if cancelled {
+					name = "cancelled request"
+				}
+				t.Run(name, func(t *testing.T) {
+					ctx := t.Context()
+					if cancelled {
+						var cancel context.CancelFunc
+						ctx, cancel = context.WithCancel(ctx)
+						cancel()
+					}
+					since := spansSince(recorder)
+					_, err := mcpClient.CallTool(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "missing"}})
+					require.Error(t, err)
+					spans := since()
+					require.Len(t, spans, 1)
+					span := spans[0]
+					assert.Equal(t, "mcp.tools/call", span.Name())
+					assert.Equal(t, codes.Error, span.Status().Code)
+					for key, expected := range map[string]string{
+						attrMethodName: "tools/call", attrMethod: "tools/call", attrGenAIToolName: "missing",
+					} {
+						value, ok := attrValue(span, key)
+						require.True(t, ok, key)
+						assert.Equal(t, expected, value, key)
+					}
+				})
+			}
+		})
+	}
 }
 
 func TestClientTracing_InjectsTraceparent(t *testing.T) {
@@ -164,6 +231,9 @@ func TestRoundTrip_TraceparentSpansClientAndServer(t *testing.T) {
 	clientSpan := clientSpans[0]
 	assert.Equal(t, "mcp.tools/call", clientSpan.Name())
 	assert.Equal(t, trace.SpanKindClient, clientSpan.SpanKind())
+	toolName, ok := attrValue(clientSpan, attrGenAIToolName)
+	require.True(t, ok)
+	assert.Equal(t, "echo", toolName)
 
 	serverSpans := serverSince()
 	parentMcp := findSpan(serverSpans, "mcp.tools/call")

@@ -105,6 +105,7 @@ func (s *MCPServer) startMessageSpan(
 		tracer = tracing.NoopTracer()
 	}
 	ctx, span := tracer.Start(ctx, "mcp."+method, tracing.SpanKindServer, attrs...)
+	ctx = tracing.ContextWithSpan(ctx, span)
 
 	return ctx, func(resp mcp.JSONRPCMessage) {
 		if e, ok := resp.(mcp.JSONRPCError); ok {
@@ -120,7 +121,6 @@ func toolTracingMiddleware(tracer tracing.Tracer) ToolHandlerMiddleware {
 			name := request.Params.Name
 			parent := tracing.SpanFromContext(ctx)
 			toolAttrs := []tracing.Attribute{tracing.String(attrGenAIToolName, name), tracing.String(attrToolName, name)}
-			parent.SetAttributes(toolAttrs...)
 
 			ctx, span := tracer.Start(ctx, "tool."+name, tracing.SpanKindInternal, toolAttrs...)
 			defer span.End()

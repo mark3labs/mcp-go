@@ -2254,6 +2254,11 @@ func (s *MCPServer) handleToolCall(
 	id any,
 	request mcp.CallToolRequest,
 ) (any, *requestError) {
+	tracing.SpanFromContext(ctx).SetAttributes(
+		tracing.String(attrGenAIToolName, request.Params.Name),
+		tracing.String(attrToolName, request.Params.Name),
+	)
+
 	// First check session-specific tools
 	var tool ServerTool
 	var ok bool
