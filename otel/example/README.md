@@ -41,8 +41,8 @@ See <https://opentelemetry.io/docs/languages/go/exporters/>.
 
 | Attribute              | Where             | Description                         |
 | ---------------------- | ----------------- | ----------------------------------- |
-| `mcp.method`           | every span        | JSON-RPC method name                |
-| `mcp.tool.name`        | `tools/call` only | tool being invoked                  |
+| `mcp.method.name`      | every span        | JSON-RPC method name                |
+| `gen_ai.tool.name`     | `tools/call` only | tool being invoked                  |
 | `mcp.session.id`       | server spans      | client session ID, when available   |
 | `mcp.protocol.version` | server spans      | `Mcp-Protocol-Version` header value |
 

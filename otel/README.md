@@ -28,9 +28,13 @@ Attributes (string-valued):
 
 | Attribute              | Where             |
 | ---------------------- | ----------------- |
-| `mcp.method`           | every span        |
-| `mcp.tool.name`        | `tools/call` only |
+| `mcp.method.name`      | every span        |
+| `gen_ai.tool.name`     | `tools/call` only |
 | `mcp.session.id`       | server spans      |
 | `mcp.protocol.version` | server spans      |
+
+These follow the OpenTelemetry MCP semantic conventions. The earlier
+`mcp.method` and `mcp.tool.name` are still set alongside them and are
+deprecated.
 
 See [example/](example/) for a runnable round-trip with stderr span output.

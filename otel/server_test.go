@@ -19,8 +19,10 @@ import (
 )
 
 const (
-	attrMethod   = "mcp.method"
-	attrToolName = "mcp.tool.name"
+	attrMethod        = "mcp.method"
+	attrMethodName    = "mcp.method.name"
+	attrToolName      = "mcp.tool.name"
+	attrGenAIToolName = "gen_ai.tool.name"
 )
 
 func newTestTracer(t *testing.T) (trace.Tracer, *tracetest.SpanRecorder) {
@@ -87,19 +89,25 @@ func TestServerTracing_ToolsCallEmitsParentAndChildSpans(t *testing.T) {
 	parent := findSpan(spans, "mcp.tools/call")
 	require.NotNil(t, parent, "missing mcp.tools/call span")
 	assert.Equal(t, trace.SpanKindServer, parent.SpanKind())
-	if v, ok := attrValue(parent, attrMethod); assert.True(t, ok) {
-		assert.Equal(t, "tools/call", v)
+	for _, key := range []string{attrMethodName, attrMethod} {
+		if v, ok := attrValue(parent, key); assert.True(t, ok, key) {
+			assert.Equal(t, "tools/call", v)
+		}
 	}
-	if v, ok := attrValue(parent, attrToolName); assert.True(t, ok) {
-		assert.Equal(t, "echo", v)
+	for _, key := range []string{attrGenAIToolName, attrToolName} {
+		if v, ok := attrValue(parent, key); assert.True(t, ok, key) {
+			assert.Equal(t, "echo", v)
+		}
 	}
 
 	child := findSpan(spans, "tool.echo")
 	require.NotNil(t, child, "missing tool.echo span")
 	assert.Equal(t, trace.SpanKindInternal, child.SpanKind())
 	assert.Equal(t, parent.SpanContext().SpanID(), child.Parent().SpanID())
-	if v, ok := attrValue(child, attrToolName); assert.True(t, ok) {
-		assert.Equal(t, "echo", v)
+	for _, key := range []string{attrGenAIToolName, attrToolName} {
+		if v, ok := attrValue(child, key); assert.True(t, ok, key) {
+			assert.Equal(t, "echo", v)
+		}
 	}
 }
 

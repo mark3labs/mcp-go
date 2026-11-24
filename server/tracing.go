@@ -8,9 +8,14 @@ import (
 	"github.com/mark3labs/mcp-go/tracing"
 )
 
+// The OpenTelemetry MCP semantic conventions name the method and tool
+// attributes mcp.method.name and gen_ai.tool.name. Spans carry both those and
+// the earlier mcp.method and mcp.tool.name, which are deprecated.
 const (
 	attrMethod          = "mcp.method"
+	attrMethodName      = "mcp.method.name"
 	attrToolName        = "mcp.tool.name"
+	attrGenAIToolName   = "gen_ai.tool.name"
 	attrSessionID       = "mcp.session.id"
 	attrProtocolVersion = "mcp.protocol.version"
 )
@@ -20,8 +25,10 @@ const (
 //   - mcp.<method> (server) around every dispatched JSON-RPC method
 //   - tool.<name> (internal) around every tool handler invocation
 //
-// Span attributes: mcp.method, mcp.tool.name (tools/call), mcp.session.id
-// (when set), mcp.protocol.version (from the Mcp-Protocol-Version header).
+// Span attributes: mcp.method.name, gen_ai.tool.name (tools/call),
+// mcp.session.id (when set), mcp.protocol.version (from the
+// Mcp-Protocol-Version header). The deprecated mcp.method and mcp.tool.name
+// are set alongside them.
 //
 // For end-to-end propagation install a Propagator with WithPropagator as
 // well. Tool-handler panics surface in span status only when paired with
@@ -83,7 +90,7 @@ func (s *MCPServer) startMessageSpan(
 	}
 	ctx = propagator.Extract(ctx, headers)
 
-	attrs := []tracing.Attribute{tracing.String(attrMethod, method)}
+	attrs := []tracing.Attribute{tracing.String(attrMethodName, method), tracing.String(attrMethod, method)}
 	if session := ClientSessionFromContext(ctx); session != nil {
 		if id := session.SessionID(); id != "" {
 			attrs = append(attrs, tracing.String(attrSessionID, id))
@@ -112,11 +119,10 @@ func toolTracingMiddleware(tracer tracing.Tracer) ToolHandlerMiddleware {
 		return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			name := request.Params.Name
 			parent := tracing.SpanFromContext(ctx)
-			parent.SetAttributes(tracing.String(attrToolName, name))
+			toolAttrs := []tracing.Attribute{tracing.String(attrGenAIToolName, name), tracing.String(attrToolName, name)}
+			parent.SetAttributes(toolAttrs...)
 
-			ctx, span := tracer.Start(ctx, "tool."+name, tracing.SpanKindInternal,
-				tracing.String(attrToolName, name),
-			)
+			ctx, span := tracer.Start(ctx, "tool."+name, tracing.SpanKindInternal, toolAttrs...)
 			defer span.End()
 
 			result, err := next(ctx, request)

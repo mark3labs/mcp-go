@@ -66,6 +66,11 @@ func TestClientTracing_EmitsClientSpan(t *testing.T) {
 	require.Len(t, spans, 1)
 	assert.Equal(t, "mcp.tools/call", spans[0].Name())
 	assert.Equal(t, trace.SpanKindClient, spans[0].SpanKind())
+	for _, key := range []string{attrMethodName, attrMethod} {
+		if v, ok := attrValue(spans[0], key); assert.True(t, ok, key) {
+			assert.Equal(t, "tools/call", v)
+		}
+	}
 }
 
 func TestClientTracing_InjectsTraceparent(t *testing.T) {

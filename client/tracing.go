@@ -8,7 +8,12 @@ import (
 	"github.com/mark3labs/mcp-go/tracing"
 )
 
-const attrMethod = "mcp.method"
+// attrMethodName is the OpenTelemetry MCP semantic convention name; the
+// deprecated attrMethod is set alongside it.
+const (
+	attrMethodName = "mcp.method.name"
+	attrMethod     = "mcp.method"
+)
 
 // WithTracer installs a tracer on the client. The tracer starts a client-kind
 // span around every outgoing JSON-RPC method ("mcp.<method>"). For end-to-end
@@ -70,6 +75,7 @@ func (c *Client) startSendSpan(
 	}
 
 	ctx, span := tracer.Start(ctx, "mcp."+method, tracing.SpanKindClient,
+		tracing.String(attrMethodName, method),
 		tracing.String(attrMethod, method),
 	)
 
