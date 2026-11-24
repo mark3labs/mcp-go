@@ -28,7 +28,11 @@ func TestConcurrentSessionResourceRegistration(t *testing.T) {
 	require.NoError(t, err)
 	id := c.GetSessionId()
 	require.NotEmpty(t, id)
-	handler := func(context.Context, mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) { return nil, nil }
+	handlerFor := func(registeredURI string) server.ResourceHandlerFunc {
+		return func(_ context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+			return []mcp.ResourceContents{mcp.TextResourceContents{URI: req.Params.URI, Text: registeredURI}}, nil
+		}
+	}
 	const count = 64
 	start := make(chan struct{})
 	var writers sync.WaitGroup
@@ -36,10 +40,11 @@ func TestConcurrentSessionResourceRegistration(t *testing.T) {
 		writers.Go(func() {
 			<-start
 			uri := fmt.Sprintf("test://items/%d", i)
-			if err := s.AddSessionResource(id, mcp.NewResource(uri, "item"), handler); err != nil {
+			if err := s.AddSessionResource(id, mcp.NewResource(uri, "item"), handlerFor(uri)); err != nil {
 				t.Error(err)
 			}
-			if err := s.AddSessionResourceTemplate(id, mcp.NewResourceTemplate(uri+"/{key}", "entry"), handler); err != nil {
+			template := uri + "/{key}"
+			if err := s.AddSessionResourceTemplate(id, mcp.NewResourceTemplate(template, "entry"), server.ResourceTemplateHandlerFunc(handlerFor(template))); err != nil {
 				t.Error(err)
 			}
 		})
@@ -55,6 +60,21 @@ func TestConcurrentSessionResourceRegistration(t *testing.T) {
 	}
 	if got := len(templates.ResourceTemplates); got != count {
 		t.Errorf("listed %d templates, want %d", got, count)
+	}
+
+	for i := range count {
+		uri := fmt.Sprintf("test://items/%d", i)
+		for _, read := range []struct{ uri, registered string }{{uri, uri}, {uri + "/sample", uri + "/{key}"}} {
+			request := mcp.ReadResourceRequest{}
+			request.Params.URI = read.uri
+			result, err := c.ReadResource(ctx, request)
+			require.NoError(t, err, read.uri)
+			require.Len(t, result.Contents, 1)
+			content, ok := mcp.AsTextResourceContents(result.Contents[0])
+			require.True(t, ok)
+			require.Equal(t, read.uri, content.URI)
+			require.Equal(t, read.registered, content.Text)
+		}
 	}
 
 	start = make(chan struct{})
