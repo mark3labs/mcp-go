@@ -662,16 +662,6 @@ func (s *MCPServer) AddSessionResources(sessionID string, resources ...ServerRes
 		func() { s.capabilities.resources = &resourceCapabilities{listChanged: true} },
 	)
 
-	// Get existing resources (this should return a thread-safe copy)
-	sessionResources := session.GetSessionResources()
-
-	// Create a new map to avoid concurrent modification issues
-	newSessionResources := make(map[string]ServerResource, len(sessionResources)+len(resources))
-
-	// Copy existing resources
-	maps.Copy(newSessionResources, sessionResources)
-
-	// Add new resources with validation
 	for _, resource := range resources {
 		// Validate that URI is non-empty
 		if resource.Resource.URI == "" {
@@ -682,12 +672,25 @@ func (s *MCPServer) AddSessionResources(sessionID string, resources ...ServerRes
 		if _, err := url.ParseRequestURI(resource.Resource.URI); err != nil {
 			return fmt.Errorf("invalid resource URI: %w", err)
 		}
+	}
 
+	s.sessionResourcesMu.Lock()
+	// Get existing resources (this should return a thread-safe copy)
+	sessionResources := session.GetSessionResources()
+
+	// Create a new map to avoid concurrent modification issues
+	newSessionResources := make(map[string]ServerResource, len(sessionResources)+len(resources))
+
+	// Copy existing resources
+	maps.Copy(newSessionResources, sessionResources)
+
+	for _, resource := range resources {
 		newSessionResources[resource.Resource.URI] = resource
 	}
 
 	// Set the resources (this should be thread-safe)
 	session.SetSessionResources(newSessionResources)
+	s.sessionResourcesMu.Unlock()
 
 	// It only makes sense to send resource notifications to initialized sessions --
 	// if we're not initialized yet the client can't possibly have sent their
@@ -734,9 +737,11 @@ func (s *MCPServer) DeleteSessionResources(sessionID string, uris ...string) err
 		return ErrSessionDoesNotSupportResources
 	}
 
+	s.sessionResourcesMu.Lock()
 	// Get existing resources (this should return a thread-safe copy)
 	sessionResources := session.GetSessionResources()
 	if sessionResources == nil {
+		s.sessionResourcesMu.Unlock()
 		return nil
 	}
 
@@ -757,11 +762,13 @@ func (s *MCPServer) DeleteSessionResources(sessionID string, uris ...string) err
 
 	// Skip no-op write if nothing was actually deleted
 	if !actuallyDeleted {
+		s.sessionResourcesMu.Unlock()
 		return nil
 	}
 
 	// Set the resources (this should be thread-safe)
 	session.SetSessionResources(newSessionResources)
+	s.sessionResourcesMu.Unlock()
 
 	// It only makes sense to send resource notifications to initialized sessions --
 	// if we're not initialized yet the client can't possibly have sent their
@@ -824,16 +831,6 @@ func (s *MCPServer) AddSessionResourceTemplates(sessionID string, templates ...S
 		func() { s.capabilities.resources = &resourceCapabilities{listChanged: true} },
 	)
 
-	// Get existing templates (this returns a thread-safe copy)
-	sessionTemplates := session.GetSessionResourceTemplates()
-
-	// Create a new map to avoid modifying the returned copy
-	newTemplates := make(map[string]ServerResourceTemplate, len(sessionTemplates)+len(templates))
-
-	// Copy existing templates
-	maps.Copy(newTemplates, sessionTemplates)
-
-	// Validate and add new templates
 	for _, t := range templates {
 		if !hasURITemplate(t.Template.URITemplate) {
 			return fmt.Errorf("resource template URITemplate cannot be nil")
@@ -845,11 +842,25 @@ func (s *MCPServer) AddSessionResourceTemplates(sessionID string, templates ...S
 		if t.Template.Name == "" {
 			return fmt.Errorf("resource template name cannot be empty")
 		}
-		newTemplates[raw] = t
+	}
+
+	s.sessionResourcesMu.Lock()
+	// Get existing templates (this returns a thread-safe copy)
+	sessionTemplates := session.GetSessionResourceTemplates()
+
+	// Create a new map to avoid modifying the returned copy
+	newTemplates := make(map[string]ServerResourceTemplate, len(sessionTemplates)+len(templates))
+
+	// Copy existing templates
+	maps.Copy(newTemplates, sessionTemplates)
+
+	for _, t := range templates {
+		newTemplates[t.Template.URITemplate.Raw()] = t
 	}
 
 	// Set the new templates (this method must handle thread-safety)
 	session.SetSessionResourceTemplates(newTemplates)
+	s.sessionResourcesMu.Unlock()
 
 	// Send notification if the session is initialized and listChanged is enabled
 	if session.Initialized() && s.capabilities.resources != nil && s.capabilities.resources.listChanged {
@@ -888,6 +899,7 @@ func (s *MCPServer) DeleteSessionResourceTemplates(sessionID string, uriTemplate
 		return ErrSessionDoesNotSupportResourceTemplates
 	}
 
+	s.sessionResourcesMu.Lock()
 	// Get existing templates (this returns a thread-safe copy)
 	sessionTemplates := session.GetSessionResourceTemplates()
 
@@ -907,29 +919,32 @@ func (s *MCPServer) DeleteSessionResourceTemplates(sessionID string, uriTemplate
 	}
 
 	// Only update if something was actually deleted
-	if deletedAny {
-		// Set the new templates (this method must handle thread-safety)
-		session.SetSessionResourceTemplates(newTemplates)
+	if !deletedAny {
+		s.sessionResourcesMu.Unlock()
+		return nil
+	}
+	// Set the new templates (this method must handle thread-safety)
+	session.SetSessionResourceTemplates(newTemplates)
+	s.sessionResourcesMu.Unlock()
 
-		// Send notification if the session is initialized and listChanged is enabled
-		if session.Initialized() && s.capabilities.resources != nil && s.capabilities.resources.listChanged {
-			if err := s.SendNotificationToSpecificClient(sessionID, "notifications/resources/list_changed", nil); err != nil {
-				// Log the error but don't fail the operation
-				if s.hooks != nil && len(s.hooks.OnError) > 0 {
-					hooks := s.hooks
-					go func(sID string, hooks *Hooks) {
-						defer func() {
-							if r := recover(); r != nil {
-								log.Printf("mcp-go: panic in OnError hook (resource templates deleted, session %s): %v", sID, r)
-							}
-						}()
-						ctx := context.Background()
-						hooks.onError(ctx, nil, "notification", map[string]any{
-							"method":    "notifications/resources/list_changed",
-							"sessionID": sID,
-						}, fmt.Errorf("failed to send notification after deleting resource templates: %w", err))
-					}(sessionID, hooks)
-				}
+	// Send notification if the session is initialized and listChanged is enabled
+	if session.Initialized() && s.capabilities.resources != nil && s.capabilities.resources.listChanged {
+		if err := s.SendNotificationToSpecificClient(sessionID, "notifications/resources/list_changed", nil); err != nil {
+			// Log the error but don't fail the operation
+			if s.hooks != nil && len(s.hooks.OnError) > 0 {
+				hooks := s.hooks
+				go func(sID string, hooks *Hooks) {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("mcp-go: panic in OnError hook (resource templates deleted, session %s): %v", sID, r)
+						}
+					}()
+					ctx := context.Background()
+					hooks.onError(ctx, nil, "notification", map[string]any{
+						"method":    "notifications/resources/list_changed",
+						"sessionID": sID,
+					}, fmt.Errorf("failed to send notification after deleting resource templates: %w", err))
+				}(sessionID, hooks)
 			}
 		}
 	}

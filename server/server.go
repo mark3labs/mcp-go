@@ -220,6 +220,7 @@ type MCPServer struct {
 	promptFiltersMu        sync.RWMutex
 	tasksMu                sync.RWMutex
 	sessionToolsMu         sync.Mutex // Protects complete session tool read-modify-write operations.
+	sessionResourcesMu     sync.Mutex // Protects session resource and template read-modify-write operations.
 
 	// Test-only checkpoint configured before the server is used concurrently.
 	beforeCapabilityRegistration func()
