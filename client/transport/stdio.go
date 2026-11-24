@@ -422,6 +422,16 @@ func (c *Stdio) closeDone() {
 	c.closeOnce.Do(func() { close(c.done) })
 }
 
+// isClosed reports whether the transport's done channel has been closed.
+func (c *Stdio) isClosed() bool {
+	select {
+	case <-c.done:
+		return true
+	default:
+		return false
+	}
+}
+
 // Close shuts down the stdio client, closing the stdin pipe and waiting for the subprocess to exit.
 // Returns an error if there are issues closing stdin or waiting for the subprocess to terminate.
 // Safe to call multiple times and concurrently with readResponses calling closeDone().
@@ -762,8 +772,9 @@ func (c *Stdio) handleIncomingRequest(request JSONRPCRequest) {
 		ctx := c.ctx
 		c.ctxMu.RUnlock()
 
-		// Check if context is already cancelled before processing
 		select {
+		case <-c.done:
+			return
 		case <-ctx.Done():
 			errorResponse := *NewJSONRPCErrorResponse(request.ID, mcp.INTERNAL_ERROR, ctx.Err().Error(), nil)
 			c.sendResponse(errorResponse)
@@ -771,7 +782,18 @@ func (c *Stdio) handleIncomingRequest(request JSONRPCRequest) {
 		default:
 		}
 
-		response, err := handler(ctx, request)
+		// End the handler with the transport, so it cannot outlive Close or a server exit.
+		reqCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		go func() {
+			select {
+			case <-c.done:
+				cancel()
+			case <-reqCtx.Done():
+			}
+		}()
+
+		response, err := handler(reqCtx, request)
 		if err != nil {
 			errorResponse := *NewJSONRPCErrorResponse(request.ID, mcp.INTERNAL_ERROR, err.Error(), nil)
 			c.sendResponse(errorResponse)
@@ -786,6 +808,10 @@ func (c *Stdio) handleIncomingRequest(request JSONRPCRequest) {
 
 // sendResponse sends a response back to the server.
 func (c *Stdio) sendResponse(response JSONRPCResponse) {
+	if c.isClosed() {
+		return
+	}
+
 	responseBytes, err := json.Marshal(response)
 	if err != nil {
 		c.logger.Error("Error marshaling response", "err", err)
@@ -796,7 +822,7 @@ func (c *Stdio) sendResponse(response JSONRPCResponse) {
 	c.stdinMu.Lock()
 	_, err = c.stdin.Write(responseBytes)
 	c.stdinMu.Unlock()
-	if err != nil {
+	if err != nil && !c.isClosed() {
 		c.logger.Error("Error writing response", "err", err)
 	}
 }
