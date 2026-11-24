@@ -2980,11 +2980,7 @@ func (s *MCPServer) handleComplete(
 		}
 	}
 	if err != nil {
-		return nil, &requestError{
-			id:   id,
-			code: mcp.INTERNAL_ERROR,
-			err:  err,
-		}
+		return nil, handlerError(ctx, id, err)
 	}
 
 	// Defensive nil check: default providers always return non-nil completions,
