@@ -215,6 +215,10 @@ func TestHandleMessageRejectsMalformedJSON(t *testing.T) {
 			name:    "invalid JSON value",
 			message: `{"jsonrpc":"2.0","id":1,"method":undefined}`,
 		},
+		{
+			name:    "incomplete JSON with invalid member name",
+			message: `{"Method":`,
+		},
 	}
 
 	for _, tt := range tests {
