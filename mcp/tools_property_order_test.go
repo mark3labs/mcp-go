@@ -272,9 +272,9 @@ func TestToolArgumentsSchema_PropertyOrderEdgeCases(t *testing.T) {
 	})
 }
 
-// nilOrderGoldenCases holds marshaled output captured from mcp-go v1.0.0,
-// before ToolArgumentsSchema recorded property order. Schemas built in Go
-// without a property order must keep producing these exact bytes.
+// nilOrderGoldenCases holds expected output for schemas without a property
+// order. It matches mcp-go v1.0.0 apart from omitting an unspecified type
+// instead of emitting the invalid JSON Schema type "".
 var nilOrderGoldenCases = []struct {
 	name   string
 	schema ToolArgumentsSchema
@@ -283,7 +283,7 @@ var nilOrderGoldenCases = []struct {
 	{
 		name:   "zero value",
 		schema: ToolArgumentsSchema{},
-		want:   `{"properties":{},"required":[],"type":""}`,
+		want:   `{"properties":{},"required":[]}`,
 	},
 	{
 		name:   "type only",
@@ -384,7 +384,7 @@ var nilOrderGoldenCases = []struct {
 }
 
 // TestToolArgumentsSchema_NilPropertyOrderMatchesGolden checks that schemas
-// without a property order marshal to the v1.0.0 bytes.
+// without a property order marshal to the expected bytes.
 func TestToolArgumentsSchema_NilPropertyOrderMatchesGolden(t *testing.T) {
 	for _, tc := range nilOrderGoldenCases {
 		t.Run(tc.name, func(t *testing.T) {

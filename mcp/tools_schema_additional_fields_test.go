@@ -89,7 +89,7 @@ func TestSchemaAdditionalFieldsCollisions(t *testing.T) {
 		expected string
 	}{
 		{"structured", ToolArgumentsSchema{Type: "object", Properties: map[string]any{"x": true}, Required: []string{"x"}, Defs: map[string]any{"x": false}, AdditionalProperties: false}, `{"type":"object","properties":{"x":true},"required":["x"],"$defs":{"x":false},"additionalProperties":false,"title":"retained"}`},
-		{"omitted optional fields", ToolArgumentsSchema{}, `{"type":"","properties":{},"required":[],"title":"retained"}`},
+		{"omitted optional fields", ToolArgumentsSchema{}, `{"properties":{},"required":[],"title":"retained"}`},
 		{"array type", ToolArgumentsSchema{Types: []string{"object", "null"}}, `{"type":["object","null"],"properties":{},"required":[],"title":"retained"}`},
 	}
 	for _, tt := range tests {
@@ -117,7 +117,7 @@ func TestSchemaAdditionalFieldsReceiverReuse(t *testing.T) {
 	for _, extras := range []map[string]any{nil, {}} {
 		encoded, err := json.Marshal(ToolArgumentsSchema{AdditionalFields: extras})
 		require.NoError(t, err)
-		assert.JSONEq(t, `{"type":"","properties":{},"required":[]}`, string(encoded))
+		assert.JSONEq(t, `{"properties":{},"required":[]}`, string(encoded))
 	}
 }
 

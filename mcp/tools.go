@@ -891,7 +891,8 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 // ToolArgumentsSchema represents a JSON Schema for tool arguments.
 type ToolArgumentsSchema struct {
 	Defs map[string]any `json:"$defs,omitempty"`
-	Type string         `json:"type"`
+	// Type is omitted from JSON when empty and Types is nil.
+	Type string `json:"type"`
 	// Types holds an array-valued JSON Schema type, including a single-element
 	// array. Type remains a string for compatibility and takes precedence when
 	// non-empty. Decoding a string clears Types; decoding an array clears Type.
