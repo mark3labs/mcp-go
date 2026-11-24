@@ -2906,7 +2906,7 @@ func (s *MCPServer) awaitTaskInput(
 	task := entry.task
 	s.tasksMu.Unlock()
 
-	s.sendTaskStatusNotification(task, entry.modernTask)
+	s.sendTaskStatusNotification(entry.sessionID, task, entry.modernTask)
 
 	select {
 	case <-entry.inputReady:
@@ -2927,7 +2927,7 @@ func (s *MCPServer) awaitTaskInput(
 	task = entry.task
 	s.tasksMu.Unlock()
 
-	s.sendTaskStatusNotification(task, entry.modernTask)
+	s.sendTaskStatusNotification(entry.sessionID, task, entry.modernTask)
 	return responses, true
 }
 

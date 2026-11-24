@@ -1193,7 +1193,7 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 				case mcp.TaskStatusFailed:
 					server.completeTask(entry, nil, fmt.Errorf("private-error"))
 				case mcp.TaskStatusCancelled:
-					require.NoError(t, server.cancelTask(ctx, "private-task"))
+					require.NoError(t, server.cancelTask(ctx, "private-task", false))
 				}
 
 				select {
