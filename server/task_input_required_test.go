@@ -747,16 +747,19 @@ func TestTaskMissingExtensionErrorData(t *testing.T) {
 }
 
 // TestModernTaskStatusNotSentToOtherSessions verifies a modern task does not
-// broadcast its id via notifications/tasks/status (which fans out to every
-// session, leaking the bearer handle). Legacy tasks still broadcast.
+// send notifications/tasks/status. Legacy tasks notify only their owning session.
 func TestModernTaskStatusNotSentToOtherSessions(t *testing.T) {
 	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
 
 	notifyChan := make(chan mcp.JSONRPCNotification, 10)
 	require.NoError(t, srv.RegisterSession(t.Context(),
 		fakeSess{sessionID: "observer", notifyChan: notifyChan}))
+	ownerChan := make(chan mcp.JSONRPCNotification, 10)
+	owner := fakeSess{sessionID: "owner", notifyChan: ownerChan}
+	require.NoError(t, srv.RegisterSession(t.Context(), owner))
+	ownerCtx := srv.WithContext(t.Context(), owner)
 
-	modernCtx := buildModernContext(t.Context(), srv)
+	modernCtx := buildModernContext(ownerCtx, srv)
 	ttl := int64(60000)
 	entry, err := srv.createTask(modernCtx, "modern-task", "tool", &ttl, nil)
 	require.NoError(t, err)
@@ -768,23 +771,29 @@ func TestModernTaskStatusNotSentToOtherSessions(t *testing.T) {
 	select {
 	case n := <-notifyChan:
 		t.Fatalf("modern task leaked status broadcast: %s %v", n.Method, n.Params.AdditionalFields)
+	case n := <-ownerChan:
+		t.Fatalf("modern task sent legacy status notification: %s %v", n.Method, n.Params.AdditionalFields)
 	case <-time.After(100 * time.Millisecond):
 		// No broadcast — correct.
 	}
 
-	// A legacy task still broadcasts.
-	legacyEntry, err := srv.createTask(t.Context(), "legacy-task", "tool", &ttl, nil)
+	legacyEntry, err := srv.createTask(ownerCtx, "legacy-task", "tool", &ttl, nil)
 	require.NoError(t, err)
 	srv.completeTask(legacyEntry, &mcp.CallToolResult{
 		Content: []mcp.Content{mcp.NewTextContent("ok")},
 	}, nil)
 
 	select {
-	case n := <-notifyChan:
+	case n := <-ownerChan:
 		assert.Equal(t, mcp.MethodNotificationTasksStatus, n.Method)
 		assert.Equal(t, "legacy-task", n.Params.AdditionalFields["taskId"])
 	case <-time.After(time.Second):
-		t.Fatal("expected legacy task status broadcast")
+		t.Fatal("expected legacy task status notification for its owner")
+	}
+	select {
+	case n := <-notifyChan:
+		t.Fatalf("legacy task leaked status notification: %s %v", n.Method, n.Params.AdditionalFields)
+	default:
 	}
 }
 

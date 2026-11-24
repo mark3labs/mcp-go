@@ -565,22 +565,23 @@ Each tool should:
 
 ##### Task Authorization
 
-The pinned Tasks extension specification defines three task-management methods: `tasks/get`, `tasks/update`, and `tasks/cancel`, and requires servers to authenticate and authorize every one of them. The legacy 2025-11-25 flow also exposes `tasks/list` and `tasks/result`. The modern extension removes both, there is no `tasks/list`, and results are inlined into `tasks/get`. The SDK enforces the same default authorization policy across these methods:
+The pinned Tasks extension specification defines three task-management methods: `tasks/get`, `tasks/update`, and `tasks/cancel`, and requires servers to authenticate and authorize every one of them. The legacy 2025-11-25 flow also exposes `tasks/list` and `tasks/result`. The modern extension removes both, there is no `tasks/list`, and results are inlined into `tasks/get`. The SDK requires each task request to use the same protocol surface (modern or legacy) as task creation. Within that protocol surface, access by task ID requires exact session matching:
 
 | Task session | Request session | Result |
 |---|---|---|
 | set | set, **same** | Allowed |
 | set | set, **different** | Denied (`task not found`, to avoid enumeration) |
-| **empty** | any | Allowed — bearer-token model |
-| any | **empty** | Allowed — bearer-token model |
+| **empty** | **empty** | Allowed — bearer-token model |
+| **empty** | set | Denied (`task not found`) |
+| set | **empty** | Denied (`task not found`) |
 
-**Bearer-token default.** When either side has no session (e.g. stdio, in-process, or a task created outside a session), possessing the task ID is the only credential for accessing a task. Under the modern Tasks extension this is the intended default for session-less transports: there is no `tasks/list`, so task IDs with sufficient entropy cannot be enumerated or guessed by a third party.
+**Sessionless access.** When both the task and request have no session, possessing the task ID is the SDK's default credential for accessing a task. An empty session on only one side does not bypass session isolation. Under the modern Tasks extension there is no `tasks/list`, so task IDs with sufficient entropy cannot be enumerated or guessed by a third party.
 
-The legacy 2025-11-25 `tasks/list`, however, returns tasks from other sessions to a session-less caller, who can then fetch results or cancel those tasks by ID. When task IDs are used as bearer credentials, restrict `tasks/list` to authorized callers at the transport or application boundary.
+The legacy 2025-11-25 `tasks/list` returns only legacy tasks whose session exactly matches the request session. A sessionless caller sees only sessionless legacy tasks. Multiple application users can share that scope, so restrict listing to authorized callers at the transport or application boundary.
 
-**Application authorization boundary.** The SDK checks task protocol/session scope and supports task IDs as bearer credentials. It does not authenticate application users or bind tasks to users or tenants. Applications that require ownership checks must authenticate every request, record the authenticated creator against the task ID, and authorize access before SDK dispatch. Apply this to `tasks/get`, `tasks/update`, and `tasks/cancel`, and to any enabled legacy `tasks/result` and `tasks/list` endpoints.
+**Application authorization boundary.** The SDK checks task protocol/session scope and supports task IDs as bearer credentials when both sessions are empty. It does not authenticate application users or bind tasks to users or tenants. Applications that require ownership checks must authenticate every request, record the authenticated creator against the task ID, and authorize access before SDK dispatch. Apply this to `tasks/get`, `tasks/update`, and `tasks/cancel`, and to any enabled legacy `tasks/result` and `tasks/list` endpoints.
 
-The executable [task authorization example](examples/task_authorization/main.go) uses HTTP middleware to authenticate callers and reject task reads, updates, cancellations, and legacy result retrieval unless the caller owns the task. Legacy listing requires a separate explicit permission because it can expose every legacy task ID. The creation hook records ownership, all access decisions happen in middleware. The example uses static demo credentials and an in-memory owner index, applications should use their own authentication and retain ownership records for the task's retention period, persisting them when tasks survive a restart. A session ID alone does not identify an authenticated caller.
+The executable [task authorization example](examples/task_authorization/main.go) uses HTTP middleware to authenticate callers and reject task reads, updates, cancellations, and legacy result retrieval unless the caller owns the task. The example uses stateless HTTP, so its legacy tasks share an empty session scope; listing requires a separate explicit permission because it can expose every sessionless legacy task ID across application users. The creation hook records ownership, all access decisions happen in middleware. The example uses static demo credentials and an in-memory owner index, applications should use their own authentication and retain ownership records for the task's retention period, persisting them when tasks survive a restart. A session ID alone does not identify an authenticated caller.
 
 `OnBefore*` hooks (`AddBeforeGetTask`, `AddBeforeCancelTask`, `AddBeforeUpdateTask`, etc.) are for **observation only**. They cannot return an error, and the handler runs regardless of what the hook does. Reading an identity in a hook does not authorize or reject the request.
 

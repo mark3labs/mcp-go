@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTaskAccessControlContract verifies the bearer-token access model.
+// TestTaskAccessControlContract verifies exact session matching for task access.
 func TestTaskAccessControlContract(t *testing.T) {
 	newServer := func() *MCPServer {
 		return NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
@@ -54,21 +54,25 @@ func TestTaskAccessControlContract(t *testing.T) {
 			"different session should be denied — returned as not-found to avoid enumeration")
 	})
 
-	t.Run("task has no session — bearer-token, any caller allowed", func(t *testing.T) {
+	t.Run("task has no session — session-bearing caller denied", func(t *testing.T) {
 		s := newServer()
-		// Create task with no session in context → server-global task.
 		entry, err := s.createTask(t.Context(), "task-global", "tool", nil, nil)
 		require.NoError(t, err)
 		assert.Empty(t, entry.sessionID, "task created without a session should have empty sessionID")
 
-		// A session-bearing request can still access it via task ID alone.
 		ctxB := sessionCtx(t, s, "session-B")
 		_, _, err = s.getTask(ctxB, entry.task.TaskId)
-		assert.NoError(t, err,
-			"session-less task is bearer-token accessible: any caller who knows the ID may access it")
+		assert.EqualError(t, err, "task not found")
+		_, err = s.getTaskEntry(ctxB, entry.task.TaskId)
+		assert.EqualError(t, err, "task not found")
+
+		_, _, err = s.getTask(t.Context(), entry.task.TaskId)
+		assert.NoError(t, err, "both sessions empty should be allowed")
+		_, err = s.getTaskEntry(t.Context(), entry.task.TaskId)
+		assert.NoError(t, err)
 	})
 
-	t.Run("request has no session — bearer-token, task's session not enforced", func(t *testing.T) {
+	t.Run("request has no session — session-owned task denied", func(t *testing.T) {
 		s := newServer()
 		ctxA := sessionCtx(t, s, "session-A")
 
@@ -76,10 +80,10 @@ func TestTaskAccessControlContract(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "session-A", entry.sessionID)
 
-		// A session-less request (stdio, in-process) can access any task by ID.
 		_, _, err = s.getTask(t.Context(), entry.task.TaskId)
-		assert.NoError(t, err,
-			"session-less request uses bearer-token model: task ID possession grants access")
+		assert.EqualError(t, err, "task not found")
+		_, err = s.getTaskEntry(t.Context(), entry.task.TaskId)
+		assert.EqualError(t, err, "task not found")
 	})
 
 	t.Run("getTaskEntry applies the same policy as getTask", func(t *testing.T) {
@@ -208,7 +212,7 @@ func TestTaskAccessControl_HTTPMiddlewareIdentityFlowsToHook(t *testing.T) {
 		WithHooks(hooks),
 	)
 
-	// Create a task without a session, bearer-token model, any caller can access it.
+	// The hook observes identity even when session isolation rejects task access.
 	entry, err := mcpServer.createTask(t.Context(), "task-flow", "tool", nil, nil)
 	require.NoError(t, err)
 
