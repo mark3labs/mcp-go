@@ -820,6 +820,10 @@ func (c *Stdio) sendResponse(response JSONRPCResponse) {
 	responseBytes = append(responseBytes, '\n')
 
 	c.stdinMu.Lock()
+	if c.isClosed() {
+		c.stdinMu.Unlock()
+		return
+	}
 	_, err = c.stdin.Write(responseBytes)
 	c.stdinMu.Unlock()
 	if err != nil && !c.isClosed() {
