@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script src="/initializeTheme.iife.js"></script><link rel="preload" as="image" href="/logo.png"/><title>Implementing Resources – MCP-Go</title><meta property="og:type" content="website"/><meta property="og:title" content="Implementing Resources"/><meta property="og:url" content="https://mcp-go.dev"/><meta name="twitter:card" content="summary_large_image"/>
-    <script type="module" crossorigin src="/assets/index-DoICjSo0.js"></script>
+    <script type="module" crossorigin src="/assets/index-BH7wwTMK.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/style-3fK4AU4f.css">
   </head>
   <body>
@@ -706,7 +706,8 @@
 <li class="vocs_ListItem">Session resources override global resources with the same URI</li>
 <li class="vocs_ListItem">Notifications (<code class="vocs_Code">resources/list_changed</code>) are automatically sent when resources are added/removed</li>
 <li class="vocs_ListItem">The server automatically registers resource capabilities when session resources are first added</li>
-<li class="vocs_ListItem">Operations are thread-safe and can be called concurrently</li>
+<li class="vocs_ListItem">Built-in Streamable HTTP and SSE sessions apply each batch of resource or resource-template updates atomically</li>
+<li class="vocs_ListItem">When using a custom session, serialize concurrent additions and deletions for each resource or resource-template map</li>
 <li class="vocs_ListItem">Resources are only available to initialized sessions unless explicitly added before initialization</li>
 </ul>
 <h2 class="vocs_H2 vocs_Heading"><div id="next-steps" class="vocs_Heading_slugTarget"></div>Next Steps<a class="vocs_Anchor vocs_Autolink" aria-hidden="true" tabindex="-1" href="/servers/resources#next-steps" data-discover="true"><div data-autolink-icon="true" class="vocs_Div vocs_AutolinkIcon" style="--vocs_AutolinkIcon_iconUrl:url(/.vocs/icons/link.svg)"></div></a></h2>

@@ -9585,7 +9585,8 @@ sseServer := server.NewSSEServer(
 * Session resources override global resources with the same URI
 * Notifications (`resources/list_changed`) are automatically sent when resources are added/removed
 * The server automatically registers resource capabilities when session resources are first added
-* Operations are thread-safe and can be called concurrently
+* Built-in Streamable HTTP and SSE sessions apply each batch of resource or resource-template updates atomically
+* When using a custom session, serialize concurrent additions and deletions for each resource or resource-template map
 * Resources are only available to initialized sessions unless explicitly added before initialization
 
 ### Next Steps

@@ -1,4 +1,4 @@
-import{u as e,j as s}from"./index-DoICjSo0.js";const a={title:"Implementing Resources",description:"undefined"};function r(l){const i={a:"a",code:"code",div:"div",h1:"h1",h2:"h2",h3:"h3",h4:"h4",header:"header",li:"li",p:"p",pre:"pre",span:"span",strong:"strong",ul:"ul",...e(),...l.components};return s.jsxs(s.Fragment,{children:[s.jsx(i.header,{children:s.jsxs(i.h1,{id:"implementing-resources",children:["Implementing Resources",s.jsx(i.a,{"aria-hidden":"true",tabIndex:"-1",href:"#implementing-resources",children:s.jsx(i.div,{"data-autolink-icon":!0})})]})}),`
+import{u as e,j as s}from"./index-BH7wwTMK.js";const a={title:"Implementing Resources",description:"undefined"};function r(l){const i={a:"a",code:"code",div:"div",h1:"h1",h2:"h2",h3:"h3",h4:"h4",header:"header",li:"li",p:"p",pre:"pre",span:"span",strong:"strong",ul:"ul",...e(),...l.components};return s.jsxs(s.Fragment,{children:[s.jsx(i.header,{children:s.jsxs(i.h1,{id:"implementing-resources",children:["Implementing Resources",s.jsx(i.a,{"aria-hidden":"true",tabIndex:"-1",href:"#implementing-resources",children:s.jsx(i.div,{"data-autolink-icon":!0})})]})}),`
 `,s.jsx(i.p,{children:"Resources expose data to LLMs in a read-only manner. Think of them as GET endpoints that provide access to files, databases, APIs, or any other data source."}),`
 `,s.jsxs(i.h2,{id:"resource-fundamentals",children:["Resource Fundamentals",s.jsx(i.a,{"aria-hidden":"true",tabIndex:"-1",href:"#resource-fundamentals",children:s.jsx(i.div,{"data-autolink-icon":!0})})]}),`
 `,s.jsx(i.p,{children:"Resources in MCP are identified by URIs and can be either static (fixed content) or dynamic (generated on-demand). They're perfect for giving LLMs access to documentation, configuration files, database records, or API responses."}),`
@@ -696,7 +696,8 @@ import{u as e,j as s}from"./index-DoICjSo0.js";const a={title:"Implementing Reso
 `,s.jsx(i.li,{children:"Session resources override global resources with the same URI"}),`
 `,s.jsxs(i.li,{children:["Notifications (",s.jsx(i.code,{children:"resources/list_changed"}),") are automatically sent when resources are added/removed"]}),`
 `,s.jsx(i.li,{children:"The server automatically registers resource capabilities when session resources are first added"}),`
-`,s.jsx(i.li,{children:"Operations are thread-safe and can be called concurrently"}),`
+`,s.jsx(i.li,{children:"Built-in Streamable HTTP and SSE sessions apply each batch of resource or resource-template updates atomically"}),`
+`,s.jsx(i.li,{children:"When using a custom session, serialize concurrent additions and deletions for each resource or resource-template map"}),`
 `,s.jsx(i.li,{children:"Resources are only available to initialized sessions unless explicitly added before initialization"}),`
 `]}),`
 `,s.jsxs(i.h2,{id:"next-steps",children:["Next Steps",s.jsx(i.a,{"aria-hidden":"true",tabIndex:"-1",href:"#next-steps",children:s.jsx(i.div,{"data-autolink-icon":!0})})]}),`
