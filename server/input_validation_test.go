@@ -495,6 +495,24 @@ func TestInputSchemaValidation(t *testing.T) {
 	}
 }
 
+// TestInputSchemaValidation_ToolNameWithURLCharacters checks that a tool whose
+// name contains characters with a meaning in a URL is still validated. The
+// schema is compiled under a virtual URL built from the name.
+func TestInputSchemaValidation_ToolNameWithURLCharacters(t *testing.T) {
+	for _, name := range []string{"search#v2", "100%", "a?b", "a/b"} {
+		t.Run(name, func(t *testing.T) {
+			srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
+			srv.AddTool(mcp.NewTool(name, mcp.WithString("resourceType", mcp.Required())), okHandler)
+
+			resp := callTool(t, srv, name, map[string]any{})
+			requireToolErrorContaining(t, resp, "resourceType")
+
+			resp = callTool(t, srv, name, map[string]any{"resourceType": "pods"})
+			requireToolSuccess(t, resp)
+		})
+	}
+}
+
 // TestInputSchemaValidation_RecompilesOnSchemaChange documents that
 // re-registering a tool with a different schema honours the new schema on
 // the next call. The cache keys by name+digest, so a fresh schema produces a
@@ -657,6 +675,27 @@ func TestInputSchemaValidation_ErrorKindReadable(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInputSchemaValidation_DistinguishesMissingAndNullArguments(t *testing.T) {
+	srv := NewMCPServer("test", "1.0.0", WithInputSchemaValidation())
+	tool := mcp.NewTool("no_args")
+	handlerCalled := false
+	srv.AddTool(tool, func(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		handlerCalled = true
+		return mcp.NewToolResultText("ok"), nil
+	})
+
+	// An omitted arguments field means an empty argument object.
+	missing := srv.HandleMessage(t.Context(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"no_args"}}`))
+	requireToolSuccess(t, missing)
+	assert.True(t, handlerCalled)
+
+	// Explicit null is not an object and must fail the tool's root schema.
+	handlerCalled = false
+	null := srv.HandleMessage(t.Context(), []byte(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"no_args","arguments":null}}`))
+	requireToolErrorContaining(t, null, "null")
+	assert.False(t, handlerCalled)
 }
 
 func TestInputSchemaValidation_PreservesLargeIntegerPrecision(t *testing.T) {

@@ -28,10 +28,16 @@ type resourceEntry struct {
 	handler  ResourceHandlerFunc
 }
 
-// resourceTemplateEntry holds both a template and its handler
+// resourceTemplateEntry holds both a template and its handler, plus the
+// order it was registered in. handleReadResource uses order to pick a
+// deterministic winner when a URI matches more than one global template:
+// Go map iteration order is randomized per-process, so ranging over
+// resourceTemplates directly (as before) picked an arbitrary match that
+// could differ between otherwise-identical calls.
 type resourceTemplateEntry struct {
 	template mcp.ResourceTemplate
 	handler  ResourceTemplateHandlerFunc
+	order    int
 }
 
 // taskEntry holds task state and associated data
@@ -236,16 +242,20 @@ type MCPServer struct {
 	toolFiltersMu          sync.RWMutex
 	promptFiltersMu        sync.RWMutex
 	tasksMu                sync.RWMutex
+	sessionToolsMu         sync.Mutex // Protects complete session tool read-modify-write operations.
 
 	// Test-only checkpoint configured before the server is used concurrently.
 	beforeCapabilityRegistration func()
 
-	name                       string
-	version                    string
-	implementation             mcp.Implementation
-	instructions               string
-	resources                  map[string]resourceEntry
-	resourceTemplates          map[string]resourceTemplateEntry
+	name              string
+	version           string
+	implementation    mcp.Implementation
+	instructions      string
+	resources         map[string]resourceEntry
+	resourceTemplates map[string]resourceTemplateEntry
+	// nextResourceTemplateOrder assigns each resourceTemplateEntry its order
+	// (see resourceTemplateEntry.order) as it is registered, under resourcesMu.
+	nextResourceTemplateOrder  int
 	prompts                    map[string]mcp.Prompt
 	promptHandlers             map[string]PromptHandlerFunc
 	tools                      map[string]ServerTool
@@ -944,16 +954,25 @@ func (s *MCPServer) RemoveResource(uri string) {
 	}
 }
 
+func hasURITemplate(t *mcp.URITemplate) bool {
+	return t != nil && t.Template != nil
+}
+
 // AddResourceTemplates registers multiple resource templates at once
 func (s *MCPServer) AddResourceTemplates(resourceTemplates ...ServerResourceTemplate) {
 	s.implicitlyRegisterResourceCapabilities()
 
 	s.resourcesMu.Lock()
 	for _, entry := range resourceTemplates {
+		if !hasURITemplate(entry.Template.URITemplate) {
+			continue
+		}
 		s.resourceTemplates[entry.Template.URITemplate.Raw()] = resourceTemplateEntry{
 			template: entry.Template,
 			handler:  entry.Handler,
+			order:    s.nextResourceTemplateOrder,
 		}
+		s.nextResourceTemplateOrder++
 	}
 	s.resourcesMu.Unlock()
 
@@ -969,8 +988,17 @@ func (s *MCPServer) SetResourceTemplates(templates ...ServerResourceTemplate) {
 	s.implicitlyRegisterResourceCapabilities()
 	s.resourcesMu.Lock()
 	s.resourceTemplates = make(map[string]resourceTemplateEntry, len(templates))
+	s.nextResourceTemplateOrder = 0
 	for _, item := range templates {
-		s.resourceTemplates[item.Template.URITemplate.Raw()] = resourceTemplateEntry{template: item.Template, handler: item.Handler}
+		if !hasURITemplate(item.Template.URITemplate) {
+			continue
+		}
+		s.resourceTemplates[item.Template.URITemplate.Raw()] = resourceTemplateEntry{
+			template: item.Template,
+			handler:  item.Handler,
+			order:    s.nextResourceTemplateOrder,
+		}
+		s.nextResourceTemplateOrder++
 	}
 	s.resourcesMu.Unlock()
 	if s.capabilities.resources.listChanged {
@@ -1644,13 +1672,10 @@ func listByPagination[T mcp.Named](
 	if elementsToReturn == nil {
 		elementsToReturn = []T{}
 	}
-	// set the next cursor
-	nextCursor := func() mcp.Cursor {
-		if s.paginationLimit != nil && *s.paginationLimit > 0 && len(elementsToReturn) >= *s.paginationLimit {
-			return encodePageCursor(&elementsToReturn[len(elementsToReturn)-1])
-		}
-		return ""
-	}()
+	var nextCursor mcp.Cursor
+	if endPos < len(allElements) {
+		nextCursor = encodePageCursor(&allElements[endPos-1])
+	}
 	return elementsToReturn, nextCursor, nil
 }
 
@@ -1664,7 +1689,7 @@ func pageTieBreak[T mcp.Named](element *T) string {
 	case *mcp.Resource:
 		return e.URI
 	case *mcp.ResourceTemplate:
-		if e.URITemplate != nil {
+		if hasURITemplate(e.URITemplate) {
 			return e.URITemplate.Raw()
 		}
 	}
@@ -1759,7 +1784,9 @@ func (s *MCPServer) handleListResourceTemplates(
 	s.resourcesMu.RLock()
 	templateMap := make(map[string]mcp.ResourceTemplate, len(s.resourceTemplates))
 	for uri, entry := range s.resourceTemplates {
-		templateMap[uri] = entry.template
+		if hasURITemplate(entry.template.URITemplate) {
+			templateMap[uri] = entry.template
+		}
 	}
 	s.resourcesMu.RUnlock()
 
@@ -1771,7 +1798,9 @@ func (s *MCPServer) handleListResourceTemplates(
 				// Merge session-specific templates with global templates
 				// Session templates override global ones
 				for uriTemplate, serverTemplate := range sessionTemplates {
-					templateMap[uriTemplate] = serverTemplate.Template
+					if hasURITemplate(serverTemplate.Template.URITemplate) {
+						templateMap[uriTemplate] = serverTemplate.Template
+					}
 				}
 			}
 		}
@@ -1873,7 +1902,7 @@ func (s *MCPServer) handleReadResource(
 		if sessionWithTemplates, ok := session.(SessionWithResourceTemplates); ok {
 			sessionTemplates := sessionWithTemplates.GetSessionResourceTemplates()
 			for _, serverTemplate := range sessionTemplates {
-				if serverTemplate.Template.URITemplate == nil {
+				if !hasURITemplate(serverTemplate.Template.URITemplate) {
 					continue
 				}
 				if matchesTemplate(request.Params.URI, serverTemplate.Template.URITemplate) {
@@ -1894,11 +1923,22 @@ func (s *MCPServer) handleReadResource(
 		}
 	}
 
-	// If not found in session templates, check global templates
+	// If not found in session templates, check global templates. Multiple
+	// registered templates can match the same URI (e.g. a specific template
+	// and a catch-all); candidates are matched in registration order so the
+	// winner is deterministic instead of following Go's randomized map
+	// iteration order.
 	if !matched {
+		candidates := make([]resourceTemplateEntry, 0, len(s.resourceTemplates))
 		for _, entry := range s.resourceTemplates {
+			candidates = append(candidates, entry)
+		}
+		sort.Slice(candidates, func(i, j int) bool {
+			return candidates[i].order < candidates[j].order
+		})
+		for _, entry := range candidates {
 			template := entry.template
-			if template.URITemplate == nil {
+			if !hasURITemplate(template.URITemplate) {
 				continue
 			}
 			if matchesTemplate(request.Params.URI, template.URITemplate) {
@@ -1988,6 +2028,11 @@ func (s *MCPServer) filteredPrompts(ctx context.Context) []mcp.Prompt {
 		}
 	}
 	s.promptFiltersMu.RUnlock()
+	// Filters may reorder their inputs, but list pagination uses binary search
+	// over prompts sorted by name.
+	sort.Slice(prompts, func(i, j int) bool {
+		return prompts[i].Name < prompts[j].Name
+	})
 
 	return prompts
 }
@@ -2196,6 +2241,11 @@ func (s *MCPServer) filteredTools(ctx context.Context) []mcp.Tool {
 		}
 	}
 	s.toolFiltersMu.RUnlock()
+	// Filters may reorder their inputs, but list pagination uses binary search
+	// over tools sorted by name.
+	sort.Slice(tools, func(i, j int) bool {
+		return tools[i].Name < tools[j].Name
+	})
 
 	return tools
 }
@@ -2919,6 +2969,21 @@ func createErrorResponse(
 	}
 }
 
+// marshalResponse encodes a message for the wire. A result that cannot be
+// encoded, such as one holding NaN, becomes an INTERNAL_ERROR for the same
+// request id, so the client is not left waiting for a response.
+func marshalResponse(response mcp.JSONRPCMessage) ([]byte, error) {
+	data, err := json.Marshal(response)
+	if result, ok := response.(mcp.JSONRPCResponse); ok && err != nil {
+		return json.Marshal(createErrorResponse(
+			result.ID.Value(),
+			mcp.INTERNAL_ERROR,
+			fmt.Sprintf("failed to marshal response: %v", err),
+		))
+	}
+	return data, err
+}
+
 //
 // Task Request Handlers
 //
@@ -3378,7 +3443,7 @@ func (s *MCPServer) fireTaskHook(ctx context.Context, entry *taskEntry, fire fun
 	fire(ctx)
 }
 
-// getTask retrieves a task by ID, checking session isolation if applicable.
+// getTask retrieves a task by ID within the current session.
 // Returns a copy of the task and the done channel for waiting on completion.
 func (s *MCPServer) getTask(ctx context.Context, taskID string) (mcp.Task, chan struct{}, error) {
 	s.tasksMu.RLock()
@@ -3402,8 +3467,7 @@ func (s *MCPServer) getTask(ctx context.Context, taskID string) (mcp.Task, chan 
 	}
 
 	// Verify session isolation
-	sessionID := getSessionID(ctx)
-	if entry.sessionID != "" && sessionID != "" && entry.sessionID != sessionID {
+	if entry.sessionID != getSessionID(ctx) {
 		s.tasksMu.RUnlock()
 		return mcp.Task{}, nil, fmt.Errorf("task not found")
 	}
@@ -3436,8 +3500,7 @@ func (s *MCPServer) getTaskEntry(ctx context.Context, taskID string) (*taskEntry
 	}
 
 	// Verify session isolation
-	sessionID := getSessionID(ctx)
-	if entry.sessionID != "" && sessionID != "" && entry.sessionID != sessionID {
+	if entry.sessionID != getSessionID(ctx) {
 		return nil, fmt.Errorf("task not found")
 	}
 
@@ -3459,8 +3522,7 @@ func (s *MCPServer) listTasks(ctx context.Context) []mcp.Task {
 		if entry.modernTask != modern {
 			continue
 		}
-		// Filter by session if applicable
-		if sessionID == "" || entry.sessionID == "" || entry.sessionID == sessionID {
+		if entry.sessionID == sessionID {
 			tasks = append(tasks, entry.task)
 		}
 	}
@@ -3514,7 +3576,7 @@ func (s *MCPServer) completeTask(entry *taskEntry, result any, err error) {
 	s.tasksMu.Unlock()
 
 	// Send task status notification
-	s.sendTaskStatusNotification(task, entry.modernTask)
+	s.sendTaskStatusNotification(entry.sessionID, task, entry.modernTask)
 
 	// Fire task hooks, after the created hook if it is still running
 	if s.taskHooks != nil {
@@ -3578,7 +3640,8 @@ func (s *MCPServer) cancelTaskEntry(ctx context.Context, entry *taskEntry, messa
 	if cancel != nil {
 		cancel()
 	}
-	s.sendTaskStatusNotification(task, entry.modernTask)
+
+	s.sendTaskStatusNotification(entry.sessionID, task, entry.modernTask)
 	if s.taskHooks != nil {
 		// After the created hook, if it is still running.
 		s.fireTaskHook(ctx, entry, func(ctx context.Context) { s.taskHooks.taskCancelled(ctx, metrics) })
@@ -3619,11 +3682,11 @@ func (s *MCPServer) scheduleTaskCleanup(taskID string, expected *taskEntry, ttlM
 }
 
 // sendTaskStatusNotification sends a notification when a task's status changes.
-func (s *MCPServer) sendTaskStatusNotification(task mcp.Task, modernTask bool) {
+func (s *MCPServer) sendTaskStatusNotification(sessionID string, task mcp.Task, modernTask bool) {
 	// Don't broadcast modern tasks, this fans out to every session with no
 	// origin filtering, so the task id would leak its bearer handle. Modern
 	// clients poll tasks/get instead.
-	if modernTask {
+	if modernTask || sessionID == "" {
 		return
 	}
 
@@ -3648,7 +3711,7 @@ func (s *MCPServer) sendTaskStatusNotification(task mcp.Task, modernTask bool) {
 		taskMap["pollIntervalMs"] = *task.PollInterval // SEP-2663 field name
 	}
 
-	s.SendNotificationToAllClients(mcp.MethodNotificationTasksStatus, taskMap)
+	_ = s.SendNotificationToSpecificClient(sessionID, mcp.MethodNotificationTasksStatus, taskMap)
 }
 
 // getSessionID extracts the session ID from the context.

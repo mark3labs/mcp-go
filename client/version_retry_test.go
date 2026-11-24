@@ -31,6 +31,7 @@ type versionRejectingServer struct {
 	rejected int
 	requests []string
 	headers  []string
+	routes   []string
 }
 
 func (s *versionRejectingServer) seen() []string {
@@ -65,6 +66,7 @@ func (s *versionRejectingServer) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	s.mu.Lock()
 	s.requests = append(s.requests, request.Method+" "+version)
 	s.headers = append(s.headers, r.Header.Get("MCP-Protocol-Version"))
+	s.routes = append(s.routes, r.Header.Get("X-Route"))
 	reject := request.Method == string(mcp.MethodServerDiscover) && (s.rejections < 0 || s.rejected < s.rejections)
 	if reject {
 		s.rejected++
@@ -143,6 +145,31 @@ func newClientAgainst(t *testing.T, server *versionRejectingServer, opts ...Clie
 	t.Cleanup(func() { _ = client.Close() })
 	require.NoError(t, client.Start(t.Context()))
 	return client
+}
+
+func TestInitializeDiscoveryHeaders(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		method string
+		want   string
+	}{
+		{"explicit request headers", "", "blue"},
+		{"headers from an inbound request", string(mcp.MethodInitialize), ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			server := &versionRejectingServer{supported: []string{mcp.LATEST_PROTOCOL_VERSION}, rejections: 1}
+			client := newClientAgainst(t, server)
+			result, err := client.Initialize(t.Context(), mcp.InitializeRequest{
+				Request: mcp.Request{Method: tt.method},
+				Header:  http.Header{"X-Route": {"blue"}},
+			})
+			require.NoError(t, err)
+			require.Equal(t, mcp.LATEST_PROTOCOL_VERSION, result.ProtocolVersion)
+			server.mu.Lock()
+			defer server.mu.Unlock()
+			assert.Equal(t, []string{tt.want, tt.want}, server.routes, "first discovery request and retry")
+		})
+	}
 }
 
 func TestInitializeRetriesAnAdvertisedRejectedVersion(t *testing.T) {

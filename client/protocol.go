@@ -361,7 +361,7 @@ func validateDiscoverResult(data json.RawMessage) error {
 // The probe is bounded by a timeout: a well-behaved JSON-RPC server answers an
 // unknown method with MethodNotFound, but a server predating this method may
 // simply ignore it, which on stdio would otherwise block forever.
-func (c *Client) negotiateModern(ctx context.Context, preferred string) (*mcp.DiscoverResult, bool, error) {
+func (c *Client) negotiateModern(ctx context.Context, preferred string, header http.Header) (*mcp.DiscoverResult, bool, error) {
 	if preferred == "" {
 		preferred = mcp.LATEST_PROTOCOL_VERSION
 	}
@@ -383,7 +383,7 @@ func (c *Client) negotiateModern(ctx context.Context, preferred string) (*mcp.Di
 	modern := false
 	for attempt := range 2 {
 		var result *mcp.DiscoverResult
-		result, err = c.Discover(probeCtx, mcp.DiscoverRequest{})
+		result, err = c.Discover(probeCtx, mcp.DiscoverRequest{Header: header})
 		if err == nil {
 			version := discoveredVersion(c.protocolVersion, result.SupportedVersions)
 			if version == "" {

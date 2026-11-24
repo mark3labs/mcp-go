@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -699,16 +700,16 @@ func TestMCPServer_TaskListPagination(t *testing.T) {
 		assert.Equal(t, "task-delta", result.Tasks[0].TaskId)
 		assert.Equal(t, "task-gamma", result.Tasks[1].TaskId)
 
-		// Should have nextCursor even though this is the last page (client will fetch empty third page)
-		assert.NotEmpty(t, result.NextCursor)
+		assert.Empty(t, result.NextCursor, "an exactly full last page must not advertise another page")
 
-		// Fetch third page to confirm it's empty
+		// Cursors previously returned for the last item still yield an empty page.
+		terminalCursor := base64.StdEncoding.EncodeToString([]byte("task-gamma"))
 		requestJSON3 := `{
 			"jsonrpc": "2.0",
 			"id": 3,
 			"method": "tasks/list",
 			"params": {
-				"cursor": "` + string(result.NextCursor) + `"
+				"cursor": "` + terminalCursor + `"
 			}
 		}`
 
@@ -918,18 +919,83 @@ func (f fakeSess) Initialized() bool {
 
 var _ ClientSession = fakeSess{}
 
+func TestMCPServer_TaskSessionIsolation(t *testing.T) {
+	tests := []struct {
+		name     string
+		ownerID  string
+		callerID string
+		allowed  bool
+	}{
+		{name: "own session", ownerID: "owner", callerID: "owner", allowed: true},
+		{name: "another session", ownerID: "owner", callerID: "other"},
+		{name: "sessionless caller", ownerID: "owner"},
+		{name: "sessionless task", callerID: "other"},
+		{name: "sessionless task and caller", allowed: true},
+	}
+	for _, tt := range tests {
+		for _, method := range []string{"tasks/get", "tasks/result", "tasks/list", "tasks/cancel"} {
+			t.Run(tt.name+"/"+method, func(t *testing.T) {
+				server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+				ownerCtx := server.WithContext(t.Context(), NewInProcessSession(tt.ownerID, nil))
+				callerCtx := server.WithContext(t.Context(), NewInProcessSession(tt.callerID, nil))
+				entry, err := server.createTask(ownerCtx, "private-task", "private-tool", nil, nil)
+				require.NoError(t, err)
+				if method != "tasks/cancel" {
+					server.completeTask(entry, mcp.NewToolResultText("private-result"), nil)
+				}
+
+				params := map[string]string{}
+				if method != "tasks/list" {
+					params["taskId"] = "private-task"
+				}
+				message, err := json.Marshal(mcp.JSONRPCRequest{
+					JSONRPC: mcp.JSONRPC_VERSION,
+					ID:      mcp.NewRequestId(1),
+					Request: mcp.Request{Method: method},
+					Params:  params,
+				})
+				require.NoError(t, err)
+				response := server.HandleMessage(callerCtx, message)
+
+				if method == "tasks/list" {
+					require.IsType(t, mcp.JSONRPCResponse{}, response)
+					tasks := response.(mcp.JSONRPCResponse).Result.(mcp.ListTasksResult).Tasks
+					if tt.allowed {
+						require.Len(t, tasks, 1)
+						assert.Equal(t, "private-task", tasks[0].TaskId)
+						return
+					}
+					assert.Empty(t, tasks)
+					return
+				}
+				if tt.allowed {
+					require.IsType(t, mcp.JSONRPCResponse{}, response)
+					return
+				}
+				require.IsType(t, mcp.JSONRPCError{}, response)
+				assert.Equal(t, mcp.INVALID_PARAMS, response.(mcp.JSONRPCError).Error.Code)
+				if method == "tasks/cancel" {
+					task, _, err := server.getTask(ownerCtx, "private-task")
+					require.NoError(t, err)
+					assert.Equal(t, mcp.TaskStatusWorking, task.Status)
+				}
+			})
+		}
+	}
+}
+
 func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 	server := NewMCPServer("test", "1.0.0",
 		WithTaskCapabilities(true, true, true),
 	)
 
 	// Create a session to receive notifications
-	ctx := t.Context()
 	notifyChan := make(chan mcp.JSONRPCNotification, 10)
 	session := fakeSess{
 		sessionID:  "test-session",
 		notifyChan: notifyChan,
 	}
+	ctx := server.WithContext(t.Context(), session)
 	err := server.RegisterSession(ctx, session)
 	require.NoError(t, err)
 
@@ -1095,52 +1161,63 @@ func TestMCPServer_TaskStatusNotifications(t *testing.T) {
 		}
 	})
 
-	t.Run("multiple clients receive notifications", func(t *testing.T) {
-		// Create two additional sessions
-		notifyChan1 := make(chan mcp.JSONRPCNotification, 10)
-		session1 := fakeSess{
-			sessionID:  "test-session-1",
-			notifyChan: notifyChan1,
+	t.Run("notifications are limited to the task owner", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			ownerID string
+			status  mcp.TaskStatus
+		}{
+			{name: "completed", ownerID: "owner", status: mcp.TaskStatusCompleted},
+			{name: "failed", ownerID: "owner", status: mcp.TaskStatusFailed},
+			{name: "cancelled", ownerID: "owner", status: mcp.TaskStatusCancelled},
+			{name: "sessionless completed", status: mcp.TaskStatusCompleted},
+			{name: "sessionless failed", status: mcp.TaskStatusFailed},
+			{name: "sessionless cancelled", status: mcp.TaskStatusCancelled},
 		}
-		err := server.RegisterSession(ctx, session1)
-		require.NoError(t, err)
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				server := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+				owner := NewInProcessSession("owner", nil)
+				other := NewInProcessSession("other", nil)
+				owner.Initialize()
+				other.Initialize()
+				require.NoError(t, server.RegisterSession(t.Context(), owner))
+				require.NoError(t, server.RegisterSession(t.Context(), other))
+				ctx := server.WithContext(t.Context(), NewInProcessSession(tt.ownerID, nil))
+				entry, err := server.createTask(ctx, "private-task", "private-tool", nil, nil)
+				require.NoError(t, err)
 
-		notifyChan2 := make(chan mcp.JSONRPCNotification, 10)
-		session2 := fakeSess{
-			sessionID:  "test-session-2",
-			notifyChan: notifyChan2,
-		}
-		err = server.RegisterSession(ctx, session2)
-		require.NoError(t, err)
+				switch tt.status {
+				case mcp.TaskStatusCompleted:
+					server.completeTask(entry, mcp.NewToolResultText("private-result"), nil)
+				case mcp.TaskStatusFailed:
+					server.completeTask(entry, nil, fmt.Errorf("private-error"))
+				case mcp.TaskStatusCancelled:
+					require.NoError(t, server.cancelTask(ctx, "private-task"))
+				}
 
-		// Create a task
-		entry, err := server.createTask(ctx, "task-notify-multi", "test-tool", nil, nil)
-		require.NoError(t, err)
-
-		// Clear any initial notifications
-		for len(notifyChan1) > 0 {
-			<-notifyChan1
-		}
-		for len(notifyChan2) > 0 {
-			<-notifyChan2
-		}
-
-		// Complete the task
-		server.completeTask(entry, "result", nil)
-
-		// Both sessions should receive notification
-		select {
-		case notification := <-notifyChan1:
-			assert.Equal(t, mcp.MethodNotificationTasksStatus, notification.Method)
-		case <-time.After(1 * time.Second):
-			t.Fatal("Expected notification on session1")
-		}
-
-		select {
-		case notification := <-notifyChan2:
-			assert.Equal(t, mcp.MethodNotificationTasksStatus, notification.Method)
-		case <-time.After(1 * time.Second):
-			t.Fatal("Expected notification on session2")
+				select {
+				case notification := <-other.ClientNotifications():
+					t.Fatalf("another session received task state: %+v", notification)
+				default:
+				}
+				if tt.ownerID == "" {
+					select {
+					case notification := <-owner.ClientNotifications():
+						t.Fatalf("sessionless task was broadcast: %+v", notification)
+					default:
+					}
+					return
+				}
+				select {
+				case notification := <-owner.ClientNotifications():
+					assert.Equal(t, mcp.MethodNotificationTasksStatus, notification.Method)
+					assert.Equal(t, "private-task", notification.Params.AdditionalFields["taskId"])
+					assert.Equal(t, tt.status, notification.Params.AdditionalFields["status"])
+				default:
+					t.Fatal("task owner did not receive its notification")
+				}
+			})
 		}
 	})
 

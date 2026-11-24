@@ -390,6 +390,8 @@ func outboundHeader(header http.Header, requestMethod string) http.Header {
 // succeeds the connection is stateless and every subsequent request carries
 // its own protocol metadata; the returned InitializeResult is rendered from
 // the discovery response so that callers observe the same value in both eras.
+// Explicit request headers apply to each discovery attempt and to the legacy
+// initialize request.
 //
 // When the probe fails without identifying a modern server, the server is
 // taken to be legacy, and the classic initialize handshake is performed instead.
@@ -412,7 +414,7 @@ func (c *Client) Initialize(
 	// earlier revision or configured the transport in a way that rules it out.
 	if !c.legacyOnly && !c.transportRequiresLegacyProtocol() &&
 		(preferred == "" || mcp.IsModernProtocol(preferred)) {
-		discovered, modern, err := c.negotiateModern(ctx, preferred)
+		discovered, modern, err := c.negotiateModern(ctx, preferred, outboundHeader(request.Header, request.Method))
 		if err == nil {
 			c.serverCapabilities = discovered.Capabilities
 			c.applyNegotiatedVersion(c.protocolVersion)
@@ -844,14 +846,26 @@ func (c *Client) handleIncomingRequest(ctx context.Context, request transport.JS
 	case string(mcp.MethodListRoots):
 		return c.handleListRootsRequestTransport(ctx, request)
 	default:
-		return nil, fmt.Errorf("unsupported request method: %s", request.Method)
+		return methodNotSupported(request), nil
 	}
+}
+
+// methodNotSupported answers a request for a method the client does not
+// implement or has no handler for. It is a response rather than an error,
+// which the transports report as an internal error.
+func methodNotSupported(request transport.JSONRPCRequest) *transport.JSONRPCResponse {
+	return transport.NewJSONRPCErrorResponse(
+		request.ID,
+		mcp.METHOD_NOT_FOUND,
+		fmt.Sprintf("unsupported request method: %s", request.Method),
+		nil,
+	)
 }
 
 // handleSamplingRequestTransport handles sampling requests at the transport level.
 func (c *Client) handleSamplingRequestTransport(ctx context.Context, request transport.JSONRPCRequest) (*transport.JSONRPCResponse, error) {
 	if c.samplingHandler == nil {
-		return nil, fmt.Errorf("no sampling handler configured")
+		return methodNotSupported(request), nil
 	}
 
 	// Parse the request parameters
@@ -920,7 +934,7 @@ func withRootsArray(result *mcp.ListRootsResult) *mcp.ListRootsResult {
 // handleListRootsRequestTransport handles list roots requests at the transport level.
 func (c *Client) handleListRootsRequestTransport(ctx context.Context, request transport.JSONRPCRequest) (*transport.JSONRPCResponse, error) {
 	if c.rootsHandler == nil {
-		return nil, fmt.Errorf("no roots handler configured")
+		return methodNotSupported(request), nil
 	}
 
 	// Create the MCP request
@@ -955,7 +969,7 @@ func (c *Client) handleListRootsRequestTransport(ctx context.Context, request tr
 // handleElicitationRequestTransport handles elicitation requests at the transport level.
 func (c *Client) handleElicitationRequestTransport(ctx context.Context, request transport.JSONRPCRequest) (*transport.JSONRPCResponse, error) {
 	if c.elicitationHandler == nil {
-		return nil, fmt.Errorf("no elicitation handler configured")
+		return methodNotSupported(request), nil
 	}
 
 	// Parse the request parameters
