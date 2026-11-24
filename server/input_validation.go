@@ -179,6 +179,13 @@ func schemaDigest(schemaJSON []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// hasStructuredToolSchema recognizes schemas that constrain values without a
+// top-level type, such as schemas using $ref, allOf or additionalProperties.
+func hasStructuredToolSchema(schema mcp.ToolArgumentsSchema) bool {
+	return schema.Type != "" || schema.Types != nil || len(schema.Properties) > 0 || len(schema.Required) > 0 ||
+		len(schema.Defs) > 0 || schema.AdditionalProperties != nil || len(schema.AdditionalFields) > 0
+}
+
 // schemaJSONFor returns the JSON representation of the tool's input schema.
 // It prefers RawInputSchema when set, otherwise marshals the structured
 // InputSchema. The boolean return is false when the tool has no usable input
@@ -187,7 +194,7 @@ func schemaJSONFor(tool mcp.Tool) ([]byte, bool) {
 	if len(tool.RawInputSchema) > 0 {
 		return tool.RawInputSchema, true
 	}
-	if tool.InputSchema.Type == "" && tool.InputSchema.Types == nil && len(tool.InputSchema.Properties) == 0 && len(tool.InputSchema.Required) == 0 && tool.InputSchema.AdditionalProperties == nil {
+	if !hasStructuredToolSchema(mcp.ToolArgumentsSchema(tool.InputSchema)) {
 		return nil, false
 	}
 	// MarshalJSON already returns compact, HTML-escaped JSON. Check validity

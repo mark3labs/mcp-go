@@ -860,7 +860,7 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 			return nil, fmt.Errorf("tool %s has both OutputSchema and RawOutputSchema set: %w", t.Name, errToolSchemaConflict)
 		}
 		m["outputSchema"] = t.RawOutputSchema
-	} else if t.OutputSchema.Type != "" || t.OutputSchema.Types != nil {
+	} else if ToolArgumentsSchema(t.OutputSchema).hasStructuredKeywords() {
 		m["outputSchema"] = t.OutputSchema
 	}
 
@@ -971,8 +971,9 @@ func toolArgumentsSchemaMarshalJSON(tis ToolArgumentsSchema) ([]byte, error) {
 			m[key] = value
 		}
 	}
-	m["type"] = tis.Type
-	if tis.Type == "" && tis.Types != nil {
+	if tis.Type != "" {
+		m["type"] = tis.Type
+	} else if tis.Types != nil {
 		m["type"] = tis.Types
 	}
 

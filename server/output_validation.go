@@ -124,7 +124,7 @@ func outputSchemaJSONFor(tool mcp.Tool) ([]byte, bool) {
 	if len(tool.RawOutputSchema) > 0 {
 		return tool.RawOutputSchema, true
 	}
-	if tool.OutputSchema.Type == "" && tool.OutputSchema.Types == nil && len(tool.OutputSchema.Properties) == 0 && len(tool.OutputSchema.Required) == 0 {
+	if !hasStructuredToolSchema(mcp.ToolArgumentsSchema(tool.OutputSchema)) {
 		return nil, false
 	}
 	data, err := json.Marshal(tool.OutputSchema)
