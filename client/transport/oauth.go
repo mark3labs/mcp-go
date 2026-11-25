@@ -1800,5 +1800,10 @@ func (h *OAuthHandler) GetAuthorizationURL(ctx context.Context, state, codeChall
 		params.Set("resource", resourceURL)
 	}
 
-	return authorizationEndpoint + "?" + params.Encode(), nil
+	// RFC 6749 section 3.1: a query already on the endpoint must be retained.
+	separator := "?"
+	if strings.Contains(authorizationEndpoint, "?") {
+		separator = "&"
+	}
+	return authorizationEndpoint + separator + params.Encode(), nil
 }
