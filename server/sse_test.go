@@ -1824,34 +1824,60 @@ func addHeaderVerificationTool(mcpServer *MCPServer) {
 }
 
 func TestSSEServer_EndpointEscapesCustomSessionID(t *testing.T) {
-	const sessionID = "q+Zk/3xX9b2c+0Lw8Y1tPA=="
-	mcpServer := NewMCPServer("test", "1.0.0")
-	sseServer := NewSSEServer(mcpServer,
-		WithBaseURL("http://localhost:0"),
-		WithSessionIDGenerator(func(context.Context, *http.Request) (string, error) {
-			return sessionID, nil
-		}),
-	)
+	tests := []struct {
+		name      string
+		sessionID string
+	}{
+		{name: "plus slash equals", sessionID: "q+Zk/3xX9b2c+0Lw8Y1tPA=="},
+		{name: "percent ampersand hash", sessionID: "a%20b&c=d#e"},
+		{name: "default uuid", sessionID: "7c9e6679-7425-40de-944b-e07fc1f90ae7"},
+	}
 
-	ts := httptest.NewServer(sseServer)
-	defer ts.Close()
-	sseServer.baseURL = ts.URL
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mcpServer := NewMCPServer("test", "1.0.0")
+			sseServer := NewSSEServer(mcpServer,
+				WithBaseURL("http://localhost:0"),
+				WithSessionIDGenerator(func(context.Context, *http.Request) (string, error) {
+					return tt.sessionID, nil
+				}),
+			)
 
-	sseResp, err := http.Get(ts.URL + "/sse")
-	require.NoError(t, err)
-	defer sseResp.Body.Close()
+			ts := httptest.NewServer(sseServer)
+			defer ts.Close()
+			sseServer.baseURL = ts.URL
 
-	endpointEvent, err := readSSEEvent(sseResp)
-	require.NoError(t, err)
-	require.Contains(t, endpointEvent, "event: endpoint")
-	messageURL := strings.TrimSpace(
-		strings.Split(strings.Split(endpointEvent, "data: ")[1], "\n")[0],
-	)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/sse", nil)
+			require.NoError(t, err)
+			sseResp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+			defer sseResp.Body.Close()
 
-	requestBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"test-client","version":"1.0.0"}}}`)
-	resp, err := http.Post(messageURL, "application/json", bytes.NewReader(requestBody))
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	require.Equal(t, http.StatusAccepted, resp.StatusCode, "endpoint %q: %s", messageURL, body)
+			// Read the whole endpoint event, up to its blank-line delimiter.
+			var event, messageURL string
+			reader := bufio.NewReader(sseResp.Body)
+			for {
+				line, err := reader.ReadString('\n')
+				require.NoError(t, err, "partial event: %q", event)
+				event += line
+				if data, ok := strings.CutPrefix(line, "data: "); ok {
+					messageURL = strings.TrimSpace(data)
+				}
+				if strings.TrimRight(line, "\r\n") == "" {
+					break
+				}
+			}
+			require.Contains(t, event, "event: endpoint")
+			require.NotEmpty(t, messageURL, "event: %q", event)
+
+			requestBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"test-client","version":"1.0.0"}}}`)
+			resp, err := http.Post(messageURL, "application/json", bytes.NewReader(requestBody))
+			require.NoError(t, err)
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(resp.Body)
+			require.Equal(t, http.StatusAccepted, resp.StatusCode, "endpoint %q: %s", messageURL, body)
+		})
+	}
 }
