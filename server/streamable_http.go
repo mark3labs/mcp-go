@@ -1070,6 +1070,17 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 
 	// Process message through MCPServer
 	response := s.server.HandleMessage(ctx, rawData)
+	// A result that cannot be encoded, such as one holding NaN, is answered
+	// with an INTERNAL_ERROR rather than an empty body or no event at all.
+	if result, ok := response.(mcp.JSONRPCResponse); ok {
+		if _, err := json.Marshal(result); err != nil {
+			response = createErrorResponse(
+				result.ID.Value(),
+				mcp.INTERNAL_ERROR,
+				fmt.Sprintf("failed to marshal response: %v", err),
+			)
+		}
+	}
 	if listening {
 		// Stop broadcasts before draining what is already queued.
 		s.server.unregisterListenSession(session)

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -67,6 +68,20 @@ func TestUnencodableResultIsAnsweredWithInternalError(t *testing.T) {
 				var message json.RawMessage
 				readSSEData(t, reader, &message)
 				return message
+			},
+		},
+		{
+			name: "streamable http",
+			call: func(t *testing.T) []byte {
+				ts := httptest.NewServer(NewStreamableHTTPServer(newUnencodableResultServer(), WithStateLess(true)))
+				defer ts.Close()
+
+				resp, err := http.Post(ts.URL+"/mcp", "application/json", strings.NewReader(unencodableResultCall))
+				require.NoError(t, err)
+				defer resp.Body.Close()
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+				return body
 			},
 		},
 	}
