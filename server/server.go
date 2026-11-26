@@ -2528,9 +2528,36 @@ func (s *MCPServer) handleTaskAugmentedToolCall(
 // newDetachedTaskContext returns the context a task runs under. It keeps the
 // values of ctx but not its cancellation: ctx belongs to the tools/call request,
 // which ends as soon as the CreateTaskResult is returned. The task is cancelled
-// only through the returned cancel func, which tasks/cancel and TTL expiry call.
+// only through the returned cancel func, which tasks/cancel, TTL expiry and the
+// shutdown of the transport that started the task call.
 func newDetachedTaskContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithCancel(context.WithoutCancel(ctx))
+}
+
+// taskLifetimeKey is the context key for a context that ends when the
+// transport serving a request shuts down. Each transport sets its own, so a
+// task is cancelled with the transport that started it and not with another
+// transport serving the same MCPServer.
+type taskLifetimeKey struct{}
+
+// withTaskLifetime returns a copy of ctx under which started tasks are
+// cancelled when lifetime ends.
+func withTaskLifetime(ctx, lifetime context.Context) context.Context {
+	return context.WithValue(ctx, taskLifetimeKey{}, lifetime)
+}
+
+// cancelTaskOnShutdown cancels entry, as tasks/cancel does, once the lifetime
+// set on ctx by withTaskLifetime ends. A worker calls the returned stop func
+// when its handler returns.
+func (s *MCPServer) cancelTaskOnShutdown(ctx context.Context, entry *taskEntry) (stop func() bool) {
+	lifetime, ok := ctx.Value(taskLifetimeKey{}).(context.Context)
+	if !ok {
+		return func() bool { return false }
+	}
+	hookCtx := context.WithoutCancel(ctx)
+	return context.AfterFunc(lifetime, func() {
+		_ = s.cancelTaskEntry(hookCtx, entry, "Task cancelled by server shutdown")
+	})
 }
 
 // executeTaskTool executes a task tool handler asynchronously.
@@ -2564,6 +2591,8 @@ func (s *MCPServer) executeTaskTool(
 		_ = s.cancelTaskEntry(context.WithoutCancel(ctx), entry, context.Canceled.Error())
 		return
 	}
+	stop := s.cancelTaskOnShutdown(ctx, entry)
+	defer stop()
 
 	// Execute the task tool handler
 	result, err := taskTool.Handler(taskCtx, request)
@@ -2656,6 +2685,8 @@ func (s *MCPServer) executeRegularToolAsTask(
 		_ = s.cancelTaskEntry(context.WithoutCancel(ctx), entry, context.Canceled.Error())
 		return
 	}
+	stop := s.cancelTaskOnShutdown(ctx, entry)
+	defer stop()
 
 	// Execute the regular tool handler with middleware applied
 	finalHandler := regularTool.Handler

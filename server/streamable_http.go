@@ -376,6 +376,11 @@ type StreamableHTTPServer struct {
 	sessionLastActive sync.Map // sessionID → *atomic.Int64 (unix nanos)
 	sweeperCancel     context.CancelFunc
 
+	// tasksCtx ends when Shutdown runs, which cancels the tasks started
+	// through this server.
+	tasksCtx    context.Context
+	cancelTasks context.CancelFunc
+
 	// protectedResourceMetadata, when non-nil, is served as RFC 9728 OAuth
 	// 2.0 Protected Resource Metadata. The well-known path is derived from
 	// the configured Resource via ProtectedResourceMetadataPath.
@@ -406,6 +411,7 @@ func NewStreamableHTTPServer(server *MCPServer, opts ...StreamableHTTPOption) *S
 		sessionResources:         newSessionResourcesStore(),
 		sessionResourceTemplates: newSessionResourceTemplatesStore(),
 	}
+	s.tasksCtx, s.cancelTasks = context.WithCancel(context.Background())
 
 	// Apply all options
 	for _, opt := range opts {
@@ -598,11 +604,13 @@ func (s *StreamableHTTPServer) Start(addr string) error {
 }
 
 // Shutdown gracefully stops the server, closing all active sessions
-// and shutting down the HTTP server.
+// and shutting down the HTTP server. Tasks started through this server are
+// cancelled, including any a request starts after Shutdown.
 func (s *StreamableHTTPServer) Shutdown(ctx context.Context) error {
 	if s.sweeperCancel != nil {
 		s.sweeperCancel()
 	}
+	s.cancelTasks()
 
 	s.CloseSessions(ctx)
 
@@ -862,6 +870,7 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 	// Set the client context before handling the message
 	ctx := s.server.WithContext(r.ctx(), session)
 	ctx = WithSupportedProtocolVersions(ctx, s.supportedProtocolVersions())
+	ctx = withTaskLifetime(ctx, s.tasksCtx)
 	if s.contextFunc != nil {
 		ctx = s.contextFunc(ctx, r.asHTTPRequest())
 	}
