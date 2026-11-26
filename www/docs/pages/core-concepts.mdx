@@ -97,21 +97,21 @@ Prompts are reusable interaction templates that help structure conversations bet
 // Code review prompt
 reviewPrompt := mcp.NewPrompt("code_review",
     mcp.WithPromptDescription("Review code for best practices and issues"),
-    mcp.WithPromptArgument("code", 
-        mcp.Required(),
-        mcp.Description("The code to review"),
+    mcp.WithArgument("code",
+        mcp.RequiredArgument(),
+        mcp.ArgumentDescription("The code to review"),
     ),
-    mcp.WithPromptArgument("language",
-        mcp.Description("Programming language"),
+    mcp.WithArgument("language",
+        mcp.ArgumentDescription("Programming language"),
     ),
 )
 
 // Data analysis prompt
 analysisPrompt := mcp.NewPrompt("analyze_data",
     mcp.WithPromptDescription("Analyze dataset and provide insights"),
-    mcp.WithPromptArgument("dataset_uri", mcp.Required()),
-    mcp.WithPromptArgument("focus_areas", 
-        mcp.Description("Specific areas to focus analysis on"),
+    mcp.WithArgument("dataset_uri", mcp.RequiredArgument()),
+    mcp.WithArgument("focus_areas",
+        mcp.ArgumentDescription("Specific areas to focus analysis on"),
     ),
 )
 ```

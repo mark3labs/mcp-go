@@ -12,13 +12,12 @@ Prompts in MCP serve as templates that can be invoked by LLMs to generate struct
 // Create a simple prompt
 prompt := mcp.NewPrompt("code_review",
     mcp.WithPromptDescription("Review code for best practices and issues"),
-    mcp.WithPromptArgument("code",
-        mcp.Required(),
-        mcp.Description("The code to review"),
+    mcp.WithArgument("code",
+        mcp.RequiredArgument(),
+        mcp.ArgumentDescription("The code to review"),
     ),
-    mcp.WithPromptArgument("language",
-        mcp.Description("Programming language"),
-        mcp.Default("auto-detect"),
+    mcp.WithArgument("language",
+        mcp.ArgumentDescription("Programming language (default: auto-detect)"),
     ),
 )
 ```
@@ -79,17 +78,15 @@ func main() {
     // Code review prompt
     codeReviewPrompt := mcp.NewPrompt("code_review",
         mcp.WithPromptDescription("Review code for best practices, bugs, and improvements"),
-        mcp.WithPromptArgument("code",
-            mcp.Required(),
-            mcp.Description("The code to review"),
+        mcp.WithArgument("code",
+            mcp.RequiredArgument(),
+            mcp.ArgumentDescription("The code to review"),
         ),
-        mcp.WithPromptArgument("language",
-            mcp.Description("Programming language (auto-detected if not specified)"),
+        mcp.WithArgument("language",
+            mcp.ArgumentDescription("Programming language (auto-detected if not specified)"),
         ),
-        mcp.WithPromptArgument("focus",
-            mcp.Description("Specific areas to focus on"),
-            mcp.Enum("security", "performance", "readability", "best-practices", "all"),
-            mcp.Default("all"),
+        mcp.WithArgument("focus",
+            mcp.ArgumentDescription("Area to focus on: security, performance, readability, best-practices or all (default)"),
         ),
     )
 
@@ -104,9 +101,9 @@ func handleCodeReview(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPr
         return nil, fmt.Errorf("missing required arguments")
     }
     
-    code, ok := args["code"].(string)
-    if !ok {
-        return nil, fmt.Errorf("code argument is required and must be a string")
+    code := args["code"]
+    if code == "" {
+        return nil, fmt.Errorf("code argument is required")
     }
     
     language := getStringArg(args, "language", "auto-detect")
@@ -140,7 +137,7 @@ func handleCodeReview(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPr
 
 ```go
 func handleDataAnalysis(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-    datasetURI := req.Params.Arguments["dataset_uri"].(string)
+    datasetURI := req.Params.Arguments["dataset_uri"]
     analysisType := getStringArg(req.Params.Arguments, "analysis_type", "exploratory")
     focusAreas := getStringSliceArg(req.Params.Arguments, "focus_areas", []string{})
 
@@ -206,20 +203,22 @@ Please provide a comprehensive analysis including:
 ```go
 func handleFlexiblePrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
     // Required arguments
-    task := req.Params.Arguments["task"].(string)
+    task := req.Params.Arguments["task"]
     
     // Optional arguments with defaults
     tone := getStringArg(req.Params.Arguments, "tone", "professional")
     length := getStringArg(req.Params.Arguments, "length", "medium")
     audience := getStringArg(req.Params.Arguments, "audience", "general")
     
-    // Array arguments
+    // List arguments, passed as comma-separated values
     keywords := getStringSliceArg(req.Params.Arguments, "keywords", []string{})
     
-    // Object arguments
+    // Structured arguments, passed as a JSON string
     var constraints map[string]interface{}
     if c, exists := req.Params.Arguments["constraints"]; exists {
-        constraints = c.(map[string]interface{})
+        if err := json.Unmarshal([]byte(c), &constraints); err != nil {
+            return nil, fmt.Errorf("constraints must be a JSON object: %w", err)
+        }
     }
 
     // Build prompt based on parameters
@@ -236,28 +235,29 @@ func handleFlexiblePrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.G
     }, nil
 }
 
-func getStringArg(args map[string]interface{}, key, defaultValue string) string {
-    if val, exists := args[key]; exists {
-        if str, ok := val.(string); ok {
-            return str
-        }
+// Prompt arguments are always strings (req.Params.Arguments is a
+// map[string]string), so these helpers only supply defaults and parse
+// string-encoded values.
+
+func getStringArg(args map[string]string, key, defaultValue string) string {
+    if val, exists := args[key]; exists && val != "" {
+        return val
     }
     return defaultValue
 }
 
-func getStringSliceArg(args map[string]interface{}, key string, defaultValue []string) []string {
-    if val, exists := args[key]; exists {
-        if slice, ok := val.([]interface{}); ok {
-            result := make([]string, len(slice))
-            for i, v := range slice {
-                if str, ok := v.(string); ok {
-                    result[i] = str
-                }
-            }
-            return result
+func getStringSliceArg(args map[string]string, key string, defaultValue []string) []string {
+    val, exists := args[key]
+    if !exists || val == "" {
+        return defaultValue
+    }
+    var result []string
+    for _, item := range strings.Split(val, ",") {
+        if item = strings.TrimSpace(item); item != "" {
+            result = append(result, item)
         }
     }
-    return defaultValue
+    return result
 }
 ```
 
@@ -267,7 +267,7 @@ func getStringSliceArg(args map[string]interface{}, key string, defaultValue []s
 
 ```go
 func handleConversationPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-    scenario := req.Params.Arguments["scenario"].(string)
+    scenario := req.Params.Arguments["scenario"]
     userRole := getStringArg(req.Params.Arguments, "user_role", "customer")
     
     var messages []mcp.PromptMessage
@@ -317,8 +317,8 @@ func handleConversationPrompt(ctx context.Context, req mcp.GetPromptRequest) (*m
 
 ```go
 func handleRoleBasedPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-    expertise := req.Params.Arguments["expertise"].(string)
-    task := req.Params.Arguments["task"].(string)
+    expertise := req.Params.Arguments["expertise"]
+    task := req.Params.Arguments["task"]
     context := getStringArg(req.Params.Arguments, "context", "")
 
     // Define system message based on expertise
@@ -368,7 +368,7 @@ func handleRoleBasedPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.
 
 ```go
 func handleResourceEmbeddedPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-    documentURI := req.Params.Arguments["document_uri"].(string)
+    documentURI := req.Params.Arguments["document_uri"]
     analysisType := getStringArg(req.Params.Arguments, "analysis_type", "summary")
 
     // Fetch the document content
@@ -418,19 +418,18 @@ Please provide your analysis following the instructions above.`,
 
 ```go
 func handleDynamicResourcePrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-    resourceURIs := req.Params.Arguments["resource_uris"].([]interface{})
+    // A comma-separated list of resource URIs
+    resourceURIs := getStringSliceArg(req.Params.Arguments, "resource_uris", nil)
     promptType := getStringArg(req.Params.Arguments, "prompt_type", "compare")
 
     // Fetch all resources
     var resources []ResourceData
     for _, uri := range resourceURIs {
-        if uriStr, ok := uri.(string); ok {
-            resource, err := fetchResource(ctx, uriStr)
-            if err != nil {
-                return nil, fmt.Errorf("failed to fetch resource %s: %w", uriStr, err)
-            }
-            resources = append(resources, resource)
+        resource, err := fetchResource(ctx, uri)
+        if err != nil {
+            return nil, fmt.Errorf("failed to fetch resource %s: %w", uri, err)
         }
+        resources = append(resources, resource)
     }
 
     // Build prompt based on type and resources
@@ -471,7 +470,7 @@ func handleDynamicResourcePrompt(ctx context.Context, req mcp.GetPromptRequest) 
 ```go
 func handleConditionalPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
     userLevel := getStringArg(req.Params.Arguments, "user_level", "beginner")
-    topic := req.Params.Arguments["topic"].(string)
+    topic := req.Params.Arguments["topic"]
     includeExamples := getBoolArg(req.Params.Arguments, "include_examples", true)
 
     var prompt strings.Builder
@@ -504,9 +503,9 @@ func handleConditionalPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mc
     }, nil
 }
 
-func getBoolArg(args map[string]interface{}, key string, defaultValue bool) bool {
+func getBoolArg(args map[string]string, key string, defaultValue bool) bool {
     if val, exists := args[key]; exists {
-        if b, ok := val.(bool); ok {
+        if b, err := strconv.ParseBool(val); err == nil {
             return b
         }
     }
@@ -563,8 +562,12 @@ Please assess:
 }
 
 func handleTemplatePrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-    templateName := req.Params.Arguments["template"].(string)
-    variables := req.Params.Arguments["variables"].(map[string]interface{})
+    templateName := req.Params.Arguments["template"]
+    // Template variables, passed as a JSON object string
+    var variables map[string]string
+    if err := json.Unmarshal([]byte(req.Params.Arguments["variables"]), &variables); err != nil {
+        return nil, fmt.Errorf("variables must be a JSON object of strings: %w", err)
+    }
 
     template, exists := promptTemplates[templateName]
     if !exists {
@@ -576,7 +579,7 @@ func handleTemplatePrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.G
     for _, variable := range template.Variables {
         if value, exists := variables[variable]; exists {
             placeholder := fmt.Sprintf("{{.%s}}", variable)
-            content = strings.ReplaceAll(content, placeholder, fmt.Sprintf("%v", value))
+            content = strings.ReplaceAll(content, placeholder, value)
         }
     }
 
