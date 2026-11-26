@@ -81,6 +81,15 @@ go run main.go
 
 ## Running Your First Server
 
+From the `hello-server` directory, build the server executable:
+
+```bash
+go build -o hello-server .
+```
+
+On Windows, use `go build -o hello-server.exe .`. Launching the executable
+lets stdio clients start the server from any working directory.
+
 ### Testing with Claude Desktop
 
 1. **Install Claude Desktop** from [Anthropic's website](https://claude.ai/download)
@@ -94,12 +103,14 @@ go run main.go
    {
      "mcpServers": {
        "hello-world": {
-         "command": "go",
-         "args": ["run", "/path/to/your/hello-server/main.go"]
+         "command": "/path/to/your/hello-server/hello-server"
        }
      }
    }
    ```
+
+   On Windows, use the absolute path to `hello-server.exe` and escape each
+   backslash in the JSON string.
 
 3. **Restart Claude Desktop** and look for the 🔌 icon indicating MCP connection
 
@@ -121,7 +132,8 @@ This opens a web interface where you can test your tools interactively.
 
 ## Basic Client Example
 
-You can also create MCP clients to connect to other servers:
+You can also create an MCP client to launch the stdio server. Replace the
+placeholder path with the absolute path to the executable you built.
 
 ```go
 package main
@@ -142,7 +154,7 @@ func main() {
     defer cancel()
 
     // Create stdio transport
-    stdioTransport := transport.NewStdio("go", nil, "run", "path/to/server/main.go")
+    stdioTransport := transport.NewStdio("/path/to/your/hello-server/hello-server", nil)
 
     // Create client with the transport
     c := client.NewClient(stdioTransport)
