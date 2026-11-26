@@ -138,6 +138,7 @@ func TestCallToolRequest_IntegerAtRangeEdge(t *testing.T) {
 		{"min int exponent", `-9.223372036854775808e18`, math.MinInt},
 		{"min int fraction", `-9223372036854775808.5`, math.MinInt},
 		{"max int", `9223372036854775807`, math.MaxInt},
+		{"fraction rounding to 2^63", `9223372036854775806.5`, math.MaxInt - 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

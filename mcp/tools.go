@@ -310,9 +310,6 @@ func parseRawInt(rawVal json.RawMessage, value float64) (n int, ok, outOfRange b
 	if err != nil {
 		return 0, false, true
 	}
-	if !rat.IsInt() {
-		return 0, false, false
-	}
 	return i, true, false
 }
 
