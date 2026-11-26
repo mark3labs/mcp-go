@@ -42,14 +42,14 @@ type SessionWithTools interface {
 	SetSessionTools(tools map[string]ServerTool)
 }
 
-// SessionWithResources is an extension of ClientSession that can store session-specific resource data
+// SessionWithResources is an extension of ClientSession that can store session-specific resource data.
 type SessionWithResources interface {
 	ClientSession
 	// GetSessionResources returns the resources specific to this session, if any
 	// This method must be thread-safe for concurrent access
 	GetSessionResources() map[string]ServerResource
-	// SetSessionResources sets resources specific to this session
-	// This method must be thread-safe for concurrent access
+	// SetSessionResources replaces the session resources and must be safe for concurrent use.
+	// Store the new map and release any storage lock before calling back into the server.
 	SetSessionResources(resources map[string]ServerResource)
 }
 
@@ -96,14 +96,14 @@ type SessionWithResourceSubscriptionsErr interface {
 	SubscribeToResourceErr(uri string) error
 }
 
-// SessionWithResourceTemplates is an extension of ClientSession that can store session-specific resource template data
+// SessionWithResourceTemplates is an extension of ClientSession that can store session-specific resource template data.
 type SessionWithResourceTemplates interface {
 	ClientSession
 	// GetSessionResourceTemplates returns the resource templates specific to this session, if any
 	// This method must be thread-safe for concurrent access
 	GetSessionResourceTemplates() map[string]ServerResourceTemplate
-	// SetSessionResourceTemplates sets resource templates specific to this session
-	// This method must be thread-safe for concurrent access
+	// SetSessionResourceTemplates replaces the session resource templates and must be safe for concurrent use.
+	// Store the new map and release any storage lock before calling back into the server.
 	SetSessionResourceTemplates(templates map[string]ServerResourceTemplate)
 }
 
@@ -244,7 +244,9 @@ func (s *MCPServer) broadcastToSession(session ClientSession, notification mcp.J
 	// opt-in: a session that opened a subscriptions/listen stream receives
 	// only the types it asked for (SEP-2575). Sessions that never opened one
 	// are unaffected.
-	if !subscriptionAllowsNotification(session, notification.Method) {
+	var allowed bool
+	notification, allowed = prepareSubscriptionNotification(session, notification)
+	if !allowed {
 		return
 	}
 	if sessionWithStreamableHTTPConfig, ok := session.(SessionWithStreamableHTTPConfig); ok {
@@ -276,7 +278,26 @@ func (s *MCPServer) broadcastToSession(session ClientSession, notification mcp.J
 	}
 }
 
+func prepareSubscriptionNotification(session ClientSession, notification mcp.JSONRPCNotification) (mcp.JSONRPCNotification, bool) {
+	if filtered, ok := session.(interface {
+		subscriptionNotification(mcp.JSONRPCNotification) (mcp.JSONRPCNotification, bool)
+	}); ok {
+		return filtered.subscriptionNotification(notification)
+	}
+	return notification, subscriptionAllowsNotification(session, notification.Method)
+}
+
 func (s *MCPServer) sendNotificationToSpecificClient(session ClientSession, notification mcp.JSONRPCNotification) error {
+	// Only list changes belong to the subscription stream. Acknowledgements
+	// and request-scoped notifications keep their existing delivery path.
+	switch notification.Method {
+	case mcp.MethodNotificationToolsListChanged, mcp.MethodNotificationPromptsListChanged, mcp.MethodNotificationResourcesListChanged:
+		var allowed bool
+		notification, allowed = prepareSubscriptionNotification(session, notification)
+		if !allowed {
+			return nil
+		}
+	}
 	// upgrades the client-server communication to SSE stream when the server sends notifications to the client
 	if sessionWithStreamableHTTPConfig, ok := session.(SessionWithStreamableHTTPConfig); ok {
 		sessionWithStreamableHTTPConfig.UpgradeToSSEWhenReceiveNotification()
@@ -423,6 +444,31 @@ func (s *MCPServer) SendNotificationToClient(
 	return s.sendNotificationCore(ctx, session, notification)
 }
 
+// SendProgressNotificationToClient sends a progress notification, such as one
+// built with mcp.NewProgressNotification, to the current client. It sends
+// nothing when the progress token is nil, because a request without a
+// progress token did not ask for progress.
+func (s *MCPServer) SendProgressNotificationToClient(
+	ctx context.Context,
+	notification mcp.ProgressNotification,
+) error {
+	p := notification.Params
+	if p.ProgressToken == nil {
+		return nil
+	}
+	params := map[string]any{
+		"progressToken": p.ProgressToken,
+		"progress":      p.Progress,
+	}
+	if p.Total != 0 {
+		params["total"] = p.Total
+	}
+	if p.Message != "" {
+		params["message"] = p.Message
+	}
+	return s.SendNotificationToClient(ctx, string(mcp.MethodNotificationProgress), params)
+}
+
 // SendNotificationToSpecificClient sends a notification to a specific client by session ID
 func (s *MCPServer) SendNotificationToSpecificClient(
 	sessionID string,
@@ -468,6 +514,7 @@ func (s *MCPServer) AddSessionTools(sessionID string, tools ...ServerTool) error
 
 	s.implicitlyRegisterToolCapabilities()
 
+	s.sessionToolsMu.Lock()
 	// Get existing tools (this should return a thread-safe copy)
 	sessionTools := session.GetSessionTools()
 
@@ -481,6 +528,7 @@ func (s *MCPServer) AddSessionTools(sessionID string, tools ...ServerTool) error
 	for _, tool := range tools {
 		s.applyStrictInputSchemaDefault(&tool.Tool)
 		if err := validateToolHeaderAnnotations(&tool.Tool); err != nil {
+			s.sessionToolsMu.Unlock()
 			return err
 		}
 		newSessionTools[tool.Tool.Name] = tool
@@ -488,6 +536,7 @@ func (s *MCPServer) AddSessionTools(sessionID string, tools ...ServerTool) error
 
 	// Set the tools (this should be thread-safe)
 	session.SetSessionTools(newSessionTools)
+	s.sessionToolsMu.Unlock()
 
 	// It only makes sense to send tool notifications to initialized sessions --
 	// if we're not initialized yet the client can't possibly have sent their
@@ -534,9 +583,11 @@ func (s *MCPServer) DeleteSessionTools(sessionID string, names ...string) error 
 		return ErrSessionDoesNotSupportTools
 	}
 
+	s.sessionToolsMu.Lock()
 	// Get existing tools (this should return a thread-safe copy)
 	sessionTools := session.GetSessionTools()
 	if sessionTools == nil {
+		s.sessionToolsMu.Unlock()
 		return nil
 	}
 
@@ -553,6 +604,7 @@ func (s *MCPServer) DeleteSessionTools(sessionID string, names ...string) error 
 
 	// Set the tools (this should be thread-safe)
 	session.SetSessionTools(newSessionTools)
+	s.sessionToolsMu.Unlock()
 
 	// It only makes sense to send tool notifications to initialized sessions --
 	// if we're not initialized yet the client can't possibly have sent their
@@ -587,6 +639,61 @@ func (s *MCPServer) DeleteSessionTools(sessionID string, names ...string) error 
 	return nil
 }
 
+// cloneSessionEntries returns a writable snapshot, including for an empty session.
+func cloneSessionEntries[T any](entries map[string]T) map[string]T {
+	cloned := make(map[string]T, len(entries))
+	maps.Copy(cloned, entries)
+	return cloned
+}
+
+// applySessionEntries updates a map owned by the caller.
+func applySessionEntries[T any](entries map[string]T, add map[string]T, remove []string) (map[string]T, bool) {
+	original := len(entries)
+	for _, key := range remove {
+		delete(entries, key)
+	}
+	changed := len(entries) != original || len(add) != 0
+	if entries == nil && len(add) != 0 {
+		entries = make(map[string]T, len(add))
+	}
+	maps.Copy(entries, add)
+	if changed && len(entries) <= original/4 {
+		// Go maps retain their backing storage after deletions. Rebuild on a large net shrink.
+		return cloneSessionEntries(entries), true
+	}
+	return entries, changed
+}
+
+func updateSessionEntries[T any](get func() map[string]T, set func(map[string]T), add map[string]T, remove []string) bool {
+	entries, changed := applySessionEntries(cloneSessionEntries(get()), add, remove)
+	if changed || add != nil {
+		set(entries)
+	}
+	return changed
+}
+
+// builtinResourceSession applies batches under the same lock used for reads and replacements.
+type builtinResourceSession interface {
+	SessionWithResources
+	SessionWithResourceTemplates
+	updateSessionResources(add map[string]ServerResource, remove []string) bool
+	updateSessionResourceTemplates(add map[string]ServerResourceTemplate, remove []string) bool
+}
+
+func updateSessionResources(session SessionWithResources, add map[string]ServerResource, remove []string) bool {
+	if updater, ok := session.(builtinResourceSession); ok {
+		return updater.updateSessionResources(add, remove)
+	}
+	return updateSessionEntries(session.GetSessionResources, session.SetSessionResources, add, remove)
+}
+
+func updateSessionResourceTemplates(session SessionWithResourceTemplates, add map[string]ServerResourceTemplate, remove []string) bool {
+	if updater, ok := session.(builtinResourceSession); ok {
+		return updater.updateSessionResourceTemplates(add, remove)
+	}
+	return updateSessionEntries(session.GetSessionResourceTemplates, session.SetSessionResourceTemplates, add, remove)
+}
+
 // AddSessionResource adds a resource for a specific session
 func (s *MCPServer) AddSessionResource(sessionID string, resource mcp.Resource, handler ResourceHandlerFunc) error {
 	return s.AddSessionResources(sessionID, ServerResource{Resource: resource, Handler: handler})
@@ -610,32 +717,18 @@ func (s *MCPServer) AddSessionResources(sessionID string, resources ...ServerRes
 		func() { s.capabilities.resources = &resourceCapabilities{listChanged: true} },
 	)
 
-	// Get existing resources (this should return a thread-safe copy)
-	sessionResources := session.GetSessionResources()
-
-	// Create a new map to avoid concurrent modification issues
-	newSessionResources := make(map[string]ServerResource, len(sessionResources)+len(resources))
-
-	// Copy existing resources
-	maps.Copy(newSessionResources, sessionResources)
-
-	// Add new resources with validation
+	add := make(map[string]ServerResource, len(resources))
 	for _, resource := range resources {
-		// Validate that URI is non-empty
 		if resource.Resource.URI == "" {
 			return fmt.Errorf("resource URI cannot be empty")
 		}
-
-		// Validate that URI conforms to RFC 3986
 		if _, err := url.ParseRequestURI(resource.Resource.URI); err != nil {
 			return fmt.Errorf("invalid resource URI: %w", err)
 		}
-
-		newSessionResources[resource.Resource.URI] = resource
+		add[resource.Resource.URI] = resource
 	}
 
-	// Set the resources (this should be thread-safe)
-	session.SetSessionResources(newSessionResources)
+	updateSessionResources(session, add, nil)
 
 	// It only makes sense to send resource notifications to initialized sessions --
 	// if we're not initialized yet the client can't possibly have sent their
@@ -682,34 +775,9 @@ func (s *MCPServer) DeleteSessionResources(sessionID string, uris ...string) err
 		return ErrSessionDoesNotSupportResources
 	}
 
-	// Get existing resources (this should return a thread-safe copy)
-	sessionResources := session.GetSessionResources()
-	if sessionResources == nil {
+	if !updateSessionResources(session, nil, uris) {
 		return nil
 	}
-
-	// Create a new map to avoid concurrent modification issues
-	newSessionResources := make(map[string]ServerResource, len(sessionResources))
-
-	// Copy existing resources except those being deleted
-	maps.Copy(newSessionResources, sessionResources)
-
-	// Remove specified resources and track if anything was actually deleted
-	actuallyDeleted := false
-	for _, uri := range uris {
-		if _, exists := newSessionResources[uri]; exists {
-			delete(newSessionResources, uri)
-			actuallyDeleted = true
-		}
-	}
-
-	// Skip no-op write if nothing was actually deleted
-	if !actuallyDeleted {
-		return nil
-	}
-
-	// Set the resources (this should be thread-safe)
-	session.SetSessionResources(newSessionResources)
 
 	// It only makes sense to send resource notifications to initialized sessions --
 	// if we're not initialized yet the client can't possibly have sent their
@@ -718,8 +786,7 @@ func (s *MCPServer) DeleteSessionResources(sessionID string, uris ...string) err
 	// For initialized sessions, honor resources.listChanged, which is specifically
 	// about whether notifications will be sent or not.
 	// see <https://modelcontextprotocol.io/specification/2025-03-26/server/resources#capabilities>
-	// Only send notification if something was actually deleted
-	if actuallyDeleted && session.Initialized() && s.capabilities.resources != nil && s.capabilities.resources.listChanged {
+	if session.Initialized() && s.capabilities.resources != nil && s.capabilities.resources.listChanged {
 		// Send notification only to this session
 		if err := s.SendNotificationToSpecificClient(sessionID, "notifications/resources/list_changed", nil); err != nil {
 			// Log the error but don't fail the operation
@@ -772,18 +839,9 @@ func (s *MCPServer) AddSessionResourceTemplates(sessionID string, templates ...S
 		func() { s.capabilities.resources = &resourceCapabilities{listChanged: true} },
 	)
 
-	// Get existing templates (this returns a thread-safe copy)
-	sessionTemplates := session.GetSessionResourceTemplates()
-
-	// Create a new map to avoid modifying the returned copy
-	newTemplates := make(map[string]ServerResourceTemplate, len(sessionTemplates)+len(templates))
-
-	// Copy existing templates
-	maps.Copy(newTemplates, sessionTemplates)
-
-	// Validate and add new templates
+	add := make(map[string]ServerResourceTemplate, len(templates))
 	for _, t := range templates {
-		if t.Template.URITemplate == nil {
+		if !hasURITemplate(t.Template.URITemplate) {
 			return fmt.Errorf("resource template URITemplate cannot be nil")
 		}
 		raw := t.Template.URITemplate.Raw()
@@ -793,11 +851,10 @@ func (s *MCPServer) AddSessionResourceTemplates(sessionID string, templates ...S
 		if t.Template.Name == "" {
 			return fmt.Errorf("resource template name cannot be empty")
 		}
-		newTemplates[raw] = t
+		add[raw] = t
 	}
 
-	// Set the new templates (this method must handle thread-safety)
-	session.SetSessionResourceTemplates(newTemplates)
+	updateSessionResourceTemplates(session, add, nil)
 
 	// Send notification if the session is initialized and listChanged is enabled
 	if session.Initialized() && s.capabilities.resources != nil && s.capabilities.resources.listChanged {
@@ -836,29 +893,9 @@ func (s *MCPServer) DeleteSessionResourceTemplates(sessionID string, uriTemplate
 		return ErrSessionDoesNotSupportResourceTemplates
 	}
 
-	// Get existing templates (this returns a thread-safe copy)
-	sessionTemplates := session.GetSessionResourceTemplates()
+	deletedAny := updateSessionResourceTemplates(session, nil, uriTemplates)
 
-	// Track if any were actually deleted
-	deletedAny := false
-
-	// Create a new map without the deleted templates
-	newTemplates := make(map[string]ServerResourceTemplate, len(sessionTemplates))
-	maps.Copy(newTemplates, sessionTemplates)
-
-	// Delete specified templates
-	for _, uriTemplate := range uriTemplates {
-		if _, exists := newTemplates[uriTemplate]; exists {
-			delete(newTemplates, uriTemplate)
-			deletedAny = true
-		}
-	}
-
-	// Only update if something was actually deleted
 	if deletedAny {
-		// Set the new templates (this method must handle thread-safety)
-		session.SetSessionResourceTemplates(newTemplates)
-
 		// Send notification if the session is initialized and listChanged is enabled
 		if session.Initialized() && s.capabilities.resources != nil && s.capabilities.resources.listChanged {
 			if err := s.SendNotificationToSpecificClient(sessionID, "notifications/resources/list_changed", nil); err != nil {

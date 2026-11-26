@@ -443,10 +443,12 @@ func (c *SSE) readSSE(reader io.ReadCloser, endpointChan chan struct{}, endpoint
 			continue
 		}
 
-		if after, ok := strings.CutPrefix(line, "event:"); ok {
-			event = strings.TrimSpace(after)
-		} else if after, ok := strings.CutPrefix(line, "data:"); ok {
-			data = appendSSEData(data, after)
+		field, value, _ := strings.Cut(line, ":")
+		switch field {
+		case "event":
+			event = strings.TrimSpace(value)
+		case "data":
+			data = appendSSEData(data, value)
 			if c.maxMessageBytes > 0 && int64(len(data)) > c.maxMessageBytes {
 				end(ErrMessageTooLarge)
 				return
@@ -564,15 +566,19 @@ func (c *SSE) SetConnectionLostHandler(handler func(error)) {
 
 // SendRequest sends a JSON-RPC request to the server and waits for a response.
 // Returns the raw JSON response message or an error if the request fails.
+// After Close has run, SendRequest returns ErrTransportClosed, including when
+// Close ran before Start.
 func (c *SSE) SendRequest(
 	ctx context.Context,
 	request JSONRPCRequest,
 ) (*JSONRPCResponse, error) {
+	// Reject sends after Close before the not-started check so a closed
+	// transport reports ErrTransportClosed instead of "transport not started yet".
+	if c.closed.Load() {
+		return nil, ErrTransportClosed
+	}
 	if !c.started.Load() {
 		return nil, fmt.Errorf("transport not started yet")
-	}
-	if c.closed.Load() {
-		return nil, fmt.Errorf("transport has been closed")
 	}
 
 	c.mu.RLock()

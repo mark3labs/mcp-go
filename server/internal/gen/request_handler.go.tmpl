@@ -16,6 +16,15 @@ import (
 func (s *MCPServer) HandleMessage(
 	ctx context.Context,
 	message json.RawMessage,
+) mcp.JSONRPCMessage {
+	return s.handleMessage(ctx, message, false)
+}
+
+// handleMessage can reuse a request context reserved by stdio before dispatch.
+func (s *MCPServer) handleMessage(
+	ctx context.Context,
+	message json.RawMessage,
+	registered bool,
 ) (resp mcp.JSONRPCMessage) {
 	// Add server to context
 	ctx = context.WithValue(ctx, serverKey{}, s)
@@ -26,6 +35,7 @@ func (s *MCPServer) HandleMessage(
 		Method  mcp.MCPMethod   `json:"method"`
 		RawID   json.RawMessage `json:"id,omitempty"`
 		Result  json.RawMessage `json:"result,omitempty"`
+		Error   json.RawMessage `json:"error,omitempty"`
 	}
 	var baseMessage struct {
 		envelope
@@ -61,6 +71,15 @@ func (s *MCPServer) HandleMessage(
 		}
 	}
 
+	// A JSON-RPC 2.0 request id is a string or a number. A boolean, object or
+	// array id cannot be echoed in a response (the error response must carry a
+	// null id), so reject it before the method runs or the id is reused.
+	switch baseMessage.ID.(type) {
+	case nil, string, json.Number:
+	default:
+		return createErrorResponse(nil, mcp.INVALID_REQUEST, "Invalid request id")
+	}
+
 	if number, ok := baseMessage.ID.(json.Number); ok {
 		var id mcp.RequestId
 		if err := json.Unmarshal([]byte(number), &id); err != nil {
@@ -70,6 +89,15 @@ func (s *MCPServer) HandleMessage(
 		if value, ok := baseMessage.ID.(int64); ok && value >= -9007199254740991 && value <= 9007199254740991 {
 			baseMessage.ID = float64(value)
 		}
+	}
+
+	// encoding/json would also accept "Method" or "paramſ" here.
+	if err := validateProtocolMemberNames(message); err != nil {
+		return createErrorResponse(
+			baseMessage.ID,
+			mcp.INVALID_REQUEST,
+			err.Error(),
+		)
 	}
 
 	// Check for valid JSONRPC version
@@ -94,10 +122,30 @@ func (s *MCPServer) HandleMessage(
 		return nil // Return nil for notifications
 	}
 
-	if len(baseMessage.Result) > 0 && !bytes.Equal(baseMessage.Result, []byte("null")) {
+	isResponse := func(member json.RawMessage) bool {
+		return len(member) > 0 && !bytes.Equal(member, []byte("null"))
+	}
+	// A message with a method is a request, even if it carries an extra
+	// "error" member.
+	if isResponse(baseMessage.Result) || (baseMessage.Method == "" && isResponse(baseMessage.Error)) {
 		// this is a response to a request sent by the server (e.g. from a ping
 		// sent due to WithKeepAlive option)
 		return nil
+	}
+
+	var key inflightRequestKey
+	if !registered {
+		key = inflightKey(ctx, baseMessage.ID)
+		if key.sessionID != "" {
+			// Reject duplicates before hooks can reply with the same ID or
+			// the request can change session state.
+			var finish func()
+			ctx, finish = s.startRequest(ctx, key)
+			if finish == nil {
+				return duplicateRequestIDError()
+			}
+			defer finish()
+		}
 	}
 
 	handleErr := s.hooks.onRequestInitialization(ctx, baseMessage.ID, message)
@@ -149,16 +197,11 @@ func (s *MCPServer) HandleMessage(
 		}
 	}
 
-	// Wrap context with cancel for in-flight request cancellation (MCP spec: notifications/cancelled)
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	// Store cancel func so notifications/cancelled can cancel this request.
-	// Use session-scoped keys to prevent cross-session request ID collisions.
-	if baseMessage.ID != nil {
-		key := inflightKey(ctx, baseMessage.ID)
-		s.inflightCancels.Store(key, cancel)
-		defer s.inflightCancels.Delete(key)
+	if !registered && key.sessionID == "" {
+		// Keep the existing cancellation timing for requests without a session ID.
+		var finish func()
+		ctx, finish = s.startRequest(ctx, key)
+		defer finish()
 	}
 
 	// Extract trace context from _meta before opening the server span so the span

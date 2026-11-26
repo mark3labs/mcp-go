@@ -250,7 +250,16 @@ func NewStreamableHTTP(serverURL string, options ...StreamableHTTPCOption) (*Str
 }
 
 // Start initiates the HTTP connection to the server.
+// After Close has run, Start returns ErrTransportClosed and does not reopen
+// the transport.
 func (c *StreamableHTTP) Start(ctx context.Context) error {
+	// Reject any start after Close before the initialized fast-path so a closed
+	// transport reports ErrTransportClosed instead of nil. SSE / stdio /
+	// in-process already treat Close as terminal; Streamable HTTP must too.
+	if err := c.errIfClosed(); err != nil {
+		return err
+	}
+
 	// Start is idempotent - check if already initialized
 	select {
 	case <-c.initialized:
@@ -294,41 +303,89 @@ func (c *StreamableHTTP) Close() error {
 		// Cancel all in-flight requests
 		close(c.closed)
 
-		// Protocol version 2026-07-28 removed protocol-level sessions, so
-		// there is nothing to terminate and DELETE is not part of the
-		// transport any more.
-		sessionId := c.sessionID.Load().(string)
-		if sessionId != "" && !c.isModern() {
+		// Coordinate with publishSessionID: hold sessionMu while deciding
+		// which session ID, if any, this Close terminates. A session ID
+		// published before this point is terminated here; one published
+		// afterwards observes the closed transport and terminates itself,
+		// so a received ID can never stay published on a closed transport
+		// without a cleanup attempt.
+		c.sessionMu.Lock()
+		sessionID := c.sessionID.Load().(string)
+		if sessionID != "" {
 			c.sessionID.Store("")
-			// notify server session closed
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.serverURL.String(), nil)
-			if err != nil {
-				c.logger.Error("failed to create close request", "err", err)
-				return
-			}
-			req.Header.Set(HeaderKeySessionID, sessionId)
-			// Set protocol version header if negotiated
-			if v := c.protocolVersion.Load(); v != nil {
-				if version, ok := v.(string); ok && version != "" {
-					req.Header.Set(HeaderKeyProtocolVersion, version)
-				}
-			}
-
-			// Set custom Host header if provided
-			if c.host != "" {
-				req.Host = c.host
-			}
-			res, err := c.httpClient.Do(req)
-			if err != nil {
-				c.logger.Error("failed to send close request", "err", err)
-				return
-			}
-			res.Body.Close()
 		}
+		c.sessionMu.Unlock()
+
+		c.deleteSession(sessionID)
 	})
 	return nil
+}
+
+// isClosed reports whether Close has begun.
+func (c *StreamableHTTP) isClosed() bool {
+	select {
+	case <-c.closed:
+		return true
+	default:
+		return false
+	}
+}
+
+// deleteSession best-effort terminates a legacy session on the server by
+// sending it a DELETE request. It is a no-op for an empty session ID and
+// for the modern protocol, which has no protocol-level sessions to
+// terminate. DELETE failures are logged, not returned.
+func (c *StreamableHTTP) deleteSession(sessionID string) {
+	// Protocol version 2026-07-28 removed protocol-level sessions, so
+	// there is nothing to terminate and DELETE is not part of the
+	// transport any more.
+	if sessionID == "" || c.isModern() {
+		return
+	}
+	// notify server session closed
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.serverURL.String(), nil)
+	if err != nil {
+		c.logger.Error("failed to create close request", "err", err)
+		return
+	}
+	req.Header.Set(HeaderKeySessionID, sessionID)
+	// Set protocol version header if negotiated
+	if v := c.protocolVersion.Load(); v != nil {
+		if version, ok := v.(string); ok && version != "" {
+			req.Header.Set(HeaderKeyProtocolVersion, version)
+		}
+	}
+
+	// Set custom Host header if provided
+	if c.host != "" {
+		req.Host = c.host
+	}
+	res, err := c.httpClient.Do(req)
+	if err != nil {
+		c.logger.Error("failed to send close request", "err", err)
+		return
+	}
+	res.Body.Close()
+}
+
+// publishSessionID stores a session ID received in an initialize response.
+// Publication is coordinated with Close via sessionMu: if the transport is
+// already closed, the ID is not published; the session is terminated
+// immediately instead, so it cannot leak on the server.
+func (c *StreamableHTTP) publishSessionID(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	c.sessionMu.Lock()
+	if c.isClosed() {
+		c.sessionMu.Unlock()
+		c.deleteSession(sessionID)
+		return
+	}
+	c.sessionID.Store(sessionID)
+	c.sessionMu.Unlock()
 }
 
 // SetProtocolVersion sets the negotiated protocol version for this connection.
@@ -706,10 +763,16 @@ func (e *OAuthAuthorizationRequiredError) Unwrap() error {
 
 // SendRequest sends a JSON-RPC request to the server and waits for a response.
 // Returns the raw JSON response message or an error if the request fails.
+// After Close has run, SendRequest returns ErrTransportClosed, including when
+// Close interrupts an in-flight send.
 func (c *StreamableHTTP) SendRequest(
 	ctx context.Context,
 	request JSONRPCRequest,
 ) (*JSONRPCResponse, error) {
+	if err := c.errIfClosed(); err != nil {
+		return nil, err
+	}
+
 	// Marshal request
 	requestBody, err := json.Marshal(request)
 	if err != nil {
@@ -723,6 +786,9 @@ func (c *StreamableHTTP) SendRequest(
 	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream", request.Header, c.startsConnection(request))
 	if err != nil {
 		cancel()
+		if closedErr := c.errIfClosed(); closedErr != nil {
+			return nil, closedErr
+		}
 		if errors.Is(err, ErrSessionTerminated) && request.Method == string(mcp.MethodInitialize) {
 			// Per the MCP spec's backwards compatibility section: a 404 on an
 			// initialize POST means the server likely only supports legacy SSE.
@@ -795,7 +861,7 @@ func (c *StreamableHTTP) SendRequest(
 		// saved the received session ID in the response
 		// empty session ID is allowed
 		if sessionID := resp.Header.Get(HeaderKeySessionID); sessionID != "" {
-			c.sessionID.Store(sessionID)
+			c.publishSessionID(sessionID)
 		}
 
 		c.initializedOnce.Do(func() {
@@ -1220,32 +1286,42 @@ func (c *StreamableHTTP) readSSEWithCursor(ctx context.Context, reader io.ReadCl
 			continue
 		}
 
-		if eventStr, ok := strings.CutPrefix(line, "event:"); ok {
-			event = strings.TrimSpace(eventStr)
-		} else if dataStr, ok := strings.CutPrefix(line, "data:"); ok {
-			data = appendSSEData(data, dataStr)
+		field, value, _ := strings.Cut(line, ":")
+		switch field {
+		case "event":
+			event = strings.TrimSpace(value)
+		case "data":
+			data = appendSSEData(data, value)
 			if c.maxMessageBytes > 0 && int64(len(data)) > c.maxMessageBytes {
 				c.logger.Error("SSE stream error", "err", ErrMessageTooLarge)
 				return ErrMessageTooLarge
 			}
-		} else if idStr, ok := strings.CutPrefix(line, "id:"); ok {
+		case "id":
 			// The SSE spec ignores an id that contains a NUL character.
-			if value := strings.TrimPrefix(idStr, " "); !strings.ContainsRune(value, 0) {
+			if value := strings.TrimPrefix(value, " "); !strings.ContainsRune(value, 0) {
 				id, hasID = value, true
 			}
-		} else if retryStr, ok := strings.CutPrefix(line, "retry:"); ok && cursor != nil {
-			// Only ASCII digits are a valid retry value.
-			value := strings.TrimPrefix(retryStr, " ")
-			if ms, err := strconv.ParseUint(value, 10, 31); err == nil && value != "" && strings.Trim(value, "0123456789") == "" {
-				cursor.retry = time.Duration(ms) * time.Millisecond
-				cursor.hasRetry = true
+		case "retry":
+			if cursor != nil {
+				// Only ASCII digits are a valid retry value.
+				value := strings.TrimPrefix(value, " ")
+				if ms, err := strconv.ParseUint(value, 10, 31); err == nil && value != "" && strings.Trim(value, "0123456789") == "" {
+					cursor.retry = time.Duration(ms) * time.Millisecond
+					cursor.hasRetry = true
+				}
 			}
 		}
 	}
 }
 
 // SendNotification sends a JSON-RPC notification to the server without expecting a response.
+// After Close has run, SendNotification returns ErrTransportClosed, including
+// when Close interrupts an in-flight send.
 func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.JSONRPCNotification) error {
+	if err := c.errIfClosed(); err != nil {
+		return err
+	}
+
 	// Marshal request
 	requestBody, err := json.Marshal(notification)
 	if err != nil {
@@ -1258,6 +1334,9 @@ func (c *StreamableHTTP) SendNotification(ctx context.Context, notification mcp.
 	resp, err := c.sendHTTP(ctx, http.MethodPost, bytes.NewReader(requestBody), "application/json, text/event-stream", nil, false)
 	if err != nil {
 		cancel()
+		if closedErr := c.errIfClosed(); closedErr != nil {
+			return closedErr
+		}
 		return fmt.Errorf("failed to send request: %w", err)
 	}
 	defer func() { cancel(); resp.Body.Close() }()
@@ -1622,4 +1701,15 @@ func (c *StreamableHTTP) contextAwareOfClientClose(ctx context.Context) (context
 		}
 	}()
 	return newCtx, cancel
+}
+
+// errIfClosed returns ErrTransportClosed when Close has already run, and nil
+// otherwise. Callers use it to treat Close as a terminal transport state.
+func (c *StreamableHTTP) errIfClosed() error {
+	select {
+	case <-c.closed:
+		return ErrTransportClosed
+	default:
+		return nil
+	}
 }

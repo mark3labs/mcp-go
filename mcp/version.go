@@ -1,6 +1,9 @@
 package mcp
 
-import "slices"
+import (
+	"slices"
+	"time"
+)
 
 // Protocol version constants for every MCP revision this SDK understands.
 //
@@ -57,9 +60,16 @@ const JSONRPC_VERSION = "2.0"
 // client identity, and capabilities in _meta rather than establishing a
 // session through initialize.
 //
-// Unknown future versions that sort after 2026-07-28 are treated as modern,
+// Version must be a valid ISO-8601 calendar date (YYYY-MM-DD); malformed
+// strings return false. Valid future dates at or after 2026-07-28 return true,
 // so that this SDK degrades gracefully rather than rejecting them outright.
 func IsModernProtocol(version string) bool {
+	if len(version) != len(time.DateOnly) {
+		return false
+	}
+	if _, err := time.Parse(time.DateOnly, version); err != nil {
+		return false
+	}
 	return version >= ProtocolVersion20260728
 }
 

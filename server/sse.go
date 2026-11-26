@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -32,9 +33,10 @@ type sseSession struct {
 	notificationChannel chan mcp.JSONRPCNotification
 	initialized         atomic.Bool
 	loggingLevel        atomic.Value
-	tools               sync.Map // stores session-specific tools
-	resources           sync.Map // stores session-specific resources
-	resourceTemplates   sync.Map // stores session-specific resource templates
+	tools               sync.Map     // stores session-specific tools
+	resourceMu          sync.RWMutex // Protects resources and resourceTemplates.
+	resources           map[string]ServerResource
+	resourceTemplates   map[string]ServerResourceTemplate
 }
 
 // closeDone safely closes the session's done channel exactly once,
@@ -93,45 +95,43 @@ func (s *sseSession) GetLogLevel() mcp.LoggingLevel {
 }
 
 func (s *sseSession) GetSessionResources() map[string]ServerResource {
-	resources := make(map[string]ServerResource)
-	s.resources.Range(func(key, value any) bool {
-		if resource, ok := value.(ServerResource); ok {
-			resources[key.(string)] = resource
-		}
-		return true
-	})
-	return resources
+	s.resourceMu.RLock()
+	defer s.resourceMu.RUnlock()
+	return cloneSessionEntries(s.resources)
 }
 
-func (s *sseSession) SetSessionResources(resources map[string]ServerResource) {
-	// Clear existing resources
-	s.resources.Clear()
+func (s *sseSession) SetSessionResources(entries map[string]ServerResource) {
+	s.resourceMu.Lock()
+	defer s.resourceMu.Unlock()
+	s.resources = cloneSessionEntries(entries)
+}
 
-	// Set new resources
-	for name, resource := range resources {
-		s.resources.Store(name, resource)
-	}
+func (s *sseSession) updateSessionResources(add map[string]ServerResource, remove []string) bool {
+	s.resourceMu.Lock()
+	defer s.resourceMu.Unlock()
+	updated, changed := applySessionEntries(s.resources, add, remove)
+	s.resources = updated
+	return changed
 }
 
 func (s *sseSession) GetSessionResourceTemplates() map[string]ServerResourceTemplate {
-	templates := make(map[string]ServerResourceTemplate)
-	s.resourceTemplates.Range(func(key, value any) bool {
-		if template, ok := value.(ServerResourceTemplate); ok {
-			templates[key.(string)] = template
-		}
-		return true
-	})
-	return templates
+	s.resourceMu.RLock()
+	defer s.resourceMu.RUnlock()
+	return cloneSessionEntries(s.resourceTemplates)
 }
 
-func (s *sseSession) SetSessionResourceTemplates(templates map[string]ServerResourceTemplate) {
-	// Clear existing templates
-	s.resourceTemplates.Clear()
+func (s *sseSession) SetSessionResourceTemplates(entries map[string]ServerResourceTemplate) {
+	s.resourceMu.Lock()
+	defer s.resourceMu.Unlock()
+	s.resourceTemplates = cloneSessionEntries(entries)
+}
 
-	// Set new templates
-	for uriTemplate, template := range templates {
-		s.resourceTemplates.Store(uriTemplate, template)
-	}
+func (s *sseSession) updateSessionResourceTemplates(add map[string]ServerResourceTemplate, remove []string) bool {
+	s.resourceMu.Lock()
+	defer s.resourceMu.Unlock()
+	updated, changed := applySessionEntries(s.resourceTemplates, add, remove)
+	s.resourceTemplates = updated
+	return changed
 }
 
 func (s *sseSession) GetSessionTools() map[string]ServerTool {
@@ -200,9 +200,19 @@ type SSEServer struct {
 	// connections. See WithSSEDisableLocalhostProtection.
 	disableLocalhostProtection bool
 
+	// allowedHosts is an opt-in Host header allowlist enforced for every
+	// request regardless of the connection's local address. See
+	// WithSSEAllowedHosts.
+	allowedHosts []string
+
 	// maxRequestBodyBytes bounds a message POST body; zero or less is no
 	// bound. See WithSSEMaxRequestBodyBytes.
 	maxRequestBodyBytes int64
+
+	// closed is set when Shutdown begins on an owned HTTP server. Start and
+	// new HTTP handlers are rejected afterwards. Shutdown is a no-op until an
+	// HTTP server exists, and that case leaves the handler usable.
+	closed atomic.Bool
 
 	mu sync.RWMutex
 }
@@ -374,20 +384,41 @@ func WithSSECORS(opts ...CORSOption) SSEOption {
 // [::1]) whose Host header is not a localhost value are rejected with 403
 // Forbidden. This protects local MCP servers against DNS rebinding attacks,
 // where a malicious website rebinds its own domain to 127.0.0.1 to make a
-// victim's browser issue requests against a local server. The protection
-// applies regardless of whether the server listens on localhost specifically
-// or on 0.0.0.0, and never affects requests arriving via non-loopback
-// addresses.
+// victim's browser issue requests against a local server. By default this
+// protection only covers connections delivered over a loopback address; a
+// server bound to a non-loopback interface (e.g. 0.0.0.0) is not protected
+// for requests arriving on that interface unless WithSSEAllowedHosts is
+// configured.
 //
-// Disable it only if you understand the security implications, for example
-// when a reverse proxy on the same host forwards requests via localhost
-// while preserving the original Host header. In that case, prefer
-// configuring the proxy to rewrite the Host header to localhost instead.
+// Disabling the protection turns off all Host header validation, including
+// the allowlist configured with WithSSEAllowedHosts. Disable it only if you
+// understand the security implications. When a reverse proxy on the same
+// host forwards requests via localhost while preserving the original Host
+// header, prefer listing the public host name with WithSSEAllowedHosts, or
+// configuring the proxy to rewrite the Host header to localhost, instead.
 //
 // See https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#local-mcp-server-compromise
 func WithSSEDisableLocalhostProtection(disable bool) SSEOption {
 	return func(s *SSEServer) {
 		s.disableLocalhostProtection = disable
+	}
+}
+
+// WithSSEAllowedHosts configures an allowlist of Host header values for DNS
+// rebinding protection. When at least one host is configured, every request
+// handled by ServeHTTP, SSEHandler or MessageHandler whose Host header is
+// neither a loopback value nor in the allowlist is rejected with 403
+// Forbidden, regardless of the address the server is bound to. This is how to
+// protect a server bound to a non-loopback interface (e.g. ":8080" or
+// 0.0.0.0): list the host names clients legitimately use to reach it.
+//
+// Entries are matched as described in WithAllowedHosts. Calling
+// WithSSEAllowedHosts with no hosts clears the allowlist, restoring the
+// default loopback-only protection. WithSSEDisableLocalhostProtection(true)
+// disables the allowlist as well.
+func WithSSEAllowedHosts(hosts ...string) SSEOption {
+	return func(s *SSEServer) {
+		s.allowedHosts = append([]string(nil), hosts...)
 	}
 }
 
@@ -444,7 +475,13 @@ func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
 
 // Start begins serving SSE connections on the specified address.
 // It sets up HTTP handlers for SSE and message endpoints.
+// After Shutdown has closed the owned HTTP server, Start returns
+// http.ErrServerClosed and does not listen again.
 func (s *SSEServer) Start(addr string) error {
+	if s.closed.Load() {
+		return http.ErrServerClosed
+	}
+
 	s.mu.Lock()
 	if s.srv == nil {
 		s.srv = &http.Server{
@@ -466,17 +503,22 @@ func (s *SSEServer) Start(addr string) error {
 }
 
 // Shutdown gracefully stops the SSE server, closing all active sessions
-// and shutting down the HTTP server.
+// and shutting down the HTTP server. Once an owned HTTP server has been
+// shut down, Start and new SSE or message requests fail. Shutdown before
+// an HTTP server exists is a no-op so a later Start can still listen.
 func (s *SSEServer) Shutdown(ctx context.Context) error {
 	s.mu.RLock()
 	srv := s.srv
 	s.mu.RUnlock()
 
-	if srv != nil {
-		s.CloseSessions()
-		return srv.Shutdown(ctx)
+	if srv == nil {
+		return nil
 	}
-	return nil
+	// Reject new work before closing sessions so a connection accepted
+	// during shutdown observes the closed server and exits.
+	s.closed.Store(true)
+	s.CloseSessions()
+	return srv.Shutdown(ctx)
 }
 
 // CloseSessions terminates all active SSE sessions without stopping the HTTP
@@ -498,6 +540,10 @@ func (s *SSEServer) CloseSessions() {
 // handleSSE handles incoming SSE connection requests.
 // It sets up appropriate headers and creates a new session for the client.
 func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
+	if s.closed.Load() {
+		http.Error(w, "server closed", http.StatusServiceUnavailable)
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -552,6 +598,14 @@ func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.server.UnregisterSession(r.Context(), sessionID)
+
+	// Shutdown may have won between the initial check and registration.
+	// Drop the session instead of blocking in the event loop, which would
+	// keep http.Server.Shutdown from returning.
+	if s.closed.Load() {
+		http.Error(w, "server closed", http.StatusServiceUnavailable)
+		return
+	}
 
 	// Start notification handler for this session
 	go func() {
@@ -651,6 +705,10 @@ func (s *SSEServer) GetMessageEndpointForClient(r *http.Request, sessionID strin
 // handleMessage processes incoming JSON-RPC messages from clients and sends responses
 // back through the SSE connection and 202 code to HTTP response.
 func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
+	if s.closed.Load() {
+		http.Error(w, "server closed", http.StatusServiceUnavailable)
+		return
+	}
 	if r.Method != http.MethodPost {
 		s.writeJSONRPCError(w, nil, mcp.INVALID_REQUEST, "Method not allowed")
 		return
@@ -667,6 +725,12 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session := sessionI.(*sseSession)
+	select {
+	case <-session.done:
+		s.writeJSONRPCError(w, nil, mcp.INVALID_REQUEST, "session closed")
+		return
+	default:
+	}
 
 	// Set the client context before handling the message
 	ctx := s.server.WithContext(r.Context(), session)
@@ -683,9 +747,17 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	select {
+	case <-session.done:
+		s.writeJSONRPCError(w, nil, mcp.INVALID_REQUEST, "session closed")
+		return
+	default:
+	}
+
 	// Parse message as raw JSON
 	var rawMessage json.RawMessage
-	if err != nil || json.NewDecoder(bytes.NewReader(body)).Decode(&rawMessage) != nil {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if err != nil || decoder.Decode(&rawMessage) != nil || decoder.Decode(new(json.RawMessage)) != io.EOF {
 		s.writeJSONRPCError(w, nil, mcp.PARSE_ERROR, "Parse error")
 		return
 	}
@@ -733,7 +805,7 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 		// Only send response if there is one (not for notifications)
 		if response != nil {
 			var message string
-			if eventData, err := json.Marshal(response); err != nil {
+			if eventData, err := marshalResponse(response); err != nil {
 				// If there is an error marshalling the response, send a generic error response
 				log.Printf("failed to marshal response: %v", err)
 				message = "event: message\ndata: {\"error\": \"internal error\",\"jsonrpc\": \"2.0\", \"id\": null}\n\n"
@@ -914,7 +986,7 @@ func (s *SSEServer) MessageHandler() http.Handler {
 // portion is a no-op when CORS is disabled.
 func (s *SSEServer) withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.disableLocalhostProtection && rejectDNSRebinding(w, r) {
+		if !s.disableLocalhostProtection && rejectDNSRebinding(w, r, s.allowedHosts) {
 			return
 		}
 		if s.corsConfig.enabled() {
@@ -935,10 +1007,11 @@ func (s *SSEServer) withCORS(next http.Handler) http.Handler {
 // message handlers.
 //
 // Requests arriving over a loopback connection with a non-localhost Host
-// header are rejected with 403 Forbidden to protect against DNS rebinding
-// attacks, unless WithSSEDisableLocalhostProtection is set.
+// header, or carrying a Host header outside the allowlist configured with
+// WithSSEAllowedHosts, are rejected with 403 Forbidden to protect against DNS
+// rebinding attacks, unless WithSSEDisableLocalhostProtection is set.
 func (s *SSEServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !s.disableLocalhostProtection && rejectDNSRebinding(w, r) {
+	if !s.disableLocalhostProtection && rejectDNSRebinding(w, r, s.allowedHosts) {
 		return
 	}
 	if s.corsConfig.enabled() {
