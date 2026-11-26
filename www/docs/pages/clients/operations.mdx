@@ -925,7 +925,10 @@ Consider implementing sampling when your client:
 ### Basic Implementation
 
 ```go
-import "github.com/mark3labs/mcp-go/client"
+import (
+    "github.com/mark3labs/mcp-go/client"
+    "github.com/mark3labs/mcp-go/client/transport"
+)
 
 // Implement the SamplingHandler interface
 type MySamplingHandler struct {
@@ -947,10 +950,8 @@ func (h *MySamplingHandler) CreateMessage(ctx context.Context, request mcp.Creat
 }
 
 // Create client with sampling support
-mcpClient, err := client.NewStdioClient(
-    "/path/to/server",
-    client.WithSamplingHandler(&MySamplingHandler{}),
-)
+stdioTransport := transport.NewStdio("/path/to/server", nil)
+mcpClient := client.NewClient(stdioTransport, client.WithSamplingHandler(&MySamplingHandler{}))
 ```
 
 For complete sampling documentation, see **[Client Sampling Guide](/clients/advanced-sampling)**.

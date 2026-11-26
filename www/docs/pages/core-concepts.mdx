@@ -141,11 +141,11 @@ Transports define how MCP clients and servers communicate. MCP-Go supports multi
 // Stdio transport (most common)
 server.ServeStdio(s)
 
-// HTTP transport
-server.ServeHTTP(s, ":8080")
+// Streamable HTTP transport
+server.NewStreamableHTTPServer(s).Start(":8080")
 
 // SSE transport
-server.ServeSSE(s, ":8080")
+server.NewSSEServer(s).Start(":8080")
 ```
 
 ## SDK Architecture
@@ -184,9 +184,9 @@ server.ServeStdio(s)
 
 ```go
 // Client example - uses functionality
-client := client.NewStdioClient("database-server")
-tools, _ := client.ListTools(ctx, mcp.ListToolsRequest{})
-result, _ := client.CallTool(ctx, queryRequest)
+c, _ := client.NewStdioMCPClient("database-server", nil)
+tools, _ := c.ListTools(ctx, mcp.ListToolsRequest{})
+result, _ := c.CallTool(ctx, queryRequest)
 ```
 
 ### Transport Layer
@@ -208,9 +208,9 @@ switch transport {
 case "stdio":
     server.ServeStdio(s)
 case "http":
-    server.ServeHTTP(s, ":8080")
+    server.NewStreamableHTTPServer(s).Start(":8080")
 case "sse":
-    server.ServeSSE(s, ":8080")
+    server.NewSSEServer(s).Start(":8080")
 }
 ```
 

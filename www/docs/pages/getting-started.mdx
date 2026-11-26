@@ -151,7 +151,7 @@ MCP-Go supports multiple transport methods:
 
 - **Stdio** (most common): `server.ServeStdio(s)`
 - **StreamableHTTP**: `server.NewStreamableHTTPServer(s).Start(":8080")`
-- **Server-Sent Events**: `server.ServeSSE(s, ":8080")`
+- **Server-Sent Events**: `server.NewSSEServer(s).Start(":8080")`
 - **In-Process**: `client.NewInProcessClient(server)`
 
 ## Need Help?
