@@ -548,6 +548,117 @@ func TestStreamableHTTP_GET(t *testing.T) {
 	}
 }
 
+func TestStreamableHTTP_GET_StatelessStreamsAreIndependent(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []StreamableHTTPOption
+	}{
+		{name: "without event store"},
+		{name: "with event store", opts: []StreamableHTTPOption{WithEventStore(NewInMemoryEventStore())}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hooks := &Hooks{}
+			registered := make(chan string, 2)
+			hooks.AddOnRegisterSession(func(_ context.Context, client ClientSession) {
+				session := client.(*streamableHttpSession)
+				session.SetSessionTools(map[string]ServerTool{
+					"ephemeral": {Tool: mcp.Tool{Name: "ephemeral"}},
+				})
+				registered <- session.SessionID()
+			})
+			mcpServer := NewMCPServer("test", "1.0", WithHooks(hooks))
+			handler := NewStreamableHTTPServer(mcpServer, append(tt.opts, WithStateLess(true))...)
+			firstDone := make(chan struct{})
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("stream") == "first" {
+					defer close(firstDone)
+				}
+				handler.ServeHTTP(w, r)
+			}))
+			defer ts.Close()
+
+			openStream := func(ctx context.Context, name string) <-chan string {
+				t.Helper()
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/mcp?stream="+name, nil)
+				require.NoError(t, err)
+				req.Header.Set("Accept", "text/event-stream")
+				resp, err := ts.Client().Do(req)
+				require.NoError(t, err)
+				t.Cleanup(func() { resp.Body.Close() })
+				require.Equal(t, http.StatusOK, resp.StatusCode)
+				require.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
+				assert.Empty(t, resp.Header.Get(HeaderKeySessionID))
+
+				events := make(chan string, 2)
+				go func() {
+					defer close(events)
+					scanner := bufio.NewScanner(resp.Body)
+					for scanner.Scan() {
+						if data, ok := strings.CutPrefix(scanner.Text(), "data: "); ok {
+							select {
+							case events <- data:
+							case <-ctx.Done():
+								return
+							}
+						}
+					}
+				}()
+				return events
+			}
+			assertNotification := func(events <-chan string, stream, value string) {
+				t.Helper()
+				select {
+				case data, ok := <-events:
+					if assert.Truef(t, ok, "%s stream closed before notification %q", stream, value) {
+						assert.Contains(t, data, `"method":"notifications/message"`)
+						assert.Contains(t, data, `"value":"`+value+`"`)
+					}
+				case <-time.After(time.Second):
+					t.Errorf("%s stream did not receive notification %q", stream, value)
+				}
+			}
+
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			firstCtx, cancelFirst := context.WithCancel(ctx)
+			defer cancelFirst()
+			getRegisteredID := func() string {
+				t.Helper()
+				select {
+				case id := <-registered:
+					return id
+				case <-ctx.Done():
+					t.Fatal("timed out waiting for GET session registration")
+					return ""
+				}
+			}
+			first := openStream(firstCtx, "first")
+			firstID := getRegisteredID()
+			second := openStream(ctx, "second")
+			secondID := getRegisteredID()
+			require.NotEqual(t, firstID, secondID)
+			require.Len(t, handler.sessionTools.get(firstID), 1)
+			require.Len(t, handler.sessionTools.get(secondID), 1)
+
+			mcpServer.SendNotificationToAllClients("notifications/message", map[string]any{"value": "both connected"})
+			assertNotification(first, "first", "both connected")
+			assertNotification(second, "second", "both connected")
+
+			cancelFirst()
+			select {
+			case <-firstDone:
+			case <-ctx.Done():
+				t.Fatal("first GET handler did not exit after cancellation")
+			}
+			require.Empty(t, handler.sessionTools.get(firstID), "disconnected stream leaked its session tools")
+			require.Len(t, handler.sessionTools.get(secondID), 1, "active stream lost its session tools")
+			mcpServer.SendNotificationToAllClients("notifications/message", map[string]any{"value": "after disconnect"})
+			assertNotification(second, "second", "after disconnect")
+		})
+	}
+}
+
 func TestStreamableHTTP_HttpHandler(t *testing.T) {
 	t.Run("Works with custom mux", func(t *testing.T) {
 		mcpServer := NewMCPServer("test", "1.0.0")
@@ -2872,6 +2983,52 @@ func TestStreamableHTTP_SessionIdleTTLSweeper(t *testing.T) {
 		assert.Empty(t, tools, "sessionTools should be cleaned")
 	})
 
+	t.Run("swept session ends its quiet GET stream", func(t *testing.T) {
+		mcpServer := NewMCPServer("test", "1.0")
+		httpServer := NewStreamableHTTPServer(mcpServer,
+			WithSessionIdleTTL(100*time.Millisecond),
+		)
+		defer func() { _ = httpServer.Shutdown(t.Context()) }()
+		ts := httptest.NewServer(httpServer)
+		defer ts.Close()
+
+		resp, err := postJSON(ts.URL, initRequest)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		sessionID := resp.Header.Get(HeaderKeySessionID)
+		require.NotEmpty(t, sessionID)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
+		require.NoError(t, err)
+		req.Header.Set(HeaderKeySessionID, sessionID)
+		getResp, err := ts.Client().Do(req)
+		require.NoError(t, err)
+		defer getResp.Body.Close()
+		require.Equal(t, http.StatusOK, getResp.StatusCode)
+
+		ended := make(chan struct{})
+		go func() {
+			_, _ = io.Copy(io.Discard, getResp.Body)
+			close(ended)
+		}()
+
+		require.Eventually(t, func() bool {
+			_, exists := httpServer.sessionLastActive.Load(sessionID)
+			return !exists
+		}, 3*time.Second, 50*time.Millisecond, "session should be swept after idle TTL")
+
+		// The session no longer receives notifications, so its GET stream
+		// must end to let the client reconnect.
+		select {
+		case <-ended:
+		case <-time.After(2 * time.Second):
+			t.Fatal("GET stream stayed open after its session was swept")
+		}
+	})
+
 	t.Run("active sessions are not swept", func(t *testing.T) {
 		mcpServer := NewMCPServer("test", "1.0")
 		httpServer := NewStreamableHTTPServer(mcpServer,
@@ -3096,46 +3253,72 @@ func TestStreamableHTTP_ServerRequestIDsDoNotCollide(t *testing.T) {
 
 // TestStreamableHTTP_TrySendWaitsForBufferSpace verifies that transient
 // backpressure on an active POST stream makes trySend wait rather than spill
-// the request to the standalone GET stream, and that it still gives up when
-// the caller's context ends or the POST stream finishes.
+// the request to the standalone GET stream, that it reports what the POST
+// stream did with the request, and that it gives up when the caller's
+// context ends or the POST stream finishes.
 func TestStreamableHTTP_TrySendWaitsForBufferSpace(t *testing.T) {
-	requests := make(chan mcp.JSONRPCRequest, 1)
+	requests := make(chan scopedRequest, 1)
 	done := make(chan struct{})
-	scoped := &requestScopedSSE{requests: requests, done: done, register: func() {}}
+	scoped := &requestScopedSSE{requests: requests, done: done}
 
-	// Fill the buffer so the next send hits backpressure.
-	require.True(t, scoped.trySend(t.Context(), mcp.JSONRPCRequest{}))
-
-	result := make(chan bool, 1)
-	go func() { result <- scoped.trySend(t.Context(), mcp.JSONRPCRequest{}) }()
-
-	select {
-	case r := <-result:
-		t.Fatalf("expected trySend to wait for buffer space, returned %v immediately", r)
-	case <-time.After(50 * time.Millisecond):
+	send := func(ctx context.Context) <-chan bool {
+		result := make(chan bool, 1)
+		go func() { result <- scoped.trySend(ctx, mcp.JSONRPCRequest{}) }()
+		return result
+	}
+	pending := func(result <-chan bool, why string) {
+		t.Helper()
+		select {
+		case r := <-result:
+			t.Fatalf("expected trySend to wait (%s), returned %v", why, r)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	returns := func(result <-chan bool) bool {
+		t.Helper()
+		select {
+		case r := <-result:
+			return r
+		case <-time.After(2 * time.Second):
+			t.Fatal("trySend did not return")
+			return false
+		}
 	}
 
-	// Draining the stream frees a slot and the waiting send completes.
+	// A full buffer makes the send wait for space, then for the stream to
+	// settle the request.
+	requests <- scopedRequest{delivered: make(chan bool, 1)}
+	result := send(t.Context())
+	pending(result, "buffer full")
 	<-requests
-	select {
-	case r := <-result:
-		require.True(t, r, "expected the waiting send to succeed after the stream drained")
-	case <-time.After(2 * time.Second):
-		t.Fatal("trySend did not complete after buffer space freed")
-	}
+	item := <-requests
+	pending(result, "queued, not yet written")
+	item.delivered <- true
+	require.True(t, returns(result), "a written request reports true")
 
-	// The waiting send refilled the buffer; drain it so the next refill is
-	// deterministic.
-	<-requests
+	// A request the stream could not write reports false, so the caller
+	// falls back to the GET stream.
+	result = send(t.Context())
+	item = <-requests
+	item.delivered <- false
+	require.False(t, returns(result), "an unwritten request reports false")
 
-	// With the buffer full again, an ended caller context falls back instead
-	// of waiting forever.
-	require.True(t, scoped.trySend(t.Context(), mcp.JSONRPCRequest{}))
+	// An ended context while the request is queued reports true: the
+	// request may still be written, so it must not be sent again.
+	queuedCtx, cancelQueued := context.WithCancel(t.Context())
+	result = send(queuedCtx)
+	item = <-requests
+	cancelQueued()
+	require.True(t, returns(result))
+
+	// An ended context while the buffer is full never queued the request.
+	requests <- item
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
 	require.False(t, scoped.trySend(cancelled, mcp.JSONRPCRequest{}))
+	<-requests
 
-	// A finished POST stream still reports false immediately.
+	// A finished POST stream reports false immediately.
 	close(done)
 	require.False(t, scoped.trySend(t.Context(), mcp.JSONRPCRequest{}))
 }

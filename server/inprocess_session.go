@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,14 +30,17 @@ type RootsHandler interface {
 type InProcessSession struct {
 	clientInfoStore // provides Get/SetClientInfo and Get/SetClientCapabilities via method promotion
 
-	sessionID          string
-	notifications      chan mcp.JSONRPCNotification
-	initialized        atomic.Bool
-	loggingLevel       atomic.Value
-	samplingHandler    SamplingHandler
-	elicitationHandler ElicitationHandler
-	rootsHandler       RootsHandler
-	mu                 sync.RWMutex
+	sessionID              string
+	notifications          chan mcp.JSONRPCNotification
+	initialized            atomic.Bool
+	loggingLevel           atomic.Value
+	samplingHandler        SamplingHandler
+	elicitationHandler     ElicitationHandler
+	rootsHandler           RootsHandler
+	subscriptionFilter     mcp.SubscriptionFilter
+	subscriptionGeneration uint64
+	subscriptionID         any
+	mu                     sync.RWMutex
 }
 
 func NewInProcessSession(sessionID string, samplingHandler SamplingHandler) *InProcessSession {
@@ -100,6 +105,75 @@ func (s *InProcessSession) GetLogLevel() mcp.LoggingLevel {
 	return level.(mcp.LoggingLevel)
 }
 
+// SetSubscriptionFilter records the notification types requested by subscriptions/listen.
+// Passing the zero filter clears the subscription. It is safe for concurrent use.
+func (s *InProcessSession) SetSubscriptionFilter(filter mcp.SubscriptionFilter) {
+	s.setOwnedSubscriptionFilter(context.Background(), nil, filter)
+}
+
+func (s *InProcessSession) setOwnedSubscriptionFilter(ctx context.Context, id any, filter mcp.SubscriptionFilter) func() {
+	clear, _ := s.activateSubscription(ctx, id, filter, func() error { return nil })
+	return clear
+}
+
+// activateSubscription queues the acknowledgement and installs its filter under
+// the same lock used to prepare subscription notifications.
+func (s *InProcessSession) activateSubscription(ctx context.Context, id any, filter mcp.SubscriptionFilter, acknowledge func() error) (func(), error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return func() {}, err
+	}
+	if err := acknowledge(); err != nil {
+		return func() {}, err
+	}
+	s.subscriptionGeneration++
+	generation := s.subscriptionGeneration
+	filter.ResourceSubscriptions = slices.Clone(filter.ResourceSubscriptions)
+	s.subscriptionFilter = filter
+	s.subscriptionID = id
+
+	return func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.subscriptionGeneration == generation {
+			s.subscriptionFilter = mcp.SubscriptionFilter{}
+			s.subscriptionID = nil
+		}
+	}, nil
+}
+
+// SubscriptionFilter returns a snapshot of the requested notification types and
+// whether a subscription is active. Sessions without a subscription remain unfiltered.
+func (s *InProcessSession) SubscriptionFilter() (mcp.SubscriptionFilter, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	filter := s.subscriptionFilter
+	filter.ResourceSubscriptions = slices.Clone(filter.ResourceSubscriptions)
+	return filter, !filter.IsEmpty()
+}
+
+// subscriptionNotification reads the filter and its correlation ID together so
+// a replacement cannot associate a notification with the wrong subscription.
+func (s *InProcessSession) subscriptionNotification(notification mcp.JSONRPCNotification) (mcp.JSONRPCNotification, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.subscriptionFilter.IsEmpty() {
+		return notification, true
+	}
+	if !subscriptionFilterAllowsNotification(s.subscriptionFilter, notification.Method) {
+		return notification, false
+	}
+	if s.subscriptionID != nil {
+		notification.Params.Meta = maps.Clone(notification.Params.Meta)
+		if notification.Params.Meta == nil {
+			notification.Params.Meta = make(map[string]any)
+		}
+		notification.Params.Meta[mcp.MetaKeySubscriptionID] = s.subscriptionID
+	}
+	return notification, true
+}
+
 func (s *InProcessSession) RequestSampling(ctx context.Context, request mcp.CreateMessageRequest) (*mcp.CreateMessageResult, error) {
 	s.mu.RLock()
 	handler := s.samplingHandler
@@ -149,10 +223,11 @@ func GenerateInProcessSessionID() string {
 
 // Ensure interface compliance
 var (
-	_ ClientSession          = (*InProcessSession)(nil)
-	_ SessionWithLogging     = (*InProcessSession)(nil)
-	_ SessionWithClientInfo  = (*InProcessSession)(nil)
-	_ SessionWithSampling    = (*InProcessSession)(nil)
-	_ SessionWithElicitation = (*InProcessSession)(nil)
-	_ SessionWithRoots       = (*InProcessSession)(nil)
+	_ ClientSession                 = (*InProcessSession)(nil)
+	_ SessionWithLogging            = (*InProcessSession)(nil)
+	_ SessionWithClientInfo         = (*InProcessSession)(nil)
+	_ SessionWithSampling           = (*InProcessSession)(nil)
+	_ SessionWithElicitation        = (*InProcessSession)(nil)
+	_ SessionWithRoots              = (*InProcessSession)(nil)
+	_ SessionWithSubscriptionFilter = (*InProcessSession)(nil)
 )

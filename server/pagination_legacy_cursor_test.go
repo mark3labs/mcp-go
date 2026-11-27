@@ -12,14 +12,15 @@ import (
 
 func TestPaginationLegacyNameOnlyCursor(t *testing.T) {
 	tests := []struct {
-		name      string
-		method    string
-		configure func(*MCPServer)
-		collect   func(any) ([]string, mcp.Cursor)
+		name        string
+		method      string
+		terminalURI string
+		configure   func(*MCPServer)
+		collect     func(any) ([]string, mcp.Cursor)
 	}{
 		{
 			name:   "resources",
-			method: "resources/list",
+			method: "resources/list", terminalURI: "file:///next",
 			configure: func(s *MCPServer) {
 				for _, uri := range []string{"file:///a", "file:///b", "file:///c"} {
 					s.AddResource(mcp.NewResource(uri, "shared"), nil)
@@ -37,7 +38,7 @@ func TestPaginationLegacyNameOnlyCursor(t *testing.T) {
 		},
 		{
 			name:   "resource templates",
-			method: "resources/templates/list",
+			method: "resources/templates/list", terminalURI: "repo://next/{path}",
 			configure: func(s *MCPServer) {
 				for _, uri := range []string{"repo://a/{path}", "repo://b/{path}"} {
 					s.AddResourceTemplate(mcp.NewResourceTemplate(uri, "shared"), nil)
@@ -67,9 +68,13 @@ func TestPaginationLegacyNameOnlyCursor(t *testing.T) {
 			require.True(t, ok, "unexpected response: %+v", response)
 			names, next := tt.collect(rpc.Result)
 			assert.Equal(t, []string{"z-next"}, names)
-			require.NotEmpty(t, next)
+			assert.Empty(t, next, "an exactly full last page must not advertise another page")
+
+			// Replay the composite terminal cursor an older server could emit.
+			end := base64.StdEncoding.EncodeToString([]byte("z-next")) + "." +
+				base64.StdEncoding.EncodeToString([]byte(tt.terminalURI))
 			response = s.HandleMessage(t.Context(), fmt.Appendf(nil,
-				`{"jsonrpc":"2.0","id":2,"method":%q,"params":{"cursor":%q}}`, tt.method, next))
+				`{"jsonrpc":"2.0","id":2,"method":%q,"params":{"cursor":%q}}`, tt.method, end))
 			rpc, ok = response.(mcp.JSONRPCResponse)
 			require.True(t, ok, "unexpected response: %+v", response)
 			names, next = tt.collect(rpc.Result)
