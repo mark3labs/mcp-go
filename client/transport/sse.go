@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -384,7 +383,6 @@ func (c *SSE) start(ctx context.Context) error {
 func (c *SSE) readSSE(reader io.ReadCloser, endpointChan chan struct{}, endpointOnce *sync.Once) {
 	defer reader.Close()
 
-	br := bufio.NewReader(reader)
 	var event, data string
 
 	// end handles the stream ending with err.
@@ -414,6 +412,12 @@ func (c *SSE) readSSE(reader io.ReadCloser, endpointChan chan struct{}, endpoint
 		} else if err == io.EOF || err == ErrMessageTooLarge {
 			c.logger.Error("SSE stream error", "err", err)
 		}
+	}
+
+	br, err := newSSEReader(reader)
+	if err != nil {
+		end(err)
+		return
 	}
 
 	for {
