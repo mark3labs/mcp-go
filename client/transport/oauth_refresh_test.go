@@ -254,3 +254,115 @@ func TestOAuthHandler_RefreshAfterAStaleRead(t *testing.T) {
 	assert.Equal(t, "Bearer new-access", header)
 	assert.Equal(t, int32(1), server.refreshes.Load(), "refresh requests")
 }
+
+// An access token that is about to expire is refreshed before it is used, so
+// that it does not expire on its way to the server, which would answer 401 and
+// send the caller back to authorize although the refresh token was still good.
+// A token that cannot be refreshed is used until it expires.
+func TestOAuthHandler_RefreshesShortlyBeforeExpiry(t *testing.T) {
+	unavailable := func(w http.ResponseWriter, _ string) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	rejected := func(w http.ResponseWriter, _ string) {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": "invalid_grant"})
+	}
+
+	tests := []struct {
+		name         string
+		expiresIn    time.Duration
+		refreshToken string
+		// lifetime is the token's expires_in, in seconds, when it was issued.
+		lifetime int64
+		// token answers the refresh request; nil means singleUseTokens(0).
+		token         func(http.ResponseWriter, string)
+		wantHeader    string
+		wantErr       error
+		wantRefreshes int32
+	}{
+		{
+			name:          "expires soon, refreshable",
+			expiresIn:     5 * time.Second,
+			refreshToken:  "single-use",
+			wantHeader:    "Bearer new-access",
+			wantRefreshes: 1,
+		},
+		{
+			name:          "expires soon, not refreshable",
+			expiresIn:     5 * time.Second,
+			wantHeader:    "Bearer old-access",
+			wantRefreshes: 0,
+		},
+		{
+			name:          "not about to expire",
+			expiresIn:     time.Hour,
+			refreshToken:  "single-use",
+			wantHeader:    "Bearer old-access",
+			wantRefreshes: 0,
+		},
+		{
+			name:          "short-lived, just issued",
+			expiresIn:     5 * time.Second,
+			refreshToken:  "single-use",
+			lifetime:      5,
+			wantHeader:    "Bearer old-access",
+			wantRefreshes: 0,
+		},
+		{
+			name:          "short-lived, past half its lifetime",
+			expiresIn:     2 * time.Second,
+			refreshToken:  "single-use",
+			lifetime:      5,
+			wantHeader:    "Bearer new-access",
+			wantRefreshes: 1,
+		},
+		{
+			name:          "expires soon, refresh unavailable",
+			expiresIn:     5 * time.Second,
+			refreshToken:  "single-use",
+			token:         unavailable,
+			wantHeader:    "Bearer old-access",
+			wantRefreshes: 1,
+		},
+		{
+			name:          "expires soon, refresh rejected",
+			expiresIn:     5 * time.Second,
+			refreshToken:  "single-use",
+			token:         rejected,
+			wantErr:       ErrOAuthAuthorizationRequired,
+			wantRefreshes: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			token := tt.token
+			if token == nil {
+				token = singleUseTokens(0)
+			}
+			server := newRefreshServer(t, token)
+			store := NewMemoryTokenStore()
+			require.NoError(t, store.SaveToken(t.Context(), &Token{
+				Issuer:       server.URL,
+				AccessToken:  "old-access",
+				TokenType:    "Bearer",
+				RefreshToken: tt.refreshToken,
+				ExpiresIn:    tt.lifetime,
+				ExpiresAt:    time.Now().Add(tt.expiresIn),
+			}))
+			handler := NewOAuthHandler(OAuthConfig{
+				ClientID:              "client",
+				TokenStore:            store,
+				AuthServerMetadataURL: server.URL + "/.well-known/oauth-authorization-server",
+			})
+
+			header, err := handler.GetAuthorizationHeader(t.Context())
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantHeader, header)
+			}
+			assert.Equal(t, tt.wantRefreshes, server.refreshes.Load(), "refresh requests")
+		})
+	}
+}
