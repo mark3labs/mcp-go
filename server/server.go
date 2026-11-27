@@ -2023,6 +2023,13 @@ func (s *MCPServer) handleResourceResult(
 	if err != nil {
 		return nil, handlerError(ctx, id, err)
 	}
+	if result.Contents == nil && !result.NeedsInput() {
+		// Successful results require an array on the wire. Leave the
+		// handler's result intact in case it is reused across requests.
+		empty := *result
+		empty.Contents = []mcp.ResourceContents{}
+		return &empty, nil
+	}
 	return result, nil
 }
 

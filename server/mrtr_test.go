@@ -111,6 +111,7 @@ func TestMultiRoundTrip_ResourceResultHandlerReturnsInputRequired(t *testing.T) 
 	assert.True(t, result.NeedsInput())
 	assert.Equal(t, "resource-state", result.RequestState)
 	assert.Contains(t, result.InputRequests, "who")
+	assert.Nil(t, result.Contents)
 }
 
 func TestMultiRoundTrip_ResourceTemplateResultHandler(t *testing.T) {
