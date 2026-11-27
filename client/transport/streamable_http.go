@@ -267,6 +267,14 @@ func (c *StreamableHTTP) Start(ctx context.Context) error {
 	default:
 	}
 
+	// A session adopted with WithSession is not initialized again, so no
+	// initialize request opens the gate the listener waits on.
+	if sessionID, _ := c.sessionID.Load().(string); sessionID != "" {
+		c.initializedOnce.Do(func() {
+			close(c.initialized)
+		})
+	}
+
 	// For Streamable HTTP, we don't need to establish a persistent connection by default
 	if c.getListeningEnabled {
 		go func() {
