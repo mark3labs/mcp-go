@@ -38,7 +38,11 @@ func NewOAuthStreamableHttpClient(baseURL string, oauthConfig OAuthConfig, optio
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP transport: %w", err)
 	}
-	return NewClient(trans), nil
+	clientOptions := make([]ClientOption, 0)
+	if trans.GetSessionId() != "" {
+		clientOptions = append(clientOptions, WithSession())
+	}
+	return NewClient(trans, clientOptions...), nil
 }
 
 // NewOAuthStreamableHttpClient creates a new streamable-http-based MCP client with OAuth support.
