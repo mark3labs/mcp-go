@@ -889,6 +889,7 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 }
 
 // ToolArgumentsSchema represents a JSON Schema for tool arguments.
+// Decoded numbers in schema values use json.Number to preserve their precision.
 type ToolArgumentsSchema struct {
 	Defs map[string]any `json:"$defs,omitempty"`
 	Type string         `json:"type"`
@@ -1114,7 +1115,9 @@ func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) err
 		Alias: (*Alias)(tis),
 	}
 
-	if err := json.Unmarshal(data, aux); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(aux); err != nil {
 		return err
 	}
 	if err := unmarshalAdditionalSchemaKeywords(data, tis); err != nil {
@@ -1137,7 +1140,9 @@ func toolArgumentsSchemaUnmarshalJSON(data []byte, tis *ToolArgumentsSchema) err
 	}
 
 	if aux.Properties != nil {
-		if err := json.Unmarshal(aux.Properties, &tis.Properties); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(aux.Properties))
+		decoder.UseNumber()
+		if err := decoder.Decode(&tis.Properties); err != nil {
 			return err
 		}
 		tis.PropertyOrder = propertyOrder(aux.Properties)
