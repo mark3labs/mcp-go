@@ -259,7 +259,7 @@ func (r CallToolRequest) RequireString(key string) (string, error) {
 }
 
 // rawIntArgument parses an exact int from RawArguments if it still matches value.
-func (r CallToolRequest) rawIntArgument(key string, value float64) (int, bool) {
+func (r CallToolRequest) rawIntArgument(key string, value float64) (n int, ok, outOfRange bool) {
 	return parseRawInt(r.rawArgument(key), value)
 }
 
@@ -282,27 +282,35 @@ func (r CallToolRequest) rawArgumentSlice(key string) []json.RawMessage {
 	return items
 }
 
-func parseRawInt(rawVal json.RawMessage, value float64) (int, bool) {
+// parseRawInt reports outOfRange when rawVal still matches value and truncates to
+// an integer outside the int range. Callers must then reject the value instead of
+// using the decoded float64, which rounds values just below math.MinInt back into range.
+func parseRawInt(rawVal json.RawMessage, value float64) (n int, ok, outOfRange bool) {
 	s := strings.TrimSpace(string(rawVal))
-	if i, err := strconv.Atoi(s); err == nil {
-		return i, float64(i) == value
+	i, err := strconv.Atoi(s)
+	if err == nil {
+		return i, float64(i) == value, false
+	}
+	if errors.Is(err, strconv.ErrRange) {
+		f, ferr := strconv.ParseFloat(s, 64)
+		return 0, false, ferr == nil && f == value
 	}
 	if len(s) > 64 || !strings.ContainsAny(s, ".eE") {
-		return 0, false
+		return 0, false, false
 	}
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil || f != value || (f > -1 && f < 1) || f < float64(math.MinInt) || f > float64(math.MaxInt) {
-		return 0, false
+		return 0, false, false
 	}
 	rat, ok := new(big.Rat).SetString(s)
-	if !ok || !rat.IsInt() {
-		return 0, false
+	if !ok {
+		return 0, false, false
 	}
-	i, err := strconv.Atoi(rat.Num().String())
+	i, err = strconv.Atoi(new(big.Int).Quo(rat.Num(), rat.Denom()).String())
 	if err != nil {
-		return 0, false
+		return 0, false, true
 	}
-	return i, true
+	return i, true, false
 }
 
 // GetInt returns an int argument by key, or the default value if not found
@@ -313,10 +321,16 @@ func (r CallToolRequest) GetInt(key string, defaultValue int) int {
 		case int:
 			return v
 		case float64:
-			if i, ok := r.rawIntArgument(key, v); ok {
+			i, ok, outOfRange := r.rawIntArgument(key, v)
+			if ok {
 				return i
 			}
-			return int(v)
+			if outOfRange {
+				break
+			}
+			if i, ok := checkedSignedInteger(v, strconv.IntSize); ok {
+				return int(i)
+			}
 		case string:
 			if i, err := strconv.Atoi(v); err == nil {
 				return i
@@ -334,10 +348,16 @@ func (r CallToolRequest) RequireInt(key string) (int, error) {
 		case int:
 			return v, nil
 		case float64:
-			if i, ok := r.rawIntArgument(key, v); ok {
+			i, ok, outOfRange := r.rawIntArgument(key, v)
+			if ok {
 				return i, nil
 			}
-			return int(v), nil
+			if !outOfRange {
+				if i, ok := checkedSignedInteger(v, strconv.IntSize); ok {
+					return int(i), nil
+				}
+			}
+			return 0, fmt.Errorf("argument %q cannot be converted to int", key)
 		case string:
 			if i, err := strconv.Atoi(v); err == nil {
 				return i, nil
@@ -493,12 +513,18 @@ func (r CallToolRequest) GetIntSlice(key string, defaultValue []int) []int {
 					result = append(result, num)
 				case float64:
 					if i < len(rawItems) {
-						if exact, ok := parseRawInt(rawItems[i], num); ok {
+						exact, ok, outOfRange := parseRawInt(rawItems[i], num)
+						if ok {
 							result = append(result, exact)
 							continue
 						}
+						if outOfRange {
+							continue
+						}
 					}
-					result = append(result, int(num))
+					if n, ok := checkedSignedInteger(num, strconv.IntSize); ok {
+						result = append(result, int(n))
+					}
 				case string:
 					if i, err := strconv.Atoi(num); err == nil {
 						result = append(result, i)
@@ -528,12 +554,20 @@ func (r CallToolRequest) RequireIntSlice(key string) ([]int, error) {
 					result = append(result, num)
 				case float64:
 					if i < len(rawItems) {
-						if exact, ok := parseRawInt(rawItems[i], num); ok {
+						exact, ok, outOfRange := parseRawInt(rawItems[i], num)
+						if ok {
 							result = append(result, exact)
 							continue
 						}
+						if outOfRange {
+							return nil, fmt.Errorf("item %d in argument %q cannot be converted to int", i, key)
+						}
 					}
-					result = append(result, int(num))
+					n, ok := checkedSignedInteger(num, strconv.IntSize)
+					if !ok {
+						return nil, fmt.Errorf("item %d in argument %q cannot be converted to int", i, key)
+					}
+					result = append(result, int(n))
 				case string:
 					if n, err := strconv.Atoi(num); err == nil {
 						result = append(result, n)
