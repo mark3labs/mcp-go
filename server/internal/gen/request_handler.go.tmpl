@@ -220,6 +220,10 @@ func (s *MCPServer) handleMessage(
 	// 2026-07-28: resultType, serverInfo, and caching hints.
 	defer func() { resp = s.decorateResponse(ctx, protocolInfo, baseMessage.Method, resp) }()
 
+	s.capabilitiesMu.RLock()
+	capabilities := s.capabilities
+	s.capabilitiesMu.RUnlock()
+
 	switch baseMessage.Method {
 	{{- range .}}
 	case mcp.{{.MethodName}}:
@@ -237,7 +241,7 @@ func (s *MCPServer) handleMessage(
 				code: mcp.METHOD_NOT_FOUND,
 				err:  fmt.Errorf("%q %w", baseMessage.Method, ErrRequiresModernProtocol),
 			}
-		} else {{ end }}{{ if .Group }}if s.capabilities.{{.Group}} == nil {
+		} else {{ end }}{{ if .Group }}if capabilities.{{.Group}} == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,

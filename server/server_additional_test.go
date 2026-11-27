@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -803,50 +802,60 @@ func TestMCPServer_CapabilityImplicitRegistration(t *testing.T) {
 
 // TestMCPServer_ConcurrentCapabilityChecks tests thread safety of capability access
 func TestMCPServer_ConcurrentCapabilityChecks(t *testing.T) {
-	server := NewMCPServer("test-server", "1.0.0")
+	tests := []struct {
+		name     string
+		method   string
+		register func(*MCPServer)
+	}{
+		{
+			name:   "tools",
+			method: "tools/list",
+			register: func(server *MCPServer) {
+				server.AddTool(mcp.NewTool("test-tool"), nil)
+			},
+		},
+		{
+			name:   "resources",
+			method: "resources/list",
+			register: func(server *MCPServer) {
+				server.AddResource(mcp.NewResource("test://resource", "test-resource"), nil)
+			},
+		},
+		{
+			name:   "prompts",
+			method: "prompts/list",
+			register: func(server *MCPServer) {
+				server.AddPrompt(mcp.NewPrompt("test-prompt"), nil)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := NewMCPServer("test-server", "1.0.0")
+			ctx := t.Context()
+			message := json.RawMessage(fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":%q}`, test.method))
+			response := server.HandleMessage(ctx, message)
+			require.IsType(t, mcp.JSONRPCError{}, response)
+			assert.Equal(t, mcp.METHOD_NOT_FOUND, response.(mcp.JSONRPCError).Error.Code)
 
-	var wg sync.WaitGroup
-	stopCh := make(chan struct{})
-	errorCount := atomic.Int32{}
-
-	// Goroutine that adds tools (triggers capability registration)
-	wg.Go(func() {
-		i := 0
-		for {
-			select {
-			case <-stopCh:
-				return
-			default:
-				server.AddTool(mcp.NewTool(fmt.Sprintf("tool-%d", i)), nil)
-				i++
-				time.Sleep(1 * time.Millisecond)
-			}
-		}
-	})
-
-	// Goroutines that check capabilities
-	for range 5 {
-		wg.Go(func() {
-			for {
-				select {
-				case <-stopCh:
-					return
-				default:
-					server.capabilitiesMu.RLock()
-					_ = server.capabilities.tools
-					server.capabilitiesMu.RUnlock()
-					time.Sleep(1 * time.Millisecond)
+			start := make(chan struct{})
+			var wg sync.WaitGroup
+			wg.Go(func() {
+				<-start
+				test.register(server)
+			})
+			wg.Go(func() {
+				<-start
+				for range 100 {
+					server.HandleMessage(ctx, message)
 				}
-			}
+			})
+			close(start)
+			wg.Wait()
+
+			require.IsType(t, mcp.JSONRPCResponse{}, server.HandleMessage(ctx, message))
 		})
 	}
-
-	// Let it run for a bit
-	time.Sleep(50 * time.Millisecond)
-	close(stopCh)
-	wg.Wait()
-
-	assert.Equal(t, int32(0), errorCount.Load(), "Should complete without errors")
 }
 
 // TestMCPServer_PaginationCursorStability tests pagination behavior when items change
