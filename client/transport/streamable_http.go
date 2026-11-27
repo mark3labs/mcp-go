@@ -1651,9 +1651,12 @@ func (c *StreamableHTTP) handleIncomingRequest(ctx context.Context, request JSON
 				}
 			}
 
-			// Send error response
+			// Send error response. requestCtx is already done when the handler
+			// was cancelled or timed out, so it cannot carry the response.
 			errorResponse := NewJSONRPCErrorResponse(request.ID, errorCode, errorMessage, nil)
-			c.sendResponseToServer(requestCtx, errorResponse)
+			sendCtx, cancelSend := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer cancelSend()
+			c.sendResponseToServer(sendCtx, errorResponse)
 			return
 		}
 
