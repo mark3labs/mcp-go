@@ -214,6 +214,11 @@ type SSEServer struct {
 	// HTTP server exists, and that case leaves the handler usable.
 	closed atomic.Bool
 
+	// tasksCtx ends when Shutdown closes the server, which cancels the
+	// tasks started through it.
+	tasksCtx    context.Context
+	cancelTasks context.CancelFunc
+
 	mu sync.RWMutex
 }
 
@@ -464,6 +469,7 @@ func NewSSEServer(server *MCPServer, opts ...SSEOption) *SSEServer {
 			return uuid.New().String(), nil
 		},
 	}
+	s.tasksCtx, s.cancelTasks = context.WithCancel(context.Background())
 
 	// Apply all options
 	for _, opt := range opts {
@@ -504,8 +510,9 @@ func (s *SSEServer) Start(addr string) error {
 
 // Shutdown gracefully stops the SSE server, closing all active sessions
 // and shutting down the HTTP server. Once an owned HTTP server has been
-// shut down, Start and new SSE or message requests fail. Shutdown before
-// an HTTP server exists is a no-op so a later Start can still listen.
+// shut down, Start and new SSE or message requests fail, and tasks started
+// through the server are cancelled. Shutdown before an HTTP server exists is
+// a no-op so a later Start can still listen.
 func (s *SSEServer) Shutdown(ctx context.Context) error {
 	s.mu.RLock()
 	srv := s.srv
@@ -517,6 +524,7 @@ func (s *SSEServer) Shutdown(ctx context.Context) error {
 	// Reject new work before closing sessions so a connection accepted
 	// during shutdown observes the closed server and exits.
 	s.closed.Store(true)
+	s.cancelTasks()
 	s.CloseSessions()
 	return srv.Shutdown(ctx)
 }
@@ -734,6 +742,7 @@ func (s *SSEServer) handleMessage(w http.ResponseWriter, r *http.Request) {
 
 	// Set the client context before handling the message
 	ctx := s.server.WithContext(r.Context(), session)
+	ctx = withTaskLifetime(ctx, s.tasksCtx)
 	if s.contextFunc != nil {
 		ctx = s.contextFunc(ctx, r)
 	}

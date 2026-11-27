@@ -578,7 +578,8 @@ func (s *StdioServer) readNextLine(ctx context.Context, reader *bufio.Reader) (s
 // Caller-context cancellation, including cancellation inherited from Listen's
 // context, can release a waiting request with ctx.Err() before listener closure
 // is observed. Once closure is observed, ErrStdioServerClosed takes precedence
-// over context cancellation.
+// over context cancellation. Tasks started over the listener are cancelled
+// when Listen returns.
 func (s *StdioServer) Listen(
 	ctx context.Context,
 	stdin io.Reader,
@@ -620,8 +621,14 @@ func (s *StdioServer) Listen(
 	if err := s.server.RegisterSession(ctx, &stdioSessionInstance); err != nil {
 		return fmt.Errorf("register session: %w", err)
 	}
+	// Tasks started over this listener are cancelled once its session is
+	// unregistered, so their status notifications are not left queued for
+	// a later Listen.
+	tasksCtx, cancelTasks := context.WithCancel(context.Background())
+	defer cancelTasks()
 	defer s.server.UnregisterSession(ctx, stdioSessionInstance.SessionID())
 	ctx = s.server.WithContext(ctx, &stdioSessionInstance)
+	ctx = withTaskLifetime(ctx, tasksCtx)
 
 	// Set the writer for sending requests to the client
 	writeGen = stdioSessionInstance.SetWriter(&lockedWriter{mu: &s.writeMu, w: stdout})

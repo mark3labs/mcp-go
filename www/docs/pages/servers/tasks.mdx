@@ -121,7 +121,7 @@ The available status constants are:
 | Working | `mcp.TaskStatusWorking` | Task is actively processing |
 | Completed | `mcp.TaskStatusCompleted` | Task finished successfully |
 | Failed | `mcp.TaskStatusFailed` | Task encountered an error |
-| Cancelled | `mcp.TaskStatusCancelled` | Task was cancelled by the client |
+| Cancelled | `mcp.TaskStatusCancelled` | Task was cancelled by the client, or by the shutdown of the transport that started it |
 | Input Required | `mcp.TaskStatusInputRequired` | Task needs additional input to continue |
 
 Use `IsTerminal()` to check whether a task has reached a final state:
