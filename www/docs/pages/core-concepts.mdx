@@ -231,15 +231,16 @@ MCP-Go handles session management automatically, supporting multiple concurrent 
 
 ```go
 // Server automatically handles multiple sessions
+hooks := &server.Hooks{}
+hooks.AddOnRegisterSession(func(ctx context.Context, session server.ClientSession) {
+    log.Printf("Client %s connected", session.SessionID())
+})
+hooks.AddOnUnregisterSession(func(ctx context.Context, session server.ClientSession) {
+    log.Printf("Client %s disconnected", session.SessionID())
+})
+
 s := server.NewMCPServer("Multi-Client Server", "1.0.0",
-    server.WithHooks(&server.Hooks{
-        OnSessionStart: func(sessionID string) {
-            log.Printf("Client %s connected", sessionID)
-        },
-        OnSessionEnd: func(sessionID string) {
-            log.Printf("Client %s disconnected", sessionID)
-        },
-    }),
+    server.WithHooks(hooks),
 )
 ```
 
@@ -255,8 +256,12 @@ type SessionState struct {
 var sessions = make(map[string]*SessionState)
 
 func toolHandler(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-    sessionID := server.GetSessionID(ctx)
-    state := sessions[sessionID]
+    session := server.ClientSessionFromContext(ctx)
+    if session == nil {
+        return nil, fmt.Errorf("no active session")
+    }
+
+    state := sessions[session.SessionID()]
     
     // Use session-specific state
     return processWithState(state, req)

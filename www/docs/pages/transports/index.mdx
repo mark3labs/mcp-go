@@ -256,11 +256,13 @@ func setupServer(s *server.MCPServer) {
 ```go
 // Example with security middleware
 s := server.NewMCPServer("Secure Server", "1.0.0",
-    server.WithToolMiddleware(authMiddleware),
-    server.WithToolMiddleware(rateLimitMiddleware),
+    server.WithToolHandlerMiddleware(authMiddleware),
+    server.WithToolHandlerMiddleware(rateLimitMiddleware),
     server.WithRecovery(),
 )
 ```
+
+`WithToolHandlerMiddleware` wraps regular tool handlers only. It does not cover resource handlers, prompt handlers, or the handler that creates a native task tool. A regular tool executed as a task still passes through the regular tool middleware chain. For authentication and rate limiting that must cover every network request, wrap the HTTP handler at the transport layer.
 
 ## Next Steps
 
