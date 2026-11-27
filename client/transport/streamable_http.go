@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -1209,7 +1208,7 @@ func (c *StreamableHTTP) resumeSSE(ctx context.Context, cursor *sseCursor, handl
 // distinguish a clean disconnect from a failed one.
 //
 // A background goroutine closes the reader when ctx is cancelled, which unblocks
-// any in-progress ReadString call. This is necessary because ReadString is blocking
+// any in-progress read. This is necessary because reading from the stream is blocking
 // I/O that does not respect context cancellation on its own.
 func (c *StreamableHTTP) readSSE(ctx context.Context, reader io.ReadCloser, handler func(event, data string)) error {
 	return c.readSSEWithCursor(ctx, reader, nil, handler)
@@ -1231,7 +1230,7 @@ type sseCursor struct {
 // with no data, which is how a server primes the client to reconnect.
 func (c *StreamableHTTP) readSSEWithCursor(ctx context.Context, reader io.ReadCloser, cursor *sseCursor, handler func(event, data string)) error {
 	// Close the reader when context is cancelled to interrupt blocking reads.
-	// This ensures ReadString returns immediately with an error instead of
+	// This ensures reading returns immediately with an error instead of
 	// blocking indefinitely when the SSE stream is open but idle.
 	go func() {
 		defer func() {
@@ -1243,7 +1242,7 @@ func (c *StreamableHTTP) readSSEWithCursor(ctx context.Context, reader io.ReadCl
 		reader.Close()
 	}()
 
-	br := bufio.NewReader(reader)
+	lines := newSSELineReader(reader)
 	var event, data, id string
 	var hasID bool
 	commitID := func() {
@@ -1254,7 +1253,7 @@ func (c *StreamableHTTP) readSSEWithCursor(ctx context.Context, reader io.ReadCl
 	}
 
 	for {
-		line, err := readSSELine(br, c.maxMessageBytes)
+		line, err := lines.readLine(c.maxMessageBytes)
 		if err != nil {
 			// Context was cancelled — reader was closed by the goroutine above.
 			if ctx.Err() != nil {
@@ -1276,8 +1275,6 @@ func (c *StreamableHTTP) readSSEWithCursor(ctx context.Context, reader io.ReadCl
 			return fmt.Errorf("SSE stream error: %w", err)
 		}
 
-		// Remove only newline markers
-		line = strings.TrimRight(line, "\r\n")
 		if line == "" {
 			// Empty line means end of event
 			commitID()
