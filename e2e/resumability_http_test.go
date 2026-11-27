@@ -731,7 +731,8 @@ func TestResumability_PlainJSONNotRecorded(t *testing.T) {
 }
 
 // A reconnect for a stream supersedes an earlier connection still attached to
-// it: the old connection is closed and delivery continues on the new one.
+// it, whether it resumes with Last-Event-ID or opens a new GET without one:
+// the old connection is closed and delivery continues on the new one.
 func TestResumability_ReconnectSupersedes(t *testing.T) {
 	store := newRecordingStore()
 	mcpServer, ts, _ := startServer(t, store)
@@ -754,6 +755,15 @@ func TestResumability_ReconnectSupersedes(t *testing.T) {
 	sendNotification(t, mcpServer, sid, "n2")
 	ev2 := requireEvent(t, br2)
 	assert.Equal(t, "n2", notificationData(t, ev2.data))
+
+	// A new GET without Last-Event-ID takes the listening stream over too.
+	resp3, _ := openGET(t, ts, sid, "")
+	br3 := bufio.NewReader(resp3.Body)
+	requireEOF(t, br2)
+
+	sendNotification(t, mcpServer, sid, "n3")
+	ev3 := requireEvent(t, br3)
+	assert.Equal(t, "n3", notificationData(t, ev3.data))
 }
 
 // ---------------------------------------------------------------------------
