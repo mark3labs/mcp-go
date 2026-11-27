@@ -138,14 +138,35 @@ func (c *InProcessTransport) forwardNotifications() {
 			if !ok {
 				return
 			}
-			c.notifyMu.RLock()
-			handler := c.onNotification
-			c.notifyMu.RUnlock()
-			if handler != nil {
-				handler(notification)
-			}
+			c.deliverNotification(notification)
 		}
 	}
+}
+
+func (c *InProcessTransport) deliverNotification(notification mcp.JSONRPCNotification) {
+	select {
+	case <-c.done:
+		return
+	default:
+	}
+	c.notifyMu.RLock()
+	handler := c.onNotification
+	c.notifyMu.RUnlock()
+	if handler != nil {
+		handler(notification)
+	}
+}
+
+// handleMessage passes msg to the server. Notifications the server sends
+// while handling it reach the client handler before this returns.
+func (c *InProcessTransport) handleMessage(ctx context.Context, msg []byte) mcp.JSONRPCMessage {
+	session := c.session
+	if session == nil {
+		return c.server.HandleMessage(ctx, msg)
+	}
+	ctx, end := session.RequestContext(c.server.WithContext(ctx, session), c.deliverNotification)
+	defer end()
+	return c.server.HandleMessage(ctx, msg)
 }
 
 func (c *InProcessTransport) SendRequest(ctx context.Context, request JSONRPCRequest) (*JSONRPCResponse, error) {
@@ -155,12 +176,7 @@ func (c *InProcessTransport) SendRequest(ctx context.Context, request JSONRPCReq
 	}
 	requestBytes = append(requestBytes, '\n')
 
-	// Add session to context if available
-	if c.session != nil {
-		ctx = c.server.WithContext(ctx, c.session)
-	}
-
-	respMessage := c.server.HandleMessage(ctx, requestBytes)
+	respMessage := c.handleMessage(ctx, requestBytes)
 	respByte, err := json.Marshal(respMessage)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal response message: %w", err)
@@ -180,14 +196,15 @@ func (c *InProcessTransport) SendNotification(ctx context.Context, notification 
 		return fmt.Errorf("failed to marshal notification: %w", err)
 	}
 	notificationBytes = append(notificationBytes, '\n')
-	if c.session != nil {
-		ctx = c.server.WithContext(ctx, c.session)
-	}
-	c.server.HandleMessage(ctx, notificationBytes)
+	c.handleMessage(ctx, notificationBytes)
 
 	return nil
 }
 
+// SetNotificationHandler sets the handler for server notifications. A
+// notification sent while the server handles a client message is passed to
+// the handler on that message's goroutine, so the handler can run on several
+// goroutines at once and must guard any state it shares.
 func (c *InProcessTransport) SetNotificationHandler(handler func(notification mcp.JSONRPCNotification)) {
 	c.notifyMu.Lock()
 	defer c.notifyMu.Unlock()
