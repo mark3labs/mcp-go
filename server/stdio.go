@@ -715,7 +715,9 @@ func (s *StdioServer) processMessage(
 			}
 		}
 	}
-	if parsed && !baseMessage.ID.IsNil() {
+	// A message without a method is a response, whose id belongs to the
+	// server's requests and may equal the id of a client request in flight.
+	if parsed && !baseMessage.ID.IsNil() && baseMessage.Method != "" {
 		// Register before handing the request off, so even queued calls
 		// can receive cancellation notifications.
 		id := baseMessage.ID.Value()
