@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"unicode"
 
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -287,9 +288,14 @@ func nativeJSONFieldSelection(
 		if field.Anonymous || info.omit {
 			continue
 		}
-		if _, duplicate := native[info.name]; duplicate {
+		// Native inference uses even tag names that encoding/json ignores.
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if name == "" {
+			name = field.Name
+		}
+		if _, duplicate := native[name]; duplicate {
 			matches = false
-			if opts.IgnoreInvalidTypes && properties[info.name] != nil {
+			if opts.IgnoreInvalidTypes && properties[name] != nil {
 				// Ignored fields do not overwrite earlier native properties.
 				candidate, err := jsonschema.ForType(field.Type, opts)
 				if err != nil {
@@ -300,7 +306,7 @@ func nativeJSONFieldSelection(
 				}
 			}
 		}
-		native[info.name] = field
+		native[name] = field
 	}
 	if len(native) != len(fields) {
 		matches = false
@@ -329,49 +335,23 @@ func applyStructFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 		return
 	}
 
-	active := make(map[reflect.Type]bool)
-	var walk func(reflect.Type)
-	walk = func(structType reflect.Type) {
-		if active[structType] {
-			return
+	// Native inference can accept recursive embeddings and selection still returns their visible fields.
+	fields, _ := selectedJSONFields(t)
+	for _, field := range fields {
+		prop := schema.Properties[field.info.name]
+		if prop == nil {
+			continue
 		}
-		active[structType] = true
-		defer delete(active, structType)
-		for i := 0; i < structType.NumField(); i++ {
-			field := structType.Field(i)
-			fieldType := field.Type
-			info := fieldJSONInfo(field)
-			if info.omit {
-				continue
-			}
-			if field.Anonymous && !info.explicitName {
-				anonType := fieldType
-				if anonType.Kind() == reflect.Pointer {
-					anonType = anonType.Elem()
-				}
-				if anonType.Kind() == reflect.Struct {
-					walk(anonType)
-					continue
-				}
-			}
 
-			prop, ok := schema.Properties[info.name]
-			if !ok {
-				continue
-			}
-
-			description, enums := fieldSchemaAnnotations(field)
-			if description != "" {
-				prop.Description = description
-			}
-			if len(enums) > 0 {
-				prop.Enum = enums
-			}
-			applyStructFieldTagsToType(fieldType, prop, applyStructFieldTags)
+		description, enums := fieldSchemaAnnotations(field.field)
+		if description != "" {
+			prop.Description = description
 		}
+		if len(enums) > 0 {
+			prop.Enum = enums
+		}
+		applyStructFieldTagsToType(field.field.Type, prop, applyStructFieldTags)
 	}
-
-	walk(t)
 }
 
 type jsonSchemaField struct {
@@ -382,8 +362,8 @@ type jsonSchemaField struct {
 	throughPointer bool
 }
 
-// selectedJSONFields resolves JSON field visibility before either constructing
-// fallback properties or applying the string option to their schemas.
+// selectedJSONFields resolves JSON field visibility before constructing
+// fallback properties or applying schema annotations.
 func selectedJSONFields(t reflect.Type) ([]jsonSchemaField, error) {
 	fields := make(map[string]jsonSchemaField)
 	var names []string
@@ -625,7 +605,7 @@ func fieldJSONTagInfo(field reflect.StructField) jsonFieldInfo {
 	if name == "-" && !found {
 		return jsonFieldInfo{omit: true}
 	}
-	if name != "" {
+	if validJSONTagName(name) {
 		info.name = name
 		info.explicitName = true
 	}
@@ -636,6 +616,20 @@ func fieldJSONTagInfo(field reflect.StructField) jsonFieldInfo {
 		}
 	}
 	return info
+}
+
+func validJSONTagName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, c := range name {
+		switch {
+		case strings.ContainsRune("!#$%&()*+-./:;<=>?@[]^_{|}~ ", c):
+		case !unicode.IsLetter(c) && !unicode.IsDigit(c):
+			return false
+		}
+	}
+	return true
 }
 
 func schemaForRawMessage[T any]() ([]byte, error) {
