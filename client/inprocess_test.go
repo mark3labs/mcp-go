@@ -14,6 +14,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestInProcessMCPClient_EmptyFullResourceResult(t *testing.T) {
+	const uri = "test://empty-resource"
+	srv := server.NewMCPServer("test-server", "1.0.0", server.WithResourceCapabilities(false, false))
+	srv.AddResourceWithResult(mcp.NewResource(uri, "empty"), func(context.Context, mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{}, nil
+	})
+	client, err := NewInProcessClient(srv)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	require.NoError(t, client.Start(t.Context()))
+	_, err = client.Initialize(t.Context(), mcp.InitializeRequest{})
+	require.NoError(t, err)
+
+	result, err := client.ReadResource(t.Context(), mcp.ReadResourceRequest{Params: mcp.ReadResourceParams{URI: uri}})
+	require.NoError(t, err)
+	require.Empty(t, result.Contents)
+}
+
 func TestInProcessMCPClient(t *testing.T) {
 	mcpServer := server.NewMCPServer(
 		"test-server",

@@ -88,11 +88,11 @@ Expose files from your filesystem:
 ```go
 func main() {
     s := server.NewMCPServer("File Server", "1.0.0",
-        server.WithResourceCapabilities(true),
+        server.WithResourceCapabilities(false, false),
     )
 
     // Add a static file resource
-    s.AddResource(
+    s.AddResourceWithResult(
         mcp.NewResource(
             "file://README.md",
             "Project README",
@@ -122,6 +122,10 @@ func handleReadmeFile(ctx context.Context, req mcp.ReadResourceRequest) (*mcp.Re
     }, nil
 }
 ```
+
+Use `AddResourceWithResult` when a resource handler needs to return cache hints
+or an `input_required` result. Content-only handlers can continue using
+`AddResource` and returning `[]mcp.ResourceContents`.
 
 ### Configuration Resources
 

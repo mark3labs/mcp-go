@@ -348,6 +348,15 @@ func getPromptResultNeedsInput(result *mcp.GetPromptResult) (mcp.InputRequests, 
 	return result.InputRequests, result.RequestState, true
 }
 
+// readResourceResultNeedsInput reports whether a resources/read result asks
+// the client for more input.
+func readResourceResultNeedsInput(result *mcp.ReadResourceResult) (mcp.InputRequests, string, bool) {
+	if !result.NeedsInput() {
+		return nil, "", false
+	}
+	return result.InputRequests, result.RequestState, true
+}
+
 // assertServerInitiatedRequestAllowed rejects a server-initiated request on a
 // connection using protocol version 2026-07-28 or later, where the pattern was
 // replaced by multi round-trip requests.
