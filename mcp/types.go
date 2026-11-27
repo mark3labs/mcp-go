@@ -1343,6 +1343,8 @@ type ResourceLink struct {
 	Description string `json:"description"`
 	// The MIME type of the resource.
 	MIMEType string `json:"mimeType"`
+	// Icons can be displayed alongside the resource link.
+	Icons []Icon `json:"icons,omitempty"`
 	// Size is the size of the raw resource content, in bytes (i.e., before base64
 	// encoding or any tokenization), if known. This can be used by hosts to
 	// display file sizes and estimate context window usage.

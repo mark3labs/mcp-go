@@ -1110,3 +1110,21 @@ func TestToolResultContent_IsContent(t *testing.T) {
 	var c Content = ToolResultContent{Type: ContentTypeToolResult, ToolUseID: "tu_1"}
 	assert.NotNil(t, c)
 }
+
+func TestResourceLinkIconRoundTrip(t *testing.T) {
+	const link = `{"type":"resource_link","uri":"file:///report","name":"Report","icons":[{"src":"https://example.com/report.svg","mimeType":"image/svg+xml","sizes":["any"],"theme":"dark"}]}`
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal([]byte(link), &fields))
+	content, err := ParseContent(fields)
+	require.NoError(t, err)
+	raw := json.RawMessage(`{"content":[` + link + `]}`)
+	result, err := ParseCallToolResult(&raw)
+	require.NoError(t, err)
+	for _, parsed := range []Content{content, result.Content[0]} {
+		encoded, err := json.Marshal(parsed)
+		require.NoError(t, err)
+		var got map[string]any
+		require.NoError(t, json.Unmarshal(encoded, &got))
+		assert.Equal(t, fields["icons"], got["icons"])
+	}
+}

@@ -668,6 +668,15 @@ func ParseContent(contentMap map[string]any) (Content, error) {
 		}
 		c := NewResourceLink(uri, name, description, mimeType)
 		c.Title = ExtractString(contentMap, "title")
+		if icons := contentMap["icons"]; icons != nil {
+			data, err := json.Marshal(icons)
+			if err != nil {
+				return nil, fmt.Errorf("resource_link icons: %w", err)
+			}
+			if err := json.Unmarshal(data, &c.Icons); err != nil {
+				return nil, fmt.Errorf("resource_link icons: %w", err)
+			}
+		}
 		if value, ok := contentMap["size"]; ok && value != nil {
 			if size, err := cast.ToInt64E(value); err == nil && size >= 0 {
 				c.Size = &size
