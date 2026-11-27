@@ -67,18 +67,18 @@ func TestStdioServerFullQueueKeepsInputReadable(t *testing.T) {
 		name   string
 		method mcp.MCPMethod
 		result string
-		call   func(context.Context) error
+		call   func(context.Context, *stdioSession) error
 	}{
-		{name: "sampling", method: mcp.MethodSamplingCreateMessage, result: `{"role":"assistant","content":{"type":"text","text":"ok"},"model":"test"}`, call: func(ctx context.Context) error {
-			_, err := stdioSessionInstance.RequestSampling(ctx, mcp.CreateMessageRequest{})
+		{name: "sampling", method: mcp.MethodSamplingCreateMessage, result: `{"role":"assistant","content":{"type":"text","text":"ok"},"model":"test"}`, call: func(ctx context.Context, session *stdioSession) error {
+			_, err := session.RequestSampling(ctx, mcp.CreateMessageRequest{})
 			return err
 		}},
-		{name: "elicitation", method: mcp.MethodElicitationCreate, result: `{"action":"accept","content":{}}`, call: func(ctx context.Context) error {
-			_, err := stdioSessionInstance.RequestElicitation(ctx, mcp.ElicitationRequest{})
+		{name: "elicitation", method: mcp.MethodElicitationCreate, result: `{"action":"accept","content":{}}`, call: func(ctx context.Context, session *stdioSession) error {
+			_, err := session.RequestElicitation(ctx, mcp.ElicitationRequest{})
 			return err
 		}},
-		{name: "roots", method: mcp.MethodListRoots, result: `{"roots":[]}`, call: func(ctx context.Context) error {
-			_, err := stdioSessionInstance.ListRoots(ctx, mcp.ListRootsRequest{})
+		{name: "roots", method: mcp.MethodListRoots, result: `{"roots":[]}`, call: func(ctx context.Context, session *stdioSession) error {
+			_, err := session.ListRoots(ctx, mcp.ListRootsRequest{})
 			return err
 		}},
 	}
@@ -99,9 +99,10 @@ func TestStdioServerFullQueueKeepsInputReadable(t *testing.T) {
 				var calls atomic.Int32
 				handlerDone := make(chan error, 2)
 				mcpServer := NewMCPServer("test", "1.0.0", WithToolCapabilities(true))
-				mcpServer.AddTool(mcp.NewTool("ask"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				mcpServer.AddTool(mcp.NewTool("ask"), func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 					calls.Add(1)
-					handlerDone <- tt.call(requestCtx)
+					session := ClientSessionFromContext(ctx).(*stdioSession)
+					handlerDone <- tt.call(requestCtx, session)
 					return mcp.NewToolResultText("done"), nil
 				})
 				mcpServer.AddTool(mcp.NewTool("queued"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
