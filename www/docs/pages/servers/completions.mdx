@@ -126,6 +126,10 @@ If you don't set custom providers, `DefaultPromptCompletionProvider` and `Defaul
 
 You only need to register a custom provider when you want to return actual suggestions.
 
+## Provider Errors
+
+Completion providers can return `server.NewHandlerError` to expose an application-defined JSON-RPC error's code, public message, and data, just like tool, prompt, and resource handlers. Wrapping that error with `%w` preserves it. Ordinary errors and unmarked errors from upstream servers remain internal errors.
+
 ## The Completion Type
 
 The `mcp.Completion` struct is what your provider returns to the client:

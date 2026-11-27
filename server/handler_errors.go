@@ -45,8 +45,8 @@ func NewHandlerError(provider JSONRPCErrorProvider) error {
 	return &exposedHandlerError{provider: provider}
 }
 
-// handlerError reports an error returned by a tool, prompt or resource
-// handler, which is otherwise an internal error.
+// handlerError reports an error returned by a tool, prompt, resource or
+// completion handler, which is otherwise an internal error.
 //
 // A handler returns mcp.URLElicitationRequiredError when the request cannot
 // proceed until the user completes a URL elicitation. Protocol version
