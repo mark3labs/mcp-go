@@ -329,49 +329,26 @@ func applyStructFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 		return
 	}
 
-	active := make(map[reflect.Type]bool)
-	var walk func(reflect.Type)
-	walk = func(structType reflect.Type) {
-		if active[structType] {
-			return
+	// Selection must match the one used to build the properties, so an
+	// embedded field loses to a shallower or explicitly tagged one.
+	// Native inference can accept recursive embeddings; selection still
+	// returns their visible fields.
+	fields, _ := selectedJSONFields(t)
+	for _, field := range fields {
+		prop, ok := schema.Properties[field.info.name]
+		if !ok {
+			continue
 		}
-		active[structType] = true
-		defer delete(active, structType)
-		for i := 0; i < structType.NumField(); i++ {
-			field := structType.Field(i)
-			fieldType := field.Type
-			info := fieldJSONInfo(field)
-			if info.omit {
-				continue
-			}
-			if field.Anonymous && !info.explicitName {
-				anonType := fieldType
-				if anonType.Kind() == reflect.Pointer {
-					anonType = anonType.Elem()
-				}
-				if anonType.Kind() == reflect.Struct {
-					walk(anonType)
-					continue
-				}
-			}
 
-			prop, ok := schema.Properties[info.name]
-			if !ok {
-				continue
-			}
-
-			description, enums := fieldSchemaAnnotations(field)
-			if description != "" {
-				prop.Description = description
-			}
-			if len(enums) > 0 {
-				prop.Enum = enums
-			}
-			applyStructFieldTagsToType(fieldType, prop, applyStructFieldTags)
+		description, enums := fieldSchemaAnnotations(field.field)
+		if description != "" {
+			prop.Description = description
 		}
+		if len(enums) > 0 {
+			prop.Enum = enums
+		}
+		applyStructFieldTagsToType(field.field.Type, prop, applyStructFieldTags)
 	}
-
-	walk(t)
 }
 
 type jsonSchemaField struct {
