@@ -494,22 +494,21 @@ func (m *AuthMiddleware) ToolMiddleware(next server.ToolHandlerFunc) server.Tool
 ## Hooks
 
 Implement lifecycle callbacks for telemetry, logging, and custom behavior.
+Register hooks before starting the transport. The `Add*` methods append to
+callback slices that request dispatch reads without synchronization.
 
 ### Hook Composability with GetHooks()
 
-Use `GetHooks()` to append hooks to an existing server without replacing the entire hooks configuration. This is useful for libraries or plugins that need to add hooks after construction:
+Use `GetHooks()` to append hooks after constructing the server and before
+serving requests. Initialize the hook set with `WithHooks` during construction.
 
 ```go
 s := server.NewMCPServer("My Server", "1.0.0",
     server.WithHooks(initialHooks),
 )
 
-// Later, add more hooks without replacing existing ones
-hooks := s.GetHooks()
-if hooks == nil {
-    hooks = &server.Hooks{}
-}
-hooks.AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, message any) {
+// Add more hooks before starting the transport.
+s.GetHooks().AddBeforeAny(func(ctx context.Context, id any, method mcp.MCPMethod, message any) {
     log.Printf("Request: %s", method)
 })
 ```
@@ -848,7 +847,10 @@ func (n *CustomNotifier) BroadcastSystemMessage(message string) {
 
 ## Production Configuration
 
-### Complete Production Server
+### Production Server Wiring
+
+This illustrative pseudocode omits the application-specific implementations of
+metrics, session management, logging, and tool, resource, and prompt handlers.
 
 ```go
 func main() {
@@ -856,12 +858,8 @@ func main() {
     logger := log.New(os.Stderr, "[MCP] ", log.LstdFlags)
     metrics := NewPrometheusMetrics()
     sessionManager := NewSessionManager()
-    notifier := NewCustomNotifier()
-    
-    // Create middleware
     loggingMW := NewLoggingMiddleware(logger)
-    rateLimitMW := NewRateLimitMiddleware(10.0, 20) // 10 req/sec, burst 20
-    authMW := NewAuthMiddleware(NewJWTValidator())
+    permissionFilter := NewPermissionFilter(sessionManager)
     
     // Create hooks. server.WithHooks takes *server.Hooks, so build that struct
     // rather than a custom type.
@@ -876,7 +874,7 @@ func main() {
         server.WithRecovery(),
         server.WithHooks(hooks),
         server.WithToolHandlerMiddleware(loggingMW.ToolMiddleware),
-        server.WithToolFilter(NewPermissionFilter(sessionManager)),
+        server.WithToolFilter(permissionFilter.FilterTools),
     )
     
     // Add tools and resources
@@ -884,35 +882,10 @@ func main() {
     addProductionResources(s)
     addProductionPrompts(s)
     
-    // Start server with graceful shutdown
-    startWithGracefulShutdown(s)
-}
-
-func startWithGracefulShutdown(s *server.MCPServer) {
-    // Setup signal handling
-    sigChan := make(chan os.Signal, 1)
-    signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-    
-    // Start server in goroutine
-    go func() {
-        if err := server.ServeStdio(s); err != nil {
-            log.Printf("Server error: %v", err)
-        }
-    }()
-    
-    // Wait for shutdown signal
-    <-sigChan
-    log.Println("Shutting down server...")
-    
-    // Graceful shutdown with timeout
-    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-    defer cancel()
-    
-    if err := s.Shutdown(ctx); err != nil {
-        log.Printf("Shutdown error: %v", err)
+    // ServeStdio handles interrupt and termination signals.
+    if err := server.ServeStdio(s); err != nil {
+        logger.Printf("Server error: %v", err)
     }
-    
-    log.Println("Server stopped")
 }
 ```
 

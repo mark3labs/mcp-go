@@ -64,11 +64,12 @@ When `Title` is empty, clients fall back to `Name`. Both fields serialise with `
 ### Basic Code Review Prompt
 
 ```go
+package main
+
 import (
+    "cmp"
     "context"
-    "encoding/json"
     "fmt"
-    "strings"
 
     "github.com/mark3labs/mcp-go/mcp"
     "github.com/mark3labs/mcp-go/server"
@@ -110,8 +111,8 @@ func handleCodeReview(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPr
         return nil, fmt.Errorf("code argument is required and must be a string")
     }
     
-    language := getStringArg(args, "language", "auto-detect")
-    focus := getStringArg(args, "focus", "all")
+    language := cmp.Or(args["language"], "auto-detect")
+    focus := cmp.Or(args["focus"], "all")
 
     // Build the prompt based on focus area
     var instructions string
