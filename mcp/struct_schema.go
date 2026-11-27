@@ -335,49 +335,23 @@ func applyStructFieldTags(t reflect.Type, schema *jsonschema.Schema) {
 		return
 	}
 
-	active := make(map[reflect.Type]bool)
-	var walk func(reflect.Type)
-	walk = func(structType reflect.Type) {
-		if active[structType] {
-			return
+	// Native inference can accept recursive embeddings and selection still returns their visible fields.
+	fields, _ := selectedJSONFields(t)
+	for _, field := range fields {
+		prop := schema.Properties[field.info.name]
+		if prop == nil {
+			continue
 		}
-		active[structType] = true
-		defer delete(active, structType)
-		for i := 0; i < structType.NumField(); i++ {
-			field := structType.Field(i)
-			fieldType := field.Type
-			info := fieldJSONInfo(field)
-			if info.omit {
-				continue
-			}
-			if field.Anonymous && !info.explicitName {
-				anonType := fieldType
-				if anonType.Kind() == reflect.Pointer {
-					anonType = anonType.Elem()
-				}
-				if anonType.Kind() == reflect.Struct {
-					walk(anonType)
-					continue
-				}
-			}
 
-			prop, ok := schema.Properties[info.name]
-			if !ok {
-				continue
-			}
-
-			description, enums := fieldSchemaAnnotations(field)
-			if description != "" {
-				prop.Description = description
-			}
-			if len(enums) > 0 {
-				prop.Enum = enums
-			}
-			applyStructFieldTagsToType(fieldType, prop, applyStructFieldTags)
+		description, enums := fieldSchemaAnnotations(field.field)
+		if description != "" {
+			prop.Description = description
 		}
+		if len(enums) > 0 {
+			prop.Enum = enums
+		}
+		applyStructFieldTagsToType(field.field.Type, prop, applyStructFieldTags)
 	}
-
-	walk(t)
 }
 
 type jsonSchemaField struct {
@@ -388,8 +362,8 @@ type jsonSchemaField struct {
 	throughPointer bool
 }
 
-// selectedJSONFields resolves JSON field visibility before either constructing
-// fallback properties or applying the string option to their schemas.
+// selectedJSONFields resolves JSON field visibility before constructing
+// fallback properties or applying schema annotations.
 func selectedJSONFields(t reflect.Type) ([]jsonSchemaField, error) {
 	fields := make(map[string]jsonSchemaField)
 	var names []string

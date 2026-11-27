@@ -120,3 +120,56 @@ func TestSchemaForRaw_InvalidJSONTagDominance(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{"Value":7}`, string(payload))
 }
+
+func TestSchemaForRaw_InvalidJSONTagLosingAnnotations(t *testing.T) {
+	type Tagged struct {
+		Other string `json:"Value" jsonschema_description:"Selected field"`
+	}
+	//nolint:staticcheck // The invalid tag falls back to the name Value.
+	type Invalid struct {
+		Value string `json:"bad\\name" jsonschema_description:"Ignored field"`
+	}
+	//nolint:staticcheck // The losing field also carries an enum for the fallback path.
+	type InvalidEnum struct {
+		Value string `json:"bad\\name" jsonschema:"enum=ignored" jsonschema_description:"Ignored field"`
+	}
+	type native struct {
+		Tagged
+		Invalid
+	}
+	type fallback struct {
+		Tagged
+		InvalidEnum
+		Mode string `json:"mode" jsonschema:"enum=safe"`
+	}
+	tagged := Tagged{Other: "hello"}
+	tests := []struct {
+		name  string
+		raw   func() (json.RawMessage, error)
+		input any
+	}{
+		{name: "native", raw: SchemaForRaw[native], input: native{Tagged: tagged}},
+		{name: "enum fallback", raw: SchemaForRaw[fallback], input: fallback{Tagged: tagged, Mode: "safe"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw, err := test.raw()
+			require.NoError(t, err)
+			var schema jsonschema.Schema
+			require.NoError(t, json.Unmarshal(raw, &schema))
+			require.Contains(t, schema.Properties, "Value")
+			property := schema.Properties["Value"]
+			assert.Equal(t, "Selected field", property.Description)
+			assert.Empty(t, property.Enum)
+
+			payload, err := json.Marshal(test.input)
+			require.NoError(t, err)
+			var value map[string]any
+			require.NoError(t, json.Unmarshal(payload, &value))
+			assert.Equal(t, "hello", value["Value"])
+			resolved, err := schema.Resolve(nil)
+			require.NoError(t, err)
+			require.NoError(t, resolved.Validate(value))
+		})
+	}
+}
