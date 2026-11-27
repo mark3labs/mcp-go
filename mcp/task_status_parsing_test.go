@@ -50,14 +50,14 @@ func TestTaskStatusParsersPreserveEnvelopeAndIntegerFields(t *testing.T) {
 				require.NoError(t, json.Unmarshal(encoded, &fields))
 				require.JSONEq(t, `"data"`, string(fields["resultType"]))
 
-				// The output wire names depend on the response type, not the
-				// input. The int64 value must survive the round trip exactly.
-				if kind == "list" {
+				// Preserve the input format for get/cancel; list remains legacy.
+				// The int64 value must survive the round trip exactly.
+				if kind == "list" || wire.name == "legacy-input" {
 					// tasks/list serves legacy 2025-11-25 clients (ttl/pollInterval)
 					require.Contains(t, string(encoded), `"ttl":`+bigInt)
 					require.Contains(t, string(encoded), `"pollInterval":`+bigInt)
 				} else {
-					// tasks/get and tasks/cancel use SEP-2663 names (ttlMs/pollIntervalMs).
+					// Modern get/cancel responses retain SEP-2663 timing names.
 					require.Contains(t, string(encoded), `"ttlMs":`+bigInt)
 					require.Contains(t, string(encoded), `"pollIntervalMs":`+bigInt)
 				}
@@ -105,4 +105,96 @@ func TestTaskParserDecodesModernTiming(t *testing.T) {
 	require.NotNil(t, result.TTL, "valid ttlMs must be populated")
 	require.Equal(t, int64(60000), *result.TTL)
 	require.Nil(t, result.PollInterval, "absent pollIntervalMs must stay nil")
+}
+
+func TestTaskResponsesPreserveTimingFormat(t *testing.T) {
+	tests := []struct {
+		name   string
+		wire   string
+		legacy bool
+	}{
+		{name: "legacy timing", wire: `{"taskId":"t","status":"cancelled","ttl":60000,"pollInterval":1000}`, legacy: true},
+		{name: "legacy unlimited", wire: `{"taskId":"t","status":"cancelled","ttl":null}`, legacy: true},
+		{name: "modern timing", wire: `{"resultType":"complete","taskId":"t","status":"completed","ttlMs":60000,"pollIntervalMs":1000}`},
+		{name: "modern unlimited", wire: `{"resultType":"complete","taskId":"t","status":"completed","ttlMs":null}`},
+	}
+	for _, tt := range tests {
+		for _, kind := range []string{"get", "cancel"} {
+			for _, decoder := range []string{"parser", "json"} {
+				t.Run(tt.name+"/"+kind+"/"+decoder, func(t *testing.T) {
+					raw := json.RawMessage(tt.wire)
+					var result any
+					var legacy bool
+					if kind == "get" {
+						got := &GetTaskResult{}
+						if decoder == "parser" {
+							var err error
+							got, err = ParseGetTaskResult(&raw)
+							require.NoError(t, err)
+						} else {
+							require.NoError(t, json.Unmarshal(raw, got))
+						}
+						result, legacy = got, got.Legacy
+					} else {
+						got := &CancelTaskResult{}
+						if decoder == "parser" {
+							var err error
+							got, err = ParseCancelTaskResult(&raw)
+							require.NoError(t, err)
+						} else {
+							require.NoError(t, json.Unmarshal(raw, got))
+						}
+						result, legacy = got, got.Legacy
+					}
+					require.Equal(t, tt.legacy, legacy)
+					encoded, err := json.Marshal(result)
+					require.NoError(t, err)
+					var fields map[string]json.RawMessage
+					require.NoError(t, json.Unmarshal(encoded, &fields))
+					if tt.legacy {
+						require.Contains(t, fields, "ttl")
+						require.NotContains(t, fields, "ttlMs")
+						require.NotContains(t, fields, "pollIntervalMs")
+					} else {
+						require.Contains(t, fields, "ttlMs")
+						require.NotContains(t, fields, "ttl")
+						require.NotContains(t, fields, "pollInterval")
+					}
+					var original map[string]json.RawMessage
+					require.NoError(t, json.Unmarshal(raw, &original))
+					for key, value := range original {
+						require.JSONEq(t, string(value), string(fields[key]), "field %s", key)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestTaskResponseUnmarshalResetsLegacyFormat(t *testing.T) {
+	legacy := []byte(`{"taskId":"t","status":"cancelled","ttl":60000,"pollInterval":1000}`)
+	var get GetTaskResult
+	require.NoError(t, json.Unmarshal(legacy, &get))
+	require.True(t, get.Legacy)
+	require.NoError(t, json.Unmarshal([]byte(`{"taskId":"t","status":"working","ttlMs":null}`), &get))
+	require.False(t, get.Legacy)
+	require.Nil(t, get.TTL)
+	require.Nil(t, get.PollInterval)
+
+	var cancel CancelTaskResult
+	require.NoError(t, json.Unmarshal(legacy, &cancel))
+	require.True(t, cancel.Legacy)
+	ack := json.RawMessage(`{"resultType":"complete"}`)
+	require.NoError(t, json.Unmarshal(ack, &cancel))
+	require.False(t, cancel.Legacy)
+	require.Empty(t, cancel.TaskId)
+	encoded, err := json.Marshal(cancel)
+	require.NoError(t, err)
+	require.JSONEq(t, string(ack), string(encoded))
+	parsed, err := ParseCancelTaskResult(&ack)
+	require.NoError(t, err)
+	require.False(t, parsed.Legacy)
+	encoded, err = json.Marshal(parsed)
+	require.NoError(t, err)
+	require.JSONEq(t, string(ack), string(encoded))
 }

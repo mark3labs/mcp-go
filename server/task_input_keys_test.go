@@ -49,7 +49,7 @@ func answerFor(key string) mcp.InputResponses {
 // later round of the same task fails the task instead of confusing clients
 // that deduplicate by key.
 func TestAwaitTaskInput_KeyReuseFailsTask(t *testing.T) {
-	srv := NewMCPServer("key-test", "1.0.0", WithTaskCapabilities(true, true, true))
+	srv := NewMCPServer("key-test", "1.0.0", WithTaskCapabilities(true, true, true), WithTasksExtension())
 	inputRoundTool(srv, "flaky", []string{"confirm", "confirm"})
 
 	ctx := buildModernContext(t.Context(), srv)
@@ -86,7 +86,7 @@ func TestAwaitTaskInput_KeyReuseFailsTask(t *testing.T) {
 // TestAwaitTaskInput_DistinctKeysAcrossRoundsSucceed is the control: a second
 // round with a fresh key completes normally.
 func TestAwaitTaskInput_DistinctKeysAcrossRoundsSucceed(t *testing.T) {
-	srv := NewMCPServer("key-test", "1.0.0", WithTaskCapabilities(true, true, true))
+	srv := NewMCPServer("key-test", "1.0.0", WithTaskCapabilities(true, true, true), WithTasksExtension())
 	inputRoundTool(srv, "tworound", []string{"q1", "q2"})
 
 	ctx := buildModernContext(t.Context(), srv)

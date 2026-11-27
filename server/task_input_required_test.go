@@ -115,7 +115,7 @@ func TestAwaitTaskInput_BufferedAnswerAfterExpiry(t *testing.T) {
 // TestTaskInputRequired_RegularToolRoundTrip verifies an optional tool run as a
 // task (modern, extension declared) that returns input_required.
 func TestTaskInputRequired_RegularToolRoundTrip(t *testing.T) {
-	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true), WithTasksExtension())
 
 	const confirmKey = "confirm"
 	srv.AddTool(
@@ -206,7 +206,7 @@ func TestTaskInputRequired_PartialResponses(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+			srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true), WithTasksExtension())
 			var calls atomic.Int32
 			resumed := make(chan mcp.MultiRoundTripParams, 1)
 			srv.AddTool(
@@ -337,7 +337,7 @@ func TestTaskInputRequired_PartialResponses(t *testing.T) {
 // is parked in input_required transitions it to cancelled and lets the executor
 // goroutine exit cleanly.
 func TestTaskInputRequired_CancelWhileParked(t *testing.T) {
-	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true), WithTasksExtension())
 
 	var resumed atomic.Bool
 	srv.AddTool(
@@ -383,7 +383,7 @@ func TestTaskInputRequired_CancelWhileParked(t *testing.T) {
 // parked in input_required frees its concurrency slot.
 func TestTaskInputRequired_SlotFreedOnExpiry(t *testing.T) {
 	srv := NewMCPServer("test", "1.0.0",
-		WithTaskCapabilities(true, true, true),
+		WithTaskCapabilities(true, true, true), WithTasksExtension(),
 		WithMaxConcurrentTasks(1),
 	)
 
@@ -466,7 +466,7 @@ func TestTaskInputRequired_LegacyFailsCleanly(t *testing.T) {
 // rejected synchronously and no task is created.
 func TestTaskInputRequired_ValidationBlocksTaskCreation(t *testing.T) {
 	srv := NewMCPServer("test", "1.0.0",
-		WithTaskCapabilities(true, true, true),
+		WithTaskCapabilities(true, true, true), WithTasksExtension(),
 		WithInputSchemaValidation(),
 	)
 
@@ -508,7 +508,7 @@ func TestTaskInputRequired_ValidationBlocksTaskCreation(t *testing.T) {
 // testHandlerJSONRPCError (request_error_test.go) supplies INVALID_PARAMS,
 // "invalid customer ID", data {field: customer_id}.
 func TestTaskGetModern_FailedPreservesErrorDetails(t *testing.T) {
-	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true), WithTasksExtension())
 
 	srv.AddTool(
 		mcp.NewTool("fails", mcp.WithTaskSupport(mcp.TaskSupportOptional)),
@@ -543,7 +543,7 @@ func TestTaskGetModern_FailedPreservesErrorDetails(t *testing.T) {
 func TestTaskModern_IgnoresLegacyTaskParam(t *testing.T) {
 	const serverDefault = int64(60000)
 	srv := NewMCPServer("test", "1.0.0",
-		WithTaskCapabilities(true, true, true),
+		WithTaskCapabilities(true, true, true), WithTasksExtension(),
 		WithDefaultTaskTTL(serverDefault),
 	)
 	srv.AddTool(
@@ -593,7 +593,7 @@ func TestDiscoverModern_OmitsLegacyTaskCapability(t *testing.T) {
 // legacy URL_ELICITATION_REQUIRED code (modern clients drive elicitation via
 // multi round-trips).
 func TestTaskGetModern_URLElicitationMapsToInternal(t *testing.T) {
-	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true), WithTasksExtension())
 
 	srv.AddTool(
 		mcp.NewTool("needsURL", mcp.WithTaskSupport(mcp.TaskSupportOptional)),
@@ -645,7 +645,7 @@ func TestDiscoverModern_OmitsLegacyTaskCapabilityWithoutExtension(t *testing.T) 
 // result with no input requests (the "retry later" signal) fails the task
 // rather than parking it forever for a tasks/update that can't answer.
 func TestTaskInputRequired_EmptyRequestsFailsFast(t *testing.T) {
-	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true), WithTasksExtension())
 
 	srv.AddTool(
 		mcp.NewTool("shed", mcp.WithTaskSupport(mcp.TaskSupportOptional)),
@@ -857,7 +857,7 @@ func TestConcurrentUpdateAndComplete(t *testing.T) {
 // handler run as a task fails the task instead of crashing the process. The
 // executor goroutine has no caller to recover it, and WithRecovery is not set.
 func TestRegularToolAsTaskRecoversPanic(t *testing.T) {
-	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true), WithTasksExtension())
 
 	srv.AddTool(
 		mcp.NewTool("boom", mcp.WithTaskSupport(mcp.TaskSupportOptional)),

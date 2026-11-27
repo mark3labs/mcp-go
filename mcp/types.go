@@ -1960,6 +1960,21 @@ type GetTaskResult struct {
 	Legacy bool `json:"-"`
 }
 
+// UnmarshalJSON decodes either task format and preserves its timing field names.
+func (r *GetTaskResult) UnmarshalJSON(data []byte) error {
+	type plain GetTaskResult
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	result := GetTaskResult(decoded)
+	if err := jsonToTask(data, &result); err != nil {
+		return err
+	}
+	*r = result
+	return nil
+}
+
 // MarshalJSON emits SEP-2663 field names (ttlMs, pollIntervalMs) by default,
 // or legacy 2025-11-25 field names (ttl, pollInterval) when Legacy is true.
 func (r GetTaskResult) MarshalJSON() ([]byte, error) {
@@ -2093,6 +2108,24 @@ type CancelTaskResult struct {
 	// Legacy instructs MarshalJSON to emit legacy 2025-11-25 field names
 	// (ttl, pollInterval) for the non-ack cancel response shape.
 	Legacy bool `json:"-"`
+}
+
+// UnmarshalJSON decodes either task format, preserving legacy timing field names
+// and modern acknowledgement-only responses.
+func (r *CancelTaskResult) UnmarshalJSON(data []byte) error {
+	type plain CancelTaskResult
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	timing := GetTaskResult{Task: decoded.Task}
+	if err := jsonToTask(data, &timing); err != nil {
+		return err
+	}
+	decoded.Task = timing.Task
+	decoded.Legacy = timing.Legacy
+	*r = CancelTaskResult(decoded)
+	return nil
 }
 
 // MarshalJSON serialises CancelTaskResult.

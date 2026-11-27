@@ -658,6 +658,12 @@ func (s *MCPServer) handleMessage(
 				code: mcp.INVALID_REQUEST,
 				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
 			}
+		} else if request.Params.InputResponses == nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.INVALID_PARAMS,
+				err:  fmt.Errorf("inputResponses must be an object"),
+			}
 		} else {
 			request.Header = headers
 			s.hooks.beforeUpdateTask(ctx, baseMessage.ID, &request)

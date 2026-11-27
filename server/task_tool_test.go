@@ -726,7 +726,7 @@ func TestTaskTool_ModelImmediateResponse(t *testing.T) {
 // Because the tool cannot run synchronously and the request cannot be served
 // without a CreateTaskResult, SEP-2663 requires MISSING_REQUIRED_CLIENT_CAPABILITY.
 func TestTaskToolOnly_ModernRequiresExtension(t *testing.T) {
-	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true), WithTasksExtension())
 
 	var handlerRan bool
 	// Task-only tool with no Execution.TaskSupport set, so the earlier
@@ -765,7 +765,7 @@ func TestTaskToolOnly_ModernRequiresExtension(t *testing.T) {
 // same task-only tool IS routed to task creation when the modern client has
 // declared the Tasks extension.
 func TestTaskToolOnly_ModernWithExtensionRoutes(t *testing.T) {
-	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true), WithTasksExtension())
 
 	srv.AddTaskTool(
 		mcp.NewTool("batch"),
@@ -796,7 +796,7 @@ func TestTaskToolOnly_ModernWithExtensionRoutes(t *testing.T) {
 // returns an error instead of a successful task with empty output. Silently
 // dropping the output would make the tool result disappear with no signal.
 func TestTaskGetModern_NonEncodableResultReportsError(t *testing.T) {
-	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true), WithTasksExtension())
 
 	srv.AddTool(
 		mcp.NewTool("bad", mcp.WithTaskSupport(mcp.TaskSupportOptional)),

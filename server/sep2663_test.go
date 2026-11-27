@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"testing"
 	"time"
 
@@ -10,6 +11,127 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestModernTaskRoutingRequiresNegotiation(t *testing.T) {
+	tools := []struct {
+		name     string
+		support  mcp.TaskSupport
+		taskOnly bool
+	}{
+		{name: "optional", support: mcp.TaskSupportOptional},
+		{name: "required", support: mcp.TaskSupportRequired},
+		{name: "task-only", taskOnly: true},
+	}
+	declarations := []struct {
+		name    string
+		option  ServerOption
+		enabled bool
+	}{
+		{name: "server undeclared"},
+		{name: "helper declaration", option: WithTasksExtension(), enabled: true},
+		{name: "map declaration", option: WithExtensions(map[string]any{mcp.ExtensionTasks: map[string]any{}}), enabled: true},
+	}
+	for _, tool := range tools {
+		for _, declaration := range declarations {
+			for _, clientDeclared := range []bool{false, true} {
+				clientName := "client undeclared"
+				if clientDeclared {
+					clientName = "client declared"
+				}
+				t.Run(tool.name+"/"+declaration.name+"/"+clientName, func(t *testing.T) {
+					options := []ServerOption{WithTaskCapabilities(true, true, true)}
+					if declaration.option != nil {
+						options = append(options, declaration.option)
+					}
+					srv := NewMCPServer("test", "1.0.0", options...)
+					_, advertised := srv.serverCapabilitiesSnapshot(true).Extensions[mcp.ExtensionTasks]
+					assert.Equal(t, declaration.enabled, advertised)
+					called := make(chan struct{}, 1)
+					if tool.taskOnly {
+						srv.AddTaskTool(mcp.NewTool("work"), func(context.Context, mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+							called <- struct{}{}
+							return &mcp.CreateTaskResult{Content: []mcp.Content{mcp.NewTextContent("done")}}, nil
+						})
+					} else {
+						srv.AddTool(mcp.NewTool("work", mcp.WithTaskSupport(tool.support)), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+							called <- struct{}{}
+							return mcp.NewToolResultText("done"), nil
+						})
+					}
+					caps := &mcp.ClientCapabilities{}
+					if clientDeclared {
+						caps.Extensions = map[string]any{mcp.ExtensionTasks: map[string]any{}}
+					}
+					ctx := WithRequestProtocolInfo(t.Context(), &RequestProtocolInfo{Modern: true, ProtocolVersion: "2026-07-28", ClientCapabilities: caps})
+					result, reqErr := srv.handleToolCall(ctx, 1, mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "work", Task: &mcp.TaskParams{}}})
+					requiresTask := tool.taskOnly || tool.support == mcp.TaskSupportRequired
+					if requiresTask && (!declaration.enabled || !clientDeclared) {
+						require.NotNil(t, reqErr)
+						expected := mcp.METHOD_NOT_FOUND
+						if declaration.enabled {
+							expected = mcp.MISSING_REQUIRED_CLIENT_CAPABILITY
+							assert.Equal(t, missingExtensionData(mcp.ExtensionTasks), reqErr.data)
+						}
+						assert.Equal(t, expected, reqErr.code)
+						assert.Nil(t, result)
+						assert.Empty(t, called)
+						assert.Empty(t, srv.tasks)
+						return
+					}
+					require.Nil(t, reqErr)
+					if declaration.enabled && clientDeclared {
+						created, ok := result.(*mcp.CreateTaskResult)
+						require.True(t, ok, "got %T", result)
+						assert.NotEmpty(t, created.Task.TaskId)
+						assert.False(t, created.Legacy)
+					} else {
+						_, ok := result.(*mcp.CallToolResult)
+						require.True(t, ok, "got %T", result)
+						assert.Empty(t, srv.tasks)
+					}
+					select {
+					case <-called:
+					case <-time.After(5 * time.Second):
+						t.Fatal("handler was not called")
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestWithTasksExtensionPreservesSharedExtensions(t *testing.T) {
+	tests := []struct {
+		name       string
+		extensions map[string]any
+	}{
+		{name: "nil map"},
+		{name: "empty map", extensions: map[string]any{}},
+		{name: "existing settings", extensions: map[string]any{
+			"example.com/other": map[string]any{"enabled": true},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := maps.Clone(tt.extensions)
+			sharedOption := WithExtensions(tt.extensions)
+			other := NewMCPServer("without-tasks", "1.0.0", sharedOption)
+			tasks := NewMCPServer("with-tasks", "1.0.0", sharedOption, WithTasksExtension())
+
+			assert.Equal(t, original, tt.extensions, "the caller's map must remain unchanged")
+			otherExtensions := other.serverCapabilitiesSnapshot(true).Extensions
+			assert.Equal(t, original, otherExtensions)
+			assert.NotContains(t, otherExtensions, mcp.ExtensionTasks)
+			taskExtensions := tasks.serverCapabilitiesSnapshot(true).Extensions
+			require.Contains(t, taskExtensions, mcp.ExtensionTasks)
+			assert.Equal(t, map[string]any{}, taskExtensions[mcp.ExtensionTasks])
+			assert.Len(t, taskExtensions, len(original)+1)
+			for name, settings := range original {
+				assert.Equal(t, settings, taskExtensions[name], "existing extension %s", name)
+			}
+		})
+	}
+}
 
 // modernCallParams builds a _meta block for a modern protocol
 // request that declares the tasks extension.

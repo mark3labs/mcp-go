@@ -767,6 +767,7 @@ func WithTasksExtension() ServerOption {
 	return func(s *MCPServer) {
 		s.capabilitiesMu.Lock()
 		defer s.capabilitiesMu.Unlock()
+		s.capabilities.extensions = maps.Clone(s.capabilities.extensions)
 		if s.capabilities.extensions == nil {
 			s.capabilities.extensions = make(map[string]any)
 		}
@@ -2371,6 +2372,22 @@ func (s *MCPServer) handleToolCall(
 	if info := RequestProtocolInfoFromContext(ctx); info != nil && info.Modern && info.ClientCapabilities != nil {
 		clientDeclaredExtension = info.ClientCapabilities.HasExtension(mcp.ExtensionTasks)
 	}
+	serverDeclaredExtension := false
+	if IsModernRequest(ctx) {
+		s.capabilitiesMu.RLock()
+		_, serverDeclaredExtension = s.capabilities.extensions[mcp.ExtensionTasks]
+		s.capabilitiesMu.RUnlock()
+
+		requiresTask := taskToolOnly ||
+			(tool.Tool.Execution != nil && tool.Tool.Execution.TaskSupport == mcp.TaskSupportRequired)
+		if requiresTask && !serverDeclaredExtension {
+			return nil, &requestError{
+				id:   id,
+				code: mcp.METHOD_NOT_FOUND,
+				err:  fmt.Errorf("tool '%s' requires server support for %s", request.Params.Name, mcp.ExtensionTasks),
+			}
+		}
+	}
 
 	if tool.Tool.Execution != nil && tool.Tool.Execution.TaskSupport == mcp.TaskSupportRequired {
 		// Modern protocol: client must declare the extension.
@@ -2406,7 +2423,7 @@ func (s *MCPServer) handleToolCall(
 	// Tools with TaskSupportOptional or TaskSupportRequired can be executed as tasks
 	var shouldExecuteAsTask bool
 	if info := RequestProtocolInfoFromContext(ctx); info != nil && info.Modern {
-		shouldExecuteAsTask = clientDeclaredExtension &&
+		shouldExecuteAsTask = clientDeclaredExtension && serverDeclaredExtension &&
 			tool.Tool.Execution != nil &&
 			(tool.Tool.Execution.TaskSupport == mcp.TaskSupportOptional ||
 				tool.Tool.Execution.TaskSupport == mcp.TaskSupportRequired)
@@ -2418,11 +2435,11 @@ func (s *MCPServer) handleToolCall(
 	}
 
 	// Task-only tools (AddTaskTool) must always go through the task path.
-	// On modern protocol with extension declared, or legacy with task param set.
+	// On modern protocol with the extension negotiated, or legacy with task param set.
 	// Otherwise fall through to the error below.
 	if taskToolOnly {
 		if info := RequestProtocolInfoFromContext(ctx); info != nil && info.Modern {
-			shouldExecuteAsTask = clientDeclaredExtension
+			shouldExecuteAsTask = clientDeclaredExtension && serverDeclaredExtension
 		} else if request.Params.Task != nil {
 			shouldExecuteAsTask = true
 		}
