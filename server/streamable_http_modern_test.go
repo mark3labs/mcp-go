@@ -86,13 +86,20 @@ func decodeJSONRPC(t *testing.T, resp *http.Response) map[string]any {
 }
 
 func TestModernProtocol_TaskSessionIsolation(t *testing.T) {
-	s := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true))
+	s := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true), WithTasksExtension())
 	s.AddTool(mcp.NewTool("work", mcp.WithTaskSupport(mcp.TaskSupportOptional)), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return mcp.NewToolResultText("private-result"), nil
 	})
 	httpServer := httptest.NewServer(NewStreamableHTTPServer(s, WithStateful(true)))
 	defer httpServer.Close()
 	sessionID := initializeSession(t, httpServer.URL)
+	postTaskModern := func(method mcp.MCPMethod, params map[string]any) map[string]any {
+		meta := modernMeta()
+		meta[mcp.MetaKeyClientCapabilities] = mcp.ClientCapabilities{
+			Extensions: map[string]any{mcp.ExtensionTasks: map[string]any{}},
+		}
+		return decodeJSONRPC(t, postModernWithMeta(t, httpServer.URL, method, params, meta))
+	}
 
 	postLegacy := func(method mcp.MCPMethod, params map[string]any) map[string]any {
 		body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
@@ -121,10 +128,17 @@ func TestModernProtocol_TaskSessionIsolation(t *testing.T) {
 
 	legacyCreated := postLegacy(mcp.MethodToolsCall, map[string]any{"name": "work", "arguments": map[string]any{}, "task": map[string]any{}})
 	legacyTaskID := legacyCreated["result"].(map[string]any)["task"].(map[string]any)["taskId"].(string)
-	modernCreated := decodeJSONRPC(t, postModern(t, httpServer.URL, mcp.MethodToolsCall, map[string]any{"name": "work", "arguments": map[string]any{}, "task": map[string]any{}}))
-	modernTaskID := modernCreated["result"].(map[string]any)["task"].(map[string]any)["taskId"].(string)
+	modernCreated := postTaskModern(mcp.MethodToolsCall, map[string]any{"name": "work", "arguments": map[string]any{}})
+	require.NotContains(t, modernCreated, "error")
+	modernResult, ok := modernCreated["result"].(map[string]any)
+	require.True(t, ok, "expected task result, got %v", modernCreated)
+	require.Equal(t, string(mcp.ResultTypeTask), modernResult["resultType"])
+	require.NotContains(t, modernResult, "task")
+	modernTaskID, ok := modernResult["taskId"].(string)
+	require.True(t, ok)
+	require.NotEmpty(t, modernTaskID)
 
-	modernLookup := decodeJSONRPC(t, postModern(t, httpServer.URL, mcp.MethodTasksGet, map[string]any{"taskId": legacyTaskID}))
+	modernLookup := postTaskModern(mcp.MethodTasksGet, map[string]any{"taskId": legacyTaskID})
 	require.Contains(t, modernLookup, "error")
 	assert.Equal(t, float64(mcp.INVALID_PARAMS), modernLookup["error"].(map[string]any)["code"])
 
@@ -141,7 +155,8 @@ func TestModernProtocol_TaskSessionIsolation(t *testing.T) {
 
 	legacyLookup := postLegacy(mcp.MethodTasksGet, map[string]any{"taskId": legacyTaskID})
 	assert.Equal(t, legacyTaskID, legacyLookup["result"].(map[string]any)["taskId"])
-	modernOwnLookup := decodeJSONRPC(t, postModern(t, httpServer.URL, mcp.MethodTasksGet, map[string]any{"taskId": modernTaskID}))
+	modernOwnLookup := postTaskModern(mcp.MethodTasksGet, map[string]any{"taskId": modernTaskID})
+	require.NotContains(t, modernOwnLookup, "error")
 	assert.Equal(t, modernTaskID, modernOwnLookup["result"].(map[string]any)["taskId"])
 }
 

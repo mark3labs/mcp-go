@@ -1,5 +1,9 @@
 # Task-Augmented Tools
 
+The modern `io.modelcontextprotocol/tasks` extension targets the [2026-07-28 Tasks specification](https://tasks.extensions.modelcontextprotocol.io/specification/2026-07-28/tasks), pinned to source revision [`cc9aaac1047a9440b07486e38f37060bbebeef4c`](https://github.com/modelcontextprotocol/ext-tasks/blob/cc9aaac1047a9440b07486e38f37060bbebeef4c/specification/2026-07-28/tasks.md) and its [schema](https://github.com/modelcontextprotocol/ext-tasks/blob/cc9aaac1047a9440b07486e38f37060bbebeef4c/schema/2026-07-28/schema.json). This pinned revision is the conformance reference; [SEP-2663](https://modelcontextprotocol.io/seps/2663-tasks-extension) provides design history.
+
+This guide describes the supported [legacy 2025-11-25 task flow](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks). Its `tasks/list`, `tasks/result`, and `notifications/tasks/status` methods belong to that legacy flow.
+
 Task-augmented tools allow long-running operations to execute asynchronously. Instead of blocking until completion, the server creates a task and the client can poll for status updates. This is ideal for operations like batch processing, data analysis, or any work that may take more than a few seconds.
 
 ## Overview
@@ -190,6 +194,12 @@ meta := mcp.WithRelatedTask("task-id-123")
 ```
 
 The metadata contains the `io.modelcontextprotocol/related-task` key with the task ID, enabling clients to correlate responses with their originating tasks.
+
+## Task Authorization
+
+Applications are responsible for authenticating each task request and enforcing their user or tenant ownership policy before SDK dispatch. The SDK's session checks and bearer task IDs do not establish an application user identity. Record the authenticated creator for each task and check ownership on `tasks/get`, `tasks/update`, `tasks/cancel`, and any enabled legacy `tasks/result` endpoint. Restrict legacy `tasks/list` separately so it cannot disclose task IDs to unauthorized callers.
+
+The executable [task authorization example](https://github.com/mark3labs/mcp-go/tree/main/examples/task_authorization) demonstrates HTTP middleware enforcing these checks, with tests for owner access and rejection of another authenticated user. Its creation hook records ownership, middleware rejects unauthorized requests before the SDK runs. `OnBefore*` hooks only observe requests and cannot reject them. The example uses static demo credentials and an in-memory owner index, use application authentication and retain ownership records for the task's retention period.
 
 ## Task Hooks
 

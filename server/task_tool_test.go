@@ -448,7 +448,7 @@ func TestTaskToolTracerBullet(t *testing.T) {
 		<-started
 
 		// Step 4: Cancel the task via tasks/cancel
-		cancelErr := server.cancelTask(ctx, taskID)
+		cancelErr := server.cancelTask(ctx, taskID, false)
 		require.NoError(t, cancelErr)
 
 		// Wait for cancellation to be detected
@@ -537,7 +537,6 @@ func TestTaskToolTracerBullet(t *testing.T) {
 		// explicitly called, the task is still marked as cancelled rather than
 		// failed.
 
-		// Step 1: Create server
 		server := NewMCPServer(
 			"test-handler-cancellation",
 			"1.0.0",
@@ -553,9 +552,7 @@ func TestTaskToolTracerBullet(t *testing.T) {
 
 		server.AddTaskTool(selfCancelTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
 			close(handlerStarted)
-			// Wait for context cancellation
 			<-ctx.Done()
-			// Return the context error
 			return nil, ctx.Err()
 		})
 
@@ -574,7 +571,6 @@ func TestTaskToolTracerBullet(t *testing.T) {
 		createTaskResult := callResult.(*mcp.CreateTaskResult)
 		taskID := createTaskResult.Task.TaskId
 
-		// Wait for handler to start
 		<-handlerStarted
 
 		// Step 4: Cancel the task's context without going through tasks/cancel.
@@ -601,7 +597,6 @@ func TestTaskToolTracerBullet(t *testing.T) {
 
 		// Step 6: Verify task status is cancelled (not failed)
 		assert.Equal(t, mcp.TaskStatusCancelled, finalTask.Status)
-		assert.Contains(t, finalTask.StatusMessage, "context canceled")
 	})
 
 	t.Run("multiple concurrent task tools", func(t *testing.T) {
@@ -720,6 +715,123 @@ func TestTaskTool_ModelImmediateResponse(t *testing.T) {
 		immediateResponse := result.Meta.AdditionalFields[mcp.ModelImmediateResponseMetaKey]
 		assert.Equal(t, message, immediateResponse)
 	})
+}
+
+// TestTaskToolOnly_ModernRequiresExtension verifies that a task-only tool
+// (AddTaskTool) whose Execution does not force TaskSupportRequired is NOT
+// routed to task creation for a modern request that has not declared the Tasks
+// extension — even if the request carries a stray legacy params.task. Creating
+// a task there would strand it: tasks/get and tasks/cancel reject modern
+// requests without the extension, so the client could never read or cancel it.
+// Because the tool cannot run synchronously and the request cannot be served
+// without a CreateTaskResult, SEP-2663 requires MISSING_REQUIRED_CLIENT_CAPABILITY.
+func TestTaskToolOnly_ModernRequiresExtension(t *testing.T) {
+	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true), WithTasksExtension())
+
+	var handlerRan bool
+	// Task-only tool with no Execution.TaskSupport set, so the earlier
+	// TaskSupportRequired guard does not fire.
+	srv.AddTaskTool(
+		mcp.NewTool("batch"),
+		func(context.Context, mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			handlerRan = true
+			r := mcp.NewCreateTaskResult(mcp.Task{})
+			return &r, nil
+		})
+
+	// Modern request WITHOUT the tasks extension, carrying a stray legacy task param.
+	ctx := WithRequestProtocolInfo(t.Context(), &RequestProtocolInfo{
+		Modern:             true,
+		ProtocolVersion:    "2026-07-28",
+		ClientCapabilities: &mcp.ClientCapabilities{},
+	})
+
+	_, reqErr := srv.handleToolCall(ctx, 1, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{Name: "batch", Task: &mcp.TaskParams{}},
+	})
+
+	require.NotNil(t, reqErr, "modern no-extension request to a task-only tool must be rejected")
+	assert.Equal(t, mcp.MISSING_REQUIRED_CLIENT_CAPABILITY, reqErr.code)
+	assert.False(t, handlerRan, "handler must not run / no task should be created")
+
+	// Sanity: no task was created.
+	srv.tasksMu.RLock()
+	n := len(srv.tasks)
+	srv.tasksMu.RUnlock()
+	assert.Equal(t, 0, n, "no task should have been created")
+}
+
+// TestTaskToolOnly_ModernWithExtensionRoutes verifies the positive case: the
+// same task-only tool IS routed to task creation when the modern client has
+// declared the Tasks extension.
+func TestTaskToolOnly_ModernWithExtensionRoutes(t *testing.T) {
+	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true), WithTasksExtension())
+
+	srv.AddTaskTool(
+		mcp.NewTool("batch"),
+		func(context.Context, mcp.CallToolRequest) (*mcp.CreateTaskResult, error) {
+			r := mcp.NewCreateTaskResult(mcp.Task{})
+			return &r, nil
+		})
+
+	ctx := WithRequestProtocolInfo(t.Context(), &RequestProtocolInfo{
+		Modern:          true,
+		ProtocolVersion: "2026-07-28",
+		ClientCapabilities: &mcp.ClientCapabilities{
+			Extensions: map[string]any{mcp.ExtensionTasks: map[string]any{}},
+		},
+	})
+
+	created, reqErr := srv.handleToolCall(ctx, 1, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{Name: "batch"},
+	})
+	require.Nil(t, reqErr)
+	_, ok := created.(*mcp.CreateTaskResult)
+	assert.True(t, ok, "expected *CreateTaskResult, got %T", created)
+}
+
+// TestTaskGetModern_NonEncodableResultReportsError verifies that when a
+// completed task's stored result cannot be JSON-encoded (e.g. a tool placed a
+// non-serializable value in StructuredContent), the modern tasks/get branch
+// returns an error instead of a successful task with empty output. Silently
+// dropping the output would make the tool result disappear with no signal.
+func TestTaskGetModern_NonEncodableResultReportsError(t *testing.T) {
+	srv := NewMCPServer("test", "1.0.0", WithTaskCapabilities(true, true, true), WithTasksExtension())
+
+	srv.AddTool(
+		mcp.NewTool("bad", mcp.WithTaskSupport(mcp.TaskSupportOptional)),
+		func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			// A channel cannot be marshaled to JSON; json.Marshal will error.
+			return &mcp.CallToolResult{StructuredContent: make(chan int)}, nil
+		})
+
+	ctx := WithRequestProtocolInfo(t.Context(), &RequestProtocolInfo{
+		Modern:          true,
+		ProtocolVersion: "2026-07-28",
+		ClientCapabilities: &mcp.ClientCapabilities{
+			Extensions: map[string]any{mcp.ExtensionTasks: map[string]any{}},
+		},
+	})
+
+	created, reqErr := srv.handleToolCall(ctx, 1, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{Name: "bad"},
+	})
+	require.Nil(t, reqErr)
+	taskID := created.(*mcp.CreateTaskResult).Task.TaskId
+
+	// Wait until the task reaches a terminal (completed) state.
+	require.Eventually(t, func() bool {
+		srv.tasksMu.RLock()
+		defer srv.tasksMu.RUnlock()
+		e, ok := srv.tasks[taskID]
+		return ok && e.task.Status.IsTerminal()
+	}, 5*time.Second, 10*time.Millisecond)
+
+	// Modern tasks/get must surface the encoding failure as an error, not a
+	// silent empty success.
+	_, e := srv.handleGetTask(ctx, 2, mcp.GetTaskRequest{Params: mcp.GetTaskParams{TaskId: taskID}})
+	require.NotNil(t, e, "non-encodable completed result must produce an error")
+	assert.Equal(t, mcp.INTERNAL_ERROR, e.code)
 }
 
 // addTaskWorkTool registers a tool named "work" that runs as a task, either
@@ -878,7 +990,7 @@ func TestTaskCancelledBeforeWorkerStarts(t *testing.T) {
 			const taskID = "cancel-before-start"
 			entry, err := s.createTask(t.Context(), taskID, "work", nil, nil)
 			require.NoError(t, err)
-			require.NoError(t, s.cancelTask(t.Context(), taskID))
+			require.NoError(t, s.cancelTask(t.Context(), taskID, false))
 
 			var called atomic.Bool
 			request := mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "work"}}

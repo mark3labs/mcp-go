@@ -77,6 +77,29 @@ func handlerError(ctx context.Context, id any, err error) *requestError {
 	return &requestError{id: id, code: mcp.INTERNAL_ERROR, err: err}
 }
 
+// taskErrorDetails converts a failed task's stored handler error into the
+// JSON-RPC error details surfaced on the modern tasks/get path. It mirrors
+// handlerError's extraction so a task failure preserves the same code,
+// client-facing message, and data an exposed handler error would carry on the
+// synchronous path, rather than flattening everything to INTERNAL_ERROR.
+func taskErrorDetails(err error) *mcp.JSONRPCErrorDetails {
+	if _, ok := asURLElicitationRequired(err); ok {
+		return &mcp.JSONRPCErrorDetails{
+			Code:    mcp.INTERNAL_ERROR,
+			Message: err.Error(),
+		}
+	}
+	var exposed *exposedHandlerError
+	if errors.As(err, &exposed) {
+		details := exposed.provider.JSONRPCError().Error
+		return &details
+	}
+	return &mcp.JSONRPCErrorDetails{
+		Code:    mcp.INTERNAL_ERROR,
+		Message: err.Error(),
+	}
+}
+
 // asURLElicitationRequired finds a URLElicitationRequiredError in err's chain,
 // whether the handler returned the value or a pointer to it.
 func asURLElicitationRequired(err error) (mcp.URLElicitationRequiredError, bool) {

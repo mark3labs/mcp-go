@@ -15,6 +15,7 @@ func TestValidateStandardHeaders_ParamsShapes(t *testing.T) {
 	echo, _ := mcp.EncodeHeaderValue("echo")
 	other, _ := mcp.EncodeHeaderValue("other")
 	uri, _ := mcp.EncodeHeaderValue("file:///a")
+	taskID, _ := mcp.EncodeHeaderValue("task-abc-123")
 
 	tests := []struct {
 		name         string
@@ -57,6 +58,15 @@ func TestValidateStandardHeaders_ParamsShapes(t *testing.T) {
 			wantErr: `header mismatch: Mcp-Name: header value "echo" does not match body value "file:///a"`},
 		{name: "prompt ok", method: "prompts/get", headerName: echo,
 			body: `{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"echo"}}`},
+		{name: "tasks/get ok", method: "tasks/get", headerName: taskID,
+			body: `{"jsonrpc":"2.0","id":1,"method":"tasks/get","params":{"taskId":"task-abc-123"}}`},
+		{name: "tasks/get mismatch", method: "tasks/get", headerName: other,
+			body:    `{"jsonrpc":"2.0","id":1,"method":"tasks/get","params":{"taskId":"task-abc-123"}}`,
+			wantErr: `header mismatch: Mcp-Name: header value "other" does not match body value "task-abc-123"`},
+		{name: "tasks/update ok", method: "tasks/update", headerName: taskID,
+			body: `{"jsonrpc":"2.0","id":1,"method":"tasks/update","params":{"taskId":"task-abc-123"}}`},
+		{name: "tasks/cancel ok", method: "tasks/cancel", headerName: taskID,
+			body: `{"jsonrpc":"2.0","id":1,"method":"tasks/cancel","params":{"taskId":"task-abc-123"}}`},
 		{name: "list", method: "tools/list",
 			body: `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`},
 		{name: "list with wrong method header", method: "tools/list", headerMethod: "tools/call",

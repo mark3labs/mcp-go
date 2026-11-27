@@ -89,7 +89,7 @@ func TestTaskCancellationKeepsResultError(t *testing.T) {
 					t.Fatal("result request did not wait")
 				}
 			}
-			require.NoError(t, srv.cancelTask(t.Context(), "cancelled"))
+			require.NoError(t, srv.cancelTask(t.Context(), "cancelled", false))
 			if waiting {
 				select {
 				case e := <-results:
@@ -135,7 +135,7 @@ func TestCancelledTaskResultHTTPEnvelope(t *testing.T) {
 	srv := NewMCPServer("test", "1", WithTaskCapabilities(true, true, true))
 	_, err := srv.createTask(t.Context(), "cancelled", "work", nil, nil)
 	require.NoError(t, err)
-	require.NoError(t, srv.cancelTask(t.Context(), "cancelled"))
+	require.NoError(t, srv.cancelTask(t.Context(), "cancelled", false))
 	httpServer := httptest.NewServer(NewStreamableHTTPServer(srv, WithStateLess(true)))
 	defer httpServer.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)

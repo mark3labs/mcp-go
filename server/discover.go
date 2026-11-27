@@ -78,7 +78,7 @@ func (s *MCPServer) handleDiscover(
 ) (*mcp.DiscoverResult, *requestError) {
 	result := &mcp.DiscoverResult{
 		SupportedVersions: SupportedProtocolVersionsFromContext(ctx),
-		Capabilities:      s.serverCapabilitiesSnapshot(),
+		Capabilities:      s.serverCapabilitiesSnapshot(IsModernRequest(ctx)),
 		Instructions:      s.instructions,
 	}
 

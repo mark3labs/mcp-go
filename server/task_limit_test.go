@@ -128,7 +128,7 @@ func TestMaxConcurrentTasks(t *testing.T) {
 		server.tasksMu.Unlock()
 
 		// Cancel one task
-		err = server.cancelTask(cancelCtx, "task-1")
+		err = server.cancelTask(cancelCtx, "task-1", false)
 		require.NoError(t, err)
 
 		// Now we should be able to create a new task

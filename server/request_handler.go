@@ -606,7 +606,14 @@ func (s *MCPServer) handleMessage(
 	case mcp.MethodTasksGet:
 		var request mcp.GetTaskRequest
 		var result *mcp.GetTaskResult
-		if s.capabilities.tasks == nil {
+		if clientCaps := protocolInfo.ClientCapabilities; protocolInfo.Modern && (clientCaps == nil || !clientCaps.HasExtension(mcp.ExtensionTasks)) {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.MISSING_REQUIRED_CLIENT_CAPABILITY,
+				err:  fmt.Errorf("tasks extension %w", ErrUnsupported),
+				data: missingExtensionData(mcp.ExtensionTasks),
+			}
+		} else if !protocolInfo.Modern && s.capabilities.tasks == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
@@ -628,6 +635,45 @@ func (s *MCPServer) handleMessage(
 			return err.ToJSONRPCError()
 		}
 		s.hooks.afterGetTask(ctx, baseMessage.ID, &request, result)
+		return createResponse(baseMessage.ID, *result)
+	case mcp.MethodTasksUpdate:
+		var request mcp.UpdateTaskRequest
+		var result *mcp.UpdateTaskResult
+		if !protocolInfo.Modern {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.METHOD_NOT_FOUND,
+				err:  fmt.Errorf("%q %w", baseMessage.Method, ErrRequiresModernProtocol),
+			}
+		} else if clientCaps := protocolInfo.ClientCapabilities; clientCaps == nil || !clientCaps.HasExtension(mcp.ExtensionTasks) {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.MISSING_REQUIRED_CLIENT_CAPABILITY,
+				err:  fmt.Errorf("tasks extension %w", ErrUnsupported),
+				data: missingExtensionData(mcp.ExtensionTasks),
+			}
+		} else if unmarshalErr := json.Unmarshal(message, &request); unmarshalErr != nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.INVALID_REQUEST,
+				err:  &UnparsableMessageError{message: message, err: unmarshalErr, method: baseMessage.Method},
+			}
+		} else if request.Params.InputResponses == nil {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.INVALID_PARAMS,
+				err:  fmt.Errorf("inputResponses must be an object"),
+			}
+		} else {
+			request.Header = headers
+			s.hooks.beforeUpdateTask(ctx, baseMessage.ID, &request)
+			result, err = s.handleUpdateTask(ctx, baseMessage.ID, request)
+		}
+		if err != nil {
+			s.hooks.onError(ctx, baseMessage.ID, baseMessage.Method, &request, err)
+			return err.ToJSONRPCError()
+		}
+		s.hooks.afterUpdateTask(ctx, baseMessage.ID, &request, result)
 		return createResponse(baseMessage.ID, *result)
 	case mcp.MethodTasksList:
 		var request mcp.ListTasksRequest
@@ -696,7 +742,14 @@ func (s *MCPServer) handleMessage(
 	case mcp.MethodTasksCancel:
 		var request mcp.CancelTaskRequest
 		var result *mcp.CancelTaskResult
-		if s.capabilities.tasks == nil {
+		if clientCaps := protocolInfo.ClientCapabilities; protocolInfo.Modern && (clientCaps == nil || !clientCaps.HasExtension(mcp.ExtensionTasks)) {
+			err = &requestError{
+				id:   baseMessage.ID,
+				code: mcp.MISSING_REQUIRED_CLIENT_CAPABILITY,
+				err:  fmt.Errorf("tasks extension %w", ErrUnsupported),
+				data: missingExtensionData(mcp.ExtensionTasks),
+			}
+		} else if !protocolInfo.Modern && s.capabilities.tasks == nil {
 			err = &requestError{
 				id:   baseMessage.ID,
 				code: mcp.METHOD_NOT_FOUND,
