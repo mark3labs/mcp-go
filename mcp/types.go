@@ -1340,9 +1340,9 @@ type ResourceLink struct {
 	// If not provided, clients should fall back to Name.
 	Title string `json:"title,omitempty"`
 	// The description of the resource.
-	Description string `json:"description"`
+	Description string `json:"description,omitempty"`
 	// The MIME type of the resource.
-	MIMEType string `json:"mimeType"`
+	MIMEType string `json:"mimeType,omitempty"`
 	// Size is the size of the raw resource content, in bytes (i.e., before base64
 	// encoding or any tokenization), if known. This can be used by hosts to
 	// display file sizes and estimate context window usage.
