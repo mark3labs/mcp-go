@@ -122,12 +122,12 @@ func (s *MCPServer) handleMessage(
 		return nil // Return nil for notifications
 	}
 
-	isResponse := func(member json.RawMessage) bool {
+	isNonNull := func(member json.RawMessage) bool {
 		return len(member) > 0 && !bytes.Equal(member, []byte("null"))
 	}
-	// A message with a method is a request, even if it carries an extra
-	// "error" member.
-	if isResponse(baseMessage.Result) || (baseMessage.Method == "" && isResponse(baseMessage.Error)) {
+	// For a message without a method, an explicit null result is also a response.
+	if isNonNull(baseMessage.Result) ||
+		(baseMessage.Method == "" && (baseMessage.Result != nil || isNonNull(baseMessage.Error))) {
 		// this is a response to a request sent by the server (e.g. from a ping
 		// sent due to WithKeepAlive option)
 		return nil
