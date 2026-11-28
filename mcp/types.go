@@ -172,16 +172,23 @@ type URITemplate struct {
 	*uritemplate.Template
 }
 
-func (t *URITemplate) MarshalJSON() ([]byte, error) {
+func (t URITemplate) MarshalJSON() ([]byte, error) {
+	if t.Template == nil {
+		return []byte("null"), nil
+	}
 	return json.Marshal(t.Raw())
 }
 
 func (t *URITemplate) UnmarshalJSON(data []byte) error {
-	var raw string
+	var raw *string
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	template, err := uritemplate.New(raw)
+	if raw == nil {
+		t.Template = nil
+		return nil
+	}
+	template, err := uritemplate.New(*raw)
 	if err != nil {
 		return err
 	}
@@ -1333,9 +1340,9 @@ type ResourceLink struct {
 	// If not provided, clients should fall back to Name.
 	Title string `json:"title,omitempty"`
 	// The description of the resource.
-	Description string `json:"description"`
+	Description string `json:"description,omitempty"`
 	// The MIME type of the resource.
-	MIMEType string `json:"mimeType"`
+	MIMEType string `json:"mimeType,omitempty"`
 	// Size is the size of the raw resource content, in bytes (i.e., before base64
 	// encoding or any tokenization), if known. This can be used by hosts to
 	// display file sizes and estimate context window usage.

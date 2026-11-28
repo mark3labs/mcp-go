@@ -106,11 +106,14 @@ func WithHeartbeatInterval(interval time.Duration) StreamableHTTPOption {
 // WithEventStore enables stream resumability, per the "Resumability and
 // Redelivery" section of the MCP Streamable HTTP transport specification.
 //
-// Every JSON-RPC message delivered on an SSE stream is recorded in store
+// Every JSON-RPC message delivered on a resumable SSE stream is recorded in store
 // before it is sent and carries the store-issued event ID in the SSE id
 // field. A client whose connection broke can then reconnect with a GET
 // carrying the standard Last-Event-ID header to be redelivered everything it
 // missed on that stream and keep receiving from it.
+//
+// A standalone GET with neither a supplied nor a generated session ID uses
+// an SSE stream scoped to the lifetime of the connection.
 //
 // With an event store configured, session transport state survives client
 // disconnects so that messages produced while no client is connected can
@@ -1067,6 +1070,17 @@ func (s *StreamableHTTPServer) handlePost(w HTTPResponseWriter, r *HTTPRequest) 
 
 	// Process message through MCPServer
 	response := s.server.HandleMessage(ctx, rawData)
+	// A result that cannot be encoded, such as one holding NaN, is answered
+	// with an INTERNAL_ERROR rather than an empty body or no event at all.
+	if result, ok := response.(mcp.JSONRPCResponse); ok {
+		if _, err := json.Marshal(result); err != nil {
+			response = createErrorResponse(
+				result.ID.Value(),
+				mcp.INTERNAL_ERROR,
+				fmt.Sprintf("failed to marshal response: %v", err),
+			)
+		}
+	}
 	if listening {
 		// Stop broadcasts before draining what is already queued.
 		s.server.unregisterListenSession(session)
@@ -1273,33 +1287,39 @@ func (s *StreamableHTTPServer) handleGet(w HTTPResponseWriter, r *HTTPRequest) {
 		sessionIdManager := s.resolveSessionIdManager(r)
 		sessionID = sessionIdManager.Generate()
 	}
+	sessionKey := sessionID
+	if sessionKey == "" {
+		// Anonymous streams need separate notification channels and lifetimes.
+		sessionKey = uuid.NewString()
+	}
+	// Resuming a listening stream uses the session ID supplied by the client.
+	resumable := sessionID != "" && s.eventStore != nil
 
 	// Get or create session atomically to prevent TOCTOU races
 	// where concurrent GETs could both create and register duplicate sessions
 	var session *streamableHttpSession
-	newSession := s.newSession(sessionID)
-	actual, loaded := s.activeSessions.LoadOrStore(sessionID, newSession)
+	newSession := s.newSession(sessionKey)
+	actual, loaded := s.activeSessions.LoadOrStore(sessionKey, newSession)
 	session = actual.(*streamableHttpSession)
 
 	if !loaded {
 		// We created a new session, need to register it
 		if err := s.server.RegisterSession(r.ctx(), session); err != nil {
-			s.activeSessions.Delete(sessionID)
+			s.activeSessions.Delete(sessionKey)
 			writeHTTPErrorf(w, http.StatusBadRequest, "Session registration failed: %v", err)
 			return
 		}
-		if s.eventStore == nil {
-			defer s.server.UnregisterSession(r.ctx(), sessionID)
-			defer s.activeSessions.Delete(sessionID)
+		if !resumable {
+			defer s.cleanupSessionState(r.ctx(), sessionKey)
 		}
-		// With an event store, the session outlives the connection so that
+		// A resumable session outlives the connection so that
 		// messages produced while the client is away are recorded for
 		// replay; it is cleaned up on DELETE or by the idle sweeper.
 	}
 
 	s.touchSession(sessionID)
 
-	if s.eventStore != nil {
+	if resumable {
 		s.serveListeningStream(w, r, sessionID, session)
 		return
 	}
@@ -1723,6 +1743,14 @@ func (s *StreamableHTTPServer) sweepExpiredSessions() {
 		if mgr == nil {
 			mgr = s.sessionIdManagerResolver.ResolveSessionIdManager(nil)
 		}
+		// End a GET stream still attached to the session: once the session
+		// is unregistered it gets no notifications, and closing it lets the
+		// client reconnect.
+		if v, ok := s.activeSessions.Load(sessionID); ok {
+			if session, ok := v.(*streamableHttpSession); ok {
+				session.closeDone()
+			}
+		}
 		_, _ = mgr.Terminate(sessionID)
 		s.cleanupSessionState(context.Background(), sessionID)
 		return true
@@ -1777,17 +1805,23 @@ func newSessionResourcesStore() *sessionResourcesStore {
 func (s *sessionResourcesStore) get(sessionID string) map[string]ServerResource {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	cloned := make(map[string]ServerResource, len(s.resources[sessionID]))
-	maps.Copy(cloned, s.resources[sessionID])
-	return cloned
+	return cloneSessionEntries(s.resources[sessionID])
 }
 
 func (s *sessionResourcesStore) set(sessionID string, resources map[string]ServerResource) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cloned := make(map[string]ServerResource, len(resources))
-	maps.Copy(cloned, resources)
-	s.resources[sessionID] = cloned
+	s.resources[sessionID] = cloneSessionEntries(resources)
+}
+
+func (s *sessionResourcesStore) update(sessionID string, add map[string]ServerResource, remove []string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	updated, changed := applySessionEntries(s.resources[sessionID], add, remove)
+	if changed {
+		s.resources[sessionID] = updated
+	}
+	return changed
 }
 
 func (s *sessionResourcesStore) delete(sessionID string) {
@@ -1810,17 +1844,23 @@ func newSessionResourceTemplatesStore() *sessionResourceTemplatesStore {
 func (s *sessionResourceTemplatesStore) get(sessionID string) map[string]ServerResourceTemplate {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	cloned := make(map[string]ServerResourceTemplate, len(s.templates[sessionID]))
-	maps.Copy(cloned, s.templates[sessionID])
-	return cloned
+	return cloneSessionEntries(s.templates[sessionID])
 }
 
 func (s *sessionResourceTemplatesStore) set(sessionID string, templates map[string]ServerResourceTemplate) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cloned := make(map[string]ServerResourceTemplate, len(templates))
-	maps.Copy(cloned, templates)
-	s.templates[sessionID] = cloned
+	s.templates[sessionID] = cloneSessionEntries(templates)
+}
+
+func (s *sessionResourceTemplatesStore) update(sessionID string, add map[string]ServerResourceTemplate, remove []string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	updated, changed := applySessionEntries(s.templates[sessionID], add, remove)
+	if changed {
+		s.templates[sessionID] = updated
+	}
+	return changed
 }
 
 func (s *sessionResourceTemplatesStore) delete(sessionID string) {
@@ -2131,12 +2171,20 @@ func (s *streamableHttpSession) SetSessionResources(resources map[string]ServerR
 	s.resources.set(s.sessionID, resources)
 }
 
+func (s *streamableHttpSession) updateSessionResources(add map[string]ServerResource, remove []string) bool {
+	return s.resources.update(s.sessionID, add, remove)
+}
+
 func (s *streamableHttpSession) GetSessionResourceTemplates() map[string]ServerResourceTemplate {
 	return s.resourceTemplates.get(s.sessionID)
 }
 
 func (s *streamableHttpSession) SetSessionResourceTemplates(templates map[string]ServerResourceTemplate) {
 	s.resourceTemplates.set(s.sessionID, templates)
+}
+
+func (s *streamableHttpSession) updateSessionResourceTemplates(add map[string]ServerResourceTemplate, remove []string) bool {
+	return s.resourceTemplates.update(s.sessionID, add, remove)
 }
 
 var (

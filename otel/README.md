@@ -26,11 +26,19 @@ Spans:
 
 Attributes (string-valued):
 
-| Attribute              | Where             |
-| ---------------------- | ----------------- |
-| `mcp.method`           | every span        |
-| `mcp.tool.name`        | `tools/call` only |
-| `mcp.session.id`       | server spans      |
-| `mcp.protocol.version` | server spans      |
+| Attribute              | Where                                  |
+| ---------------------- | -------------------------------------- |
+| `mcp.method.name`       | `mcp.<method>` request spans            |
+| `gen_ai.tool.name`      | `tools/call` requests and tool handlers |
+| `mcp.session.id`        | server request spans                   |
+| `mcp.protocol.version`  | server request spans                   |
+
+These follow the OpenTelemetry MCP semantic conventions. The earlier
+`mcp.method` and the server's `mcp.tool.name` are still set alongside them
+and are deprecated.
+
+Tool name attributes contain the requested name verbatim, including on
+rejected calls to unknown or filtered tools. Error status descriptions can
+also contain these names.
 
 See [example/](example/) for a runnable round-trip with stderr span output.

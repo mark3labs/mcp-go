@@ -102,7 +102,11 @@ func (r CallToolRequest) BindArguments(target any) error {
 	}
 
 	if len(r.Params.RawArguments) > 0 {
-		return json.Unmarshal(r.Params.RawArguments, target)
+		data, err := r.Params.marshalArguments()
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(data, target)
 	}
 
 	// Fast-path: already raw JSON
@@ -159,9 +163,13 @@ func (p *CallToolParams) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(raw.Arguments, &p.Arguments)
 }
 
-// MarshalJSON re-emits preserved raw arguments when available.
+// MarshalJSON preserves exact numbers while honoring changes to Arguments.
 func (p CallToolParams) MarshalJSON() ([]byte, error) {
 	if len(p.RawArguments) > 0 {
+		arguments, err := p.marshalArguments()
+		if err != nil {
+			return nil, err
+		}
 		type params struct {
 			Name      string          `json:"name"`
 			Arguments json.RawMessage `json:"arguments,omitempty"`
@@ -171,7 +179,7 @@ func (p CallToolParams) MarshalJSON() ([]byte, error) {
 		}
 		return json.Marshal(params{
 			Name:                 p.Name,
-			Arguments:            p.RawArguments,
+			Arguments:            arguments,
 			Meta:                 p.Meta,
 			Task:                 p.Task,
 			MultiRoundTripParams: p.MultiRoundTripParams,
@@ -180,6 +188,62 @@ func (p CallToolParams) MarshalJSON() ([]byte, error) {
 
 	type alias CallToolParams
 	return json.Marshal(alias(p))
+}
+
+func (p CallToolParams) marshalArguments() ([]byte, error) {
+	var original any
+	if err := json.Unmarshal(p.RawArguments, &original); err != nil {
+		return nil, err
+	}
+	if reflect.DeepEqual(p.Arguments, original) {
+		return p.RawArguments, nil
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(p.RawArguments))
+	decoder.UseNumber()
+	if err := decoder.Decode(&original); err != nil {
+		return nil, err
+	}
+	return json.Marshal(preserveArgumentNumbers(p.Arguments, original))
+}
+
+// preserveArgumentNumbers restores exact numbers only at unchanged positions.
+// Recursion follows the original JSON tree, so changed cyclic values still reach
+// json.Marshal's cycle detection rather than being traversed indefinitely here.
+func preserveArgumentNumbers(value, original any) any {
+	switch current := value.(type) {
+	case float64:
+		if number, ok := original.(json.Number); ok {
+			if decoded, err := number.Float64(); err == nil && decoded == current {
+				return number
+			}
+		}
+	case map[string]any:
+		previous, ok := original.(map[string]any)
+		if !ok || current == nil {
+			break
+		}
+		updated := make(map[string]any, len(current))
+		for key, item := range current {
+			updated[key] = preserveArgumentNumbers(item, previous[key])
+		}
+		return updated
+	case []any:
+		previous, ok := original.([]any)
+		if !ok || current == nil {
+			break
+		}
+		updated := make([]any, len(current))
+		for i, item := range current {
+			var old any
+			if i < len(previous) {
+				old = previous[i]
+			}
+			updated[i] = preserveArgumentNumbers(item, old)
+		}
+		return updated
+	}
+	return value
 }
 
 // RequireString returns a string argument by key, or an error if not found or not a string
@@ -194,9 +258,9 @@ func (r CallToolRequest) RequireString(key string) (string, error) {
 	return "", fmt.Errorf("required argument %q not found", key)
 }
 
-// rawIntArgument parses an exact int argument from RawArguments when present.
-func (r CallToolRequest) rawIntArgument(key string) (int, bool) {
-	return parseRawInt(r.rawArgument(key))
+// rawIntArgument parses an exact int from RawArguments if it still matches value.
+func (r CallToolRequest) rawIntArgument(key string, value float64) (int, bool) {
+	return parseRawInt(r.rawArgument(key), value)
 }
 
 func (r CallToolRequest) rawArgument(key string) json.RawMessage {
@@ -218,16 +282,16 @@ func (r CallToolRequest) rawArgumentSlice(key string) []json.RawMessage {
 	return items
 }
 
-func parseRawInt(rawVal json.RawMessage) (int, bool) {
+func parseRawInt(rawVal json.RawMessage, value float64) (int, bool) {
 	s := strings.TrimSpace(string(rawVal))
 	if i, err := strconv.Atoi(s); err == nil {
-		return i, true
+		return i, float64(i) == value
 	}
 	if len(s) > 64 || !strings.ContainsAny(s, ".eE") {
 		return 0, false
 	}
 	f, err := strconv.ParseFloat(s, 64)
-	if err != nil || (f > -1 && f < 1) || f < float64(math.MinInt) || f > float64(math.MaxInt) {
+	if err != nil || f != value || (f > -1 && f < 1) || f < float64(math.MinInt) || f > float64(math.MaxInt) {
 		return 0, false
 	}
 	rat, ok := new(big.Rat).SetString(s)
@@ -249,7 +313,7 @@ func (r CallToolRequest) GetInt(key string, defaultValue int) int {
 		case int:
 			return v
 		case float64:
-			if i, ok := r.rawIntArgument(key); ok {
+			if i, ok := r.rawIntArgument(key, v); ok {
 				return i
 			}
 			return int(v)
@@ -270,7 +334,7 @@ func (r CallToolRequest) RequireInt(key string) (int, error) {
 		case int:
 			return v, nil
 		case float64:
-			if i, ok := r.rawIntArgument(key); ok {
+			if i, ok := r.rawIntArgument(key, v); ok {
 				return i, nil
 			}
 			return int(v), nil
@@ -429,7 +493,7 @@ func (r CallToolRequest) GetIntSlice(key string, defaultValue []int) []int {
 					result = append(result, num)
 				case float64:
 					if i < len(rawItems) {
-						if exact, ok := parseRawInt(rawItems[i]); ok {
+						if exact, ok := parseRawInt(rawItems[i], num); ok {
 							result = append(result, exact)
 							continue
 						}
@@ -464,7 +528,7 @@ func (r CallToolRequest) RequireIntSlice(key string) ([]int, error) {
 					result = append(result, num)
 				case float64:
 					if i < len(rawItems) {
-						if exact, ok := parseRawInt(rawItems[i]); ok {
+						if exact, ok := parseRawInt(rawItems[i], num); ok {
 							result = append(result, exact)
 							continue
 						}
@@ -696,7 +760,7 @@ func (r *CallToolResult) UnmarshalJSON(data []byte) error {
 	r.RawStructuredContent = nil
 	r.StructuredContent = nil
 	if len(raw.StructuredContent) > 0 {
-		r.RawStructuredContent = append(json.RawMessage(nil), raw.StructuredContent...)
+		r.RawStructuredContent = raw.StructuredContent
 		if err := json.Unmarshal(raw.StructuredContent, &r.StructuredContent); err != nil {
 			return err
 		}
@@ -781,7 +845,7 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 
 	// Determine which input schema to use
 	if t.RawInputSchema != nil {
-		if t.InputSchema.Type != "" || t.InputSchema.Types != nil {
+		if ToolArgumentsSchema(t.InputSchema).hasStructuredKeywords() {
 			return nil, fmt.Errorf("tool %s has both InputSchema and RawInputSchema set: %w", t.Name, errToolSchemaConflict)
 		}
 		m["inputSchema"] = t.RawInputSchema
@@ -792,7 +856,7 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 
 	// Add output schema if present
 	if t.RawOutputSchema != nil {
-		if t.OutputSchema.Type != "" || t.OutputSchema.Types != nil {
+		if ToolArgumentsSchema(t.OutputSchema).hasStructuredKeywords() {
 			return nil, fmt.Errorf("tool %s has both OutputSchema and RawOutputSchema set: %w", t.Name, errToolSchemaConflict)
 		}
 		m["outputSchema"] = t.RawOutputSchema
@@ -877,6 +941,11 @@ type ToolArgumentsSchema struct {
 	// in Properties are skipped, and keys that are not listed follow in
 	// sorted order. A nil PropertyOrder marshals all keys in sorted order.
 	PropertyOrder []string `json:"-"`
+}
+
+func (s ToolArgumentsSchema) hasStructuredKeywords() bool {
+	return s.Type != "" || s.Types != nil || len(s.Properties) > 0 || len(s.Required) > 0 ||
+		len(s.Defs) > 0 || s.AdditionalProperties != nil || len(s.AdditionalFields) > 0
 }
 
 // ToolInputSchema remains a named type for retro-compatibility, so its JSON

@@ -147,6 +147,26 @@ func TestResourceLinkTitleAndSize(t *testing.T) {
 	}
 }
 
+// A link received without description and mimeType must not gain empty ones
+// when it is forwarded: both are optional in the MCP schema, as on Resource.
+func TestResourceLinkOmitsUnsetDescriptionAndMIMEType(t *testing.T) {
+	content, err := ParseContent(map[string]any{
+		"type": "resource_link",
+		"uri":  "file:///x.txt",
+		"name": "x.txt",
+	})
+	require.NoError(t, err)
+
+	data, err := json.Marshal(content)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"type":"resource_link","uri":"file:///x.txt","name":"x.txt"}`, string(data))
+
+	data, err = json.Marshal(NewResourceLink("file:///x.txt", "x.txt", "a file", "text/plain"))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"description":"a file"`)
+	assert.Contains(t, string(data), `"mimeType":"text/plain"`)
+}
+
 // TestResourceLinkMeta mirrors the _meta round-trip that Resource and the other
 // content blocks already have: per the MCP spec a ResourceLink carries the same
 // metadata as a Resource, so its _meta must survive JSON round-trips and be

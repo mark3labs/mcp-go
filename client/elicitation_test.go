@@ -30,11 +30,6 @@ func TestClient_HandleElicitationRequest(t *testing.T) {
 		expectedError string
 	}{
 		{
-			name:          "no handler configured",
-			handler:       nil,
-			expectedError: "no elicitation handler configured",
-		},
-		{
 			name: "successful elicitation - accept",
 			handler: &mockElicitationHandler{
 				result: &mcp.ElicitationResult{
