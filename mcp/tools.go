@@ -888,6 +888,36 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
+// InputSchemaJSON returns the tool's input schema as it appears on the wire,
+// whether it was set with InputSchema or RawInputSchema. It is useful for
+// passing an MCP tool's schema on to another API, such as an LLM's tool
+// definitions.
+func (t Tool) InputSchemaJSON() (json.RawMessage, error) {
+	if t.RawInputSchema != nil {
+		if ToolArgumentsSchema(t.InputSchema).hasStructuredKeywords() {
+			return nil, fmt.Errorf("tool %s has both InputSchema and RawInputSchema set: %w", t.Name, errToolSchemaConflict)
+		}
+		return slices.Clone(t.RawInputSchema), nil
+	}
+	return json.Marshal(t.InputSchema)
+}
+
+// OutputSchemaJSON returns the tool's output schema as it appears on the
+// wire, whether it was set with OutputSchema or RawOutputSchema, or nil when
+// the tool declares none.
+func (t Tool) OutputSchemaJSON() (json.RawMessage, error) {
+	if t.RawOutputSchema != nil {
+		if ToolArgumentsSchema(t.OutputSchema).hasStructuredKeywords() {
+			return nil, fmt.Errorf("tool %s has both OutputSchema and RawOutputSchema set: %w", t.Name, errToolSchemaConflict)
+		}
+		return slices.Clone(t.RawOutputSchema), nil
+	}
+	if t.OutputSchema.Type == "" && t.OutputSchema.Types == nil {
+		return nil, nil
+	}
+	return json.Marshal(t.OutputSchema)
+}
+
 // ToolArgumentsSchema represents a JSON Schema for tool arguments.
 type ToolArgumentsSchema struct {
 	Defs map[string]any `json:"$defs,omitempty"`
