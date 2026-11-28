@@ -397,4 +397,25 @@ func TestInitialize_LegacyFallbackOnUnsupportedProtocolVersion(t *testing.T) {
 			t.Error("legacy initialize should not be called when no version is mutually supported")
 		}
 	})
+
+	t.Run("does not fall back to legacy when server advertises an unsupported modern version alongside a legacy version", func(t *testing.T) {
+		tr := &legacyOnlyDiscoverRejectTransport{
+			supportedVersions: []string{"2099-01-01", "2025-06-18"},
+		}
+		c := NewClient(tr)
+		_, err := c.Initialize(t.Context(), mcp.InitializeRequest{
+			Params: mcp.InitializeParams{
+				ClientInfo: mcp.Implementation{Name: "test-client", Version: "1.0"},
+			},
+		})
+		if err == nil {
+			t.Fatal("expected error when server advertises a modern version")
+		}
+		if !mcp.IsUnsupportedProtocolVersion(err) {
+			t.Errorf("expected UnsupportedProtocolVersionError, got %T: %v", err, err)
+		}
+		if tr.initCalled {
+			t.Error("legacy initialize must not be called when server advertises any modern version")
+		}
+	})
 }

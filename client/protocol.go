@@ -401,9 +401,10 @@ func (c *Client) negotiateModern(ctx context.Context, preferred string, header h
 		if !errors.As(err, &unsupported) || unsupported.Supported == nil {
 			break
 		}
+		hasModern := slices.ContainsFunc(unsupported.Supported, mcp.IsModernProtocol)
 		negotiated := mcp.NegotiateMutuallySupportedVersion(unsupported.Supported)
 		if !mcp.IsModernProtocol(negotiated) {
-			if negotiated != "" {
+			if !modern && !hasModern && negotiated != "" {
 				// The server only supports initialize-era protocol versions that
 				// this client also supports; fall back to the legacy handshake
 				// using the mutually supported version.
