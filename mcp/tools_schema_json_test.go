@@ -69,18 +69,30 @@ func TestTool_SchemaJSONWithoutOutputSchema(t *testing.T) {
 
 func TestTool_SchemaJSONConflicts(t *testing.T) {
 	raw := json.RawMessage(`{"type":"object"}`)
-	tests := []struct {
+	structured := []struct {
 		name   string
-		schema func() (json.RawMessage, error)
+		fields ToolArgumentsSchema
 	}{
-		{name: "input with Type", schema: Tool{Name: "a", InputSchema: ToolInputSchema{Type: "object"}, RawInputSchema: raw}.InputSchemaJSON},
-		{name: "input with Types", schema: Tool{Name: "a", InputSchema: ToolInputSchema{Types: []string{"object", "null"}}, RawInputSchema: raw}.InputSchemaJSON},
-		{name: "output with Type", schema: Tool{Name: "a", OutputSchema: ToolOutputSchema{Type: "object"}, RawOutputSchema: raw}.OutputSchemaJSON},
-		{name: "output with Types", schema: Tool{Name: "a", OutputSchema: ToolOutputSchema{Types: []string{"object", "null"}}, RawOutputSchema: raw}.OutputSchemaJSON},
+		{name: "Type", fields: ToolArgumentsSchema{Type: "object"}},
+		{name: "Types", fields: ToolArgumentsSchema{Types: []string{"object", "null"}}},
+		{name: "Properties", fields: ToolArgumentsSchema{Properties: map[string]any{"q": map[string]any{"type": "string"}}}},
+		{name: "Required", fields: ToolArgumentsSchema{Required: []string{"q"}}},
+		{name: "Defs", fields: ToolArgumentsSchema{Defs: map[string]any{"d": map[string]any{"type": "string"}}}},
+		{name: "AdditionalProperties", fields: ToolArgumentsSchema{AdditionalProperties: false}},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := tt.schema()
+	for _, s := range structured {
+		t.Run("input with "+s.name, func(t *testing.T) {
+			tool := Tool{Name: "a", InputSchema: ToolInputSchema(s.fields), RawInputSchema: raw}
+			_, err := tool.InputSchemaJSON()
+			require.ErrorIs(t, err, errToolSchemaConflict)
+			_, err = json.Marshal(tool)
+			require.ErrorIs(t, err, errToolSchemaConflict)
+		})
+		t.Run("output with "+s.name, func(t *testing.T) {
+			tool := Tool{Name: "a", OutputSchema: ToolOutputSchema(s.fields), RawOutputSchema: raw}
+			_, err := tool.OutputSchemaJSON()
+			require.ErrorIs(t, err, errToolSchemaConflict)
+			_, err = json.Marshal(tool)
 			require.ErrorIs(t, err, errToolSchemaConflict)
 		})
 	}

@@ -894,7 +894,7 @@ func (t Tool) MarshalJSON() ([]byte, error) {
 // definitions.
 func (t Tool) InputSchemaJSON() (json.RawMessage, error) {
 	if t.RawInputSchema != nil {
-		if t.InputSchema.Type != "" || t.InputSchema.Types != nil {
+		if ToolArgumentsSchema(t.InputSchema).hasStructuredKeywords() {
 			return nil, fmt.Errorf("tool %s has both InputSchema and RawInputSchema set: %w", t.Name, errToolSchemaConflict)
 		}
 		return slices.Clone(t.RawInputSchema), nil
@@ -906,14 +906,13 @@ func (t Tool) InputSchemaJSON() (json.RawMessage, error) {
 // wire, whether it was set with OutputSchema or RawOutputSchema, or nil when
 // the tool declares none.
 func (t Tool) OutputSchemaJSON() (json.RawMessage, error) {
-	structured := t.OutputSchema.Type != "" || t.OutputSchema.Types != nil
 	if t.RawOutputSchema != nil {
-		if structured {
+		if ToolArgumentsSchema(t.OutputSchema).hasStructuredKeywords() {
 			return nil, fmt.Errorf("tool %s has both OutputSchema and RawOutputSchema set: %w", t.Name, errToolSchemaConflict)
 		}
 		return slices.Clone(t.RawOutputSchema), nil
 	}
-	if !structured {
+	if t.OutputSchema.Type == "" && t.OutputSchema.Types == nil {
 		return nil, nil
 	}
 	return json.Marshal(t.OutputSchema)
