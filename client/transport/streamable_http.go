@@ -343,6 +343,8 @@ func (c *StreamableHTTP) isClosed() bool {
 // sending it a DELETE request. It is a no-op for an empty session ID and
 // for the modern protocol, which has no protocol-level sessions to
 // terminate. DELETE failures are logged, not returned.
+const closeAuthLookupTimeout = 2 * time.Second
+
 func (c *StreamableHTTP) deleteSession(sessionID string) {
 	// Protocol version 2026-07-28 removed protocol-level sessions, so
 	// there is nothing to terminate and DELETE is not part of the
@@ -365,10 +367,29 @@ func (c *StreamableHTTP) deleteSession(sessionID string) {
 			req.Header.Set(HeaderKeyProtocolVersion, version)
 		}
 	}
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
+	}
 
 	// Set custom Host header if provided
 	if c.host != "" {
 		req.Host = c.host
+	}
+
+	if c.oauthHandler != nil {
+		lookupCtx, cancelLookup := context.WithTimeout(ctx, closeAuthLookupTimeout)
+		authHeader, err := c.oauthHandler.GetAuthorizationHeader(lookupCtx)
+		cancelLookup()
+		if err != nil {
+			c.logger.Error("failed to get authorization header for close request", "err", err)
+		} else {
+			req.Header.Set("Authorization", authHeader)
+		}
+	}
+	if c.headerFunc != nil {
+		for k, v := range c.headerFunc(ctx) {
+			req.Header.Set(k, v)
+		}
 	}
 	res, err := c.httpClient.Do(req)
 	if err != nil {
