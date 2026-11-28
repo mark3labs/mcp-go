@@ -127,7 +127,9 @@ func (s *MCPServer) handleMessage(
 	}
 	// A message with a method is a request, even if it carries an extra
 	// "error" member.
-	if isResponse(baseMessage.Result) || (baseMessage.Method == "" && isResponse(baseMessage.Error)) {
+	if (baseMessage.Method == "" && len(baseMessage.Result) > 0) ||
+		isResponse(baseMessage.Result) ||
+		(baseMessage.Method == "" && isResponse(baseMessage.Error)) {
 		// this is a response to a request sent by the server (e.g. from a ping
 		// sent due to WithKeepAlive option)
 		return nil

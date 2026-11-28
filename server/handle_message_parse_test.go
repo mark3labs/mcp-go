@@ -44,6 +44,7 @@ func TestHandleMessage_ParsesEnvelope(t *testing.T) {
 		{name: "not an object", message: `[1,2]`, wantError: mcp.PARSE_ERROR},
 		{name: "invalid id", message: `{"jsonrpc":"2.0","id":{,"method":"ping"}`, wantError: mcp.PARSE_ERROR},
 		{name: "response with result", message: `{"jsonrpc":"2.0","id":7,"result":{"content":[]}}`, wantNil: true},
+		{name: "response with null result", message: `{"jsonrpc":"2.0","id":8,"result":null}`, wantNil: true},
 		{name: "null result is a request", message: `{"jsonrpc":"2.0","id":3,"result":null,"method":"ping"}`, wantID: float64(3)},
 		{name: "string id", message: `{"jsonrpc":"2.0","id":"abc","method":"ping"}`, wantID: "abc"},
 		{name: "large id keeps precision", message: `{"jsonrpc":"2.0","id":9007199254740993,"method":"ping"}`, wantID: int64(9007199254740993)},
