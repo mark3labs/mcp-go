@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"maps"
 	"net/http"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -53,12 +54,38 @@ func WithMetaPropagator(p tracing.MetaPropagator) ClientOption {
 	}
 }
 
-func (c *Client) injectMeta(ctx context.Context, meta *mcp.Meta) *mcp.Meta {
+// injectTraceMeta writes the trace context of ctx into the _meta of
+// tools/call, prompts/get and resources/read params. It writes into a copy of
+// _meta, so the caller's request is left unchanged.
+func (c *Client) injectTraceMeta(ctx context.Context, params any) any {
 	p := c.metaPropagator
 	if p == nil {
-		return meta
+		return params
 	}
-	return p.InjectMeta(ctx, meta)
+	switch params := params.(type) {
+	case mcp.CallToolParams:
+		params.Meta = p.InjectMeta(ctx, copyMeta(params.Meta))
+		return params
+	case mcp.GetPromptParams:
+		params.Meta = p.InjectMeta(ctx, copyMeta(params.Meta))
+		return params
+	case mcp.ReadResourceParams:
+		params.Meta = p.InjectMeta(ctx, copyMeta(params.Meta))
+		return params
+	default:
+		return params
+	}
+}
+
+// copyMeta returns a copy of meta whose AdditionalFields can be written
+// without changing meta's.
+func copyMeta(meta *mcp.Meta) *mcp.Meta {
+	if meta == nil {
+		return nil
+	}
+	copied := *meta
+	copied.AdditionalFields = maps.Clone(meta.AdditionalFields)
+	return &copied
 }
 
 func (c *Client) startSendSpan(

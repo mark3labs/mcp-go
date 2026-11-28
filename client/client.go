@@ -269,6 +269,11 @@ func (c *Client) sendRequest(
 		toolName = toolParams.Name
 	}
 
+	// Start the span first so that the trace context written into _meta
+	// names this request's span, as the one written into the headers does.
+	ctx, header, span := c.startSendSpan(ctx, method, header, toolName)
+	params = c.injectTraceMeta(ctx, params)
+
 	// Protocol version 2026-07-28 carries the protocol version, client
 	// identity, and client capabilities in the _meta of every request, and
 	// mirrors the method and name into HTTP headers (SEP-2575, SEP-2243).
@@ -277,8 +282,6 @@ func (c *Client) sendRequest(
 	header = c.applyStandardHeaders(header, method, params)
 
 	id := c.requestID.Add(1)
-
-	ctx, header, span := c.startSendSpan(ctx, method, header, toolName)
 
 	request := transport.JSONRPCRequest{
 		JSONRPC: mcp.JSONRPC_VERSION,
@@ -648,7 +651,6 @@ func (c *Client) ReadResource(
 	ctx context.Context,
 	request mcp.ReadResourceRequest,
 ) (*mcp.ReadResourceResult, error) {
-	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
 	header := outboundHeader(request.Header, request.Method)
 	return multiRoundTrip(ctx, c, request.Params.MultiRoundTripParams,
 		func(ctx context.Context, roundTrip mcp.MultiRoundTripParams) (*mcp.ReadResourceResult, error) {
@@ -705,7 +707,6 @@ func (c *Client) GetPrompt(
 	ctx context.Context,
 	request mcp.GetPromptRequest,
 ) (*mcp.GetPromptResult, error) {
-	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
 	header := outboundHeader(request.Header, request.Method)
 	return multiRoundTrip(ctx, c, request.Params.MultiRoundTripParams,
 		func(ctx context.Context, roundTrip mcp.MultiRoundTripParams) (*mcp.GetPromptResult, error) {
@@ -766,7 +767,6 @@ func (c *Client) CallTool(
 	ctx context.Context,
 	request mcp.CallToolRequest,
 ) (*mcp.CallToolResult, error) {
-	request.Params.Meta = c.injectMeta(ctx, request.Params.Meta)
 	header := outboundHeader(request.Header, request.Method)
 	return multiRoundTrip(ctx, c, request.Params.MultiRoundTripParams,
 		func(ctx context.Context, roundTrip mcp.MultiRoundTripParams) (*mcp.CallToolResult, error) {

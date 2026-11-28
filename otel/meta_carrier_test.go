@@ -170,14 +170,13 @@ func TestClientMetaPropagator_CallToolInjectsMeta(t *testing.T) {
 // TestClientMetaPropagator_NoTracerDoesNotInjectMeta checks that with a
 // propagator installed but no active span, no traceparent is injected into _meta.
 func TestClientMetaPropagator_NoTracerDoesNotInjectMeta(t *testing.T) {
-	tracer, _ := newTestTracer(t)
 	srv := server.NewMCPServer("srv", "1.0")
 	srv.AddTool(mcp.Tool{Name: "echo"}, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return mcp.NewToolResultText("ok"), nil
 	})
 
-	// Propagator installed but context has no active span — must not inject an invalid traceparent.
-	c, cap := startTracedClient(t, srv, otelmcp.WithClientTracing(tracer))
+	// Propagator installed but no tracer, so no span is active — must not inject an invalid traceparent.
+	c, cap := startTracedClient(t, srv, otelmcp.WithClientMetaPropagator(propagation.TraceContext{}))
 
 	callReq := mcp.CallToolRequest{}
 	callReq.Params.Name = "echo"
@@ -236,7 +235,7 @@ func TestServerMetaPropagator_ExtractsInboundTraceparent(t *testing.T) {
 // TestServerMetaPropagator_RoundTrip verifies end-to-end: client injects into
 // _meta, server extracts and server span joins the client trace.
 func TestServerMetaPropagator_RoundTrip(t *testing.T) {
-	clientTracer, _ := newTestTracer(t)
+	clientTracer, clientRec := newTestTracer(t)
 	serverTracer, serverRec := newTestTracer(t)
 
 	srv := server.NewMCPServer("srv", "1.0", otelmcp.WithServerTracing(serverTracer))
@@ -261,6 +260,11 @@ func TestServerMetaPropagator_RoundTrip(t *testing.T) {
 
 	assert.Equal(t, parentSpan.SpanContext().TraceID(), serverSpan.SpanContext().TraceID(),
 		"server span must join the client trace propagated through _meta")
+
+	clientSpan := findSpan(clientRec.Ended(), "mcp.tools/call")
+	require.NotNil(t, clientSpan, "client must produce mcp.tools/call span")
+	assert.Equal(t, clientSpan.SpanContext().SpanID(), serverSpan.Parent().SpanID(),
+		"server span must be a child of the client's mcp.tools/call span")
 }
 
 // traceIDFromTraceparent extracts the 32-hex trace-id segment from a W3C traceparent.
