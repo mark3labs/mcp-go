@@ -75,6 +75,7 @@ func TestManualInputRoundTrips(t *testing.T) {
 		{name: "manual ignores max round trips", manual: true, maxTrips: 1, requests: elicit, wantCalls: 1},
 		{name: "default without handler fails", requests: elicit, wantErr: "no elicitation handler configured", wantCalls: 1},
 		{name: "default with handler retries automatically", handler: true, requests: elicit, wantCalls: 2, wantHandl: 1},
+		{name: "max one allows one retry", handler: true, maxTrips: 1, requests: elicit, wantCalls: 2, wantHandl: 1},
 		{name: "manual caller-driven retry", manual: true, handler: true, requests: elicit, retry: true, wantCalls: 2},
 		{name: "manual empty input requests returned unchanged", manual: true, requests: mcp.InputRequests{}, wantCalls: 1},
 	}
