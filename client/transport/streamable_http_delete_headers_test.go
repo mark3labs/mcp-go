@@ -54,6 +54,39 @@ func deleteTestOAuth(t *testing.T, withToken bool) StreamableHTTPCOption {
 	})
 }
 
+type stallingTokenStore struct{}
+
+func (stallingTokenStore) GetToken(ctx context.Context) (*Token, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (stallingTokenStore) SaveToken(context.Context, *Token) error {
+	return nil
+}
+
+func TestStreamableHTTP_CloseSendsDeleteWhenOAuthLookupStalls(t *testing.T) {
+	srv, deletes := deleteHeaderServer(t)
+
+	trans, err := NewStreamableHTTP(srv.URL,
+		WithSession("session-1"),
+		WithHTTPOAuth(OAuthConfig{
+			ClientID:    "test-client",
+			RedirectURI: "http://localhost:8085/callback",
+			TokenStore:  stallingTokenStore{},
+			PKCEEnabled: true,
+		}),
+	)
+	require.NoError(t, err)
+	trans.SetProtocolVersion(mcp.LATEST_LEGACY_PROTOCOL_VERSION)
+
+	require.NoError(t, trans.Close())
+
+	h := receiveDelete(t, deletes)
+	assert.Equal(t, "session-1", h.Get(HeaderKeySessionID))
+	assert.Empty(t, h.Get("Authorization"))
+}
+
 func TestStreamableHTTP_CloseSendsHeadersOnDelete(t *testing.T) {
 	staticAuth := WithHTTPHeaders(map[string]string{"Authorization": "Bearer static"})
 	tenantFunc := WithHTTPHeaderFunc(func(context.Context) map[string]string {
