@@ -361,7 +361,7 @@ func validateDiscoverResult(data json.RawMessage) error {
 // The probe is bounded by a timeout: a well-behaved JSON-RPC server answers an
 // unknown method with MethodNotFound, but a server predating this method may
 // simply ignore it, which on stdio would otherwise block forever.
-func (c *Client) negotiateModern(ctx context.Context, preferred string, header http.Header) (*mcp.DiscoverResult, bool, error) {
+func (c *Client) negotiateModern(ctx context.Context, preferred string, header http.Header) (*mcp.DiscoverResult, bool, string, error) {
 	if preferred == "" {
 		preferred = mcp.LATEST_PROTOCOL_VERSION
 	}
@@ -388,10 +388,10 @@ func (c *Client) negotiateModern(ctx context.Context, preferred string, header h
 			version := discoveredVersion(c.protocolVersion, result.SupportedVersions)
 			if version == "" {
 				c.applyNegotiatedVersion(previous)
-				return nil, true, fmt.Errorf("server/discover result lists no modern version this client supports: %v", result.SupportedVersions)
+				return nil, true, "", fmt.Errorf("server/discover result lists no modern version this client supports: %v", result.SupportedVersions)
 			}
 			c.applyNegotiatedVersion(version)
-			return result, true, nil
+			return result, true, "", nil
 		}
 
 		// A recognized modern error identifies a modern server: renegotiate
@@ -401,19 +401,28 @@ func (c *Client) negotiateModern(ctx context.Context, preferred string, header h
 		if !errors.As(err, &unsupported) || unsupported.Supported == nil {
 			break
 		}
-		modern = true
-		if attempt > 0 {
-			break
-		}
+		hasModern := slices.ContainsFunc(unsupported.Supported, mcp.IsModernProtocol)
 		negotiated := mcp.NegotiateMutuallySupportedVersion(unsupported.Supported)
 		if !mcp.IsModernProtocol(negotiated) {
+			if !modern && !hasModern && negotiated != "" {
+				// The server only supports initialize-era protocol versions that
+				// this client also supports; fall back to the legacy handshake
+				// using the mutually supported version.
+				c.applyNegotiatedVersion(previous)
+				return nil, false, negotiated, err
+			}
+			modern = true
+			break
+		}
+		modern = true
+		if attempt > 0 {
 			break
 		}
 		c.applyNegotiatedVersion(negotiated)
 	}
 
 	c.applyNegotiatedVersion(previous)
-	return nil, modern, err
+	return nil, modern, "", err
 }
 
 // discoveredVersion picks the version to continue with after server/discover

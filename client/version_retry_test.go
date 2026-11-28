@@ -242,20 +242,14 @@ func TestInitializeDoesNotFallBackAfterModernVersionError(t *testing.T) {
 		retryError bool
 		wantCalls  []string
 	}{
-		{"legacy versions only", 1, false, []string{"server/discover " + mcp.ProtocolVersion20260728}},
 		{"retry rejected", -1, false, []string{"server/discover 2099-01-01", "server/discover " + mcp.ProtocolVersion20260728}},
 		{"non-modern retry error", 1, true, []string{"server/discover 2099-01-01", "server/discover " + mcp.ProtocolVersion20260728}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			supported := []string{mcp.ProtocolVersion20250618}
-			preferred := mcp.ProtocolVersion20260728
-			if tt.name != "legacy versions only" {
-				supported = append(supported, mcp.ProtocolVersion20260728)
-				preferred = "2099-01-01"
-			}
+			supported := []string{mcp.ProtocolVersion20250618, mcp.ProtocolVersion20260728}
 			server := &versionRejectingServer{supported: supported, rejections: tt.rejections, retryError: tt.retryError}
-			client := newClientAgainst(t, server, WithProtocolVersion(preferred))
+			client := newClientAgainst(t, server, WithProtocolVersion("2099-01-01"))
 
 			result, err := client.Initialize(t.Context(), mcp.InitializeRequest{})
 			assert.Error(t, err)
@@ -265,6 +259,25 @@ func TestInitializeDoesNotFallBackAfterModernVersionError(t *testing.T) {
 			assert.Equal(t, tt.wantCalls, server.seen())
 		})
 	}
+}
+
+func TestInitializeFallsBackWhenServerAdvertisesOnlyLegacyVersions(t *testing.T) {
+	server := &versionRejectingServer{
+		supported:  []string{mcp.ProtocolVersion20250618},
+		rejections: 1,
+	}
+	client := newClientAgainst(t, server, WithProtocolVersion(mcp.ProtocolVersion20260728))
+
+	result, err := client.Initialize(t.Context(), mcp.InitializeRequest{})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, mcp.ProtocolVersion20250618, result.ProtocolVersion)
+	assert.True(t, client.IsInitialized())
+	assert.Equal(t, mcp.ProtocolVersion20250618, client.ProtocolVersion())
+	assert.Equal(t, []string{
+		"server/discover " + mcp.ProtocolVersion20260728,
+		"initialize " + mcp.ProtocolVersion20250618,
+	}, server.seen())
 }
 
 // With no version in common the client reports the error instead of trying a

@@ -235,7 +235,7 @@ func TestE2E_ModernClientAgainstLegacyOnlyServer(t *testing.T) {
 	))
 	defer httpServer.Close()
 
-	t.Run("modern error does not select legacy semantics", func(t *testing.T) {
+	t.Run("falls back to legacy initialize when server advertises only legacy versions", func(t *testing.T) {
 		httpTransport, err := transport.NewStreamableHTTP(httpServer.URL)
 		require.NoError(t, err)
 		c := client.NewClient(httpTransport)
@@ -243,15 +243,12 @@ func TestE2E_ModernClientAgainstLegacyOnlyServer(t *testing.T) {
 		t.Cleanup(func() { _ = c.Close() })
 
 		result, err := c.Initialize(t.Context(), mcp.InitializeRequest{})
-		require.Error(t, err)
-		var unsupported mcp.UnsupportedProtocolVersionError
-		require.ErrorAs(t, err, &unsupported)
-		assert.Equal(t, mcp.ProtocolVersion20260728, unsupported.Version)
-		assert.Equal(t, mcp.LegacyProtocolVersions(), unsupported.Supported)
-		assert.Nil(t, result)
-		assert.False(t, c.IsInitialized())
-		assert.Empty(t, c.ProtocolVersion())
-		assert.Empty(t, httpTransport.GetSessionId())
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, mcp.LATEST_LEGACY_PROTOCOL_VERSION, result.ProtocolVersion)
+		assert.True(t, c.IsInitialized())
+		assert.Equal(t, mcp.LATEST_LEGACY_PROTOCOL_VERSION, c.ProtocolVersion())
+		assert.NotEmpty(t, httpTransport.GetSessionId())
 	})
 
 	t.Run("explicit legacy client still works", func(t *testing.T) {

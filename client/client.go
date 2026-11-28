@@ -419,7 +419,7 @@ func (c *Client) Initialize(
 	// earlier revision or configured the transport in a way that rules it out.
 	if !c.legacyOnly && !c.transportRequiresLegacyProtocol() &&
 		(preferred == "" || mcp.IsModernProtocol(preferred)) {
-		discovered, modern, err := c.negotiateModern(ctx, preferred, outboundHeader(request.Header, request.Method))
+		discovered, modern, fallbackVersion, err := c.negotiateModern(ctx, preferred, outboundHeader(request.Header, request.Method))
 		if err == nil {
 			c.serverCapabilities = discovered.Capabilities
 			c.applyNegotiatedVersion(c.protocolVersion)
@@ -428,6 +428,9 @@ func (c *Client) Initialize(
 		}
 		if modern {
 			return nil, err
+		}
+		if fallbackVersion != "" {
+			preferred = fallbackVersion
 		}
 	}
 
