@@ -92,7 +92,7 @@ func multiRoundTrip[T any](
 			loadShedding = 0
 		}
 
-		if attempt >= c.maxRoundTrips() {
+		if attempt > c.maxRoundTrips() {
 			return nil, fmt.Errorf("%w (%d)", ErrMaxInputRoundTripsExceeded, c.maxRoundTrips())
 		}
 

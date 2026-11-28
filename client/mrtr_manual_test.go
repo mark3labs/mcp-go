@@ -24,7 +24,7 @@ func (h *recordingElicitationHandler) Elicit(context.Context, mcp.ElicitationReq
 	return &mcp.ElicitationResult{ElicitationResponse: mcp.ElicitationResponse{Action: mcp.ElicitationResponseActionAccept}}, nil
 }
 
-// TestManualInputRoundTrips verifies that WithManualInputRoundTrips hands input-required results to the caller.
+// TestManualInputRoundTrips verifies manual and automatic handling of input-required results.
 func TestManualInputRoundTrips(t *testing.T) {
 	type outcome struct {
 		err        error
@@ -61,20 +61,26 @@ func TestManualInputRoundTrips(t *testing.T) {
 	elicit := mcp.InputRequests{"q": mcp.NewElicitationInputRequest(mcp.ElicitationParams{Message: "name?"})}
 
 	tests := []struct {
-		name      string
-		manual    bool
-		handler   bool
-		maxTrips  int
-		requests  mcp.InputRequests
-		retry     bool
-		wantErr   string
-		wantCalls int
-		wantHandl int32
+		name        string
+		manual      bool
+		handler     bool
+		maxTrips    int
+		requests    mcp.InputRequests
+		retry       bool
+		repeatInput bool
+		wantErr     string
+		wantCalls   int
+		wantHandl   int32
 	}{
 		{name: "manual returns input request unchanged", manual: true, handler: true, requests: elicit, wantCalls: 1},
 		{name: "manual ignores max round trips", manual: true, maxTrips: 1, requests: elicit, wantCalls: 1},
 		{name: "default without handler fails", requests: elicit, wantErr: "no elicitation handler configured", wantCalls: 1},
 		{name: "default with handler retries automatically", handler: true, requests: elicit, wantCalls: 2, wantHandl: 1},
+		{name: "limit of one allows one retry", handler: true, maxTrips: 1, requests: elicit, wantCalls: 2, wantHandl: 1},
+		{
+			name: "limit of one stops after one retry", handler: true, maxTrips: 1, requests: elicit,
+			repeatInput: true, wantErr: "multi round-trip: exceeded maximum retries (1)", wantCalls: 2, wantHandl: 1,
+		},
 		{name: "manual caller-driven retry", manual: true, handler: true, requests: elicit, retry: true, wantCalls: 2},
 		{name: "manual empty input requests returned unchanged", manual: true, requests: mcp.InputRequests{}, wantCalls: 1},
 	}
@@ -116,7 +122,7 @@ func TestManualInputRoundTrips(t *testing.T) {
 						seen = append(seen, p)
 						n := len(seen)
 						mu.Unlock()
-						if n == 1 {
+						if n == 1 || (n == 2 && tt.repeatInput) {
 							result = mcp.NewInputRequiredResult(tt.requests, "s1")
 						} else {
 							result = json.RawMessage(m.final)
@@ -150,25 +156,33 @@ func TestManualInputRoundTrips(t *testing.T) {
 				require.NoError(t, err)
 
 				got := m.call(c, mcp.MultiRoundTripParams{})
+				if tt.wantErr == "" {
+					require.NoError(t, got.err)
+				} else {
+					require.ErrorContains(t, got.err, tt.wantErr)
+				}
 				firstCalls := tt.wantCalls
 				if tt.retry {
 					firstCalls = 1
 				}
 				mu.Lock()
-				require.Len(t, seen, firstCalls)
+				calls := len(seen)
 				mu.Unlock()
+				require.Equal(t, firstCalls, calls, "number of requests sent")
 				assert.Equal(t, tt.wantHandl, handler.calls.Load())
 				if tt.wantErr != "" {
-					require.ErrorContains(t, got.err, tt.wantErr)
 					return
 				}
-				require.NoError(t, got.err)
 				if !tt.manual {
 					assert.False(t, got.needsInput)
 					mu.Lock()
 					defer mu.Unlock()
 					assert.Equal(t, "s1", seen[1].RequestState)
-					assert.Contains(t, seen[1].InputResponses, "q")
+					require.Contains(t, seen[1].InputResponses, "q")
+					response := seen[1].InputResponses["q"]
+					require.NoError(t, response.DecodeFor(mcp.MethodElicitationCreate))
+					require.NotNil(t, response.Elicitation)
+					assert.Equal(t, mcp.ElicitationResponseActionAccept, response.Elicitation.Action)
 					return
 				}
 				assert.True(t, got.needsInput)
